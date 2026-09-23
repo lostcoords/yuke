@@ -5,7 +5,7 @@ import { spawn, lines } from "yuke:spawn";
 import { fetch } from "yuke:http";
 import { sseParser } from "yuke:sse";
 import { utf8 } from "yuke:utf8";
-import { authFor } from "yuke:mcp-oauth";
+import { authFor, record, errorText } from "yuke:mcp-oauth";
 
 /** @typedef {import("yuke:cancellation-native").CancellationSignal} CancellationSignal */
 /** @typedef {Awaited<ReturnType<typeof fetch>>} HttpResponse */
@@ -29,12 +29,6 @@ const ROUTED = /** @type {Record<string, string>} */ ({ "tools/call": "name", "p
 const SENTINEL_START = "=?base64?";
 const SENTINEL_END = "?=";
 const VAR = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
-
-/** @param {unknown} error @returns {string} */
-const errorText = (error) => (error instanceof Error ? error.message : String(error));
-
-/** @param {any} value @returns {boolean} */
-function record(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
 
 // Expand `${VAR}` and `${VAR:-default}`. A missing variable without a default is a config error.
 /** @param {string} text @returns {string} */
@@ -131,14 +125,21 @@ function openStdio(launch, sink) {
   };
 }
 
+// Expand every value of a configured map. The sorted entries key the trust, so a reorder is not a new server.
+/** @param {Record<string, string> | undefined} map @returns {{ entries: [string, string][], values: Record<string, string> }} */
+function expandAll(map) {
+  const entries = Object.entries(map ?? {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  /** @type {Record<string, string>} */
+  const values = Object.create(null);
+  for (const [key, value] of entries) values[key] = expand(value);
+  return { entries, values };
+}
+
 // Expand the configuration into what it runs. A missing variable throws here.
 /** @param {ServerConfig} config @returns {Endpoint} */
 function stdioEndpoint(config) {
   const argv = [expand(config.command ?? ""), ...(config.args ?? []).map(expand)];
-  /** @type {Record<string, string>} */
-  const env = Object.create(null);
-  const entries = Object.entries(config.env ?? {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-  for (const [key, value] of entries) env[key] = expand(value);
+  const { entries, values: env } = expandAll(config.env);
   const launch = { argv, env, ...(config.cwd !== undefined ? { cwd: expand(config.cwd) } : {}) };
   return {
     identity: JSON.stringify([config.command, config.args ?? [], config.cwd ?? null, entries, launch]),
@@ -365,13 +366,18 @@ function openHttp(target, sink) {
     }
   };
 
-  /** @param {string} reason @param {{ reconnect?: boolean }} [options] */
-  const closed = (reason, options) => {
-    if (!open) return;
+  // Stop the listen loop and every exchange, so the transport answers nothing more.
+  const stop = () => {
     open = false;
     clearTimeout(retry);
     if (listening) cancellation.cancel(listening);
     for (const signal of exchanges.values()) cancellation.cancel(signal);
+  };
+
+  /** @param {string} reason @param {{ reconnect?: boolean }} [options] */
+  const closed = (reason, options) => {
+    if (!open) return;
+    stop();
     sink.closed(reason, options);
   };
 
@@ -385,10 +391,7 @@ function openHttp(target, sink) {
     },
     negotiated(negotiatedVersion) { version = negotiatedVersion; },
     async close() {
-      open = false;
-      clearTimeout(retry);
-      if (listening) cancellation.cancel(listening);
-      for (const signal of exchanges.values()) cancellation.cancel(signal);
+      stop();
       // A legacy session ends with DELETE; a failure changes nothing for the client.
       if (session) await exchange(target, target.url, { method: "DELETE", extra: { "mcp-session-id": session, "mcp-protocol-version": version } }).then((response) => response.body.cancel(), () => {});
     },
@@ -455,10 +458,7 @@ function openSse(target, sink) {
 /** @param {ServerConfig} config @param {"http" | "sse"} type @returns {Endpoint} */
 function remoteEndpoint(config, type) {
   const url = expand(/** @type {string} */ (config.url));
-  const entries = Object.entries(config.headers ?? {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-  /** @type {Record<string, string>} */
-  const headers = Object.create(null);
-  for (const [name, value] of entries) headers[name] = expand(value);
+  const { entries, values: headers } = expandAll(config.headers);
   // A configured Authorization header or `oauth: false` means the user owns the credential.
   const owned = config.oauth === false || Object.keys(headers).some((name) => name.toLowerCase() === "authorization");
   /** @type {Target} */

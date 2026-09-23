@@ -6,7 +6,7 @@ import { fs } from "yuke:fs";
 import { showInfo } from "yuke:info-panel";
 import { checkTransport, endpointFor, headerValue, LISTEN_RETRY_MS, LISTEN_RETRY_MAX_MS } from "yuke:mcp-transport";
 import { client } from "yuke:client";
-import { signIn, forget } from "yuke:mcp-oauth";
+import { signIn, forget, record, errorText } from "yuke:mcp-oauth";
 import { openUrl } from "yuke:browser";
 import { notice } from "yuke:notice";
 
@@ -56,9 +56,6 @@ const MAX_IMAGES = 8;
 const NO_IMAGES = Object.freeze(/** @type {string[]} */ ([]));
 // A result above this reaches the model cut, with a marker that names the missing part.
 const MAX_RESULT_CHARS = 100_000;
-
-/** @param {unknown} error @returns {string} */
-const errorText = (error) => (error instanceof Error ? error.message : String(error));
 
 /** @param {string} text @returns {number} */
 function fnv(text) {
@@ -110,9 +107,6 @@ function contentText(content, structured) {
   const text = parts.join("\n");
   return total <= MAX_RESULT_CHARS ? text : text + "\n[truncated " + (total - MAX_RESULT_CHARS) + " characters]";
 }
-
-/** @param {any} value @returns {boolean} */
-function record(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
 
 /** @param {string} message @returns {never} */
 function invalid(message) { throw new Error("invalid MCP " + message); }
@@ -1018,11 +1012,8 @@ export function mcp(options = {}) {
           problems.push(server.name + ": " + errorText(error));
           continue;
         }
-        if (!server.endpoint) continue;
-        await server.close();
-        const fresh = new Server(server.name, server.config, limits, false, server.ctx);
-        fresh.onChange = server.onChange;
-        servers[index] = fresh;
+        // The record is gone, so the fresh instance waits for trust and does not start.
+        if (server.endpoint) await restart(index);
       }
       asked = false;
     },
