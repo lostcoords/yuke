@@ -37,47 +37,54 @@ const catalog_model: registry.ModelSpec = .{
     .caps = .{ .tools = true, .vision = false },
 };
 
+/// One merge over a file layer. The rows borrow the arena and the loaded file, so both live until `deinit`.
+const Merge = struct {
+    arena: std.heap.ArenaAllocator,
+    loaded: provider.config.Loaded,
+    rows: []const registry.Provider,
+
+    fn init(self: *Merge, json: []const u8, rows: []const catalog.Provider, env: *const EnvMap) !void {
+        self.arena = .init(testing.allocator);
+        errdefer self.arena.deinit();
+        self.loaded = try provider.config.loadBytes(testing.allocator, json);
+        errdefer self.loaded.deinit();
+        self.rows = try resolve(self.arena.allocator(), .{ .local = &self.loaded, .catalog = rows, .env = env });
+    }
+
+    fn deinit(self: *Merge) void {
+        self.loaded.deinit();
+        self.arena.deinit();
+    }
+};
+
 /// The route of the first model of a row. Every row under test serves at least one.
 fn routeOf(row: *const registry.Provider) registry.Route {
     return registry.routeFor(.{ .provider = row, .model = &row.models[0] }).?;
 }
 
 test "a local provider with an absent environment key reports that it needs one" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"acme","base_url":"https://local.example/v1",
         \\ "endpoints":[{"protocol":"openai_chat","key_header":"x_api_key"}],"auth":{"api_key":{"source":{"env":"ABSENT_KEY"}}}}]}
-    );
-    defer loaded.deinit();
-
-    var env: EnvMap = .init(testing.allocator);
-    defer env.deinit();
-
+    , &.{}, &no_env);
+    defer m.deinit();
     // The entry stays visible, because a user who set the wrong variable name must see the reason.
-    const rows = try resolve(a, .{ .local = &loaded, .env = &env });
-    try testing.expectEqual(@as(usize, 1), rows.len);
-    try testing.expectEqual(registry.Reason.needs_credential, rows[0].availability.unavailable);
+    try testing.expectEqual(@as(usize, 1), m.rows.len);
+    try testing.expectEqual(registry.Reason.needs_credential, m.rows[0].availability.unavailable);
 }
 
 test "an id and a key alone resolve a full route from the catalog" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
     // This is the whole entry: no base_url, no endpoints, no header, no models.
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"acme","api_key":"sk-minimal"}]}
-    );
-    defer loaded.deinit();
+    , &.{catalogRow("acme", "Acme", &.{catalog_model})}, &no_env);
+    defer m.deinit();
+    try testing.expectEqual(@as(usize, 1), m.rows.len);
+    try testing.expectEqualStrings("Acme", m.rows[0].name); // The catalog names it.
 
-    const rows = try resolve(a, .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{catalog_model})}, .env = &no_env });
-    try testing.expectEqual(@as(usize, 1), rows.len);
-    try testing.expectEqualStrings("Acme", rows[0].name); // The catalog names it.
-
-    const route = routeOf(&rows[0]);
+    const route = routeOf(&m.rows[0]);
     try testing.expectEqualStrings("https://api.example/v1", route.route.base_url);
     try testing.expectEqual(ai.route.Protocol.openai_chat, route.route.protocol);
     try testing.expectEqual(ai.route.ApiKeyHeader.authorization_bearer, route.route.auth.api_key);
@@ -85,75 +92,57 @@ test "an id and a key alone resolve a full route from the catalog" {
     try testing.expectEqualStrings("x-catalog-version", route.route.headers[0].name);
 
     // The models come from the catalog too, so the picker is complete.
-    try testing.expectEqual(@as(usize, 1), rows[0].models.len);
-    try testing.expectEqualStrings("cm", rows[0].models[0].id);
+    try testing.expectEqual(@as(usize, 1), m.rows[0].models.len);
+    try testing.expectEqualStrings("cm", m.rows[0].models[0].id);
 }
 
 test "a local field beats the catalog field by field" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
     // The file pins the base URL and clears the headers. Other route fields come from the catalog.
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"acme","base_url":"https://pinned.example/v1","api_key":"k","headers":[]}]}
-    );
-    defer loaded.deinit();
-
-    const rows = try resolve(a, .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{catalog_model})}, .env = &no_env });
-    const route = routeOf(&rows[0]);
+    , &.{catalogRow("acme", "Acme", &.{catalog_model})}, &no_env);
+    defer m.deinit();
+    const route = routeOf(&m.rows[0]);
     try testing.expectEqualStrings("https://pinned.example/v1", route.route.base_url);
     try testing.expectEqual(ai.route.Protocol.openai_chat, route.route.protocol);
     try testing.expectEqual(@as(usize, 0), route.route.headers.len);
 }
 
 test "local model reasoning levels reach the registry" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"ollama","base_url":"http://127.0.0.1:11434/v1","endpoints":[{"protocol":"openai_chat"}],
         \\ "models":[{"id":"qwen3","upstream_id":"qwen3:8b","limits":{"context_window":40960,"max_output_tokens":8192},
         \\ "reasoning_levels":[null,"high"],"flags":{"thinking_format":"qwen"}}]}]}
-    );
-    defer loaded.deinit();
-
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .env = &no_env });
-    const model = rows[0].models[0];
+    , &.{}, &no_env);
+    defer m.deinit();
+    const model = m.rows[0].models[0];
     try testing.expectEqual(@as(usize, 2), model.reasoning_levels.len);
     try testing.expect(model.reasoning_levels[0] == .none);
     try testing.expectEqualStrings("high", model.reasoning_levels[1].named);
 }
 
 test "a minimal entry with no catalog row is offered but not routable" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"unknown","api_key":"k"}]}
-    );
-    defer loaded.deinit();
-
-    const rows = try resolve(a, .{ .local = &loaded, .env = &no_env });
-    try testing.expectEqual(@as(usize, 1), rows.len);
-    try testing.expectEqual(registry.Reason.needs_route, rows[0].availability.unavailable);
+    , &.{}, &no_env);
+    defer m.deinit();
+    try testing.expectEqual(@as(usize, 1), m.rows.len);
+    try testing.expectEqual(registry.Reason.needs_route, m.rows[0].availability.unavailable);
     // The state never claims a provider is ready when no route can be built.
-    try testing.expectEqual(proto.enums.ProviderState.needs_route, rows[0].availability.state());
+    try testing.expectEqual(proto.enums.ProviderState.needs_route, m.rows[0].availability.state());
 }
 
 test "a local codex grant routes with a bearer and its account header" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"codex",
         \\ "auth":{"oauth":{"access_token":"tok","account_id":"acct","expires_at_ms":9000000000000}}}]}
-    );
-    defer loaded.deinit();
-
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("codex", "codex")}, .env = &no_env });
-    const route = routeOf(&rows[0]);
+    , &.{oauthCatalogRow("codex", "codex")}, &no_env);
+    defer m.deinit();
+    const route = routeOf(&m.rows[0]);
     // The file stores only the grant, so the catalog row is what selects this shape.
     try testing.expectEqual(ai.route.ApiKeyHeader.authorization_bearer, route.route.auth.api_key);
     try testing.expectEqual(ai.route.ResponsesDialect.codex, route.route.responses_dialect);
@@ -164,97 +153,63 @@ test "a local codex grant routes with a bearer and its account header" {
 }
 
 test "a grant whose pinned header the file also names is never ready" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"codex",
         \\ "headers":[{"name":"chatgpt-account-id","value":"mine"}],
         \\ "auth":{"oauth":{"access_token":"tok","account_id":"acct","expires_at_ms":9000000000000}}}]}
-    );
-    defer loaded.deinit();
-
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("codex", "codex")}, .env = &no_env });
+    , &.{oauthCatalogRow("codex", "codex")}, &no_env);
+    defer m.deinit();
     // The flow pins this header, so every request would fail. A ready route must be a usable one.
-    try testing.expectEqual(proto.enums.ProviderState.needs_route, rows[0].availability.state());
+    try testing.expectEqual(proto.enums.ProviderState.needs_route, m.rows[0].availability.state());
 }
 
 test "a catalog row the engine cannot build leaves the grant unroutable" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"other","auth":{"oauth":{"access_token":"tok","expires_at_ms":9000000000000}}}]}
-    );
-    defer loaded.deinit();
-
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("other", "wat")}, .env = &no_env });
-    try testing.expectEqual(proto.enums.ProviderState.needs_route, rows[0].availability.state());
+    , &.{oauthCatalogRow("other", "wat")}, &no_env);
+    defer m.deinit();
+    try testing.expectEqual(proto.enums.ProviderState.needs_route, m.rows[0].availability.state());
 }
 
 test "a lapsed grant presents no credential to a run" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"xai",
         \\ "auth":{"oauth":{"access_token":"tok","expires_at_ms":1000}}}]}
-    );
-    defer loaded.deinit();
-
-    var env = EnvMap.init(testing.allocator);
-    defer env.deinit();
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{oauthCatalogRow("xai", "xai")}, .env = &env });
-    const route = routeOf(&rows[0]);
-
+    , &.{oauthCatalogRow("xai", "xai")}, &no_env);
+    defer m.deinit();
+    const route = routeOf(&m.rows[0]);
     // The run reads the clock, so a grant that lapses needs no catalog rebuild.
-    try testing.expect(credential(route.credential, &env, 999) != null);
-    try testing.expect(credential(route.credential, &env, 1000) == null);
+    try testing.expect(credential(route.credential, &no_env, 999) != null);
+    try testing.expect(credential(route.credential, &no_env, 1000) == null);
 }
 
 test "an entry that names a key and holds none needs a credential" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"acme","base_url":"https://acme.example/v1",
         \\ "endpoints":[{"protocol":"openai_chat","key_header":"x_api_key"}],"auth":{"api_key":{}}}]}
-    );
-    defer loaded.deinit();
-
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .env = &no_env });
+    , &.{}, &no_env);
+    defer m.deinit();
     // The route is complete, so only the missing value keeps it from serving a turn.
-    try testing.expectEqual(proto.enums.ProviderState.needs_credential, rows[0].availability.state());
+    try testing.expectEqual(proto.enums.ProviderState.needs_credential, m.rows[0].availability.state());
 }
 
 test "a keyless entry routes with no credential" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"ollama","base_url":"http://127.0.0.1:11434/v1","endpoints":[{"protocol":"openai_chat"}],
         \\ "models":[{"id":"qwen3","upstream_id":"qwen3:8b"}]}]}
-    );
-    defer loaded.deinit();
-
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .env = &no_env });
-    const route = routeOf(&rows[0]);
+    , &.{}, &no_env);
+    defer m.deinit();
+    const route = routeOf(&m.rows[0]);
     try testing.expect(route.route.auth == .none);
     try testing.expect(route.credential == .none);
 }
 
 test "a gateway routes each model to the path it names, and the key header follows the path" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
-    // The file adds a chat model and a Responses model to a host the catalog serves on three paths.
-    var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"providers":[{"id":"gateway","api_key":"sk-gw",
-        \\ "models":[{"id":"chat","upstream_id":"chat","protocol":"openai_chat"},
-        \\           {"id":"resp","upstream_id":"resp","protocol":"openai_responses"}]}]}
-    );
-    defer loaded.deinit();
-
     const gateway: catalog.Provider = .{
         .id = "gateway",
         .name = "Gateway",
@@ -268,8 +223,15 @@ test "a gateway routes each model to the path it names, and the key header follo
         },
         .models = &.{.{ .id = "msg", .upstream_id = "msg", .name = "Messages", .protocol = .anthropic_messages }},
     };
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{gateway}, .env = &no_env });
-    const row = &rows[0];
+    // The file adds a chat model and a Responses model to a host the catalog serves on three paths.
+    var m: Merge = undefined;
+    try m.init(
+        \\{"providers":[{"id":"gateway","api_key":"sk-gw",
+        \\ "models":[{"id":"chat","upstream_id":"chat","protocol":"openai_chat"},
+        \\           {"id":"resp","upstream_id":"resp","protocol":"openai_responses"}]}]}
+    , &.{gateway}, &no_env);
+    defer m.deinit();
+    const row = &m.rows[0];
     try testing.expectEqual(@as(usize, 3), row.models.len);
 
     const expected = [_]struct { id: []const u8, protocol: ai.route.Protocol, header: ai.route.ApiKeyHeader, cache: ?ai.route.CachePolicy }{
@@ -278,7 +240,7 @@ test "a gateway routes each model to the path it names, and the key header follo
         .{ .id = "resp", .protocol = .openai_responses, .header = .authorization_bearer, .cache = null },
     };
     for (expected) |want| {
-        const match = registry.findModel(rows, try registry.selectorOf(arena.allocator(), "gateway", want.id)).?;
+        const match = registry.findModel(m.rows, try registry.selectorOf(m.arena.allocator(), "gateway", want.id)).?;
         const route = registry.routeFor(match).?;
         try testing.expectEqual(want.protocol, route.route.protocol);
         try testing.expectEqual(want.header, route.route.auth.api_key);
@@ -291,94 +253,73 @@ test "a gateway routes each model to the path it names, and the key header follo
 }
 
 test "a file model on no declared path leaves the provider unroutable" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
     // The catalog serves chat only, so a Responses model has no path, and a model that names none has no sole path to take.
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"acme","api_key":"k","models":[{"id":"resp","upstream_id":"resp","protocol":"openai_responses"}]}]}
-    );
-    defer loaded.deinit();
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{catalog_model})}, .env = &no_env });
-    try testing.expectEqual(registry.Reason.needs_route, rows[0].availability.unavailable);
+    , &.{catalogRow("acme", "Acme", &.{catalog_model})}, &no_env);
+    defer m.deinit();
+    try testing.expectEqual(registry.Reason.needs_route, m.rows[0].availability.unavailable);
     // The baked models still show, so the picker explains which provider is broken and why.
-    try testing.expectEqual(@as(usize, 1), rows[0].models.len);
+    try testing.expectEqual(@as(usize, 1), m.rows[0].models.len);
 
     // A file list that drops the path a baked model needs is the same fault from the other side.
-    var replaced = try provider.config.loadBytes(testing.allocator,
+    var replaced: Merge = undefined;
+    try replaced.init(
         \\{"providers":[{"id":"acme","api_key":"k","endpoints":[{"protocol":"anthropic_messages","key_header":"x_api_key"}]}]}
-    );
+    , &.{catalogRow("acme", "Acme", &.{catalog_model})}, &no_env);
     defer replaced.deinit();
-    const dropped = try resolve(arena.allocator(), .{ .local = &replaced, .catalog = &.{catalogRow("acme", "Acme", &.{catalog_model})}, .env = &no_env });
-    try testing.expectEqual(registry.Reason.needs_route, dropped[0].availability.unavailable);
+    try testing.expectEqual(registry.Reason.needs_route, replaced.rows[0].availability.unavailable);
 }
 
 test "a local entry with no credential never routes a catalog provider that needs one" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
     // The file names only the id. The catalog supplies a complete API-key route.
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"acme"}]}
-    );
-    defer loaded.deinit();
-
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{})}, .env = &no_env });
+    , &.{catalogRow("acme", "Acme", &.{})}, &no_env);
+    defer m.deinit();
     // A ready row here would send an unauthenticated request to a paid endpoint.
-    try testing.expectEqual(proto.enums.ProviderState.needs_credential, rows[0].availability.state());
+    try testing.expectEqual(proto.enums.ProviderState.needs_credential, m.rows[0].availability.state());
 }
 
 test "a pinned header that shadows the catalog credential header is not ready" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
     // The file pins Authorization, and the catalog names authorization_bearer for the credential.
-    var loaded = try provider.config.loadBytes(testing.allocator,
+    var m: Merge = undefined;
+    try m.init(
         \\{"providers":[{"id":"acme","api_key":"k","headers":[{"name":"Authorization","value":"other"}]}]}
-    );
-    defer loaded.deinit();
-
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{catalogRow("acme", "Acme", &.{})}, .env = &no_env });
+    , &.{catalogRow("acme", "Acme", &.{})}, &no_env);
+    defer m.deinit();
     // The loader cannot see the catalog header, so the merge must reject the collision.
-    try testing.expectEqual(proto.enums.ProviderState.needs_route, rows[0].availability.state());
+    try testing.expectEqual(proto.enums.ProviderState.needs_route, m.rows[0].availability.state());
 }
 
 test "an empty environment value is no credential" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
-    var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"providers":[{"id":"acme","base_url":"https://acme.example/v1",
-        \\ "endpoints":[{"protocol":"openai_chat","key_header":"x_api_key"}],"auth":{"api_key":{"source":{"env":"EMPTY_KEY"}}}}]}
-    );
-    defer loaded.deinit();
-
     var env = EnvMap.init(testing.allocator);
     defer env.deinit();
     try env.put("EMPTY_KEY", "");
-
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .env = &env });
-    try testing.expectEqual(proto.enums.ProviderState.needs_credential, rows[0].availability.state());
+    var m: Merge = undefined;
+    try m.init(
+        \\{"providers":[{"id":"acme","base_url":"https://acme.example/v1",
+        \\ "endpoints":[{"protocol":"openai_chat","key_header":"x_api_key"}],"auth":{"api_key":{"source":{"env":"EMPTY_KEY"}}}}]}
+    , &.{}, &env);
+    defer m.deinit();
+    try testing.expectEqual(proto.enums.ProviderState.needs_credential, m.rows[0].availability.state());
     try testing.expect(credential(.{ .env = "EMPTY_KEY" }, &env, 0) == null);
 }
 
 test "an environment credential resolves through the production path" {
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-
-    var loaded = try provider.config.loadBytes(testing.allocator,
-        \\{"providers":[{"id":"acme","base_url":"https://acme.example/v1",
-        \\ "endpoints":[{"protocol":"openai_chat","key_header":"x_api_key"}],"auth":{"api_key":{"source":{"env":"ACME_KEY"}}},
-        \\ "models":[{"id":"m","upstream_id":"m"}]}]}
-    );
-    defer loaded.deinit();
-
     var env = EnvMap.init(testing.allocator);
     defer env.deinit();
     try env.put("ACME_KEY", "sk-from-env");
-
-    const rows = try resolve(arena.allocator(), .{ .local = &loaded, .env = &env });
-    const route = routeOf(&rows[0]);
+    var m: Merge = undefined;
+    try m.init(
+        \\{"providers":[{"id":"acme","base_url":"https://acme.example/v1",
+        \\ "endpoints":[{"protocol":"openai_chat","key_header":"x_api_key"}],"auth":{"api_key":{"source":{"env":"ACME_KEY"}}},
+        \\ "models":[{"id":"m","upstream_id":"m"}]}]}
+    , &.{}, &env);
+    defer m.deinit();
+    const route = routeOf(&m.rows[0]);
     // The row names the variable, and the run reads it again when it starts.
     try testing.expectEqualStrings("ACME_KEY", route.credential.env);
     try testing.expectEqualStrings("sk-from-env", credential(route.credential, &env, 0).?.api_key);
@@ -552,14 +493,10 @@ test "tool search support follows the resolved endpoint rather than the model na
         .{ ",\"base_url\":\"https://proxy.example/v1\",\"models\":[{\"id\":\"cm\",\"upstream_id\":\"cm\",\"flags\":{\"supports_tool_search\":true}}]", @as(?bool, true) },
     };
     inline for (cases) |case| {
-        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-        defer arena.deinit();
-        const bytes = "{\"providers\":[{\"id\":\"acme\",\"api_key\":\"test-key\"" ++ case[0] ++ "}]}";
-        var loaded = try provider.config.loadBytes(testing.allocator, bytes);
-        defer loaded.deinit();
-        const rows = try resolve(arena.allocator(), .{ .local = &loaded, .catalog = &.{source}, .env = &no_env });
-        const effective = rows[0].models[0];
-        try testing.expectEqual(case[1], effective.caps.tool_search);
+        var m: Merge = undefined;
+        try m.init("{\"providers\":[{\"id\":\"acme\",\"api_key\":\"test-key\"" ++ case[0] ++ "}]}", &.{source}, &no_env);
+        defer m.deinit();
+        try testing.expectEqual(case[1], m.rows[0].models[0].caps.tool_search);
         try testing.expectEqual(@as(?bool, true), specs[0].caps.tool_search);
     }
 }
