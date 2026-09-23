@@ -896,6 +896,8 @@ export function mcp(options = {}) {
     name: "mcp",
     /** @param {Context} ctx */
     async apply(ctx) {
+      // A restart replaces a server in the list, so the release closes the servers the list holds at unload.
+      ctx.own(() => Promise.all(servers.map((server) => server.close())));
       // The first definition of a name wins: index.js, then the user file, then the workspace file, which is not trusted yet.
       /** @type {[Record<string, ServerConfig>, boolean][]} */
       const sources = [[options.servers ?? {}, true]];
@@ -1016,9 +1018,6 @@ export function mcp(options = {}) {
         if (server.endpoint) await restart(index);
       }
       asked = false;
-    },
-    async stop() {
-      await Promise.all(servers.map((server) => server.close()));
     },
     /** @returns {[string, string][]} */
     rows() {

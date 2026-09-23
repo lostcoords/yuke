@@ -1,4 +1,4 @@
-// yuke:ext — the plugin runtime: a Scope owns revertible effects, a Context registers, and `advice` wraps methods.
+// yuke:ext — the plugin runtime: a Scope owns effects and releases, a Context registers, and `advice` wraps methods.
 import * as cancellation from "yuke:cancellation-native";
 import { events } from "yuke:kernel";
 import { bindInteraction } from "yuke:interaction";
@@ -7,11 +7,11 @@ import { defineTool, removeTool } from "yuke:tools";
 import { installDispatcher, installLifecycle, setPoints } from "yuke:hooks";
 import { native } from "yuke:engine-native";
 
-/** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, ScopeEntry, ToolDefinition } from "./types/ext.js" */
+/** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, PluginAsync, PluginHandle, Release, ReleaseEntry, ScopeEntry, ScopeLife, ToolDefinition } from "./types/ext.js" */
 
 const NOOP = () => {};
 
-// --- scope: the owner of revertible effects ---
+// --- scope: one owner for sync effects, async-capable releases, a signal, and child scopes ---
 export class Scope {
   /** @param {string | undefined} name */
   constructor(name) {
@@ -21,6 +21,13 @@ export class Scope {
     this._disposers = []; // registration order; reverted in reverse
     /** @type {ScopeEntry | null} */
     this._parentEntry = null;
+    /** @type {ScopeLife | null} */
+    this._life = null; // made on first use, because boot builds many scopes and each own field costs QuickJS a shape step
+  }
+
+  /** @returns {ScopeLife} */
+  _state() {
+    return this._life ??= { parent: null, releases: null, signal: null, closed: undefined, draining: null, quiet: false };
   }
 
   // Run `fn` now. Collect the disposer it returns. The handle reverts this one effect, once.
@@ -49,10 +56,43 @@ export class Scope {
     };
   }
 
+  // Hold `release` until this scope closes; it may answer a Promise, which the close awaits. A closed scope releases at once and throws.
+  /** @param {Release} release @returns {() => void | Promise<void>} */
+  own(release) {
+    if (typeof release !== "function") throw new TypeError("a resource needs a release function");
+    if (!this.alive) {
+      this._attempt(release);
+      throw new TypeError("the resource owner is closed");
+    }
+    /** @type {ReleaseEntry} */
+    const entry = { release };
+    const life = this._state();
+    const list = life.releases ??= [];
+    list.push(entry);
+    return () => {
+      const fn = entry.release;
+      if (!fn) return;
+      entry.release = null;
+      const at = list.indexOf(entry);
+      if (at >= 0) list.splice(at, 1);
+      return this._attempt(fn);
+    };
+  }
+
+  // The cancellation signal of this scope. A close cancels it before any effect reverts.
+  get signal() {
+    const life = this._state();
+    if (!life.signal) {
+      life.signal = cancellation.create();
+      if (!this.alive) cancellation.cancel(life.signal);
+    }
+    return life.signal;
+  }
+
   /** @param {Disposer} cleanup @returns {ScopeEntry} */
   _addEntry(cleanup) {
     /** @type {ScopeEntry} */
-    const entry = { owner: this, cleanup };
+    const entry = { owner: this, cleanup, child: null };
     this._disposers.push(entry);
     return entry;
   }
@@ -79,30 +119,43 @@ export class Scope {
   child(name) {
     if (!this.alive) throw new TypeError("effect on a disposed scope: " + this.name);
     const s = new Scope(name);
-    const parentEntry = this._addEntry(() => s.dispose());
+    const parentEntry = this._addEntry(() => { s.dispose(); });
+    parentEntry.child = s;
     s._parentEntry = parentEntry;
-
     return s;
   }
 
-  // Revert every effect, newest first. A throwing teardown never stops the others.
-  /** @returns {void} */
+  // Cancel the signal of this scope and of every child, so no effect reverts while its I/O still runs.
+  _cancel() {
+    const signal = this._life?.signal;
+    if (signal) cancellation.cancel(signal);
+    for (const entry of this._disposers) if (entry.child) entry.child._cancel();
+  }
+
+  // Close newest first: cancel the signals, revert the effects, await the child closes, release, then drain the signal. Answer a Promise only while a close is async.
+  /** @returns {void | Promise<void>} */
   dispose() {
-    if (!this.alive) return;
+    if (!this.alive) return this._life?.closed;
+    this._cancel();
     this.alive = false;
 
     const parentEntry = this._parentEntry;
     this._parentEntry = null;
-    if (parentEntry) {
-      const parent = parentEntry.owner;
-      if (parent) parent._takeEntry(parentEntry);
-    }
+    const parent = parentEntry?.owner ?? this._life?.parent ?? null;
+    if (parentEntry?.owner) parentEntry.owner._takeEntry(parentEntry);
 
+    /** @type {Promise<void>[]} */
+    const children = [];
     while (this._disposers.length) {
       const entry = /** @type {ScopeEntry} */ (this._disposers.pop());
       const cleanup = entry.cleanup;
       entry.owner = null;
       entry.cleanup = null;
+      if (entry.child) {
+        const closed = entry.child.dispose();
+        if (closed) children.push(closed);
+        continue;
+      }
       try {
         if (cleanup) cleanup();
       } catch (e) {
@@ -110,6 +163,50 @@ export class Scope {
         events.emit("ext.error", e, this.name);
       }
     }
+
+    const life = this._life;
+    if (!life && !children.length) return;
+    // A block that an effect closed above added its drain here, so read the set after the effects.
+    if (life?.draining) children.push(...life.draining);
+    const released = children.length ? Promise.all(children).then(() => this._release()) : this._release();
+    const signal = life?.signal;
+    if (!released && !signal) return;
+    const closed = Promise.resolve(released).then(() => (signal ? cancellation.drain(signal) : undefined));
+    this._state().closed = closed;
+    // A child that leaves on its own keeps its parent's close waiting until its releases end.
+    if (parent) {
+      const draining = parent._state().draining ??= new Set();
+      draining.add(closed);
+      closed.then(() => draining.delete(closed));
+    }
+    return closed;
+  }
+
+  // Run the held releases newest first. A sync release runs now; an async one holds the rest until it settles.
+  /** @returns {void | Promise<void>} */
+  _release() {
+    const list = this._life?.releases;
+    while (list?.length) {
+      const entry = /** @type {ReleaseEntry} */ (list.pop());
+      const fn = entry.release;
+      entry.release = null;
+      const pending = fn ? this._attempt(fn) : undefined;
+      if (pending) return pending.then(() => this._release());
+    }
+  }
+
+  // Call one release and report its fault. Answer a Promise only for an async release.
+  /** @param {Release} fn @returns {Promise<void> | undefined} */
+  _attempt(fn) {
+    /** @param {unknown} error */
+    const report = (error) => { if (!this._life?.quiet) events.emit("ext.error", error, this.name); };
+    try {
+      const result = fn();
+      if (result != null && typeof /** @type {any} */ (result).then === "function") return Promise.resolve(result).then(NOOP, report);
+    } catch (error) {
+      report(error);
+    }
+    return undefined;
   }
 }
 
@@ -377,10 +474,11 @@ function injectInto(parentContext, names, apply) {
       return false;
     }
 
-    // The injection owns this scope until its dependencies change.
+    // The injection owns this scope until its dependencies change; the parent waits for its drain.
     const child = new Scope("inject:" + deps.join("+"));
+    child._state().parent = parent;
     try {
-      const ctx = new Context(child, id, parentContext);
+      const ctx = new Context(child, id);
       // Each build reads the live provider, and a later change builds the block again.
       const bound = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (ctx));
       for (const n of deps) bound[n] = bindCapability(services.get(n), ctx);
@@ -537,111 +635,23 @@ export async function createSession(params) {
   return JSON.parse(await native.request("session.create", JSON.stringify(params)));
 }
 
-/** @param {Disposer} release */
-function releaseResource(release) {
-  const result = /** @type {unknown} */ (release());
-  if (result != null && typeof /** @type {any} */ (result).then === "function") {
-    Promise.resolve(result).catch(NOOP);
-    throw new TypeError("resource release must be synchronous");
-  }
-}
-
 // --- plugin context: the register-through-me surface --- Every registration is an effect on the scope, so an unload reverts all of them.
 export class Context {
-  /** @param {Scope} scope @param {string} id @param {Context} [parent] */
-  constructor(scope, id, parent) {
+  /** @param {Scope} scope @param {string} id */
+  constructor(scope, id) {
     this.scope = scope;
     this.id = id; // the plugin id; it namespaces commands and owns this plugin's advice
-    if (parent) {
-      /** @type {Context | undefined} */
-      this._parent = parent;
-    }
   }
 
-  get _managed() { return false; }
-
-  /** @returns {import("./types/ext.js").ResourceState} */
-  _resources() {
-    if (!this._owner) {
-      const parent = this._parent?._resources();
-      /** @type {import("./types/ext.js").ResourceState | undefined} */
-      this._owner = { active: this.scope.alive && (parent?.active ?? true) };
-      if (parent) (parent.children ??= new Set()).add(this);
-      if (this._managed) plugins._needsStop = true;
-      if (!this.scope.alive) this._closeResources();
-      else if (!this._managed) this.scope.effect(() => () => { this._closeResources(); });
-    }
-    return this._owner;
-  }
-
-  // Unload cancels this signal before stop runs.
+  // A close cancels this signal before any effect reverts, so I/O started with it aborts.
   get signal() {
-    const owner = this._resources();
-    if (!owner.signal) {
-      owner.signal = cancellation.create();
-      if (!owner.active) cancellation.cancel(owner.signal);
-    }
-    return owner.signal;
+    return this.scope.signal;
   }
 
-  // A late resource is released at once; normal release follows stop.
-  /** @param {Disposer} release @returns {Disposer} */
+  // Hold a resource until the close; its release may be async and runs after the effects revert, newest first.
+  /** @param {Release} release @returns {() => void | Promise<void>} */
   own(release) {
-    if (typeof release !== "function") throw new TypeError("a resource needs a release function");
-    const owner = this._resources();
-    if (!owner.active) {
-      releaseResource(release);
-      throw new TypeError("the resource owner is closed");
-    }
-    const resources = owner.resources ??= [];
-    const entry = /** @type {import("./types/ext.js").OwnedResource} */ ({ release });
-    resources.push(entry);
-    return () => {
-      const fn = entry.release;
-      if (!fn) return;
-      entry.release = null;
-      const at = resources.indexOf(entry);
-      if (at >= 0) resources.splice(at, 1);
-      releaseResource(fn);
-    };
-  }
-
-  _cancelResources() {
-    const owner = this._owner;
-    if (!owner?.active) return;
-    owner.active = false;
-    if (owner.signal) cancellation.cancel(owner.signal);
-    if (owner.children) for (const child of owner.children) child._cancelResources();
-  }
-
-  /** @returns {void | Promise<void>} */
-  _closeResources() {
-    const owner = this._owner;
-    if (!owner) return;
-    if (owner.closed) return owner.closed;
-    let resolve = NOOP;
-    owner.closed = new Promise(done => { resolve = done; });
-    this._cancelResources();
-    /** @type {Promise<void>[]} */
-    const pending = [];
-    if (owner.children) for (const child of owner.children) {
-      const result = child._closeResources();
-      if (result) pending.push(result);
-    }
-    const resources = owner.resources;
-    while (resources?.length) {
-      const entry = /** @type {import("./types/ext.js").OwnedResource} */ (resources.pop());
-      const release = entry.release;
-      entry.release = null;
-      try { if (release) releaseResource(release); } catch (error) { events.emit("ext.error", error, this.id); }
-    }
-    if (owner.signal) pending.push(cancellation.drain(owner.signal));
-    Promise.all(pending).then(() => {
-      this._parent?._owner?.children?.delete(this);
-      this._parent = undefined;
-      resolve();
-    });
-    return owner.closed;
+    return this.scope.own(release);
   }
 
   /** @param {Effect} fn @returns {Disposer} */
@@ -700,21 +710,12 @@ export class Context {
   }
 }
 
-/** @type {Context | undefined} */
-Context.prototype._parent = undefined;
-/** @type {import("./types/ext.js").ResourceState | undefined} */
-Context.prototype._owner = undefined;
-
 // --- plugin registry --- A plugin is `{ name, apply }`; the name keys the registry and prefixes every command, so it is required.
-/** @param {Plugin} plugin @returns {Plugin["stop"]} */
+/** @param {Plugin} plugin @returns {void} */
 function checkPlugin(plugin) {
   const ok = plugin !== null && typeof plugin === "object" && typeof plugin.apply === "function";
   if (!ok || typeof plugin.name !== "string" || plugin.name === "")
     throw new TypeError("invalid plugin: expected { name, apply }");
-  const stop = plugin.stop;
-  if (stop !== undefined && typeof stop !== "function")
-    throw new TypeError("plugin stop must be a function");
-  return stop;
 }
 
 const readyNow = Promise.resolve();
@@ -731,135 +732,121 @@ function startupCanceled() {
   return error;
 }
 
-/** @typedef {{ stop?: Plugin["stop"], ready?: Promise<void> | undefined, startup?: Promise<void> | undefined, cancelReady?: ((error: Error) => void) | undefined, dispose?: Promise<void> | undefined, force?: (() => void) | undefined }} AsyncPlugin */
-
+// One loaded plugin: its scope, its startup, and the close that holds its name until the scope and the startup settle.
 class PluginInstance extends Context {
-  /** @param {string} name @param {Plugin["stop"]} stop */
-  constructor(name, stop) {
+  /** @param {string} name */
+  constructor(name) {
     super(new Scope(name), name);
     this._name = name;
+    /** @type {"applying" | "active" | "closing" | "closed"} */
     this._phase = "applying";
-    if (stop) {
-      /** @type {AsyncPlugin | undefined} */
-      this._async = { stop };
-    }
+    /** @type {PluginAsync | undefined} */
+    this._async = undefined; // made only for an async apply or an async close
   }
 
-  get _managed() { return true; }
   get ready() { return this._async?.ready ?? readyNow; }
+
+  /** @returns {PluginAsync} */
+  _state() {
+    return this._async ??= {};
+  }
 
   /** @param {unknown} error */
   report(error) { events.emit("ext.error", error, this._name); }
 
-  finish() {
-    if (this._async) {
-      this._async.stop = undefined;
-      this._async.force = undefined;
-      this._async.cancelReady = undefined;
-      this._async.startup = undefined;
-    }
-    if (plugins._live[this._name] === this) delete plugins._live[this._name];
-  }
-
+  // Close the scope, then free the name once the scope and any startup settle, or once the deadline gives up on them. A sync close answers nothing.
   /** @returns {void | Promise<void>} */
   dispose() {
-    if (this._phase === "stopping") return this._async?.dispose;
+    if (this._phase === "closed") return this._async?.closed;
+    if (this._phase === "closing") return this._promise();
     const applying = this._phase === "applying";
-    const asynchronous = applying || this._async?.startup || this._async?.stop || this._owner;
-    this._phase = "stopping";
-    if (!asynchronous) {
-      this.scope.dispose();
-      if (plugins._live[this._name] === this) delete plugins._live[this._name];
-      return;
-    }
-    const state = this._async ??= {};
-    let resolve = NOOP;
-    state.dispose = new Promise(done => { resolve = done; });
-    state.cancelReady?.(startupCanceled());
-    this._cancelResources();
-    this.scope.dispose();
-
-    let closed = false;
-    /** @type {number | undefined} */
-    let timer;
-    const close = () => {
-      if (closed) return;
-      closed = true;
-      clearTimeout(timer);
-      const drain = this._closeResources();
-      if (drain) drain.then(() => { this.finish(); resolve(); });
-      else { this.finish(); resolve(); }
-    };
-    state.force = () => {
-      if (!closed) this.report(new Error("plugin stop timed out"));
-      close();
-    };
-    if (!applying && !state.startup && !state.stop) {
-      close();
-      return state.dispose;
-    }
-    timer = setTimeout(state.force, stopTimeoutMs);
-    /** @type {void | Promise<void>} */
-    let stopped = undefined;
-    try { const stop = state.stop; stopped = stop?.(this); }
-    catch (error) { this.report(error); }
-    const stop = Promise.resolve(stopped).catch(error => { if (!closed) this.report(error); });
+    this._phase = "closing";
+    this._async?.cancelReady?.(startupCanceled());
+    const closed = this.scope.dispose();
     // A reentrant dispose can run before apply returns its promise.
-    const start = applying ? readyNow.then(() => state.startup) : state.startup ?? readyNow;
-    Promise.all([start.catch(() => {}), stop]).then(close);
-    return state.dispose;
+    const startup = applying ? readyNow.then(() => this._async?.startup) : this._async?.startup;
+    if (!closed && !startup) {
+      this._finish();
+      return this._async?.closed;
+    }
+    this._state().timer = setTimeout(() => this._force(), stopTimeoutMs);
+    Promise.all([closed, startup?.catch(NOOP)]).then(() => this._finish());
+    return this._promise();
+  }
+
+  /** @returns {Promise<void>} */
+  _promise() {
+    const state = this._state();
+    return state.closed ??= new Promise((resolve) => { state.settle = resolve; });
+  }
+
+  // Give up on a close that passed its deadline. A late release fault stays silent, and the name is free for a replacement.
+  _force() {
+    if (this._phase !== "closing") return;
+    this.report(new Error("plugin stop timed out"));
+    this.scope._state().quiet = true;
+    this._finish();
+  }
+
+  _finish() {
+    if (this._phase === "closed") return;
+    this._phase = "closed";
+    const state = this._async;
+    if (state) {
+      if (state.timer !== undefined) clearTimeout(state.timer);
+      state.startup = undefined;
+      state.cancelReady = undefined;
+    }
+    if (plugins._live[this._name] === this) delete plugins._live[this._name];
+    state?.settle?.();
   }
 }
-
-/** @type {AsyncPlugin | undefined} */
-PluginInstance.prototype._async = undefined;
 
 export const plugins = {
   /** @type {Record<string, PluginInstance>} */
   _live: Object.create(null),
   _closing: false,
-  _needsStop: false,
   /** @type {{ error: unknown } | undefined} */
   _startupFailure: undefined,
 
-  /** @param {Plugin} plugin @returns {import("./types/ext.js").PluginHandle} */
+  /** @param {Plugin} plugin @returns {PluginHandle} */
   use(plugin) {
-    const stop = checkPlugin(plugin);
+    checkPlugin(plugin);
     if (this._closing || !rootScope.alive) throw new TypeError("the plugin registry is closed");
     const name = plugin.name;
     if (this._live[name]) throw new TypeError("plugin `" + name + "` is already in use");
-    if (stop) this._needsStop = true;
-    const instance = new PluginInstance(name, stop);
+    const instance = new PluginInstance(name);
     this._live[name] = instance;
     try {
       const result = plugin.apply(instance);
       if (result != null && typeof /** @type {any} */ (result).then === "function") {
-        this._needsStop = true;
-        const state = instance._async ??= {};
-        let resolveReady = () => {};
         /** @type {(error: unknown) => void} */
-        let rejectReady = () => {};
+        let rejectReady = NOOP;
+        let resolveReady = NOOP;
+        const state = instance._state();
         state.ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+        state.ready.catch(NOOP);
         state.cancelReady = rejectReady;
-        state.ready.catch(() => {});
-        if (instance._phase === "stopping") rejectReady(startupCanceled());
-        state.startup = Promise.resolve(result).then(value => {
+        if (instance._phase !== "applying") rejectReady(startupCanceled());
+        state.startup = Promise.resolve(result).then((value) => {
           checkApplyResult(value);
           resolveReady();
-        }).catch(error => {
+        }).catch((error) => {
           rejectReady(error);
-          if (instance._phase !== "stopping") {
+          if (instance._phase === "active") {
             this._startupFailure ??= { error };
             instance.report(error);
             instance.dispose();
           }
-        }).then(() => { state.cancelReady = undefined; state.startup = undefined; });
+        }).then(() => {
+          state.cancelReady = undefined;
+          state.startup = undefined;
+        });
       } else {
         checkApplyResult(result);
-        if (instance._phase === "stopping") {
-          const state = instance._async ??= {};
-          state.ready = Promise.reject(startupCanceled());
-          state.ready.catch(() => {});
+        if (instance._phase !== "applying") {
+          const ready = instance._state().ready = Promise.reject(startupCanceled());
+          ready.catch(NOOP);
         }
       }
     } catch (error) {
@@ -882,7 +869,7 @@ export const plugins = {
 
   /** @returns {Promise<void>} */
   _cancelStartup() {
-    return Promise.all(Object.values(this._live).filter(entry => entry._async?.startup || entry._phase === "stopping").map(entry => entry.dispose())).then(() => {});
+    return Promise.all(Object.values(this._live).filter((entry) => entry._async?.startup || entry._phase === "closing").map((entry) => entry.dispose())).then(NOOP);
   },
 
   // Report a startup failure once, even after the failed plugin exits.
@@ -891,41 +878,28 @@ export const plugins = {
     const failure = this._startupFailure;
     this._startupFailure = undefined;
     if (failure) return Promise.reject(failure.error);
-    const pending = Object.values(this._live).filter(entry => entry._async?.startup && entry._phase !== "stopping");
+    const pending = Object.values(this._live).filter((entry) => entry._async?.startup && entry._phase === "active");
     if (!pending.length) return;
-    return Promise.all(pending.map(entry => entry.ready)).then(() => this.ready(), error => {
+    return Promise.all(pending.map((entry) => entry.ready)).then(() => this.ready(), (error) => {
       this._startupFailure = undefined;
       throw error;
     });
   },
 };
 
-const stopTimeoutMs = installLifecycle(force => {
+// Close every plugin newest first under one deadline; a forced pass gives up on the closes that still wait.
+const stopTimeoutMs = installLifecycle((force) => {
   plugins._closing = true;
-  if (!plugins._needsStop && !rootScope.alive) return;
-  const entries = Object.values(plugins._live);
-  if (!plugins._needsStop) {
-    for (let i = entries.length - 1; i >= 0; i--) /** @type {PluginInstance} */ (entries[i]).scope.dispose();
-    plugins._live = Object.create(null);
-    rootScope.dispose();
-    return;
-  }
-  if (force) {
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const entry = /** @type {PluginInstance} */ (entries[i]);
-      entry.dispose();
-      entry._async?.force?.();
-    }
-    rootScope.dispose();
-    return;
-  }
+  const entries = Object.values(plugins._live).reverse();
+  /** @type {Promise<void>[]} */
   const pending = [];
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const result = /** @type {PluginInstance} */ (entries[i]).dispose();
-    if (result) pending.push(result);
+  for (const entry of entries) {
+    const closed = entry.dispose();
+    if (force) entry._force();
+    else if (closed) pending.push(closed);
   }
   rootScope.dispose();
-  return pending.length ? Promise.all(pending).then(() => {}) : undefined;
+  return pending.length ? Promise.all(pending).then(NOOP) : undefined;
 });
 
 // The scope owns each tool until its disposer runs or the scope closes.

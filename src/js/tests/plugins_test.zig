@@ -199,7 +199,7 @@ const KernelLoader = struct {
     }
 };
 
-test "plugin stop shares its promise and holds its name until disposal" {
+test "an async release shares the dispose promise and holds the name until it settles" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "plugins/stop.test.js");
@@ -207,7 +207,7 @@ test "plugin stop shares its promise and holds its name until disposal" {
     try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
 }
 
-test "plugin stop timeout releases the scope and ignores late failure" {
+test "a release past the deadline frees the name and ignores a late failure" {
     const host = createTimeoutHost();
     defer support.destroyHost(host);
     const start = std.Io.Timestamp.now(host.io, .awake);
@@ -217,7 +217,7 @@ test "plugin stop timeout releases the scope and ignores late failure" {
     try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
 }
 
-test "plugin stop faults still dispose every scope" {
+test "release faults still close every scope" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "plugins/stop-fault.test.js");
@@ -237,15 +237,16 @@ test "shutdown permits process I/O and timers before resource release" {
         \\  child = spawn(["/bin/cat"]);
         \\  child.onStdout(text => { globalThis.stopped += text; });
         \\  ctx.own(() => { child.kill(); globalThis.stopped += "disposed"; });
-        \\}, async stop() {
-        \\  await import("yuke/ui");
-        \\  await new Promise(resolve => setTimeout(resolve, 1));
-        \\  await child.write("flushed:");
-        \\  child.closeStdin();
-        \\  await child.exited;
-        \\  try { await client.sessionList(); } catch (error) {
-        \\    if (error.message === "the host is closed") globalThis.stopped += "refused:";
-        \\  }
+        \\  ctx.own(async () => {
+        \\    await import("yuke/ui");
+        \\    await new Promise(resolve => setTimeout(resolve, 1));
+        \\    await child.write("flushed:");
+        \\    child.closeStdin();
+        \\    await child.exited;
+        \\    try { await client.sessionList(); } catch (error) {
+        \\      if (error.message === "the host is closed") globalThis.stopped += "refused:";
+        \\    }
+        \\  });
         \\} });
     , "shutdown-io.js");
     try host.close();
@@ -260,10 +261,10 @@ test "shutdown has one deadline and forces disposal of stalled plugins" {
     try host.evalModule(
         \\import { plugins } from "yuke";
         \\globalThis.stopped = "";
-        \\for (const name of ["a", "b", "c"]) plugins.use({ name,
-        \\  apply(ctx) { ctx.effect(() => () => { globalThis.stopped += name; }); },
-        \\  stop() { return new Promise(() => {}); }
-        \\});
+        \\for (const name of ["a", "b", "c"]) plugins.use({ name, apply(ctx) {
+        \\  ctx.effect(() => () => { globalThis.stopped += name; });
+        \\  ctx.own(() => new Promise(() => {}));
+        \\} });
     , "shutdown-stall.js");
     const start = std.Io.Timestamp.now(host.io, .awake);
     try host.close();
@@ -272,16 +273,16 @@ test "shutdown has one deadline and forces disposal of stalled plugins" {
     try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
 }
 
-test "shutdown bounds synchronous stop code and still disposes its scope" {
+test "shutdown bounds a synchronous release and still reverts the effects" {
     const host = createTimeoutHost();
     defer support.destroyHost(host);
     try host.evalModule(
         \\import { plugins } from "yuke";
         \\globalThis.stopped = "";
-        \\plugins.use({ name: "spin",
-        \\  apply(ctx) { ctx.effect(() => () => { globalThis.stopped = "disposed"; }); },
-        \\  stop() { while (true) {} }
-        \\});
+        \\plugins.use({ name: "spin", apply(ctx) {
+        \\  ctx.effect(() => () => { globalThis.stopped = "disposed"; });
+        \\  ctx.own(() => { while (true) {} });
+        \\} });
     , "shutdown-spin.js");
     const start = std.Io.Timestamp.now(host.io, .awake);
     host.stopPlugins();

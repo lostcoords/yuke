@@ -708,7 +708,7 @@ test "entry failure drains partial startup and preserves an independent plugin" 
         \\  ctx.own(() => { globalThis.released++; });
         \\  await exec("printf ready", { signal: ctx.signal });
         \\  throw new Error("startup failure");
-        \\}, stop() { globalThis.released++; } });
+        \\} });
     });
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const dir = buf[0..try tmp.dir.realPath(std.testing.io, &buf)];
@@ -716,7 +716,7 @@ test "entry failure drains partial startup and preserves an independent plugin" 
     defer support.destroyHost(host);
     try std.testing.expectError(error.JavaScriptFault, evalUserEntry(host, dir));
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "startup failure") != null);
-    try std.testing.expectEqual(@as(i32, 2), try host.evalInt("globalThis.released"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.released"));
     try host.evalModule("import { plugins } from 'yuke'; globalThis.remaining = plugins.names().join(',');", "remaining.js");
     try support.expectString(host, "globalThis.remaining", "independent");
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);

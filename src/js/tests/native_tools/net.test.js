@@ -63,10 +63,12 @@ async function run() {
   const plugin = plugins.use({ name: "socket-owner", async apply(ctx) {
     held = await net.connect({ path: socketPath, signal: ctx.signal });
     ctx.own(() => held.close());
-  }, async stop(ctx) {
-    check("normal signal is canceled before stop", ctx.signal.aborted);
-    await held.write(new Uint8Array([17]), { timeoutMs: 1000 });
-    equal((await held.read({ maxBytes: 1, timeoutMs: 1000 }))[0], 17);
+    // Registered last, so it runs first, while the socket is still open.
+    ctx.own(async () => {
+      check("normal signal is canceled before the release", ctx.signal.aborted);
+      await held.write(new Uint8Array([17]), { timeoutMs: 1000 });
+      equal((await held.read({ maxBytes: 1, timeoutMs: 1000 }))[0], 17);
+    });
   } });
   await plugin.ready;
   socket.close();

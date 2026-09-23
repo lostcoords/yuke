@@ -8,10 +8,12 @@ const unwatch = events.on("ext.error", (error, owner) => faults.push(owner + ":"
 for (const async of [false, true]) {
   plugins.use({
     name: "fault-" + async,
-    apply(ctx) { ctx.effect(() => () => { disposed++; }); },
-    stop() {
-      if (async) return Promise.reject(new Error("async"));
-      throw new Error("sync");
+    apply(ctx) {
+      ctx.effect(() => () => { disposed++; });
+      ctx.own(() => {
+        if (async) return Promise.reject(new Error("async"));
+        throw new Error("sync");
+      });
     },
   });
 }

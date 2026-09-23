@@ -8,8 +8,10 @@ let faults = 0;
 const unwatch = events.on("ext.error", (_error, owner) => { if (owner === "stalled") faults++; });
 plugins.use({
   name: "stalled",
-  apply(ctx) { ctx.effect(() => () => { disposed++; }); },
-  stop() { return new Promise((_resolve, fail) => { reject = fail; }); },
+  apply(ctx) {
+    ctx.effect(() => () => { disposed++; });
+    ctx.own(() => new Promise((_resolve, fail) => { reject = fail; }));
+  },
 });
 globalThis.stopDone = false;
 plugins.dispose("stalled").then(async () => {

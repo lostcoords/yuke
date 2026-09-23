@@ -1,4 +1,7 @@
+import type { CancellationSignal } from "yuke:cancellation-native";
 import type { Context, Scope } from "../ext.js";
+import type { events } from "../kernel.js";
+import type { tui } from "../tui.js";
 
 export type Disposer = () => void;
 export type Effect = () => unknown;
@@ -35,8 +38,8 @@ export interface AdviceInfo {
   order: number;
 }
 
-export type EventHandler = Parameters<typeof import("../kernel.js").events.on>[1];
-export type EventOptions = Parameters<typeof import("../kernel.js").events.on>[2];
+export type EventHandler = Parameters<typeof events.on>[1];
+export type EventOptions = Parameters<typeof events.on>[2];
 export type PluginApply = (context: Context) => void | Promise<void>;
 
 export interface ToolContext {
@@ -50,7 +53,7 @@ export interface ToolContext {
 
 export type ToolExecute = (
   args: any,
-  signal: import("yuke:cancellation-native").CancellationSignal,
+  signal: CancellationSignal,
   context: ToolContext,
 ) => Promise<unknown>;
 
@@ -64,7 +67,7 @@ export interface ToolDefinition {
 }
 
 export interface Capabilities {
-  tui: ReturnType<typeof import("../tui.js").tui.bindTo>;
+  tui: ReturnType<typeof tui.bindTo>;
   [name: string]: unknown;
 }
 
@@ -74,14 +77,13 @@ export type InjectApply<K extends string = string> = (context: InjectContext<K>)
 export interface PluginHandle {
   /** Rejects on startup failure or cancellation. */
   readonly ready: Promise<void>;
-  /** Withdraws registrations, cancels startup, stops the plugin, and drains its resources. */
+  /** Cancels the signal and startup, reverts the registrations, awaits the releases, and frees the name. A sync close answers nothing. */
   dispose(): void | Promise<void>;
 }
 
 export interface Plugin {
   name: string;
   apply: PluginApply;
-  stop?: (context: Context) => void | Promise<void>;
 }
 
 /** The run facts every engine hook carries. */
@@ -178,25 +180,45 @@ export interface HookEntry {
 
 export type HookDecision = { type: "block"; reason: string } | { type: "replace"; value: any };
 
-export interface OwnedResource {
-  release: Disposer | null;
+/** A resource release. It may answer a Promise; the close awaits it before the next older release. */
+export type Release = () => unknown;
+
+export interface ReleaseEntry {
+  release: Release | null;
 }
 
-export interface ResourceState {
-  active: boolean;
-  signal?: import("yuke:cancellation-native").CancellationSignal;
-  resources?: OwnedResource[];
-  children?: Set<Context>;
+/** The state a scope makes on first use: releases, a signal, and an async close. */
+export interface ScopeLife {
+  /** The scope another effect closes, such as an inject block; its drain still holds this parent's close. */
+  parent: Scope | null;
+  releases: ReleaseEntry[] | null;
+  signal: CancellationSignal | null;
+  closed: Promise<void> | undefined;
+  /** The closes of children that left the scope while their releases still run. */
+  draining: Set<Promise<void>> | null;
+  /** Set when an owner gives up waiting, so a late release fault stays silent. */
+  quiet: boolean;
+}
+
+/** The state a plugin makes only for an async apply or an async close. */
+export interface PluginAsync {
+  ready?: Promise<void>;
+  startup?: Promise<void> | undefined;
+  cancelReady?: ((error: Error) => void) | undefined;
   closed?: Promise<void>;
+  settle?: () => void;
+  timer?: number;
 }
 
 export interface ScopeEntry {
   owner: Scope | null;
   cleanup: Disposer | null;
+  /** The child scope this entry closes, so the parent can await its releases. */
+  child: Scope | null;
 }
 
 export interface InteractionOptions {
-  signal?: import("yuke:cancellation-native").CancellationSignal;
+  signal?: CancellationSignal;
   secret?: boolean;
   labels?: { accept?: string; cancel?: string };
 }
