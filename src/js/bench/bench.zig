@@ -456,6 +456,9 @@ pub const Harness = struct {
     }
 };
 
+const support = @import("../tests/support.zig");
+const paging = @import("../native/engine/paging.zig");
+
 test "benchmark scenarios preserve the transcript across updates and cache eviction" {
     var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
     defer _ = pool.deinit();
@@ -554,9 +557,6 @@ test "reused RGB and ANSI colors need no backing allocations after warmup" {
         _ = try harness.verify(true);
     }
 }
-
-const support = @import("../tests/support.zig");
-const paging = @import("../native/engine/paging.zig");
 
 test "native part refresh validates the draft cursor across replacement and removal" {
     var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };

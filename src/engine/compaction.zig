@@ -8,6 +8,13 @@ const request_config = @import("request_config.zig");
 const round_request = @import("request.zig");
 const ai = @import("ai");
 const prompt = @import("prompt.zig");
+const Engine = @import("Engine.zig");
+const session_mod = @import("../session/session.zig");
+const runs = @import("run.zig");
+const session_events = @import("events.zig");
+const provider = @import("../provider/provider.zig");
+const Session = session_mod.Session;
+const RunSlot = session_mod.RunSlot;
 
 /// How much recent history one compaction keeps, in estimated tokens.
 const default_keep_recent_tokens: u64 = 20_000;
@@ -64,14 +71,6 @@ pub fn selectCut(gpa: std.mem.Allocator, db: *database.Database, session_id: [16
     selected.tokens_before = total;
     return selected;
 }
-
-const Engine = @import("Engine.zig");
-const session_mod = @import("../session/session.zig");
-const Session = session_mod.Session;
-const RunSlot = session_mod.RunSlot;
-const runs = @import("run.zig");
-const session_events = @import("events.zig");
-const provider = @import("../provider/provider.zig");
 
 /// The output one summary may take. A checkpoint states the work, not the conversation.
 const summary_output_tokens: u32 = 4096;
@@ -238,6 +237,11 @@ fn commit(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, cut: Cut, s
 }
 
 const testing = std.testing;
+const Resources = @import("test_resources.zig");
+const registry = @import("../provider/registry.zig");
+const commands = @import("commands.zig");
+const zqlite = @import("zqlite");
+const toolset = @import("toolset.zig");
 
 test "the cut lands on the start of the turn that holds the tail target" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
@@ -337,9 +341,6 @@ fn seedCommitted(db: *database.Database, arena: std.mem.Allocator, id: [16]u8, m
     _ = try database.message.appendCommittedMessage(db, arena, id, event_id, message_id, message);
     try tx.commit();
 }
-
-const Resources = @import("test_resources.zig");
-const registry = @import("../provider/registry.zig");
 
 /// A resident session whose model resolves to a canned Anthropic route.
 const TaskFixture = struct {
@@ -472,8 +473,6 @@ test "a cancel that landed before the summary leaves the transcript alone" {
     try testing.expectEqual(@as(usize, 4), page.messages.len);
 }
 
-const commands = @import("commands.zig");
-
 test "a compaction on an idle session starts at once and answers its run id" {
     var f: TaskFixture = undefined;
     try f.init();
@@ -543,9 +542,6 @@ test "the session starts the compaction it held once its run ends" {
     defer row.deinit();
     try testing.expectEqual(@as(i64, 1), row.int(0));
 }
-
-const zqlite = @import("zqlite");
-const toolset = @import("toolset.zig");
 
 fn sendAndWait(f: *TaskFixture, arena: std.mem.Allocator, text: []const u8) !void {
     var gate: ?runs.Launch = null;

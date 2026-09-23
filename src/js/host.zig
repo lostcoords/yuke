@@ -669,6 +669,10 @@ fn firstLine(text: []const u8) []const u8 {
     return std.mem.trim(u8, text[0..end], " \t");
 }
 
+const support = @import("tests/support.zig");
+const TestPaint = @import("tests/paint.zig").Paint;
+const loop = @import("loop.zig");
+
 test "eval returns an integer" {
     const host = support.createHost();
     defer support.destroyHost(host);
@@ -1047,7 +1051,3 @@ test {
     _ = @import("native/jobs.zig");
     _ = @import("tests/interaction_test.zig");
 }
-
-const support = @import("tests/support.zig");
-const TestPaint = @import("tests/paint.zig").Paint;
-const loop = @import("loop.zig");

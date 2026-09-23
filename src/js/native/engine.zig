@@ -239,6 +239,9 @@ fn jsRequest(ctx: Context, _: Value, args: []const Value) Value {
 
 const app_fixture = @import("../../app/fixture.zig");
 const testing = std.testing;
+const support = @import("../tests/support.zig");
+const ai = @import("ai");
+const agents = @import("../bench/agents.zig");
 
 test "view integers stay within the protocol safe integer range" {
     const host = support.createHost();
@@ -348,10 +351,6 @@ test "a request reaches a command and answers with its result" {
     , "close.js");
     host.engine.detach();
 }
-
-const support = @import("../tests/support.zig");
-const ai = @import("ai");
-const agents = @import("../bench/agents.zig");
 
 test "process activity uses live engine state and scoped coalesced notifications" {
     const Tree = agents;

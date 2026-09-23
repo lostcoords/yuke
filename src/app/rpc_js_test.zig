@@ -41,6 +41,9 @@ const TestFixture = struct {
     }
 };
 
+const support = @import("../js/tests/support.zig");
+const database = @import("../store/store.zig");
+
 test "an interaction question and its answer share the RPC stream" {
     var f: TestFixture = undefined;
     try f.init();
@@ -264,6 +267,3 @@ test "a removed session stops its running jobs" {
     try testing.expectEqual(proto.job.JobState.running, host.jobs.find(2).?.state);
     try testing.expectEqual(proto.job.JobState.exited, host.jobs.find(1).?.state);
 }
-
-const support = @import("../js/tests/support.zig");
-const database = @import("../store/store.zig");

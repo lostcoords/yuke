@@ -309,6 +309,8 @@ fn winchTask(tty: *term_pkg.Tty, ch: *Channel) !void {
     }
 }
 
+const support = @import("tests/support.zig");
+
 test "serve stops when q arrives" {
     var gpa = support.Pool.init;
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -536,5 +538,3 @@ test "queued key text survives a later parse" {
     _ = try input.next();
     try std.testing.expectEqualStrings("a", buf.event().key_press.text.?);
 }
-
-const support = @import("tests/support.zig");

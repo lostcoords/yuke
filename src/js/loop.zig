@@ -271,6 +271,9 @@ fn keyCode(cp: u21) []const u8 {
     };
 }
 
+const support = @import("tests/support.zig");
+const Paint = @import("tests/paint.zig").Paint;
+
 test "start and stepTick deliver their event type" {
     const host = support.createHost();
     defer support.destroyHost(host);
@@ -406,6 +409,3 @@ test "resize updates term.width before JS reads ev.w" {
     try std.testing.expectEqual(@as(i32, 8), try host.evalInt("globalThis.w"));
     try std.testing.expectEqual(@as(i32, 8), try host.evalInt("globalThis.tw"));
 }
-
-const support = @import("tests/support.zig");
-const Paint = @import("tests/paint.zig").Paint;

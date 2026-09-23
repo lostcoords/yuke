@@ -37,6 +37,9 @@ pub fn paintFault(host: *Host) void {
 }
 
 const testing = std.testing;
+const support = @import("tests/support.zig");
+const TestPaint = @import("tests/paint.zig").Paint;
+const loop = @import("loop.zig");
 
 test "a throwing onEvent paints the message on the bottom row" {
     var paint: TestPaint = undefined;
@@ -71,7 +74,3 @@ test "paintFault does nothing without a recorded fault" {
     paintFault(host);
     try testing.expectEqual(@as(usize, 0), paint.out.written().len);
 }
-
-const support = @import("tests/support.zig");
-const TestPaint = @import("tests/paint.zig").Paint;
-const loop = @import("loop.zig");

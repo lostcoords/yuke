@@ -807,6 +807,9 @@ fn emptyPart(part_id: ids.PartId, kind: event.BlockKind) message.AssistantPart {
     };
 }
 
+const Resources = @import("test_resources.zig");
+const hookset = @import("hookset.zig");
+
 test "the stream cap rejects an oversized provider delta" {
     const max = proto.meta.limits.max_message_string_bytes;
     try checkStreamCap(0, max); // A delta up to the cap is allowed.
@@ -814,9 +817,6 @@ test "the stream cap rejects an oversized provider delta" {
     try std.testing.expectError(error.ResponseTooLarge, checkStreamCap(max, 1));
     try std.testing.expectError(error.ResponseTooLarge, checkStreamCap(max + 1, 0));
 }
-
-const Resources = @import("test_resources.zig");
-const hookset = @import("hookset.zig");
 
 /// Drive `Streamer.onEvent` over a real engine, session, and draft. The caller reads the draft parts.
 const StreamerFixture = struct {

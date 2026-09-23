@@ -219,6 +219,11 @@ pub fn sessionQueue(engine: *Engine, arena: std.mem.Allocator, params: proto.ses
     return .{ .items = items };
 }
 
+const ai = @import("ai");
+const provider = @import("../provider/provider.zig");
+const Resources = @import("test_resources.zig");
+const build_info = @import("build_info");
+
 test "session list cursor round-trips and binds to its selector" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -686,12 +691,6 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
         .reason = .concurrency_limit,
     } } else null };
 }
-
-const ai = @import("ai");
-const provider = @import("../provider/provider.zig");
-
-const Resources = @import("test_resources.zig");
-const build_info = @import("build_info");
 
 test "session.get and session.queue read the durable queue, resident or not" {
     var resources: Resources = undefined;

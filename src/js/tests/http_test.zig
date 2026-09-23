@@ -5,12 +5,12 @@ const zio = @import("zio");
 const support = @import("support.zig");
 const Host = @import("../host.zig").Host;
 const Work = @import("../../session/work.zig");
-const Cleanup = enum { none, plugin, host, tool, body };
-const PoolCase = enum { reuse, recover, stale, no_replay, concurrent, origins };
-
 const bench = @import("../bench/bench.zig");
 const Peer = @import("../http_peer.zig").Peer;
 const Mode = @import("../http_peer.zig").Mode;
+
+const Cleanup = enum { none, plugin, host, tool, body };
+const PoolCase = enum { reuse, recover, stale, no_replay, concurrent, origins };
 
 fn run(mode: Mode, options: struct { cleanup: Cleanup = .none, pool: ?PoolCase = null }) !void {
     const cleanup = options.cleanup;

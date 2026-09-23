@@ -477,6 +477,8 @@ fn evalOk(host: *Host, src: [:0]const u8) !i32 {
     return host.evalInt("globalThis.result");
 }
 
+const support = @import("../tests/support.zig");
+
 test "colors accept exact hex and integer indices" {
     const host = support.createHost();
     defer support.destroyHost(host);
@@ -805,5 +807,3 @@ test "a failed endFrame keeps the frame dirty and retries" {
     try std.testing.expectEqual(.idle, paint.render.frame);
     try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "A") != null);
 }
-
-const support = @import("../tests/support.zig");

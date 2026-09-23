@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const http = @import("../../net/http.zig");
+const provider_config = @import("../config/providers.zig");
 
 /// An absent, non-positive, or absurd interval becomes this. RFC 8628 leaves the value to the server.
 pub const default_interval_ms: u64 = 5_000;
@@ -21,7 +22,7 @@ pub const Start = struct {
 };
 
 /// One grant. The caller keeps its old refresh token when a refresh omits a new one.
-pub const Tokens = @import("../config/providers.zig").Grant;
+pub const Tokens = provider_config.Grant;
 
 /// What one poll learned. Only `tokens` ends the login.
 pub const Poll = union(enum) {

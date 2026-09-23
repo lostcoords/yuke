@@ -264,6 +264,8 @@ fn settleTextAndExtra(host: *Host, call: *table.Call, text: []const u8, extra_js
     call.settleExtra(host.io, utf8.sanitize(host.gpa, text) catch unreachable, utf8.sanitize(host.gpa, extra_json) catch unreachable);
 }
 
+const support = @import("tests/support.zig");
+
 test "a settle after a spent interrupt slice still reads the answer" {
     const host = support.createHost();
     defer support.destroyHost(host);
@@ -296,5 +298,3 @@ test "a tool signal aborts at settlement before its submitter leaves" {
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.signal.aborted"));
     try support.dropCall(host, invocation);
 }
-
-const support = @import("tests/support.zig");

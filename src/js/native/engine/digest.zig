@@ -381,6 +381,7 @@ fn call(engine: *Engine, ctx: Context, ev: Value) void {
 }
 
 const testing = std.testing;
+const support = @import("../../tests/support.zig");
 
 test "a merge keeps every fact, even when a stronger kind resets the change" {
     const sid = SessionId.bytes([_]u8{0} ** 16);
@@ -559,5 +560,3 @@ test "a throwing event sink faults once and leaves no pending exception" {
     host.engine.markDirty(SessionId.bytes([_]u8{3} ** 16), .{ .view = .reload });
     try testing.expect(!drain(host.engine, host.ctx));
 }
-
-const support = @import("../../tests/support.zig");
