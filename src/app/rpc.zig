@@ -6,7 +6,6 @@ const app = @import("app.zig");
 const call = @import("call.zig");
 const extensions_mod = @import("../js/extensions.zig");
 const tools_table = @import("../js/tools.zig");
-const jobs_native = @import("../js/native/jobs.zig");
 const Host = extensions_mod.Host;
 const zio = @import("zio");
 
@@ -130,7 +129,7 @@ pub const Rpc = struct {
         defer arena_state.deinit();
         const arena = arena_state.allocator();
         const text = call_record.text orelse "";
-        const answer = if (call_record.is_error) null else std.json.parseFromSliceLeaky(GateAnswer, arena, text, .{ .ignore_unknown_fields = true }) catch null;
+        const answer = if (call_record.is_error) null else std.json.parseFromSliceLeaky(call.GateAnswer, arena, text, .{ .ignore_unknown_fields = true }) catch null;
         const decoded = answer orelse {
             std.log.err("rpc: the input gate answered: {s}", .{text});
             self.writeFailure(id, .internal, "the input gate failed") catch |err| self.failWrite(err);
@@ -246,12 +245,6 @@ const GatedInput = struct {
         if (self.id) |id| gpa.free(id);
         gpa.free(self.params);
     }
-};
-
-/// What the gate answers: the command result, or the refusal with its wire code.
-const GateAnswer = struct {
-    result: std.json.Value = .null,
-    failure: ?struct { code: []const u8, message: []const u8 } = null,
 };
 
 /// Read requests on a task and run JavaScript only on the owner task. The caller owns `extensions`.
@@ -415,14 +408,6 @@ pub fn serve(gpa: std.mem.Allocator, rpc: *Rpc, line: []const u8) void {
 }
 
 fn serveParsed(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
-    if (std.mem.eql(u8, request.method, "interaction.respond")) {
-        serveInteraction(arena, rpc, request);
-        return;
-    }
-    if (jobs_native.isMethod(request.method)) {
-        serveJob(arena, rpc, request);
-        return;
-    }
     // A hooked input waits on JavaScript, so it leaves the owner and answers later.
     const needs_gate = if (std.mem.eql(u8, request.method, "session.send_input")) true else if (std.mem.eql(u8, request.method, "session.create")) blk: {
         const params = std.json.parseFromValueLeaky(proto.misc.CreateSession, arena, request.params, .{ .ignore_unknown_fields = true }) catch break :blk false;
@@ -433,7 +418,7 @@ fn serveParsed(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
     }
 
     var body: std.Io.Writer.Allocating = .init(arena);
-    const failure = call.call(rpc.app, arena, request.method, request.params, &body.writer) catch |err| {
+    const failure = call.call(rpc.app, rpc.host, arena, request.method, request.params, &body.writer) catch |err| {
         std.log.err("rpc: {s} failed: {t}", .{ request.method, err });
         rpc.flushNotifications();
         if (request.id) |id| {
@@ -451,45 +436,6 @@ fn serveParsed(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
     if (request.id) |id| {
         rpc.writeResult(id, body.written()) catch |err| rpc.failWrite(err);
     }
-}
-
-/// Answer a job method from the host job table. It reads at most 262144 bytes, so the owner loop stays short.
-fn serveJob(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
-    var body: std.Io.Writer.Allocating = .init(arena);
-    const failure = jobs_native.answer(arena, rpc.host, request.method, request.params, &body.writer);
-    rpc.flushNotifications();
-    const id = request.id orelse return;
-    if (failure) |f| {
-        rpc.writeFailure(id, f.code, f.message) catch |err| rpc.failWrite(err);
-    } else {
-        rpc.writeResult(id, body.written()) catch |err| rpc.failWrite(err);
-    }
-}
-
-fn serveInteraction(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
-    const params = std.json.parseFromValueLeaky(
-        proto.interaction.InteractionRespondParams,
-        arena,
-        request.params,
-        .{ .ignore_unknown_fields = true },
-    ) catch {
-        rpc.flushNotifications();
-        if (request.id) |id| rpc.writeFailure(id, .bad_request, "bad interaction response") catch |err| rpc.failWrite(err);
-        return;
-    };
-    rpc.host.interactions.respond(params) catch |err| {
-        const failure: struct { code: proto.enums.ErrorCode, message: []const u8 } = switch (err) {
-            error.Unknown => .{ .code = .unknown_interaction, .message = "unknown interaction" },
-            error.ResponseMismatch => .{ .code = .bad_request, .message = "the interaction response has the wrong type" },
-            error.InvalidSelection => .{ .code = .bad_request, .message = "the interaction selected an unknown option" },
-            else => .{ .code = .internal, .message = "the interaction response failed" },
-        };
-        rpc.flushNotifications();
-        if (request.id) |id| rpc.writeFailure(id, failure.code, failure.message) catch |write_err| rpc.failWrite(write_err);
-        return;
-    };
-    rpc.flushNotifications();
-    if (request.id) |id| rpc.writeResult(id, "{}") catch |err| rpc.failWrite(err);
 }
 
 /// One decoded request line. Every field borrows the request arena.

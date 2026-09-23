@@ -201,12 +201,6 @@ const Sent = union(enum) {
     refused: struct { code: []const u8, message: []const u8 },
 };
 
-/// What the JavaScript gate answers: the command result, or the refusal with its wire code.
-const GateAnswer = struct {
-    result: std.json.Value = .null,
-    failure: ?struct { code: []const u8, message: []const u8 } = null,
-};
-
 /// Send the prompt. A hooked input goes through the JavaScript gate, as every frontend's does.
 fn send(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.Writer, session_id: proto.ids.SessionId, prompt: []const u8) !Sent {
     const params: proto.session.SessionSendInputParams = .{
@@ -222,11 +216,11 @@ fn send(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.Writer, 
 }
 
 /// Both input methods use the same owner bridge and retain the response launch gate.
-fn gatedCommand(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.Writer, method: []const u8, params: []const u8) !GateAnswer {
+fn gatedCommand(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.Writer, method: []const u8, params: []const u8) !call.GateAnswer {
     const host = extensions.host;
     if (!host.hooks.holds(.@"input.before")) {
         var body: std.Io.Writer.Allocating = .init(arena);
-        if (try call.call(extensions.app, arena, method, params, &body.writer)) |f| return .{ .failure = .{ .code = @tagName(f.code), .message = f.message } };
+        if (try call.call(extensions.app, extensions.host, arena, method, params, &body.writer)) |f| return .{ .failure = .{ .code = @tagName(f.code), .message = f.message } };
         return .{ .result = try std.json.parseFromSliceLeaky(std.json.Value, arena, body.written(), .{}) };
     }
     const record = host.calls.submitInputMethod(method, params);
@@ -236,7 +230,7 @@ fn gatedCommand(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.
         try fail(err, "the input gate failed: {s}", .{record.text orelse ""});
         return error.InputGateFailed;
     }
-    return std.json.parseFromSliceLeaky(GateAnswer, arena, record.text orelse "", .{});
+    return std.json.parseFromSliceLeaky(call.GateAnswer, arena, record.text orelse "", .{ .ignore_unknown_fields = true });
 }
 
 /// Pump until `done(context)` holds. Tools and hooks run on the owner; a script fault is logged, and the run goes on without the handler.

@@ -710,7 +710,7 @@ test "session create returns the invalid instruction path through the call API" 
     const a = arena.allocator();
     const params = try std.json.Stringify.valueAlloc(a, .{ .workspace_path = f.extensions.host.cwd, .model = "test/model" }, .{});
     var output: std.Io.Writer.Allocating = .init(a);
-    const failure = (try app_call.call(&f.app, a, "session.create", params, &output.writer)).?;
+    const failure = (try app_call.call(&f.app, f.extensions.host, a, "session.create", params, &output.writer)).?;
     try std.testing.expectEqual(proto.enums.ErrorCode.bad_request, failure.code);
     try std.testing.expect(std.mem.indexOf(u8, failure.message, f.extensions.host.cwd) != null);
     try std.testing.expect(std.mem.indexOf(u8, failure.message, "AGENTS.md") != null);

@@ -92,7 +92,7 @@ fn errorMessage(err: interactions.Error) [:0]const u8 {
         error.Duplicate => "the interaction id is already pending",
         error.Full => "too many interactions are pending",
         error.InvalidRequest => "the interaction request is invalid",
-        error.Unknown => "the interaction is not pending",
+        error.UnknownInteraction => "the interaction is not pending",
         error.ResponseMismatch => "the interaction response has the wrong type",
         error.InvalidSelection => "the interaction selected an unknown option",
         error.Exception => unreachable, // the caller throws it

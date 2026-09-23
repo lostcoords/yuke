@@ -252,7 +252,7 @@ fn jsRequest(ctx: Context, _: Value, args: []const Value) Value {
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
     var out: std.Io.Writer.Allocating = .init(arena.allocator());
-    const failure = engine_call.call(runtime, arena.allocator(), method, params, &out.writer) catch
+    const failure = engine_call.call(runtime, host, arena.allocator(), method, params, &out.writer) catch
         return pending.rejected(ctx, "internal error");
     if (failure) |refused| return pending.rejectedWith(ctx, .{ .message = refused.message, .code = @tagName(refused.code) });
     return pending.resolved(ctx, ctx.newString(out.written()));

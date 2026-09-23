@@ -10,7 +10,7 @@ test "RPC interaction answers correlated promises out of order" {
     try std.testing.expectEqual(@as(i32, 2), try host.evalInt("interactionPending()"));
 
     // The host refuses an answer to a question the frontend has not seen.
-    try std.testing.expectError(error.Unknown, host.interactions.respond(.{
+    try std.testing.expectError(error.UnknownInteraction, host.interactions.respond(.{
         .interaction_id = 1,
         .response = .{ .confirm = .{ .value = true } },
     }));
@@ -51,7 +51,7 @@ test "disposing an interaction consumer cancels only its pending dialog" {
     try host.pump();
     try support.expectString(host, "result", "canceled");
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("interactionPending()"));
-    try std.testing.expectError(error.Unknown, host.interactions.respond(.{
+    try std.testing.expectError(error.UnknownInteraction, host.interactions.respond(.{
         .interaction_id = interaction_id,
         .response = .{ .input = .{ .value = "late" } },
     }));

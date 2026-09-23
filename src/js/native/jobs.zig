@@ -141,46 +141,32 @@ pub fn stopSession(host: *Host, session_id: SessionId) void {
     }
 }
 
-pub const Failure = struct { code: proto.enums.ErrorCode, message: []const u8 };
-
-/// Answer whether `method` is a job method, which `rpc.zig` answers here because `call.zig` cannot reach the host.
-pub fn isMethod(method: []const u8) bool {
-    return std.mem.startsWith(u8, method, "job.");
+/// Answer `job.list`, newest first. A session id keeps only the jobs of that session.
+pub fn jobList(host: *Host, arena: std.mem.Allocator, params: proto.job.JobListParams) !proto.job.JobListResult {
+    var jobs: std.ArrayList(proto.job.Job) = .empty;
+    const items = host.jobs.list.items;
+    for (0..items.len) |i| {
+        const job = items[items.len - 1 - i];
+        if (params.session_id) |id| if (job.session_id == null or !std.mem.eql(u8, &job.session_id.?.raw, &id.raw)) continue;
+        try jobs.append(arena, wire(job));
+    }
+    return .{ .jobs = jobs.items };
 }
 
-/// Answer one `job.*` RPC method from the table and write its result JSON to `out`.
-pub fn answer(a: std.mem.Allocator, host: *Host, method: []const u8, params: std.json.Value, out: *std.Io.Writer) ?Failure {
-    const bad: Failure = .{ .code = .bad_request, .message = "bad parameters" };
-    const unknown: Failure = .{ .code = .unknown_job, .message = "unknown job" };
-    const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
-    if (std.mem.eql(u8, method, "job.list")) {
-        const p = if (params == .null) proto.job.JobListParams{} else std.json.parseFromValueLeaky(proto.job.JobListParams, a, params, opts) catch return bad;
-        var jobs: std.ArrayList(proto.job.Job) = .empty;
-        const items = host.jobs.list.items;
-        for (0..items.len) |i| {
-            const job = items[items.len - 1 - i];
-            if (p.session_id) |id| if (job.session_id == null or !std.mem.eql(u8, &job.session_id.?.raw, &id.raw)) continue;
-            jobs.append(a, wire(job)) catch unreachable;
-        }
-        write(out, proto.job.JobListResult{ .jobs = jobs.items });
-    } else if (std.mem.eql(u8, method, "job.stop")) {
-        const p = std.json.parseFromValueLeaky(proto.job.JobStopParams, a, params, opts) catch return bad;
-        const job = host.jobs.find(p.id) orelse return unknown;
-        stop(host, job);
-        write(out, proto.job.JobStopResult{ .job = wire(job) });
-    } else if (std.mem.eql(u8, method, "job.read")) {
-        const p = std.json.parseFromValueLeaky(proto.job.JobReadParams, a, params, opts) catch return bad;
-        if (p.max_bytes < 4 or p.max_bytes > max_read_bytes or (p.offset orelse 0) > proto.meta.constants.MAX_WIRE_INTEGER) return bad;
-        const job = host.jobs.find(p.id) orelse return unknown;
-        var local: LocalHost = .{ .io = host.io, .root = "/", .env = host.execution.env };
-        const got = local.readFrom(a, job.log, p.offset, p.max_bytes, job.state != .running) catch return .{ .code = .internal, .message = "the host could not read the job log" };
-        write(out, proto.job.JobReadResult{ .text = got.text, .next = got.next, .size = got.size, .start = got.start, .complete = got.complete });
-    } else return .{ .code = .unknown_method, .message = "unknown method" };
-    return null;
+/// Answer `job.stop`. The end arrives later as `job.changed`.
+pub fn jobStop(host: *Host, _: std.mem.Allocator, params: proto.job.JobStopParams) !proto.job.JobStopResult {
+    const job = host.jobs.find(params.id) orelse return error.UnknownJob;
+    stop(host, job);
+    return .{ .job = wire(job) };
 }
 
-fn write(out: *std.Io.Writer, value: anytype) void {
-    std.json.Stringify.value(value, .{ .emit_null_optional_fields = false }, out) catch unreachable;
+/// Answer `job.read` with at most `max_read_bytes`, so the owner loop stays short.
+pub fn jobRead(host: *Host, arena: std.mem.Allocator, params: proto.job.JobReadParams) !proto.job.JobReadResult {
+    if (params.max_bytes < 4 or params.max_bytes > max_read_bytes or (params.offset orelse 0) > proto.meta.constants.MAX_WIRE_INTEGER) return error.JobReadRange;
+    const job = host.jobs.find(params.id) orelse return error.UnknownJob;
+    var local: LocalHost = .{ .io = host.io, .root = "/", .env = host.execution.env };
+    const got = local.readFrom(arena, job.log, params.offset, params.max_bytes, job.state != .running) catch return error.JobLogUnreadable;
+    return .{ .text = got.text, .next = got.next, .size = got.size, .start = got.start, .complete = got.complete };
 }
 
 pub fn install(host: *Host) void {

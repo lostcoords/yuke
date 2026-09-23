@@ -6,6 +6,8 @@ const App = @import("app.zig").App;
 const commands = @import("../engine/commands.zig");
 const app_commands = @import("commands.zig");
 const runs = @import("../engine/run.zig");
+const Host = @import("../js/host.zig").Host;
+const jobs = @import("../js/native/jobs.zig");
 
 /// A command refused the request. This is an operating outcome, not a bug.
 pub const Failure = struct {
@@ -13,9 +15,16 @@ pub const Failure = struct {
     message: []const u8,
 };
 
+/// What the JavaScript input gate answers for a gated method: the command result, or the refusal with its wire code.
+pub const GateAnswer = struct {
+    result: std.json.Value = .null,
+    failure: ?struct { code: []const u8, message: []const u8 } = null,
+};
+
 /// Decode `params_json`, run the command, and write its result as JSON into `out`; return null on success, a `Failure` when a command refuses, and an error for a bug.
 pub fn call(
     runtime: *App,
+    host: *Host,
     arena: std.mem.Allocator,
     method_name: []const u8,
     params_in: anytype,
@@ -40,7 +49,7 @@ pub fn call(
                 const params = decoded catch return Failure{ .code = .bad_request, .message = "bad parameters" };
 
                 var diagnostic: ?[]const u8 = null;
-                const result = invoke(spec, runtime, arena, params, &launch, &diagnostic) catch |err| {
+                const result = invoke(spec, runtime, host, arena, params, &launch, &diagnostic) catch |err| {
                     if (diagnostic) |message| return Failure{ .code = .bad_request, .message = message };
                     return failureFor(err) orelse return err;
                 };
@@ -78,7 +87,16 @@ const bindings = struct {
     pub const @"auth.remove" = app_commands.authRemove;
     pub const @"auth.login" = app_commands.authLogin;
     pub const @"auth.cancel_login" = app_commands.authCancelLogin;
+    pub const @"interaction.respond" = interactionRespond;
+    pub const @"job.list" = jobs.jobList;
+    pub const @"job.stop" = jobs.jobStop;
+    pub const @"job.read" = jobs.jobRead;
 };
+
+fn interactionRespond(host: *Host, _: std.mem.Allocator, params: proto.interaction.InteractionRespondParams) !proto.misc.Empty {
+    try host.interactions.respond(params);
+    return .{};
+}
 
 comptime {
     for (std.meta.declarations(bindings)) |binding| {
@@ -88,10 +106,11 @@ comptime {
 }
 
 /// The handler signature states its owner and whether it needs response gates.
-fn invoke(comptime spec: anytype, runtime: *App, arena: std.mem.Allocator, params: spec.params, launch: *?runs.Launch, diagnostic: *?[]const u8) !spec.result {
+fn invoke(comptime spec: anytype, runtime: *App, host: *Host, arena: std.mem.Allocator, params: spec.params, launch: *?runs.Launch, diagnostic: *?[]const u8) !spec.result {
     const handler = @field(bindings, @tagName(spec.name));
     const args = @typeInfo(@TypeOf(handler)).@"fn".params;
-    const owner = if (args[0].type.? == *App) runtime else &runtime.engine;
+    const Owner = args[0].type.?;
+    const owner = if (Owner == *App) runtime else if (Owner == *Host) host else &runtime.engine;
     return switch (args.len) {
         2 => handler(owner, arena),
         3 => handler(owner, arena, params),
@@ -160,6 +179,12 @@ fn failureFor(err: anyerror) ?Failure {
         error.NoConfigDirectory => .{ .code = .internal, .message = "no config directory holds providers.json" },
         error.BadProvidersFile => .{ .code = .internal, .message = "providers.json did not load" },
         error.Unavailable => .{ .code = .internal, .message = "the engine stops" },
+        error.UnknownJob => .{ .code = .unknown_job, .message = "unknown job" },
+        error.JobReadRange => .{ .code = .bad_request, .message = "bad parameters" },
+        error.JobLogUnreadable => .{ .code = .internal, .message = "the host could not read the job log" },
+        error.UnknownInteraction => .{ .code = .unknown_interaction, .message = "unknown interaction" },
+        error.ResponseMismatch => .{ .code = .bad_request, .message = "the interaction response has the wrong type" },
+        error.InvalidSelection => .{ .code = .bad_request, .message = "the interaction selected an unknown option" },
         else => null,
     };
 }
@@ -170,7 +195,8 @@ test "a name outside the protocol refuses with the unknown method code" {
 
     // `call` resolves the method name before it reads the runtime, so this path needs no state.
     var runtime: App = undefined;
-    const failure = (try call(&runtime, std.testing.allocator, "nope.nope", "{}", &sink.writer)).?;
+    var host: Host = undefined;
+    const failure = (try call(&runtime, &host, std.testing.allocator, "nope.nope", "{}", &sink.writer)).?;
 
     try std.testing.expectEqual(proto.enums.ErrorCode.unknown_method, failure.code);
     try std.testing.expectEqualStrings("unknown method", failure.message);

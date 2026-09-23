@@ -20,7 +20,7 @@ pub const Error = error{
     Duplicate,
     Full,
     InvalidRequest,
-    Unknown,
+    UnknownInteraction,
     ResponseMismatch,
     InvalidSelection,
     /// The QuickJS heap is full. The exception stays pending, so the caller throws it.
@@ -130,9 +130,9 @@ pub const Table = struct {
 
     /// Settle one question. Bad peer input leaves the original question pending.
     pub fn respond(self: *Table, params: proto.interaction.InteractionRespondParams) Error!void {
-        const index = self.indexOf(params.interaction_id) orelse return error.Unknown;
+        const index = self.indexOf(params.interaction_id) orelse return error.UnknownInteraction;
         const request = self.live.items[index];
-        if (!request.sent) return error.Unknown;
+        if (!request.sent) return error.UnknownInteraction;
         self.removeAt(index, try self.resultFor(request, params.response));
     }
 
