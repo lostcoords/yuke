@@ -34,12 +34,6 @@ pub fn pump(host: *Host) void {
     host.calls.sweep(host.ctx);
 }
 
-pub fn pollRunning(host: *Host) void {
-    for (host.calls.live.items) |call| {
-        if (call.state == .running and !call.submitter_done) poll(host, call);
-    }
-}
-
 /// Answer every waiting call, so a turn task never sleeps past the host. `Host.close` calls this.
 pub fn abortAll(host: *Host) void {
     for (host.calls.live.items) |call| {
@@ -280,7 +274,7 @@ test "a settle after a spent interrupt slice still reads the answer" {
     , "answer.js", .{});
     // The last job of a drain can spend the slice right before the poll.
     host.interrupt_count = host.interrupt_budget;
-    pollRunning(host);
+    pump(host);
     try std.testing.expect(call.state == .settled);
     try std.testing.expect(!call.is_error);
     try std.testing.expectEqualStrings("{\"ok\":true}", call.text.?);

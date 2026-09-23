@@ -38,6 +38,8 @@ const memory_limit: usize = 64 * 1024 * 1024;
 const stack_limit: usize = 4 * 1024 * 1024;
 /// Limit jobs per drain so Promise chains do not starve the owner.
 const job_budget: u32 = 1024;
+/// Limit the passes of one pump; work a pump leaves keeps `hasPending` true, so the owner pumps again after its frame.
+const max_pump_passes: u32 = 8;
 /// Bound one evaluation by interrupt polls, a coarse CPU proxy, so scheduling jitter never aborts a script.
 pub const default_interrupt_budget: u32 = 100_000;
 /// Limit the fault text the Host stores, so `captureFault` runs from a fixed buffer without an allocation.
@@ -234,7 +236,7 @@ pub const Host = struct {
         return started.promise;
     }
 
-    /// Settle finished operations and run the jobs they wake in two ordered phases, because the first phase settles a promise a handler awaited and the second runs what that handler queued.
+    /// Run passes until none finds local work, so a promise a handler awaited and the work that handler queues settle in one pump.
     pub fn pump(self: *Host) Error!void {
         std.debug.assert(self.phase == .open);
         self.enterSlice();
@@ -243,30 +245,32 @@ pub const Host = struct {
         self.bodies.reap(self.gpa);
         // Engine events reach JavaScript here, on the owner, never from an engine task.
         if (engine_module.drain(self.engine, self.ctx)) return error.JavaScriptFault;
-        call_run.abortLeft(self); // A continuation below must read a left call's signal as aborted.
-        // Output reaches its callback before `settle`, so every chunk of a child arrives before a promise its exit settles.
-        var faulted = self.procs.drain(self);
-        if (self.ops.settle(self)) faulted = true;
-        // A timer fires before the drain, so a promise it settles runs its reactions in this pump.
-        if (self.timers.fire(self, std.Io.Timestamp.now(self.io, .awake))) faulted = true;
-        try self.drainJobs();
-        // The first drain settles a promise a handler awaited, the poll reads it, and the second drain runs what the handler queued.
-        call_run.pump(self);
-        if (self.ops.settle(self)) faulted = true;
-        try self.drainJobs();
-        // The last drain can settle a call Promise, so this pump reads it before the owner sleeps.
-        call_run.pollRunning(self);
-        // A callback can cancel a native interaction; hasPending schedules its completion for the next pass.
+        var faulted = false;
+        var passes: u32 = 0;
+        while (passes == 0 or (passes < max_pump_passes and self.hasLocalWork())) : (passes += 1) {
+            call_run.abortLeft(self); // A continuation below must read a left call's signal as aborted.
+            // Output reaches its callback before `settle`, so every chunk of a child arrives before a promise its exit settles.
+            if (self.procs.drain(self)) faulted = true;
+            if (self.ops.settle(self)) faulted = true;
+            // A timer fires once for each pump, so a zero-delay chain yields to the frame between two firings.
+            if (passes == 0 and self.timers.fire(self, std.Io.Timestamp.now(self.io, .awake))) faulted = true;
+            try self.drainJobs();
+            call_run.pump(self);
+        }
         if (faulted) {
             self.dropPendingException();
             return error.JavaScriptFault;
         }
     }
 
+    /// Report whether a pass can settle anything now; timers and engine events wait for the next pump.
+    fn hasLocalWork(self: *const Host) bool {
+        return self.runtime.isJobPending() or self.ops.anyReady() or self.calls.hasWork(self.ctx) or self.procs.hasWork();
+    }
+
     /// Report whether the owner has work to run. The owner asks before it sleeps.
     pub fn hasPending(self: *const Host) bool {
-        return self.runtime.isJobPending() or self.ops.anyReady() or self.engine.hasPending() or
-            self.calls.hasWork(self.ctx) or self.procs.hasWork() or self.timers.isDue(std.Io.Timestamp.now(self.io, .awake));
+        return self.hasLocalWork() or self.engine.hasPending() or self.timers.isDue(std.Io.Timestamp.now(self.io, .awake));
     }
 
     /// Sleep until a task sets the wake, the next timer is due, or `deadline` passes; a passed deadline is `error.Timeout`.
