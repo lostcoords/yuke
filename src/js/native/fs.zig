@@ -240,7 +240,7 @@ fn jsList(ctx: Context, _: Value, args: []const Value) Value {
         error.HomeUnavailable => return rejected(ctx, errorMessage(error.HomeUnavailable)),
         else => return rejected(ctx, "the path is not a directory this process can read"),
     };
-    const page = call.local.listDir(arena, path, .{ .limit = max_entries, .include_files = false }) catch |err|
+    const page = call.local.listDir(arena, path, max_entries) catch |err|
         return rejected(ctx, errorMessage(err));
 
     var aw: std.Io.Writer.Allocating = .init(host.gpa);
@@ -264,7 +264,7 @@ fn pageOf(arena: std.mem.Allocator, path: []const u8, page: os.DirPage) Page {
         .path = path,
         .parent = std.fs.path.dirname(path),
         .entries = entries,
-        .more = page.next_after != null,
+        .more = page.more,
     };
 }
 
@@ -303,7 +303,7 @@ test "list answers the directories of a real path and marks a repository" {
 
     const env: std.process.Environ.Map = .init(testing.allocator);
     var local: LocalHost = .{ .io = testing.io, .root = root, .env = &env };
-    const page = try local.listDir(arena, root, .{ .limit = max_entries, .include_files = false });
+    const page = try local.listDir(arena, root, max_entries);
 
     var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     defer aw.deinit();

@@ -56,26 +56,16 @@ pub const Stat = struct {
     last_modified_ms: u64,
 };
 
-/// One entry of a directory page. `name` holds the basename only.
+/// One directory of a listing. `name` holds the basename only.
 pub const DirItem = struct {
     name: []const u8,
-    is_dir: bool,
-    /// The local host sets this field only when a directory contains a `.git` entry.
+    /// The local host sets this field only when the directory contains a `.git` entry.
     is_git_repo: bool = false,
 };
 
-/// The bounds of one directory page. The local host returns the first `limit` names after `after`.
-pub const ListOptions = struct {
-    /// Continue after this name. A null value starts at the first name.
-    after: ?[]const u8 = null,
-    limit: u32,
-    /// A false value drops every entry that is not a directory.
-    include_files: bool = false,
-};
-
-/// One directory page, sorted by name.
+/// The first directories of one listing, sorted by name.
 pub const DirPage = struct {
     items: []const DirItem,
-    /// The name to continue after, or null at the end of the directory.
-    next_after: ?[]const u8 = null,
+    /// True when the directory holds more directories than the page returns.
+    more: bool,
 };

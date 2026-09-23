@@ -118,15 +118,14 @@ pub const LocalHost = struct {
         return .{ .path = full, .is_dir = info.kind == .directory, .last_modified_ms = millisOf(info.mtime) };
     }
 
-    pub fn listDir(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, options: h.ListOptions) h.HostError!h.DirPage {
+    /// List the first `limit` subdirectories by name. A file never appears.
+    pub fn listDir(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, limit: u32) h.HostError!h.DirPage {
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
         var dir = std.Io.Dir.cwd().openDir(self.io, full, .{ .iterate = true }) catch |err| return mapError(err);
         defer dir.close(self.io);
-        var page = try selectPage(self.io, dir, scratch, options);
+        var page = try selectPage(self.io, dir, scratch, limit);
         // Check for a repository only in the directories that this page keeps.
-        for (page.items.items) |*item| if (item.is_dir) {
-            item.is_git_repo = isGitRepo(self.io, dir, item.name);
-        };
+        for (page.items.items) |*item| item.is_git_repo = isGitRepo(self.io, dir, item.name);
         return page.result();
     }
 
@@ -349,23 +348,20 @@ const PageBuilder = struct {
     fn result(self: *const PageBuilder) h.DirPage {
         std.debug.assert(self.items.items.len <= self.limit);
         if (self.dropped) std.debug.assert(self.items.items.len == self.limit);
-        const last = if (self.dropped) self.items.items[self.items.items.len - 1].name else null;
-        return .{ .items = self.items.items, .next_after = last };
+        return .{ .items = self.items.items, .more = self.dropped };
     }
 };
 
-/// Scan the whole directory and keep the first page of names after `options.after`.
-fn selectPage(io: std.Io, dir: std.Io.Dir, scratch: std.mem.Allocator, options: h.ListOptions) h.HostError!PageBuilder {
-    var builder = PageBuilder.init(scratch, options.limit) catch unreachable;
+/// Scan the whole directory and keep the `limit` subdirectories that sort first.
+fn selectPage(io: std.Io, dir: std.Io.Dir, scratch: std.mem.Allocator, limit: u32) h.HostError!PageBuilder {
+    var builder = PageBuilder.init(scratch, limit) catch unreachable;
     var it = dir.iterate();
     while (it.next(io) catch |err| return mapError(err)) |entry| {
         if (std.mem.eql(u8, entry.name, ".") or std.mem.eql(u8, entry.name, "..")) continue;
         // A wire name is a JSON string, so a name that is not UTF-8 has no valid encoding.
         if (!std.unicode.utf8ValidateSlice(entry.name)) continue;
-        if (options.after) |after| if (!std.mem.lessThan(u8, after, entry.name)) continue;
-        const is_dir = entryIsDir(io, dir, entry);
-        if (!is_dir and !options.include_files) continue;
-        builder.offer(.{ .name = entry.name, .is_dir = is_dir });
+        if (!entryIsDir(io, dir, entry)) continue;
+        builder.offer(.{ .name = entry.name });
     }
     return builder;
 }
@@ -687,13 +683,13 @@ const TreeFixture = struct {
     fn deinit(self: *TreeFixture) void {
         self.tmp.cleanup();
     }
-    fn list(self: *TreeFixture, a: std.mem.Allocator, options: h.ListOptions) h.HostError!h.DirPage {
+    fn list(self: *TreeFixture, a: std.mem.Allocator, limit: u32) h.HostError!h.DirPage {
         var local: LocalHost = .{ .io = testing.io, .root = self.root_buf[0..self.root_len], .env = &test_env };
-        return local.listDir(a, ".", options);
+        return local.listDir(a, ".", limit);
     }
 };
 
-test "listDir sorts by name and drops files by default" {
+test "listDir sorts directories by name, drops files, and reports a full page" {
     var f: TreeFixture = undefined;
     try f.init(&.{ "beta", "alpha" }, &.{"note.txt"});
     defer f.deinit();
@@ -701,38 +697,15 @@ test "listDir sorts by name and drops files by default" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    const page = try f.list(a, .{ .limit = 10 });
+    const page = try f.list(a, 10);
     try testing.expectEqual(@as(usize, 2), page.items.len);
     try testing.expectEqualStrings("alpha", page.items[0].name);
     try testing.expectEqualStrings("beta", page.items[1].name);
-    try testing.expect(page.items[0].is_dir and !page.items[0].is_git_repo);
-    try testing.expect(page.next_after == null); // The page holds the whole directory.
+    try testing.expect(!page.items[0].is_git_repo and !page.more);
 
-    const with_files = try f.list(a, .{ .limit = 10, .include_files = true });
-    try testing.expectEqual(@as(usize, 3), with_files.items.len);
-    try testing.expectEqualStrings("note.txt", with_files.items[2].name);
-    try testing.expect(!with_files.items[2].is_dir);
-}
-
-test "listDir pages after a name and reports the end" {
-    var f: TreeFixture = undefined;
-    try f.init(&.{ "a", "b", "c", "d" }, &.{});
-    defer f.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const first = try f.list(a, .{ .limit = 2 });
-    try testing.expectEqual(@as(usize, 2), first.items.len);
-    try testing.expectEqualStrings("a", first.items[0].name);
-    try testing.expectEqualStrings("b", first.items[1].name);
-    try testing.expectEqualStrings("b", first.next_after.?);
-
-    const second = try f.list(a, .{ .limit = 2, .after = first.next_after });
-    try testing.expectEqualStrings("c", second.items[0].name);
-    try testing.expectEqualStrings("d", second.items[1].name);
-    // The scan found no name after "d", so this page is final.
-    try testing.expect(second.next_after == null);
+    const first = try f.list(a, 1);
+    try testing.expectEqualStrings("alpha", first.items[0].name);
+    try testing.expect(first.more);
 }
 
 test "listDir marks a directory that holds .git" {
@@ -743,7 +716,7 @@ test "listDir marks a directory that holds .git" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    const page = try f.list(arena.allocator(), .{ .limit = 10 });
+    const page = try f.list(arena.allocator(), 10);
     try testing.expectEqualStrings("plain", page.items[0].name);
     try testing.expect(!page.items[0].is_git_repo);
     try testing.expectEqualStrings("repo", page.items[1].name);
