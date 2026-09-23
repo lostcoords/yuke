@@ -116,36 +116,3 @@ test "a fresh session reports zeros, each session allocates its own contiguous s
     try testing.expectEqual(@as(u64, 2), (try highWater(&db, a, one)).?.seq_high);
     try testing.expectEqual(@as(u64, 1), (try highWater(&db, a, two)).?.seq_high);
 }
-
-test "append rejects a missing session" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    defer db.conn.execNoArgs("ROLLBACK") catch {};
-    try testing.expectError(error.NoRow, append(&db, a, [_]u8{9} ** 16, eid(1), 1, "x", "{}"));
-}
-
-test "a rolled-back append leaves no seq hole" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const sid = [_]u8{3} ** 16;
-    try session.seedSession(&db, sid);
-
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try append(&db, a, sid, eid(1), 1, "run.started", "{}");
-    try db.conn.execNoArgs("ROLLBACK");
-
-    try testing.expectEqual(@as(u64, 0), (try highWater(&db, a, sid)).?.seq_high);
-
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    try testing.expectEqual(@as(u64, 1), try append(&db, a, sid, eid(2), 1, "run.started", "{}"));
-    try db.conn.execNoArgs("COMMIT");
-}

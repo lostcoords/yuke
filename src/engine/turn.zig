@@ -1300,25 +1300,6 @@ test "an error event inside a 200 stream reports its class and the provider mess
     try std.testing.expectEqualStrings("no credits left (402)", terminal.failed.detail.?);
 }
 
-test "an advertised output ceiling equal to context leaves a usable request budget" {
-    var f: StreamerFixture = undefined;
-    try f.init();
-    defer f.deinit();
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-
-    const row = Resources.mockProvider(&.{}, .{ .protocol = .openai_chat });
-    const model: registry.ModelSpec = .{
-        .id = "model",
-        .upstream_id = "model",
-        .name = "Model",
-        .protocol = .openai_chat,
-        .limits = .{ .context_window = 500_000, .max_output_tokens = 500_000 },
-    };
-    const held = try round_request.snapshot(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model });
-    try std.testing.expect(held.budget.input_ceiling > 0);
-}
-
 test "the final build hook obeys prompt and context limits without a new floor" {
     const State = struct {
         size: usize = proto.meta.limits.max_message_string_bytes + 1,

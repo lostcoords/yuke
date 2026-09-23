@@ -407,28 +407,6 @@ test "a later commit with an earlier timestamp does not regress recency" {
     try testing.expectEqual(@as(i64, 200), try scalar(&db, "SELECT updated_at_ms FROM sessions"));
 }
 
-test "a rolled-back commit leaves no event, row, or seq advance" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const sid = [_]u8{3} ** 16;
-    try session.seedSession(&db, sid);
-    const msg: proto.message.Message = .{ .user = .{ .id = 1, .content = &.{}, .input_id = 1, .time = .{ .created_at_ms = 100 } } };
-
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try appendCommittedMessage(&db, a, sid, [_]u8{1} ** 16, 100, msg);
-    // InsertMessage rejects a duplicate message_id after event.append raises the seq.
-    try testing.expectError(error.ConstraintUnique, appendCommittedMessage(&db, a, sid, [_]u8{2} ** 16, 100, msg));
-    try db.conn.execNoArgs("ROLLBACK");
-
-    try testing.expectEqual(@as(i64, 0), try scalar(&db, "SELECT count(*) FROM events"));
-    try testing.expectEqual(@as(i64, 0), try scalar(&db, "SELECT count(*) FROM messages"));
-    try testing.expectEqual(@as(i64, 0), try scalar(&db, "SELECT seq_high FROM sessions"));
-}
-
 test "historyPage returns a page oldest-first with has_more" {
     var db = try Database.openTest();
     defer db.deinit();

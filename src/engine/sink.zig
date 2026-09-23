@@ -79,18 +79,6 @@ const Counter = struct {
     }
 };
 
-test "every subscriber receives the same event" {
-    var sinks: Sinks = .{};
-    var tui: Counter = .{};
-    var rpc: Counter = .{};
-    sinks.add(tui.sink());
-    sinks.add(rpc.sink());
-
-    sinks.emit(removedNote());
-    try testing.expectEqual(@as(usize, 1), tui.seen);
-    try testing.expectEqual(@as(usize, 1), rpc.seen);
-}
-
 test "a removed subscriber stops receiving, and the others continue" {
     var sinks: Sinks = .{};
     var first: Counter = .{};

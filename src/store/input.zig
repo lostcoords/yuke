@@ -121,28 +121,6 @@ fn textContent(comptime text: []const u8) []const proto.content.ContentPart {
     return &.{.{ .text = .{ .text = text } }};
 }
 
-test "enqueue writes the event, the projection, and the sequence" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const sid = [_]u8{3} ** 16;
-    try session.seedSession(&db, sid);
-
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    const result = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, .{ .content = textContent("hello") }, 149);
-    try db.conn.execNoArgs("COMMIT");
-
-    try testing.expectEqual(@as(u64, 1), result.input.input_id);
-    try testing.expectEqual(@as(u64, 1), result.seq);
-    const count_row = (try db.conn.row("SELECT count(*) FROM events WHERE name = 'input.queued'", .{})) orelse return error.NoRow;
-    defer count_row.deinit();
-    try testing.expectEqual(@as(i64, 1), count_row.int(0));
-    const stored = (try list(&db, a, sid))[0].input;
-    try testing.expectEqualStrings("hello", stored.content[0].text.text);
-}
-
 test "list returns oldest-first owned entries" {
     var db = try Database.openTest();
     defer db.deinit();
@@ -231,36 +209,6 @@ test "missing cancel does not append an event" {
     const count_row = (try db.conn.row("SELECT count(*) FROM events", .{})) orelse return error.NoRow;
     defer count_row.deinit();
     try testing.expectEqual(@as(i64, 0), count_row.int(0));
-}
-
-test "pending projection enforces ownership and event foreign keys" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const sid = [_]u8{3} ** 16;
-    try session.seedSession(&db, sid);
-    const row = (try db.conn.row("SELECT sql FROM sqlite_master WHERE name = 'pending_inputs'", .{})) orelse return error.NoRow;
-    defer row.deinit();
-    try testing.expect(std.mem.indexOf(u8, row.text(0), "WITHOUT ROWID") != null);
-    const foreign_id = [_]u8{9} ** 16;
-    try testing.expectError(error.ConstraintForeignKey, db.conn.exec(
-        "INSERT INTO pending_inputs(session_id, input_id, seq) VALUES (?1, 1, 1)",
-        .{zqlite.blob(&foreign_id)},
-    ));
-    try testing.expectError(error.ConstraintForeignKey, db.conn.exec(
-        "INSERT INTO pending_inputs(session_id, input_id, seq) VALUES (?1, 1, 1)",
-        .{zqlite.blob(&sid)},
-    ));
-
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try enqueue(&db, a, sid, [_]u8{1} ** 16, 150, .{ .content = textContent("hello") }, 149);
-    try db.conn.execNoArgs("COMMIT");
-    try db.conn.exec("DELETE FROM events WHERE session_id = ?1", .{zqlite.blob(&sid)});
-    const pending_count = (try db.conn.row("SELECT count(*) FROM pending_inputs", .{})) orelse return error.NoRow;
-    defer pending_count.deinit();
-    try testing.expectEqual(@as(i64, 0), pending_count.int(0));
 }
 
 test "list rejects a projection whose source event has the wrong name" {

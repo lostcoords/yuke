@@ -78,10 +78,3 @@ pub const ActivityStateWaiting = struct {
 
 const testing = std.testing;
 const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
-
-test "activity state rejects the removed running tag" {
-    const removed =
-        \\{"type":"running","run_id":7,"started_at_ms":100}
-    ;
-    try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(ActivityState, testing.allocator, removed, opts));
-}

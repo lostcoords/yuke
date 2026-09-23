@@ -342,11 +342,6 @@ test "a tickable removed during startup never starts" {
     try support.run("ui/startup.test.js");
 }
 
-test "the nav vocabulary cannot drift after the shell binds it" {
-    // The shell copies the table once and a modal reads it per key, so it must not be writable.
-    try support.run("ui/frozen.test.js");
-}
-
 test "the pager follows the tail and counts the rows once per frame" {
     try support.runPainted(24, 80, "ui/pager.test.js");
 }

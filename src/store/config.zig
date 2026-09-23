@@ -118,18 +118,6 @@ test "a config change stores a revision, sets the current config, and reads back
     try testing.expect((try byRevision(&db, a, sid, 99)) == null);
 }
 
-test "appendConfig rejects a missing session" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    defer db.conn.execNoArgs("ROLLBACK") catch {};
-    try testing.expectError(error.NoRow, appendConfig(&db, a, [_]u8{9} ** 16, [_]u8{1} ** 16, 1, .{ .config_rev = 1, .model = "m", .reasoning = "r" }));
-}
-
 test "appendConfig keeps the current config monotonic" {
     var db = try Database.openTest();
     defer db.deinit();

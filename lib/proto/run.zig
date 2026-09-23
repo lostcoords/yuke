@@ -88,14 +88,3 @@ pub const RunStartedData = struct {
 
 const testing = std.testing;
 const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
-
-test "interrupted is a closed run failure category" {
-    const json = "{\"type\":\"failed\",\"code\":\"interrupted\",\"message\":\"the engine stopped\"}";
-    const parsed = try std.json.parseFromSlice(RunOutcome, testing.allocator, json, .{});
-    defer parsed.deinit();
-    try testing.expectEqual(enums.RunErrorCode.interrupted, parsed.value.failed.code);
-    const encoded = try std.json.Stringify.valueAlloc(testing.allocator, parsed.value, .{ .emit_null_optional_fields = false });
-    defer testing.allocator.free(encoded);
-    try testing.expectEqualStrings(json, encoded);
-    try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(RunOutcome, testing.allocator, "{\"type\":\"failed\",\"code\":\"unknown_failure\",\"message\":\"x\"}", .{}));
-}

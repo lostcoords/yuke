@@ -11,7 +11,7 @@ test "focused session identity follows pane and session lifetimes" {
     try support.run("app/focused-session.test.js");
 }
 
-test "yuke:client exposes the engine surface and answers a closed session" {
+test "yuke:client answers a closed session with no outline" {
     try support.run("app/c.test.js");
 }
 

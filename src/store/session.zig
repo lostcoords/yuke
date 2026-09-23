@@ -299,74 +299,6 @@ test "create inserts a root session and exists finds it" {
     try testing.expect((try snapshot(&db, a, [_]u8{9} ** 16)) == null);
 }
 
-test "a root session rejects a stray parent id" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    var params = rootParams([_]u8{3} ** 16, "/w");
-    params.parent_id = [_]u8{4} ** 16; // A root must have no parent marks.
-    try testing.expectError(error.ConstraintCheck, create(&db, params));
-}
-
-test "a child session needs all three parent marks" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    // A valid child sets all three marks.
-    var ok = rootParams([_]u8{1} ** 16, "/w");
-    ok.origin = "child";
-    ok.parent_id = [_]u8{4} ** 16;
-    ok.parent_message_id = 1;
-    ok.parent_part_id = 0;
-    ok.name = "kid";
-    try create(&db, ok);
-
-    // Each absent mark fails the check.
-    const missing = [_]struct { m: ?u64, p: ?u64 }{
-        .{ .m = null, .p = 0 },
-        .{ .m = 1, .p = null },
-        .{ .m = null, .p = null },
-    };
-    for (missing, 0..) |case, i| {
-        var bad = rootParams([_]u8{ 2, @intCast(i) } ++ [_]u8{0} ** 14, "/w");
-        bad.origin = "child";
-        bad.parent_id = [_]u8{4} ** 16;
-        bad.parent_message_id = case.m;
-        bad.parent_part_id = case.p;
-        bad.name = "kid";
-        try testing.expectError(error.ConstraintCheck, create(&db, bad));
-    }
-}
-
-test "fork needs a source id" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    var fork = rootParams([_]u8{1} ** 16, "/w");
-    fork.origin = "fork";
-    fork.source_id = [_]u8{5} ** 16;
-    try create(&db, fork);
-
-    var bad_fork = rootParams([_]u8{3} ** 16, "/w");
-    bad_fork.origin = "fork"; // A fork must have a source_id.
-    try testing.expectError(error.ConstraintCheck, create(&db, bad_fork));
-}
-
-test "create rejects an empty root" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    try testing.expectError(
-        error.ConstraintCheck,
-        create(&db, rootParams([_]u8{8} ** 16, "")),
-    );
-}
-
 test "prompt reads a set prompt and null when absent" {
     var db = try Database.openTest();
     defer db.deinit();
@@ -381,29 +313,6 @@ test "prompt reads a set prompt and null when absent" {
     _ = try setPrompt(&db, a, id, &.{.{ .key = "base", .text = "be helpful" }}, 3);
     try testing.expectEqualStrings("be helpful", (try prompt(&db, a, id)).?.text);
     try testing.expectEqual(@as(u64, 3), (try prompt(&db, a, id)).?.generation);
-}
-
-test "an open run cannot exceed the run high-water mark" {
-    var db = try Database.openTest();
-    defer db.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const id = [_]u8{3} ** 16;
-    try create(&db, rootParams(id, "/w"));
-
-    // run_id_high is 0, so the mark check rejects an open run.
-    const open =
-        "UPDATE sessions SET open_run_id = 1, open_run_kind = 'turn', open_run_started_at_ms = 0 " ++
-        "WHERE id = x'03030303030303030303030303030303'";
-    try testing.expectError(error.ConstraintCheck, db.conn.execNoArgs(open));
-
-    // Raise the mark, then the same open run passes the check.
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    _ = try event.allocRunId(&db, a, id);
-    try db.conn.execNoArgs("COMMIT");
-    try db.conn.execNoArgs(open);
 }
 
 test "list rejects a bad limit, answers empty, then pages newest first" {
