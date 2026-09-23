@@ -95,7 +95,7 @@ fn holdsFor(ctx: *anyopaque, point: proto.hook.Point) bool {
     return host.hooks.holds(point);
 }
 
-/// Submit one point and wait for the folded chain. A handler fault proceeds, because it is a bug.
+/// Submit one point and wait for the folded chain. A failed dispatch or an unreadable answer blocks, so a bug never lets an action through.
 fn askFor(ctx: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payload: []const u8) hookset.Decision {
     const host: *Host = @ptrCast(@alignCast(ctx));
     const call = host.calls.submitHook(point.wireName(), payload);
@@ -105,7 +105,7 @@ fn askFor(ctx: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payl
     const text = call.text orelse return .proceed;
     if (call.is_error) {
         std.log.warn("hook {s} faulted: {s}", .{ point.wireName(), text });
-        return .proceed;
+        return .{ .block = "the hook dispatch failed" };
     }
     if (text.len == 0) return .proceed;
     return decisionOf(out, point, text);
@@ -115,7 +115,7 @@ fn askFor(ctx: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payl
 fn decisionOf(out: std.mem.Allocator, point: proto.hook.Point, text: []const u8) hookset.Decision {
     const parsed = std.json.parseFromSliceLeaky(proto.hook.Decision, out, text, .{ .allocate = .alloc_always }) catch {
         std.log.warn("hook {s} answered an unreadable decision", .{point.wireName()});
-        return .proceed;
+        return .{ .block = "the hook answered an unreadable decision" };
     };
     return switch (parsed) {
         .proceed => .proceed,
@@ -171,4 +171,6 @@ test "hook decisions own text after the call answer leaves" {
     std.testing.allocator.free(replaced_text);
     try std.testing.expect(replaced == .replace);
     try std.testing.expectEqualStrings("bash", replaced.replace.object.get("name").?.string);
+
+    try std.testing.expect(decisionOf(out, .@"tool.before", "{\"type\":\"allow\"}") == .block);
 }
