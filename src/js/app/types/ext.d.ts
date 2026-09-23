@@ -77,7 +77,7 @@ export type InjectApply<K extends string = string> = (context: InjectContext<K>)
 export interface PluginHandle {
   /** Rejects on startup failure or cancellation. */
   readonly ready: Promise<void>;
-  /** Cancels the signal and startup, reverts the registrations, awaits the releases, and frees the name. A sync close answers nothing. */
+  /** Cancels the signal and startup, reverts the registrations, awaits the releases, and frees the name; a sync close answers nothing. */
   dispose(): void | Promise<void>;
 }
 
@@ -180,7 +180,7 @@ export interface HookEntry {
 
 export type HookDecision = { type: "block"; reason: string } | { type: "replace"; value: any };
 
-/** A resource release. It may answer a Promise; the close awaits it before the next older release. */
+/** A resource release; the close awaits a returned Promise before the next older release. */
 export type Release = () => unknown;
 
 export interface ReleaseEntry {
@@ -189,11 +189,13 @@ export interface ReleaseEntry {
 
 /** The state a scope makes on first use: releases, a signal, and an async close. */
 export interface ScopeLife {
-  /** The scope another effect closes, such as an inject block; its drain still holds this parent's close. */
-  parent: Scope | null;
+  /** The scope that awaits this close, so a quiet owner silences a late child fault. */
+  awaiter: Scope | null;
   releases: ReleaseEntry[] | null;
   signal: CancellationSignal | null;
   closed: Promise<void> | undefined;
+  /** Settles the promise a caller inside the close received. */
+  settle: (() => void) | undefined;
   /** The closes of children that left the scope while their releases still run. */
   draining: Set<Promise<void>> | null;
   /** Set when an owner gives up waiting, so a late release fault stays silent. */

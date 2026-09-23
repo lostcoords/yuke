@@ -342,6 +342,14 @@ test "plugin unload cancels and drains native startup" {
     try std.testing.expectEqual(@as(usize, 0), host.signal_waiters.items.len);
 }
 
+test "a close refuses late resources, shares itself with inner callers, and closes inject blocks as children" {
+    const host = createTimeoutHost();
+    defer support.destroyHost(host);
+    try support.eval(host, "plugins/close-order.test.js");
+    try support.pumpUntilTrue(host, "globalThis.closeDone");
+    try support.expectString(host, "globalThis.closeFailure || ''", "");
+}
+
 test "resource release is LIFO, idempotent, and safe under reentrant disposal" {
     const host = support.createHost();
     defer support.destroyHost(host);
