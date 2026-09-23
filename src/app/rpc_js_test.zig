@@ -145,6 +145,11 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
         \\{"id":"other","method":"job.list","params":{"session_id":"02020202020202020202020202020202"}}
     );
     try testing.expect(std.mem.indexOf(u8, f.out.written(), "{\"id\":\"other\",\"result\":{\"jobs\":[]}}") != null);
+    // An explicit null stands for the optional parameter object.
+    rpc.serve(testing.allocator, &f.stream,
+        \\{"id":"all","method":"job.list","params":null}
+    );
+    try testing.expect(std.mem.indexOf(u8, f.out.written(), "{\"id\":\"all\",\"result\":{\"jobs\":[{\"id\":1,") != null);
 
     // The shell writes before the read sees it, so the read retries until the line arrives.
     for (0..100) |_| {

@@ -288,6 +288,8 @@ pub const Host = struct {
             self.wake.reset();
             try self.pump();
             if (done(context)) return;
+            // Work that stays ready never sleeps, so the deadline is read on every pass too.
+            if (deadline) |d| if (d.durationFromNow(self.io).raw.nanoseconds <= 0) return error.Timeout;
             try self.waitForWork(deadline);
         }
     }

@@ -71,6 +71,17 @@ comptime {
             if (std.mem.eql(u8, entry.name, alias)) break;
         } else @compileError("unknown alias: " ++ alias);
     }
+    // A misspelled field name would name no field, and its alias would never reach the schema.
+    for (field_aliases.keys()) |field| {
+        const used = for (registry.structs) |entry| {
+            if (@hasField(entry.ty, field)) break true;
+        } else for (registry.envelope_unions) |entry| {
+            if (@hasField(entry.ty, field)) break true;
+        } else for (rpc.broadcasts) |spec| {
+            if (std.mem.eql(u8, @tagName(spec.name), field)) break true;
+        } else false;
+        if (!used) @compileError("no wire field is named: " ++ field);
+    }
     for (id_aliases.keys()) |owner| {
         for (registry.structs) |entry| {
             if (std.mem.eql(u8, entry.name, owner) and @hasField(entry.ty, "id")) break;

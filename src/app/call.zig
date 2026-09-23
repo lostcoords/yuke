@@ -42,7 +42,12 @@ pub fn call(
             if (comptime @hasDecl(bindings, @tagName(spec.name))) {
                 // The RPC frontend holds a parsed value and the JavaScript host holds text.
                 const options: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
-                const decoded = if (comptime @TypeOf(params_in) == std.json.Value)
+                const is_value = comptime @TypeOf(params_in) == std.json.Value;
+                // Optional parameters may arrive as an explicit null, which means the empty object.
+                const absent = spec.params_optional and if (is_value) params_in == .null else std.mem.eql(u8, params_in, "null");
+                const decoded = if (absent)
+                    spec.params{}
+                else if (is_value)
                     std.json.parseFromValueLeaky(spec.params, arena, params_in, options)
                 else
                     std.json.parseFromSliceLeaky(spec.params, arena, params_in, options);

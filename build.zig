@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
     const strip = b.option(bool, "strip", "Omit the debug info from the yuke binary");
     const test_filters: []const []const u8 = if (test_filter) |filter| &.{filter} else &.{};
     const test_shards = b.option(u32, "test-shards", "Split the src tests over this many processes") orelse 8;
+    if (test_shards == 0) std.debug.panic("-Dtest-shards must be at least 1", .{});
 
     // A Debug test run spends most of its time in QuickJS and SQLite, so the C dependencies build optimized.
     const dep_optimize: std.builtin.OptimizeMode = if (optimize == .Debug) .ReleaseSafe else optimize;
