@@ -130,7 +130,7 @@ pub const Reducer = struct {
         const item = json.fieldGet(root, "item") orelse return error.Protocol;
         const item_type = json.fieldStr(item, "type") orelse return error.Protocol;
 
-        if (self.outputs.count() >= event.max_blocks) return error.Protocol; // Bound the output map.
+        if (self.outputs.count() >= event.max_response_blocks) return error.Protocol; // Bound the output map.
         var entry = try self.outputs.getOrPut(self.gpa, index);
         if (entry.found_existing) return error.Protocol;
         entry.value_ptr.* = .{ .kind = .ignored, .item_id = itemIdHash(json.fieldStr(item, "id")) };
@@ -381,8 +381,8 @@ pub const Reducer = struct {
     }
 
     fn addBlock(self: *Reducer, kind: event.BlockKind) Error!*Block {
-        std.debug.assert(self.blocks.items.len <= event.max_blocks);
-        if (self.blocks.items.len >= event.max_blocks) return error.Protocol;
+        std.debug.assert(self.blocks.items.len <= event.max_response_blocks);
+        if (self.blocks.items.len >= event.max_response_blocks) return error.Protocol;
         try self.blocks.append(self.gpa, .{ .kind = kind });
         return &self.blocks.items[self.blocks.items.len - 1];
     }

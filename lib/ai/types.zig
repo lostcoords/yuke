@@ -45,7 +45,6 @@ pub const MediaSource = union(enum) {
 };
 
 pub const limits = struct {
-    pub const max_blocks: usize = 1024;
     pub const max_string_bytes: usize = 1 << 20;
     /// The ChatGPT host answers 400 for a longer cache key.
     pub const max_cache_key_bytes: usize = 64;

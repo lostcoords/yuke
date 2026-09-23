@@ -3,8 +3,8 @@
 const std = @import("std");
 const types = @import("../types.zig");
 
-/// A block becomes at most one message part, so the part cap bounds the blocks a reducer holds.
-pub const max_blocks = types.limits.max_blocks;
+/// Bound the blocks of one answer, so a hostile stream cannot force quadratic reducer scans.
+pub const max_response_blocks = 1024;
 
 /// The arguments of a tool call reach the wire as one message string, so that cap bounds the accumulation.
 pub const max_tool_arg_bytes = types.limits.max_string_bytes;

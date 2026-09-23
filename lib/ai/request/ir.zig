@@ -188,8 +188,7 @@ pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Bloc
         .openai_responses => |wire| if (wire.cache_key.len > types.limits.max_cache_key_bytes or !stringValid(wire.cache_key)) return error.InvalidRequest,
     }
     if (request.max_output_tokens == 0) return error.InvalidRequest;
-    if (blocks.len == 0 or blocks.len > types.limits.max_blocks) return error.InvalidRequest;
-    if (request.tools.len > types.limits.max_blocks) return error.InvalidRequest;
+    if (blocks.len == 0) return error.InvalidRequest;
 
     // A saturating total needs no overflow branch, because the cap rejects the saturated value.
     var total = request.model.len +| request.system.len;
@@ -385,17 +384,11 @@ test "request validation enforces count, size, and token boundaries" {
     unlimited.wire = .{ .openai_chat = .{} };
     try validate(arena.allocator(), unlimited, &block);
 
-    var too_many_blocks: [types.limits.max_blocks + 1]Block = undefined;
-    for (&too_many_blocks) |*item| item.* = block[0];
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &too_many_blocks));
+    // A long tool-heavy history has no block cap; only the byte total bounds it.
+    var many_blocks: [4096]Block = undefined;
+    for (&many_blocks) |*item| item.* = block[0];
+    try validate(arena.allocator(), base, &many_blocks);
 
-    var too_many_tools: [types.limits.max_blocks + 1]Tool = undefined;
-    for (&too_many_tools) |*tool| tool.* = .{ .name = "tool", .description = "", .input_schema = "{}" };
-    var many_tools = base;
-    many_tools.tools = &too_many_tools;
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), many_tools, &block));
-
-    // The byte total is its own bound, because a legal block count still carries any size of text.
     const chunk = "x" ** types.limits.max_string_bytes;
     var oversized: [types.limits.max_request_bytes / chunk.len]Block = undefined;
     for (&oversized) |*item| item.* = .{ .role = .user, .value = .{ .text = chunk } };

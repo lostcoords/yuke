@@ -179,10 +179,10 @@ pub const Reducer = struct {
         out: *std.ArrayList(StreamEvent),
     ) Error!usize {
         std.debug.assert(self.open_block == null);
-        if (self.blocks.items.len >= event.max_blocks) return error.Protocol;
+        if (self.blocks.items.len >= event.max_response_blocks) return error.Protocol;
         try self.blocks.append(self.gpa, .{ .kind = kind, .tool_index = tool_index });
         const index = self.blocks.items.len - 1;
-        std.debug.assert(index < event.max_blocks);
+        std.debug.assert(index < event.max_response_blocks);
         try out.append(self.gpa, .{ .block_started = .{ .block = @intCast(index), .kind = kind } });
         if (kind != .tool) self.open_block = index;
         return index;
