@@ -10,7 +10,7 @@ const Context = quickjs.Context;
 const Value = quickjs.Value;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
-pub const max_record_bytes = 64 * 1024;
+const max_record_bytes = 64 * 1024;
 
 /// A closed set of record kinds; a trust record belongs to one workspace, a grant to the server URL alone.
 const Scope = enum {

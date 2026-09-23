@@ -33,17 +33,17 @@ const timers_mod = @import("timers.zig");
 const baked = @import("baked");
 
 /// Limit the client heap. Scripts fail when they exceed this limit.
-pub const memory_limit: usize = 64 * 1024 * 1024;
+const memory_limit: usize = 64 * 1024 * 1024;
 /// Limit the QuickJS stack below the zio coroutine stack.
-pub const stack_limit: usize = 4 * 1024 * 1024;
+const stack_limit: usize = 4 * 1024 * 1024;
 /// Limit jobs per drain so Promise chains do not starve the owner.
-pub const job_budget: u32 = 1024;
+const job_budget: u32 = 1024;
 /// Bound one evaluation by interrupt polls, a coarse CPU proxy, so scheduling jitter never aborts a script.
 pub const default_interrupt_budget: u32 = 100_000;
 /// Limit the fault text the Host stores, so `captureFault` runs from a fixed buffer without an allocation.
-pub const fault_text_max: usize = 512;
+const fault_text_max: usize = 512;
 /// Report this when QuickJS gives no readable text for the exception.
-pub const unknown_fault = "script fault with no message";
+const unknown_fault = "script fault with no message";
 
 pub const Error = error{JavaScriptFault};
 

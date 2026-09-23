@@ -6,15 +6,15 @@ const paths = @import("../paths.zig");
 const builtin = @import("builtin");
 
 pub const Entry = proto.skill.SkillInfo;
-pub const max_file_bytes = 256 * 1024;
+const max_file_bytes = 256 * 1024;
 /// The scan reads only this much of a file, so the frontmatter must end inside it.
-pub const max_frontmatter_bytes = 16 * 1024;
+const max_frontmatter_bytes = 16 * 1024;
 /// A root with more candidates than this is a wrong directory, not a skill problem.
-pub const max_per_root = 256;
+const max_per_root = 256;
 /// A root with more direct entries than this is a wrong directory, so the scan stops before it sorts them.
-pub const max_root_entries = 1024;
-pub const max_name_bytes = 64;
-pub const max_description_chars = 1024;
+const max_root_entries = 1024;
+const max_name_bytes = 64;
+const max_description_chars = 1024;
 
 /// This is one skill the scan left out. The caller reports it as a notice.
 pub const Skipped = struct {

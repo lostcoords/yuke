@@ -12,7 +12,7 @@ const Sha256 = std.crypto.hash.sha2.Sha256;
 const base64url = std.base64.url_safe_no_pad.Encoder;
 
 /// One sign-in holds one listener, so a small bound is enough.
-pub const max_listeners = 4;
+const max_listeners = 4;
 const default_timeout_ms = 300_000;
 const max_timeout_ms = 900_000;
 /// A browser opens and closes some connections that carry no callback, so the listener skips at most this many.

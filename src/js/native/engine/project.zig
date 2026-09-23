@@ -59,9 +59,9 @@ pub fn writeOutline(w: *std.Io.Writer, s: *domain_session.Session) !void {
 }
 
 /// Every string a part inlines is bounded, and each cut value appears once in the part's `cut` list with its whole size.
-pub const max_inline_views: usize = 8;
-pub const max_inline_diff_lines: usize = 200;
-pub const max_inline_line_bytes: usize = 512;
+const max_inline_views: usize = 8;
+const max_inline_diff_lines: usize = 200;
+const max_inline_line_bytes: usize = 512;
 /// What one diff file or hunk costs in keys and brackets. The budget charges it, so structure cannot escape the bound.
 const diff_scaffold_bytes: usize = 128;
 
@@ -100,7 +100,7 @@ const Cut = struct {
 };
 
 /// One part may inline this many bytes across its strings, whichever call asks for it. The rest is paged.
-pub const max_part_bytes: usize = 4 * max_page_bytes;
+const max_part_bytes: usize = 4 * max_page_bytes;
 
 /// What a part carries as it writes: its cuts, and the bytes it may still inline.
 const Parts = struct {

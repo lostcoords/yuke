@@ -389,7 +389,7 @@ fn writeBroadcasts(jw: *std.json.Stringify, docs: *const std.StringHashMap([]con
     try jw.endArray();
 }
 
-pub fn emit(a: std.mem.Allocator, io: std.Io, w: *std.Io.Writer) !void {
+fn emit(a: std.mem.Allocator, io: std.Io, w: *std.Io.Writer) !void {
     var docs = try doc_extractor.load(a, io);
     defer docs.deinit();
     var jw: std.json.Stringify = .{ .writer = w, .options = .{ .whitespace = .indent_2 } };

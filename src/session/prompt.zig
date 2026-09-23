@@ -9,7 +9,7 @@ pub const Section = struct {
     text: []const u8,
 };
 
-pub const max_key_bytes: usize = 64;
+const max_key_bytes: usize = 64;
 
 /// A key is 1 to 64 bytes and unique in its list. The check guards a hook answer, so it returns a bool.
 pub fn valid(sections: []const Section) bool {

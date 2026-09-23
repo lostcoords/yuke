@@ -64,7 +64,7 @@ pub const Listener = struct {
 };
 
 /// An unused listener stays until `unlisten` or host close, so the count is bounded.
-pub const max_listeners = 4096;
+const max_listeners = 4096;
 
 pub fn deinit(host: *Host) void {
     for (host.abort_listeners.items) |listener| listener.free(host.ctx);

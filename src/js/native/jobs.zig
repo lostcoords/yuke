@@ -16,9 +16,9 @@ const rejected = pending.rejected;
 const SessionId = proto.ids.SessionId;
 
 /// The most ended jobs the table keeps. The job that ended first leaves first.
-pub const max_ended = 32;
+const max_ended = 32;
 /// The largest job read, so one read keeps the owner loop short.
-pub const max_read_bytes: u32 = 256 * 1024;
+const max_read_bytes: u32 = 256 * 1024;
 
 /// One job. The table owns every string, and a record outlives its process.
 pub const Job = struct {

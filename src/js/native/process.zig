@@ -19,8 +19,8 @@ const rejected = pending.rejected;
 pub const max_processes = 64;
 /// The most bytes one stream buffers before its reader waits for the owner. The child then blocks on a full pipe.
 pub const max_buffered_bytes = 1024 * 1024;
-pub const max_write_bytes = 1024 * 1024;
-pub const max_writes = 1024;
+const max_write_bytes = 1024 * 1024;
+const max_writes = 1024;
 
 pub fn install(host: *Host) void {
     module.installFunctions(host, "yuke:process", &.{

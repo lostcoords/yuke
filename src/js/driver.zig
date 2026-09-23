@@ -10,10 +10,10 @@ const report = @import("report.zig");
 
 const Event = term_pkg.Event;
 
-pub const Channel = zio.Channel(Msg);
+const Channel = zio.Channel(Msg);
 
 /// One owner message: a parser event with owned key or paste text, or a synthetic tick.
-pub const Msg = union(enum) {
+const Msg = union(enum) {
     event: EventBuf,
     paste: []const u8,
     tick,
@@ -35,7 +35,7 @@ pub const Msg = union(enum) {
 };
 
 /// A parser event plus a copy of its key text. The copy survives the next parse.
-pub const EventBuf = struct {
+const EventBuf = struct {
     ev: Event,
     text: [128]u8 = undefined,
     n: u8 = 0,
@@ -132,7 +132,7 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
 }
 
 /// Run `start`, then process queued events with `step`. Native quit ends the loop, but a script error does not.
-pub fn serve(host: *Host, ch: *Channel) !void {
+fn serve(host: *Host, ch: *Channel) !void {
     std.debug.assert(host.phase == .open);
     if (tui_loop.start(host)) |_| {
         try absorbScriptFault(host, tui_loop.flushFrame(host));

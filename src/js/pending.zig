@@ -11,7 +11,7 @@ const utf8 = @import("../utf8.zig");
 const proto = @import("proto");
 
 /// The live bytes one op streams, equal to the engine stream cap. The op drops the rest; the result still carries the answer.
-pub const max_live_bytes = proto.meta.limits.max_tool_output_stream_bytes;
+const max_live_bytes = proto.meta.limits.max_tool_output_stream_bytes;
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;

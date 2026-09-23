@@ -10,15 +10,15 @@ const utf8 = @import("../../utf8.zig");
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
-pub const default_timeout_ms: u32 = 30_000;
+const default_timeout_ms: u32 = 30_000;
 /// A slow tool call answers its head late, and a quiet event stream reads late, so both wait up to ten minutes.
-pub const max_timeout_ms: u32 = 600_000;
+const max_timeout_ms: u32 = 600_000;
 /// `text()` refuses a body above this; a chunk read has no total cap.
 pub const max_response_bytes: usize = 256 * 1024;
-pub const default_read_bytes: u32 = 64 * 1024;
-pub const max_read_bytes: u32 = 1024 * 1024;
+const default_read_bytes: u32 = 64 * 1024;
+const max_read_bytes: u32 = 1024 * 1024;
 /// Every parked body holds one connection, so the count is bounded like the sockets.
-pub const max_bodies = 64;
+const max_bodies = 64;
 const max_response_headers = 64;
 const max_response_header_bytes = 8 * 1024;
 

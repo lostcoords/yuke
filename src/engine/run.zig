@@ -23,7 +23,7 @@ const event_store = database.event;
 const input_store = database.input;
 const run_store = database.run;
 
-pub const RunHandle = session.RunHandle;
+const RunHandle = session.RunHandle;
 pub const RunSlot = session.RunSlot;
 
 /// Publish these arena-owned user commits before run.started and before arena release.

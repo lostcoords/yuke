@@ -8,7 +8,7 @@ const RunSlot = @import("run.zig").RunSlot;
 const database = @import("../store/store.zig");
 const prompts = @import("../session/prompt.zig");
 
-pub const Section = prompts.Section;
+const Section = prompts.Section;
 
 /// One AGENTS.md snapshot as the hook payload carries it.
 const Instruction = struct { scope: proto.instructions.InstructionScope, path: []const u8, text: []const u8 };

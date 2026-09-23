@@ -14,7 +14,7 @@ const Context = quickjs.Context;
 const Value = quickjs.Value;
 
 /// The longest name a provider accepts: Anthropic states `^[a-zA-Z0-9_-]{1,64}$` and OpenAI accepts the same shape.
-pub const max_name_bytes: usize = 64;
+const max_name_bytes: usize = 64;
 
 /// Why one registration was refused. Each case answers one sentence to the script.
 pub const RegisterError = error{
@@ -27,7 +27,7 @@ pub const Tools = struct {
     gpa: std.mem.Allocator,
     entries: std.ArrayList(Entry) = .empty,
 
-    pub const Entry = struct {
+    const Entry = struct {
         decl: ir.Tool,
         handler: Value,
     };
@@ -101,7 +101,7 @@ pub const Tools = struct {
 };
 
 /// What one call asks for. The kind selects the handler the owner runs and the answer it records.
-pub const Kind = enum { tool, hook, input };
+const Kind = enum { tool, hook, input };
 
 /// One call in flight; the submitter waits and touches no QuickJS value, so the owner alone frees the Promise and sweeps the record.
 pub const Call = struct {
@@ -261,7 +261,7 @@ pub const Calls = struct {
 };
 
 /// Answer whether a provider accepts this name. Both providers state `^[a-zA-Z0-9_-]{1,64}$`.
-pub fn validName(name: []const u8) bool {
+fn validName(name: []const u8) bool {
     if (name.len == 0 or name.len > max_name_bytes) return false;
     for (name) |c| {
         const ok = std.ascii.isAlphanumeric(c) or c == '_' or c == '-';

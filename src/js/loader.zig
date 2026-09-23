@@ -14,13 +14,13 @@ pub const BakedModule = struct {
     },
 };
 
-pub const ResolveError = error{
+const ResolveError = error{
     EmptyPath,
     MissingBase,
 };
 
 /// True for the public entries and every internal module name.
-pub fn isBaked(name: []const u8) bool {
+fn isBaked(name: []const u8) bool {
     return std.mem.eql(u8, name, "yuke") or std.mem.startsWith(u8, name, "yuke/") or std.mem.startsWith(u8, name, "yuke:");
 }
 

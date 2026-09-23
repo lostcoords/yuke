@@ -18,9 +18,9 @@ const SessionId = proto.ids.SessionId;
 /// Bound the dirty set so a storm cannot grow it without limit. A full set marks everything dirty.
 pub const max_dirty_sessions: usize = 256;
 /// Bound the auth payloads one drain carries. A login is rare, so a burst over this drops the oldest.
-pub const max_auth_notes: usize = 16;
+const max_auth_notes: usize = 16;
 /// Bound the notice payloads one drain carries. A burst over this drops the oldest.
-pub const max_notice_notes: usize = 16;
+const max_notice_notes: usize = 16;
 /// The module state on the Host.
 pub const Engine = struct {
     gpa: std.mem.Allocator,
@@ -168,21 +168,21 @@ pub const Engine = struct {
 };
 
 /// The facts one drain carries. A digest coalesces them, so a repeat within a frame reads as one.
-pub const FactSet = std.EnumSet(proto.enums.BroadcastName);
+const FactSet = std.EnumSet(proto.enums.BroadcastName);
 
 /// One auth event as the sink gets it. The method stays beside the text, so a full list drops the right one.
 const AuthNote = struct { method: proto.enums.BroadcastName, text: []u8 };
 const NoticeNote = struct { text: []u8 };
 
 /// How one session changed since the last drain. A view redraws differently for each kind.
-pub const Change = struct {
+const Change = struct {
     /// The work this change leaves the transcript.
     view: View = .quiet,
     /// Every fact this session saw since the last drain. A view ignores it; a plugin reads it.
     facts: FactSet = .initEmpty(),
 
     /// What one drain asks the transcript to do. The order of the fields is the merge order.
-    pub const View = union(enum) {
+    const View = union(enum) {
         /// Nothing the transcript draws moved. The plugins still read the facts.
         quiet,
         /// Only this message moved. With a part, only that part moved, so the view re-wraps one part.
@@ -268,7 +268,7 @@ pub const Change = struct {
 };
 
 /// Read the session an event belongs to. An index event names no session.
-pub fn sessionOf(note: proto.rpc.Notification) ?SessionId {
+fn sessionOf(note: proto.rpc.Notification) ?SessionId {
     return switch (note.params) {
         inline else => |payload| if (@hasField(@TypeOf(payload), "session_id")) payload.session_id else null,
     };

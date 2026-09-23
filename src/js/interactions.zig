@@ -10,7 +10,7 @@ const Context = quickjs.Context;
 const Value = quickjs.Value;
 
 /// The admission cap on the questions that wait for an answer.
-pub const max_pending: usize = 32;
+const max_pending: usize = 32;
 pub const max_options: usize = 64;
 pub const max_text_bytes: usize = 64 * 1024;
 pub const max_safe_id: u64 = (1 << 53) - 1;
@@ -28,7 +28,7 @@ pub const Error = error{
 };
 
 /// One question. The arena owns every slice `value` holds.
-pub const Request = struct {
+const Request = struct {
     arena: std.heap.ArenaAllocator,
     id: proto.ids.InteractionId,
     value: proto.interaction.InteractionRequest,

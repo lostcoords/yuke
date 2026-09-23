@@ -8,7 +8,7 @@ const Context = quickjs.Context;
 const Value = quickjs.Value;
 
 /// The most live timers. A call past the limit throws `RangeError`.
-pub const max_timers = 4096;
+const max_timers = 4096;
 /// The longest delay, as on the web. A larger delay waits this long.
 const max_delay_ms: u64 = std.math.maxInt(i32);
 

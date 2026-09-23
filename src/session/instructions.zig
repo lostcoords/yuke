@@ -5,7 +5,7 @@ const proto = @import("proto");
 const paths = @import("../paths.zig");
 const builtin = @import("builtin");
 
-pub const max_file_bytes = 256 * 1024;
+const max_file_bytes = 256 * 1024;
 pub const Snapshot = struct {
     source: proto.instructions.InstructionSource,
     text: []const u8,

@@ -14,7 +14,7 @@ const Context = quickjs.Context;
 const Value = quickjs.Value;
 
 /// The largest side this module compares. A line table costs about 20 bytes for each line.
-pub const max_side_bytes: usize = 1024 * 1024;
+const max_side_bytes: usize = 1024 * 1024;
 
 /// Register `yuke:diff` and its functions.
 pub fn install(host: *Host) void {

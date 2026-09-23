@@ -15,11 +15,11 @@ const Context = quickjs.Context;
 const Value = quickjs.Value;
 
 /// The command deadline. A caller raises it up to `max_timeout_ms`.
-pub const default_timeout_ms: u32 = 120_000;
-pub const max_timeout_ms: u32 = 600_000;
+const default_timeout_ms: u32 = 120_000;
+const max_timeout_ms: u32 = 600_000;
 
 /// The default and the largest cap for each stream. A command that prints more loses its middle, not its result.
-pub const max_stream_bytes: u32 = 64 * 1024;
+const max_stream_bytes: u32 = 64 * 1024;
 
 /// Register `yuke:exec` and its functions.
 pub fn install(host: *Host) void {

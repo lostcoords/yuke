@@ -9,8 +9,8 @@ const cancellation = @import("cancellation.zig");
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
-pub const max_connections = 64;
-pub const max_bytes = 1024 * 1024;
+const max_connections = 64;
+const max_bytes = 1024 * 1024;
 const default_read_bytes = 64 * 1024;
 const default_timeout_ms = 5000;
 const max_timeout_ms = 600_000;

@@ -16,10 +16,10 @@ const Context = quickjs.Context;
 const Value = quickjs.Value;
 
 /// The most entries one listing returns. A larger directory reports `more` and stops.
-pub const max_entries: u32 = 512;
+const max_entries: u32 = 512;
 
 /// The most bytes `readFile` returns. A tool that needs more should read a range.
-pub const max_read_bytes: u32 = 10 * 1024 * 1024;
+const max_read_bytes: u32 = 10 * 1024 * 1024;
 
 /// Register `yuke:fs` and its one `fs` object.
 pub fn install(host: *Host) void {

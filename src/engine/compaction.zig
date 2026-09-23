@@ -10,7 +10,7 @@ const ai = @import("ai");
 const prompt = @import("prompt.zig");
 
 /// How much recent history one compaction keeps, in estimated tokens.
-pub const default_keep_recent_tokens: u64 = 20_000;
+const default_keep_recent_tokens: u64 = 20_000;
 
 /// The boundary one compaction takes.
 pub const Cut = struct {

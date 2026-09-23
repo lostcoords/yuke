@@ -11,7 +11,7 @@ pub const Error = error{OutOfMemory};
 /// The default message-count bound. It covers the model context, which is the larger reader.
 pub const default_max_messages: usize = 1000;
 /// The default byte bound. One large message can dominate, so bound bytes too.
-pub const default_max_bytes: usize = 8 * 1024 * 1024;
+const default_max_bytes: usize = 8 * 1024 * 1024;
 
 /// A recent committed message plus its serialized byte size. Each entry owns an arena for its clone.
 const Entry = struct {

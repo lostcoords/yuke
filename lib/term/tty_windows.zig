@@ -46,13 +46,13 @@ pub const Tty = struct {
     buf: [4]u8 = undefined,
     last_mouse_button_press: u16 = 0,
 
-    pub const input_raw_mode: CONSOLE_MODE_INPUT = .{
+    const input_raw_mode: CONSOLE_MODE_INPUT = .{
         .WINDOW_INPUT = 1,
         .MOUSE_INPUT = 1,
         .EXTENDED_FLAGS = 1,
     };
 
-    pub const output_raw_mode: CONSOLE_MODE_OUTPUT = .{
+    const output_raw_mode: CONSOLE_MODE_OUTPUT = .{
         .PROCESSED_OUTPUT = 1,
         .VIRTUAL_TERMINAL_PROCESSING = 1,
         .DISABLE_NEWLINE_AUTO_RETURN = 1,
@@ -139,7 +139,7 @@ pub const Tty = struct {
         return join.join();
     }
 
-    pub const CONSOLE_MODE_INPUT = packed struct(u32) {
+    const CONSOLE_MODE_INPUT = packed struct(u32) {
         PROCESSED_INPUT: u1 = 0,
         LINE_INPUT: u1 = 0,
         ECHO_INPUT: u1 = 0,
@@ -153,7 +153,7 @@ pub const Tty = struct {
         _: u22 = 0,
     };
 
-    pub const CONSOLE_MODE_OUTPUT = packed struct(u32) {
+    const CONSOLE_MODE_OUTPUT = packed struct(u32) {
         PROCESSED_OUTPUT: u1 = 0,
         WRAP_AT_EOL_OUTPUT: u1 = 0,
         VIRTUAL_TERMINAL_PROCESSING: u1 = 0,
@@ -162,21 +162,21 @@ pub const Tty = struct {
         _: u27 = 0,
     };
 
-    pub const EventState = struct {
+    const EventState = struct {
         ansi_buf: [128]u8 = undefined,
         ansi_idx: usize = 0,
         utf16_buf: [2]u16 = undefined,
         utf16_half: bool = false,
     };
 
-    pub const SMALL_RECT = extern struct {
+    const SMALL_RECT = extern struct {
         Left: windows.SHORT,
         Top: windows.SHORT,
         Right: windows.SHORT,
         Bottom: windows.SHORT,
     };
 
-    pub const CONSOLE_SCREEN_BUFFER_INFO = extern struct {
+    const CONSOLE_SCREEN_BUFFER_INFO = extern struct {
         dwSize: windows.COORD,
         dwCursorPosition: windows.COORD,
         wAttributes: windows.WORD,
@@ -185,7 +185,7 @@ pub const Tty = struct {
     };
 
     /// Map a Win32 input record to an xvaxis event. Return null for unsupported records.
-    pub fn eventFromRecord(
+    fn eventFromRecord(
         self: *Tty,
         record: *const INPUT_RECORD,
         state: *EventState,
@@ -462,7 +462,7 @@ pub const Tty = struct {
         AsciiChar: windows.CHAR,
     };
 
-    pub const KEY_EVENT_RECORD = extern struct {
+    const KEY_EVENT_RECORD = extern struct {
         bKeyDown: windows.BOOL,
         wRepeatCount: windows.WORD,
         wVirtualKeyCode: windows.WORD,
@@ -471,18 +471,18 @@ pub const Tty = struct {
         dwControlKeyState: windows.DWORD,
     };
 
-    pub const MOUSE_EVENT_RECORD = extern struct {
+    const MOUSE_EVENT_RECORD = extern struct {
         dwMousePosition: windows.COORD,
         dwButtonState: windows.DWORD,
         dwControlKeyState: windows.DWORD,
         dwEventFlags: windows.DWORD,
     };
 
-    pub const WINDOW_BUFFER_SIZE_RECORD = extern struct {
+    const WINDOW_BUFFER_SIZE_RECORD = extern struct {
         dwSize: windows.COORD,
     };
 
-    pub const MENU_EVENT_RECORD = extern struct {
+    const MENU_EVENT_RECORD = extern struct {
         dwCommandId: windows.UINT,
     };
 
@@ -498,7 +498,7 @@ pub const Tty = struct {
         FocusEvent: FOCUS_EVENT_RECORD,
     };
 
-    pub const INPUT_RECORD = extern struct {
+    const INPUT_RECORD = extern struct {
         EventType: windows.WORD,
         Event: union_unnamed_event,
     };

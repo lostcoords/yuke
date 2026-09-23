@@ -6,7 +6,7 @@ const zio = @import("zio");
 const CredentialLock = @This();
 
 /// How long one acquire waits before it gives up and leaves the grant for the next pass.
-pub const wait_ms: u64 = 30_000;
+const wait_ms: u64 = 30_000;
 /// How long one attempt waits before it tries again.
 const retry_ms: u64 = 25;
 

@@ -89,10 +89,10 @@ pub const Paint = struct {
 };
 
 /// The largest clipboard payload `term.copy` accepts. JavaScript reads it to report a refusal.
-pub const clipboard_max = term_pkg.Render.clipboard_max;
+const clipboard_max = term_pkg.Render.clipboard_max;
 
-pub const tick_ms_min: u32 = 50;
-pub const tick_ms_max: u32 = 2000;
+const tick_ms_min: u32 = 50;
+const tick_ms_max: u32 = 2000;
 
 /// Register `yuke:term` and its one `term` object, which the host also keeps as a root for size updates.
 pub fn install(host: *Host) void {
