@@ -1,4 +1,4 @@
-import { check } from "yuke:test";
+import { check, textParts } from "yuke:test";
 import { ChatView } from "yuke:chat-view";
 import { Text } from "yuke:ui";
 import { root } from "yuke:core";
@@ -6,7 +6,7 @@ import { row, column, child, fixed, fit, grow } from "yuke:layout";
 import { Context, Scope } from "yuke:ext";
 import { tui } from "yuke:tui";
 let sessionId = null;
-const view = new ChatView({ sessionId: () => sessionId, textOf: () => "history across sidebar" });
+const view = new ChatView({ sessionId: () => sessionId, partsOf: textParts(() => "history across sidebar") });
 const composer = view.composer, transcript = view.transcript, pager = transcript.pager;
 composer.onKey({ type: "paste", text: "draft\nline two\nline three\n" });
 const draft = composer.text, caret = composer.input.caret, spans = JSON.stringify(composer.spans);

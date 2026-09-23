@@ -6,24 +6,24 @@ import { ui } from "yuke:ui";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { openUrl } from "yuke:browser";
-import { loadCatalog, providerState, providerStateLabel, reloadCatalog } from "yuke:catalog";
+import { loadCatalog, providerStateLabel, reloadCatalog } from "yuke:catalog";
 
 /** @import { Context } from "yuke:ext" */
 /** @import { InjectContext as Ctx } from "./types/ext.js" */
-/** @typedef {Wire.AuthProvider & { state: Wire.ProviderState | null }} ProviderRow */
+/** @typedef {Wire.ProviderInfo} ProviderRow */
 
 /** @param {ProviderRow} p @returns {string} */
 function stateLabel(p) {
   return p.state === "ready" ? "ready" : providerStateLabel(p.state, p.can_login);
 }
 
-/** @param {Wire.AuthProvider} p @returns {string} */
+/** @param {ProviderRow} p @returns {string} */
 function kindLabel(p) {
   return p.can_login ? "account" : "api key";
 }
 
 // One picker over provider rows. Login and logout differ only in the rows, the footer verb, and the action.
-/** @template {Wire.AuthProvider} T @param {Ctx} ctx @param {string} title @param {string} verb @param {T[]} rows @param {(p: T) => string} right @param {(p: T) => void} onAccept @returns {void} */
+/** @param {Ctx} ctx @param {string} title @param {string} verb @param {readonly ProviderRow[]} rows @param {(p: ProviderRow) => string} right @param {(p: ProviderRow) => void} onAccept @returns {void} */
 function pickProvider(ctx, title, verb, rows, right, onAccept) {
   const picked = ui.pick({
     title,
@@ -31,21 +31,13 @@ function pickProvider(ctx, title, verb, rows, right, onAccept) {
     border: "rounded",
     width: max => Math.round(max * 0.6),
     height: max => Math.round(max * 0.5),
-    items: rows,
-    key: (p) => p.provider_id,
-    filterText: (p) => p.provider_id,
-    format: (p) => ({ text: p.provider_id, detail: kindLabel(p), right: right(p) }),
+    items: [...rows],
+    key: (p) => p.id,
+    filterText: (p) => p.id,
+    format: (p) => ({ text: p.id, detail: kindLabel(p), right: right(p) }),
     onAccept,
   });
   ctx.tui.overlay(picked.win);
-}
-
-// Read the providers after a reload, so a login from another process shows.
-/** @returns {Promise<ProviderRow[]>} */
-function providerRows() {
-  return reloadCatalog()
-    .then(() => client.authList())
-    .then((r) => r.providers.map((p) => ({ ...p, state: providerState(p.provider_id) })));
 }
 
 // The device-code step: the URL to open and the code to enter. The engine polls; this window only waits.
@@ -91,7 +83,7 @@ export class DeviceDialog {
 /** @param {ProviderRow} p @param {Wire.AuthLoginOutcome} outcome @returns {void} */
 function finishLogin(p, outcome) {
   if (outcome.type === "succeeded") {
-    notice.show("logged in · " + p.provider_id);
+    notice.show("logged in · " + p.id);
     loadCatalog();
   } else if (outcome.type === "canceled") notice.show("login canceled");
   else notice.show("login failed · " + outcome.message);
@@ -101,7 +93,7 @@ function finishLogin(p, outcome) {
 /** @param {Ctx} ctx @param {ProviderRow} p @returns {Promise<void>} */
 async function deviceLogin(ctx, p) {
   if (!ctx.scope.alive) return;
-  const login = client.authLoginTracked(p.provider_id);
+  const login = client.authLoginTracked(p.id);
   let loginId = "";
   let finished = false;
   const release = ctx.effect(() => login.dispose);
@@ -126,11 +118,11 @@ async function deviceLogin(ctx, p) {
 /** @param {Ctx} ctx @param {ProviderRow} p @returns {Promise<void>} */
 async function keyLogin(ctx, p) {
   try {
-    const key = await ctx.interaction.input("api key · " + p.provider_id, "paste the API key", { secret: true });
+    const key = await ctx.interaction.input("api key · " + p.id, "paste the API key", { secret: true });
     if (!key || !ctx.scope.alive) return;
-    await client.authSetApiKey(p.provider_id, key);
+    await client.authSetApiKey(p.id, key);
     if (ctx.scope.alive) {
-      notice.show("key saved · " + p.provider_id);
+      notice.show("key saved · " + p.id);
       await loadCatalog();
     }
   } catch (error) {
@@ -144,12 +136,12 @@ function startLogin(ctx, p) {
   else keyLogin(ctx, p);
 }
 
-// `/login` lists every provider with its state; `/login codex` starts that one.
+// `/login` lists every provider with its state; `/login codex` starts that one. A reload shows a login from another process.
 /** @param {Ctx} ctx @param {string} [query] @returns {void} */
 function openLogin(ctx, query) {
-  providerRows().then((rows) => {
+  reloadCatalog().then(({ providers: rows }) => {
     if (query) {
-      const p = rows.find((x) => x.provider_id === query);
+      const p = rows.find((x) => x.id === query);
       if (p) startLogin(ctx, p);
       else notice.show("no provider named " + query);
       return;
@@ -161,19 +153,19 @@ function openLogin(ctx, query) {
 // `/logout` lists the providers that hold a credential; `/logout codex` drops that one.
 /** @param {Ctx} ctx @param {string} [query] @returns {void} */
 function openLogout(ctx, query) {
-  client.authList().then((r) => {
-    const rows = r.providers.filter((p) => p.credential_kind != null);
+  loadCatalog().then((catalog) => {
+    const rows = catalog.providers.filter((p) => p.credential_kind != null);
     // A key the environment supplies is not in the file, so the engine cannot remove it and says so.
-    /** @param {Wire.AuthProvider} p */
-    const remove = (p) => client.authRemove(p.provider_id).then(
+    /** @param {ProviderRow} p */
+    const remove = (p) => client.authRemove(p.id).then(
       () => {
-        notice.show("logged out · " + p.provider_id);
+        notice.show("logged out · " + p.id);
         return loadCatalog();
       },
-      (e) => notice.show(e.code === "unknown_provider" ? p.provider_id + " has its key in the environment · unset the variable" : "logout failed · " + e.message),
+      (e) => notice.show(e.code === "unknown_provider" ? p.id + " has its key in the environment · unset the variable" : "logout failed · " + e.message),
     );
     if (query) {
-      const p = rows.find((x) => x.provider_id === query);
+      const p = rows.find((x) => x.id === query);
       if (p) remove(p);
       else notice.show("no credential for " + query);
       return;

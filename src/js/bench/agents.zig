@@ -37,7 +37,6 @@ pub fn create(host: *Host, count: u32, shape: Shape) !*Tree {
             .parent_id = if (n == 0) null else id(parent).raw,
             .parent_message_id = if (n == 0) null else 1,
             .parent_part_id = if (n == 0) null else 0,
-            .profile = "default",
             .model = "bench/model",
             .reasoning = "high",
             .config_rev = 0,

@@ -11,7 +11,7 @@ const ids = proto.ids;
 const reports = @import("reports.zig");
 const session_events = @import("events.zig");
 const admission = @import("admission.zig");
-const Input = @import("../session/input.zig");
+pub const Input = @import("../session/input.zig");
 const sql = @import("sql");
 const turn = @import("turn.zig");
 const compaction = @import("compaction.zig");
@@ -48,15 +48,21 @@ fn appendRunStarted(db: *Database, arena: std.mem.Allocator, io: std.Io, session
 pub fn beginTurn(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, input: Input, config_rev: proto.ids.ConfigRev) !Started {
     var tx = try db.begin();
     defer tx.deinit();
+    const started = try beginTurnInTransaction(db, io, arena, session_id, input, config_rev);
+    try tx.commit();
+    return started;
+}
+
+/// Commit the input as the first user message of a new run in the caller's transaction; it never enters the queue.
+pub fn beginTurnInTransaction(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, input: Input, config_rev: proto.ids.ConfigRev) !Started {
+    std.debug.assert(sql.inTransaction(db.conn));
     const input_id = try event_store.allocInputId(db, arena, session_id);
     const run_id = try event_store.allocRunId(db, arena, session_id);
     const now = util.nowMillis(io);
     const commits = try arena.alloc(message_store.Commit, 1);
     commits[0] = try commitInput(db, io, arena, session_id, input, input_id, now, now);
-    const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, now);
-    try tx.commit();
     return .{
-        .handle = .{ .input_id = input_id, .started = started },
+        .handle = .{ .input_id = input_id, .started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, now) },
         .user_commits = commits,
     };
 }
@@ -71,18 +77,11 @@ pub fn beginQueuedTurn(
 ) !Started {
     var tx = try db.begin();
     defer tx.deinit();
-    const result = try beginQueuedTurnInTransaction(db, io, arena, session_id, config_rev);
-    try tx.commit();
-    return result;
-}
-
-/// Create admission can share this transaction without a nested commit.
-pub fn beginQueuedTurnInTransaction(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, config_rev: proto.ids.ConfigRev) !Started {
-    std.debug.assert(sql.inTransaction(db.conn));
     const commits = try consumeQueued(db, io, arena, session_id);
     if (commits.len == 0) return error.NoRow;
     const run_id = try event_store.allocRunId(db, arena, session_id);
     const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, util.nowMillis(io));
+    try tx.commit();
     return .{
         .handle = .{ .input_id = commits[0].data.message.user.input_id, .started = started },
         .user_commits = commits,
@@ -284,8 +283,16 @@ pub fn createSlot(engine: *Engine, context: Preparation, started: Started, confi
     return RunSlot.create(engine.deps.gpa, started.handle, if (context.snapshot.parent_id) |id| .bytes(id) else null, context.tree, config);
 }
 
+/// Bind a committed turn to its session, then publish it: the user commits first, then `run.started`.
+pub fn bindStarted(engine: *Engine, rt: *Session, slot: *RunSlot, started: Started) void {
+    std.debug.assert(rt.active_run == null);
+    rt.active_run = slot;
+    session_events.publishUserCommits(engine, rt, started.user_commits);
+    emitStarted(engine, rt, started);
+}
+
 /// Emit the durable start after the caller folds any user commits.
-pub fn emitStarted(engine: *Engine, rt: *Session, started: Started) void {
+fn emitStarted(engine: *Engine, rt: *Session, started: Started) void {
     session_events.emitDurable(engine, rt, .{ .method = .@"run.started", .params = .{ .run_started_data = started.handle.started } });
 }
 
@@ -303,11 +310,8 @@ pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
     const config = try slotConfig(engine, arena, rt, context, .turn);
     const started = try beginQueuedTurn(engine.deps.db, engine.deps.io, arena, session_id.raw, context.snapshot.config_rev);
     const slot = try createSlot(engine, context, started, config);
-    // Publish the user commits before run.started to retire the queue in sequence order.
-    session_events.publishUserCommits(engine, rt, started.user_commits);
-    std.debug.assert(rt.queueDepth() == 0);
-    rt.active_run = slot;
-    emitStarted(engine, rt, started);
+    bindStarted(engine, rt, slot, started);
+    std.debug.assert(rt.queueDepth() == 0); // The commits retired the whole queue.
     return slot;
 }
 
@@ -350,8 +354,7 @@ pub fn prepareCompaction(engine: *Engine, rt: *Session, reason: proto.enums.Comp
 
     const started_result: Started = .{ .handle = .{ .input_id = 0, .started = started }, .user_commits = &.{} };
     const slot = try createSlot(engine, context, started_result, config);
-    rt.active_run = slot;
-    emitStarted(engine, rt, started_result);
+    bindStarted(engine, rt, slot, started_result);
     session_events.announceActivity(engine, rt); // A compaction opens no round, so nothing else says it runs.
     return slot;
 }

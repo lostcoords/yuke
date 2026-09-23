@@ -12,7 +12,7 @@ class Side extends View {
   draw() {}
   onKey(ev) { seen++; return true; }
 }
-const v = new ChatView({ textOf: () => "" });
+const v = new ChatView({});
 const side = new Side();
 root.setRoot(Node.branch("row", Node.leaf(side), Node.leaf(v), 0.3));
 root.focusView(v);

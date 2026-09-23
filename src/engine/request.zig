@@ -56,17 +56,9 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
     if (built.added.len != 0 and context.tokensFor(try context.jsonBytes(built.added)) > held.budget.input_ceiling - projected.tokens) return error.ContextHistoryTooLarge;
     const tools = try provider.request_builder.declared(arena, build.tools, built.added);
 
-    // Read the credential here, so a rotated key or a lapsed grant takes effect on the next round.
-    const secret = registry.credential(route.credential, engine.deps.execution.env, engine.nowMillis()) orelse return error.MissingCredential;
     // The serializer and the header builder both copy this, so it only has to outlive `prepare`.
     const session_hex = std.fmt.bytesToHex(slot.sessionId().raw, .lower);
-    var prepared = try ai.prepare(engine.deps.gpa, .{
-        .id = build.model,
-        .route = route.route,
-        .credential = secret,
-        .caps = model.caps,
-        .dialect = model.dialect,
-    }, .{
+    var prepared = try ai.prepare(engine.deps.gpa, try bind(engine, held, route.route), .{
         .blocks = built.blocks,
         .system = build.system,
         .tools = tools,
@@ -95,6 +87,12 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
         };
     }
     return prepared;
+}
+
+/// Bind the model of one call over `route`. The credential is read here, so a rotated key or a lapsed grant takes effect on the next call.
+pub fn bind(engine: *Engine, held: Snapshot, route: ai.route.Route) !ai.Model {
+    const secret = registry.credential(held.route.credential, engine.deps.execution.env, engine.nowMillis()) orelse return error.MissingCredential;
+    return .{ .id = held.build.model, .route = route, .credential = secret, .caps = held.model.caps, .dialect = held.model.dialect };
 }
 
 /// The serialized request one round sends. A `request.send` handler may replace any field.

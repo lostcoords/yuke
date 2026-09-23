@@ -6,6 +6,7 @@ const zio = @import("zio");
 const proto = @import("proto");
 const cli = @import("../cli.zig");
 const call = @import("call.zig");
+const input_gate = @import("input_gate.zig");
 const commands = @import("../engine/commands.zig");
 const Engine = @import("../engine/Engine.zig");
 const extensions_mod = @import("../js/extensions.zig");
@@ -95,13 +96,16 @@ fn runWith(extensions: *Extensions, arena: std.mem.Allocator, w: *std.Io.Writer,
 
     const pick = (try pickSession(extensions, arena, err, cwd, prompt, opts)) orelse return 1;
     waiter.bind(pick.id);
-    const sent: Sent = if (pick.input) |input| .{ .result = input } else try send(extensions, arena, err, pick.id, prompt);
+    const sent: call.Answer(proto.session.SessionSendInputResult) = if (pick.input) |input| .{ .ok = input } else try gated(extensions, arena, proto.session.SessionSendInputParams{
+        .session_id = pick.id,
+        .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = prompt } }} } },
+    });
     const started = switch (sent) {
-        .refused => |f| {
-            try fail(err, "{s}: {s}", .{ f.code, f.message });
+        .failure => |f| {
+            try fail(err, "{t}: {s}", .{ f.code, f.message });
             return 1;
         },
-        .result => |result| switch (result) {
+        .ok => |result| switch (result) {
             .started => |s| s,
             // Input that waits behind a queue has no run of its own to wait on, so it leaves the queue.
             .queued => |q| {
@@ -146,13 +150,13 @@ fn pickSession(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.W
                 return null;
             };
             const params: proto.misc.CreateSession = .{ .workspace_path = cwd, .model = model, .reasoning = opts.reasoning, .initial_input = .{ .content = .{ .content = &.{.{ .text = .{ .text = prompt } }} } } };
-            const json = try std.json.Stringify.valueAlloc(arena, params, .{ .emit_null_optional_fields = false });
-            const answer = try gatedCommand(extensions, arena, err, "session.create", json);
-            if (answer.failure) |f| {
-                try fail(err, "{s}: {s}", .{ f.code, f.message });
-                return null;
-            }
-            const created = try std.json.parseFromValueLeaky(proto.session.SessionResult, arena, answer.result, .{});
+            const created = switch (try gated(extensions, arena, params)) {
+                .ok => |result| result,
+                .failure => |f| {
+                    try fail(err, "{t}: {s}", .{ f.code, f.message });
+                    return null;
+                },
+            };
             return .{ .id = created.session.id, .model = created.session.model, .input = created.input };
         },
         .@"continue" => {
@@ -196,41 +200,12 @@ fn newest(engine: *Engine, arena: std.mem.Allocator, cwd: ?[]const u8) !?proto.m
     return best;
 }
 
-const Sent = union(enum) {
-    result: proto.session.SessionSendInputResult,
-    refused: struct { code: []const u8, message: []const u8 },
-};
-
-/// Send the prompt. A hooked input goes through the JavaScript gate, as every frontend's does.
-fn send(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.Writer, session_id: proto.ids.SessionId, prompt: []const u8) !Sent {
-    const params: proto.session.SessionSendInputParams = .{
-        .session_id = session_id,
-        .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = prompt } }} } },
-    };
-    var params_json: std.Io.Writer.Allocating = .init(arena);
-    try std.json.Stringify.value(params, .{ .emit_null_optional_fields = false }, &params_json.writer);
-
-    const answer = try gatedCommand(extensions, arena, err, "session.send_input", params_json.written());
-    if (answer.failure) |f| return .{ .refused = .{ .code = f.code, .message = f.message } };
-    return .{ .result = try std.json.parseFromValueLeaky(proto.session.SessionSendInputResult, arena, answer.result, .{}) };
-}
-
-/// Both input methods use the same owner bridge and retain the response launch gate.
-fn gatedCommand(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.Writer, method: []const u8, params: []const u8) !call.GateAnswer {
-    const host = extensions.host;
-    if (!host.hooks.holds(.@"input.before")) {
-        var body: std.Io.Writer.Allocating = .init(arena);
-        if (try call.call(extensions.app, extensions.host, arena, method, params, &body.writer)) |f| return .{ .failure = .{ .code = @tagName(f.code), .message = f.message } };
-        return .{ .result = try std.json.parseFromSliceLeaky(std.json.Value, arena, body.written(), .{}) };
-    }
-    const record = host.calls.submitInputMethod(method, params);
-    defer record.finish();
-    try pumpUntil(extensions, record, callSettled);
-    if (record.is_error) {
-        try fail(err, "the input gate failed: {s}", .{record.text orelse ""});
-        return error.InputGateFailed;
-    }
-    return std.json.parseFromSliceLeaky(call.GateAnswer, arena, record.text orelse "", .{ .ignore_unknown_fields = true });
+/// Fold `input.before` on the owner when a handler waits, then run the command. The RPC frontend holds its inputs through the same gate.
+fn gated(extensions: *Extensions, arena: std.mem.Allocator, params: anytype) !input_gate.AnswerOf(@TypeOf(params)) {
+    const record = input_gate.submit(extensions.host, arena, params);
+    defer if (record) |held| held.finish();
+    if (record) |held| try pumpUntil(extensions, held, callSettled);
+    return input_gate.finish(extensions.app, extensions.host, arena, params, record);
 }
 
 /// Pump until `done(context)` holds. Tools and hooks run on the owner; a script fault is logged, and the run goes on without the handler.

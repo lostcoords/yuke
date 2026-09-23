@@ -1,4 +1,4 @@
-import { check } from "yuke:test";
+import { check, textParts } from "yuke:test";
 import { root } from "yuke:core";
 import { Transcript } from "yuke:transcript";
 const rowText = (row) => row.text || (row.segments || []).map((segment) => segment.text).join("");
@@ -17,8 +17,7 @@ const tools = [plain, viewed];
 for (let i = 2; i < 8; i++) tools.push({ ...plain, id: i + 1, name: "plain-" + i, arguments: '{"path":"plain-' + i + '.txt"}' });
 const parts = tools.concat([{ type: "reasoning", id: 9, text: reasoning, signature: "" }]);
 const t = new Transcript({
-  textOf: (id) => id === "report" ? report : "",
-  partsOf: (id) => id === "answer" ? parts : [],
+  partsOf: (id) => id === "answer" ? parts : textParts((key) => key === "report" ? report : "")(id),
 });
 t.setOutline([
   { id: "report", type: "user", source: { type: "child_report", session_id: "s", run_id: 1, name: "agent", outcome: { type: "turn", finish: "stop", rounds: 1 }, partial: false, truncated: false, usage: { rounds: 1, tool_calls: 0, tokens: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 } } } },
@@ -57,7 +56,7 @@ check("reasoning-details", t.openReasoning("answer", 9) && root.overlays[0].cont
 root.popOverlay(root.overlays[0]);
 
 {
-  const rowsOf = (error) => { const e = new Transcript({ textOf: () => "" }); e.setOutline([{ id: 1, type: "assistant", error }], null); return e.rows(160, 0, e.rowCount(160)).map(rowText).join("\n"); };
+  const rowsOf = (error) => { const e = new Transcript({}); e.setOutline([{ id: 1, type: "assistant", error }], null); return e.rows(160, 0, e.rowCount(160)).map(rowText).join("\n"); };
   check("error-row-every-part", rowsOf({ type: "provider", message: "the provider returned an unexpected status", status: 400, request_id: "req_1", detail: "invalid_request_error: too long" }).includes("⚠ the provider returned an unexpected status · HTTP 400 · invalid_request_error: too long · request req_1"));
   check("error-row-sentence-only", rowsOf({ type: "provider", message: "the provider stream timed out" }).includes("⚠ the provider stream timed out") && !rowsOf({ type: "provider", message: "x" }).includes("HTTP"));
 }

@@ -21,8 +21,6 @@ const sample = [
 let outline;
 /** @type {Map<number, Wire.AssistantPart[]>} */
 let parts;
-/** @type {Map<number, string>} */
-let texts;
 /** @type {Extract<Wire.AssistantPart, { type: "text" }>[]} */
 let live;
 /** @type {Wire.AssistantPart[]} */
@@ -96,7 +94,6 @@ function previewParts() {
 function configurePreview(scale) {
   outline = [];
   parts = new Map();
-  texts = new Map();
   for (let copy = 0; copy < scale; copy++) {
     const reportId = outline.length + 1;
     outline.push({ id: reportId, type: "user", source: {
@@ -109,7 +106,7 @@ function configurePreview(scale) {
       truncated: false,
       usage: { rounds: 1, tool_calls: 0, tokens: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 } },
     } });
-    texts.set(reportId, previewReport);
+    parts.set(reportId, [{ type: "text", id: 0, text: previewReport }]);
     const assistantId = outline.length + 1;
     outline.push({ id: assistantId, type: "assistant" });
     parts.set(assistantId, previewParts());
@@ -122,14 +119,12 @@ function options() {
   if (phase === "stream_part") {
     const session = globalThis.PROJECTION_SESSION;
     return {
-      textOf: id => client.sessionWholeText(session, id),
       partsOf: id => client.sessionParts(session, id),
       partOf: (id, partId, previous) => client.sessionPart(session, id, partId, previous),
       partTextPage: (id, partId, field, offset, limit) => client.partTextPage(session, id, partId, field, offset, limit),
     };
   }
   return {
-    textOf: id => texts.get(id) || "",
     partsOf: id => id === activeId ? live : nativeStream() && id === NATIVE_STREAM_MESSAGE_ID ? nativeLive : parts.get(id) || [],
     partOf: (id, pid) => (id === activeId ? live : nativeStream() && id === NATIVE_STREAM_MESSAGE_ID ? nativeLive : parts.get(id) || []).find(p => p.id === pid) || null,
   };
@@ -161,14 +156,13 @@ function start(name, scale, w, h) {
   routeOff = null;
   outline = [];
   parts = new Map();
-  texts = new Map();
   const fixture = /** @type {FixtureMessage[]} */ (globalThis.FIXTURE ? JSON.parse(globalThis.FIXTURE) : sample);
   for (let copy = 0; copy < scale; copy++) {
     for (const message of fixture) {
       const id = outline.length + 1;
       outline.push({ id, type: message.type });
       if (message.type === "assistant") parts.set(id, JSON.parse(JSON.stringify(message.parts || [])));
-      else texts.set(id, message.text || "");
+      else parts.set(id, [{ type: "text", id: 0, text: message.text || "" }]);
     }
   }
   if (phase === "preview") configurePreview(scale);

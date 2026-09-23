@@ -62,7 +62,6 @@ pub fn sessionItem(arena: std.mem.Allocator, row: anytype) !proto.session.Sessio
         .session = .{
             .id = .bytes(row.id),
             .root = try arena.dupe(u8, row.root),
-            .profile = try arena.dupe(u8, row.profile),
             .model = try arena.dupe(u8, row.model),
             .reasoning = try arena.dupe(u8, row.reasoning),
             .config_rev = row.config_rev,

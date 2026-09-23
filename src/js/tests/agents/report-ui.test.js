@@ -1,10 +1,11 @@
+import { textParts } from "yuke:test";
 import { Transcript, inputSourceLabel } from "yuke:transcript";
 import { clearWorkQueue, queuedText } from "yuke:queue";
 (async () => {
   const source = { type: "child_report", name: "one", outcome: { type: "turn" }, partial: false, truncated: false, usage: { rounds: 1, tool_calls: 0, tokens: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 } } };
   const full = Array.from({ length: 200 }, (_, i) => "line " + i).join("\n");
   const preamble = "Report from one, run 1. Outcome: turn\nThis child report is not user input.\n\n";
-  const t = new Transcript({ textOf: () => preamble + full, partsOf: () => [{ type: "text", id: 0, text: preamble }, { type: "text", id: 1, text: full }] });
+  const t = new Transcript({ partsOf: () => [{ type: "text", id: 0, text: preamble }, { type: "text", id: 1, text: full }] });
   t.setOutline([{ id: 1, type: "user", source }], null);
   const rowText = (row) => row.text || (row.segments || []).map((segment) => segment.text).join("");
   const drawn = () => t.rows(80, 0, t.rowCount(80)).map(rowText).join("\n");
@@ -13,7 +14,7 @@ import { clearWorkQueue, queuedText } from "yuke:queue";
   if (t.rowCount(80) > 15 || !inputSourceLabel(source).includes("one")) throw new Error("unfolded report");
   const failed = { ...source, outcome: { type: "failed", code: "provider", message: "the provider returned an unexpected status", detail: "invalid_request_error: too long" } };
   if (!inputSourceLabel(failed).includes("failed · the provider returned an unexpected status · invalid_request_error: too long")) throw new Error("failure missing from the header");
-  const child = new Transcript({ textOf: () => "read the file" });
+  const child = new Transcript({ partsOf: textParts(() => "read the file") });
   child.setOutline([{ id: 1, type: "user", source: { type: "parent_instruction", session_id: "01".repeat(16), message_id: 2, part_id: 0 } }], null);
   const childRows = child.rows(80, 0, child.rowCount(80)).map(rowText).join("\n");
   if (!childRows.startsWith("From the parent session") || !childRows.includes("read the file")) throw new Error("parent instruction unlabeled");

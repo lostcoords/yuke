@@ -41,7 +41,6 @@ pub fn install(host: *Host) void {
         .{ .name = "sessionActivity", .arity = 1, .call = jsSessionActivity },
         .{ .name = "sessionParts", .arity = 2, .call = jsSessionParts },
         .{ .name = "sessionPart", .arity = 3, .call = jsSessionPart },
-        .{ .name = "sessionText", .arity = 4, .call = jsSessionText },
         .{ .name = "partText", .arity = 6, .call = jsPartText },
     }, null);
 }
@@ -189,25 +188,6 @@ fn jsSessionPart(ctx: Context, _: Value, args: []const Value) Value {
     return ctx.newString(aw.written());
 }
 
-/// One page of a message's whole text: `{"text":...,"next":N|null,"bytes":T}`. The cost follows the page, not the message.
-fn jsSessionText(ctx: Context, _: Value, args: []const Value) Value {
-    const engine = Host.fromContext(ctx).engine;
-    const empty = "{\"text\":\"\",\"next\":null,\"bytes\":0}";
-    const rt = runtimeArg(ctx, args) orelse return ctx.newString(empty);
-    const mid = u64Arg(ctx, args, 1) orelse return ctx.newString(empty);
-    const offset: usize = @intCast(u64Arg(ctx, args, 2) orelse 0);
-    const want = paging.pageLimit(u64Arg(ctx, args, 3));
-
-    var raw: std.Io.Writer.Allocating = .init(engine.gpa);
-    defer raw.deinit();
-    const page = paging.textPage(rt, mid, offset, want, &raw) orelse return ctx.newString(empty);
-
-    var aw: std.Io.Writer.Allocating = .init(engine.gpa);
-    defer aw.deinit();
-    writePage(&aw.writer, page.text, page.next, page.total) catch return ctx.newString(empty);
-    return ctx.newString(aw.written());
-}
-
 /// One page of one field of a part: `{"text":...,"next":N|null}`. `field` is the address a `cut` entry names.
 fn jsPartText(ctx: Context, _: Value, args: []const Value) Value {
     const engine = Host.fromContext(ctx).engine;
@@ -226,15 +206,14 @@ fn jsPartText(ctx: Context, _: Value, args: []const Value) Value {
 
     var aw: std.Io.Writer.Allocating = .init(engine.gpa);
     defer aw.deinit();
-    writePage(&aw.writer, page.text, page.next, null) catch return ctx.newString(empty);
+    writePage(&aw.writer, page.text, page.next) catch return ctx.newString(empty);
     return ctx.newString(aw.written());
 }
 
-fn writePage(w: *std.Io.Writer, text: []const u8, next: ?usize, bytes: ?usize) !void {
+fn writePage(w: *std.Io.Writer, text: []const u8, next: ?usize) !void {
     try w.writeAll("{\"text\":");
     try std.json.Stringify.encodeJsonString(text, .{}, w);
     if (next) |offset| try w.print(",\"next\":{d}", .{offset}) else try w.writeAll(",\"next\":null");
-    if (bytes) |total| try w.print(",\"bytes\":{d}", .{total});
     try w.writeByte('}');
 }
 
@@ -332,12 +311,12 @@ test "a request reaches a command and answers with its result" {
     try support.pumpUntilIdle(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.sent"));
 
-    // The text a person typed must come back; the client reads the complete text through bounded native pages.
+    // The text a person typed must come back through the part read.
     try host.evalModule(
         \\import { client } from "yuke:client";
         \\const o = client.sessionOutline(globalThis.sid);
         \\const first = o && o.messages.length ? o.messages[0].id : 0;
-        \\globalThis.text = first ? client.sessionWholeText(globalThis.sid, first) : "";
+        \\globalThis.text = first ? client.sessionParts(globalThis.sid, first).map((p) => p.text).join("") : "";
         \\globalThis.len = globalThis.text.length;
     , "text.js");
     try testing.expectEqual(@as(i32, 5), try host.evalInt("globalThis.len")); // "probe"

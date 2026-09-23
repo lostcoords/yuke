@@ -49,7 +49,6 @@ export class Chat {
     this.creating = false;
     this.gen = 0;
     this.view = new ChatView({
-      textOf: id => (this.sessionId ? client.sessionWholeText(this.sessionId, id) : ""),
       partsOf: id => (this.sessionId ? client.sessionParts(this.sessionId, id) : []),
       partOf: (id, partId, previous) => (this.sessionId ? client.sessionPart(this.sessionId, id, partId, previous) : null),
       partTextPage: (id, partId, field, offset, limit) => (this.sessionId ? client.partTextPage(this.sessionId, id, partId, field, offset, limit) : { text: "", next: null }),
@@ -366,7 +365,7 @@ function openModelPicker(ctx, query) {
 /** @param {Wire.ModelInfo} model @returns {boolean} */
 function modelAvailable(model) {
   const state = providerState(model.provider);
-  if (state === "needs_credential" || state === "expired") command.perform("auth:login", model.provider);
+  if (state === "needs_credential") command.perform("auth:login", model.provider);
   else if (state === "needs_route") notice.show(model.provider + " needs a route in providers.json");
   else return true;
   return false;

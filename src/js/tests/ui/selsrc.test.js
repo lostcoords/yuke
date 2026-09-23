@@ -1,11 +1,11 @@
-import { check } from "yuke:test";
+import { check, textParts } from "yuke:test";
 import { term } from "yuke:term";
 import { Transcript } from "yuke:transcript";
 import { rowText } from "yuke:pager";
 const at = (col, row, event) => ({ type: "mouse", col, row, button: "left", event, mods: 0 });
 
 const body = { u1: "plain user text", a1: "hello **bold** and `code`", a2: "- alpha" };
-const t = new Transcript({ textOf: (id) => body[id] || "" });
+const t = new Transcript({ partsOf: textParts((id) => body[id] || "") });
 t.setOutline([{ id: "u1", type: "user" }, { id: "a1", type: "assistant" }, { id: "a2", type: "assistant" }], null);
 term.beginFrame();
 t.draw({ x: 0, y: 0, w: 40, h: 12 });

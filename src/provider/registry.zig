@@ -4,6 +4,7 @@ const std = @import("std");
 const ai = @import("ai");
 const proto = @import("proto");
 const provider = @import("provider.zig");
+const login_runtime = @import("oauth/login_runtime.zig");
 const catalog = ai.catalog;
 
 const model = ai.model;
@@ -66,8 +67,6 @@ pub const Reason = enum {
     needs_credential,
     /// A routing field is missing, so the engine cannot build a request.
     needs_route,
-    /// The grant expired. The user must authenticate again.
-    expired,
 };
 
 /// A ready provider carries its host fields, so a state and a route can never disagree.
@@ -80,9 +79,7 @@ pub const Availability = union(enum) {
         return switch (self) {
             .ready => .ready,
             .unavailable => |reason| switch (reason) {
-                .needs_credential => .needs_credential,
-                .needs_route => .needs_route,
-                .expired => .expired,
+                inline else => |tag| @field(proto.enums.ProviderState, @tagName(tag)),
             },
         };
     }
@@ -96,6 +93,13 @@ pub const Provider = struct {
     availability: Availability,
     /// The OAuth flow the catalog names for this provider. An API-key provider names none.
     login_flow: ?[]const u8 = null,
+    /// The credential the file stores, or the key the environment supplies. Null when the row holds none.
+    credential_kind: ?proto.enums.AuthCredentialKind = null,
+
+    /// Report whether the engine can start a login for this row.
+    pub fn canLogin(self: Provider) bool {
+        return login_runtime.Flow.parse(self.login_flow orelse return false) != null;
+    }
 };
 
 /// One model, and the provider that serves it.
@@ -156,7 +160,13 @@ pub const Registry = struct {
         const providers = try arena.alloc(proto.catalog.ProviderInfo, self.rows.len);
         var models: std.ArrayList(proto.catalog.ModelInfo) = .empty;
         for (self.rows, 0..) |row, i| {
-            providers[i] = .{ .id = row.id, .name = row.name, .state = row.availability.state() };
+            providers[i] = .{
+                .id = row.id,
+                .name = row.name,
+                .state = row.availability.state(),
+                .credential_kind = row.credential_kind,
+                .can_login = row.canLogin(),
+            };
             for (row.models) |item| try models.append(arena, try modelInfo(arena, row.id, item));
         }
         self.providers = providers;
@@ -226,15 +236,29 @@ fn providerRow(
         catalog_only.models = &.{};
         break :fallback try mergedModels(arena, catalog_only, from_catalog, endpoints);
     };
+    const availability: Availability = if (merged != null)
+        try localAvailability(arena, p, from_catalog, env, endpoints, models)
+    else
+        .{ .unavailable = .needs_route };
     return .{
         .id = p.id,
         .login_flow = if (from_catalog) |c| loginFlow(c.auth) else null,
         .name = if (from_catalog) |c| c.name else p.id,
         .models = models,
-        .availability = if (merged != null)
-            try localAvailability(arena, p, from_catalog, env, endpoints, models)
-        else
-            .{ .unavailable = .needs_route },
+        .availability = availability,
+        .credential_kind = credentialKind(p, availability),
+    };
+}
+
+/// Report the credential the file stores; a row the file holds no credential for can only have its key from the environment.
+fn credentialKind(p: provider.config.LocalProvider, availability: Availability) ?proto.enums.AuthCredentialKind {
+    if (p.auth) |auth| return switch (auth) {
+        .api_key => |key| if (key.source == null) null else .api_key,
+        .oauth => .oauth,
+    };
+    return switch (availability) {
+        .ready => |host| if (host.credential == .none) null else .api_key,
+        .unavailable => null,
     };
 }
 

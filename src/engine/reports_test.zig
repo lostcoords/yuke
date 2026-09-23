@@ -110,7 +110,7 @@ test "child reuse reports only the current run and preserves source through prom
     try testing.expect(second.report.?.input.source.?.child_report.partial);
     const resident = try f.engine.activate(root);
     try testing.expectEqual(@as(usize, 2), resident.queueDepth());
-    try testing.expectEqual(@as(u64, 2), resident.queueEntries()[1].source.?.child_report.run_id);
+    try testing.expectEqual(@as(u64, 2), (try database.input.list(&f.db, a, root.raw))[1].input.source.?.child_report.run_id);
     const promoted = try run.beginQueuedTurn(&f.db, f.resources.runtime.io(), a, root.raw, 0);
     try testing.expectEqual(@as(usize, 2), promoted.user_commits.len);
     const history = try database.message.historyPage(&f.db, a, root.raw, 0, 10);

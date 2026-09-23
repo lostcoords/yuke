@@ -45,13 +45,15 @@ pub fn deinit(self: *Resources) void {
     self.* = undefined;
 }
 
-/// A tool port answer for tests: the names a canned reply calls, so the run loadout admits them.
-pub fn serveNames(comptime list: []const []const u8) *const fn (*anyopaque, std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
+/// A tool port answer for tests: the tools a canned reply calls, so the run loadout admits them.
+pub fn serveTools(comptime list: []const []const u8) *const fn (*anyopaque, std.mem.Allocator) error{OutOfMemory}![]const ai.ir.Tool {
     return struct {
-        fn names(_: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
-            return try arena.dupe([]const u8, list);
+        fn decls(_: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const ai.ir.Tool {
+            const out = try arena.alloc(ai.ir.Tool, list.len);
+            for (list, out) |name, *decl| decl.* = .{ .name = name, .description = name, .input_schema = "{}" };
+            return out;
         }
-    }.names;
+    }.decls;
 }
 
 pub fn makeEngine(self: *Resources, db: *Database) Engine {
@@ -106,7 +108,6 @@ pub fn seedSession(db: *Database, id: [16]u8, options: SessionOptions) !void {
         .parent_message_id = options.parent_message_id,
         .parent_part_id = options.parent_part_id,
         .name = options.name,
-        .profile = "default",
         .model = options.model,
         .reasoning = options.reasoning,
         .config_rev = 0,

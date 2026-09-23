@@ -70,7 +70,6 @@ const session_mod = @import("../session/session.zig");
 const Session = session_mod.Session;
 const RunSlot = session_mod.RunSlot;
 const runs = @import("run.zig");
-const model_call = @import("model_call.zig");
 const session_events = @import("events.zig");
 const provider = @import("../provider/provider.zig");
 
@@ -164,21 +163,41 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: ro
     @memcpy(blocks[0..built.len], built);
     blocks[built.len] = .{ .role = .user, .value = .{ .text = try instruction(engine, arena, slot, if (head != null) .merge else .summarize) } };
 
-    const session_hex = std.fmt.bytesToHex(slot.sessionId().raw, .lower);
-    const answer = try model_call.generateWith(engine, arena, &slot.cancel, held.route, &held.model, .{
-        .system = held.build.system,
-        .blocks = blocks,
-        .tools = held.build.tools,
-        .max_output_tokens = summary_output_tokens,
-        .reasoning = slot.config.reasoning,
-        .session_id = &session_hex,
-    }, diagnostics);
-    if (answer.finish_reason != .stop) return error.IncompleteSummary;
-    if (std.mem.trim(u8, answer.text, " \t\r\n").len == 0) return error.EmptySummary;
-    const after = cut.tokens_kept + context.summaryTokens(answer.text);
+    const summary = try summaryCall(engine, arena, slot, held, blocks, diagnostics);
+    const after = cut.tokens_kept + context.summaryTokens(summary);
     if (after > held.budget.input_ceiling or after >= cut.tokens_before) return error.CompactionDidNotFit;
     try slot.cancel.check(engine.deps.io);
-    return commit(engine, arena, slot, cut, answer.text);
+    return commit(engine, arena, slot, cut, summary);
+}
+
+/// Ask the session model for the summary text with the system prompt and the tools of the turn, so the call reuses the cached prefix.
+fn summaryCall(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: round_request.Snapshot, blocks: []const ai.ir.Block, diagnostics: *ai.Diagnostics) ![]const u8 {
+    try slot.cancel.check(engine.deps.io); // A cancel that already landed reports no other refusal.
+    // One call repeats no prefix, so it writes no cache breakpoint that it can never read back.
+    var route = held.route.route;
+    route.cache = null;
+    const limit = @min(summary_output_tokens, request_config.outputLimit(&held.model));
+    if (limit == 0) return error.ContextTooLarge;
+    // A budget shares the output ceiling, and this call sets a small ceiling for its answer alone.
+    const control = try request_config.reasoningFor(&held.model, slot.config.reasoning, limit);
+    const session_hex = std.fmt.bytesToHex(slot.sessionId().raw, .lower);
+    var result = try ai.generateWithTransport(engine.deps.gpa, engine.deps.route_transport, try round_request.bind(engine, held, route), .{
+        .blocks = blocks,
+        .system = held.build.system,
+        .tools = held.build.tools,
+        .options = .{
+            .max_output_tokens = limit,
+            .reasoning = if (control == .budget) .default else control,
+            .tool_choice = .none,
+            .session_id = &session_hex,
+        },
+    }, diagnostics);
+    defer result.deinit();
+    try slot.cancel.check(engine.deps.io);
+    for (result.content) |part| if (part == .tool_call) return error.IncompleteSummary;
+    if (result.finish_reason != .stop) return error.IncompleteSummary;
+    if (std.mem.trim(u8, result.text, " \t\r\n").len == 0) return error.EmptySummary;
+    return arena.dupe(u8, result.text);
 }
 
 /// A small window takes a small tail, so one compaction always reclaims a useful share of it.
@@ -609,7 +628,7 @@ test "the summary call repeats the prefix of the turn and refuses a tool" {
     try seedCompactableHistory(&f.db, a);
     // A turn declares tools, so the summary call declares the same ones.
     const Tools = struct {
-        fn decls(_: *anyopaque, tool_arena: std.mem.Allocator, _: []const []const u8) error{OutOfMemory}![]const ai.ir.Tool {
+        fn decls(_: *anyopaque, tool_arena: std.mem.Allocator) error{OutOfMemory}![]const ai.ir.Tool {
             return proto.dupe(tool_arena, @as([]const ai.ir.Tool, &.{.{
                 .name = "read",
                 .description = "Read a file.",
@@ -618,7 +637,7 @@ test "the summary call repeats the prefix of the turn and refuses a tool" {
         }
     };
     var tool_ctx: u8 = 0;
-    f.engine.installTools(.{ .ctx = &tool_ctx, .getDecls = Tools.decls });
+    f.engine.installTools(.{ .ctx = &tool_ctx, .decls = Tools.decls });
     var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.testing.canned_reply} };
     f.engine.deps.route_transport = capture.transport();
 
@@ -767,7 +786,7 @@ test "a tool round can compact and resume within the same run" {
             return .{ .output = "EXACT_TOOL_OUTPUT" ** 625, .is_error = false };
         }
     };
-    f.engine.installTools(.{ .names = Resources.serveNames(&.{"unknown"}), .run = Tool.run });
+    f.engine.installTools(.{ .decls = Resources.serveTools(&.{"unknown"}), .run = Tool.run });
     var capture: Resources.Capture = .{ .arena = a, .replies = &.{ Resources.tool_reply, ai.testing.canned_reply, ai.testing.canned_reply } };
     f.engine.deps.route_transport = capture.transport();
     try sendAndWait(&f, a, "continue after the tool");

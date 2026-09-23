@@ -11,7 +11,6 @@ CREATE TABLE sessions (
     parent_part_id    INTEGER CHECK (parent_part_id IS NULL OR parent_part_id BETWEEN 0 AND 9007199254740991), -- proto.PartId
     source_id         BLOB    CHECK (source_id IS NULL OR length(source_id) = 16), -- proto.SessionId
 
-    profile    TEXT NOT NULL CHECK (length(profile)   <= 64),
     model      TEXT NOT NULL CHECK (length(CAST(model AS BLOB)) <= 288),
     reasoning  TEXT NOT NULL CHECK (length(reasoning) <= 32),
     config_rev INTEGER NOT NULL CHECK (config_rev BETWEEN 0 AND 9007199254740991), -- proto.ConfigRev
@@ -152,16 +151,14 @@ CREATE TABLE session_configs (
     PRIMARY KEY (session_id, config_rev)
 ) STRICT, WITHOUT ROWID;
 
--- Store one prompt per session in a separate table; Create sets it once because the prompt has no fixed bound, and an absent row means null.
--- The rendered prompt and the engine prompt generation it was built under; zero means stale.
+-- The engine prompt generation the stored sections were built under; zero means stale.
 CREATE TABLE session_prompts (
     session_id BLOB PRIMARY KEY CHECK (length(session_id) = 16) -- proto.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,
-    prompt TEXT NOT NULL,
     generation INTEGER NOT NULL CHECK (generation BETWEEN 0 AND 9007199254740991) -- u64
 ) STRICT, WITHOUT ROWID;
 
--- The sections a prompt.build handler answered, in render order. Two blank lines separate them in `prompt`.
+-- The sections a prompt.build handler answered, in render order. The rendered prompt joins them with two blank lines.
 CREATE TABLE session_prompt_sections (
     session_id BLOB NOT NULL CHECK (length(session_id) = 16) -- proto.SessionId
         REFERENCES sessions(id) ON DELETE CASCADE,
@@ -201,8 +198,8 @@ CREATE TABLE pending_inputs (
         REFERENCES sessions(id) ON DELETE CASCADE,
     input_id     INTEGER NOT NULL CHECK (input_id BETWEEN 1 AND 9007199254740991),
     seq          INTEGER NOT NULL CHECK (seq BETWEEN 1 AND 9007199254740991),
-    queued_at_ms INTEGER NOT NULL CHECK (queued_at_ms BETWEEN 0 AND 9007199254740991),
-    payload      TEXT NOT NULL CHECK (length(payload) > 0),
+    -- The source of an engine input; null for a user input. The input.queued event holds the content.
+    source       TEXT CHECK (source IN ('parent_instruction', 'child_report', 'child_input_canceled', 'engine_interruption')),
 
     PRIMARY KEY (session_id, input_id),
     UNIQUE (session_id, seq),

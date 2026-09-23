@@ -3,7 +3,7 @@ import { root, Node, context } from "yuke:core";
 import { ChatView } from "yuke:chat-view";
 const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });
 
-const v = new ChatView({ textOf: () => "" });
+const v = new ChatView({});
 root.setRoot(Node.leaf(v));
 root.focusView(v);
 // Count where each key lands, which is the routing contract itself.

@@ -7,7 +7,6 @@
 -- parent_message_id: ?u64!
 -- parent_part_id: ?u64!
 -- source_id: ?[16]u8!
--- profile: []const u8!
 -- model: []const u8!
 -- reasoning: []const u8!
 -- config_rev: u64!
@@ -20,11 +19,11 @@
 -- updated_at_ms: u64!
 INSERT INTO sessions(
     id, root, origin, parent_id, parent_message_id, parent_part_id, source_id,
-    profile, model, reasoning, config_rev, max_rounds, title, name,
+    model, reasoning, config_rev, max_rounds, title, name,
     created_by_name, created_by_version, created_at_ms, updated_at_ms
 ) VALUES (
     :id, :root, :origin, :parent_id, :parent_message_id, :parent_part_id, :source_id,
-    :profile, :model, :reasoning, :config_rev, :max_rounds, :title, :name,
+    :model, :reasoning, :config_rev, :max_rounds, :title, :name,
     :created_by_name, :created_by_version, :created_at_ms, :updated_at_ms
 );
 
@@ -42,7 +41,6 @@ SELECT 1 AS present FROM sessions WHERE id = :id;
 -- parent_message_id: ?u64!
 -- parent_part_id: ?u64!
 -- source_id: ?[16]u8!
--- profile: []const u8!
 -- model: []const u8!
 -- reasoning: []const u8!
 -- config_rev: u64!
@@ -70,7 +68,7 @@ SELECT 1 AS present FROM sessions WHERE id = :id;
 SELECT
     id, root,
     origin, parent_id, parent_message_id, parent_part_id, source_id,
-    profile, model, reasoning, config_rev, max_rounds, title, name,
+    model, reasoning, config_rev, max_rounds, title, name,
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -126,7 +124,6 @@ RETURNING 1 AS changed;
 -- parent_message_id: ?u64!
 -- parent_part_id: ?u64!
 -- source_id: ?[16]u8!
--- profile: []const u8!
 -- model: []const u8!
 -- reasoning: []const u8!
 -- config_rev: u64!
@@ -151,7 +148,7 @@ RETURNING 1 AS changed;
 SELECT
     id, root,
     origin, parent_id, parent_message_id, parent_part_id, source_id,
-    profile, model, reasoning, config_rev, max_rounds, title, name,
+    model, reasoning, config_rev, max_rounds, title, name,
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -175,7 +172,7 @@ LIMIT :limit;
 SELECT
     id, root,
     origin, parent_id, parent_message_id, parent_part_id, source_id,
-    profile, model, reasoning, config_rev, max_rounds, title, name,
+    model, reasoning, config_rev, max_rounds, title, name,
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -206,11 +203,10 @@ WHERE parent_id = :filter_parent_id
   AND (NOT :top_level OR origin IN ('root', 'fork'));
 
 -- name: ReplacePrompt :exec
--- Store the rendered prompt under the generation it was built for. A row exists from creation on.
+-- Store the generation the sections were built for. A row exists from creation on.
 -- session_id: [16]u8!
--- prompt: []const u8!
 -- generation: u64!
-INSERT OR REPLACE INTO session_prompts(session_id, prompt, generation) VALUES (:session_id, :prompt, :generation);
+INSERT OR REPLACE INTO session_prompts(session_id, generation) VALUES (:session_id, :generation);
 
 -- name: StalePrompt :exec
 -- A context reload marks the prompt stale, so the next run builds it again.
@@ -218,11 +214,10 @@ INSERT OR REPLACE INTO session_prompts(session_id, prompt, generation) VALUES (:
 UPDATE session_prompts SET generation = 0 WHERE session_id = :session_id;
 
 -- name: SelectPrompt :optional
--- Read the session's system prompt and its generation. An absent row reads back as null.
+-- Read the generation of the session's prompt sections. An absent row reads back as null.
 -- session_id: [16]u8!
--- prompt: []const u8!
 -- generation: u64!
-SELECT prompt, generation FROM session_prompts WHERE session_id = :session_id;
+SELECT generation FROM session_prompts WHERE session_id = :session_id;
 
 -- name: DeletePromptSections :exec
 -- session_id: [16]u8!

@@ -10,16 +10,6 @@ pub const AuthCancelLoginParams = struct {
     login_id: ids.LoginId,
 };
 
-/// This payload describes `auth.changed`.
-pub const AuthChangedData = struct {
-    provider: AuthProvider,
-};
-
-/// This result describes `auth.list`.
-pub const AuthListResult = struct {
-    providers: []const AuthProvider,
-};
-
 /// This payload describes `auth.login_finished`.
 pub const AuthLoginFinishedData = struct {
     login_id: ids.LoginId,
@@ -65,13 +55,6 @@ pub const AuthLoginResult = struct {
 /// These parameters select the local credential to remove, an API key or a grant.
 pub const AuthRemoveParams = struct {
     provider_id: ids.ProviderId,
-};
-
-/// Public authentication state and capabilities for one provider.
-pub const AuthProvider = struct {
-    provider_id: ids.ProviderId,
-    credential_kind: ?enums.AuthCredentialKind = null,
-    can_login: bool,
 };
 
 /// These `auth.set_api_key` parameters carry a key that the wire never returns.

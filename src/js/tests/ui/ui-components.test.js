@@ -20,7 +20,7 @@ const parts = {
   mix: [{ type: "text", id: 0, text: "**hi** there" }, { type: "tool", id: 1, name: "read", arguments: '{"path":"c.zig"}', state: { type: "completed", output: "ok", duration_ms: 1 } }],
   diff: [{ type: "tool", id: 0, name: "edit", arguments: '{"path":"d.zig"}', state: { type: "completed", output: "ok", duration_ms: 2, view: [{ type: "diff", files: [{ path: "d.zig", hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ["-old", "+new"] }] }] }] } }],
 };
-const t = new Transcript({ textOf: () => "", partsOf: (id) => parts[id] || [] });
+const t = new Transcript({ partsOf: (id) => parts[id] || [] });
 t.setOutline([{ id: "done", type: "assistant" }, { id: "b1", type: "user" }, { id: "run", type: "assistant" }, { id: "b2", type: "user" }, { id: "err", type: "assistant" }], null);
 const paint = (h) => { term.beginFrame(); t.draw({ x: 0, y: 0, w: 40, h: h || 12 }); term.endFrame(); };
 paint();
@@ -59,7 +59,7 @@ t.onMouse(at(6, 1, "press"));
 t.onMouse(at(6, 1, "release"));
 check("click-close", !rowsHave(t.rows(40, 0, 6), "alpha"));
 
-const mix = new Transcript({ textOf: (id) => (id === "mix" ? "**hi** there" : ""), partsOf: (id) => parts[id] || [] });
+const mix = new Transcript({ partsOf: (id) => parts[id] || [] });
 mix.setOutline([{ id: "mix", type: "assistant" }], null);
 term.beginFrame(); mix.draw({ x: 0, y: 0, w: 40, h: 8 }); term.endFrame();
 const mixRows = mix.rows(40, 0, 8);
@@ -71,7 +71,7 @@ const src = mix.selectedSource();
 check("mix-source-md", src.indexOf("hi") >= 0 && src.indexOf("there") >= 0);
 check("mix-source-tool", src.indexOf("Read") >= 0 && src.indexOf("c.zig") >= 0);
 
-const dt = new Transcript({ textOf: () => "", partsOf: (id) => parts[id] || [] });
+const dt = new Transcript({ partsOf: (id) => parts[id] || [] });
 dt.setOutline([{ id: "diff", type: "assistant" }], null);
 dt.togglePart("diff", 0);
 const diffRows = dt.rows(40, 0, 10);
@@ -79,7 +79,7 @@ check("diff-path", rowsHave(diffRows, "d.zig"));
 check("diff-del", rowsHave(diffRows, "-old") && rowsGroup(diffRows, "TxToolDel"));
 check("diff-add", rowsHave(diffRows, "+new") && rowsGroup(diffRows, "TxToolAdd"));
 
-const v = new ChatView({ textOf: () => "", partsOf: (id) => parts[id] || [] });
+const v = new ChatView({ partsOf: (id) => parts[id] || [] });
 v.transcript.setOutline([{ id: "done", type: "assistant" }], null);
 root.setRoot(Node.leaf(v));
 v.rect = { x: 0, y: 0, w: 40, h: 12 }; v.layout(v.rect);
@@ -103,7 +103,7 @@ check("plugin-click-close", !rowsHave(v.transcript.rows(40, 0, 8), "alpha"));
 
 const longOut = Array.from({ length: 80 }, (_, i) => "line" + i).join("\n");
 parts.long = [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"seq"}', state: { type: "completed", output: longOut, duration_ms: 1 } }];
-const longT = new Transcript({ textOf: () => "", partsOf: (id) => parts[id] || [] });
+const longT = new Transcript({ partsOf: (id) => parts[id] || [] });
 longT.setOutline([{ id: "long", type: "assistant" }], null);
 term.beginFrame(); longT.draw({ x: 0, y: 0, w: 40, h: 4 }); term.endFrame();
 longT.onMouse(at(6, 1, "press"));

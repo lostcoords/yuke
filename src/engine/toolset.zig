@@ -40,10 +40,8 @@ pub const Outcome = struct {
 
 pub const ToolSet = struct {
     ctx: *anyopaque = undefined,
-    /// Answer every tool name the process serves. The result belongs to `arena`.
-    names: *const fn (ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 = noNames,
-    /// Answer the declarations of `allowed`, in table order. The result belongs to `arena`.
-    getDecls: *const fn (ctx: *anyopaque, arena: std.mem.Allocator, allowed: []const []const u8) error{OutOfMemory}![]const ir.Tool = noDecls,
+    /// Answer every declaration the process serves, in table order. The result belongs to `arena`.
+    decls: *const fn (ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const ir.Tool = noDecls,
     /// Run one tool by the name the provider chose.
     run: *const fn (
         ctx: *anyopaque,
@@ -55,11 +53,7 @@ pub const ToolSet = struct {
 };
 
 /// A process without extensions advertises no tool.
-fn noNames(_: *anyopaque, _: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
-    return &.{};
-}
-
-fn noDecls(_: *anyopaque, _: std.mem.Allocator, _: []const []const u8) error{OutOfMemory}![]const ir.Tool {
+fn noDecls(_: *anyopaque, _: std.mem.Allocator) error{OutOfMemory}![]const ir.Tool {
     return &.{};
 }
 

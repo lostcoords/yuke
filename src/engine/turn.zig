@@ -1102,7 +1102,7 @@ test "a build hook can discard the live registry and tools before the request se
         session_id: ids.SessionId,
         discarded: bool = false,
 
-        fn decls(ctx: *anyopaque, arena: std.mem.Allocator, _: []const []const u8) error{OutOfMemory}![]const ai.ir.Tool {
+        fn decls(ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const ai.ir.Tool {
             const self: *@This() = @ptrCast(@alignCast(ctx));
             return proto.dupe(arena, self.tools);
         }
@@ -1159,7 +1159,7 @@ test "a build hook can discard the live registry and tools before the request se
         .description = "Before",
         .input_schema = "{\"type\":\"object\",\"properties\":{}}",
     }}));
-    f.engine.installTools(.{ .ctx = &state, .getDecls = State.decls });
+    f.engine.installTools(.{ .ctx = &state, .decls = State.decls });
     f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -1439,7 +1439,7 @@ test "a running tool publishes its live output in order, and a cut on a characte
     defer recorder.deltas.deinit(std.testing.allocator);
     f.engine.sinks.add(.{ .ctx = &recorder, .on_event = Recorder.onEvent });
     defer f.engine.sinks.remove(&recorder);
-    f.engine.installTools(.{ .names = Resources.serveNames(&.{"unknown"}), .run = Tool.run });
+    f.engine.installTools(.{ .decls = Resources.serveTools(&.{"unknown"}), .run = Tool.run });
     _ = try f.send(&.{.{ .text = .{ .text = "go" } }});
     try f.finish(Resources.Fixture.id);
 
@@ -1456,11 +1456,11 @@ test "a tool that appears while tools.select runs joins the same run" {
     const State = struct {
         reads: usize = 0,
 
-        fn names(raw: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
+        fn decls(raw: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const ai.ir.Tool {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.reads += 1;
             // The first read happens before the hook, the second after it, when the late tool exists.
-            return try arena.dupe([]const u8, if (self.reads == 1) &.{"read"} else &.{ "read", "late" });
+            return if (self.reads == 1) Resources.serveTools(&.{"read"})(raw, arena) else Resources.serveTools(&.{ "read", "late" })(raw, arena);
         }
 
         fn holds(_: *anyopaque, point: proto.hook.Point) bool {
@@ -1475,7 +1475,7 @@ test "a tool that appears while tools.select runs joins the same run" {
     try fixture.init();
     defer fixture.deinit();
     var state: State = .{};
-    fixture.engine.installTools(.{ .ctx = &state, .names = State.names });
+    fixture.engine.installTools(.{ .ctx = &state, .decls = State.decls });
     fixture.engine.deps.hooks = .{ .ctx = &state, .holds = State.holds, .ask = State.ask };
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -1487,10 +1487,6 @@ test "a tool that appears while tools.select runs joins the same run" {
 test "the run loadout gates a tool call, and a tool.before rewrite lands inside it" {
     const State = struct {
         calls: usize = 0,
-
-        fn names(_: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
-            return try arena.dupe([]const u8, &.{ "delegate", "read" });
-        }
 
         fn execute(raw: *anyopaque, _: std.mem.Allocator, name: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
             const self: *@This() = @ptrCast(@alignCast(raw));
@@ -1523,7 +1519,7 @@ test "the run loadout gates a tool call, and a tool.before rewrite lands inside 
     try f.init();
     defer f.deinit();
     var state: State = .{};
-    f.engine.installTools(.{ .ctx = &state, .names = State.names, .run = State.execute });
+    f.engine.installTools(.{ .ctx = &state, .decls = Resources.serveTools(&.{ "delegate", "read" }), .run = State.execute });
     f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
     var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer scratch.deinit();
@@ -1535,7 +1531,7 @@ test "the run loadout gates a tool call, and a tool.before rewrite lands inside 
     const accepted = try runHooked(&f.engine, scratch.allocator(), f.slot, .{ .part_id = 0, .name = "read", .arguments = "{}" }, .discard);
     try std.testing.expect(!accepted.is_error);
     try std.testing.expectEqual(@as(usize, 1), state.calls);
-    try std.testing.expectEqual(@as(usize, 1), f.slot.tools.?.names.len);
+    try std.testing.expectEqual(@as(usize, 1), f.slot.tools.?.decls.len);
 }
 
 test "a tool.after replacement is the whole result, and the engine admits the media that remains" {
@@ -1564,7 +1560,7 @@ test "a tool.after replacement is the whole result, and the engine admits the me
     try f.init();
     defer f.deinit();
     var state: State = .{};
-    f.engine.installTools(.{ .ctx = &state, .names = Resources.serveNames(&.{"read"}), .run = State.execute });
+    f.engine.installTools(.{ .ctx = &state, .decls = Resources.serveTools(&.{"read"}), .run = State.execute });
     f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
     var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer scratch.deinit();

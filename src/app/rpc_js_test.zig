@@ -23,6 +23,16 @@ const TestFixture = struct {
         self.stream = .{ .app = &self.fixture.app, .out = &self.out.writer, .gpa = testing.allocator, .notifications = &self.notifications, .host = self.fixture.extensions.host };
     }
 
+    /// Pump until every held input answers. A hook settles on one pump and its command runs on the drain.
+    fn settleInputs(self: *TestFixture) !void {
+        for (0..8) |_| {
+            try self.fixture.extensions.host.pump();
+            self.stream.drainInputs();
+            if (self.stream.inputs.items.len == 0) return;
+        }
+        return error.TestUnexpectedResult;
+    }
+
     fn deinit(self: *TestFixture) void {
         self.stream.deinit();
         rpc.drainNotifications(testing.allocator, &self.notifications);
@@ -106,13 +116,52 @@ test "a pending input hook still accepts an interaction response" {
     rpc.serve(testing.allocator, &f.stream,
         \\{"id":"answer","method":"interaction.respond","params":{"interaction_id":1,"response":{"type":"confirm","value":true}}}
     );
-    // The answer settles the hook, then the command, then the gate's Promise: one pump per step.
-    for (0..8) |_| {
-        try extensions.host.pump();
-        f.stream.drainInputs();
-        if (f.stream.inputs.items.len == 0) break;
-    }
+    try f.settleInputs();
     try testing.expect(std.mem.indexOf(u8, f.out.written(), "\"id\":\"input\",\"result\"") != null);
+}
+
+test "a hooked create gates its initial input, and a refusal leaves no session" {
+    var f: TestFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const host = f.fixture.extensions.host;
+    try host.evalModule(
+        \\import { plugins } from "yuke:ext";
+        \\globalThis.mode = "block";
+        \\plugins.use({ name: "initial", apply(ctx) {
+        \\  ctx.hook("input.before", async (value) => {
+        \\    globalThis.proposed = value.session_id === null && value.create.workspace_path === "/work" && value.create.initial_input === undefined;
+        \\    if (globalThis.mode === "block") return { block: "denied" };
+        \\    if (globalThis.mode === "bad") return { replace: {} };
+        \\    return { replace: { content: [{ type: "text", text: "replaced" }] } };
+        \\  });
+        \\} });
+    , "initial.js");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const line =
+        \\{"id":"c","method":"session.create","params":{"workspace_path":"/work","model":"test/model","initial_input":{"type":"content","content":[{"type":"text","text":"original"}]}}}
+    ;
+    for ([_][:0]const u8{ "globalThis.mode = 'block'", "globalThis.mode = 'bad'" }) |script| {
+        try host.eval(script, "mode.js");
+        f.out.clearRetainingCapacity();
+        rpc.serve(testing.allocator, &f.stream, line);
+        try f.settleInputs();
+        try testing.expect(std.mem.startsWith(u8, f.out.written(), "{\"id\":\"c\",\"error\":{\"code\":-32602,"));
+        try testing.expectEqual(@as(u64, 0), try database.session.count(&f.fixture.app.db, a, .{}));
+    }
+    try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.proposed ? 1 : 0"));
+
+    try host.eval("globalThis.mode = 'replace'", "mode.js");
+    f.out.clearRetainingCapacity();
+    rpc.serve(testing.allocator, &f.stream, line);
+    try f.settleInputs();
+    const Created = struct { result: proto.session.SessionResult };
+    const created = try std.json.parseFromSliceLeaky(Created, a, f.out.written(), .{ .ignore_unknown_fields = true });
+    const id = created.result.session.id;
+    const page = try database.message.historyPage(&f.fixture.app.db, a, id.raw, 0, 10);
+    try testing.expectEqualStrings("replaced", page.messages[0].user.content[0].text.text);
 }
 
 test "RPC lists, reads, and stops a background job, and hears its start and its end" {
@@ -217,3 +266,4 @@ test "a removed session stops its running jobs" {
 }
 
 const support = @import("../js/tests/support.zig");
+const database = @import("../store/store.zig");

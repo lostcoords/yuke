@@ -177,14 +177,6 @@
       "paramsOptional": true
     },
     {
-      "name": "auth.list",
-      "doc": "List the local providers and the credential each one holds.",
-      "params": "Empty",
-      "result": "AuthListResult",
-      "direction": "clientToServer",
-      "paramsOptional": true
-    },
-    {
       "name": "auth.set_api_key",
       "doc": "Set an API key for a provider.",
       "params": "AuthSetApiKeyParams",
@@ -278,12 +270,6 @@
       "name": "auth.login_finished",
       "doc": "The engine finished an authentication login flow.",
       "params": "AuthLoginFinishedData",
-      "direction": "serverToClient"
-    },
-    {
-      "name": "auth.changed",
-      "doc": "Authentication state changed.",
-      "params": "AuthChangedData",
       "direction": "serverToClient"
     },
     {
@@ -513,28 +499,6 @@
       ]
     },
     {
-      "name": "AuthChangedData",
-      "doc": "This payload describes `auth.changed`.",
-      "fields": [
-        {
-          "name": "provider",
-          "type": "AuthProvider",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "AuthListResult",
-      "doc": "This result describes `auth.list`.",
-      "fields": [
-        {
-          "name": "providers",
-          "type": "[]AuthProvider",
-          "presence": "required"
-        }
-      ]
-    },
-    {
       "name": "AuthLoginFinishedData",
       "doc": "This payload describes `auth.login_finished`.",
       "fields": [
@@ -620,27 +584,6 @@
       ]
     },
     {
-      "name": "AuthProvider",
-      "doc": "Public authentication state and capabilities for one provider.",
-      "fields": [
-        {
-          "name": "provider_id",
-          "type": "ProviderId",
-          "presence": "required"
-        },
-        {
-          "name": "credential_kind",
-          "type": "AuthCredentialKind",
-          "presence": "optional"
-        },
-        {
-          "name": "can_login",
-          "type": "bool",
-          "presence": "required"
-        }
-      ]
-    },
-    {
       "name": "AuthSetApiKeyParams",
       "doc": "These `auth.set_api_key` parameters carry a key that the wire never returns.",
       "fields": [
@@ -717,6 +660,18 @@
         {
           "name": "state",
           "type": "ProviderState",
+          "presence": "required"
+        },
+        {
+          "name": "credential_kind",
+          "doc": "The credential that serves this provider, or null when it holds none. The wire never carries the secret.",
+          "type": "AuthCredentialKind",
+          "presence": "optional"
+        },
+        {
+          "name": "can_login",
+          "doc": "True when the engine can start a login flow for this provider.",
+          "type": "bool",
           "presence": "required"
         }
       ]
@@ -2175,11 +2130,6 @@
           "presence": "required"
         },
         {
-          "name": "profile",
-          "type": "string",
-          "presence": "optional"
-        },
-        {
           "name": "model",
           "type": "string",
           "presence": "optional"
@@ -2352,11 +2302,6 @@
         {
           "name": "root",
           "doc": "The canonical workspace directory this session runs in.",
-          "type": "string",
-          "presence": "required"
-        },
-        {
-          "name": "profile",
           "type": "string",
           "presence": "required"
         },
@@ -4032,9 +3977,6 @@
           "type": "CatalogReloadResult"
         },
         {
-          "type": "AuthListResult"
-        },
-        {
           "type": "AuthLoginResult"
         },
         {
@@ -4067,9 +4009,6 @@
         },
         {
           "type": "AuthLoginFinishedData"
-        },
-        {
-          "type": "AuthChangedData"
         },
         {
           "type": "Notice"
@@ -4227,11 +4166,6 @@
           "name": "auth.login_finished",
           "wire": "auth.login_finished",
           "doc": "The engine finished an authentication login flow."
-        },
-        {
-          "name": "auth.changed",
-          "wire": "auth.changed",
-          "doc": "Authentication state changed."
         },
         {
           "name": "notice",
@@ -4488,11 +4422,6 @@
           "doc": "Read providers.json again and rebuild the catalog."
         },
         {
-          "name": "auth.list",
-          "wire": "auth.list",
-          "doc": "List the local providers and the credential each one holds."
-        },
-        {
           "name": "auth.set_api_key",
           "wire": "auth.set_api_key",
           "doc": "Set an API key for a provider."
@@ -4708,11 +4637,6 @@
           "name": "needs_route",
           "wire": "needs_route",
           "doc": "A route field is missing, so the engine cannot build a request."
-        },
-        {
-          "name": "expired",
-          "wire": "expired",
-          "doc": "The grant expired. The user must authenticate again."
         }
       ]
     },

@@ -24,7 +24,7 @@ pub fn create(gpa: std.mem.Allocator, scale: u32) !*Commit {
     errdefer gpa.destroy(self);
     var db = try store.Database.openTest();
     errdefer db.deinit();
-    try store.session.create(&db, .{ .id = sid.raw, .root = "/bench", .origin = "root", .profile = "default", .model = "bench", .reasoning = "high", .config_rev = 0, .title = "bench", .created_at_ms = 1, .updated_at_ms = 1 });
+    try store.session.create(&db, .{ .id = sid.raw, .root = "/bench", .origin = "root", .model = "bench", .reasoning = "high", .config_rev = 0, .title = "bench", .created_at_ms = 1, .updated_at_ms = 1 });
     var draft = try Draft.init(gpa, .{ .session_id = sid, .message_id = 100000, .run_id = 1, .config_rev = 0, .created_at_ms = 1 });
     errdefer draft.deinit();
     const unit = "Text 世界 \"quoted\" \\ path\n";

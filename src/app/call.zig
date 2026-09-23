@@ -15,13 +15,12 @@ pub const Failure = struct {
     message: []const u8,
 };
 
-/// What the JavaScript input gate answers for a gated method: the command result, or the refusal with its wire code.
-pub const GateAnswer = struct {
-    result: std.json.Value = .null,
-    failure: ?struct { code: []const u8, message: []const u8 } = null,
-};
+/// The answer of one typed command: its result, or the refusal the frontend reports.
+pub fn Answer(comptime T: type) type {
+    return union(enum) { ok: T, failure: Failure };
+}
 
-/// Decode `params_json`, run the command, and write its result as JSON into `out`; return null on success, a `Failure` when a command refuses, and an error for a bug.
+/// Decode `params_in`, run the command, and write its result as JSON into `out`; return null on success, a `Failure` when a command refuses, and an error for a bug.
 pub fn call(
     runtime: *App,
     host: *Host,
@@ -33,39 +32,59 @@ pub fn call(
     const method = std.meta.stringToEnum(proto.enums.MethodName, method_name) orelse
         return Failure{ .code = .unknown_method, .message = "unknown method" };
 
-    // The launch token starts a run after the answer, so `send_input` returns before the turn does.
-    var launch: ?runs.Launch = null;
-    defer runs.Launch.release(&launch, &runtime.engine);
-
     inline for (proto.rpc.methods) |spec| {
         if (method == spec.name) {
-            if (comptime @hasDecl(bindings, @tagName(spec.name))) {
-                // The RPC frontend holds a parsed value and the JavaScript host holds text.
-                const options: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
-                const is_value = comptime @TypeOf(params_in) == std.json.Value;
-                // Optional parameters may arrive as an explicit null, which means the empty object.
-                const absent = spec.params_optional and if (is_value) params_in == .null else std.mem.eql(u8, params_in, "null");
-                const decoded = if (absent)
-                    spec.params{}
-                else if (is_value)
-                    std.json.parseFromValueLeaky(spec.params, arena, params_in, options)
-                else
-                    std.json.parseFromSliceLeaky(spec.params, arena, params_in, options);
-                const params = decoded catch return Failure{ .code = .bad_request, .message = "bad parameters" };
-
-                var diagnostic: ?[]const u8 = null;
-                const result = invoke(spec, runtime, host, arena, params, &launch, &diagnostic) catch |err| {
-                    if (diagnostic) |message| return Failure{ .code = .bad_request, .message = message };
-                    return failureFor(err) orelse return err;
-                };
-
-                try std.json.Stringify.value(result, .{ .emit_null_optional_fields = false }, out);
-                return null;
-            }
-            return Failure{ .code = .not_implemented, .message = "not implemented" };
+            if (comptime !@hasDecl(bindings, @tagName(spec.name))) return Failure{ .code = .not_implemented, .message = "not implemented" };
+            // The RPC frontend holds a parsed value and the JavaScript host holds text.
+            const options: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
+            const is_value = comptime @TypeOf(params_in) == std.json.Value;
+            // Optional parameters may arrive as an explicit null, which means the empty object.
+            const absent = spec.params_optional and if (is_value) params_in == .null else std.mem.eql(u8, params_in, "null");
+            const decoded = if (absent)
+                spec.params{}
+            else if (is_value)
+                std.json.parseFromValueLeaky(spec.params, arena, params_in, options)
+            else
+                std.json.parseFromSliceLeaky(spec.params, arena, params_in, options);
+            const params = decoded catch return Failure{ .code = .bad_request, .message = "bad parameters" };
+            return encode(try run(spec.name, runtime, host, arena, params), out);
         }
     }
     unreachable; // The protocol validates one table entry for every method name.
+}
+
+/// Run one bound command on typed parameters. The launch token starts a run after the answer, so `send_input` returns before the turn does.
+pub fn run(
+    comptime method: proto.enums.MethodName,
+    runtime: *App,
+    host: *Host,
+    arena: std.mem.Allocator,
+    params: specOf(method).params,
+) !Answer(specOf(method).result) {
+    var launch: ?runs.Launch = null;
+    defer runs.Launch.release(&launch, &runtime.engine);
+    var diagnostic: ?[]const u8 = null;
+    const result = invoke(specOf(method), runtime, host, arena, params, &launch, &diagnostic) catch |err| {
+        if (diagnostic) |message| return .{ .failure = .{ .code = .bad_request, .message = message } };
+        return .{ .failure = failureFor(err) orelse return err };
+    };
+    return .{ .ok = result };
+}
+
+/// Write the result of `answer` as JSON into `out`, or return its refusal.
+pub fn encode(answer: anytype, out: *std.Io.Writer) !?Failure {
+    switch (answer) {
+        .ok => |result| {
+            try std.json.Stringify.value(result, .{ .emit_null_optional_fields = false }, out);
+            return null;
+        },
+        .failure => |failure| return failure,
+    }
+}
+
+pub fn specOf(comptime method: proto.enums.MethodName) proto.rpc.MethodSpec {
+    for (proto.rpc.methods) |spec| if (spec.name == method) return spec;
+    unreachable;
 }
 
 const bindings = struct {
@@ -87,7 +106,6 @@ const bindings = struct {
     pub const @"session.remove" = commands.sessionRemove;
     pub const @"catalog.list" = app_commands.catalogList;
     pub const @"catalog.reload" = app_commands.catalogReload;
-    pub const @"auth.list" = app_commands.authList;
     pub const @"auth.set_api_key" = app_commands.authSetApiKey;
     pub const @"auth.remove" = app_commands.authRemove;
     pub const @"auth.login" = app_commands.authLogin;

@@ -172,23 +172,21 @@ pub const LatestTurnDone = sql.OptionalQuery(
 );
 
 pub const InsertPendingInput = sql.ExecQuery(
-    \\INSERT INTO pending_inputs(session_id, input_id, seq, queued_at_ms, payload)
-    \\    VALUES (:session_id, :input_id, :seq, :queued_at_ms, :payload);
+    \\INSERT INTO pending_inputs(session_id, input_id, seq, source)
+    \\    VALUES (:session_id, :input_id, :seq, :source);
 ,
     struct {
         session_id: [16]u8,
         input_id: u64,
         seq: u64,
-        queued_at_ms: u64,
-        payload: []const u8,
+        source: ?[]const u8 = null,
     },
 );
 
 pub const PendingInputById = sql.OptionalQuery(
     \\SELECT p.input_id AS row_input_id,
     \\       p.seq,
-    \\       p.queued_at_ms,
-    \\       p.payload,
+    \\       e.payload,
     \\       e.name AS event_name
     \\FROM pending_inputs p
     \\JOIN events e ON e.session_id = p.session_id AND e.seq = p.seq
@@ -201,7 +199,6 @@ pub const PendingInputById = sql.OptionalQuery(
     struct {
         row_input_id: u64,
         seq: u64,
-        queued_at_ms: u64,
         payload: []const u8,
         event_name: []const u8,
     },
@@ -210,8 +207,7 @@ pub const PendingInputById = sql.OptionalQuery(
 pub const PendingInputs = sql.ManyQuery(
     \\SELECT p.input_id AS row_input_id,
     \\       p.seq,
-    \\       p.queued_at_ms,
-    \\       p.payload,
+    \\       e.payload,
     \\       e.name AS event_name
     \\FROM pending_inputs p
     \\JOIN events e ON e.session_id = p.session_id AND e.seq = p.seq
@@ -260,7 +256,7 @@ pub const ChildReportCredits = sql.OneQuery(
     \\SELECT
     \\    (SELECT count(*) FROM pending_inputs p JOIN tree t ON t.id = p.session_id) +
     \\    (SELECT count(*) FROM sessions s JOIN tree t ON t.id = s.id WHERE s.open_run_kind = 'turn') +
-    \\    (SELECT count(*) FROM pending_inputs WHERE session_id = :parent_id AND json_extract(payload, '$.source.type') IN ('child_report', 'child_input_canceled')) AS used;
+    \\    (SELECT count(*) FROM pending_inputs WHERE session_id = :parent_id AND source IN ('child_report', 'child_input_canceled')) AS used;
 ,
     struct {
         parent_id: [16]u8,
@@ -272,7 +268,7 @@ pub const ChildReportCredits = sql.OneQuery(
 
 pub const ProtectedInputCount = sql.OneQuery(
     \\SELECT count(*) AS depth FROM pending_inputs
-    \\WHERE session_id = :session_id AND coalesce(json_extract(payload, '$.source.type'), 'parent_instruction') <> 'parent_instruction';
+    \\WHERE session_id = :session_id AND source <> 'parent_instruction';
 ,
     struct {
         session_id: [16]u8,
@@ -461,11 +457,11 @@ pub const NewestCompaction = sql.OptionalQuery(
 pub const InsertSession = sql.ExecQuery(
     \\INSERT INTO sessions(
     \\    id, root, origin, parent_id, parent_message_id, parent_part_id, source_id,
-    \\    profile, model, reasoning, config_rev, max_rounds, title, name,
+    \\    model, reasoning, config_rev, max_rounds, title, name,
     \\    created_by_name, created_by_version, created_at_ms, updated_at_ms
     \\) VALUES (
     \\    :id, :root, :origin, :parent_id, :parent_message_id, :parent_part_id, :source_id,
-    \\    :profile, :model, :reasoning, :config_rev, :max_rounds, :title, :name,
+    \\    :model, :reasoning, :config_rev, :max_rounds, :title, :name,
     \\    :created_by_name, :created_by_version, :created_at_ms, :updated_at_ms
     \\);
 ,
@@ -477,7 +473,6 @@ pub const InsertSession = sql.ExecQuery(
         parent_message_id: ?u64 = null,
         parent_part_id: ?u64 = null,
         source_id: ?[16]u8 = null,
-        profile: []const u8,
         model: []const u8,
         reasoning: []const u8,
         config_rev: u64,
@@ -506,7 +501,7 @@ pub const SessionSnapshot = sql.OptionalQuery(
     \\SELECT
     \\    id, root,
     \\    origin, parent_id, parent_message_id, parent_part_id, source_id,
-    \\    profile, model, reasoning, config_rev, max_rounds, title, name,
+    \\    model, reasoning, config_rev, max_rounds, title, name,
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -527,7 +522,6 @@ pub const SessionSnapshot = sql.OptionalQuery(
         parent_message_id: ?u64,
         parent_part_id: ?u64,
         source_id: ?[16]u8,
-        profile: []const u8,
         model: []const u8,
         reasoning: []const u8,
         config_rev: u64,
@@ -600,7 +594,7 @@ pub const SessionPageRecent = sql.ManyQuery(
     \\SELECT
     \\    id, root,
     \\    origin, parent_id, parent_message_id, parent_part_id, source_id,
-    \\    profile, model, reasoning, config_rev, max_rounds, title, name,
+    \\    model, reasoning, config_rev, max_rounds, title, name,
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -626,7 +620,6 @@ pub const SessionPageRecent = sql.ManyQuery(
         parent_message_id: ?u64,
         parent_part_id: ?u64,
         source_id: ?[16]u8,
-        profile: []const u8,
         model: []const u8,
         reasoning: []const u8,
         config_rev: u64,
@@ -655,7 +648,7 @@ pub const SessionPageParent = sql.ManyQuery(
     \\SELECT
     \\    id, root,
     \\    origin, parent_id, parent_message_id, parent_part_id, source_id,
-    \\    profile, model, reasoning, config_rev, max_rounds, title, name,
+    \\    model, reasoning, config_rev, max_rounds, title, name,
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
@@ -705,11 +698,10 @@ pub const SessionCountParent = sql.OneQuery(
 );
 
 pub const ReplacePrompt = sql.ExecQuery(
-    \\INSERT OR REPLACE INTO session_prompts(session_id, prompt, generation) VALUES (:session_id, :prompt, :generation);
+    \\INSERT OR REPLACE INTO session_prompts(session_id, generation) VALUES (:session_id, :generation);
 ,
     struct {
         session_id: [16]u8,
-        prompt: []const u8,
         generation: u64,
     },
 );
@@ -723,13 +715,12 @@ pub const StalePrompt = sql.ExecQuery(
 );
 
 pub const SelectPrompt = sql.OptionalQuery(
-    \\SELECT prompt, generation FROM session_prompts WHERE session_id = :session_id;
+    \\SELECT generation FROM session_prompts WHERE session_id = :session_id;
 ,
     struct {
         session_id: [16]u8,
     },
     struct {
-        prompt: []const u8,
         generation: u64,
     },
 );

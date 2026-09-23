@@ -6,7 +6,7 @@ const parts = {
   gone: [{ type: "text", id: 0, text: "truncated" }],
   live: [{ type: "reasoning", id: 0, text: "live thought" }],
 };
-const t = new Transcript({ textOf: () => "", partsOf: (id) => parts[id] || [] });
+const t = new Transcript({ partsOf: (id) => parts[id] || [] });
 const draw = () => { term.beginFrame(); t.draw({ x: 0, y: 0, w: 40, h: 12 }); term.endFrame(); };
 const shows = (text) => t.rows(40, 0, 12).some((r) => (r.segments || []).map(s => s.text).join("").includes(text));
 t.setOutline([{ id: "old", type: "assistant" }, { id: "gone", type: "assistant" }], { id: "live", type: "assistant" });

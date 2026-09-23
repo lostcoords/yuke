@@ -25,7 +25,7 @@ pub fn validate(engine: *Engine, arena: std.mem.Allocator, model: []const u8, re
     const match = engine.deps.providers.merged.resolveModel(model) orelse return error.ModelUnknown;
     if (match.provider.availability == .unavailable) return switch (match.provider.availability.unavailable) {
         .needs_route => error.ModelRouteUnavailable,
-        .needs_credential, .expired => error.ModelUnavailable,
+        .needs_credential => error.ModelUnavailable,
     };
     if (registry.credential(match.provider.availability.ready.credential, engine.deps.execution.env, engine.nowMillis()) == null) return error.ModelUnavailable;
     if (match.model.caps.tools != true) return error.ModelToolsUnsupported;

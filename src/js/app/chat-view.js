@@ -9,7 +9,7 @@ import { column, child, fixed, fit, grow, solve } from "yuke:layout";
 
 /** @typedef {"composer" | "transcript"} ChatRegion */
 /** @typedef {{ text: string, group?: string }} StripRow */
-/** @typedef {{ textOf?: ((id: number) => string) | undefined, partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, partTextPage?: PartTextPage | null | undefined, onSelect?: ((text: string) => void) | null | undefined, onSubmit?: ((content: Wire.ContentPart[]) => boolean | void) | null | undefined, sessionId?: () => string | null }} ChatViewOptions */
+/** @typedef {{ partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, partTextPage?: PartTextPage | null | undefined, onSelect?: ((text: string) => void) | null | undefined, onSubmit?: ((content: Wire.ContentPart[]) => boolean | void) | null | undefined, sessionId?: () => string | null }} ChatViewOptions */
 /** @import { HostMouseEvent as MouseEvent, NavTarget, Rect, ViewLike as PresentationView } from "./types/core.js" */
 /** @import { LayoutNode, LayoutResult } from "./types/layout.js" */
 /** @typedef {{ bounds: Rect, empty: boolean, sessionId: string | null, composerRows: number, defaultLayout: LayoutNode }} PresentationContext */
@@ -22,7 +22,7 @@ export class ChatView {
   /** @param {ChatViewOptions} [opts] */
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.transcript = new Transcript({ textOf: opts.textOf, partsOf: opts.partsOf, partOf: opts.partOf, partTextPage: opts.partTextPage, onSelect: opts.onSelect });
+    this.transcript = new Transcript({ partsOf: opts.partsOf, partOf: opts.partOf, partTextPage: opts.partTextPage, onSelect: opts.onSelect });
     this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
     claimView(this.composer, this);
     this.sessionId = opts.sessionId || (() => null);

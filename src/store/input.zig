@@ -32,16 +32,14 @@ pub fn enqueue(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, even
         .seq = seq,
         .input = queued,
     };
-    const event_payload = try std.json.Stringify.valueAlloc(arena, data, .{ .emit_null_optional_fields = false });
-    const projection_payload = try std.json.Stringify.valueAlloc(arena, queued, .{ .emit_null_optional_fields = false });
-    try event.appendAt(db, session_id, seq, event_id, committed_at_ms, "input.queued", event_payload);
+    const payload = try std.json.Stringify.valueAlloc(arena, data, .{ .emit_null_optional_fields = false });
+    try event.appendAt(db, session_id, seq, event_id, committed_at_ms, "input.queued", payload);
     try blob.recordRefs(db, session_id, stored_content);
     try db.queries.insert_pending_input.exec(.{
         .session_id = session_id,
         .input_id = input_id,
         .seq = seq,
-        .queued_at_ms = queued_at_ms,
-        .payload = projection_payload,
+        .source = if (queued.source) |source| @tagName(source) else null,
     });
     return .{ .input = queued, .seq = seq };
 }
@@ -106,12 +104,12 @@ fn checkedPending(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, i
 
 fn checkedRow(arena: std.mem.Allocator, row: anytype) !Entry {
     if (!std.mem.eql(u8, row.event_name, "input.queued")) return error.CorruptLog;
-    const projection = std.json.parseFromSliceLeaky(proto.misc.QueuedInput, arena, row.payload, .{ .allocate = .alloc_always }) catch |err| switch (err) {
+    const queued = std.json.parseFromSliceLeaky(proto.input.InputQueuedData, arena, row.payload, .{ .allocate = .alloc_always }) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.CorruptLog,
     };
-    if (row.row_input_id != projection.input_id or row.queued_at_ms != projection.queued_at_ms) return error.CorruptLog;
-    return .{ .input = projection, .seq = row.seq };
+    if (row.row_input_id != queued.input.input_id or row.seq != queued.seq) return error.CorruptLog;
+    return .{ .input = queued.input, .seq = row.seq };
 }
 
 const testing = std.testing;
@@ -123,7 +121,7 @@ fn textContent(comptime text: []const u8) []const proto.content.ContentPart {
     return &.{.{ .text = .{ .text = text } }};
 }
 
-test "enqueue writes the full event, projection, and sequence" {
+test "enqueue writes the event, the projection, and the sequence" {
     var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -141,9 +139,7 @@ test "enqueue writes the full event, projection, and sequence" {
     const count_row = (try db.conn.row("SELECT count(*) FROM events WHERE name = 'input.queued'", .{})) orelse return error.NoRow;
     defer count_row.deinit();
     try testing.expectEqual(@as(i64, 1), count_row.int(0));
-    const row = (try db.conn.row("SELECT payload FROM pending_inputs", .{})) orelse return error.NoRow;
-    defer row.deinit();
-    const stored = try std.json.parseFromSliceLeaky(proto.misc.QueuedInput, a, row.text(0), .{});
+    const stored = (try list(&db, a, sid))[0].input;
     try testing.expectEqualStrings("hello", stored.content[0].text.text);
 }
 
@@ -250,11 +246,11 @@ test "pending projection enforces ownership and event foreign keys" {
     try testing.expect(std.mem.indexOf(u8, row.text(0), "WITHOUT ROWID") != null);
     const foreign_id = [_]u8{9} ** 16;
     try testing.expectError(error.ConstraintForeignKey, db.conn.exec(
-        "INSERT INTO pending_inputs(session_id, input_id, seq, queued_at_ms, payload) VALUES (?1, 1, 1, 1, '{}')",
+        "INSERT INTO pending_inputs(session_id, input_id, seq) VALUES (?1, 1, 1)",
         .{zqlite.blob(&foreign_id)},
     ));
     try testing.expectError(error.ConstraintForeignKey, db.conn.exec(
-        "INSERT INTO pending_inputs(session_id, input_id, seq, queued_at_ms, payload) VALUES (?1, 1, 1, 1, '{}')",
+        "INSERT INTO pending_inputs(session_id, input_id, seq) VALUES (?1, 1, 1)",
         .{zqlite.blob(&sid)},
     ));
 

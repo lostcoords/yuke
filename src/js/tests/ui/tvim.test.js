@@ -1,4 +1,4 @@
-import { check } from "yuke:test";
+import { check, textParts } from "yuke:test";
 import { term } from "yuke:term";
 import { root, Node, keymap, command } from "yuke:core";
 import { plugins } from "yuke:ext";
@@ -13,7 +13,7 @@ const key = (code, char) => ({ type: "key", code: code || "char", char: char || 
 const body = { a1: "alpha **bravo** charlie delta" };
 let copied = null;
 term.copy = (x) => { copied = x; return x.length; };
-const v = new ChatView({ textOf: (id) => body[id] || "" });
+const v = new ChatView({ partsOf: textParts((id) => body[id] || "") });
 v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
 root.setRoot(Node.leaf(v));
 v.rect = { x: 0, y: 0, w: 24, h: 18 }; v.layout(v.rect);

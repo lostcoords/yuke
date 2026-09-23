@@ -680,12 +680,37 @@ function errorLabel(error) {
   return "⚠ " + parts.join(" · ");
 }
 
+// The text of a user or compaction message: its text parts in order. One part answers its own string, so nothing is copied.
+/** @param {readonly MessagePart[]} parts @returns {string} */
+function textOfParts(parts) {
+  /** @type {string | null} */
+  let text = null;
+  for (const part of parts) if (part && part.type === "text") text = text === null ? part.text : text + part.text;
+  return text ?? "";
+}
+
+// A child report is two text parts. The user reads the body; the preamble is the model's and stays out of the rows.
+/** @param {readonly MessagePart[]} parts @param {string} text @returns {string} */
+function reportBody(parts, text) {
+  const texts = parts.filter((part) => part && part.type === "text");
+  const last = texts.length >= 2 ? texts[texts.length - 1] : undefined;
+  return last && last.type === "text" ? last.text : text;
+}
+
+// A user message with an attachment draws each label where its part sits. The client completes a cut text before a part arrives here.
+/** @param {readonly MessagePart[]} parts @param {string} text @returns {string} */
+function userBody(parts, text) {
+  if (!parts.some(isMedia)) return text;
+  // One pass builds every label, so the number counts media alone and stays the number the composer drew.
+  let image = 0;
+  return parts.map((part) => (isMedia(part) ? mediaLabel(part.source, part.type === "image" ? ++image : 0) : part.type === "text" ? part.text : "")).join("");
+}
+
 // The chat transcript: message descriptors, exact row counts, and a bounded cache of rendered rows.
 export class Transcript {
   /** @param {TranscriptOptions} [opts] */
   constructor(opts = {}) {
-    this.textOf = opts.textOf || (() => "");
-    this.partsOf = opts.partsOf || null;
+    this.partsOf = opts.partsOf || (() => []);
     this.partOf = opts.partOf || null;
     this.partTextPage = opts.partTextPage || null;
     this.pager = new Pager();
@@ -846,7 +871,7 @@ export class Transcript {
   // A missing count renders its message once and lets the cache drop the rows; later reads use the counts alone.
   /** @param {number} last @returns {void} */
   _indexRowsThrough(last) {
-    if (!this._actionPlanCache && this.partsOf && this._prefix.length === 1) {
+    if (!this._actionPlanCache && this._prefix.length === 1) {
       this._buildActionPlan(
         (m) => this._partState(m.id).list,
         this._indexRowsThrough,
@@ -961,7 +986,7 @@ export class Transcript {
   _sourceOf(id) {
     this._rowsFor(id);
     const c = this._rows.get(String(id));
-    return c ? c.source : this.textOf(id);
+    return c ? c.source : "";
   }
 
   // The selection as source offsets. Return null when either end carries no source.
@@ -1034,7 +1059,7 @@ export class Transcript {
       }
       return blocks;
     }
-    return c?.doc ? c.doc.blocks() : [];
+    return [];
   }
 
   // The rendered rows of one message at the drawn width, owned by the render cache, so only this class holds them.
@@ -1153,11 +1178,11 @@ export class Transcript {
     let rows;
     let source;
     let partBases = new Map();
-    let doc;
     if (m.type === "user") {
-      source = this.textOf(m.id) || "";
+      const parts = this._allParts(m.id);
+      source = textOfParts(parts);
       if (m.skill_name || (m.source && m.source.type !== "parent_instruction")) {
-        if (m.source?.type === "child_report") source = this._reportBody(m.id, source);
+        if (m.source?.type === "child_report") source = reportBody(parts, source);
         const expanded = this._expand.get(this._expandKey(m.id, -1)) === true;
         const body = wrapBody(source, Math.max(1, width - TX_GUTTER), "TxToolBody", expanded ? Infinity : REPORT_PREVIEW_LINES + 1);
         const shown = expanded ? body : body.slice(0, m.skill_name ? 0 : REPORT_PREVIEW_LINES);
@@ -1165,25 +1190,19 @@ export class Transcript {
           ...shown.map((row) => ({ ...row, kind: "report-body", partId: -1, key: m.id })),
           ...(!expanded && body.length > shown.length ? [{ text: "… click the header to expand", group: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id }] : []), { text: "", key: m.id }];
       } else {
-        source = this._userBody(m.id, source);
+        source = userBody(parts, source);
         rows = messageRows(m.id, source, width, "user");
         // A parent-sent task reads like user input, so one meta row says where it came from.
         if (m.source?.type === "parent_instruction") rows.unshift({ text: inputSourceLabel(m.source), group: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id });
       }
     } else if (m.type === "compaction") {
-      source = this.textOf(m.id) || "";
+      source = textOfParts(this._allParts(m.id));
       rows = messageRows(m.id, source, width, "compaction");
-    } else if (this.partsOf) {
+    } else {
       const built = this._partRows(m, width, index);
       rows = built.rows;
       source = built.source;
       partBases = built.partBases;
-    } else {
-      doc = c?.doc || new Document();
-      doc.setText(this.textOf(m.id));
-      rows = /** @type {TranscriptRow[]} */ (doc.rows(Math.max(1, width - TX_GUTTER)).map(r => ({ segments: r.segments, indent: TX_GUTTER, key: m.id })));
-      rows.push({ text: "", key: m.id });
-      source = doc.sourceText();
     }
     if (m.error) {
       const base = source.length ? source.length + 1 : 0;
@@ -1192,54 +1211,24 @@ export class Transcript {
       rows = rows.concat(messageRows(m.id, error, width, "error", base));
     }
     this._rows.delete(key);
-    this._rows.set(key, { w: width, rows, source, partBases, doc });
+    this._rows.set(key, { w: width, rows, source, partBases });
     this._counts.set(key, rows.length);
     return rows;
   }
 
-  // A child report is two text parts. The user reads the body; the preamble is the model's and stays out of the rows.
-  /** @param {number} id @param {string} text @returns {string} */
-  _reportBody(id, text) {
-    if (!this.partsOf) return text;
-    let parts = /** @type {readonly MessagePart[]} */ ([]);
+  // Every part of one message. A reader fault reads as no parts, so one bad read cannot break a frame.
+  /** @param {number} id @returns {readonly MessagePart[]} */
+  _allParts(id) {
     try {
-      const read = /** @type {PartsOf} */ (this.partsOf)(id);
-      if (Array.isArray(read)) parts = read;
+      const read = this.partsOf(id);
+      if (Array.isArray(read)) return read;
     } catch (_) {}
-    const texts = parts.filter((part) => part && part.type === "text");
-    const last = texts.length >= 2 ? texts[texts.length - 1] : undefined;
-    return last && last.type === "text" ? last.text : text;
-  }
-
-  // A user message with an attachment draws each label where its part sits. The wire carries no file name.
-  /** @param {number} id @param {string} text @returns {string} */
-  _userBody(id, text) {
-    if (!this.partsOf) return text;
-    let parts = /** @type {readonly MessagePart[]} */ ([]);
-    try {
-      const read = /** @type {PartsOf} */ (this.partsOf)(id);
-      if (Array.isArray(read)) parts = read;
-    } catch (_) {}
-    if (!parts.some(isMedia)) return text;
-    // One pass builds every label, so the number counts media alone and stays the number the composer drew.
-    let image = 0;
-    const labels = parts.map((part) => (isMedia(part) ? mediaLabel(part.source, part.type === "image" ? ++image : 0) : ""));
-    // A text part the projection cut cannot place what follows it, so every label goes after the whole text instead.
-    if (parts.some((part) => cutsOf(part).length > 0)) {
-      const tail = labels.filter(Boolean).join(" ");
-      return text === "" ? tail : text + "\n" + tail;
-    }
-    return parts.map((part, i) => (isMedia(part) ? labels[i] : part.type === "text" ? part.text : "")).join("");
+    return [];
   }
 
   /** @param {number} id @returns {Wire.AssistantPart[]} */
   _readParts(id) {
-    let list = /** @type {readonly MessagePart[]} */ ([]);
-    try {
-      const parts = /** @type {PartsOf} */ (this.partsOf)(id);
-      if (Array.isArray(parts)) list = parts;
-    } catch (_) {}
-    return list.filter((part) => part && (part.type === "text" || part.type === "tool" || part.type === "reasoning"));
+    return /** @type {Wire.AssistantPart[]} */ (this._allParts(id).filter((part) => part && (part.type === "text" || part.type === "tool" || part.type === "reasoning")));
   }
 
   // The parts of one rendered message stay held until a delta or an eviction drops them.
@@ -1383,7 +1372,7 @@ export class Transcript {
     if (id == null || partId == null) return;
     const k = this._expandKey(id, partId);
     let part = null;
-    if (partId !== -1 && this.partsOf) {
+    if (partId !== -1) {
       for (const p of this._partState(id).list) if (sameId(p.id, partId)) part = p;
     }
     this._expand.set(k, !(partId === -1 ? this._expand.get(k) === true : this._isExpanded(id, partId, part)));
@@ -1462,7 +1451,7 @@ export class Transcript {
   /** @param {MessageDescriptor} m @returns {Position[]} */
   _partStopsOf(m) {
     const rows = this._rowsFor(m.id);
-    if (m.type === "user" || m.type === "compaction" || !this.partsOf) {
+    if (m.type === "user" || m.type === "compaction") {
       return rows.length ? [{ id: m.id, row: 0, col: 0 }] : [];
     }
     const out = [];

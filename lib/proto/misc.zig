@@ -20,7 +20,6 @@ pub const ConfigChangedData = struct {
 pub const CreateSession = struct {
     /// The workspace root. The caller names it; the engine holds no default directory.
     workspace_path: []const u8,
-    profile: ?[]const u8 = null,
     model: ?[]const u8 = null,
     reasoning: ?[]const u8 = null,
     /// Replace the base prompt; child policy remains separate. Resolve placeholders at creation.
@@ -81,7 +80,6 @@ pub const Session = struct {
     id: ids.SessionId,
     /// The canonical workspace directory this session runs in.
     root: []const u8,
-    profile: []const u8,
     model: []const u8,
     reasoning: []const u8,
     config_rev: ids.ConfigRev,

@@ -129,20 +129,6 @@ function blobPutData(data) {
   return request("blob.put", { data });
 }
 
-// The concatenated text of one message. A page echoes the next byte offset, or null at the end.
-/** @param {string} sessionId @param {number} messageId @returns {string} */
-function sessionWholeText(sessionId, messageId) {
-  let text = "";
-  let offset = 0;
-  while (true) {
-    const page = JSON.parse(native.sessionText(sessionId, messageId, offset, 0));
-    text += page.text;
-    if (page.next == null) return text;
-    if (page.next <= offset) throw new Error("The text page did not advance.");
-    offset = page.next;
-  }
-}
-
 /** @type {WeakMap<MessagePart, { partId: number, type: "text" | "reasoning", text: string, generation: number, bytes: number }>} */
 const textCursors = new WeakMap();
 
@@ -250,7 +236,7 @@ function sessionCancelInput(id, inputId) {
   return request("session.cancel_input", { session_id: id, input_id: inputId });
 }
 
-// Create a session. An unset model or reasoning lets the engine use its profile default.
+// Create a session. An unset reasoning takes the default of the model, and a session with no model is refused.
 /** @param {Wire.CreateSession} params @returns {Promise<Wire.SessionResult>} */
 function sessionCreate(params) {
   return createSession(params);
@@ -272,11 +258,6 @@ function catalogList(sinceRev) {
 /** @returns {Promise<Wire.CatalogReloadResult>} */
 function catalogReload() {
   return request("catalog.reload", {});
-}
-
-/** @returns {Promise<Wire.AuthListResult>} */
-function authList() {
-  return request("auth.list", {});
 }
 
 // Start a device-code login. The engine polls in its own task and reports through `auth.login_finished`.
@@ -311,7 +292,6 @@ function authLoginTracked(providerId) {
   };
   off = events.on("auth.login_finished", (event) => {
     for (const note of event.auth || []) {
-      if (note.method !== "auth.login_finished") continue;
       if (loginId === note.params.login_id) finish(note.params.outcome);
       else if (loginId === null) seen.push(note.params);
     }
@@ -364,7 +344,6 @@ export const client = {
   sessionQueue,
   blobPut,
   blobPutData,
-  sessionWholeText,
   sessionParts,
   sessionPart,
   partTextPage,
@@ -378,7 +357,6 @@ export const client = {
   sessionPatch,
   catalogList,
   catalogReload,
-  authList,
   authLogin,
   authLoginTracked,
   authCancelLogin,

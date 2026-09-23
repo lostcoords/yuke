@@ -7,7 +7,7 @@ import { register } from "yuke:vim";
 import { tuiPlugin } from "yuke:tui";
 plugins.use(tuiPlugin);
 
-const v = new ChatView({ textOf: () => "" });
+const v = new ChatView({});
 root.setRoot(Node.leaf(v));
 root.focusView(v);
 const off = plugins.use(composerVim);

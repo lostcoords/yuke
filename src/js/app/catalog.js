@@ -66,7 +66,6 @@ export function providerStateLabel(state, canLogin = true) {
   switch (state) {
     case "needs_credential": return canLogin ? "needs login" : "needs key";
     case "needs_route": return "needs route";
-    case "expired": return "expired";
     default: return "";
   }
 }

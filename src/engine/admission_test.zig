@@ -434,7 +434,7 @@ test "a failed initial input transaction leaves no session or ownership claim" {
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    try f.db.conn.execNoArgs("CREATE TEMP TRIGGER refuse_input BEFORE INSERT ON pending_inputs BEGIN SELECT RAISE(FAIL, 'test refusal'); END");
+    try f.db.conn.execNoArgs("CREATE TEMP TRIGGER refuse_input BEFORE INSERT ON messages BEGIN SELECT RAISE(FAIL, 'test refusal'); END");
     const owner_count = f.engine.owners.count();
     const session_count = try database.session.count(&f.db, a, .{});
     var gate: ?runs.Launch = null;
@@ -460,7 +460,7 @@ test "child completion stays queued across an active parent interrupt" {
     const parent = f.engine.sessions.get(f.parent).?;
     try testing.expectEqual(@as(usize, 1), parent.queueDepth());
     try testing.expectEqual(@as(usize, 1), parent.transcript.list.items.len);
-    const pending = parent.queueEntries()[0];
+    const pending = (try database.input.list(&f.db, a, f.parent.raw))[0].input;
     try testing.expectEqual(child.session.id, pending.source.?.child_report.session_id);
     try testing.expectEqual(proto.enums.RunErrorCode.unknown_model, pending.source.?.child_report.outcome.failed.code);
     const canceled = try commands.sessionCancelRun(&f.engine, a, .{ .session_id = f.parent, .clear_queue = true });

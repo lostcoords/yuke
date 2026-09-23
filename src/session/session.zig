@@ -29,10 +29,9 @@ pub const Config = struct {
     name: ?[]const u8 = null,
 };
 
-/// The tools one run may see. One arena owns the names and the declarations for the whole run.
+/// The tools one run may see. One arena owns the declarations for the whole run.
 pub const Loadout = struct {
     arena: std.heap.ArenaAllocator,
-    names: []const []const u8,
     decls: []const transport_ir.Tool,
     /// The session catalog lists at least one skill. Read once, because a reload refuses an active run.
     has_skills: bool,
@@ -44,7 +43,7 @@ pub const Loadout = struct {
     pub const Deferral = enum { none, native, omitted };
 
     pub fn allows(self: *const Loadout, name: []const u8) bool {
-        for (self.names) |allowed| if (std.mem.eql(u8, allowed, name)) return true;
+        for (self.decls) |decl| if (std.mem.eql(u8, decl.name, name)) return true;
         return false;
     }
 };
@@ -155,7 +154,8 @@ pub const Session = struct {
     gpa: std.mem.Allocator,
     id: ids.SessionId,
     draft: ?Draft = null,
-    pending: std.ArrayList(QueueItem) = .empty,
+    /// The inputs the durable queue holds, oldest first. The store owns their content.
+    pending: std.ArrayList(Queued) = .empty,
     transcript: Transcript,
     base_seq: ids.Seq = 0,
     finalized_message_id: ids.MessageId = 0,
@@ -173,7 +173,6 @@ pub const Session = struct {
     pub fn deinit(self: *Session) void {
         std.debug.assert(self.active_run == null);
         if (self.draft) |*d| d.deinit();
-        for (self.pending.items) |*item| item.deinit();
         self.pending.deinit(self.gpa);
         self.transcript.deinit();
         self.* = undefined;
@@ -196,24 +195,17 @@ pub const Session = struct {
         return self.pending.items.len;
     }
 
-    pub fn queueEntries(self: *const Session) []const QueueItem {
-        return self.pending.items;
-    }
-
     /// Engine reports and notices wait outside the user queue limit.
     pub fn userQueueDepth(self: *const Session) usize {
         var depth: usize = 0;
-        for (self.pending.items) |item| if (item.source == null or !item.source.?.protected()) {
-            depth += 1;
-        };
+        for (self.pending.items) |item| depth += @intFromBool(!item.protected);
         return depth;
     }
 
-    pub fn queueOnQueued(self: *Session, d: input.InputQueuedData) Error!void {
-        std.debug.assert(self.queueIndex(d.input.input_id) == null);
-        var item = try QueueItem.clone(self.gpa, d.input);
-        errdefer item.deinit();
-        try self.pending.append(self.gpa, item);
+    pub fn queueOnQueued(self: *Session, queued: misc.QueuedInput) Error!void {
+        std.debug.assert(self.queueIndex(queued.input_id) == null);
+        const protected = if (queued.source) |source| source.protected() else false;
+        try self.pending.append(self.gpa, .{ .input_id = queued.input_id, .protected = protected });
     }
 
     /// Seal the projection after the store history is in the transcript. Call once before the first fold on a fresh Session.
@@ -316,7 +308,7 @@ pub const Session = struct {
     }
 
     fn onQueued(self: *Session, d: proto.input.InputQueuedData) Error!void {
-        try self.queueOnQueued(d);
+        try self.queueOnQueued(d.input);
         self.advance(d.seq);
     }
 
@@ -337,8 +329,7 @@ pub const Session = struct {
 
     fn removeQueued(self: *Session, input_id: ids.InputId) void {
         const i = self.queueIndex(input_id) orelse return;
-        var item = self.pending.orderedRemove(i);
-        item.deinit();
+        _ = self.pending.orderedRemove(i);
     }
 
     fn queueIndex(self: *const Session, input_id: ids.InputId) ?usize {
@@ -347,26 +338,10 @@ pub const Session = struct {
     }
 };
 
-pub const QueueItem = struct {
-    arena: std.heap.ArenaAllocator,
+/// One input in the durable queue. A protected input is an engine report or notice.
+pub const Queued = struct {
     input_id: ids.InputId,
-    content: []const content.ContentPart,
-    queued_at_ms: u64,
-    source: ?proto.input.InputSource = null,
-    skill_name: ?[]const u8 = null,
-
-    fn clone(gpa: std.mem.Allocator, qi: misc.QueuedInput) Error!QueueItem {
-        var arena = std.heap.ArenaAllocator.init(gpa);
-        errdefer arena.deinit();
-        const owned = try proto.dupe(arena.allocator(), qi.content);
-        const source = try proto.dupe(arena.allocator(), qi.source);
-        const skill_name = try proto.dupe(arena.allocator(), qi.skill_name);
-        return .{ .arena = arena, .input_id = qi.input_id, .content = owned, .queued_at_ms = qi.queued_at_ms, .source = source, .skill_name = skill_name };
-    }
-
-    fn deinit(self: *QueueItem) void {
-        self.arena.deinit();
-    }
+    protected: bool,
 };
 
 pub const Registry = struct {

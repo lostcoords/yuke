@@ -1,9 +1,9 @@
-import { check } from "yuke:test";
+import { check, textParts } from "yuke:test";
 import { root, Node, slot } from "yuke:core";
 import { term } from "yuke:term";
 import { ChatView } from "yuke:chat-view";
 const body = { a1: "alpha bravo charlie\nsecond line here\nthird line xx" };
-const v = new ChatView({ textOf: (id) => body[id] || "" });
+const v = new ChatView({ partsOf: textParts((id) => body[id] || "") });
 v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
 root.setRoot(Node.leaf(v));
 v.rect = { x: 0, y: 0, w: 40, h: 18 }; v.layout(v.rect);

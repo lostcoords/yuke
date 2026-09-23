@@ -15,8 +15,6 @@ pub const BroadcastName = enum {
     @"catalog.changed",
     /// The engine finished an authentication login flow.
     @"auth.login_finished",
-    /// Authentication state changed.
-    @"auth.changed",
     /// The engine sent an out-of-band notice.
     notice,
     /// An extension asks the connected frontend to interact with the user.
@@ -112,8 +110,6 @@ pub const MethodName = enum {
     @"catalog.list",
     /// Read providers.json again and rebuild the catalog.
     @"catalog.reload",
-    /// List the local providers and the credential each one holds.
-    @"auth.list",
     /// Set an API key for a provider.
     @"auth.set_api_key",
     /// Begin a provider login flow.
@@ -159,8 +155,6 @@ pub const ProviderState = enum {
     needs_credential,
     /// A route field is missing, so the engine cannot build a request.
     needs_route,
-    /// The grant expired. The user must authenticate again.
-    expired,
 };
 
 /// Workspace execution environment; advertised engine capability; numeric JSON-RPC and yuke error codes.

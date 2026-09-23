@@ -325,9 +325,7 @@ fn loadSession(self: *Engine, session_id: proto.ids.SessionId) !Session {
     resident.sealHistory(hw.seq_high, hw.message_count > limit);
     // Pending inputs are historical. Fold them directly, so they do not advance the durable cursor.
     const pending = try database.input.list(self.deps.db, scratch.allocator(), sid);
-    for (pending) |entry| {
-        try resident.queueOnQueued(.{ .session_id = resident.id, .seq = entry.seq, .input = entry.input });
-    }
+    for (pending) |entry| try resident.queueOnQueued(entry.input);
     return resident;
 }
 
@@ -352,7 +350,6 @@ test {
     _ = @import("blob_test.zig");
     _ = @import("reports_test.zig");
     _ = @import("model_config_test.zig");
-    _ = @import("model_call.zig");
     _ = @import("compaction.zig");
     _ = @import("steering_test.zig");
 }

@@ -1,4 +1,4 @@
-//! The owner side of a tool, hook, or input call: start the handler, poll its promise, and settle the record.
+//! The owner side of a tool or hook call: start the handler, poll its promise, and settle the record.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -56,7 +56,6 @@ fn start(host: *Host, call: *table.Call) void {
     switch (call.kind) {
         .tool => startTool(host, call),
         .hook => startHook(host, call),
-        .input => startInput(host, call),
     }
 }
 
@@ -89,21 +88,6 @@ fn startHook(host: *Host, call: *table.Call) void {
     host.enterSlice();
     var argv = [_]Value{ point, parsed };
     const answer = ctx.call(folder, quickjs.UNDEFINED, &argv);
-    acceptPromise(host, call, answer);
-}
-
-/// Hand one `session.send_input` to the gate. The gate answers `{result}` or `{failure}` and never rejects.
-fn startInput(host: *Host, call: *table.Call) void {
-    const ctx = host.ctx;
-    const gate = host.hooks.gate orelse return settleText(host, call, "no input gate is installed", true);
-    const parsed = parseArguments(host, call) orelse return;
-    defer ctx.freeValue(parsed);
-
-    host.enterSlice();
-    const method = ctx.newString(call.name);
-    defer ctx.freeValue(method);
-    var argv = [_]Value{ parsed, method };
-    const answer = ctx.call(gate, quickjs.UNDEFINED, &argv);
     acceptPromise(host, call, answer);
 }
 
@@ -157,7 +141,6 @@ fn acceptPromise(host: *Host, call: *table.Call, answer: Value) void {
         return settleText(host, call, switch (call.kind) {
             .tool => "the tool execute function must return a Promise",
             .hook => "the hook dispatcher must return a Promise",
-            .input => "the input gate must return a Promise",
         }, true);
     }
     call.promise = answer; // the call holds the root until it settles
@@ -186,13 +169,12 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
         const fallback: []const u8 = switch (call.kind) {
             .tool => "the tool failed",
             .hook => "the hook failed",
-            .input => "the input gate failed",
         };
         return settleText(host, call, if (message) |text| text else fallback, true);
     }
     // An empty answer is the proceed decision for a hook, and empty output for a tool.
     if (ctx.isUndefined(value) or ctx.isNull(value)) return settleText(host, call, "", false);
-    // A hook or the gate answers one object, which never carries model text or a view.
+    // A hook answers one object, which never carries model text or a view.
     if (call.kind != .tool) return stringifyValue(host, call, value);
     if (ctx.isString(value)) {
         const text = cstring(ctx, value) orelse return settleText(host, call, "the tool answered text the host cannot read", true);

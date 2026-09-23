@@ -36,9 +36,9 @@ pub const Engine = struct {
     /// The facts that named no session. A plugin reads them beside the index change.
     index_facts: FactSet = .initEmpty(),
     /// The auth events since the last drain, as JSON. A fact name alone cannot carry a login outcome.
-    index_auth: std.ArrayListUnmanaged(AuthNote) = .empty,
+    index_auth: std.ArrayListUnmanaged(Note) = .empty,
     /// The notices since the last drain, as JSON. A fact name alone cannot carry the message.
-    index_notices: std.ArrayListUnmanaged(NoticeNote) = .empty,
+    index_notices: std.ArrayListUnmanaged(Note) = .empty,
     /// Every session removed since the last drain. The dirty set can overflow, but a removal must still stop the jobs of its session.
     removed: std.ArrayListUnmanaged(SessionId) = .empty,
     /// Set when the dirty set overflowed; `drain` then reports an index change, so no lost event leaves a stale view.
@@ -64,8 +64,8 @@ pub const Engine = struct {
         self.ctx.freeValue(self.sink);
         self.dirty.deinit(self.gpa);
         self.removed.deinit(self.gpa);
-        freeNotes(AuthNote, self.gpa, &self.index_auth);
-        freeNotes(NoticeNote, self.gpa, &self.index_notices);
+        freeNotes(self.gpa, &self.index_auth);
+        freeNotes(self.gpa, &self.index_notices);
         self.gpa.destroy(self);
     }
 
@@ -132,13 +132,10 @@ pub const Engine = struct {
 
     /// Keep the whole event for a login, because the overlay reads the outcome and the failure text.
     fn keepAuth(self: *Engine, note: proto.rpc.Notification) void {
-        switch (note.method) {
-            .@"auth.login_finished", .@"auth.changed" => {},
-            else => return,
-        }
-        if (self.index_auth.items.len >= max_auth_notes) self.gpa.free(self.index_auth.orderedRemove(self.dropIndex()).text);
+        if (note.method != .@"auth.login_finished") return;
+        if (self.index_auth.items.len >= max_auth_notes) self.gpa.free(self.index_auth.orderedRemove(0).text);
         const text = std.json.Stringify.valueAlloc(self.gpa, note, .{ .emit_null_optional_fields = false }) catch unreachable;
-        self.index_auth.append(self.gpa, .{ .method = note.method, .text = text }) catch unreachable;
+        self.index_auth.append(self.gpa, .{ .text = text }) catch unreachable;
     }
 
     /// Keep the notice body because a fact name cannot carry its text.
@@ -147,12 +144,6 @@ pub const Engine = struct {
         if (self.index_notices.items.len >= max_notice_notes) self.gpa.free(self.index_notices.orderedRemove(0).text);
         const text = std.json.Stringify.valueAlloc(self.gpa, note.params.notice, .{ .emit_null_optional_fields = false }) catch unreachable;
         self.index_notices.append(self.gpa, .{ .text = text }) catch unreachable;
-    }
-
-    /// The note a full list gives up: the oldest change, so a login outcome waits out any burst of changes.
-    fn dropIndex(self: *const Engine) usize {
-        for (self.index_auth.items, 0..) |held, i| if (held.method == .@"auth.changed") return i;
-        return 0;
     }
 
     fn markDirty(self: *Engine, id: SessionId, change: Change) void {
@@ -170,9 +161,8 @@ pub const Engine = struct {
 /// The facts one drain carries. A digest coalesces them, so a repeat within a frame reads as one.
 const FactSet = std.EnumSet(proto.enums.BroadcastName);
 
-/// One auth event as the sink gets it. The method stays beside the text, so a full list drops the right one.
-const AuthNote = struct { method: proto.enums.BroadcastName, text: []u8 };
-const NoticeNote = struct { text: []u8 };
+/// One login outcome or notice as the sink gets it: JSON the drain parses into the event.
+const Note = struct { text: []u8 };
 
 /// How one session changed since the last drain. A view redraws differently for each kind.
 const Change = struct {
@@ -227,7 +217,6 @@ const Change = struct {
             .session_activity_changed_data,
             .catalog_changed_data,
             .auth_login_finished_data,
-            .auth_changed_data,
             .notice,
             .interaction_requested_data,
             .job_changed_data,
@@ -292,8 +281,8 @@ pub fn drain(engine: *Engine, ctx: Context) bool {
     const index_facts = engine.index_facts;
     var auth = engine.index_auth;
     var notices = engine.index_notices;
-    defer freeNotes(AuthNote, engine.gpa, &auth);
-    defer freeNotes(NoticeNote, engine.gpa, &notices);
+    defer freeNotes(engine.gpa, &auth);
+    defer freeNotes(engine.gpa, &notices);
     engine.index_dirty = false;
     engine.index_facts = .initEmpty();
     engine.index_auth = .empty;
@@ -325,25 +314,25 @@ pub fn drain(engine: *Engine, ctx: Context) bool {
     return engine.faulted;
 }
 
-fn emitIndex(engine: *Engine, ctx: Context, facts: FactSet, auth: []const AuthNote, notices: []const NoticeNote, overflow: bool) void {
+fn emitIndex(engine: *Engine, ctx: Context, facts: FactSet, auth: []const Note, notices: []const Note, overflow: bool) void {
     const ev = ctx.newObject();
     defer ctx.freeValue(ev);
     module.set(ctx, ev, "type", ctx.newString("index"));
     module.set(ctx, ev, "overflow", ctx.newBool(overflow));
     setFacts(ctx, ev, facts);
-    if (auth.len > 0) setNotes(AuthNote, ctx, ev, auth, "auth");
-    if (notices.len > 0) setNotes(NoticeNote, ctx, ev, notices, "notices");
+    if (auth.len > 0) setNotes(ctx, ev, auth, "auth");
+    if (notices.len > 0) setNotes(ctx, ev, notices, "notices");
     call(engine, ctx, ev);
 }
 
 /// Free the owned serialized entries in one queue.
-fn freeNotes(comptime Note: type, gpa: std.mem.Allocator, list: *std.ArrayListUnmanaged(Note)) void {
+fn freeNotes(gpa: std.mem.Allocator, list: *std.ArrayListUnmanaged(Note)) void {
     for (list.items) |note| gpa.free(note.text);
     list.deinit(gpa);
 }
 
 /// Attach one queue of serialized objects. The engine wrote each one, so a parse failure is a bug and faults the drain.
-fn setNotes(comptime Note: type, ctx: Context, ev: Value, entries: []const Note, property: [:0]const u8) void {
+fn setNotes(ctx: Context, ev: Value, entries: []const Note, property: [:0]const u8) void {
     const notes = ctx.newArray();
     for (entries, 0..) |note, index| {
         if (ctx.hasException()) break;
@@ -511,34 +500,6 @@ test "an auth event reaches the sink whole, and a session event does not" {
     try testing.expect(!drain(engine, host.ctx));
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.seen[2].auth === undefined ? 1 : 0"));
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.seen[2].notices === undefined ? 1 : 0"));
-}
-
-test "a burst of auth changes never pushes a login outcome out of the digest" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
-    try host.evalModule(
-        \\import { native } from "yuke:engine-native";
-        \\globalThis.seen = [];
-        \\native.setEventSink((ev) => { globalThis.seen.push(ev); });
-    , "sink.js");
-
-    const engine = host.engine;
-    Engine.onEvent(@ptrCast(engine), .{ .method = .@"auth.login_finished", .params = .{ .auth_login_finished_data = .{
-        .login_id = proto.ids.LoginId.bytes([_]u8{7} ** 32),
-        .provider_id = "codex",
-        .outcome = .{ .succeeded = .{} },
-    } } });
-    var i: usize = 0;
-    while (i < max_auth_notes + 4) : (i += 1) {
-        Engine.onEvent(@ptrCast(engine), .{ .method = .@"auth.changed", .params = .{ .auth_changed_data = .{
-            .provider = .{ .provider_id = "xai", .credential_kind = .oauth, .can_login = true },
-        } } });
-    }
-    try testing.expectEqual(max_auth_notes, engine.index_auth.items.len);
-    try testing.expect(!drain(engine, host.ctx));
-    try testing.expectEqual(@as(i32, 1), try host.evalInt(
-        \\globalThis.seen[0].auth.filter((n) => n.method === "auth.login_finished").length
-    ));
 }
 
 test "a notice burst stays bounded and keeps the newest bodies" {

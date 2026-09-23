@@ -35,25 +35,12 @@ pub fn catalogReload(runtime: *App, _: std.mem.Allocator, _: proto.misc.Empty) !
     return .{ .catalog_rev = runtime.store.merged.revision, .changed = changed };
 }
 
-/// Handle auth.list: report the credential runtime of every local provider.
-pub fn authList(runtime: *App, arena: std.mem.Allocator, _: proto.misc.Empty) !proto.auth.AuthListResult {
-    var out: std.ArrayList(proto.auth.AuthProvider) = .empty;
-    // The merged view holds the providers the environment offers as well as the ones the file names.
-    for (runtime.store.merged.rows) |row| try out.append(arena, .{
-        .provider_id = row.id,
-        .credential_kind = if (localEntry(runtime, row.id)) |p| credentialKind(p) else discoveredKind(row),
-        .can_login = runtime.canLogin(row.id),
-    });
-    return .{ .providers = out.items };
-}
-
 /// Handle auth.set_api_key: store one literal key and rebuild the snapshot; the entry keeps every other field, so a hand-written route survives a key change.
 pub fn authSetApiKey(runtime: *App, arena: std.mem.Allocator, params: proto.auth.AuthSetApiKeyParams) !proto.misc.Empty {
     if (!proto.ids.isSelectorPart(params.provider_id)) return error.BadProviderId;
     if (params.api_key.len == 0) return error.BadApiKey;
 
     if (try runtime.store.edit(arena, params.provider_id, .{ .set_api_key = params.api_key })) runtime.announceCatalogChanged();
-    runtime.announceAuthChanged(params.provider_id, .api_key);
     return .{};
 }
 
@@ -99,34 +86,14 @@ pub fn authRemove(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Au
     if (!proto.ids.isSelectorPart(params.provider_id)) return error.BadProviderId;
 
     if (try runtime.store.edit(arena, params.provider_id, .remove_credential)) runtime.announceCatalogChanged();
-    runtime.announceAuthChanged(params.provider_id, null);
     return .{};
-}
-
-/// Report the flows one provider accepts; only a catalog row naming a known flow offers one, and report which credential one entry holds, with null for an entry that holds none.
-fn localEntry(runtime: *const App, provider_id: []const u8) ?provider_config.LocalProvider {
-    const loaded = runtime.store.local orelse return null;
-    for (loaded.providers) |p| if (std.mem.eql(u8, p.id, provider_id)) return p;
-    return null;
-}
-
-/// Report the credential of a provider the file never names. Only the environment can supply one.
-fn discoveredKind(row: provider_registry.Provider) ?proto.enums.AuthCredentialKind {
-    return if (row.availability == .ready) .api_key else null;
-}
-
-fn credentialKind(p: provider_config.LocalProvider) ?proto.enums.AuthCredentialKind {
-    return switch (p.auth orelse return null) {
-        .api_key => |key| if (key.source == null) null else .api_key,
-        .oauth => .oauth,
-    };
 }
 
 const app_fixture = @import("fixture.zig");
 const zio = @import("zio");
 const testing = std.testing;
 
-test "auth.list reports the providers the environment offers, not only the file" {
+test "the catalog reports the credential and the login of the providers the environment offers" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
 
@@ -145,16 +112,16 @@ test "auth.list reports the providers the environment offers, not only the file"
 
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    const result = try authList(&runtime, arena.allocator(), .{});
+    const result = try catalogList(&runtime, arena.allocator(), .{});
 
-    var anthropic: ?proto.auth.AuthProvider = null;
-    var codex: ?proto.auth.AuthProvider = null;
-    for (result.providers) |p| {
-        if (std.mem.eql(u8, p.provider_id, "anthropic")) anthropic = p;
-        if (std.mem.eql(u8, p.provider_id, "openai-codex")) codex = p;
+    var anthropic: ?proto.catalog.ProviderInfo = null;
+    var codex: ?proto.catalog.ProviderInfo = null;
+    for (result.full.providers) |p| {
+        if (std.mem.eql(u8, p.id, "anthropic")) anthropic = p;
+        if (std.mem.eql(u8, p.id, "openai-codex")) codex = p;
     }
 
-    // `providers.json` names neither of these, so before discovery the list was empty.
+    // `providers.json` names neither of these, so only the environment and the catalog speak for them.
     try testing.expectEqual(proto.enums.AuthCredentialKind.api_key, anthropic.?.credential_kind.?);
     try testing.expect(!anthropic.?.can_login);
 

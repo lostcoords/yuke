@@ -13,7 +13,7 @@ const parts = {
   shot: [{ type: "tool", id: 0, name: "read", arguments: '{"path":"shot.png"}', state: { type: "completed", output: "PNG image, 2 KiB", media: [png, jpg], duration_ms: 1 } }],
   bare: [{ type: "tool", id: 0, name: "read", arguments: '{"path":"x.png"}', state: { type: "completed", output: "", media: [png], duration_ms: 1 } }],
 };
-const t = new Transcript({ textOf: () => "", partsOf: (id) => parts[id] || [] });
+const t = new Transcript({ partsOf: (id) => parts[id] || [] });
 t.setOutline([{ id: "shot", type: "assistant" }, { id: "bare", type: "assistant" }], null);
 term.beginFrame(); t.draw({ x: 0, y: 0, w: 60, h: 12 }); term.endFrame();
 t.pager.toTop();

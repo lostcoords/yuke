@@ -44,7 +44,6 @@ export interface RowCache {
   rows: TranscriptRow[];
   source: string;
   partBases: Map<string, number>;
-  doc: Document | undefined;
 }
 
 export interface PartCache {
@@ -67,7 +66,6 @@ export type PartOf = (id: number, partId: number, previous?: MessagePart) => Mes
 export type PartTextPage = (id: number, partId: number, field: string, offset?: number, limit?: number) => { text: string; next: number | null };
 
 export interface TranscriptOptions {
-  textOf?: ((id: number) => string) | undefined;
   partsOf?: PartsOf | null | undefined;
   partOf?: PartOf | null | undefined;
   partTextPage?: PartTextPage | null | undefined;

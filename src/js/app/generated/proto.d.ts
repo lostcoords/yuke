@@ -51,16 +51,6 @@ export interface AuthCancelLoginParams {
   readonly login_id: LoginId;
 }
 
-/** This payload describes `auth.changed`. */
-export interface AuthChangedData {
-  readonly provider: AuthProvider;
-}
-
-/** This result describes `auth.list`. */
-export interface AuthListResult {
-  readonly providers: ReadonlyArray<AuthProvider>;
-}
-
 /** This payload describes `auth.login_finished`. */
 export interface AuthLoginFinishedData {
   readonly login_id: LoginId;
@@ -96,13 +86,6 @@ export interface AuthRemoveParams {
   readonly provider_id: ProviderId;
 }
 
-/** Public authentication state and capabilities for one provider. */
-export interface AuthProvider {
-  readonly provider_id: ProviderId;
-  readonly credential_kind?: AuthCredentialKind;
-  readonly can_login: boolean;
-}
-
 /** These `auth.set_api_key` parameters carry a key that the wire never returns. */
 export interface AuthSetApiKeyParams {
   readonly provider_id: ProviderId;
@@ -132,6 +115,10 @@ export interface ProviderInfo {
   readonly id: string;
   readonly name: string;
   readonly state: ProviderState;
+  /** The credential that serves this provider, or null when it holds none. The wire never carries the secret. */
+  readonly credential_kind?: AuthCredentialKind;
+  /** True when the engine can start a login flow for this provider. */
+  readonly can_login: boolean;
 }
 
 /** The client sent the current revision, so the engine returns no catalog data. */
@@ -606,7 +593,6 @@ export interface ConfigChangedData {
 export interface CreateSession {
   /** The workspace root. The caller names it; the engine holds no default directory. */
   readonly workspace_path: string;
-  readonly profile?: string;
   readonly model?: string;
   readonly reasoning?: string;
   /** Replace the base prompt; child policy remains separate. Resolve placeholders at creation. */
@@ -667,7 +653,6 @@ export interface Session {
   readonly id: SessionId;
   /** The canonical workspace directory this session runs in. */
   readonly root: string;
-  readonly profile: string;
   readonly model: string;
   readonly reasoning: string;
   readonly config_rev: ConfigRev;
@@ -1111,8 +1096,6 @@ export type BroadcastName =
   | "catalog.changed"
   /** The engine finished an authentication login flow. */
   | "auth.login_finished"
-  /** Authentication state changed. */
-  | "auth.changed"
   /** The engine sent an out-of-band notice. */
   | "notice"
   /** An extension asks the connected frontend to interact with the user. */
@@ -1208,8 +1191,6 @@ export type MethodName =
   | "catalog.list"
   /** Read providers.json again and rebuild the catalog. */
   | "catalog.reload"
-  /** List the local providers and the credential each one holds. */
-  | "auth.list"
   /** Set an API key for a provider. */
   | "auth.set_api_key"
   /** Begin a provider login flow. */
@@ -1289,8 +1270,6 @@ export type ProviderState =
   | "needs_credential"
   /** A route field is missing, so the engine cannot build a request. */
   | "needs_route"
-  /** The grant expired. The user must authenticate again. */
-  | "expired"
 ;
 
 /** Workspace execution environment; advertised engine capability; numeric JSON-RPC and yuke error codes. */
@@ -1529,7 +1508,6 @@ export type ResponseResult =
   | MediaBlob
   | CatalogListResult
   | CatalogReloadResult
-  | AuthListResult
   | AuthLoginResult
   | JobListResult
   | JobStopResult
@@ -1543,7 +1521,6 @@ export type BroadcastData =
   | SessionRemovedData
   | CatalogChangedData
   | AuthLoginFinishedData
-  | AuthChangedData
   | Notice
   | MessageCommittedData
   | RunStartedData
@@ -1667,8 +1644,6 @@ export interface Methods {
   "catalog.list": { paramsType: [CatalogListParams?]; returnType: CatalogListResult };
   /** Read providers.json again and rebuild the catalog. */
   "catalog.reload": { paramsType: [Empty?]; returnType: CatalogReloadResult };
-  /** List the local providers and the credential each one holds. */
-  "auth.list": { paramsType: [Empty?]; returnType: AuthListResult };
   /** Set an API key for a provider. */
   "auth.set_api_key": { paramsType: [AuthSetApiKeyParams]; returnType: Empty };
   /** Begin a provider login flow. */
@@ -1698,8 +1673,6 @@ export interface Broadcasts {
   "catalog.changed": CatalogChangedData;
   /** The engine finished an authentication login flow. */
   "auth.login_finished": AuthLoginFinishedData;
-  /** Authentication state changed. */
-  "auth.changed": AuthChangedData;
   /** The engine sent an out-of-band notice. */
   "notice": Notice;
   /** The engine committed a message to a session transcript. */

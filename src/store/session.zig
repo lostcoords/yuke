@@ -59,9 +59,10 @@ pub const StoredPrompt = struct { text: []const u8, generation: u64 };
 /// The stale generation. A run builds the prompt again when the stored value differs from the engine's.
 pub const stale_generation: u64 = 0;
 
+/// Render the stored sections. The sections are the only stored form, so the text can never drift from them.
 pub fn prompt(db: *Database, arena: std.mem.Allocator, id: [16]u8) !?StoredPrompt {
     const row = (try db.queries.select_prompt.maybeOne(arena, .{ .session_id = id })) orelse return null;
-    return .{ .text = row.value.prompt, .generation = row.value.generation };
+    return .{ .text = try prompt_mod.render(arena, try promptSections(db, arena, id)), .generation = row.value.generation };
 }
 
 pub fn promptSections(db: *Database, arena: std.mem.Allocator, id: [16]u8) ![]const Section {
@@ -72,12 +73,12 @@ pub fn promptSections(db: *Database, arena: std.mem.Allocator, id: [16]u8) ![]co
     return result.items;
 }
 
-/// Render and store the sections under `generation`; the caller owns the returned text.
+/// Store the sections under `generation` and return their rendered text; the caller owns the text.
 pub fn setPrompt(db: *Database, arena: std.mem.Allocator, id: [16]u8, sections: []const Section, generation: u64) ![]const u8 {
     std.debug.assert(prompt_mod.valid(sections));
     const text = try prompt_mod.render(arena, sections);
     errdefer arena.free(text);
-    try db.queries.replace_prompt.exec(.{ .session_id = id, .prompt = text, .generation = generation });
+    try db.queries.replace_prompt.exec(.{ .session_id = id, .generation = generation });
     try db.queries.delete_prompt_sections.exec(.{ .session_id = id });
     for (sections, 0..) |section, position| try db.queries.insert_prompt_section.exec(.{ .session_id = id, .position = position, .key = section.key, .text = section.text });
     return text;
@@ -269,7 +270,6 @@ fn rootParams(id: [16]u8, root: []const u8) CreateParams {
         .id = id,
         .root = root,
         .origin = "root",
-        .profile = "default",
         .model = "opus",
         .reasoning = "high",
         .config_rev = 0,

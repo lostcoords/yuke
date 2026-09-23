@@ -392,7 +392,8 @@ pub fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: pro
                 written += 1;
                 try writeContentPart(w, &parts, id, c);
             },
-            else => {},
+            // A summary reads as one text part, so a view reads every message through its parts.
+            .compaction => |c| if (only == null or only.? == 0) try writeTextPart(w, &parts, "text", 0, c.summary, null),
         }
         return w.writeByte(']');
     }
@@ -775,4 +776,19 @@ test "a user message projects its content parts, and a position names each one" 
     try std.testing.expectEqualStrings("after", partTextOf(&session, 1, 2, "text").?);
     try std.testing.expect(partTextOf(&session, 1, 1, "text") == null);
     try std.testing.expect(partTextOf(&session, 1, 2, "output") == null);
+}
+
+test "a compaction projects its summary as one text part" {
+    const a = std.testing.allocator;
+    var session = domain_session.Session.init(a, .bytes([_]u8{5} ** 16));
+    defer session.deinit();
+    try session.apply(.{ .message_committed_data = .{
+        .session_id = session.id,
+        .seq = 1,
+        .message = .{ .compaction = .{ .id = 1, .run_id = 1, .reason = .manual, .summary = "the work so far", .tokens_before = 9, .tokens_after = 3, .time = .{ .created_at_ms = 1 } } },
+    } });
+    var buffer: std.Io.Writer.Allocating = .init(a);
+    defer buffer.deinit();
+    try writeMessageParts(&buffer.writer, &session, 1, null, null);
+    try std.testing.expectEqualStrings("[{\"type\":\"text\",\"id\":0,\"text\":\"the work so far\"}]", buffer.written());
 }

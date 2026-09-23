@@ -15,12 +15,9 @@ pub const Hooks = struct {
     points: PointSet = .initEmpty(),
     /// The chain folder, held as a GC root until the table dies. A null folder answers no point.
     dispatch: ?Value = null,
-    /// The input gate: it folds `input.before` and then issues `session.send_input` on the owner.
-    gate: ?Value = null,
 
     pub fn deinit(self: *Hooks, ctx: Context) void {
         if (self.dispatch) |folder| ctx.freeValue(folder);
-        if (self.gate) |gate| ctx.freeValue(gate);
         self.* = undefined;
     }
 
@@ -33,12 +30,6 @@ pub const Hooks = struct {
     pub fn install(self: *Hooks, ctx: Context, folder: Value) void {
         if (self.dispatch) |old| ctx.freeValue(old);
         self.dispatch = folder;
-    }
-
-    /// Install the gate and drop the one it replaces. The table takes the reference.
-    pub fn installGate(self: *Hooks, ctx: Context, gate: Value) void {
-        if (self.gate) |old| ctx.freeValue(old);
-        self.gate = gate;
     }
 
     /// Record which points hold a handler. `yuke:ext` calls this after every add and drop.

@@ -17,9 +17,8 @@ const calls = [];
 const observer = new Context(new Scope("auth-observer"), "auth-observer");
 client.catalogReload = () => Promise.resolve({ changed: false });
 client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r1", models: [],
-  providers: [{ id: "codex", name: "Codex", state: "needs_credential" }, { id: "minimax", name: "MiniMax", state: "ready" }] });
-client.authList = () => Promise.resolve({ providers: [
-  { provider_id: "codex", can_login: true }, { provider_id: "minimax", credential_kind: "api_key", can_login: false }] });
+  providers: [{ id: "codex", name: "Codex", state: "needs_credential", can_login: true },
+    { id: "minimax", name: "MiniMax", state: "ready", credential_kind: "api_key", can_login: false }] });
 client.authLogin = (id) => { calls.push("login:" + id); return Promise.resolve({ login_id: "L1", verification_url: "https://x/y", user_code: "AB-CD" }); };
 client.authCancelLogin = (id) => { calls.push("cancel:" + id); return Promise.resolve({}); };
 client.authSetApiKey = (id, k) => { calls.push("key:" + id + ":" + k); return Promise.resolve({}); };
@@ -86,7 +85,7 @@ await settle();
 check("env-key-notice", notice.text.indexOf("in the environment") > 0);
 
 // The model picker dims a model whose provider needs a credential, and accepting it starts the login.
-client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r2", providers: [{ id: "codex", name: "Codex", state: "needs_credential" }],
+client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r2", providers: [{ id: "codex", name: "Codex", state: "needs_credential", can_login: true }],
   models: [{ id: "gpt", provider: "codex", selector: "codex/gpt", name: "gpt", reasoning_levels: [], default_reasoning: "", cost: {} }] });
 command.perform("model:pick");
 await settle();
@@ -99,7 +98,7 @@ check("model-accept-logs-in", root.overlays.length === 1 && calls[calls.length -
 root.onEvent(key("esc"));
 check("dialog-closed", root.overlays.length === 0);
 // A provider without a route cannot log in, so the picker stops with the reason.
-client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r3", providers: [{ id: "codex", name: "Codex", state: "needs_route" }],
+client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r3", providers: [{ id: "codex", name: "Codex", state: "needs_route", can_login: true }],
   models: [{ id: "gpt", provider: "codex", selector: "codex/gpt", name: "gpt", reasoning_levels: ["low", "high"], default_reasoning: "low", cost: {} }] });
 command.perform("model:pick");
 await settle();
@@ -110,7 +109,7 @@ const beforeQuery = defaultModel().model;
 command.perform("model:pick", "codex/gpt");
 await settle();
 check("query-route-stops", defaultModel().model === beforeQuery && notice.text.indexOf("needs a route") > 0);
-client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r4", providers: [{ id: "codex", name: "Codex", state: "ready" }],
+client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r4", providers: [{ id: "codex", name: "Codex", state: "ready", can_login: true }],
   models: [{ id: "gpt", provider: "codex", selector: "codex/gpt", name: "gpt", reasoning_levels: ["low", "high"], default_reasoning: "high", cost: {} }] });
 command.perform("model:pick", "codex/gpt");
 await settle();

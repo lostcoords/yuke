@@ -165,8 +165,7 @@ test "headless extensions pump an async JavaScript tool" {
     const installed = app_runtime.engine.deps.tools;
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    const names = try installed.names(installed.ctx, arena.allocator());
-    const advertised = try installed.getDecls(installed.ctx, arena.allocator(), names);
+    const advertised = try installed.decls(installed.ctx, arena.allocator());
     try std.testing.expectEqual(extensions.host.tools.entries.items.len, advertised.len);
     const found = for (advertised) |d| {
         if (std.mem.eql(u8, d.name, "read_note")) break true;
@@ -180,7 +179,7 @@ test "headless extensions pump an async JavaScript tool" {
     try extensions.host.pump();
 }
 
-test "the tool port lists names in table order and answers only the declarations a run allows" {
+test "the tool port answers the declarations in table order, and a removed tool leaves the table" {
     var f: Fixture = undefined;
     try f.init(
         \\import { plugins } from "yuke";
@@ -195,12 +194,9 @@ test "the tool port lists names in table order and answers only the declarations
     const installed = f.app.engine.deps.tools;
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    const names = try installed.names(installed.ctx, arena.allocator());
-    try std.testing.expect(names.len >= 2);
-    for (names[1..], 0..) |name, i| try std.testing.expect(std.mem.order(u8, names[i], name) == .lt);
-    const some = try installed.getDecls(installed.ctx, arena.allocator(), &.{ "normal_tool", "absent" });
-    try std.testing.expectEqual(@as(usize, 1), some.len);
-    try std.testing.expectEqualStrings("normal_tool", some[0].name);
+    const decls = try installed.decls(installed.ctx, arena.allocator());
+    try std.testing.expect(decls.len >= 2);
+    for (decls[1..], 0..) |decl, i| try std.testing.expect(std.mem.order(u8, decls[i].name, decl.name) == .lt);
     try host.evalModule(
         \\import { removeTool } from "yuke:tools";
         \\globalThis.removed = removeTool("hidden_tool") ? 1 : 0;
@@ -576,49 +572,6 @@ test "a blocked input answers its code and reaches no store" {
     , "input-after-block.js");
     try support.pumpUntilTrue(host, "globalThis.empty > 0");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.empty"));
-}
-
-test "create with input shares the hook gate and a refusal leaves no session" {
-    var f: Fixture = undefined;
-    try f.init(
-        \\import { plugins } from "yuke";
-        \\globalThis.mode = "block";
-        \\plugins.use({ name: "initial", apply(ctx) {
-        \\  ctx.hook("input.before", async (value) => {
-        \\    globalThis.proposed = value.session_id === null && value.create.workspace_path === "/work";
-        \\    if (globalThis.mode === "block") return { block: "denied" };
-        \\    if (globalThis.mode === "bad") return { replace: {} };
-        \\    return { replace: { content: [{ type: "text", text: "replaced" }] } };
-        \\  });
-        \\} });
-    , kernel_boot);
-    defer f.deinit();
-    const host = f.extensions.host;
-    var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer scratch.deinit();
-    const a = scratch.allocator();
-    const params =
-        \\{"workspace_path":"/work","model":"test/model","initial_input":{"type":"content","content":[{"type":"text","text":"original"}]}}
-    ;
-    for ([_][]const u8{ "globalThis.mode='block'", "globalThis.mode='bad'" }) |script| {
-        const text = try a.dupeZ(u8, script);
-        try host.eval(text, "mode.js");
-        const call = host.calls.submitInputMethod("session.create", params);
-        defer call.finish();
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(std.mem.indexOf(u8, call.text.?, "failure") != null);
-        try std.testing.expectEqual(@as(u64, 0), try database.session.count(&f.app.db, a, .{}));
-    }
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.proposed"));
-    try host.eval("globalThis.mode='replace'", "mode.js");
-    const call = host.calls.submitInputMethod("session.create", params);
-    defer call.finish();
-    try support.pumpUntilSettled(host, call);
-    const answer = try std.json.parseFromSliceLeaky(struct { result: proto.session.SessionResult }, a, call.text.?, .{});
-    const id = answer.result.session.id;
-    const page = try database.message.historyPage(&f.app.db, a, id.raw, 0, 10);
-    try std.testing.expectEqualStrings("replaced", page.messages[0].user.content[0].text.text);
-    try std.testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.app.db, a, id.raw)).?.input_id_high);
 }
 
 test "the agents plugin sets the native limits from its options and a dispose restores them" {

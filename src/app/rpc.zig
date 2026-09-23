@@ -4,6 +4,7 @@ const std = @import("std");
 const proto = @import("proto");
 const app = @import("app.zig");
 const call = @import("call.zig");
+const input_gate = @import("input_gate.zig");
 const extensions_mod = @import("../js/extensions.zig");
 const tools_table = @import("../js/tools.zig");
 const Host = extensions_mod.Host;
@@ -86,63 +87,78 @@ pub const Rpc = struct {
 
     /// Leave every held input and free the list. The owner sweeps the call records on its next pump.
     pub fn deinit(self: *Rpc) void {
-        for (self.inputs.items) |input| input.drop(self.gpa);
+        for (self.inputs.items) |*input| input.deinit();
         self.inputs.deinit(self.gpa);
         self.* = undefined;
     }
 
-    /// Hand one input to the gate. The answer goes out from `drainInputs` once the owner settles the call.
-    fn gateInput(self: *Rpc, request: Line) void {
+    /// Hold a hooked content input until the owner folds its chain; return false when the request runs now.
+    fn gate(self: *Rpc, request: Line) bool {
+        if (!self.host.hooks.holds(.@"input.before")) return false;
+        var arena: std.heap.ArenaAllocator = .init(self.gpa);
+        const a = arena.allocator();
+        // A bad parameter object runs now, so the command path answers it.
+        const input = inputOf(a, request) orelse {
+            arena.deinit();
+            return false;
+        };
         if (self.inputs.items.len == queue_slots) {
+            arena.deinit();
             self.flushNotifications();
             if (request.id) |id| self.writeFailure(id, .queue_full, "too many requests are pending") catch |err| self.failWrite(err);
-            return;
+            return true;
         }
-        // The JavaScript gate reads text, so only this path serializes the value.
-        var text: std.Io.Writer.Allocating = .init(self.gpa);
-        std.json.Stringify.value(request.params, .{ .emit_null_optional_fields = false }, &text.writer) catch unreachable;
-        const params = text.toOwnedSlice() catch unreachable;
-        const id = if (request.id) |value| self.gpa.dupe(u8, value) catch unreachable else null;
-        self.inputs.append(self.gpa, .{ .id = id, .params = params, .call = self.host.calls.submitInputMethod(request.method, params) }) catch unreachable;
+        const submitted = switch (input) {
+            inline else => |params| input_gate.submit(self.host, a, params),
+        };
+        const record = submitted orelse {
+            arena.deinit();
+            return false;
+        };
+        const id = if (request.id) |value| a.dupe(u8, value) catch unreachable else null;
+        self.inputs.append(self.gpa, .{ .arena = arena, .id = id, .input = input, .call = record }) catch unreachable;
+        return true;
     }
 
-    /// Write every gated input the owner settled. The owner is the only writer.
+    /// Run and answer every held input whose chain settled. The owner is the only writer.
     pub fn drainInputs(self: *Rpc) void {
         var i: usize = 0;
         while (i < self.inputs.items.len) {
-            const input = self.inputs.items[i];
-            if (input.call.state != .settled) {
+            if (self.inputs.items[i].call.state != .settled) {
                 i += 1;
                 continue;
             }
-            _ = self.inputs.orderedRemove(i);
-            defer input.drop(self.gpa);
-            self.flushNotifications();
+            var held = self.inputs.orderedRemove(i);
+            defer held.deinit();
+            self.answerHeld(&held);
             if (self.fatal) return;
-            if (input.id) |id| self.writeGated(id, input.call);
         }
     }
 
-    /// Decode the gate's `{result}` or `{failure}` object and write it under `id`.
-    fn writeGated(self: *Rpc, id: []const u8, call_record: *const tools_table.Call) void {
-        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
-        defer arena_state.deinit();
-        const arena = arena_state.allocator();
-        const text = call_record.text orelse "";
-        const answer = if (call_record.is_error) null else std.json.parseFromSliceLeaky(call.GateAnswer, arena, text, .{ .ignore_unknown_fields = true }) catch null;
-        const decoded = answer orelse {
-            std.log.err("rpc: the input gate answered: {s}", .{text});
-            self.writeFailure(id, .internal, "the input gate failed") catch |err| self.failWrite(err);
-            return;
-        };
-        if (decoded.failure) |failure| {
-            const code = std.meta.stringToEnum(proto.enums.ErrorCode, failure.code) orelse .internal;
-            self.writeFailure(id, code, failure.message) catch |err| self.failWrite(err);
-            return;
-        }
+    fn answerHeld(self: *Rpc, held: *GatedInput) void {
+        const arena = held.arena.allocator();
         var body: std.Io.Writer.Allocating = .init(arena);
-        std.json.Stringify.value(decoded.result, .{}, &body.writer) catch unreachable;
-        self.writeResult(id, body.written()) catch |err| self.failWrite(err);
+        const failure = switch (held.input) {
+            inline else => |params| if (input_gate.finish(self.app, self.host, arena, params, held.call)) |answer|
+                call.encode(answer, &body.writer) catch unreachable
+            else |err| blk: {
+                std.log.err("rpc: {t} failed: {t}", .{ held.input, err });
+                break :blk call.Failure{ .code = .internal, .message = "the command failed" };
+            },
+        };
+        self.respond(held.id, failure, body.written());
+    }
+
+    /// Write the events the command raised, then its answer. A request without an id gets no answer.
+    fn respond(self: *Rpc, request_id: ?[]const u8, failure: ?call.Failure, body: []const u8) void {
+        self.flushNotifications();
+        if (self.fatal) return;
+        const id = request_id orelse return;
+        if (failure) |f| {
+            self.writeFailure(id, f.code, f.message) catch |err| self.failWrite(err);
+        } else {
+            self.writeResult(id, body) catch |err| self.failWrite(err);
+        }
     }
 
     /// Queue one engine event without entering the owner or waiting on stdout.
@@ -234,16 +250,22 @@ const Request = union(enum) {
     }
 };
 
-/// One `session.send_input` the gate holds. The record owns the parameter bytes for the whole call.
+/// One input command, decoded so the gate can read its content.
+const Input = union(enum) {
+    send: proto.session.SessionSendInputParams,
+    create: proto.misc.CreateSession,
+};
+
+/// One input the gate holds. The arena owns the id, the parameters, and the hook payload for the whole call.
 const GatedInput = struct {
-    id: ?[]u8,
-    params: []u8,
+    arena: std.heap.ArenaAllocator,
+    id: ?[]const u8,
+    input: Input,
     call: *tools_table.Call,
 
-    fn drop(self: GatedInput, gpa: std.mem.Allocator) void {
+    fn deinit(self: *GatedInput) void {
         self.call.finish();
-        if (self.id) |id| gpa.free(id);
-        gpa.free(self.params);
+        self.arena.deinit();
     }
 };
 
@@ -409,33 +431,14 @@ pub fn serve(gpa: std.mem.Allocator, rpc: *Rpc, line: []const u8) void {
 
 fn serveParsed(arena: std.mem.Allocator, rpc: *Rpc, request: Line) void {
     // A hooked input waits on JavaScript, so it leaves the owner and answers later.
-    const needs_gate = if (std.mem.eql(u8, request.method, "session.send_input")) true else if (std.mem.eql(u8, request.method, "session.create")) blk: {
-        const params = std.json.parseFromValueLeaky(proto.misc.CreateSession, arena, request.params, .{ .ignore_unknown_fields = true }) catch break :blk false;
-        break :blk params.initial_input != null;
-    } else false;
-    if (needs_gate and rpc.host.hooks.holds(.@"input.before")) {
-        return rpc.gateInput(request);
-    }
+    if (rpc.gate(request)) return;
 
     var body: std.Io.Writer.Allocating = .init(arena);
-    const failure = call.call(rpc.app, rpc.host, arena, request.method, request.params, &body.writer) catch |err| {
+    const failure = call.call(rpc.app, rpc.host, arena, request.method, request.params, &body.writer) catch |err| blk: {
         std.log.err("rpc: {s} failed: {t}", .{ request.method, err });
-        rpc.flushNotifications();
-        if (request.id) |id| {
-            rpc.writeFailure(id, .internal, "the command failed") catch |write_err| rpc.failWrite(write_err);
-        }
-        return;
+        break :blk call.Failure{ .code = .internal, .message = "the command failed" };
     };
-    rpc.flushNotifications();
-    if (failure) |f| {
-        if (request.id) |id| {
-            rpc.writeFailure(id, f.code, f.message) catch |err| rpc.failWrite(err);
-        }
-        return;
-    }
-    if (request.id) |id| {
-        rpc.writeResult(id, body.written()) catch |err| rpc.failWrite(err);
-    }
+    rpc.respond(request.id, failure, body.written());
 }
 
 /// One decoded request line. Every field borrows the request arena.
@@ -445,6 +448,18 @@ const Line = struct {
     /// The parameter object that `call` decodes against the method type.
     params: std.json.Value,
 };
+
+/// Decode an input method into `arena`, or return null for any other method or a bad parameter object.
+fn inputOf(arena: std.mem.Allocator, request: Line) ?Input {
+    const options: std.json.ParseOptions = .{ .ignore_unknown_fields = true, .allocate = .alloc_always };
+    if (std.mem.eql(u8, request.method, "session.send_input")) {
+        return .{ .send = std.json.parseFromValueLeaky(proto.session.SessionSendInputParams, arena, request.params, options) catch return null };
+    }
+    if (std.mem.eql(u8, request.method, "session.create")) {
+        return .{ .create = std.json.parseFromValueLeaky(proto.misc.CreateSession, arena, request.params, options) catch return null };
+    }
+    return null;
+}
 
 /// Read the envelope and keep the parameters as one JSON value for `call`.
 fn parse(arena: std.mem.Allocator, line: []const u8) !Line {

@@ -94,7 +94,6 @@ fn pollFlow(arena: std.mem.Allocator, slot: *login_runtime.LoginSlot, seam: oaut
 /// Store the grant through the one mutator, so the write cannot lose another edit.
 fn install(runtime: *App, arena: std.mem.Allocator, slot: *login_runtime.LoginSlot, tokens: oauth.Tokens) !void {
     if (try runtime.store.edit(arena, slot.provider_id, .{ .set_grant = tokens })) runtime.announceCatalogChanged();
-    runtime.announceAuthChanged(slot.provider_id, .oauth);
 }
 
 /// Publish the one terminal outcome and drop the login. Nothing reaches the slot after this.
@@ -195,7 +194,6 @@ fn keep(runtime: *App, arena: std.mem.Allocator, due: Due, grant: provider.confi
         return;
     };
     if (changed) runtime.announceCatalogChanged();
-    runtime.announceAuthChanged(due.provider_id, .oauth);
 }
 
 /// Lapse the grant, so the run path refuses it and the client asks the human to log in again.

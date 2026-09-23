@@ -1,4 +1,4 @@
-//! The native hook module installs the dispatcher and the input gate, and validates the point set.
+//! The native hook module installs the dispatcher and validates the point set.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -13,7 +13,6 @@ const Value = quickjs.Value;
 pub fn install(host: *Host) void {
     module.installFunctions(host, "yuke:hooks", &.{
         .{ .name = "installDispatcher", .arity = 1, .call = jsInstallDispatcher },
-        .{ .name = "installInputGate", .arity = 1, .call = jsInstallInputGate },
         .{ .name = "installLifecycle", .arity = 1, .call = jsInstallLifecycle },
         .{ .name = "setPoints", .arity = 2, .call = jsSetPoints },
     });
@@ -25,14 +24,6 @@ fn jsInstallDispatcher(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len < 1 or !ctx.isFunction(args[0])) return ctx.throwTypeError("installDispatcher needs a function");
     // The table takes this reference, so it must outlive the argument frame.
     host.hooks.install(ctx, ctx.dupValue(args[0]));
-    return quickjs.UNDEFINED;
-}
-
-/// `installInputGate(fn)` takes the gate the RPC frontend calls as `fn(params)` for a hooked input.
-fn jsInstallInputGate(ctx: Context, _: Value, args: []const Value) Value {
-    const host = Host.fromContext(ctx);
-    if (args.len < 1 or !ctx.isFunction(args[0])) return ctx.throwTypeError("installInputGate needs a function");
-    host.hooks.installGate(ctx, ctx.dupValue(args[0]));
     return quickjs.UNDEFINED;
 }
 

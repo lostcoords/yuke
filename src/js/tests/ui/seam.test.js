@@ -1,11 +1,11 @@
-import { check } from "yuke:test";
+import { check, textParts } from "yuke:test";
 import { term } from "yuke:term";
 import { Transcript } from "yuke:transcript";
 import { Document } from "yuke:md";
 import { prevGrapheme, nextGrapheme } from "yuke:text-input";
 
 const body = { a1: "alpha bravo charlie delta echo foxtrot golf hotel india" };
-const t = new Transcript({ textOf: (id) => body[id] || "" });
+const t = new Transcript({ partsOf: textParts((id) => body[id] || "") });
 t.setOutline([{ id: "a1", type: "assistant" }], null);
 const rect = { x: 0, y: 0, w: 20, h: 2 };
 const paint = () => { term.beginFrame(); t.draw(rect); term.endFrame(); };
@@ -43,7 +43,7 @@ check("visible-after", t.screenAt(last) !== null);
 
 // A source offset inside a grapheme snaps to its edge.
 {
-  const em = new Transcript({ textOf: () => "a😀b" });
+  const em = new Transcript({ partsOf: textParts(() => "a😀b") });
   em.setOutline([{ id: "e1", type: "assistant" }], null);
   em.rows(20, 0, 4);
   const p1 = em.posAtSource("e1", 2);

@@ -358,11 +358,8 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
         const config = try run.slotConfig(engine, arena, rt, context, .turn);
         const started = try run.beginTurn(engine.deps.db, engine.deps.io, arena, sid, .{ .content = content, .source = source, .skill_name = skill_name }, snapshot.config_rev);
         const slot = try run.createSlot(engine, context, started, config);
-        rt.active_run = slot;
+        run.bindStarted(engine, rt, slot, started);
         launch.* = .{ .slot = slot };
-        // Fold each durable event in sequence order: the user message, then run.started.
-        session_events.publishUserCommits(engine, rt, started.user_commits);
-        run.emitStarted(engine, rt, started);
         return .{ .started = .{ .input_id = started.handle.input_id, .run_id = started.handle.started.run_id } };
     }
 
@@ -593,7 +590,6 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     errdefer if (content != null and parent == null) engine.releaseRoot(id);
     const base = std.fs.path.basename(root);
     const title = if (params.child) |child| child.name else if (base.len == 0) root else base;
-    const profile = params.profile orelse "default";
     const resolved = selected orelse try model_config.validate(
         engine,
         arena,
@@ -631,7 +627,6 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
             .parent_message_id = if (params.child) |child| child.site.message_id else null,
             .parent_part_id = if (params.child) |child| child.site.part_id else null,
             .name = if (params.child) |child| child.name else null,
-            .profile = profile,
             .model = model,
             .reasoning = reasoning,
             .config_rev = 0,
@@ -644,28 +639,34 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
         const system_prompt = try session_store.setPrompt(engine.deps.db, arena, id.raw, seed, session_store.stale_generation);
         if (available) config = .{ .model = model, .reasoning = reasoning, .system_prompt = system_prompt, .max_rounds = params.max_rounds, .root = root, .name = if (params.child) |child| child.name else null };
         try config_store.recordInitial(engine.deps.db, id.raw, birth_config);
-        if (content) |parts| queued = try input_store.enqueue(engine.deps.db, arena, id.raw, engine.newId(), now, .{ .content = parts, .source = if (params.child) |child| .{ .parent_instruction = child.site } else null, .skill_name = if (params.initial_input.? == .skill) params.initial_input.?.skill.name else null }, now);
-        if (config != null) started = try run.beginQueuedTurnInTransaction(engine.deps.db, engine.deps.io, arena, id.raw, 0);
+        if (content) |parts| {
+            const input: run.Input = .{ .content = parts, .source = if (params.child) |child| .{ .parent_instruction = child.site } else null, .skill_name = if (params.initial_input.? == .skill) params.initial_input.?.skill.name else null };
+            // A session that can run now starts on its input; one that must wait queues it.
+            if (config != null) {
+                started = try run.beginTurnInTransaction(engine.deps.db, engine.deps.io, arena, id.raw, input, 0);
+            } else {
+                queued = try input_store.enqueue(engine.deps.db, arena, id.raw, engine.newId(), now, input, now);
+            }
+        }
         try tx.commit();
     }
     if (resident) |rt| {
         rt.hydrated = true;
-        session_events.emitDurable(engine, rt, .{ .method = .@"input.queued", .params = .{ .input_queued_data = .{ .session_id = id, .seq = queued.?.seq, .input = queued.?.input } } });
         if (started) |run_start| {
             const location: run.RunSlot.Location = if (parent_tree) |tree| .{ .root = tree.root, .depth = tree.depth + 1 } else .{ .root = id, .depth = 0 };
             const slot = try run.RunSlot.create(engine.deps.gpa, run_start.handle, parent, location, config.?);
-            rt.active_run = slot;
+            run.bindStarted(engine, rt, slot, run_start);
             launch.* = .{ .slot = slot };
-            session_events.publishUserCommits(engine, rt, run_start.user_commits);
-            run.emitStarted(engine, rt, run_start);
-        } else if (parent) |pid| launch.* = .{ .wake = pid };
+        } else {
+            session_events.emitDurable(engine, rt, .{ .method = .@"input.queued", .params = .{ .input_queued_data = .{ .session_id = id, .seq = queued.?.seq, .input = queued.?.input } } });
+            if (parent) |pid| launch.* = .{ .wake = pid };
+        }
     }
     emitNotices(engine, notices);
     session_events.announceSummary(engine, id);
     return .{ .session = .{
         .id = id,
         .root = root,
-        .profile = profile,
         .model = model,
         .reasoning = reasoning,
         .config_rev = 0,
@@ -724,7 +725,7 @@ test "session.get and session.queue read the durable queue, resident or not" {
 
     // Resident: the runtime answers, and its restored queue reports the same depth.
     const rt = try engine.activate(id);
-    try std.testing.expectEqual(queued.input.input_id, rt.queueEntries()[0].input_id);
+    try std.testing.expectEqual(queued.input.input_id, rt.pending.items[0].input_id);
     const resident = try sessionGet(&engine, arena, .{ .session_id = id });
     try std.testing.expectEqual(@as(u64, 1), resident.activity.queued);
 
@@ -766,7 +767,6 @@ test "session.get and session.queue read the durable queue, resident or not" {
         .parent_message_id = if (entry.parent_id != null) 1 else null,
         .parent_part_id = if (entry.parent_id != null) 0 else null,
         .name = entry.name,
-        .profile = "default",
         .model = "mock",
         .reasoning = "",
         .config_rev = 0,

@@ -1,4 +1,4 @@
-import { check } from "yuke:test";
+import { check, textParts } from "yuke:test";
 import { term } from "yuke:term";
 import { Transcript } from "yuke:transcript";
 const at = (col, row, event) => ({ type: "mouse", col, row, button: "left", event, mods: 0 });
@@ -6,7 +6,7 @@ const at = (col, row, event) => ({ type: "mouse", col, row, button: "left", even
 // Two user turns. A user row is plain text with a two-column gutter.
 const body = { u1: "alpha", u2: "bravo" };
 let copied = null;
-const t = new Transcript({ textOf: (id) => body[id] || "", onSelect: (s) => (copied = s) });
+const t = new Transcript({ partsOf: textParts((id) => body[id] || ""), onSelect: (s) => (copied = s) });
 t.setOutline([{ id: "u1", type: "user" }, { id: "u2", type: "user" }], null);
 const paint = () => { term.beginFrame(); t.draw({ x: 0, y: 0, w: 40, h: 12 }); term.endFrame(); };
 paint();

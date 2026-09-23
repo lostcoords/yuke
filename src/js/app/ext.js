@@ -4,7 +4,7 @@ import { events } from "yuke:kernel";
 import { bindInteraction } from "yuke:interaction";
 export { interaction } from "yuke:interaction";
 import { defineTool, removeTool } from "yuke:tools";
-import { installDispatcher, installInputGate, installLifecycle, setPoints } from "yuke:hooks";
+import { installDispatcher, installLifecycle, setPoints } from "yuke:hooks";
 import { native } from "yuke:engine-native";
 
 /** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, ScopeEntry, ToolDefinition } from "./types/ext.js" */
@@ -536,12 +536,6 @@ export async function createSession(params) {
   }
   return JSON.parse(await native.request("session.create", JSON.stringify(params)));
 }
-
-// The owner bridge carries both input methods through the same hook policy.
-installInputGate((params, method = "session.send_input") => (method === "session.create" ? createSession(params) : sendInput(params)).then(
-  (result) => ({ result }),
-  (e) => ({ failure: { code: e.code || "internal", message: e.message || String(e) } }),
-));
 
 /** @param {Disposer} release */
 function releaseResource(release) {

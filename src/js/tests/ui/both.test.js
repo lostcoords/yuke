@@ -1,4 +1,4 @@
-import { equal } from "yuke:test";
+import { equal, textParts } from "yuke:test";
 import { term } from "yuke:term";
 import { root, Node, keymap } from "yuke:core";
 import { plugins } from "yuke:ext";
@@ -11,7 +11,7 @@ const key = (char) => ({ type: "key", code: "char", char: char, text: char, even
 const body = { a1: "alpha bravo charlie\nsecond line here\nthird line xx" };
 
 const run = (order) => {
-  const v = new ChatView({ textOf: (id) => body[id] || "" });
+  const v = new ChatView({ partsOf: textParts((id) => body[id] || "") });
   v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
   root.setRoot(Node.leaf(v));
   root.focusView(v);

@@ -11,30 +11,15 @@ const tools = @import("tools.zig");
 /// Build the port the process installs. The set answers from the live host table.
 pub fn toolSet(host: *Host) toolset.ToolSet {
     std.debug.assert(host.phase == .open);
-    return .{ .ctx = host, .names = namesFor, .getDecls = declsFor, .run = runFor };
+    return .{ .ctx = host, .decls = declsFor, .run = runFor };
 }
 
-/// Answer every tool name in table order, which is sorted, so the advertised order never follows load order.
-fn namesFor(ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const []const u8 {
-    const host: *Host = @ptrCast(@alignCast(ctx));
-    const names = try arena.alloc([]const u8, host.tools.entries.items.len);
-    for (host.tools.entries.items, 0..) |entry, i| names[i] = try arena.dupe(u8, entry.decl.name);
-    return names;
-}
-
-/// Answer the declarations of `allowed`. The run copies them once and keeps them for every round.
-fn declsFor(ctx: *anyopaque, arena: std.mem.Allocator, allowed: []const []const u8) error{OutOfMemory}![]const ir.Tool {
+/// Answer every declaration in table order, which is sorted, so the advertised order never follows load order.
+fn declsFor(ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const ir.Tool {
     const host: *Host = @ptrCast(@alignCast(ctx));
     const decls = try arena.alloc(ir.Tool, host.tools.entries.items.len);
-    var at: usize = 0;
-    for (host.tools.entries.items) |entry| {
-        for (allowed) |name| if (std.mem.eql(u8, name, entry.decl.name)) {
-            decls[at] = try proto.dupe(arena, entry.decl);
-            at += 1;
-            break;
-        };
-    }
-    return decls[0..at];
+    for (host.tools.entries.items, decls) |entry, *decl| decl.* = try proto.dupe(arena, entry.decl);
+    return decls;
 }
 
 /// Submit one call and wait at the turn cancellation point for the owner to answer it.
@@ -102,6 +87,12 @@ fn askFor(ctx: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payl
     defer finishCall(host, call);
     awaitCall(host, call) catch return .canceled;
     if (host.phase != .open) return .canceled;
+    return answerOf(out, point, call);
+}
+
+/// Read the answer of one settled hook call into `out`. A fault or an unreadable answer blocks.
+pub fn answerOf(out: std.mem.Allocator, point: proto.hook.Point, call: *const tools.Call) hookset.Decision {
+    std.debug.assert(call.state == .settled);
     const text = call.text orelse return .proceed;
     if (call.is_error) {
         std.log.warn("hook {s} faulted: {s}", .{ point.wireName(), text });

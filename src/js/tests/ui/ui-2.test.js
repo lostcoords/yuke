@@ -1,4 +1,4 @@
-import { check } from "yuke:test";
+import { check, textParts } from "yuke:test";
 import { List } from "yuke:ui";
 import { Transcript } from "yuke:transcript";
 import { fuzzyMatch, fuzzyRank } from "yuke:fzy";
@@ -24,7 +24,7 @@ check("over-long-cap", fuzzyMatch("a".repeat(1025), "a") === -Infinity);
 
 // A user turn is a tinted band with a gutter marker; an assistant turn renders markdown.
 const texts = { u1: "hello world", a1: "**bold** text" };
-const t = new Transcript({ textOf: (id) => texts[id] || "" });
+const t = new Transcript({ partsOf: textParts((id) => texts[id] || "") });
 t.setOutline([{ id: "u1", type: "user" }, { id: "a1", type: "assistant" }], null);
 const rows = t.rows(40, 0, 100);
 check("user-band", rows.some((r) => r.marker === "⟩" && r.bg === "TxUser"));

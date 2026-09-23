@@ -7,9 +7,7 @@ declare module "yuke:engine-native" {
   };
 
   /** The digest keeps each auth event whole, because a login outcome carries a message a fact name cannot. */
-  export type AuthNote =
-    | { method: "auth.login_finished"; params: Wire.AuthLoginFinishedData }
-    | { method: "auth.changed"; params: Wire.AuthChangedData };
+  export type AuthNote = { method: "auth.login_finished"; params: Wire.AuthLoginFinishedData };
 
   /** A drain names transcript work and broadcast facts; index overflow requires a full refresh for dropped session facts. */
   export type EngineEvent =
@@ -66,8 +64,6 @@ declare module "yuke:engine-native" {
     sessionParts(sessionId: string, messageId: number): string;
     /** One part as JSON; a draft cursor reads the suffix at a byte offset within the same lifetime. */
     sessionPart(sessionId: string, messageId: number, partId: number, generation?: number, offset?: number): string;
-    /** One page of a message's whole text, as JSON `TextPage`. */
-    sessionText(sessionId: string, messageId: number, offset: number, limit: number): string;
     /** One page of one field of a part, as JSON `TextPage`. `field` is the address a `ViewCut` names. */
     partText(sessionId: string, messageId: number, partId: number, field: string, offset: number, limit: number): string;
   };

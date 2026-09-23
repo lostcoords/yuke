@@ -28,9 +28,8 @@ pub fn login(gpa: std.mem.Allocator, io: std.Io, runtime: *App, provider: ?[]con
 }
 
 fn loginWith(io: std.Io, runtime: *App, arena: std.mem.Allocator, w: *std.Io.Writer, provider: ?[]const u8) !u8 {
-    const id = provider orelse return listProviders(runtime, arena, w);
-    const list = try commands.authList(runtime, arena, .{});
-    const row = find(list.providers, id) orelse {
+    const id = provider orelse return listProviders(runtime, w);
+    const row = find(runtime.store.merged.providers, id) orelse {
         std.log.err("yuke login: unknown provider '{s}'", .{id});
         return 1;
     };
@@ -63,38 +62,25 @@ pub fn logout(gpa: std.mem.Allocator, io: std.Io, runtime: *App, provider: []con
     return 0;
 }
 
-fn find(rows: []const proto.auth.AuthProvider, id: []const u8) ?proto.auth.AuthProvider {
-    for (rows) |row| if (std.mem.eql(u8, row.provider_id, id)) return row;
+fn find(rows: []const proto.catalog.ProviderInfo, id: []const u8) ?proto.catalog.ProviderInfo {
+    for (rows) |row| if (std.mem.eql(u8, row.id, id)) return row;
     return null;
 }
 
 /// Print one line for each provider: the name, how it signs in, and whether it can serve a turn.
-fn listProviders(runtime: *App, arena: std.mem.Allocator, w: *std.Io.Writer) !u8 {
-    const list = try commands.authList(runtime, arena, .{});
-    const catalog = try commands.catalogList(runtime, arena, .{});
-    const infos = switch (catalog) {
-        .full => |full| full.providers,
-        .unchanged => unreachable, // No revision was sent, so the engine answers in full.
-    };
-    for (list.providers) |p| {
-        const state = stateOf(infos, p.provider_id);
-        try w.print("{s:<16} {s:<8} {s}\n", .{ p.provider_id, if (p.can_login) "account" else "api key", stateLabel(state, p) });
+fn listProviders(runtime: *App, w: *std.Io.Writer) !u8 {
+    for (runtime.store.merged.providers) |p| {
+        try w.print("{s:<16} {s:<8} {s}\n", .{ p.id, if (p.can_login) "account" else "api key", stateLabel(p) });
     }
     return 0;
 }
 
-fn stateOf(infos: []const proto.catalog.ProviderInfo, id: []const u8) ?proto.enums.ProviderState {
-    for (infos) |info| if (std.mem.eql(u8, info.id, id)) return info.state;
-    return null;
-}
-
 /// The words for a provider state. A key provider needs a key where a grant provider needs a login.
-fn stateLabel(state: ?proto.enums.ProviderState, p: proto.auth.AuthProvider) []const u8 {
-    return switch (state orelse return "") {
+fn stateLabel(p: proto.catalog.ProviderInfo) []const u8 {
+    return switch (p.state) {
         .ready => "ready",
         .needs_credential => if (p.can_login) "needs login" else "needs key",
         .needs_route => "needs route",
-        .expired => "expired",
     };
 }
 
@@ -267,15 +253,6 @@ test "the waiter takes only its own login and keeps the failure text" {
     try testing.expect(waiter.done.isSet());
     try testing.expect(waiter.outcome == .failed);
     try testing.expectEqualStrings("denied", waiter.message[0..waiter.message_len]);
-}
-
-test "the state label names what a provider needs" {
-    const grant: proto.auth.AuthProvider = .{ .provider_id = "codex", .can_login = true };
-    const key: proto.auth.AuthProvider = .{ .provider_id = "minimax", .can_login = false };
-    try testing.expectEqualStrings("needs login", stateLabel(.needs_credential, grant));
-    try testing.expectEqualStrings("needs key", stateLabel(.needs_credential, key));
-    try testing.expectEqualStrings("ready", stateLabel(.ready, key));
-    try testing.expectEqualStrings("", stateLabel(null, key));
 }
 
 test "a key keeps its spaces, loses its line ending, and has a bound" {

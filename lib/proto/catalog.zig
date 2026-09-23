@@ -39,6 +39,10 @@ pub const ProviderInfo = struct {
     id: ids.ProviderId,
     name: []const u8,
     state: enums.ProviderState,
+    /// The credential that serves this provider, or null when it holds none. The wire never carries the secret.
+    credential_kind: ?enums.AuthCredentialKind = null,
+    /// True when the engine can start a login flow for this provider.
+    can_login: bool,
 };
 
 /// The client sent the current revision, so the engine returns no catalog data.

@@ -19,7 +19,6 @@ plugins.use(agents({ catalog: { explore: {} } }));
   client.sessionOutline = () => ({ messages: [{ id: 1, type: "assistant" }], active: null });
   client.sessionParts = () => [part];
   client.sessionPart = () => part;
-  client.sessionWholeText = () => "";
   const usage = { input: 8200, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 };
   const item = { session: { id: childId, model: "m", origin: { type: "child", name: "explore", site: { session_id: parent, message_id: 1, part_id: 0 } } }, activity: { state: { type: "running_tool", run_id: 1, message_id: 1, part_id: 0, tool_name: "read", started_at_ms: 1 }, queued: 0, context_usage: usage, pending_compaction: null }, last_run: null };
   let gets = 0;

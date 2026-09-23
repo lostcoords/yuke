@@ -100,23 +100,6 @@ pub const App = struct {
         return self;
     }
 
-    /// Publish one provider's new authentication state. A null `kind` means the engine holds no credential.
-    pub fn announceAuthChanged(self: *App, provider_id: []const u8, kind: ?proto.enums.AuthCredentialKind) void {
-        const note: proto.rpc.Notification = .{
-            .method = .@"auth.changed",
-            .params = .{
-                .auth_changed_data = .{
-                    .provider = .{
-                        .provider_id = provider_id,
-                        .credential_kind = kind,
-                        // An empty list here would tell a client the provider lost a login it still offers.
-                        .can_login = self.canLogin(provider_id),
-                    },
-                },
-            },
-        };
-        self.engine.sinks.emit(note);
-    }
     /// Publish the new merged revision after the replacement is ready.
     pub fn announceCatalogChanged(self: *App) void {
         const note: proto.rpc.Notification = .{
@@ -125,13 +108,6 @@ pub const App = struct {
         };
         self.engine.sinks.emit(note);
     }
-    /// Report whether the engine can start a login for one provider.
-    pub fn canLogin(self: *const App, provider_id: []const u8) bool {
-        const row = provider_registry.find(self.store.merged.rows, provider_id) orelse return false;
-        const name = row.login_flow orelse return false;
-        return login_runtime.Flow.parse(name) != null;
-    }
-
     /// Return wall-clock milliseconds since the Unix epoch.
     pub fn nowMillis(self: *const App) u64 {
         return util.nowMillis(self.io);

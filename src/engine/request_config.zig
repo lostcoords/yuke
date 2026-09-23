@@ -113,24 +113,26 @@ pub fn hookContext(engine: *const Engine, slot: *const RunSlot, has_skills: bool
 pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*Loadout {
     if (slot.tools) |*held| return held;
     const tools = engine.deps.tools;
-    const names = try tools.names(tools.ctx, arena);
+    var served = try tools.decls(tools.ctx, arena);
     const has_skills = try database.session.hasSkills(engine.deps.db, arena, slot.sessionId().raw);
+    const names = try arena.alloc([]const u8, served.len);
+    for (served, names) |decl, *name| name.* = decl.name;
     const Chosen = struct { tools: []const []const u8 };
-    var chosen = names;
     const selects = engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"tools.select");
-    if (try engine.deps.hooks.decide(Chosen, arena, slot.runId(), .@"tools.select", .{ .tools = names, .context = hookContext(engine, slot, has_skills) })) |answer| {
-        chosen = answer.tools;
-    } else if (selects) {
-        // A handler may start a server while it runs, so an answer that narrows nothing takes the table as it is now.
-        chosen = try tools.names(tools.ctx, arena);
-    }
-    var held: Loadout = .{ .arena = .init(engine.deps.gpa), .names = &.{}, .decls = &.{}, .has_skills = has_skills };
+    const chosen = try engine.deps.hooks.decide(Chosen, arena, slot.runId(), .@"tools.select", .{ .tools = names, .context = hookContext(engine, slot, has_skills) });
+    // A handler may start a server while it runs, so the table is read again after it answers.
+    if (selects) served = try tools.decls(tools.ctx, arena);
+    var held: Loadout = .{ .arena = .init(engine.deps.gpa), .decls = &.{}, .has_skills = has_skills };
     errdefer held.arena.deinit();
     const own = held.arena.allocator();
-    const copied = try own.alloc([]const u8, chosen.len);
-    for (chosen, 0..) |name, i| copied[i] = try own.dupe(u8, name);
-    held.names = copied;
-    held.decls = try tools.getDecls(tools.ctx, own, copied);
+    var kept: std.ArrayList(ai.ir.Tool) = .empty;
+    for (served) |decl| {
+        if (chosen) |answer| for (answer.tools) |name| {
+            if (std.mem.eql(u8, name, decl.name)) break;
+        } else continue;
+        try kept.append(own, try proto.dupe(own, decl));
+    }
+    held.decls = kept.items;
     slot.tools = held;
     return &slot.tools.?;
 }
@@ -193,7 +195,7 @@ test "deferral needs a deferred tool and the search tool, and the route picks th
     try std.testing.expect(!deferralApplies(decls[0..1]));
 
     var spec: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tool_search = true } };
-    var held: Loadout = .{ .arena = .init(std.testing.allocator), .names = &.{}, .decls = &decls, .has_skills = false };
+    var held: Loadout = .{ .arena = .init(std.testing.allocator), .decls = &decls, .has_skills = false };
     defer held.arena.deinit();
     try decideDeferral(&held, &spec);
     try std.testing.expectEqual(Loadout.Deferral.native, held.deferral);
