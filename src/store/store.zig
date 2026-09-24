@@ -255,14 +255,6 @@ test "migrate rejects a foreign application id" {
     try std.testing.expectError(error.ForeignDatabase, migrate(conn));
 }
 
-test "migrate detects an edited migration" {
-    const conn = try zqlite.open(":memory:", test_flags);
-    defer conn.close();
-    try migrate(conn);
-    try conn.execNoArgs("UPDATE migration_hash SET hash = '0000000000000000'");
-    try std.testing.expectError(error.MigrationDrift, migrate(conn));
-}
-
 test "migration drift rejects an older database before any upgrade" {
     for ([_][:0]const u8{
         "UPDATE migration_hash SET hash = '0000000000000000'",

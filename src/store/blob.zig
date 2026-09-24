@@ -2,7 +2,6 @@
 
 const std = @import("std");
 const sql = @import("sql");
-const zqlite = @import("zqlite");
 const proto = @import("proto");
 
 const Database = @import("store.zig").Database;

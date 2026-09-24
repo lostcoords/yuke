@@ -1,6 +1,7 @@
 //! HTTP requests run on worker tasks; only the owner reads or creates JavaScript values. The head answers first, and the body waits for reads.
 
 const std = @import("std");
+const ai = @import("ai");
 const quickjs = @import("quickjs");
 const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
@@ -114,7 +115,7 @@ const Request = struct {
             for (keys) |key| {
                 const raw_name = ctx.atomToCStringLen(key.atom) catch return error.Header;
                 defer ctx.freeCString(raw_name.ptr);
-                if (!validHeaderName(raw_name)) return error.Header;
+                if (!ai.route.validHeaderName(raw_name)) return error.Header;
                 const name = a.alloc(u8, raw_name.len) catch unreachable;
                 _ = std.ascii.lowerString(name, raw_name);
                 const entry = seen.getOrPut(a, name) catch unreachable;
@@ -125,7 +126,7 @@ const Request = struct {
                 const raw_value = ctx.getProperty(input, key.atom);
                 defer ctx.freeValue(raw_value);
                 const value = module.owned(ctx, a, raw_value) orelse return error.Header;
-                if (!validHeaderValue(value)) return error.Header;
+                if (!ai.route.validHeaderValue(value)) return error.Header;
                 if (std.mem.eql(u8, name, "accept-encoding")) continue;
                 if (std.mem.eql(u8, name, "content-type")) {
                     headers.content_type = .{ .override = value };
@@ -159,20 +160,6 @@ fn plainObject(ctx: Context, value: Value) bool {
     const expected = ctx.getPrototype(object);
     defer ctx.freeValue(expected);
     return !ctx.isException(expected) and ctx.isStrictEqual(proto, expected);
-}
-
-fn validHeaderName(name: []const u8) bool {
-    if (name.len == 0) return false;
-    for (name) |byte| switch (byte) {
-        '0'...'9', 'A'...'Z', 'a'...'z', '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~' => {},
-        else => return false,
-    };
-    return true;
-}
-
-fn validHeaderValue(value: []const u8) bool {
-    for (value) |byte| if (byte != '\t' and std.ascii.isControl(byte)) return false;
-    return true;
 }
 
 const head_limits: module.IoLimits = .{ .default_timeout_ms = default_timeout_ms, .max_timeout_ms = max_timeout_ms };
@@ -380,7 +367,7 @@ fn exchangeOnce(client: *std.http.Client, body: *Body, uri: std.Uri, reused: *bo
     var total: usize = 0;
     var it = head.iterateHeaders();
     next_header: while (it.next()) |header| {
-        if (!validHeaderName(header.name) or !validHeaderValue(header.value)) return error.BadHeader;
+        if (!ai.route.validHeaderName(header.name) or !ai.route.validHeaderValue(header.value)) return error.BadHeader;
         // The repair of an invalid byte can grow the value, so the budget counts the repaired bytes.
         const value = try utf8.sanitize(gpa, header.value);
         var kept = false;

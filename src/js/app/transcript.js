@@ -9,7 +9,7 @@ import { byteLabel } from "yuke:format";
 
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
 /** @import { ItemKey, Segment, TranscriptRow } from "./types/pager.js" */
-/** @import { ActionEntry, ActionPlan, MessageDescriptor, PartCache, PartHit, PartOf, PartState, PartsOf, Position, Presenter, RowCache, Selection, SelectionAnchors, SelectionRange, ToolLabel, TranscriptOptions } from "./types/transcript.js" */
+/** @import { ActionEntry, ActionPlan, MessageDescriptor, PartCache, PartHit, PartOf, PartState, Position, Presenter, RowCache, Selection, SelectionAnchors, SelectionRange, ToolLabel, TranscriptOptions } from "./types/transcript.js" */
 /** @import { MessagePart } from "yuke:engine-native" */
 /** @import { Block } from "./types/md.js" */
 

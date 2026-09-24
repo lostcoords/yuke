@@ -21,9 +21,6 @@ const CLIENT_NAME = "yuke";
 /** @param {unknown} value @returns {value is Record<string, any>} */
 export const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
-/** @param {unknown} error @returns {string} */
-export const errorText = (error) => (error instanceof Error ? error.message : String(error));
-
 // The `application/x-www-form-urlencoded` byte encoding: every byte but alphanumerics and `*-._` is escaped, and a space is `+`.
 /** @param {string} text @returns {string} */
 function formEncode(text) {

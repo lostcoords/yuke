@@ -6,7 +6,8 @@ import { fs } from "yuke:fs";
 import { showInfo } from "yuke:info-panel";
 import { checkTransport, endpointFor, headerValue, LISTEN_RETRY_MS, LISTEN_RETRY_MAX_MS } from "yuke:mcp-transport";
 import { client } from "yuke:client";
-import { signIn, forget, record, errorText } from "yuke:mcp-oauth";
+import { signIn, forget, record } from "yuke:mcp-oauth";
+import { errorText } from "yuke:format";
 import { openUrl } from "yuke:browser";
 import { notice } from "yuke:notice";
 

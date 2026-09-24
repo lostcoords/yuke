@@ -78,7 +78,6 @@ pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
 
 const ai = @import("ai");
 const database = @import("../store/store.zig");
-const tools_table = @import("tools.zig");
 const app_fixture = @import("../app/fixture.zig");
 const support = @import("tests/support.zig");
 const proto = @import("proto");

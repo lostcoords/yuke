@@ -28,8 +28,10 @@ pub fn compare(arena: std.mem.Allocator, old: []const u8, new: []const u8, optio
     return hunks.group(arena, edits, old_lines.text, new_lines.text, options.context);
 }
 
+const testing = std.testing;
+
 /// Count the changed lines in the hunk list.
-pub fn changedLines(list: []const Hunk) usize {
+fn changedLines(list: []const Hunk) usize {
     var total: usize = 0;
     for (list) |hunk| {
         for (hunk.lines) |line| {
@@ -38,8 +40,6 @@ pub fn changedLines(list: []const Hunk) usize {
     }
     return total;
 }
-
-const testing = std.testing;
 
 test "compare reports a line-ending change as a changed line" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);

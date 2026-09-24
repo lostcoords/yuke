@@ -8,7 +8,6 @@ const proto = @import("proto");
 const database = @import("../store/store.zig");
 const paths = @import("../paths.zig");
 const provider_store = @import("../provider/provider_store.zig");
-const provider_registry = @import("../provider/registry.zig");
 const login_runtime = @import("../provider/oauth/login_runtime.zig");
 const Engine = @import("../engine/Engine.zig");
 const scheduler_mod = @import("scheduler.zig");

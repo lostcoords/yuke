@@ -255,7 +255,6 @@ pub fn count(db: *Database, arena: std.mem.Allocator, sel: Selector) !u64 {
 }
 
 const testing = std.testing;
-const event = @import("event.zig");
 const builtin = @import("builtin");
 const zqlite = @import("zqlite");
 

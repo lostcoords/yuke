@@ -9,6 +9,7 @@ const pending = @import("../pending.zig");
 const process = @import("process.zig");
 const runner = @import("../host/process.zig");
 const LocalHost = @import("../host/local.zig").LocalHost;
+const util = @import("../../util.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -60,7 +61,7 @@ pub const Jobs = struct {
             .signaled => |s| job.signal = s,
             .timed_out => unreachable, // A job has no deadline.
         };
-        job.ended_at_ms = nowMs(host.io);
+        job.ended_at_ms = util.nowMillis(host.io);
         self.last_end += 1;
         job.end_seq = self.last_end;
         job.proc = null;
@@ -96,10 +97,6 @@ fn free(gpa: std.mem.Allocator, job: *Job) void {
     gpa.free(job.cwd);
     gpa.free(job.log);
     gpa.destroy(job);
-}
-
-fn nowMs(io: std.Io) u64 {
-    return @intCast(std.Io.Timestamp.now(io, .real).toMilliseconds());
 }
 
 /// The wire view of a job. It borrows the record strings.
@@ -198,9 +195,7 @@ pub fn toValue(ctx: Context, job: *const Job) Value {
     jw.objectField("log") catch unreachable;
     jw.write(job.log) catch unreachable;
     jw.endObject() catch unreachable;
-    text.writer.writeByte(0) catch unreachable; // JS_ParseJSON finds the end of the text at a NUL byte.
-    const json = text.written();
-    return ctx.parseJSON(json[0 .. json.len - 1 :0], "yuke:jobs");
+    return module.parseWritten(ctx, &text, "yuke:jobs");
 }
 
 /// Start a shell line as a job with both streams on a private log. It resolves `{ job, ended }`, and `ended` resolves with the final job.
@@ -250,7 +245,7 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
         .command = host.gpa.dupe(u8, command.?) catch unreachable,
         .cwd = host.gpa.dupe(u8, root) catch unreachable,
         .log = log,
-        .started_at_ms = nowMs(host.io),
+        .started_at_ms = util.nowMillis(host.io),
         .proc = null,
     };
     jobs.list.append(host.gpa, job) catch unreachable;

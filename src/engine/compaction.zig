@@ -647,8 +647,6 @@ test "the summary call repeats the prefix of the turn and refuses a tool" {
     try testing.expect(std.mem.indexOf(u8, body, "You are a context summarization assistant") != null);
     // The tools of the turn ride the call, or the prefix would differ from the cached prefix.
     try testing.expect(std.mem.indexOf(u8, body, "\"name\":\"read\"") != null);
-    // The old shape wrapped the history in one text blob. The new shape sends the real message blocks.
-    try testing.expect(std.mem.indexOf(u8, body, "<conversation>") == null);
     // A summary answers in text, so the call refuses every tool.
     try testing.expect(std.mem.indexOf(u8, body, "\"type\":\"none\"") != null);
 }

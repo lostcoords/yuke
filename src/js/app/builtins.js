@@ -7,7 +7,7 @@ import { events } from "yuke:kernel";
 import { diff } from "yuke:diff";
 import { hasTool } from "yuke:tools";
 import { client } from "yuke:client";
-import { byteLabel } from "yuke:format";
+import { byteLabel, errorText } from "yuke:format";
 
 /** @import { DiffFile as ParsedDiffFile } from "yuke:diff" */
 /** @import { RangeRead } from "yuke:fs" */
@@ -54,17 +54,11 @@ function invalid(name, message) {
   throw new Error(`${name}: ${message}`);
 }
 
-/** @param {unknown} error @returns {string} */
-function messageOf(error) {
-  if (error instanceof Error) return error.message;
-  if (error !== null && typeof error === "object" && "message" in error) return String(error.message);
-  return String(error);
-}
 
 /** @template T @param {string} name @param {Promise<T>} promise @returns {Promise<T>} */
 async function hostCall(name, promise) {
   try { return await promise; }
-  catch (e) { throw new Error(`${name}: ${messageOf(e)}`); }
+  catch (e) { throw new Error(`${name}: ${errorText(e)}`); }
 }
 
 /** @param {string} name @param {ToolArgs} args @param {string} key @returns {string} */
@@ -147,7 +141,7 @@ async function write(args, _signal, context) {
   let old = "";
   let canDiff = true;
   try { old = await fs.readFile(path, context?.workspaceRoot); }
-  catch (e) { if (messageOf(e) !== "the path does not exist") canDiff = false; }
+  catch (e) { if (errorText(e) !== "the path does not exist") canDiff = false; }
   const mapped = canDiff ? await diff(path, old, content) : null;
   const bytes = await hostCall(name, fs.writeFile(path, content, context?.workspaceRoot));
   const view = mapped == null ? null : viewOf(mapped);

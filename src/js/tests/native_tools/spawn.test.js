@@ -3,10 +3,10 @@ import { spawn as spawnNative } from "yuke:process";
 import { spawn as spawnWith, lines } from "yuke:spawn";
 import { start as startJob, jobs } from "yuke:jobs";
 import { events } from "yuke:kernel";
+import { until } from "yuke:test";
 // The test host has no PATH, so every child names the utility directories.
 const env = { PATH: "/usr/bin:/bin" };
 const spawn = (argv, options = {}) => spawnWith(argv, { ...options, env: { ...env, ...(options.env ?? {}) } });
-const until = async (ready) => { for (let i = 0; i < 1000 && !ready(); i++) await new Promise((resolve) => setTimeout(resolve, 5)); };
 const fail = [];
 const check = (name, cond) => { if (!cond) fail.push(name); };
 globalThis.result = "pending";

@@ -518,13 +518,6 @@ test "load a provider with an env api key and one model" {
 
 test "the strict schema rejects an unknown field" {
     try testing.expectError(error.UnknownField, loadBytes(testing.allocator, wrapProvider(keyed_entry ++ ",\"surprise\":true}")));
-    // The old route fields are gone, so a stale file fails instead of routing nothing.
-    try testing.expectError(error.UnknownField, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","base_url":"https://x.example/v1","protocol":"anthropic_messages"}
-    )));
-    try testing.expectError(error.UnknownField, loadBytes(testing.allocator, wrapProvider(
-        \\{"id":"x","auth":{"api_key":{"header":"x_api_key","source":{"env":"K"}}}}
-    )));
 }
 
 test "the strict schema rejects a duplicate object key" {

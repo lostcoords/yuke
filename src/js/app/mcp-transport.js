@@ -5,7 +5,8 @@ import { spawn, lines } from "yuke:spawn";
 import { fetch } from "yuke:http";
 import { sseParser } from "yuke:sse";
 import { utf8 } from "yuke:utf8";
-import { authFor, record, errorText } from "yuke:mcp-oauth";
+import { authFor, record } from "yuke:mcp-oauth";
+import { errorText } from "yuke:format";
 
 /** @import { CancellationSignal } from "yuke:cancellation-native" */
 /** @import { Auth, OAuthConfig } from "yuke:mcp-oauth" */

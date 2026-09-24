@@ -4,12 +4,13 @@ import { ui } from "yuke:ui";
 import { client, allChildren } from "yuke:client";
 import { focusedChat } from "yuke:chat";
 import { notice } from "yuke:notice";
+import { errorText } from "yuke:format";
 
 /** @import { InjectContext as Context } from "./types/ext.js" */
 /** @import { EngineEvent } from "yuke:engine-native" */
 /** @typedef {{ item: Wire.SessionListItem, depth: number }} AgentRow */
 /** @param {unknown} error */
-function failed(error) { notice.show("agents · " + (/** @type {Error} */ (error)?.message || String(error))); }
+function failed(error) { notice.show("agents · " + errorText(error)); }
 /** The state words of a child. A spawn row passes the view it keeps, so the shape is only what the words read. */
 /** @param {{ activity: Wire.SessionActivity, last_run?: Wire.RunOutcome | null }} child */
 export function childState(child) {

@@ -219,7 +219,6 @@ pub fn sessionQueue(engine: *Engine, arena: std.mem.Allocator, params: proto.ses
     return .{ .items = items };
 }
 
-const ai = @import("ai");
 const provider = @import("../provider/provider.zig");
 const Resources = @import("test_resources.zig");
 const build_info = @import("build_info");

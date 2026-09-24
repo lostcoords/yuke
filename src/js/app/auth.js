@@ -5,6 +5,7 @@ import { strokeOf } from "yuke:keys";
 import { ui } from "yuke:ui";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
+import { errorText } from "yuke:format";
 import { openUrl } from "yuke:browser";
 import { loadCatalog, providerStateLabel, reloadCatalog } from "yuke:catalog";
 
@@ -108,7 +109,7 @@ async function deviceLogin(ctx, p) {
       else notice.show("login canceled");
     }
   } catch (error) {
-    if (ctx.scope.alive) notice.show("login failed · " + String(error));
+    if (ctx.scope.alive) notice.show("login failed · " + errorText(error));
   } finally {
     release();
     if (loginId && !finished) await client.authCancelLogin(loginId).catch(() => {});
@@ -126,7 +127,7 @@ async function keyLogin(ctx, p) {
       await loadCatalog();
     }
   } catch (error) {
-    if (ctx.scope.alive) notice.show("key rejected · " + String(error));
+    if (ctx.scope.alive) notice.show("key rejected · " + errorText(error));
   }
 }
 

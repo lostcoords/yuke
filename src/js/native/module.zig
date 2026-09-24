@@ -145,6 +145,13 @@ pub fn set(ctx: Context, obj: Value, name: [:0]const u8, value: Value) void {
     ctx.setPropertyStr(obj, name, value) catch {};
 }
 
+/// Parse the JSON a writer holds. JS_ParseJSON finds the end of the text at a NUL byte, so this appends one.
+pub fn parseWritten(ctx: Context, text: *std.Io.Writer.Allocating, filename: [:0]const u8) Value {
+    text.writer.writeByte(0) catch unreachable;
+    const json = text.written();
+    return ctx.parseJSON(json[0 .. json.len - 1 :0], filename);
+}
+
 /// Build a JavaScript value from Zig data: a struct becomes an object with camelCase keys, and a tagged union becomes its payload.
 pub fn toJs(ctx: Context, value: anytype) Value {
     const T = @TypeOf(value);

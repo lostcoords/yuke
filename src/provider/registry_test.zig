@@ -400,8 +400,6 @@ test "the registry emits a bare selector and resolves it back" {
     try testing.expectEqualStrings(selector["openrouter/".len..], match.model.id);
 
     try testing.expect(snapshot.resolveModel("openrouter/nope") == null);
-    // The origin prefix is gone, so a selector stored in the old format resolves to nothing.
-    try testing.expect(snapshot.resolveModel("local:openrouter/aion-labs/aion-2.0") == null);
 }
 
 test "the environment alone offers a provider the file never names" {

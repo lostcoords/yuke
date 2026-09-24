@@ -4,6 +4,7 @@ import { ui, Window, ScrollView } from "yuke:ui";
 import { list, get, stop, read, name, endLabel, shortCommand } from "yuke:jobs";
 import { focusedChat } from "yuke:chat";
 import { notice } from "yuke:notice";
+import { errorText } from "yuke:format";
 import { elapsedLabel } from "yuke:indicator";
 
 /** @import { Context as PluginContext } from "yuke:ext" */
@@ -12,7 +13,7 @@ import { elapsedLabel } from "yuke:indicator";
 /** @import { TranscriptRow } from "./types/pager.js" */
 
 /** @param {unknown} error */
-function failed(error) { notice.show("jobs · " + (/** @type {Error} */ (error)?.message || String(error))); }
+function failed(error) { notice.show("jobs · " + errorText(error)); }
 
 /** @param {Job} job @param {number} now @returns {string} */
 function jobState(job, now) {

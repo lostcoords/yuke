@@ -5,6 +5,7 @@ import { native } from "yuke:engine-native";
 import { presentation } from "yuke:transcript";
 import { chats, focusedChat } from "yuke:chat";
 import { notice } from "yuke:notice";
+import { errorText } from "yuke:format";
 import { tokenLabel } from "yuke:catalog";
 import { childState, openAgents } from "yuke:agents-ui";
 
@@ -265,7 +266,7 @@ export function agents(options) {
 
             ctx.inject(["tui"], (ctx) => {
                 ctx.tui.command(() => focusedChat()?.sessionId != null, {
-                    "agents:open": () => { const id = focusedChat()?.sessionId; if (id) openAgents(ctx, id).catch((error) => notice.show("agents · " + (error?.message || String(error)))); },
+                    "agents:open": () => { const id = focusedChat()?.sessionId; if (id) openAgents(ctx, id).catch((error) => notice.show("agents · " + errorText(error))); },
                 }, { "agents:open": { title: "Agents", description: "open or stop child agents", slash: "agents" } });
             });
         },

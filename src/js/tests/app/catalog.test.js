@@ -9,7 +9,7 @@ plugins.use(tuiPlugin);
 let open = null;
 plugins.use(modelCatalog({ entry: () => open }));
 
-// With no session the reading falls back to the default model.
+// With no session the status shows no model.
 check("empty-without-session", status.side("right") === "");
 // A choice tells the user and asks for a repaint, or the new model never reaches the screen.
 plugins.use(noticePlugin);
