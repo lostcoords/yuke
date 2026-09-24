@@ -1,6 +1,7 @@
 # AGENTS.md
 
 Correctness is required. Safety first, then performance, then ease of change.
+Performance is a requirement, not a preference. See [Performance](#performance).
 Do the work correctly the first time.
 
 Write in ASD-STE100: one meaning per word, active voice, simple tense, one instruction per sentence.
@@ -20,6 +21,21 @@ Look up APIs on the internet and in this tree. Do not guess.
 - Do not leave a known defect.
 - You can omit a feature. Do not ship a wrong feature.
 - Prefer not to add a dependency, but you can discuss with the user.
+
+## Performance
+
+- Each change keeps or improves time, memory use, and the allocation count.
+- A slower hot path is a defect, also in a cleanup.
+- Hot paths are draw, input, stream delivery, and per-frame or per-row work.
+- On a hot path, do not add an allocation, a closure, a call, or an `await`.
+- In QuickJS, each object, closure, and private field costs time. Count them.
+- Measure each change to the JavaScript host, the engine, or the renderer. Compare the base commit with your commit.
+- Time: `zig build bench -Doptimize=ReleaseFast -- --fixture bench/transcript-fixture.json`
+- Memory and allocations: add `-Dmetrics=true` in a separate run.
+- One phase: add `--phase <name> --iterations 3000`.
+- A timing changes by up to 20% between runs. Run each side 5 times or more, alternate the sides, and compare the lowest quartile.
+- The allocation count and the live and peak bytes are exact. Compare them per phase.
+- Report the result. If a phase gets worse, stop and tell the user why.
 
 ## Memory
 
