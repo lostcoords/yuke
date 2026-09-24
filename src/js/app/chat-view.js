@@ -1,6 +1,6 @@
 // Own the chat layout, composer, and presentation views.
 import { term } from "yuke:term";
-import { text, root, slot, claimView, releaseView } from "yuke:core";
+import { text, root, slot, claimView, releaseView, contains } from "yuke:core";
 import { events } from "yuke:kernel";
 import { clip } from "yuke:text-input";
 import { Composer } from "yuke:ui";
@@ -94,7 +94,7 @@ export class ChatView {
     if (ev.event === "drag" || ev.event === "release") return this.transcript.onMouse(ev);
     for (const view of this.presentationViews) {
       const r = view.rect;
-      if (ev.col < r.x || ev.col >= r.x + r.w || ev.row < r.y || ev.row >= r.y + r.h) continue;
+      if (!contains(r, ev.col, ev.row)) continue;
       if (ev.event === "press" && ev.button === "left" && view.onMouse) {
         this.presentationFocus = view;
         this.presentationCapture = view;
@@ -105,7 +105,7 @@ export class ChatView {
     }
     if (ev.event === "press" && ev.button === "left") this.presentationFocus = null;
     const r = this.transcript.pager.rect();
-    const inside = r && ev.col >= r.x && ev.col < r.x + r.w && ev.row >= r.y && ev.row < r.y + r.h;
+    const inside = r && contains(r, ev.col, ev.row);
     const taken = inside ? this.transcript.onMouse(ev) : false;
     // A provider may claim a left press to place its own caret, after the transcript reads it.
     if (ev.event !== "press" || ev.button !== "left") return taken;

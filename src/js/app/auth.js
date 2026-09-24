@@ -148,7 +148,7 @@ function openLogin(ctx, query) {
       return;
     }
     pickProvider(ctx, "login", "select", rows, stateLabel, (p) => startLogin(ctx, p));
-  }, (e) => notice.show("login failed · " + e.message));
+  }, (e) => notice.show("login failed · " + errorText(e)));
 }
 
 // `/logout` lists the providers that hold a credential; `/logout codex` drops that one.
@@ -163,7 +163,7 @@ function openLogout(ctx, query) {
         notice.show("logged out · " + p.id);
         return loadCatalog();
       },
-      (e) => notice.show(e.code === "unknown_provider" ? p.id + " has its key in the environment · unset the variable" : "logout failed · " + e.message),
+      (e) => notice.show(e.code === "unknown_provider" ? p.id + " has its key in the environment · unset the variable" : "logout failed · " + errorText(e)),
     );
     if (query) {
       const p = rows.find((x) => x.id === query);
@@ -176,7 +176,7 @@ function openLogout(ctx, query) {
       return;
     }
     pickProvider(ctx, "logout", "remove", rows, () => "", remove);
-  }, (e) => notice.show("logout failed · " + e.message));
+  }, (e) => notice.show("logout failed · " + errorText(e)));
 }
 
 export const authPlugin = {

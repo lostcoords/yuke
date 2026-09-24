@@ -458,9 +458,7 @@ function diffRows(view, width, limit = Infinity) {
         source += line;
         const mark = line[0];
         const group = mark === "+" ? "TxToolAdd" : mark === "-" ? "TxToolDel" : "TxToolContext";
-        for (const r of wrapBody(line, width, group, limit - rows.length)) {
-          rows.push({ ...r, segments: shiftSrc(r.segments, base) });
-        }
+        for (const r of wrapBody(line, width, group, limit - rows.length)) rows.push(rowAtBase(r, base));
       }
     }
   }
@@ -492,7 +490,7 @@ function viewRows(views, width, limit = Infinity) {
       const view = /** @type {{ text?: string }} */ (v);
       const body = v && view.text ? view.text : "";
       source += body;
-      for (const r of wrapBody(body, width, "TxToolBody", limit - rows.length)) rows.push({ ...r, segments: shiftSrc(r.segments, base) });
+      for (const r of wrapBody(body, width, "TxToolBody", limit - rows.length)) rows.push(rowAtBase(r, base));
     }
   }
   return { rows, source };

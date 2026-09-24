@@ -12,6 +12,9 @@ export function isWheel(button) {
   return button === "wheel_up" || button === "wheel_down" || button === "wheel_left" || button === "wheel_right";
 }
 
+/** @param {Rect} r @param {number} col @param {number} row @returns {boolean} */
+export const contains = (r, col, row) => col >= r.x && col < r.x + r.w && row >= r.y && row < r.y + r.h;
+
 // Bound a link chain, so a cycle falls back instead of looping for ever.
 const link_depth_max = 100;
 
@@ -860,7 +863,7 @@ export class Node {
   /** @param {number} col @param {number} row @returns {Node | null} */
   leafAt(col, row) {
     const r = this.rect;
-    if (col < r.x || col >= r.x + r.w || row < r.y || row >= r.y + r.h) return null;
+    if (!contains(r, col, row)) return null;
     if (this.shape.type === "leaf") return this;
     return this.shape.a.leafAt(col, row) || this.shape.b.leafAt(col, row);
   }

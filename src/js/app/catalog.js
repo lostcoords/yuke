@@ -5,6 +5,7 @@ import { events } from "yuke:kernel";
 import { client } from "yuke:client";
 import { notice } from "yuke:notice";
 import { newestLocalModelSession } from "yuke:sessions";
+import { errorText } from "yuke:format";
 
 /** @import { Context } from "yuke:ext" */
 /** @typedef {{ rev: Wire.CatalogRev | null, providers: readonly Wire.ProviderInfo[], models: readonly Wire.ModelInfo[], loading: boolean }} CatalogState */
@@ -95,7 +96,7 @@ export function chooseModel(model, reasoning, sessionId = null) {
   client.sessionPatch(sessionId, { model: model.selector, reasoning }).then(() => root.invalidate()).catch((e) => {
     // The engine refused, so the default must not keep a choice the engine rejected.
     Object.assign(chatDefaults, previous);
-    notice.show("model · " + ((e && e.message) || "unknown"));
+    notice.show("model · " + errorText(e));
     root.invalidate();
   });
 }
@@ -132,7 +133,7 @@ export function modelCatalog(cfg = {}) {
       ctx.tui.command(null, {
         "catalog:reload": () => client.catalogReload().then(
           (r) => { notice.show(r.changed ? "providers reloaded" : "providers unchanged"); return loadCatalog(); },
-          (e) => notice.show("reload failed · " + e.message),
+          (e) => notice.show("reload failed · " + errorText(e)),
         ),
       }, {
         "catalog:reload": { title: "Reload providers", description: "read providers.json again", slash: "reload-providers" },

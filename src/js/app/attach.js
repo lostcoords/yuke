@@ -5,6 +5,7 @@ import { notice } from "yuke:notice";
 import { root } from "yuke:core";
 import { events } from "yuke:kernel";
 import { clipboard } from "yuke:clipboard";
+import { errorText } from "yuke:format";
 
 /** @import { Composer } from "yuke:ui" */
 
@@ -31,7 +32,7 @@ export function looksLikeImagePath(text) {
 /** @param {string} path @returns {Promise<Wire.MediaBlob | null>} */
 async function putImage(path) {
   return client.blobPut(path).catch((e) => {
-    notice.show("attach failed · " + ((e && e.message) || "unknown"));
+    notice.show("attach failed · " + errorText(e));
     return null;
   });
 }

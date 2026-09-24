@@ -11,6 +11,7 @@ import { feedItem } from "yuke:sessions";
 import { activityOf, refreshActivity } from "yuke:activity";
 import { catalogOf, modelOf, reloadCatalog, chooseModel, defaultModel, providerState, providerStateLabel } from "yuke:catalog";
 import { pasteAttaches } from "yuke:attach";
+import { errorText } from "yuke:format";
 
 /** @import { PresentationContext } from "yuke:chat-view" */
 /** @import { InjectContext } from "./types/ext.js" */
@@ -119,8 +120,7 @@ export class Chat {
     const sent = invocation ? client.sessionSendSkill(this.sessionId, invocation.name, invocation.args) : client.sessionSendInput(this.sessionId, content);
     sent.catch((e) => {
       this.composer.restore(snap);
-      notice.show("send failed · " + ((e && e.message) || "unknown"));
-      root.invalidate();
+      notice.show("send failed · " + errorText(e));
     });
     return true;
   }
@@ -190,8 +190,7 @@ export class Chat {
         // A cancelled create must not restore an input into a pane the user already moved on from.
         if (token !== this.gen) return;
         this.composer.restore(snap);
-        notice.show("new chat failed · " + ((e && e.message) || "unknown"));
-        root.invalidate();
+        notice.show("new chat failed · " + errorText(e));
       })
       .then(() => {
         if (token === this.gen) this.creating = false;
@@ -449,8 +448,7 @@ export const chatPlugin = {
             notice.show("Context reloaded: " + r.instruction_sources.length + " AGENTS.md, " + r.skills.length + " skills.");
             root.invalidate();
           }).catch((e) => {
-            notice.show("Context reload failed: " + ((e && e.message) || "unknown"));
-            root.invalidate();
+            notice.show("Context reload failed: " + errorText(e));
           });
         },
         "context:compact": () => {
@@ -460,8 +458,7 @@ export const chatPlugin = {
             notice.show(r.status === "started" ? "Compacting the context." : "Compaction waits for the active run.");
             root.invalidate();
           }).catch((e) => {
-            notice.show("Compaction failed: " + ((e && e.message) || "unknown"));
-            root.invalidate();
+            notice.show("Compaction failed: " + errorText(e));
           });
         },
       }, {

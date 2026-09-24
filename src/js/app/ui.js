@@ -1,6 +1,6 @@
 // yuke:ui — the widget kit over yuke:core: List and Window to subclass, plus the pickers on `ui`.
 import { term } from "yuke:term";
-import { text, fill, root, claimView, style, slot, isWheel } from "yuke:core";
+import { text, fill, root, claimView, style, slot, isWheel, contains } from "yuke:core";
 import { config, events } from "yuke:kernel";
 import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, nextGrapheme } from "yuke:text-input";
 import { strokeOf } from "yuke:keys";
@@ -281,7 +281,7 @@ export class List {
       return true;
     }
     if (ev.button !== "left") return false;
-    if (ev.col < r.x || ev.col >= r.x + r.w || ev.row < r.y || ev.row >= r.y + r.h) return false;
+    if (!contains(r, ev.col, ev.row)) return false;
     // `draw` paints `_visible(h)` rows, so a short pane leaves the last row of the rect empty.
     const off = Math.floor((ev.row - r.y) / this.itemHeight);
     if (off >= this._visible(r.h)) return false;
@@ -915,8 +915,7 @@ export class Window {
 
   /** @param {MouseEvent} ev @returns {boolean} */
   onMouse(ev) {
-    const { x, y, w, h } = this.inner;
-    if (ev.event === "press" && (ev.col < x || ev.col >= x + w || ev.row < y || ev.row >= y + h)) return false;
+    if (ev.event === "press" && !contains(this.inner, ev.col, ev.row)) return false;
     return this.content && this.content.onMouse ? this.content.onMouse(ev) : false;
   }
 
@@ -1106,10 +1105,7 @@ export class Picker {
   /** @param {MouseEvent} ev @returns {boolean} */
   onMouse(ev) {
     const win = this.win;
-    if (win && win.modal === false) {
-      const { x, y, w, h } = win.rect;
-      if (ev.col < x || ev.col >= x + w || ev.row < y || ev.row >= y + h) return false;
-    }
+    if (win && win.modal === false && !contains(win.rect, ev.col, ev.row)) return false;
     if (this.body && ev.event === "press" && isWheel(ev.button) && win) {
       const r = this._layoutRect;
       const { height: bodyHeight } = this._bodyLayout(r);

@@ -7,6 +7,7 @@ import { notice } from "yuke:notice";
 import { inputSourceLabel } from "yuke:transcript";
 import { ChatView } from "yuke:chat-view";
 import { chatOf, focusedChat } from "yuke:chat";
+import { errorText } from "yuke:format";
 
 /** @import { Context } from "yuke:ext" */
 /** @import { InjectContext as Ctx } from "./types/ext.js" */
@@ -90,7 +91,7 @@ function cancelOne(sessionId, input) {
   if (protectedInput(input)) { notice.show("engine reports and notices stay queued"); return Promise.resolve(); }
   return client.sessionCancelInput(sessionId, input.input_id).then(
     () => notice.show("dropped · " + clip(queuedText(input), 40)),
-    (e) => notice.show("cannot drop · " + ((e && e.message) || "unknown")),
+    (e) => notice.show("cannot drop · " + errorText(e)),
   );
 }
 
@@ -150,7 +151,7 @@ export const queuePlugin = {
           const id = c.sessionId;
           clearWorkQueue(id).then((result) => {
             notice.show("queue · removed " + result.removed + " · failed " + result.failed + " · protected " + result.protected);
-          }, (error) => notice.show("cannot clear queue · " + error.message));
+          }, (error) => notice.show("cannot clear queue · " + errorText(error)));
         },
       }, {
         "queue:drop": { title: "Queue", description: "drop one queued message", slash: "queue" },
