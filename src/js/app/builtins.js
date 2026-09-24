@@ -7,7 +7,8 @@ import { events } from "yuke:kernel";
 import { diff } from "yuke:diff";
 import { hasTool } from "yuke:tools";
 import { client } from "yuke:client";
-import { byteLabel, errorText, utf8Length } from "yuke:format";
+import { byteLabel, errorText } from "yuke:format";
+import { utf8Length } from "yuke:interaction";
 
 /** @import { DiffFile as ParsedDiffFile } from "yuke:diff" */
 /** @import { RangeRead } from "yuke:fs" */

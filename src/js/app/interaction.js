@@ -2,13 +2,28 @@
 import { events } from "yuke:kernel";
 import { native } from "yuke:interaction-native";
 import * as cancellation from "yuke:cancellation-native";
-import { utf8Length } from "yuke:format";
 /** @import { CancellationSignal } from "yuke:cancellation-native" */
 /** @import { Context } from "yuke:ext" */
 /** @import { Answerer, Disposer, InteractionOptions, InteractionRequest, InteractionSurface } from "./types/ext.js" */
 
 const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
 let nextId = 1;
+
+// The UTF-8 size of a string. A lone surrogate counts as the three bytes of its replacement.
+/** @param {string} text @returns {number} */
+export function utf8Length(text) {
+  let bytes = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x80) bytes += 1;
+    else if (c < 0x800) bytes += 2;
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) {
+      bytes += 4;
+      i++;
+    } else bytes += 3;
+  }
+  return bytes;
+}
 
 /** @param {unknown} value @param {string} name @param {boolean} [empty] @returns {string} */
 function text(value, name, empty = false) {
