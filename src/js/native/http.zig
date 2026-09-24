@@ -185,6 +185,8 @@ const Body = struct {
     /// The bytes of one character a chunk cut, kept for the next read.
     carry: [3]u8 = undefined,
     carry_len: u8 = 0,
+    /// The chunk read buffer from the host allocator. The record owns it until `deinit`.
+    buffer: []u8 = &.{},
     /// True after a read saw the end of the stream, so the read task ends the body.
     eof: bool = false,
     /// True once no read may start.
@@ -242,6 +244,7 @@ const Body = struct {
         std.debug.assert(self.done() and self.op == null);
         std.debug.assert(self.request == null);
         self.parsed.free(gpa);
+        gpa.free(self.buffer);
     }
 };
 
@@ -494,42 +497,34 @@ fn readWorker(host: *Host, read: Read, result: *pending.Result) error{}!void {
         result.* = .{ .text = if (std.unicode.utf8ValidateSlice(list.items)) list.toOwnedSlice(gpa) catch unreachable else utf8.sanitize(gpa, list.items) catch unreachable };
         return;
     }
-    const buffer = gpa.alloc(u8, read.max_bytes) catch unreachable;
+    // `busy` keeps one read at a time, so the body reuses one buffer and a read allocates only its answer.
+    if (body.buffer.len < read.max_bytes) {
+        gpa.free(body.buffer);
+        body.buffer = gpa.alloc(u8, read.max_bytes) catch unreachable;
+    }
+    const buffer = body.buffer[0..read.max_bytes];
     var filled: usize = body.carry_len;
     @memcpy(buffer[0..filled], body.carry[0..filled]);
-    while (true) {
+    const cut = while (true) {
         var slices = [_][]u8{buffer[filled..]};
         // Zero bytes is not the end; the reader may have filled its own buffer, and the next call copies it.
         const n = reader.readVec(&slices) catch |err| {
-            gpa.free(buffer);
-            if (err != error.EndOfStream) {
-                result.* = io_failed;
-                return;
-            }
             // A stream that ends inside a character answers the repaired bytes now and its end on the next read.
-            if (filled > 0) {
-                result.* = .{ .text = utf8.sanitize(gpa, body.carry[0..body.carry_len]) catch unreachable };
-                body.carry_len = 0;
-                return;
-            }
-            body.eof = true;
-            result.* = if (complete(body)) .null_value else io_failed;
+            if (err == error.EndOfStream and filled > 0) break filled;
+            body.eof = err == error.EndOfStream;
+            result.* = if (body.eof and complete(body)) .null_value else io_failed;
             return;
         };
         std.debug.assert(n <= buffer.len - filled);
-        if (n == 0) continue;
         filled += n;
-        const cut = utf8.whole(buffer[0..filled]);
-        if (cut > 0) {
-            body.carry_len = @intCast(filled - cut);
-            @memcpy(body.carry[0..body.carry_len], buffer[cut..filled]);
-            defer gpa.free(buffer);
-            result.* = .{ .text = utf8.sanitize(gpa, buffer[0..cut]) catch unreachable };
-            return;
-        }
+        const end = utf8.whole(buffer[0..filled]);
+        if (end > 0) break end;
         // Fewer than four bytes of one character wait for the rest, so the next read always fits.
         std.debug.assert(filled <= body.carry.len);
-    }
+    };
+    body.carry_len = @intCast(filled - cut);
+    @memcpy(body.carry[0..body.carry_len], buffer[cut..filled]);
+    result.* = .{ .text = utf8.sanitize(gpa, buffer[0..cut]) catch unreachable };
 }
 
 /// A stream that ended with declared bytes or chunks still due was cut short.
