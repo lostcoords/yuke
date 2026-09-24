@@ -200,11 +200,6 @@ fn settle(host: *Host, proc: *Proc) bool {
         .code = if (outcome == .exited) outcome.exited else null,
         .signal = if (outcome == .signaled) outcome.signaled else null,
     });
-    // A full QuickJS heap faults the drain, and `exited` stays pending.
-    if (ctx.isException(argv[0])) {
-        host.noteFault();
-        return true;
-    }
     return pending.invoke(host, proc.resolve, &argv);
 }
 

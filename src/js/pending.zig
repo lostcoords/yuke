@@ -133,8 +133,12 @@ pub fn dropException(ctx: Context) void {
     if (ctx.hasException()) ctx.freeValue(ctx.getException());
 }
 
-/// Call `function` with the borrowed `argv` and answer whether it threw. The host records the fault.
+/// Call `function` with the borrowed `argv` and answer whether it faulted. An exception argument is a full QuickJS heap, so the call does not run. The host records the fault.
 pub fn invoke(host: *Host, function: Value, argv: []const Value) bool {
+    for (argv) |arg| if (host.ctx.isException(arg)) {
+        host.noteFault();
+        return true;
+    };
     const answer = host.ctx.call(function, quickjs.UNDEFINED, argv);
     defer host.ctx.freeValue(answer);
     if (!host.ctx.isException(answer)) return false;
