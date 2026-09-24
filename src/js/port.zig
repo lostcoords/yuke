@@ -30,16 +30,18 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
     call.work = context.work;
     defer finishCall(host, call);
     host.wake.set(host.io);
+    // Each chunk swaps with this empty list, so the owner appends into capacity a chunk already grew.
+    var spare: std.ArrayList(u8) = .empty;
+    defer spare.deinit(host.gpa);
     // Publish each output chunk while the tool runs, and the last one before the result.
     while (true) {
         call.changed.wait(host.io) catch return fault(out, "cancellation stopped the tool call");
         call.changed.reset();
         if (call.output.items.len != 0) {
-            // Move the chunk out before the sink publishes it.
-            var chunk = call.output;
-            call.output = .empty;
-            defer chunk.deinit(host.gpa);
-            context.output.write(context.output.ctx, chunk.items);
+            // Swap the chunk out before the sink publishes it.
+            std.mem.swap(std.ArrayList(u8), &call.output, &spare);
+            defer spare.clearRetainingCapacity();
+            context.output.write(context.output.ctx, spare.items);
         }
         if (call.state == .settled) break;
     }
