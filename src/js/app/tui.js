@@ -3,6 +3,7 @@ import { command, keymap, route, slot, context, status, style, root } from "yuke
 import { events } from "yuke:kernel";
 import { ChatView } from "yuke:chat-view";
 import { scopeOf } from "yuke:ext";
+import { registerLabels } from "yuke:transcript";
 
 /** @import { PresentationContext, PresentationProvider } from "yuke:chat-view" */
 /** @import { LayoutNode } from "./types/layout.js" */
@@ -94,6 +95,12 @@ function bindTo(ctx) {
           root.invalidate();
         };
       });
+    },
+
+    // Name tool calls and message sources in the transcript; the newest registration wins.
+    /** @param {Parameters<typeof registerLabels>[0]} entries @returns {Disposer} */
+    labels(entries) {
+      return ctx.effect(() => registerLabels(entries));
     },
 
     /** @param {ContextFlags} flags @returns {Disposer} */

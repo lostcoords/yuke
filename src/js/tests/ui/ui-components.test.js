@@ -2,10 +2,10 @@ import { check } from "yuke:test";
 import { term } from "yuke:term";
 import { root, Node } from "yuke:core";
 import { plugins } from "yuke:ext";
-import { Transcript, presentation, inputSourceLabel } from "yuke:transcript";
+import { Transcript, inputSourceLabel } from "yuke:transcript";
 import { ChatView } from "yuke:chat-view";
 import { transcriptVim } from "yuke:transcript-vim";
-import { tuiPlugin } from "yuke:tui";
+import { tui, tuiPlugin } from "yuke:tui";
 plugins.use(tuiPlugin);
 const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
 const rowsGroup = (rs, group) => rs.some((r) => (r.segments || []).some((sg) => sg.group === group) || r.group === group);
@@ -137,7 +137,7 @@ const unknownRows = unknown.rows(60, 0, 4);
 check("fallback-name", rowsHave(unknownRows, "mcp_thing") && rowsHave(unknownRows, "x.txt"));
 
 const presenterOwner = plugins.use({ name: "test-presenter", apply(ctx) {
-  ctx.effect(() => presentation.register({ tools: { exec: { category: "run", present: () => ({ verb: "$", subject: "custom" }) } }, sources: { run_interrupted: () => "first" } }));
+  tui.bindTo(ctx).labels({ tools: { exec: { category: "run", present: () => ({ verb: "$", subject: "custom" }) } }, sources: { run_interrupted: () => "first" } });
 } });
 const over = new Transcript({ partsOf: (id) => parts[id] || [] });
 over.setOutline([{ id: "pres", type: "assistant" }], null);
@@ -147,7 +147,7 @@ check("override-source", over._sourceOf("pres").indexOf("$ custom") === 0);
 check("cached-presenter-changes", rowsHave(pres.rows(60, 0, 4), "custom"));
 
 const faultyOwner = plugins.use({ name: "test-faulty-presenter", apply(ctx) {
-  ctx.effect(() => presentation.register({ tools: { exec: { category: "run", present: () => { throw new Error("bad"); } } }, sources: { run_interrupted: () => "second" } }));
+  tui.bindTo(ctx).labels({ tools: { exec: { category: "run", present: () => { throw new Error("bad"); } } }, sources: { run_interrupted: () => "second" } });
 } });
 presenterOwner.dispose();
 check("hidden-source-owner-leaves", inputSourceLabel({ type: "run_interrupted", run_id: 1 }) === "second");

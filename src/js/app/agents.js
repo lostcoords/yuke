@@ -2,7 +2,7 @@
 import { root } from "yuke:core";
 import { client } from "yuke:client";
 import { native } from "yuke:engine-native";
-import { presentation } from "yuke:transcript";
+import { registerLabels } from "yuke:transcript";
 import { chats, focusedChat } from "yuke:chat";
 import { notice } from "yuke:notice";
 import { errorText } from "yuke:format";
@@ -254,7 +254,7 @@ export function agents(options) {
             });
             ctx.effect(() => () => children.clear());
 
-            ctx.effect(() => presentation.register({ tools: {
+            ctx.effect(() => registerLabels({ tools: {
                 spawn_agent: { category: "agent", present: (/** @type {any} */ o, /** @type {string} */ _raw, /** @type {ToolPart} */ part) => ({ verb: "Agent", subject: String(o.agent || catalog.default) + liveSuffix(part) }) },
                 send_agent_input: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Send", subject: String(o.child || "") }) },
                 stop_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Stop", subject: String(o.child || "") }) },

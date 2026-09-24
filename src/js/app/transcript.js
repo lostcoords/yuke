@@ -140,39 +140,39 @@ presenters.edit = { category: "write", present: (o) => ({ verb: "Edit", subject:
 presenters.exec = { category: "run", present: (o) => ({ verb: "Run", subject: shortCommand(o.command) }) };
 presenters.skill = { category: "other", present: (o) => ({ verb: "Skill", subject: String(o.name || "") }) };
 
-/** @typedef {{ tools?: Record<string, Presenter>, sources?: Record<string, (source: any) => string> }} PresentationRegistration */
-/** @type {PresentationRegistration[]} */
+/** @typedef {{ tools?: Record<string, Presenter>, sources?: Record<string, (source: any) => string> }} LabelRegistration */
+/** @type {LabelRegistration[]} */
 const registrations = [{ tools: presenters, sources }];
-let presentationRevision = 0;
+let labelRevision = 0;
 
 // Resolve ownership on registration changes, not on each rendered label.
-function refreshPresentation() {
+function refreshLabels() {
   presenters = Object.create(null);
   sources = Object.create(null);
   for (const entry of registrations) {
     Object.assign(presenters, entry.tools);
     Object.assign(sources, entry.sources);
   }
-  presentationRevision++;
+  labelRevision++;
   root.invalidate();
 }
 
-// Plugins own registrations through `ctx.effect` and method advice through `ctx.advise`.
-export const presentation = {
-  // The newest registration wins; a disposer removes only its own layer.
-  /** @param {PresentationRegistration} entries @returns {() => void} */
-  register(entries) {
-    const entry = { tools: { ...entries.tools }, sources: { ...entries.sources } };
-    registrations.push(entry);
-    refreshPresentation();
-    return () => {
-      const index = registrations.indexOf(entry);
-      if (index < 0) return;
-      registrations.splice(index, 1);
-      refreshPresentation();
-    };
-  },
+// `ctx.tui.labels` owns each registration; the newest one wins, and its disposer removes only its own layer.
+/** @param {LabelRegistration} entries @returns {() => void} */
+export function registerLabels(entries) {
+  const entry = { tools: { ...entries.tools }, sources: { ...entries.sources } };
+  registrations.push(entry);
+  refreshLabels();
+  return () => {
+    const index = registrations.indexOf(entry);
+    if (index < 0) return;
+    registrations.splice(index, 1);
+    refreshLabels();
+  };
+}
 
+// The words a transcript gives a part. Plugins change them with method advice through `ctx.advise`.
+export const labels = {
   // A tool with no presenter keeps its own name beside the field a reader acts on.
   /** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {Record<string, any>} args @param {string} raw @returns {ToolLabel} */
   fallback(part, args, raw) {
@@ -322,7 +322,7 @@ function describe(part) {
     // A presenter states its category beside the label it returns, so both branches answer one shape.
     const out = presenter
       ? { ...presenter.present(args, raw, part), category: presenter.category }
-      : presentation.fallback(part, args, raw);
+      : labels.fallback(part, args, raw);
     if (out && typeof out.verb === "string" && typeof out.subject === "string") {
       return { verb: out.verb, subject: out.subject, category: typeof out.category === "string" ? out.category : "other" };
     }
@@ -722,7 +722,7 @@ export class Transcript {
     /** @type {MessageDescriptor | null} */
     this._active = null; // the streaming draft descriptor, or null
     this._width = -1;
-    this._presentationRevision = presentationRevision;
+    this._labelRevision = labelRevision;
     /** @type {Map<string, number>} */
     this._positions = new Map();
     /** @type {Map<string, number>} */
@@ -956,7 +956,7 @@ export class Transcript {
       const before = /** @type {Wire.AssistantPart} */ (state.list[at]);
       state.list[at] = fresh;
       const c = state.rows.get(String(partId));
-      const groupingChanged = presentation.role(before) !== presentation.role(fresh);
+      const groupingChanged = labels.role(before) !== labels.role(fresh);
       const rowsChanged = !c || c.expanded || !toolHeaderSame(before, fresh);
       if (c && rowsChanged) stale(c);
       return { groupingChanged, rowsChanged };
@@ -966,14 +966,14 @@ export class Transcript {
     return { groupingChanged: true, rowsChanged: true };
   }
 
-  // A width or presentation change rebuilds rows and moves the selection back to the same source offsets.
+  // A width or label change rebuilds rows and moves the selection back to the same source offsets.
   /** @param {number} width @returns {void} */
   _invalidate(width) {
-    const changed = this._presentationRevision !== presentationRevision;
+    const changed = this._labelRevision !== labelRevision;
     if (width === this._width && !changed) return;
     const anchors = this._anchors();
     this._width = width;
-    this._presentationRevision = presentationRevision;
+    this._labelRevision = labelRevision;
     if (changed) for (const state of this._parts.values()) for (const c of state.rows.values()) stale(c);
     for (const c of this._rows.values()) stale(c);
     this._counts.clear();
@@ -1291,7 +1291,7 @@ export class Transcript {
       starts.push(trees.length);
       for (let index = 0; index < messageParts.length; index++) {
         const part = /** @type {Wire.AssistantPart} */ (messageParts[index]);
-        const role = presentation.role(part);
+        const role = labels.role(part);
         if (role === ROLE_TEXT) flush();
         if (role !== ROLE_ACTION) continue;
         segment.push({ part: start + index, message });
