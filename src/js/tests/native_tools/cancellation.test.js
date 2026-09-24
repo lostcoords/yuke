@@ -23,11 +23,11 @@ const survivor = create();
 const outcomes = [];
 const stopped = exec("sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\"", { signal }).then(
   () => { throw new Error("the owned command must cancel"); },
-  () => { outcomes.push("canceled"); },
+  (error) => { outcomes.push(error.code); },
 );
 const alsoStopped = exec("sleep 30", { signal }).then(
   () => { throw new Error("every command on the signal must cancel"); },
-  () => { outcomes.push("canceled"); },
+  (error) => { outcomes.push(error.code); },
 );
 const kept = exec("printf survivor", { signal: survivor }).then(result => {
   equal(result.stdout, "survivor");
@@ -38,10 +38,10 @@ function cancelCommand() {
   const drained = drain(signal);
   equal(drained, drain(signal));
   return drained.then(() => {
-    equal(outcomes.join(","), "canceled,canceled");
+    equal(outcomes.join(","), "CANCELED,CANCELED");
     return exec("touch forbidden", { signal }).then(
       () => { throw new Error("a canceled signal must refuse new work"); },
-      () => {},
+      (error) => equal(error.code, "CANCELED"),
     );
   });
 }

@@ -217,7 +217,7 @@ pub const Host = struct {
         };
         if (token) |held| if (held.aborted) {
             payload.free(self.gpa);
-            return pending.rejected(self.ctx, "the operation was canceled");
+            return pending.rejectedWith(self.ctx, .{ .message = "the operation was canceled", .code = "CANCELED" });
         };
         const started = self.ops.start(self.ctx) orelse {
             payload.free(self.gpa);

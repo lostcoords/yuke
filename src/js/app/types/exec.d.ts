@@ -6,7 +6,7 @@ declare module "yuke:exec" {
     cwd?: string;
     /** The default is 120000 and the maximum is 600000. */
     timeoutMs?: number;
-    /** A native signal cancels the command and refuses work after cancellation. */
+    /** A native signal cancels the command and refuses work after cancellation; both reject with `code: "CANCELED"`. */
     signal?: CancellationSignal;
     /** The cap for each stream. The default and the maximum are 65536. */
     maxBytes?: number;

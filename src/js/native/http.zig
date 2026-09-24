@@ -164,11 +164,11 @@ fn plainObject(ctx: Context, value: Value) bool {
 
 const head_limits: module.IoLimits = .{ .default_timeout_ms = default_timeout_ms, .max_timeout_ms = max_timeout_ms };
 const read_limits: module.IoLimits = .{ .default_timeout_ms = default_timeout_ms, .max_timeout_ms = max_timeout_ms, .min_bytes = 4, .default_bytes = default_read_bytes, .max_bytes = max_read_bytes };
-const canceled: pending.Result = .{ .failed = .{ .message = "the request was canceled" } };
-const timed_out: pending.Result = .{ .failed = .{ .message = "the request timed out" } };
+const canceled: pending.Result = .{ .failed = .{ .message = "the request was canceled", .code = "CANCELED" } };
+const timed_out: pending.Result = .{ .failed = .{ .message = "the request timed out", .code = "TIMED_OUT" } };
 const io_failed: pending.Result = .{ .failed = .{ .message = "the host could not complete the request" } };
 const too_long: pending.Result = .{ .failed = .{ .message = "the response exceeds the size limit" } };
-const failures: pending.Failures = .{ .canceled = canceled, .timed_out = timed_out, .failed = .{ .failed = .{ .message = "the host cannot start another operation" } } };
+const failures: pending.Failures = .{ .canceled = canceled, .timed_out = timed_out, .failed = .{ .failed = .{ .message = "the host cannot start another operation", .code = "LIMIT" } } };
 
 /// One response, tabled from the request on. The std response points at the request, so both live here, pinned.
 const Body = struct {
@@ -432,7 +432,7 @@ fn startRead(ctx: Context, args: []const Value, all: bool) Value {
     const body = bodyArg(host, args) orelse return pending.rejected(ctx, "the response body is closed");
     if (cancellation.aborted(ctx, options.signal)) {
         body.close();
-        return pending.rejected(ctx, "the operation was canceled");
+        return pending.rejectedWith(ctx, .{ .message = "the operation was canceled", .code = "CANCELED" });
     }
     if (body.busy) return pending.rejected(ctx, "a body read is already pending");
     body.busy = true;

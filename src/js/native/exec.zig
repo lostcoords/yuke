@@ -110,7 +110,7 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     return host.startTask(Request, execTask, request, .{ .signal = signal, .on_text = on_output });
 }
 
-const canceled: pending.Result = .{ .failed = .{ .message = "the command was canceled" } };
+const canceled: pending.Result = .{ .failed = .{ .message = "the command was canceled", .code = "CANCELED" } };
 
 /// Run the command in a child, so a call abort cancels it. Every child path writes `result` before the op finishes.
 fn execTask(host: *Host, op: *pending.Op, req: Request) void {
@@ -138,7 +138,7 @@ fn execWorker(host: *Host, op: *pending.Op, req: Request, result: *pending.Resul
         .live = if (req.live) .{ .ctx = op, .write = liveWrite } else null,
     }) catch |err| {
         arena.deinit();
-        result.* = .{ .failed = .{ .message = errorMessage(err) } };
+        result.* = if (err == error.Canceled) canceled else .{ .failed = .{ .message = errorMessage(err) } };
         return;
     };
     const answer = arena.allocator().create(Answer) catch unreachable;
