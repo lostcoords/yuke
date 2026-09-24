@@ -4,7 +4,7 @@ import { sha256 } from "yuke:oauth-native";
 import * as cancellation from "yuke:cancellation-native";
 import { fs } from "yuke:fs";
 import { showInfo } from "yuke:info-panel";
-import { checkTransport, endpointFor, headerValue, LISTEN_RETRY_MS, LISTEN_RETRY_MAX_MS } from "yuke:mcp-transport";
+import { endpointFor, headerValue, LISTEN_RETRY_MS, LISTEN_RETRY_MAX_MS } from "yuke:mcp-transport";
 import { client } from "yuke:client";
 import { signIn, forget, record } from "yuke:mcp-oauth";
 import { errorText } from "yuke:format";
@@ -56,20 +56,16 @@ const NO_IMAGES = Object.freeze(/** @type {string[]} */ ([]));
 // A result above this reaches the model cut, with a marker that names the missing part.
 const MAX_RESULT_CHARS = 100_000;
 
-/** @param {string} text @returns {number} */
-function fnv(text) {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193) >>> 0;
-  return hash;
-}
-
 // `mcp_<server>_<tool>` within the provider limit; an overflow keeps a prefix and a stable hash of the whole name.
 /** @param {string} server @param {string} tool @returns {string} */
 export function toolName(server, tool) {
   const raw = "mcp_" + server + "_" + tool;
   const clean = raw.replace(/[^A-Za-z0-9_-]/g, "_");
   if (clean.length <= NAME_MAX) return clean;
-  return clean.slice(0, NAME_MAX - 9) + "_" + fnv(raw).toString(16).padStart(8, "0");
+  // FNV-1a keeps the suffix stable across runs.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < raw.length; i++) hash = Math.imul(hash ^ raw.charCodeAt(i), 0x01000193) >>> 0;
+  return clean.slice(0, NAME_MAX - 9) + "_" + hash.toString(16).padStart(8, "0");
 }
 
 // The model reads text. Every other block becomes a one-line description.
@@ -137,14 +133,6 @@ function complete(result, modern) {
   if (!record(result)) return invalid("result");
   if ((modern || result.resultType !== undefined) && result.resultType !== "complete") return invalid("result type");
   if (result._meta !== undefined && !record(result._meta)) return invalid("result metadata");
-}
-
-/** @param {any} capabilities @returns {boolean} */
-function hasTools(capabilities) {
-  if (!record(capabilities)) return invalid("server capabilities");
-  if (capabilities.tools === undefined) return false;
-  if (!record(capabilities.tools) || (capabilities.tools.listChanged !== undefined && typeof capabilities.tools.listChanged !== "boolean")) return invalid("tool capabilities");
-  return true;
 }
 
 // The catalog owns the parsed schema; validation does not clone or serialize it.
@@ -280,17 +268,7 @@ function checkConfig(config) {
   return null;
 }
 
-/** @param {any} answer @returns {string} */
-function instructionsOf(answer) {
-  return typeof answer.instructions === "string" ? answer.instructions.slice(0, INSTRUCTIONS_MAX) : "";
-}
-
 /** @typedef {{ name: string, description: string, input_schema: string }} ToolAddition */
-
-/** @param {string} text @returns {string[]} */
-function terms(text) {
-  return text.toLowerCase().split(/[^a-z0-9]+/).filter((term) => term.length > 1);
-}
 
 // The name weighs most; the description and the argument names and descriptions weigh one each per term.
 /** @param {ToolDefinition} definition @param {string[]} wanted @returns {number} */
@@ -317,7 +295,7 @@ function searchCatalog(servers, args) {
   if (only !== undefined && typeof only !== "string") throw new Error("server must be a string");
   if (asked !== undefined && (typeof asked !== "number" || !Number.isSafeInteger(asked) || asked < 1 || asked > LIMIT_MAX)) throw new Error("limit must be an integer from 1 to " + LIMIT_MAX);
   const limit = asked === undefined ? LIMIT_DEFAULT : asked;
-  const wanted = terms(query);
+  const wanted = query.toLowerCase().split(/[^a-z0-9]+/).filter((term) => term.length > 1);
   /** @type {{ server: string, definition: ToolDefinition, score: number }[]} */
   const hits = [];
   const connected = [];
@@ -422,7 +400,7 @@ class Server {
     this.refreshing = false;
     this.refreshAgain = false;
     const type = config.type ?? (config.url ? "http" : "stdio");
-    const problem = checkConfig(config) ?? checkTransport(config, type);
+    const problem = checkConfig(config);
     if (config.enabled === false) this.state = "disabled";
     else if (problem !== null) this.fail("failed", problem);
     else if (!trusted) this.state = "untrusted";
@@ -640,9 +618,14 @@ class Server {
 
   /** @param {any} answer */
   accept(answer) {
-    this.hasTools = hasTools(answer.capabilities);
-    this.listChanged = this.hasTools && answer.capabilities.tools.listChanged === true;
-    this.instructions = instructionsOf(answer);
+    // The answer comes from the server, so its shape is checked here.
+    const capabilities = answer.capabilities;
+    if (!record(capabilities)) invalid("server capabilities");
+    const tools = capabilities.tools;
+    if (tools !== undefined && (!record(tools) || (tools.listChanged !== undefined && typeof tools.listChanged !== "boolean"))) invalid("tool capabilities");
+    this.hasTools = tools !== undefined;
+    this.listChanged = this.hasTools && tools.listChanged === true;
+    this.instructions = typeof answer.instructions === "string" ? answer.instructions.slice(0, INSTRUCTIONS_MAX) : "";
   }
 
   // Probe the modern era first. A modern answer settles it; a version error that names a legacy version, any other error, or a timeout means a legacy server.

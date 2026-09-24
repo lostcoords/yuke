@@ -63,14 +63,6 @@ function checkStdio(config) {
   return null;
 }
 
-// The message for a wrong transport entry, or null.
-/** @param {ServerConfig} config @param {string} type @returns {string | null} */
-export function checkTransport(config, type) {
-  if (type === "stdio") return checkStdio(config);
-  if (type === "http" || type === "sse") return checkRemote(config);
-  return "type must be stdio, http, or sse";
-}
-
 // A transport moves JSON-RPC text; the server decodes it and answers the id of the request that the text settles.
 // `closed` fires once, when the transport can carry no more; `reconnect` asks the server to start again, and `signIn` carries a 401 challenge.
 /** @typedef {{ message(text: string): number | undefined, closed(reason: string, options?: { reconnect?: boolean, signIn?: string }): void }} Sink */
@@ -223,16 +215,6 @@ export function headerValue(value) {
   return SENTINEL_START + bytes.toBase64() + SENTINEL_END;
 }
 
-/** @param {Record<string, string>} headers @param {Record<string, string>} extra @returns {Record<string, string>} */
-function withHeaders(headers, extra) {
-  /** @type {Record<string, string>} */
-  const merged = Object.create(null);
-  // The host refuses one name twice, so every name is lowercase and the transport's own names win.
-  for (const [name, value] of Object.entries(headers)) merged[name.toLowerCase()] = value;
-  for (const [name, value] of Object.entries(extra)) merged[name] = value;
-  return merged;
-}
-
 // Create a sign-in error and preserve the server challenge.
 /** @param {HttpResponse} response @returns {Error} */
 function signInError(response) {
@@ -246,7 +228,8 @@ async function exchange(target, url, { method, extra, body, signal }) {
   /** @param {string | null} sent */
   const attempt = (sent) => fetch(url, {
     method,
-    headers: withHeaders(target.headers, sent ? { ...extra, authorization: sent } : extra),
+    // The host refuses one name twice, so every name is lowercase and the transport's own names win.
+    headers: { ...Object.fromEntries(Object.entries(target.headers).map(([name, value]) => [name.toLowerCase(), value])), ...extra, ...(sent ? { authorization: sent } : {}) },
     ...(body !== undefined ? { body } : {}),
     ...(signal !== undefined ? { signal } : {}),
     timeoutMs: HTTP_WAIT_MS,
@@ -470,8 +453,10 @@ function remoteEndpoint(config, type) {
   };
 }
 
-// Expand a checked configuration into its endpoint. A missing variable throws here.
+// Check a configuration and expand it into its endpoint. A wrong entry or a missing variable throws here.
 /** @param {ServerConfig} config @param {string} type @returns {Endpoint} */
 export function endpointFor(config, type) {
+  const problem = type === "stdio" ? checkStdio(config) : type === "http" || type === "sse" ? checkRemote(config) : "type must be stdio, http, or sse";
+  if (problem !== null) throw new Error(problem);
   return type === "stdio" ? stdioEndpoint(config) : remoteEndpoint(config, type === "sse" ? "sse" : "http");
 }
