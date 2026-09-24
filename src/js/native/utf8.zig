@@ -13,8 +13,7 @@ pub fn install(host: *Host) void {
 }
 
 fn jsEncode(ctx: quickjs.Context, _: quickjs.Value, args: []const quickjs.Value) quickjs.Value {
-    if (args.len == 0 or !ctx.isString(args[0])) return ctx.throwTypeError("the text must be a string");
-    const bytes = ctx.toCStringLen(args[0]) catch return module.throwPending(ctx);
+    const bytes = (if (args.len > 0) module.string(ctx, args[0]) else null) orelse return ctx.throwTypeError("the text must be a string");
     defer ctx.freeCString(bytes.ptr);
     // QuickJS preserves lone UTF-16 surrogates, which UTF-8 must reject.
     if (!std.unicode.utf8ValidateSlice(bytes)) return ctx.throwTypeError("the text contains a lone surrogate");

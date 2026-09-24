@@ -12,8 +12,7 @@ pub fn install(host: *Host) void {
 }
 
 fn jsGet(ctx: quickjs.Context, _: quickjs.Value, args: []const quickjs.Value) quickjs.Value {
-    if (args.len == 0 or !ctx.isString(args[0])) return ctx.throwTypeError("the environment name must be a string");
-    const name = ctx.toCStringLen(args[0]) catch return module.throwPending(ctx);
+    const name = (if (args.len > 0) module.string(ctx, args[0]) else null) orelse return ctx.throwTypeError("the environment name must be a string");
     defer ctx.freeCString(name.ptr);
     if (name.len == 0 or std.mem.indexOfAny(u8, name, "\x00=") != null)
         return ctx.throwTypeError("the environment name must not be empty or contain NUL or =");

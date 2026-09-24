@@ -50,8 +50,7 @@ fn errorMessage(err: os.HostError) []const u8 {
 /// Copy one path argument, or `default` when it is absent or empty.
 fn ownedPath(ctx: Context, gpa: std.mem.Allocator, args: []const Value, idx: usize, default: []const u8) ?[]u8 {
     if (args.len <= idx or ctx.isUndefined(args[idx]) or ctx.isNull(args[idx])) return gpa.dupe(u8, default) catch unreachable;
-    if (!ctx.isString(args[idx])) return null;
-    const raw = ctx.toCStringLen(args[idx]) catch return null;
+    const raw = module.string(ctx, args[idx]) orelse return null;
     defer ctx.freeCString(raw.ptr);
     // The OS stops at a NUL byte, so the check rejects a different file name.
     if (std.mem.indexOfScalar(u8, raw, 0) != null) return null;
@@ -161,8 +160,7 @@ fn jsWriteFile(ctx: Context, _: Value, args: []const Value) Value {
 
     if (args.len < 2) return rejected(ctx, "writeFile needs a path and content");
     const path = ownedPath(ctx, arena.allocator(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
-    if (!ctx.isString(args[1])) return rejected(ctx, "the content must be a string");
-    const raw = ctx.toCStringLen(args[1]) catch return rejected(ctx, "the content must be a string");
+    const raw = module.string(ctx, args[1]) orelse return rejected(ctx, "the content must be a string");
     defer ctx.freeCString(raw.ptr);
 
     local.writeFile(arena.allocator(), path, raw) catch |err| return rejected(ctx, errorMessage(err));

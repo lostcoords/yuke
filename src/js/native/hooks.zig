@@ -42,20 +42,17 @@ fn jsSetPoints(ctx: Context, _: Value, args: []const Value) Value {
     while (i < count) : (i += 1) {
         const item = ctx.getPropertyUint32(args[0], @intCast(i));
         defer ctx.freeValue(item);
-        if (!ctx.isString(item)) return ctx.throwTypeError("a hook point must be a string");
-        const name = ctx.toCStringLen(item) catch return module.throwPending(ctx);
+        const name = module.string(ctx, item) orelse return ctx.throwTypeError("a hook point must be a string");
         defer ctx.freeCString(name.ptr);
         const point = table.Point.parse(name) orelse return ctx.throwTypeError("no such hook point");
         points.insert(point);
     }
     // The second argument names the point that changed. A prompt handler joined or left, so every stored prompt is stale.
-    if (args.len > 1 and ctx.isString(args[1])) {
-        const changed = ctx.toCStringLen(args[1]) catch return module.throwPending(ctx);
-        defer ctx.freeCString(changed.ptr);
-        if (table.Point.parse(changed) == .@"prompt.build") if (host.engine.runtime) |runtime| {
-            runtime.engine.prompt_generation += 1;
-        };
-    }
+    const changed = (if (args.len > 1) module.string(ctx, args[1]) else null) orelse return ctx.throwTypeError("setPoints needs the name of the changed point");
+    defer ctx.freeCString(changed.ptr);
+    if (table.Point.parse(changed) == .@"prompt.build") if (host.engine.runtime) |runtime| {
+        runtime.engine.prompt_generation += 1;
+    };
     host.hooks.setPoints(points);
     return quickjs.UNDEFINED;
 }

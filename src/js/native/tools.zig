@@ -22,15 +22,13 @@ pub fn install(host: *Host) void {
 fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (args.len < 2) return ctx.throwTypeError("defineTool needs a name and a definition");
-    if (!ctx.isString(args[0])) return ctx.throwTypeError("the tool name must be a string");
+    const name = module.string(ctx, args[0]) orelse return ctx.throwTypeError("the tool name must be a string");
+    defer ctx.freeCString(name.ptr);
     if (!ctx.isObject(args[1])) return ctx.throwTypeError("the tool definition must be an object");
 
-    const name = ctx.toCStringLen(args[0]) catch return module.throwPending(ctx);
-    defer ctx.freeCString(name.ptr);
     const description = ctx.getPropertyStr(args[1], "description");
     defer ctx.freeValue(description);
-    if (!ctx.isString(description)) return ctx.throwTypeError("the tool needs a description string");
-    const description_text = ctx.toCStringLen(description) catch return module.throwPending(ctx);
+    const description_text = module.string(ctx, description) orelse return ctx.throwTypeError("the tool needs a description string");
     defer ctx.freeCString(description_text.ptr);
     if (description_text.len == 0) return ctx.throwTypeError("the tool description must not be empty");
 
@@ -75,8 +73,7 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
 /// `removeTool(name)` withdraws one tool. It answers true when a tool held that name.
 fn jsRemoveTool(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (args.len < 1 or !ctx.isString(args[0])) return ctx.throwTypeError("removeTool needs a name string");
-    const name = ctx.toCStringLen(args[0]) catch return module.throwPending(ctx);
+    const name = (if (args.len > 0) module.string(ctx, args[0]) else null) orelse return ctx.throwTypeError("removeTool needs a name string");
     defer ctx.freeCString(name.ptr);
     return ctx.newBool(host.tools.remove(ctx, name));
 }
@@ -84,8 +81,7 @@ fn jsRemoveTool(ctx: Context, _: Value, args: []const Value) Value {
 /// `hasTool(name)` answers true when a tool holds that name.
 fn jsHasTool(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (args.len < 1 or !ctx.isString(args[0])) return ctx.throwTypeError("hasTool needs a name string");
-    const name = ctx.toCStringLen(args[0]) catch return module.throwPending(ctx);
+    const name = (if (args.len > 0) module.string(ctx, args[0]) else null) orelse return ctx.throwTypeError("hasTool needs a name string");
     defer ctx.freeCString(name.ptr);
     return ctx.newBool(host.tools.find(name) != null);
 }
@@ -97,8 +93,7 @@ fn schemaFault(ctx: Context, parameters: Value) ?[*:0]const u8 {
 
     const kind = ctx.getPropertyStr(parameters, "type");
     defer ctx.freeValue(kind);
-    if (!ctx.isString(kind)) return "the tool parameters need \"type\": \"object\"";
-    const kind_text = ctx.toCStringLen(kind) catch return "the tool parameters need \"type\": \"object\"";
+    const kind_text = module.string(ctx, kind) orelse return "the tool parameters need \"type\": \"object\"";
     defer ctx.freeCString(kind_text.ptr);
     if (!std.mem.eql(u8, kind_text, "object")) return "the tool parameters need \"type\": \"object\"";
 
