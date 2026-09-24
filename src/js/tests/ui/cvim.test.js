@@ -68,12 +68,14 @@ setComposerMode(v.composer, "normal");
 press("G");
 check("trailing-newline", t.caret === 2);
 
-// "x" never joins two lines, and a blank line keeps the register.
+// "x" and "s" never join two lines, and a blank line keeps the register.
 t.setText("a\n\nb");
 setComposerMode(v.composer, "normal");
 press("gg");
 press("jx");
 check("x-blank-line", t.text === "a\n\nb");
+press("s");
+check("s-blank-line", t.text === "a\n\nb" && composerMode(v.composer) === "insert");
 
 // An unbound letter inserts nothing in normal mode and runs no command.
 t.setText("abc");

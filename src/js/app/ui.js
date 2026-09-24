@@ -109,7 +109,8 @@ export class ScrollView {
 function normalizeCell(cell) {
   if (cell == null) return { text: "" };
   if (typeof cell === "string") return { text: cell };
-  return { text: cell.text != null ? String(cell.text) : "", ...cell };
+  // A record with string text passes as is, so a drawn row allocates nothing.
+  return typeof cell.text === "string" ? cell : { ...cell, text: cell.text != null ? String(cell.text) : "" };
 }
 
 // A scrollable list where `key(item)` gives a stable identity, so the selection follows its item across a re-sort.

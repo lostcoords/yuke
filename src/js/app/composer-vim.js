@@ -203,18 +203,15 @@ function normalKey(c, k) {
       return enter(c, start);
     case "x":
       return cut(c, t.caret, Math.min(nextGrapheme(text, t.caret), end), false);
-    case "s": {
-      const next = nextGrapheme(text, t.caret);
-      register.set(text.slice(t.caret, next), false);
-      t.replace(t.caret, next, "");
-      return enter(c, t.caret);
+    // `s` stops at the line end like `x`, so an empty line keeps its line break.
+    case "s":
+    case "C": {
+      const at = t.caret;
+      cut(c, at, k === "s" ? Math.min(nextGrapheme(text, at), end) : end, false);
+      return enter(c, at);
     }
     case "D":
       return cut(c, t.caret, end, false);
-    case "C":
-      register.set(text.slice(t.caret, end), false);
-      t.replace(t.caret, end, "");
-      return enter(c, t.caret);
     case "p":
       return put(c, true);
     case "P":
