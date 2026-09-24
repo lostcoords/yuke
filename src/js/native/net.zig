@@ -33,6 +33,8 @@ const Connection = struct {
     read_op: ?*pending.Op = null,
     write_op: ?*pending.Op = null,
     changed: std.Io.Event = .unset,
+    /// The read buffer from the host allocator, empty after a full read took it. `read_busy` keeps one read at a time.
+    buffer: []u8 = &.{},
 
     pub fn close(self: *Connection) void {
         if (self.closed) return;
@@ -50,8 +52,10 @@ const Connection = struct {
         return true;
     }
 
-    /// The connect task closed the stream, so the record holds nothing else.
-    pub fn deinit(_: *Connection, _: std.mem.Allocator) void {}
+    /// The connect task closed the stream, so the record holds only its read buffer.
+    pub fn deinit(self: *Connection, gpa: std.mem.Allocator) void {
+        gpa.free(self.buffer);
+    }
 };
 
 pub const Connections = module.Table(Connection);
@@ -229,16 +233,21 @@ fn worker(host: *Host, request: Request, result: *pending.Result) error{}!void {
         },
         .read => {
             std.debug.assert(connection.stream != null and request.max_bytes > 0);
-            const buffer = host.gpa.alloc(u8, request.max_bytes) catch unreachable;
+            if (connection.buffer.len < request.max_bytes) {
+                host.gpa.free(connection.buffer);
+                connection.buffer = host.gpa.alloc(u8, request.max_bytes) catch unreachable;
+            }
             var reader = connection.stream.?.reader(host.io, &.{});
-            var slices = [_][]u8{buffer};
+            var slices = [_][]u8{connection.buffer[0..request.max_bytes]};
             const n = reader.interface.readVec(&slices) catch |err| {
-                host.gpa.free(buffer);
                 result.* = if (err == error.EndOfStream) .null_value else .{ .failed = io_failed };
                 return;
             };
-            std.debug.assert(n > 0 and n <= buffer.len);
-            result.* = .{ .bytes = .{ .buffer = buffer, .len = n } };
+            std.debug.assert(n > 0 and n <= request.max_bytes);
+            // A full read hands the buffer to the answer. A short read copies its bytes and keeps the buffer for the next read.
+            const full = n == request.max_bytes;
+            result.* = .{ .bytes = .{ .buffer = if (full) connection.buffer else host.gpa.dupe(u8, connection.buffer[0..n]) catch unreachable, .len = n } };
+            if (full) connection.buffer = &.{};
         },
         .write => {
             std.debug.assert(connection.stream != null);
