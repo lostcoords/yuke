@@ -24,18 +24,15 @@ Look up APIs on the internet and in this tree. Do not guess.
 
 ## Performance
 
-- Each change keeps or improves time, memory use, and the allocation count.
-- A slower hot path is a defect, also in a cleanup.
-- Hot paths are draw, input, stream delivery, and per-frame or per-row work.
-- On a hot path, do not add an allocation, a closure, a call, or an `await`.
-- In QuickJS, each object, closure, and private field costs time. Count them.
-- Measure each change to the JavaScript host, the engine, or the renderer. Compare the base commit with your commit.
-- Time: `zig build bench -Doptimize=ReleaseFast -- --fixture bench/transcript-fixture.json`
-- Memory and allocations: add `-Dmetrics=true` in a separate run.
-- One phase: add `--phase <name> --iterations 3000`.
-- A timing changes by up to 20% between runs. Run each side 5 times or more, alternate the sides, and compare the lowest quartile.
-- The allocation count and the live and peak bytes are exact. Compare them per phase.
-- Report the result. If a phase gets worse, stop and tell the user why.
+No regressions in time, memory, or allocations. A slower hot path is a defect, including cleanup.
+
+Hot paths: draw, input, stream delivery, per-frame, per-row. Do not add allocation, closure, call, or `await`. QuickJS: each object, closure, and private field costs time.
+
+When you change the JS host, engine, or renderer, measure vs base:
+`zig build bench -Doptimize=ReleaseFast -- --fixture bench/transcript-fixture.json`
+Add `-Dmetrics=true` for allocs (separate run). One phase: `--phase <name> --iterations 3000`.
+
+Time noise ~20%: 5+ runs each side, alternate, lowest quartile. Alloc count and live/peak bytes are exact. If a phase is worse, stop and say why.
 
 ## Memory
 
