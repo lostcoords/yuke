@@ -1,3 +1,5 @@
+//! The owner turns terminal events into `globalThis.onEvent` calls and paints each frame through `globalThis.flushFrame`.
+
 const std = @import("std");
 const quickjs = @import("quickjs");
 const term_pkg = @import("term");
@@ -29,8 +31,11 @@ pub fn step(host: *Host, ev: Event) Error!void {
         .key_release => |k| try stepKey(host, k, .release),
         .mouse => |m| try stepMouseRepeat(host, m, 1),
         .winsize => |ws| try stepResize(host, ws),
-        .focus_in => try stepFocus(host, true),
-        .focus_out => try stepFocus(host, false),
+        .focus_in, .focus_out => {
+            const obj = objectType(host.ctx, "focus");
+            module.set(host.ctx, obj, "focused", host.ctx.newBool(ev == .focus_in));
+            _ = try dispatch(host, obj);
+        },
         // Ignore the leave and capability events.
         else => {},
     }
@@ -39,7 +44,8 @@ pub fn step(host: *Host, ev: Event) Error!void {
 /// Dispatch a paste as its own event type, so a text input inserts `text` with one edit.
 pub fn stepPaste(host: *Host, text: []const u8) Error!void {
     std.debug.assert(host.phase == .open);
-    const obj = pasteObject(host.ctx, text);
+    const obj = objectType(host.ctx, "paste");
+    module.set(host.ctx, obj, "text", host.ctx.newString(text));
     _ = try dispatch(host, obj);
 }
 
@@ -116,12 +122,6 @@ pub fn flushWheel(host: *Host, run: *?WheelRun) Error!void {
     try stepMouseRepeat(host, w.mouse, w.count);
 }
 
-/// Dispatch a focus change the terminal reported.
-fn stepFocus(host: *Host, focused: bool) Error!void {
-    const obj = focusObject(host.ctx, focused);
-    _ = try dispatch(host, obj);
-}
-
 fn stepResize(host: *Host, ws: Winsize) Error!void {
     host.paint.resize(host.ctx, ws);
     const ctx = host.ctx;
@@ -133,22 +133,31 @@ fn stepResize(host: *Host, ws: Winsize) Error!void {
 
 /// Call `globalThis.onEvent` with `obj`. Return false when no handler exists.
 fn dispatch(host: *Host, obj: Value) Error!bool {
-    const ctx = host.ctx;
-    defer ctx.freeValue(obj);
+    defer host.ctx.freeValue(obj);
     // A builder that found the QuickJS heap full left an exception pending, and that is a fault like any other.
-    if (ctx.hasException()) {
+    if (host.ctx.hasException()) {
         host.noteFault();
         return error.JavaScriptFault;
     }
+    return callGlobal(host, "onEvent", &.{obj});
+}
 
+/// Paint the frame the handlers asked for; the owner calls this once per drained queue, so a burst costs one paint.
+pub fn flushFrame(host: *Host) Error!void {
+    _ = try callGlobal(host, "flushFrame", &.{});
+    term_mod.commitFrame(host);
+}
+
+/// Call the global function `name` with the borrowed `argv` in a fresh slice, then drain the jobs. Return false when no such function exists.
+inline fn callGlobal(host: *Host, name: [:0]const u8, argv: []const Value) Error!bool {
+    host.enterSlice();
+    const ctx = host.ctx;
     const global = ctx.getGlobalObject();
     defer ctx.freeValue(global);
-    const handler = ctx.getPropertyStr(global, "onEvent");
-    defer ctx.freeValue(handler);
-    if (!ctx.isFunction(handler)) return false;
-
-    host.enterSlice();
-    const result = ctx.call(handler, quickjs.UNDEFINED, &.{obj});
+    const function = ctx.getPropertyStr(global, name);
+    defer ctx.freeValue(function);
+    if (!ctx.isFunction(function)) return false;
+    const result = ctx.call(function, quickjs.UNDEFINED, argv);
     if (ctx.isException(result)) {
         host.paint.needs_tick = false;
         host.noteFault();
@@ -157,27 +166,6 @@ fn dispatch(host: *Host, obj: Value) Error!bool {
     ctx.freeValue(result);
     try host.drainJobs();
     return true;
-}
-
-/// Paint the frame the handlers asked for; the owner calls this once per drained queue, so a burst costs one paint.
-pub fn flushFrame(host: *Host) Error!void {
-    host.enterSlice();
-    const ctx = host.ctx;
-    const global = ctx.getGlobalObject();
-    defer ctx.freeValue(global);
-    const flush = ctx.getPropertyStr(global, "flushFrame");
-    defer ctx.freeValue(flush);
-    if (ctx.isFunction(flush)) {
-        const result = ctx.call(flush, quickjs.UNDEFINED, &.{});
-        if (ctx.isException(result)) {
-            host.paint.needs_tick = false;
-            host.noteFault();
-            return error.JavaScriptFault;
-        }
-        ctx.freeValue(result);
-        try host.drainJobs();
-    }
-    term_mod.commitFrame(host);
 }
 
 fn objectType(ctx: Context, typ: []const u8) Value {
@@ -217,18 +205,6 @@ fn mouseObject(ctx: Context, m: Mouse, count: u32) Value {
     module.set(ctx, obj, "event", ctx.newString(@tagName(m.type)));
     module.set(ctx, obj, "mods", ctx.newInt32(bits));
     module.set(ctx, obj, "count", ctx.newInt32(@intCast(count)));
-    return obj;
-}
-
-fn focusObject(ctx: Context, focused: bool) Value {
-    const obj = objectType(ctx, "focus");
-    module.set(ctx, obj, "focused", ctx.newBool(focused));
-    return obj;
-}
-
-fn pasteObject(ctx: Context, text: []const u8) Value {
-    const obj = objectType(ctx, "paste");
-    module.set(ctx, obj, "text", ctx.newString(text));
     return obj;
 }
 
