@@ -1437,6 +1437,22 @@ export class Transcript {
     return { id: pos.id, partId: row.partId, kind: row.kind };
   }
 
+  // Open the tool or thought under `pos`, or fold its group; answer where the reader lands, or null when no part acts.
+  /** @param {Position} pos @returns {Position | null} */
+  activate(pos) {
+    const hit = this.partAt(pos);
+    if (!hit) return null;
+    if (hit.kind === "tool-detail" || hit.kind === "tool-body") this.openTool(hit.id, hit.partId);
+    else if (hit.kind === "reasoning-body") this.openReasoning(hit.id, hit.partId);
+    else if (hit.kind === "tool-header" || hit.kind === "reasoning-header" || hit.kind === "report-header" || hit.kind === "report-body") {
+      this.togglePart(hit.id, hit.partId);
+      const header = this.partHeader(hit.id, hit.partId) ?? pos;
+      this.ensureVisible(header);
+      return header;
+    } else return null;
+    return pos;
+  }
+
   // The header position of a foldable part, or null when it is gone.
   /** @param {number} id @param {number} partId @returns {Position | null} */
   partHeader(id, partId) {
@@ -1767,25 +1783,9 @@ export class Transcript {
       this._dragging = false;
       this._press = null;
       this._didDrag = false;
-      if (!dragged && press) {
-        const hit = this.partAt(press);
-        if (hit && (hit.kind === "tool-detail" || hit.kind === "tool-body")) {
-          this.openTool(hit.id, hit.partId);
-          this.clearSelection();
-          return true;
-        }
-        if (hit && hit.kind === "reasoning-body") {
-          this.openReasoning(hit.id, hit.partId);
-          this.clearSelection();
-          return true;
-        }
-        if (hit && (hit.kind === "tool-header" || hit.kind === "reasoning-header" || hit.kind === "report-header")) {
-          this.togglePart(hit.id, hit.partId);
-          const header = this.partHeader(hit.id, hit.partId);
-          if (header) this.ensureVisible(header);
-          this.clearSelection();
-          return true;
-        }
+      if (!dragged && press && this.activate(press)) {
+        this.clearSelection();
+        return true;
       }
       const selected = this.selectedText();
       if (selected === "") this.clearSelection();
