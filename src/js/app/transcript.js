@@ -1597,14 +1597,12 @@ export class Transcript {
     this._indexRowsThrough(Infinity);
     const first = this._messageAtRow(top);
     this._viewport.clear();
-    for (let i = first; i + 1 < this._prefix.length && this._offset(i) < top + height; i++) {
-      const m = /** @type {MessageDescriptor} */ (this._at(i));
-      this._viewport.add(String(m.id));
-    }
     const range = this._range();
     const out = [];
     for (let i = first; i + 1 < this._prefix.length && this._offset(i) < top + height; i++) {
       const m = /** @type {MessageDescriptor} */ (this._at(i));
+      // A message joins the viewport before its read, so the read trims nothing this pass draws.
+      this._viewport.add(String(m.id));
       const rows = this._rowsOf(m, width, i);
       const cache = this._rows.get(String(m.id));
       const base = this._offset(i);
