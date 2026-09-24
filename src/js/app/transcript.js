@@ -330,28 +330,15 @@ function describe(part) {
   return { verb: String(part.name || "tool"), subject: "", category: "other" };
 }
 
-/** @param {Wire.ToolState} state @returns {string} */
-function toolStateLabel(state) {
-  const t = state.type;
-  // A completed call needs no word, because the absence of an error already says it.
-  if (t === "completed") return "";
-  return t;
-}
-
 // Report a duration only over one second. A sub-second value is not a fact a reader acts on.
 /** @param {Wire.ToolState} state @returns {string} */
 function rightLabel(state) {
-  const label = toolStateLabel(state);
+  // A completed call needs no word, because the absence of an error already says it.
+  const label = state.type === "completed" ? "" : state.type;
   const ms = /** @type {{ duration_ms?: number }} */ (state).duration_ms;
   const took = typeof ms === "number" && ms >= 1000 ? (ms / 1000).toFixed(1) + "s" : "";
   if (label && took) return label + " · " + took;
   return label || took;
-}
-
-/** @param {Wire.ToolState} state @returns {boolean} */
-function defaultExpanded(state) {
-  const t = state.type;
-  return t === "running" || t === "error" || t === "canceled";
 }
 
 /** @param {ToolLabel} label @returns {string} */
@@ -393,24 +380,9 @@ function toolHeaderRow(part, expanded, width, label, tree) {
   };
 }
 
-/** @param {number} count @returns {TranscriptRow} */
-function actionGroupRow(count) {
-  return { text: count + (count === 1 ? " action" : " actions"), group: "TxToolMeta", indent: TX_GUTTER, kind: "action-group-header" };
-}
-
 /** @param {string} value @returns {string} */
 function compactField(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
-}
-
-/** @param {TranscriptRow} row @param {string} label @param {number} tree @returns {TranscriptRow} */
-function previewRow(row, label, tree) {
-  const body = row.segments || [{ text: row.text || "", group: row.group || "TxToolBody" }];
-  return {
-    segments: [{ text: label, group: "TxToolMeta" }, ...body],
-    ...actionBodyAttrs(tree),
-    markerGroup: "TxToolMeta",
-  };
 }
 
 // A collapsed tool row shows only these fields, so a delta that leaves them alone changes nothing on screen.
@@ -608,12 +580,13 @@ function toolRows(part, width, expanded, tree) {
     const base = headerSrc.length + 2 + args.length;
     for (let i = 0; i < shown.length; i++) {
       const r = /** @type {TranscriptRow} */ (shown[i]);
-      const preview = previewRow(r, i === 0 ? ACTION_LABEL_OUTPUT : ACTION_LABEL_NONE, tree);
+      const body = r.segments || [{ text: r.text || "", group: r.group || "TxToolBody" }];
       rows.push({
-        ...preview,
+        ...actionBodyAttrs(tree),
+        markerGroup: "TxToolMeta",
         kind: "tool-body",
         partId: part.id,
-        segments: preview.segments ? shiftSrc(preview.segments, base) : preview.segments,
+        segments: shiftSrc([{ text: i === 0 ? ACTION_LABEL_OUTPUT : ACTION_LABEL_NONE, group: "TxToolMeta" }, ...body], base),
       });
     }
   }
@@ -929,7 +902,9 @@ export class Transcript {
     const state = this._parts.get(String(id));
     if (!state || !state.list) return { groupingChanged: true, rowsChanged: true };
     const at = partId == null ? -1 : state.list.findIndex((part) => sameId(part.id, partId));
-    const fresh = at < 0 || !this.partOf ? null : this._partOne(id, /** @type {number} */ (partId), state.list[at]);
+    let fresh = null;
+    // A failing reader keeps the held part, so one bad read never drops the list.
+    if (at >= 0 && this.partOf) try { fresh = this.partOf(id, /** @type {number} */ (partId), state.list[at]); } catch (_) {}
     if (fresh && (fresh.type === "text" || fresh.type === "tool" || fresh.type === "reasoning")) {
       const before = /** @type {Wire.AssistantPart} */ (state.list[at]);
       state.list[at] = fresh;
@@ -1312,15 +1287,6 @@ export class Transcript {
     }
   }
 
-  /** @param {number} id @param {number} partId @param {MessagePart} [previous] @returns {MessagePart | null} */
-  _partOne(id, partId, previous) {
-    try {
-      return /** @type {PartOf} */ (this.partOf)(id, partId, previous);
-    } catch (_) {
-      return null;
-    }
-  }
-
   /** @param {ItemKey} id @param {ItemKey} partId @returns {string} */
   _expandKey(id, partId) {
     return String(id) + ":" + String(partId);
@@ -1339,7 +1305,9 @@ export class Transcript {
     const k = this._expandKey(id, partId);
     if (this._expand.has(k)) return /** @type {boolean} */ (this._expand.get(k));
     if (part && part.type === "reasoning") return this._reasoningLive(id, partId);
-    return part?.type === "tool" && defaultExpanded(part.state);
+    if (part?.type !== "tool") return false;
+    const t = part.state.type;
+    return t === "running" || t === "error" || t === "canceled";
   }
 
   // Flip the user override for one foldable part. A missing part is a no-op.
@@ -1493,7 +1461,10 @@ export class Transcript {
       const part = /** @type {Wire.AssistantPart} */ (list[index]);
       if (emptyPart(part)) continue;
       const tree = plan.trees[start + index] || 0;
-      if (tree && actionFirst(tree)) rows.push({ ...actionGroupRow(actionCount(tree)), key: m.id });
+      if (tree && actionFirst(tree)) {
+        const count = actionCount(tree);
+        rows.push({ text: count + (count === 1 ? " action" : " actions"), group: "TxToolMeta", indent: TX_GUTTER, kind: "action-group-header", key: m.id });
+      }
       if (source) source += "\n";
       const base = source.length;
       const key = String(part.id);
