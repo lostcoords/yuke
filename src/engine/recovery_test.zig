@@ -163,7 +163,7 @@ test "tree ownership protects live runs and repair preserves committed input" {
     f.engine = f.resources.makeEngine(&f.db);
     try f.other.own(.bytes(child));
     // The repair wakes the root on the executor: run 2 takes the queued input and the child report.
-    try Resources.awaitDurableRun(&f.engine, &f.db, a, root, 2);
+    try Resources.awaitDurableRun(&f.other, &f.db, a, root, 2);
     try testing.expect((try database.session.snapshot(&f.db, a, child)).?.open_run_id == null);
     try testing.expectEqual(@as(u32, 1), stale.pins);
     try testing.expectEqual(@as(usize, 0), stale.queueDepth());

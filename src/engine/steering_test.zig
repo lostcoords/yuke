@@ -10,6 +10,7 @@ const runs = @import("run.zig");
 const hookset = @import("hookset.zig");
 const Resources = @import("test_resources.zig");
 const reports = @import("reports.zig");
+const util = @import("../util.zig");
 
 const Fixture = struct {
     base: Resources.Fixture,
@@ -54,7 +55,7 @@ const Fixture = struct {
         _ = try self.send("initial task");
         try testing.expect(self.base.engine.isBusy());
         runs.Launch.release(&self.base.gate, &self.base.engine);
-        try self.entered.waitTimeout(self.base.engine.deps.io, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } });
+        try testing.expect(try util.waitEvent(self.base.engine.deps.io, &self.entered, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } }));
         try testing.expect(self.base.engine.isBusy());
     }
 
@@ -68,7 +69,7 @@ const Fixture = struct {
         if (self.paused) return;
         self.paused = true;
         self.entered.set(self.base.engine.deps.io);
-        try self.release.waitTimeout(self.base.engine.deps.io, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } });
+        if (!try util.waitEvent(self.base.engine.deps.io, &self.release, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } })) return error.ReleaseDidNotArrive;
     }
 
     fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {

@@ -20,7 +20,7 @@ plugins.use({ name: "jobs-ui-test", apply(ctx) { ctx.inject(["tui"], (ctx) => { 
   const one = await start("sleep 30", { root: "/tmp" });
   const two = await start("sleep 30", { root: "/tmp" });
   const quick = await start("exit 2", { root: "/tmp" });
-  await until(() => jobs.get(quick.id)?.state === "exited");
+  await jobs.wait(quick.id);
   check("counts-running", status.side("right").includes("jobs 2"));
 
   // The list shows newest first, and `x` stops only the selected running job.
@@ -30,13 +30,12 @@ plugins.use({ name: "jobs-ui-test", apply(ctx) { ctx.inject(["tui"], (ctx) => { 
   key(picker, "x");
   picker.content.list.move(1);
   key(picker, "x");
-  await until(() => jobs.get(two.id)?.state === "exited");
+  await jobs.wait(two.id);
   check("x-stops-selected", jobs.get(quick.id)?.state === "exited" && jobs.get(one.id)?.state === "running");
   check("list-refreshes", picker.win.opts.title === "Jobs · 1 running · 2 ended");
 
   key(picker, "X");
-  await until(() => jobs.get(one.id)?.state === "exited");
-  await until(() => notice.text.includes("stop requested"));
+  await jobs.wait(one.id);
   check("X-stops-all", notice.text === "jobs · stop requested for 1" && !status.side("right").includes("jobs"));
 
   picker.content.onKey({ type: "key", code: "esc", event: "press", mods: 0 });
@@ -62,32 +61,31 @@ while :; do wait "$child"; done`, { root: "/tmp" });
   for (let stage = 1; stage <= 3; stage++) {
     const expected = ["line1", "line2", "line3"].slice(0, stage).join("|") + (stage === 3 ? "|tail" : "");
     const partial = stage === 3 ? "tail" : "";
-    for (let i = 0; i < 1000; i++) {
+    await until(async () => {
       await view.read();
-      if (texts(view).join("|") === expected && view.partial === partial) break;
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+      return texts(view).join("|") === expected && view.partial === partial;
+    }, `output stage ${stage}`);
     check("output-stage-" + stage, texts(view).join("|") === expected && view.partial === partial);
     check("output-still-running-" + stage, jobs.get(talky.id)?.state === "running");
     globalThis.talkyStage = stage;
   }
   await jobs.wait(talky.id);
-  await until(() => { view.tick(); return texts(view).includes("[exit code 0]"); });
+  await until(async () => { await view.read(); return texts(view).includes("[exit code 0]"); }, "output completion");
   check("output-follows", texts(view).join("|") === "line1|line2|line3|tail|[exit code 0]");
   view.onKey({ type: "key", code: "esc", event: "press", mods: 0 });
   check("output-closes", root.overlays.length === 0);
 
   // A long log opens at a whole line near its end, and `x` stops the job from the view.
   const long = await start("head -c 396000 /dev/zero | tr '\\0' a | fold -w 99; echo; echo last; sleep 30", { root: "/tmp" });
-  for (let i = 0; i < 60 && (await jobs.read(long.id, Number.MAX_SAFE_INTEGER, 4)).size < 400005; i++) await new Promise((resolve) => setTimeout(resolve, 50));
+  await until(async () => (await jobs.read(long.id, Number.MAX_SAFE_INTEGER, 4)).size >= 400005, "long job output");
   const tailView = openOutput(tui, long);
-  for (let i = 0; i < 60 && !texts(tailView).includes("last"); i++) { tailView.tick(); await new Promise((resolve) => setTimeout(resolve, 50)); }
+  await until(async () => { await tailView.read(); return texts(tailView).includes("last"); }, "tail output");
   const shown = texts(tailView);
-    check("output-starts-whole", shown.length > 1000 && shown.length < 4000 && shown.slice(0, -1).every((line) => line.length === 99) && shown.at(-1) === "last");
+  check("output-starts-whole", shown.length > 1000 && shown.length < 4000 && shown.slice(0, -1).every((line) => line.length === 99) && shown.at(-1) === "last");
   tailView.onKey({ type: "key", code: "char", char: "x", text: "x", event: "press", mods: 0 });
-  await until(() => jobs.get(long.id)?.state === "exited");
+  await jobs.wait(long.id);
   check("output-x-stops", jobs.get(long.id)?.state === "exited");
-  for (let i = 0; i < 20 && !texts(tailView).includes("[stopped]"); i++) await new Promise((resolve) => setTimeout(resolve, 50));
+  await until(async () => { await tailView.read(); return texts(tailView).includes("[stopped]"); }, "stopped output");
   check("output-shows-stop-line", texts(tailView).at(-1) === "[stopped]");
   tailView.onKey({ type: "key", code: "esc", event: "press", mods: 0 });
 

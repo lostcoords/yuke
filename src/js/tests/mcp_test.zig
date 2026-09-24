@@ -124,7 +124,8 @@ test "an MCP call timeout cancels the request and ignores its late reply" {
     try std.testing.expect(call.is_error);
     try std.testing.expectEqualStrings("the request timed out", call.text orelse "");
     try std.testing.expect(start.durationTo(std.Io.Timestamp.now(host.io, .awake)).toMilliseconds() >= 100);
-    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"after-timeout\"}", .{ .text = .{ .equals = "canceled: yes" } });
+    // The server exits only after the client reads the late reply and answers the following ping.
+    try support.pumpUntilTrue(host, "mcpStates().modern === 'failed · modern · the server exited with code 0'");
     try std.testing.expect(call.is_error);
     try std.testing.expectEqualStrings("the request timed out", call.text orelse "");
     try support.dropCall(host, call);

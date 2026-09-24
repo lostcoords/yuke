@@ -12,6 +12,7 @@ const proto = @import("proto");
 const extensions = @import("../extensions.zig");
 const Work = @import("../../session/work.zig");
 const process = @import("../native/process.zig");
+const util = @import("../../util.zig");
 
 const ReactorHost = struct {
     rt: *zio.Runtime,
@@ -487,11 +488,11 @@ test "exec completion detaches before call abort and host close rejects late exe
     try support.dropCall(host, call);
     const race = host.calls.submit("probe", "{}", root);
     try host.pump();
-    const ready: std.Io.Timestamp = .now(host.io, .awake);
+    const ready_deadline = std.Io.Clock.Timestamp.fromNow(host.io, .{ .raw = .fromSeconds(5), .clock = .awake });
     while (!host.ops.anyReady()) {
-        if (ready.durationTo(.now(host.io, .awake)).toMilliseconds() > 5000) return error.ExecDidNotFinish;
-        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(10), .clock = .awake } }) catch {};
         host.wake.reset();
+        if (host.ops.anyReady()) break;
+        if (!try util.waitEvent(host.io, &host.wake, .{ .deadline = ready_deadline })) return error.ExecDidNotFinish;
     }
     try support.dropCall(host, race);
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
@@ -557,12 +558,14 @@ test "session cancel reaches the builtin exec process group" {
 }
 
 test "a JS tool's live output reaches the engine as ordered output deltas while the call runs" {
-    // The engine publishes from its task, and this thread reads after the length says a chunk landed.
+    // The recorder event publishes each engine delta to this thread.
     const Recorder = struct {
+        io: std.Io,
         text: std.ArrayList(u8) = .empty,
         /// Set when a delta does not start where the text ends.
         gap: bool = false,
         len: std.atomic.Value(usize) = .init(0),
+        changed: std.Io.Event = .unset,
 
         fn onEvent(raw: *anyopaque, note: proto.rpc.Notification) void {
             const self: *@This() = @ptrCast(@alignCast(raw));
@@ -573,18 +576,17 @@ test "a JS tool's live output reaches the engine as ordered output deltas while 
             if (delta.offset != self.text.items.len) self.gap = true;
             self.text.appendSlice(std.testing.allocator, delta.delta) catch unreachable;
             self.len.store(self.text.items.len, .release);
-        }
-
-        fn streamed(self: *@This()) bool {
-            return self.len.load(.acquire) >= 8;
+            self.changed.set(self.io);
         }
     };
     const entry =
         \\import { plugins } from "yuke";
+        \\globalThis.releaseStream = null;
         \\plugins.use({ name: "stream", apply(ctx) {
         \\  ctx.tools.define({ name: "stream", description: "Stream.", parameters: { type: "object", properties: {} }, execute: async (_args, _signal, context) => {
+        \\    const held = new Promise((resolve) => { globalThis.releaseStream = resolve; });
         \\    context.output("one\n");
-        \\    await new Promise((resolve) => setTimeout(resolve, 20));
+        \\    await held;
         \\    context.output("two\n");
         \\    return "done";
         \\  } });
@@ -594,7 +596,7 @@ test "a JS tool's live output reaches the engine as ordered output deltas while 
     try f.init(entry, "import \"yuke:kernel\"; import \"yuke:ext\";");
     defer f.deinit();
     const host = f.extensions.host;
-    var recorder: Recorder = .{};
+    var recorder: Recorder = .{ .io = host.io };
     defer recorder.text.deinit(std.testing.allocator);
     f.app.engine.sinks.add(.{ .ctx = &recorder, .on_event = Recorder.onEvent });
     defer f.app.engine.sinks.remove(&recorder);
@@ -618,7 +620,14 @@ test "a JS tool's live output reaches the engine as ordered output deltas while 
         .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "Stream." } }} } },
     }, &launch, null);
     run.Launch.release(&launch, &f.app.engine);
-    try support.pumpPolling(host, &recorder, Recorder.streamed);
+    try support.pumpUntilTrue(host, "releaseStream !== null");
+    if (recorder.len.load(.acquire) < 4 and !try util.waitEvent(host.io, &recorder.changed, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } })) return error.FirstOutputDidNotArrive;
+    try std.testing.expectEqualStrings("one\n", recorder.text.items);
+    try std.testing.expect(f.app.engine.sessions.get(created.session.id).?.active_run != null);
+    recorder.changed.reset();
+    try host.evalModule("releaseStream();", "stream-release.js");
+    try host.pump();
+    if (recorder.len.load(.acquire) < 8 and !try util.waitEvent(host.io, &recorder.changed, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } })) return error.SecondOutputDidNotArrive;
     try std.testing.expect(!recorder.gap);
     try std.testing.expectEqualStrings("one\ntwo\n", recorder.text.items);
     _ = try commands.sessionCancelRun(&f.app.engine, a, .{ .session_id = created.session.id });
@@ -690,13 +699,16 @@ test "a throwing await handler faults once and leaves no pending exception" {
     // A resolver that throws must not leave an exception for the next owner turn.
     try support.eval(host, "native_tools/throwy.test.js");
 
-    var rounds: u32 = 0;
-    while (host.ops.live.items.len != 0) : (rounds += 1) {
-        if (rounds == 64) return error.PrimitiveNeverSettled;
-        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(1000), .clock = .awake } }) catch {};
+    const deadline = std.Io.Clock.Timestamp.fromNow(host.io, .{ .raw = .fromSeconds(5), .clock = .awake });
+    while (host.ops.live.items.len != 0) {
+        if (deadline.durationFromNow(host.io).raw.nanoseconds <= 0) return error.PrimitiveNeverSettled;
         host.wake.reset();
         // The throw happens in a job, so `pump` reports it through the job drain, not the settle.
         host.pump() catch |err| try std.testing.expectEqual(host_mod.Error.JavaScriptFault, err);
+        if (host.ops.live.items.len != 0) host.waitForWork(deadline) catch |err| switch (err) {
+            error.Timeout => return error.PrimitiveNeverSettled,
+            else => return err,
+        };
     }
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.ran"));
     // The next call must see a clean context, so a later read still works.
@@ -714,15 +726,18 @@ test "a throwing onOutput faults the pump with its message, and the command stil
         \\exec("printf out", { onOutput: () => { throw new Error("onOutput boom"); } }).then(() => { globalThis.done = 1; });
     , "exec-fault.js");
     var faults: u32 = 0;
-    var rounds: u32 = 0;
-    while (host.ops.live.items.len != 0) : (rounds += 1) {
-        if (rounds == 64) return error.PrimitiveNeverSettled;
-        host.wake.waitTimeout(host.io, .{ .duration = .{ .raw = .fromMilliseconds(1000), .clock = .awake } }) catch {};
+    const deadline = std.Io.Clock.Timestamp.fromNow(host.io, .{ .raw = .fromSeconds(5), .clock = .awake });
+    while (host.ops.live.items.len != 0) {
+        if (deadline.durationFromNow(host.io).raw.nanoseconds <= 0) return error.PrimitiveNeverSettled;
         host.wake.reset();
         host.pump() catch |err| {
             try std.testing.expectEqual(host_mod.Error.JavaScriptFault, err);
             try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "onOutput boom") != null);
             faults += 1;
+        };
+        if (host.ops.live.items.len != 0) host.waitForWork(deadline) catch |err| switch (err) {
+            error.Timeout => return error.PrimitiveNeverSettled,
+            else => return err,
         };
     }
     try support.pumpUntilIdle(host);

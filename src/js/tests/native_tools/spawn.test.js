@@ -3,7 +3,6 @@ import { spawn as spawnNative } from "yuke:process";
 import { spawn as spawnWith, lines } from "yuke:spawn";
 import { start as startJob, jobs } from "yuke:jobs";
 import { events } from "yuke:kernel";
-import { until } from "yuke:test";
 // The test host has no PATH, so every child names the utility directories.
 const env = { PATH: "/usr/bin:/bin" };
 const spawn = (argv, options = {}) => spawnWith(argv, { ...options, env: { ...env, ...(options.env ?? {}) } });
@@ -35,8 +34,8 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   // A write to a child that closed its input rejects, because SIGPIPE is ignored.
   const deaf = spawn(["sh", "-c", "exec 0<&-; echo ready; sleep 2"]);
   let said = "";
-  deaf.onStdout((text) => { said += text; });
-  await until(() => said.includes("ready"));
+  const heardDeaf = new Promise((resolve) => deaf.onStdout((text) => { said += text; if (said.includes("ready")) resolve(); }));
+  await heardDeaf;
   let epipe = "";
   try { await deaf.write("x".repeat(1000).repeat(200)); } catch (e) { epipe = e.message; }
   check("write-epipe", epipe === "the process closed its input");
@@ -46,8 +45,8 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   // A kill ends the whole group, and the exit names the signal number.
   const tree = spawn(["sh", "-c", "sleep 60 & echo $!; wait"]);
   let grandchild = "";
-  tree.onStdout((text) => { grandchild += text; });
-  await until(() => grandchild.includes("\n"));
+  const heardTree = new Promise((resolve) => tree.onStdout((text) => { grandchild += text; if (grandchild.includes("\n")) resolve(); }));
+  await heardTree;
   check("kill-running", tree.kill() === true);
   const treeExit = await tree.exited;
   check("signal-exit", treeExit.code === null && treeExit.signal === 15);
@@ -80,7 +79,7 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   check("uppercase-session-rejects", uppercase === "the session id must be 32 lowercase hex digits");
   const long = await startJob("sleep 30", { root: "/tmp", sessionId: "01010101010101010101010101010101" });
   const quick = await startJob("echo out; echo bad 1>&2; echo \"$PYTHONUNBUFFERED\"; exit 3", { root: "/tmp" });
-  await until(() => jobs.get(quick.id)?.state === "exited");
+  await jobs.wait(quick.id);
   check("job-exit", jobs.get(quick.id)?.exit_code === 3 && (await jobs.stop(quick.id))?.state === "exited");
   const log = await jobs.read(quick.id, 0, 4096);
   // The host builds the answer object directly, so its keys and numbers must match the public shape exactly.

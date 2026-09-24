@@ -15,6 +15,7 @@ const zqlite = @import("zqlite");
 const work = @import("../session/work.zig");
 const prompt = @import("prompt.zig");
 const request_config = @import("request_config.zig");
+const util = @import("../util.zig");
 
 const Fixture = struct {
     tmp: testing.TmpDir,
@@ -98,24 +99,6 @@ const Fixture = struct {
     }
 };
 
-const Wait = struct {
-    fixture: *Fixture,
-    session_id: ?[16]u8 = null,
-    run_id: ?u64 = null,
-    active: ?u64 = null,
-    cleaned: ?*bool = null,
-
-    pub fn done(self: *@This()) !bool {
-        if (self.cleaned) |cleaned| return cleaned.*;
-        if (self.active) |expected| if (admission.capacity(&self.fixture.engine, self.fixture.parent).active != expected) return false;
-        if (self.run_id) |expected| {
-            const marks = (try database.event.highWater(&self.fixture.db, self.fixture.arena.allocator(), self.session_id.?)).?;
-            if (marks.run_id_high < expected) return false;
-        }
-        return true;
-    }
-};
-
 fn input() proto.input.Input {
     return .{ .content = .{ .content = &.{.{ .text = .{ .text = "task" } }} } };
 }
@@ -178,8 +161,7 @@ test "one tree limit queues grandchildren and resumes their parent after reports
     child_slot.progress.current = null;
     child_slot.phase = .pending_start;
     runs.Launch.release(&child_launch, &f.engine);
-    var wait: Wait = .{ .fixture = &f, .session_id = child.session.id.raw, .run_id = 2, .active = 0 };
-    try Resources.waitUntil(f.engine.deps.io, &wait);
+    try f.engine.turn_tasks.await(f.engine.deps.io);
     try testing.expectEqual(@as(u64, 0), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 2), (try database.event.highWater(&f.db, a, child.session.id.raw)).?.run_id_high);
     const history = try database.message.historyPage(&f.db, a, child.session.id.raw, 0, 20);
@@ -251,8 +233,7 @@ test "child capacity excludes the parent and admits durable queues in FIFO order
     try testing.expectEqual(proto.session.InputQueueReason.session_busy, queued.queued.reason);
     runs.Launch.release(&followup, &f.engine);
     runs.Launch.release(&one_launch, &f.engine);
-    var wait: Wait = .{ .fixture = &f, .active = 0 };
-    try Resources.waitUntil(f.engine.deps.io, &wait);
+    try f.engine.turn_tasks.await(f.engine.deps.io);
     try testing.expectEqual(@as(u64, 0), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, one.session.id.raw)).?.run_id_high);
     const row = (try f.db.conn.row("SELECT (SELECT min(rowid) FROM events WHERE session_id = ?1 AND name = 'run.started') < (SELECT min(rowid) FROM events WHERE session_id = ?2 AND name = 'run.started')", .{ zqlite.blob(&two.session.id.raw), zqlite.blob(&three.session.id.raw) })).?;
@@ -314,8 +295,7 @@ test "admission skips a faulted child and serves its sibling" {
     runs.Launch.release(&two_launch, &f.engine);
     runs.Launch.release(&three_launch, &f.engine);
     runs.Launch.release(&one_launch, &f.engine);
-    var wait: Wait = .{ .fixture = &f, .session_id = three.session.id.raw, .run_id = 1 };
-    try Resources.waitUntil(f.engine.deps.io, &wait);
+    try f.engine.turn_tasks.await(f.engine.deps.io);
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, three.session.id.raw)).?.run_id_high);
     try testing.expectEqual(@as(u64, 0), (try database.event.highWater(&f.db, a, two.session.id.raw)).?.run_id_high);
 }
@@ -337,8 +317,7 @@ test "a lower live limit preserves active runs and a higher limit drains queued 
     try testing.expectEqual(@as(u64, 2), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 1), admission.capacity(&f.engine, f.parent).limit);
     try f.engine.setAgentLimits(3, 1);
-    var wait: Wait = .{ .fixture = &f, .session_id = third.session.id.raw, .run_id = 1, .active = 2 };
-    try Resources.waitUntil(f.engine.deps.io, &wait);
+    try f.engine.turn_tasks.await(f.engine.deps.io);
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, third.session.id.raw)).?.run_id_high);
     try testing.expectEqual(@as(u64, 2), admission.capacity(&f.engine, f.parent).active);
 }
@@ -360,8 +339,7 @@ test "boot resumes queued children under the limit without a surviving parent dr
     try f.engine.setAgentLimits(1, 1);
     try f.engine.resumeWorkspace("/work");
     try testing.expect(admission.capacity(&f.engine, f.parent).active <= 1);
-    var wait: Wait = .{ .fixture = &f, .active = 0 };
-    try Resources.waitUntil(f.engine.deps.io, &wait);
+    try f.engine.turn_tasks.await(f.engine.deps.io);
     for ([_]proto.ids.SessionId{ first.session.id, second.session.id, third.session.id }) |id| {
         try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, id.raw)).?.run_id_high);
         try testing.expect((try database.session.snapshot(&f.db, a, id.raw)).?.open_run_id == null);
@@ -402,13 +380,14 @@ test "a terminal child retains capacity until native cleanup ends" {
     const Work = work;
     const Cleanup = struct {
         operation: Work.Operation = .{ .cancel = cancel },
-        canceled: bool = false,
+        io: std.Io,
+        canceled_event: std.Io.Event = .unset,
         fn cancel(operation: *Work.Operation) void {
             const self: *@This() = @fieldParentPtr("operation", operation);
-            self.canceled = true;
+            self.canceled_event.set(self.io);
         }
     };
-    var cleanup: Cleanup = .{};
+    var cleanup: Cleanup = .{ .io = f.engine.deps.io };
     slot.work.retain(&cleanup.operation);
     var retained = true;
     defer if (retained) slot.work.release(f.resources.runtime.io(), &cleanup.operation);
@@ -416,15 +395,12 @@ test "a terminal child retains capacity until native cleanup ends" {
     const second = try f.child("second", &next);
     runs.Launch.release(&next, &f.engine);
     runs.Launch.release(&first, &f.engine);
-    var wait: Wait = .{ .fixture = &f, .cleaned = &cleanup.canceled };
-    try Resources.waitUntil(f.engine.deps.io, &wait);
-    try testing.expect(cleanup.canceled);
+    try testing.expect(try util.waitEvent(f.engine.deps.io, &cleanup.canceled_event, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } }));
     try testing.expectEqual(@as(u64, 1), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 0), (try database.event.highWater(&f.db, a, second.session.id.raw)).?.run_id_high);
     slot.work.release(f.resources.runtime.io(), &cleanup.operation);
     retained = false;
-    var wait_after_cleanup: Wait = .{ .fixture = &f, .active = 0 };
-    try Resources.waitUntil(f.engine.deps.io, &wait_after_cleanup);
+    try f.engine.turn_tasks.await(f.engine.deps.io);
     try testing.expectEqual(@as(u64, 0), admission.capacity(&f.engine, f.parent).active);
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, second.session.id.raw)).?.run_id_high);
 }
@@ -455,8 +431,7 @@ test "child completion stays queued across an active parent interrupt" {
     f.resources.providers.deinit();
     f.resources.providers = .init(testing.allocator, f.resources.runtime.io(), &f.resources.env);
     runs.Launch.release(&launch, &f.engine);
-    var wait: Wait = .{ .fixture = &f, .active = 0 };
-    try Resources.waitUntil(f.engine.deps.io, &wait);
+    try f.engine.turn_tasks.await(f.engine.deps.io);
     const parent = f.engine.sessions.get(f.parent).?;
     try testing.expectEqual(@as(usize, 1), parent.queueDepth());
     try testing.expectEqual(@as(usize, 1), parent.transcript.list.items.len);
@@ -479,8 +454,7 @@ test "a canceled active child emits one terminal report" {
     const child = try f.child("cancel", &launch);
     _ = try commands.sessionCancelRun(&f.engine, a, .{ .session_id = child.session.id });
     runs.Launch.release(&launch, &f.engine);
-    var wait: Wait = .{ .fixture = &f, .active = 0 };
-    try Resources.waitUntil(f.engine.deps.io, &wait);
+    try f.engine.turn_tasks.await(f.engine.deps.io);
     const queue = try database.input.list(&f.db, a, f.parent.raw);
     try testing.expectEqual(@as(usize, 1), queue.len);
     try testing.expect(queue[0].input.source.?.child_report.outcome == .canceled);

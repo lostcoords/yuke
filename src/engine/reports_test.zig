@@ -358,7 +358,6 @@ test "an owned tree wakes an existing durable report without another terminal ev
     try f.engine.own(child);
     try testing.expect(f.engine.isBusy());
     try Resources.awaitDurableRun(&f.engine, &f.db, a, root.raw, 1);
-    try f.engine.turn_tasks.await(f.engine.deps.io);
     try testing.expect(!f.engine.isBusy());
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, root.raw)).?.run_id_high);
     try testing.expectEqual(@as(u64, 0), try database.input.count(&f.db, a, root.raw));
@@ -378,15 +377,12 @@ test "automatic report wake respects a faulted parent and resumes after repair" 
     parent.faulted = true;
     const result = try f.terminal(try f.start(), &.{"answer"}, success);
     reports.publishReport(&f.engine, result.report.?, true);
-    try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
+    try f.engine.turn_tasks.await(f.engine.deps.io);
     try testing.expectEqual(@as(u64, 0), (try database.event.highWater(&f.db, a, root.raw)).?.run_id_high);
     try testing.expectEqual(@as(usize, 1), parent.queueDepth());
     parent.faulted = false;
     reports.requestWake(&f.engine, root);
-    for (0..1000) |_| {
-        if ((try database.event.highWater(&f.db, a, root.raw)).?.run_id_high > 0) break;
-        try std.Io.sleep(f.resources.runtime.io(), .fromMilliseconds(1), .awake);
-    }
+    try f.engine.turn_tasks.await(f.engine.deps.io);
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, root.raw)).?.run_id_high);
     try testing.expectEqual(@as(usize, 0), parent.queueDepth());
 }

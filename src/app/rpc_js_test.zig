@@ -203,14 +203,16 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
     );
     try testing.expect(std.mem.indexOf(u8, f.out.written(), "{\"id\":\"all\",\"result\":{\"jobs\":[{\"id\":1,") != null);
 
-    // The shell writes before the read sees it, so the read retries until the line arrives.
-    for (0..100) |_| {
+    // A running job has no output event, so poll its log under one failure deadline.
+    const read_deadline = std.Io.Clock.Timestamp.fromNow(f.fixture.reactor.io(), .{ .raw = .fromSeconds(5), .clock = .awake });
+    while (true) {
         rpc.serve(testing.allocator, &f.stream,
             \\{"id":"read","method":"job.read","params":{"id":1,"offset":0,"max_bytes":1024}}
         );
         if (std.mem.indexOf(u8, f.out.written(), "{\"id\":\"read\",\"result\":{\"start\":0,\"complete\":false,\"text\":\"hello\\n\",\"next\":6,\"size\":6}}") != null) break;
-        try f.fixture.reactor.io().sleep(.fromMilliseconds(20), .awake);
-    } else return error.TestUnexpectedResult;
+        if (read_deadline.durationFromNow(f.fixture.reactor.io()).raw.nanoseconds <= 0) return error.JobOutputDidNotArrive;
+        try f.fixture.reactor.io().sleep(.fromMilliseconds(10), .awake);
+    }
     rpc.serve(testing.allocator, &f.stream,
         \\{"id":"big","method":"job.read","params":{"id":1,"offset":0,"max_bytes":262145}}
     );

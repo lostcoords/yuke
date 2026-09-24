@@ -17,6 +17,7 @@ const READ = String.raw`while IFS= read -r line; do
   method=$(printf '%s' "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
   text=$(printf '%s' "$line" | sed -n 's/.*"text":"\([^"]*\)".*/\1/p')
   case "$line" in *'"id":777,"result":{}'*) pinged=" pinged" ;; esac
+  case "$line" in *'"id":778,"result":{}'*) exit 0 ;; esac
   case "$method" in
 `;
 const END = String.raw`  esac
@@ -49,16 +50,15 @@ const MODERN = server(String.raw`    server/discover) case "$line" in
       change) changed=1; printf '{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n'; printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"changed"}]}}\n' "$id" ;;
       big) printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"' "$id"; head -c 120000 /dev/zero | tr '\0' x; printf '"}]}}\n' ;;
       slow) delayed_id=$id ;;
-      after-timeout) printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"canceled: %s"}]}}\n' "$id" "$canceled" ;;
       *) printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"modern: %s"}]}}\n' "$id" "$text" ;;
     esac ;;
     notifications/cancelled) request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":\([0-9]*\).*/\1/p')
     if [ -n "$delayed_id" ] && [ "$request_id" = "$delayed_id" ]; then
-      canceled=yes
       printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"late"}]}}\n' "$delayed_id"
       delayed_id=""
+      printf '{"jsonrpc":"2.0","id":778,"method":"ping"}\n'
     fi ;;
-`, String.raw`changed=0; delayed_id=""; canceled=no
+`, String.raw`changed=0; delayed_id=""
 `);
 // A legacy server that exits inside its first tool call.
 const DIES = server(String.raw`    server/discover) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"Method not found"}}\n' "$id" ;;

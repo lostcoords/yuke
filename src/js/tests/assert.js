@@ -10,9 +10,13 @@ export function check(name, value) {
   if (!value) throw new Error(name);
 }
 
-/** Poll `ready` every 5 ms for up to five seconds. @param {() => boolean} ready @returns {Promise<void>} */
-export async function until(ready) {
-  for (let i = 0; i < 1000 && !ready(); i++) await new Promise((resolve) => setTimeout(resolve, 5));
+/** Poll a condition with no event until it holds or five seconds pass. @param {() => boolean | Promise<boolean>} ready @param {string} [name] @returns {Promise<void>} */
+export async function until(ready, name = "condition") {
+  const deadline = Date.now() + 5000;
+  while (!(await ready())) {
+    if (Date.now() >= deadline) throw new Error(`${name} did not become ready`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 // A part reader over plain text: one text part for each message, or none for an empty text.

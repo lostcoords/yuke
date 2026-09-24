@@ -159,30 +159,20 @@ pub fn mockProvider(models: []const registry.ModelSpec, options: MockProviderOpt
     };
 }
 
-pub fn waitUntil(io: std.Io, state: anytype) !void {
-    for (0..1000) |_| {
-        if (try state.done()) return;
-        try std.Io.sleep(io, .fromMilliseconds(1), .awake);
-    }
-    return error.WaitDidNotFinish;
-}
-
+/// Join the engine turn tasks and require the selected live session to be idle.
+/// It fails when a task is canceled or the session still has work.
 pub fn awaitLiveIdle(engine: *Engine, id: proto.ids.SessionId) !void {
-    for (0..1000) |_| {
-        const resident = engine.sessions.get(id);
-        if (resident == null or (resident.?.active_run == null and resident.?.queueDepth() == 0)) return;
-        try std.Io.sleep(engine.deps.io, .fromMilliseconds(1), .awake);
-    }
-    return error.RunDidNotFinish;
+    try engine.turn_tasks.await(engine.deps.io);
+    const resident = engine.sessions.get(id);
+    if (resident != null and (resident.?.active_run != null or resident.?.queueDepth() != 0)) return error.RunDidNotFinish;
 }
 
+/// Join the engine turn tasks and require the selected durable run to be closed.
+/// It fails when a task is canceled, a store read fails, or the run stays open.
 pub fn awaitDurableRun(engine: *Engine, db: *Database, arena: std.mem.Allocator, id: [16]u8, run_id: u64) !void {
-    for (0..1000) |_| {
-        const marks = (try database.event.highWater(db, arena, id)).?;
-        if (marks.run_id_high >= run_id and (try database.session.snapshot(db, arena, id)).?.open_run_id == null) return;
-        try std.Io.sleep(engine.deps.io, .fromMilliseconds(1), .awake);
-    }
-    return error.RunDidNotFinish;
+    try engine.turn_tasks.await(engine.deps.io);
+    const marks = (try database.event.highWater(db, arena, id)).?;
+    if (marks.run_id_high < run_id or (try database.session.snapshot(db, arena, id)).?.open_run_id != null) return error.RunDidNotFinish;
 }
 
 /// One Anthropic stream that calls the tool `unknown` with no arguments and stops for its result.
