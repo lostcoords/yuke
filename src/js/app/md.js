@@ -41,21 +41,9 @@ function fenceOpen(line) {
   return { marker, length: m[2].length, indent: m[1].length, lang: m[3].trim() };
 }
 
-/** @param {string} line @param {string} marker @param {number} length @returns {boolean | null} */
-function fenceClose(line, marker, length) {
-  const m = /** @type {FenceCloseMatch | null} */ (FENCE_CLOSE.exec(line));
-  return m && m[2][0] === marker && m[2].length >= length;
-}
-
 /** @param {string} line @returns {Fence | boolean} */
 function isBlockStart(line) {
   return fenceOpen(line) || HEADING.test(line) || HR.test(line) || QUOTE.test(line) || UL_ITEM.test(line) || OL_ITEM.test(line);
-}
-
-/** @param {string} line @returns {boolean} */
-function isTableSeparator(line) {
-  const cells = splitTableRow(line, 0);
-  return cells.length > 0 && cells.every((cell) => TABLE_RULE.test(cell.text));
 }
 
 /** @param {string} line @returns {boolean} */
@@ -67,19 +55,6 @@ function hasUnescapedPipe(line) {
 /** @param {StringList} lines @param {number} i @returns {boolean} */
 function isSetextHeading(lines, i) {
   return i + 1 < lines.length && /** @type {string} */ (lines[i]).trim() !== "" && !isBlockStart(/** @type {string} */ (lines[i])) && SETEXT.test(/** @type {string} */ (lines[i + 1]));
-}
-
-/** @param {string} line @param {number} indent @returns {string} */
-function stripFenceIndent(line, indent) {
-  let count = 0;
-  while (count < indent && line[count] === " ") count++;
-  return line.slice(count);
-}
-
-// Inline text plus where each part comes from. A run maps text [at, at+len) to source [src, src+len).
-/** @returns {InlineSource} */
-function inlineSource() {
-  return { text: "", runs: [] };
 }
 
 /** @param {InlineSource} s @param {string} text @param {number} src @returns {void} */
@@ -159,14 +134,16 @@ function segment(text, from = 0) {
       let closed = false;
       for (; j < lines.length; j++) {
         const sourceLine = /** @type {string} */ (lines[j]);
-        if (fenceClose(sourceLine, marker, fence.length)) {
+        const close = /** @type {FenceCloseMatch | null} */ (FENCE_CLOSE.exec(sourceLine));
+        if (close && close[2][0] === marker && close[2].length >= fence.length) {
           closed = true;
           break;
         }
         const sourceAt = /** @type {number} */ (starts[j]);
-        const stripped = stripFenceIndent(sourceLine, fence.indent);
-        body.push(stripped);
-        bodyAt.push(sourceAt + sourceLine.length - stripped.length);
+        let cut = 0;
+        while (cut < fence.indent && sourceLine[cut] === " ") cut++;
+        body.push(sourceLine.slice(cut));
+        bodyAt.push(sourceAt + cut);
       }
       const to = closed ? j + 1 : lines.length;
       push(/** @type {CodeBlock} */ ({ kind: "code", lang: fence.lang, lines: body, lineAt: bodyAt, closed }), i, to);
@@ -202,7 +179,7 @@ function segment(text, from = 0) {
 
     if (QUOTE.test(line)) {
       let j = i;
-      const body = inlineSource();
+      const body = /** @type {InlineSource} */ ({ text: "", runs: [] });
       let markEnd = /** @type {number} */ (starts[i]);
       for (; j < lines.length && QUOTE.test(/** @type {string} */ (lines[j])); j++) {
         const sourceLine = /** @type {string} */ (lines[j]);
@@ -242,11 +219,10 @@ function segment(text, from = 0) {
       continue;
     }
 
+    // Only a header with a pipe makes the next line worth a split, so a plain line reads one line.
     const headerCells = hasUnescapedPipe(line) ? splitTableRow(line, /** @type {number} */ (starts[i])) : [];
-    const nextLine = i + 1 < lines.length ? /** @type {string} */ (lines[i + 1]) : "";
-    const separatorAt = i + 1 < lines.length ? /** @type {number} */ (starts[i + 1]) : 0;
-    const separatorCells = i + 1 < lines.length && isTableSeparator(nextLine) ? splitTableRow(nextLine, separatorAt) : [];
-    if (headerCells.length > 0 && headerCells.length === separatorCells.length) {
+    const separatorCells = headerCells.length > 0 && i + 1 < lines.length ? splitTableRow(/** @type {string} */ (lines[i + 1]), /** @type {number} */ (starts[i + 1])) : [];
+    if (headerCells.length > 0 && headerCells.length === separatorCells.length && separatorCells.every((cell) => TABLE_RULE.test(cell.text))) {
       let j = i + 2;
       for (; j < lines.length && /** @type {string} */ (lines[j]).trim() !== "" && !isBlockStart(/** @type {string} */ (lines[j])); j++);
       const rows = /** @type {TableCell[][]} */ ([]);
@@ -262,7 +238,7 @@ function segment(text, from = 0) {
 
     // Consume a paragraph until a blank line or a new block; a line feed joins as one space and keeps the source length.
     let j = i;
-    const body = inlineSource();
+    const body = /** @type {InlineSource} */ ({ text: "", runs: [] });
     for (; j < lines.length; j++) {
       const l = /** @type {string} */ (lines[j]);
       if (l.trim() === "") break;
