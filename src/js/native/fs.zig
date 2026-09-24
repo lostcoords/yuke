@@ -79,7 +79,7 @@ const read_limits: os.ReadLimits = .{
 fn jsReadFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     // The task cannot touch JavaScript, so the path is copied before it starts.
-    const root = ownedPath(ctx, host.gpa, args, 1, host.cwd) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
+    const root = module.rootOption(ctx, host.gpa, if (args.len > 1) args[1] else quickjs.UNDEFINED, host.cwd) orelse return rejected(ctx, "the workspace root must be an absolute path");
     const path = ownedPath(ctx, host.gpa, args, 0, host.cwd) orelse {
         host.gpa.free(root);
         return rejected(ctx, "the path must be a string with no NUL byte");
@@ -90,7 +90,7 @@ fn jsReadFile(ctx: Context, _: Value, args: []const Value) Value {
 /// Read bounded whole lines. The task owns the path and returns a small JSON range descriptor.
 fn jsReadRange(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const root = ownedPath(ctx, host.gpa, args, 2, host.cwd) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
+    const root = module.rootOption(ctx, host.gpa, if (args.len > 1) args[1] else quickjs.UNDEFINED, host.cwd) orelse return rejected(ctx, "the workspace root must be an absolute path");
     const path = ownedPath(ctx, host.gpa, args, 0, host.cwd) orelse {
         host.gpa.free(root);
         return rejected(ctx, "the path must be a string with no NUL byte");
@@ -152,7 +152,7 @@ fn boundArg(ctx: Context, obj: Value, name: [:0]const u8) error{InvalidOption}!?
 /// Replace a file's whole content. It answers the byte count it wrote.
 fn jsWriteFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const root = ownedPath(ctx, host.gpa, args, 2, host.cwd) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
+    const root = module.rootOption(ctx, host.gpa, if (args.len > 2) args[2] else quickjs.UNDEFINED, host.cwd) orelse return rejected(ctx, "the workspace root must be an absolute path");
     defer host.gpa.free(root);
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
@@ -170,7 +170,7 @@ fn jsWriteFile(ctx: Context, _: Value, args: []const Value) Value {
 /// Describe one path, or answer null when nothing is there. The answer names the anchored path.
 fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const root = ownedPath(ctx, host.gpa, args, 1, host.cwd) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
+    const root = module.rootOption(ctx, host.gpa, if (args.len > 1) args[1] else quickjs.UNDEFINED, host.cwd) orelse return rejected(ctx, "the workspace root must be an absolute path");
     defer host.gpa.free(root);
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
@@ -188,7 +188,7 @@ fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
 fn jsRemoveFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (args.len < 1 or !ctx.isString(args[0])) return rejected(ctx, "removeFile needs a path");
-    const root = ownedPath(ctx, host.gpa, args, 1, host.cwd) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
+    const root = module.rootOption(ctx, host.gpa, if (args.len > 1) args[1] else quickjs.UNDEFINED, host.cwd) orelse return rejected(ctx, "the workspace root must be an absolute path");
     defer host.gpa.free(root);
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();

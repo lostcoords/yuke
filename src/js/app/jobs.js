@@ -7,9 +7,9 @@ import { events } from "yuke:kernel";
 
 export const { list, get, read } = native;
 
-/** @param {string} command @param {{ root?: string, sessionId?: string }} [options] @returns {Promise<Job>} */
+/** @param {string} command @param {{ workspaceRoot?: string, sessionId?: string }} [options] @returns {Promise<Job>} */
 export async function start(command, options = {}) {
-  const { job, ended } = await native.start(command, options.sessionId ?? null, options.root);
+  const { job, ended } = await native.start(command, options.sessionId ?? null, options);
   events.emit("jobs.changed", job);
   ended.then((done) => events.emit("jobs.changed", done));
   return job;

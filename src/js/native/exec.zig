@@ -56,7 +56,7 @@ const Request = struct {
         if (std.mem.trim(u8, command, " \t\r\n").len == 0) return error.CommandBlank;
         if (std.mem.indexOfScalar(u8, command, 0) != null) return error.CommandNul;
 
-        const root = module.rootArg(ctx, gpa, if (args.len > 2) args[2] else quickjs.UNDEFINED, default_root) orelse return error.RootType;
+        const root = module.rootOption(ctx, gpa, options, default_root) orelse return error.RootType;
         errdefer gpa.free(root);
 
         const cwd = module.optionalString(ctx, gpa, options, "cwd") catch return error.CwdType;

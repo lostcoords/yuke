@@ -35,6 +35,6 @@ globalThis.done = 0;
   check("nul-remove-rejects", await nulMessage(() => fs.removeFile("hello.txt\0.bak")) === "the path must be a string with no NUL byte");
   check("nul-read-rejects", await nulMessage(() => fs.readFile("hello.txt\0.bak")) === "the path must be a string with no NUL byte");
   check("nul-range-rejects", await nulMessage(() => fs.readRange("hello.txt\0.bak", { start: 1, end: 1 })) === "the path must be a string with no NUL byte");
-  check("nul-root-rejects", await nulMessage(() => fs.readFile("hello.txt", ".\0")) === "the workspace root must be a string with no NUL byte");
+  check("nul-root-rejects", await nulMessage(() => fs.readFile("hello.txt", { workspaceRoot: "/tmp\0" })) === "the workspace root must be an absolute path");
   globalThis.done = fail.length ? 2 : 1;
 })();

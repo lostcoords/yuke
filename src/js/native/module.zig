@@ -127,11 +127,13 @@ pub fn optionalString(ctx: Context, gpa: std.mem.Allocator, options: Value, name
     return owned(ctx, gpa, value) orelse error.InvalidOption;
 }
 
-/// Copy a workspace root argument, or `default` when it is absent. A relative root answers null, because a spawn asserts an absolute directory.
-pub fn rootArg(ctx: Context, gpa: std.mem.Allocator, value: Value, default: []const u8) ?[]u8 {
+/// Copy the `workspaceRoot` option, or `default` when it is absent. A relative root answers null, because a spawn asserts an absolute directory; a NUL byte answers null, because the OS stops at it.
+pub fn rootOption(ctx: Context, gpa: std.mem.Allocator, options: Value, default: []const u8) ?[]u8 {
+    const value = if (ctx.isObject(options)) ctx.getPropertyStr(options, "workspaceRoot") else quickjs.UNDEFINED;
+    defer ctx.freeValue(value);
     if (ctx.isUndefined(value) or ctx.isNull(value)) return gpa.dupe(u8, default) catch unreachable;
     const root = owned(ctx, gpa, value) orelse return null;
-    if (std.Io.Dir.path.isAbsolute(root)) return root;
+    if (std.Io.Dir.path.isAbsolute(root) and std.mem.indexOfScalar(u8, root, 0) == null) return root;
     gpa.free(root);
     return null;
 }

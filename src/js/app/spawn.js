@@ -11,9 +11,9 @@ export function spawn(argv, options = {}) {
   /** @type {[((text: string) => void)[], ((text: string) => void)[]]} */
   const listeners = [[], []];
   const env = options.env ? Object.entries(options.env).flat() : undefined;
-  const child = native.spawn(argv, { ...(options.cwd !== undefined ? { cwd: options.cwd } : {}), ...(env ? { env } : {}) }, (stream, text) => {
+  const child = native.spawn(argv, { ...(options.cwd !== undefined ? { cwd: options.cwd } : {}), ...(env ? { env } : {}), ...(options.workspaceRoot !== undefined ? { workspaceRoot: options.workspaceRoot } : {}) }, (stream, text) => {
     for (const listener of listeners[stream === 1 ? 0 : 1]) listener(text);
-  }, options.workspaceRoot);
+  });
   return {
     onStdout(listener) { listeners[0].push(listener); },
     onStderr(listener) { listeners[1].push(listener); },

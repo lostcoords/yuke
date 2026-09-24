@@ -110,7 +110,7 @@ async function read(args, _signal, context) {
   const path = stringArg(name, args, "path");
   const start = lineArg(name, args, "start");
   const end = lineArg(name, args, "end");
-  const got = await hostCall(name, fs.readRange(path, { start, end }, context.workspaceRoot));
+  const got = await hostCall(name, fs.readRange(path, { start, end, workspaceRoot: context.workspaceRoot }));
   if ("imagePath" in got) {
     const blob = await hostCall(name, client.blobPut(got.imagePath));
     const kind = blob.mime.slice(blob.mime.indexOf("/") + 1).toUpperCase();
@@ -126,10 +126,10 @@ async function write(args, _signal, context) {
   const content = stringArg(name, args, "content");
   let old = "";
   let canDiff = true;
-  try { old = await fs.readFile(path, context.workspaceRoot); }
+  try { old = await fs.readFile(path, { workspaceRoot: context.workspaceRoot }); }
   catch (e) { if (errorText(e) !== "the path does not exist") canDiff = false; }
   const mapped = canDiff ? await diff(path, old, content) : null;
-  const bytes = await hostCall(name, fs.writeFile(path, content, context.workspaceRoot));
+  const bytes = await hostCall(name, fs.writeFile(path, content, { workspaceRoot: context.workspaceRoot }));
   const view = mapped == null ? null : viewOf(mapped);
   const text = view == null ? `The tool wrote ${bytes} bytes.` : `The tool wrote ${bytes} bytes and changed ${changedLines(view)} line(s).`;
   return result(text, view == null ? null : { view });
@@ -167,13 +167,13 @@ async function edit(args, _signal, context) {
   if (typeof replaceAll !== "boolean") invalid(name, "the argument replace_all has the wrong type or range");
   if (oldString.length === 0) invalid(name, "the argument old_string has the wrong type or range");
   if (oldString === newString) invalid(name, "old_string and new_string match. The edit changes nothing");
-  const old = await hostCall(name, fs.readFile(path, context.workspaceRoot));
+  const old = await hostCall(name, fs.readFile(path, { workspaceRoot: context.workspaceRoot }));
   const replaced = replaceAt(old, oldString, newString);
   if (replaced.count === 0) invalid(name, "the file lacks old_string");
   if (replaced.count > 1 && !replaceAll) invalid(name, "old_string appears more than one time. You must add context or set replace_all");
   if (utf8Length(replaced.text) > MAX_FILE_BYTES) invalid(name, "the file exceeds the size limit");
   const mapped = await diff(path, old, replaced.text);
-  await hostCall(name, fs.writeFile(path, replaced.text, context.workspaceRoot));
+  await hostCall(name, fs.writeFile(path, replaced.text, { workspaceRoot: context.workspaceRoot }));
   const view = viewOf(mapped);
   const text = view == null ? `The tool replaced ${replaced.count} match(es).` : `The tool replaced ${replaced.count} match(es) and changed ${changedLines(view)} line(s).`;
   return result(text, view == null ? null : { view });
@@ -214,7 +214,7 @@ async function startBackground(command, context) {
   const sessionId = context.sessionId;
   const same = sessionJobs(sessionId).find(j => j.state === "running" && j.command === command && j.cwd === root);
   if (same) return `[job ${jobName(same)} already runs this command. Log: ${same.log}]`;
-  const job = await hostCall("exec", startJob(command, { root, ...(sessionId !== undefined ? { sessionId } : {}) }));
+  const job = await hostCall("exec", startJob(command, { workspaceRoot: root, ...(sessionId !== undefined ? { sessionId } : {}) }));
   return `[job ${jobName(job)} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use jobs with id and stop: true to request its stop.]`;
 }
 
@@ -261,7 +261,7 @@ async function exec(args, signal, context) {
   }
   const timeout = timeoutValue == null ? 120000 : timeoutValue;
   if (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < 1 || timeout > 600000) invalid(name, "the argument timeout_ms has the wrong type or range");
-  const r = await hostCall(name, runCommand(command, { timeoutMs: timeout, signal, maxBytes: EXEC_STREAM_BYTES, log: true, onOutput: context.output }, context.workspaceRoot));
+  const r = await hostCall(name, runCommand(command, { timeoutMs: timeout, signal, maxBytes: EXEC_STREAM_BYTES, log: true, onOutput: context.output, workspaceRoot: context.workspaceRoot }));
   let text = r.stdout;
   if (r.stderr.length !== 0) text = `${endLine(text)}[stderr]\n${r.stderr}`;
   const empty = text.length === 0;

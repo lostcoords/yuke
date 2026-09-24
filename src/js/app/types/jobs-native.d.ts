@@ -3,7 +3,7 @@ declare module "yuke:jobs-native" {
   type Job = Wire.Job & { log: string };
 
   /** Starts a shell line as a job; `ended` resolves with the final job. */
-  export function start(command: string, sessionId?: string | null, workspaceRoot?: string): Promise<{ job: Job; ended: Promise<Job> }>;
+  export function start(command: string, sessionId?: string | null, options?: { workspaceRoot?: string }): Promise<{ job: Job; ended: Promise<Job> }>;
   /** Answers every job, newest first. */
   export function list(): Job[];
   export function get(id: number): Job | null;

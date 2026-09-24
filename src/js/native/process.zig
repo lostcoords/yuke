@@ -331,7 +331,7 @@ fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
     if (pairs.len % 2 != 0) return ctx.throwTypeError("env must be an array of key and value strings");
     const on_output: Value = if (args.len > 2) args[2] else quickjs.UNDEFINED;
     if (!ctx.isFunction(on_output)) return ctx.throwTypeError("spawn needs an output callback");
-    const root = module.rootArg(ctx, a, if (args.len > 3) args[3] else quickjs.UNDEFINED, host.cwd) orelse
+    const root = module.rootOption(ctx, a, options, host.cwd) orelse
         return ctx.throwTypeError("the workspace root must be an absolute path");
     var env: std.process.Environ.Map = if (pairs.len > 0) host.execution.env.clone(a) catch unreachable else undefined;
     var pair: usize = 0;

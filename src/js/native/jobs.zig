@@ -214,7 +214,7 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
         null
     else
         module.sessionId(ctx, session_value) orelse return rejected(ctx, "the session id must be 32 lowercase hex digits");
-    const root = module.rootArg(ctx, a, if (args.len > 2) args[2] else quickjs.UNDEFINED, host.cwd) orelse
+    const root = module.rootOption(ctx, a, if (args.len > 2) args[2] else quickjs.UNDEFINED, host.cwd) orelse
         return rejected(ctx, "the workspace root must be an absolute path");
     if (host.procs.live.items.len >= process.max_processes) return rejected(ctx, "the host runs 64 processes");
 

@@ -75,10 +75,10 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   const changes = [];
   const off = events.on("jobs.changed", (job) => { changes.push(`${job.id} ${job.state}`); job.state = "mutated"; });
   let uppercase = "";
-  try { await startJob("true", { root: "/tmp", sessionId: "AA" + "00".repeat(15) }); } catch (e) { uppercase = e.message; }
+  try { await startJob("true", { workspaceRoot: "/tmp", sessionId: "AA" + "00".repeat(15) }); } catch (e) { uppercase = e.message; }
   check("uppercase-session-rejects", uppercase === "the session id must be 32 lowercase hex digits");
-  const long = await startJob("sleep 30", { root: "/tmp", sessionId: "01010101010101010101010101010101" });
-  const quick = await startJob("echo out; echo bad 1>&2; echo \"$PYTHONUNBUFFERED\"; exit 3", { root: "/tmp" });
+  const long = await startJob("sleep 30", { workspaceRoot: "/tmp", sessionId: "01010101010101010101010101010101" });
+  const quick = await startJob("echo out; echo bad 1>&2; echo \"$PYTHONUNBUFFERED\"; exit 3", { workspaceRoot: "/tmp" });
   await jobs.wait(quick.id);
   check("job-exit", jobs.get(quick.id)?.exit_code === 3 && (await jobs.stop(quick.id))?.state === "exited");
   const log = await jobs.read(quick.id, 0, 4096);
@@ -93,7 +93,7 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
     () => spawn([]),
     () => spawn(["echo", "ok\0cut"]),
     () => spawn(["true"], { env: { "BAD=KEY": "x" } }),
-    () => spawnNative(["true"], {}, () => {}, "relative"),
+    () => spawnNative(["true"], { workspaceRoot: "relative" }, () => {}),
     () => spawnNative(["true"], {}),
   ];
   check("refusals", refusals.every((call) => { try { call(); return false; } catch (e) { return e.name === "TypeError"; } }));

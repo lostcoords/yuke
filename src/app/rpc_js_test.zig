@@ -181,7 +181,7 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
         \\globalThis.started = 0;
         \\globalThis.indexDigests = 0;
         \\events.on("engine.drained", (ev) => { if (ev.type === "index") indexDigests++; });
-        \\start("echo hello; sleep 30", { root: "/tmp", sessionId: "01010101010101010101010101010101" }).then(() => { started = 1; });
+        \\start("echo hello; sleep 30", { workspaceRoot: "/tmp", sessionId: "01010101010101010101010101010101" }).then(() => { started = 1; });
     , "rpc-job.js");
     try support.pumpUntilTrue(host, "globalThis.started === 1");
     // A job change moves no view, so the digest delivers no index change for it.
@@ -253,8 +253,8 @@ test "a removed session stops its running jobs" {
         \\import {{ events }} from "yuke:kernel";
         \\globalThis.state = "";
         \\events.on("jobs.changed", (job) => {{ state = job.state; }});
-        \\start("sleep 30", {{ root: "/tmp", sessionId: "{s}" }});
-        \\start("sleep 30", {{ root: "/tmp", sessionId: "{s}" }});
+        \\start("sleep 30", {{ workspaceRoot: "/tmp", sessionId: "{s}" }});
+        \\start("sleep 30", {{ workspaceRoot: "/tmp", sessionId: "{s}" }});
     , .{ id, "01010101010101010101010101010101" }, 0);
     try host.evalModule(source, "rpc-remove-jobs.js");
     try support.pumpUntilTrue(host, "globalThis.state === \"running\"");

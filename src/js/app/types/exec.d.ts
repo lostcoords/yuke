@@ -12,6 +12,8 @@ declare module "yuke:exec" {
     maxBytes?: number;
     /** Write both streams to a private log, and keep it when a stream was cut. */
     log?: boolean;
+    /** An absolute directory; the host directory without one. */
+    workspaceRoot?: string;
     /** Takes the live text of both streams in arrival order, before the result settles. `maxBytes` does not cut it, and it stops after 1 MiB. */
     onOutput?: ((text: string) => void) | undefined;
   }
@@ -32,5 +34,5 @@ declare module "yuke:exec" {
   }
 
   /** Runs one shell line with stdin closed, and ends its process group at shell exit or the deadline. */
-  export function exec(command: string, options?: ExecOptions, workspaceRoot?: string): Promise<ExecResult>;
+  export function exec(command: string, options?: ExecOptions): Promise<ExecResult>;
 }

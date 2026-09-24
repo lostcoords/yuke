@@ -53,7 +53,7 @@ async function step() {
     // The stream phase counts the live text, which stops at the 1 MiB cap.
     received = 0;
     const onOutput = phase === "exec_stream" ? (/** @type {string} */ text) => { received += text.length; } : undefined;
-    const result = await exec(command, { maxBytes: 65536, onOutput }, "/tmp");
+    const result = await exec(command, { maxBytes: 65536, onOutput, workspaceRoot: "/tmp" });
     if (result.code !== 0 || (phase !== "exec_short" && result.stdoutDropped === 0)) throw Error("exec result");
     if (phase === "exec_stream" && received !== 1048576) throw Error("exec stream bytes");
   } else if (phase === "fs_range") {
