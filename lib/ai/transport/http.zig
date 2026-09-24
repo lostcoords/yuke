@@ -147,17 +147,22 @@ const HttpBody = struct {
         };
         var done: std.Io.Event = .unset;
         var future = try self.io.concurrent(Leg.run, .{ self, &done, args });
-        done.waitTimeout(self.io, self.idle_timeout) catch |err| {
-            // Cancel joins the child. A leg that finished anyway releases what it made.
-            if (future.cancel(self.io)) |_| {
-                if (late) |release| release(self);
-            } else |_| {}
-            return switch (err) {
-                error.Timeout => Error.IdleTimeout,
-                else => err,
+        const deadline = self.idle_timeout.toDeadline(self.io);
+        while (true) {
+            done.waitTimeout(self.io, deadline) catch |err| {
+                // A spurious wakeup also answers Timeout, so only a passed deadline counts.
+                if (err == error.Timeout) if (deadline.toDurationFromNow(self.io)) |left| if (left.raw.nanoseconds > 0) continue;
+                // Cancel joins the child. A leg that finished anyway releases what it made.
+                if (future.cancel(self.io)) |_| {
+                    if (late) |release| release(self);
+                } else |_| {}
+                return switch (err) {
+                    error.Timeout => Error.IdleTimeout,
+                    else => err,
+                };
             };
-        };
-        return future.await(self.io);
+            return future.await(self.io);
+        }
     }
 
     fn Payload(comptime leg: anytype) type {

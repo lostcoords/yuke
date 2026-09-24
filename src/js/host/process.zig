@@ -7,6 +7,7 @@ const h = @import("operations.zig");
 const paths = @import("../../paths.zig");
 const execution = @import("../../execution.zig");
 const builtin = @import("builtin");
+const util = @import("../../util.zig");
 
 /// One command to run. `cwd` is relative to the workspace root. A null `cwd` uses the root itself.
 pub const Spec = struct {
@@ -161,8 +162,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     drains.concurrent(io, drain, .{ io, scratch, &out }) catch return error.HostFailure;
     drains.concurrent(io, drain, .{ io, scratch, &err }) catch return error.HostFailure;
 
-    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{ .raw = .fromMilliseconds(spec.timeout_ms), .clock = .awake });
-    const timed_out = !try waitUntil(io, &exited, deadline);
+    const timed_out = !try util.waitEvent(io, &exited, .{ .duration = .{ .raw = .fromMilliseconds(spec.timeout_ms), .clock = .awake } });
     if (timed_out) {
         endGroups(io, &.{pid});
         exited.waitUncancelable(io);
@@ -355,36 +355,24 @@ fn outcomeOf(term: std.process.Child.Term) ?Outcome {
     };
 }
 
-/// Wait for `event` until `deadline`, and answer false at the deadline. A spurious wake also returns `error.Timeout`, so the loop reads the clock.
-fn waitUntil(io: std.Io, event: *std.Io.Event, deadline: std.Io.Clock.Timestamp) error{Canceled}!bool {
-    while (true) {
-        event.waitTimeout(io, .{ .deadline = deadline }) catch |wait_err| switch (wait_err) {
-            error.Canceled => return error.Canceled,
-            error.Timeout => {
-                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
-                return event.isSet();
-            },
-        };
-        return true;
-    }
-}
-
 /// Give the drains one grace period, and answer true when they were cut. A descendant that left the session can hold a pipe open.
 pub fn awaitDrains(io: std.Io, drains: *std.Io.Group) h.HostError!bool {
     var done: std.Io.Event = .unset;
     var joiner = io.concurrent(joinGroup, .{ io, drains, &done }) catch return error.HostFailure;
-    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{ .raw = .fromNanoseconds(grace_ns), .clock = .awake });
-    const joined = waitUntil(io, &done, deadline) catch {
+    const grace: std.Io.Clock.Duration = .{ .raw = .fromNanoseconds(grace_ns), .clock = .awake };
+    const joined = util.waitEvent(io, &done, .{ .duration = grace }) catch {
         _ = joiner.cancel(io);
         return error.Canceled;
     };
-    if (!joined) {
-        const old = io.swapCancelProtection(.blocked);
-        defer _ = io.swapCancelProtection(old);
-        drains.cancel(io);
+    if (joined) {
+        _ = joiner.await(io);
+        return false;
     }
-    _ = joiner.await(io);
-    return !joined;
+    // Only the joiner touches the group, so canceling it carries the cancel into the group's await.
+    const old = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(old);
+    _ = joiner.cancel(io);
+    return true;
 }
 
 /// Reap the shell with cancelation blocked, because a canceled wait leaves a zombie. It returns only after the shell dies.

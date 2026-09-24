@@ -1,7 +1,6 @@
 //! An advisory lock in the data directory protects a shared `providers.json`; it covers the whole refresh because a rotating refresh token is spent once, and a separate lock file survives when `providers.json` replaces its inode.
 
 const std = @import("std");
-const zio = @import("zio");
 
 const CredentialLock = @This();
 
@@ -46,10 +45,7 @@ pub fn release(self: CredentialLock, io: std.Io) void {
 }
 
 test "one holder blocks a second acquire and a release lets it through" {
-    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer rt.deinit();
-    const io = rt.io();
-
+    const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;

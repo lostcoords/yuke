@@ -1,6 +1,7 @@
 //! One cancelable call site. A child task runs the blocking work, so a stop can interrupt it.
 
 const std = @import("std");
+const util = @import("util.zig");
 
 /// What one child task returned to the caller that waited for it.
 pub const ChildResult = union(enum) {
@@ -48,20 +49,15 @@ pub const Cancel = struct {
             }
         };
         var child = io.concurrent(Child.run, .{ self, io, args }) catch |err| return .{ .returned = err };
-        const deadline = timeout.toDeadline(io);
-        while (!self.isRequested()) {
-            self.event.waitTimeout(io, deadline) catch |err| {
-                if (err == error.Timeout) {
-                    if (deadline == .none) continue;
-                    const due = deadline.deadline;
-                    if (std.Io.Timestamp.now(io, due.clock).nanoseconds < due.raw.nanoseconds) continue;
-                    child.cancel(io) catch {};
-                    return error.Timeout;
-                }
+        if (!self.isRequested()) {
+            const woke = util.waitEvent(io, &self.event, timeout) catch {
                 child.cancel(io) catch {};
                 return .aborted;
             };
-            break;
+            if (!woke) {
+                child.cancel(io) catch {};
+                return error.Timeout;
+            }
         }
 
         if (self.isRequested()) {
@@ -78,12 +74,8 @@ pub const Cancel = struct {
         if (self.isRequested()) return true;
 
         const waited: std.Io.Clock.Duration = .{ .raw = .fromMilliseconds(@intCast(delay_ms)), .clock = .awake };
-        self.event.waitTimeout(io, .{ .duration = waited }) catch |err| switch (err) {
-            error.Timeout => return self.isRequested(), // The delay elapsed. The caller continues.
-            else => return err,
-        };
-
-        return true; // Only a cancel sets the event.
+        // Only a cancel sets the event. A delay that elapsed lets the caller continue.
+        return try util.waitEvent(io, &self.event, .{ .duration = waited }) or self.isRequested();
     }
 };
 

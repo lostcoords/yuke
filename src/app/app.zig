@@ -3,7 +3,6 @@
 const std = @import("std");
 const ai = @import("ai");
 const builtin = @import("builtin");
-const zio = @import("zio");
 const zqlite = @import("zqlite");
 const proto = @import("proto");
 const database = @import("../store/store.zig");
@@ -174,6 +173,7 @@ pub fn ensureDataDir(io: std.Io, dir: []const u8) !void {
 const app_fixture = @import("fixture.zig");
 const build_info = @import("build_info");
 const util = @import("../util.zig");
+const zio = @import("zio");
 var test_env: std.process.Environ.Map = .init(std.testing.allocator);
 var test_transport = ai.testing.CannedTransport{ .bytes = ai.testing.canned_reply };
 

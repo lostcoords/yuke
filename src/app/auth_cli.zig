@@ -2,7 +2,6 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const zio = @import("zio");
 const proto = @import("proto");
 const App = @import("app.zig").App;
 const commands = @import("commands.zig");
@@ -33,7 +32,7 @@ fn loginWith(io: std.Io, runtime: *App, arena: std.mem.Allocator, w: *std.Io.Wri
         std.log.err("yuke login: unknown provider '{s}'", .{id});
         return 1;
     };
-    return if (row.can_login) deviceLogin(runtime, arena, w, id) else keyLogin(io, runtime, arena, w, id);
+    return if (row.can_login) deviceLogin(io, runtime, arena, w, id) else keyLogin(io, runtime, arena, w, id);
 }
 
 /// Drop the credential of `provider`. Return the exit status.
@@ -86,8 +85,9 @@ fn stateLabel(p: proto.catalog.ProviderInfo) []const u8 {
 
 /// One login's terminal outcome, copied out of the event because the note borrows the engine's arena.
 const Waiter = struct {
+    io: std.Io,
     login_id: proto.ids.LoginId,
-    done: zio.ResetEvent = .init,
+    done: std.Io.Event = .unset,
     outcome: enum { succeeded, canceled, failed } = .canceled,
     message: [256]u8 = undefined,
     message_len: usize = 0,
@@ -109,12 +109,12 @@ const Waiter = struct {
                 @memcpy(self.message[0..self.message_len], f.message[0..self.message_len]);
             },
         }
-        self.done.set();
+        self.done.set(self.io);
     }
 };
 
 /// Start the device flow, print the URL and the code, then wait for the one outcome the engine publishes.
-fn deviceLogin(runtime: *App, arena: std.mem.Allocator, w: *std.Io.Writer, id: []const u8) !u8 {
+fn deviceLogin(io: std.Io, runtime: *App, arena: std.mem.Allocator, w: *std.Io.Writer, id: []const u8) !u8 {
     const start = commands.authLogin(runtime, arena, .{ .provider_id = id }) catch |err| {
         std.log.err("yuke login: {s}", .{loginError(err)});
         return 1;
@@ -122,11 +122,11 @@ fn deviceLogin(runtime: *App, arena: std.mem.Allocator, w: *std.Io.Writer, id: [
     try w.print("open  {s}\ncode  {s}\nwaiting for the provider...\n", .{ start.verification_url, start.user_code });
     try w.flush();
 
-    var waiter: Waiter = .{ .login_id = start.login_id };
+    var waiter: Waiter = .{ .io = io, .login_id = start.login_id };
     runtime.engine.sinks.add(.{ .ctx = @ptrCast(&waiter), .on_event = Waiter.onEvent });
     defer runtime.engine.sinks.remove(@ptrCast(&waiter));
     // A canceled wait stops the poll too, so the provider never completes a login nobody reads.
-    waiter.done.wait() catch |err| switch (err) {
+    waiter.done.wait(io) catch |err| switch (err) {
         error.Canceled => {
             _ = commands.authCancelLogin(runtime, arena, .{ .login_id = start.login_id }) catch {};
             return status_interrupted;
@@ -236,7 +236,7 @@ const testing = std.testing;
 test "the waiter takes only its own login and keeps the failure text" {
     const mine = proto.ids.LoginId.bytes([_]u8{1} ** 32);
     const other = proto.ids.LoginId.bytes([_]u8{2} ** 32);
-    var waiter: Waiter = .{ .login_id = mine };
+    var waiter: Waiter = .{ .io = testing.io, .login_id = mine };
 
     Waiter.onEvent(@ptrCast(&waiter), .{ .method = .@"auth.login_finished", .params = .{ .auth_login_finished_data = .{
         .login_id = other,

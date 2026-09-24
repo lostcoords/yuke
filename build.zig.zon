@@ -9,8 +9,8 @@
             .hash = "zqlite-0.0.1-RWLaY8M8nAB4m0tlSpT9A5PGUwX_JfWC5VlPjLe7lG2Q",
         },
         .zio = .{
-            .url = "git+https://github.com/xyaman/zio#4fb9a7512b626b8dabb950efdc3c3526401b7b73",
-            .hash = "zio-0.16.0-xHbVVKDFJQBoTjVVxUlq09VQpS1yqOI7BbHzheRv3z7R",
+            .url = "git+https://github.com/lalinsky/zio#b0ce3b86caf4d3a470d520a01b3586d4bc51a129",
+            .hash = "zio-0.18.0-xHbVVE39KQDPQVvdMy_8-Jssdj1lh_8XM94FGa3r6-cH",
         },
         .quickjs = .{
             .url = "git+https://github.com/xyaman/zig-quickjs#1d755fd54ac7b978ab60531d873be0bbf5608e5b",

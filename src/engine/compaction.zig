@@ -383,8 +383,9 @@ const TaskFixture = struct {
     fn run(self: *TaskFixture, reason: proto.enums.CompactionReason) !proto.run.RunOutcome {
         const slot = try runs.prepareCompaction(&self.engine, self.session, reason, null);
         slot.phase = .running; // the test drives the task, so it takes the transition `launch` makes
-        var handle = try self.resources.runtime.spawn(runs.execute, .{ &self.engine, slot });
-        handle.join();
+        const io = self.resources.runtime.io();
+        var future = try io.concurrent(runs.execute, .{ &self.engine, slot });
+        future.await(io);
         return self.lastOutcome();
     }
 
@@ -465,8 +466,9 @@ test "a cancel that landed before the summary leaves the transcript alone" {
     const slot = try runs.prepareCompaction(&f.engine, f.session, .manual, null);
     slot.phase = .running;
     slot.cancel.request(f.resources.runtime.io());
-    var handle = try f.resources.runtime.spawn(runs.execute, .{ &f.engine, slot });
-    handle.join();
+    const io = f.resources.runtime.io();
+    var future = try io.concurrent(runs.execute, .{ &f.engine, slot });
+    future.await(io);
     const outcome = try f.lastOutcome();
     try testing.expect(outcome == .canceled);
     const page = try database.message.historyPage(&f.db, a, TaskFixture.sid, 0, 10);
@@ -489,8 +491,9 @@ test "a compaction on an idle session starts at once and answers its run id" {
     try testing.expectEqual(answer.run_id, slot.runId());
     gate = null; // the test drives the task instead of the launch gate
     slot.phase = .running;
-    var handle = try f.resources.runtime.spawn(runs.execute, .{ &f.engine, slot });
-    handle.join();
+    const io = f.resources.runtime.io();
+    var future = try io.concurrent(runs.execute, .{ &f.engine, slot });
+    future.await(io);
 
     const outcome = try f.lastOutcome();
     try testing.expectEqual(@as(u64, 5), outcome.compacted.message_id);

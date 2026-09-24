@@ -2,7 +2,6 @@ const std = @import("std");
 const utf8 = @import("../utf8.zig");
 const quickjs = @import("quickjs");
 const memory = @import("memory.zig");
-const zio = @import("zio");
 const term_pkg = @import("term");
 const loader_mod = @import("loader.zig");
 const term_module = @import("native/term.zig");
@@ -100,6 +99,8 @@ pub const Host = struct {
     /// Every headless interaction that waits for a correlated frontend answer.
     interactions: interactions_table.Table,
     /// The owner sleeps on this. A task sets it after work reaches the owner queue.
+    /// One task waits and resets at a time, because a reset under a waiter loses its wakeup. The TUI tick task holds it
+    /// between startup and `stopPlugins`, and the owner holds it otherwise.
     wake: std.Io.Event = .unset,
     /// The tasks running those calls. `close` cancels them before the context dies.
     tasks: std.Io.Group = .init,

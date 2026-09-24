@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const zio = @import("zio");
 const term_pkg = @import("term");
 const host_mod = @import("host.zig");
 const extensions_mod = @import("extensions.zig");
@@ -10,7 +9,7 @@ const report = @import("report.zig");
 
 const Event = term_pkg.Event;
 
-const Channel = zio.Channel(Msg);
+const Queue = std.Io.Queue(Msg);
 
 /// One owner message: a parser event with owned key or paste text, or a synthetic tick.
 const Msg = union(enum) {
@@ -111,28 +110,27 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
     defer input.deinit();
     // The queue holds a wheel burst, so `serve` can fold it into one dispatch.
     var slot: [64]Msg = undefined;
-    var ch = Channel.init(&slot);
-    var group: zio.Group = .init;
+    var queue: Queue = .init(&slot);
+    var winch: ?term_pkg.WinsizeWatch = if (term_pkg.resize_in_band) null else try term_pkg.WinsizeWatch.init();
+    defer if (winch) |*watch| watch.deinit();
+    var group: std.Io.Group = .init;
     defer {
-        // Stop all producers, then drain the queued messages, then close the channel.
+        // Stop all producers, then free the queued messages.
         tty.shutdownInput();
-        extensions.host.wake.set(extensions.host.io);
-        group.cancel();
-        drainChannel(gpa, &ch);
-        ch.close(.immediate);
+        host.wake.set(io);
+        group.cancel(io);
+        drainQueue(gpa, io, &queue);
     }
 
-    try group.spawn(inputTask, .{ gpa, &tty, &input, &ch });
-    try group.spawn(tickTask, .{ host, &ch });
-    if (!term_pkg.resize_in_band) {
-        try group.spawn(winchTask, .{ &tty, &ch });
-    }
+    try group.concurrent(io, inputTask, .{ gpa, io, &tty, &input, &queue });
+    try group.concurrent(io, tickTask, .{ host, &queue });
+    if (winch) |*watch| try group.concurrent(io, winchTask, .{ io, watch, &tty, &queue });
 
-    try serve(host, &ch);
+    try serve(host, &queue);
 }
 
 /// Run `start`, then process queued events with `step`. Native quit ends the loop, but a script error does not.
-fn serve(host: *Host, ch: *Channel) !void {
+fn serve(host: *Host, queue: *Queue) !void {
     std.debug.assert(host.phase == .open);
     if (tui_loop.start(host)) |_| {
         try absorbScriptFault(host, tui_loop.flushFrame(host));
@@ -141,10 +139,7 @@ fn serve(host: *Host, ch: *Channel) !void {
         std.log.warn("cannot resume the workspace: {t}", .{err});
     };
     while (!host.paint.quit_requested) {
-        var msg = ch.receive() catch |err| switch (err) {
-            error.ChannelClosed, error.Canceled => break,
-            else => |e| return e,
-        };
+        var msg = queue.getOne(host.io) catch break;
 
         // Apply every queued message, then paint once. A burst costs one frame, not one each.
         var wheel: ?tui_loop.WheelRun = null;
@@ -153,7 +148,7 @@ fn serve(host: *Host, ch: *Channel) !void {
             try applyMsg(host, &msg, &wheel);
             applied += 1;
             if (applied >= drain_max or host.paint.quit_requested or host.paint.suspend_requested) break;
-            msg = ch.tryReceive() catch break;
+            msg = take(host.io, queue) orelse break;
         }
         try absorbScriptFault(host, host.pump());
         try absorbScriptFault(host, tui_loop.flushWheel(host, &wheel));
@@ -208,19 +203,27 @@ fn applyMsg(host: *Host, msg: *Msg, wheel: *?tui_loop.WheelRun) !void {
     }
 }
 
-/// Free every message the owner never received. `stopReaders` must run first, so no reader sends.
-fn drainChannel(gpa: std.mem.Allocator, ch: *Channel) void {
-    while (ch.tryReceive()) |m| {
+/// Take a queued message without blocking.
+fn take(io: std.Io, queue: *Queue) ?Msg {
+    var one: [1]Msg = undefined;
+    const n = queue.getUncancelable(io, &one, 0) catch return null;
+    return if (n == 1) one[0] else null;
+}
+
+/// Close the queue and free every message the owner never received. The producers must stop first.
+fn drainQueue(gpa: std.mem.Allocator, io: std.Io, queue: *Queue) void {
+    queue.close(io);
+    while (take(io, queue)) |m| {
         var msg = m;
         msg.deinit(gpa);
-    } else |_| {}
+    }
 }
 
 /// The shortest gap between two engine frames. Deltas merge in the engine, so a later drain loses nothing.
 const engine_frame: std.Io.Duration = .fromMilliseconds(33);
 
 /// The tick task enqueues plain messages. It never calls QuickJS.
-fn tickTask(host: *Host, ch: *Channel) !void {
+fn tickTask(host: *Host, queue: *Queue) std.Io.Cancelable!void {
     const wake = &host.wake;
     var last: std.Io.Timestamp = .zero;
     while (!host.paint.quit_requested) {
@@ -240,7 +243,7 @@ fn tickTask(host: *Host, ch: *Channel) !void {
             continue;
         }
         last = now;
-        ch.send(.tick) catch return;
+        queue.putOne(host.io, .tick) catch return;
     }
 }
 
@@ -269,12 +272,12 @@ fn absorbScriptFault(host: *Host, result: host_mod.Error!void) host_mod.Error!vo
     };
 }
 
-/// Read TTY events. A decode error resets the input, only EOF or cancellation closes the channel, and the owner frees the paste text.
-fn inputTask(gpa: std.mem.Allocator, tty: *term_pkg.Tty, input: *term_pkg.Input, ch: *Channel) !void {
+/// Read TTY events. A decode error resets the input, only EOF or cancellation closes the queue, and the owner frees the paste text.
+fn inputTask(gpa: std.mem.Allocator, io: std.Io, tty: *term_pkg.Tty, input: *term_pkg.Input, queue: *Queue) std.Io.Cancelable!void {
     while (true) {
         const ev = input.readEvent(tty) catch |err| switch (err) {
             error.EndOfStream, error.Canceled => {
-                ch.close(.graceful);
+                queue.close(io);
                 return;
             },
             else => {
@@ -283,8 +286,8 @@ fn inputTask(gpa: std.mem.Allocator, tty: *term_pkg.Tty, input: *term_pkg.Input,
             },
         };
         switch (ev) {
-            .key_press, .key_release, .mouse, .winsize, .focus_in, .focus_out => ch.send(Msg.from(ev)) catch return,
-            .paste => |text| ch.send(Msg.from(ev)) catch {
+            .key_press, .key_release, .mouse, .winsize, .focus_in, .focus_out => queue.putOne(io, Msg.from(ev)) catch return,
+            .paste => |text| queue.putOne(io, Msg.from(ev)) catch {
                 gpa.free(text);
                 return;
             },
@@ -294,49 +297,37 @@ fn inputTask(gpa: std.mem.Allocator, tty: *term_pkg.Tty, input: *term_pkg.Input,
 }
 
 /// Watch SIGWINCH and skip a size when ioctl fails; `runIo` spawns this task only for a terminal with no in-band resize.
-fn winchTask(tty: *term_pkg.Tty, ch: *Channel) !void {
-    var watch = try term_pkg.WinsizeWatch.init();
-    defer watch.deinit();
+fn winchTask(io: std.Io, watch: *term_pkg.WinsizeWatch, tty: *term_pkg.Tty, queue: *Queue) std.Io.Cancelable!void {
     while (true) {
         const ws = watch.wait(tty) catch |err| switch (err) {
-            error.Canceled => {
-                ch.close(.graceful);
-                return;
-            },
+            error.Canceled => return error.Canceled,
             else => continue,
         };
-        ch.send(Msg.from(.{ .winsize = ws })) catch return;
+        queue.putOne(io, Msg.from(.{ .winsize = ws })) catch return;
     }
 }
 
+const zio = @import("zio");
 const support = @import("tests/support.zig");
 
 test "serve stops when q arrives" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-
-    const host = support.createHost();
+    const host = support.createHostWith(rt.io(), "");
     defer support.destroyHost(host);
 
     var slot: [1]Msg = undefined;
-    var ch = Channel.init(&slot);
-    var producer = try rt.spawn(sendQuit, .{&ch});
-    try serve(host, &ch);
-    producer.join() catch {};
+    var queue: Queue = .init(&slot);
+    var producer = try host.io.concurrent(sendKeys, .{ host.io, &queue, "q" });
+    try serve(host, &queue);
+    try producer.await(host.io);
     try std.testing.expect(host.paint.quit_requested);
 }
 
 test "serve folds a wheel run into one dispatch and keeps the next button" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-
-    const host = support.createHost();
+    const host = support.createHostWith(rt.io(), "");
     defer support.destroyHost(host);
     try host.eval(
         \\globalThis.seen = [];
@@ -347,10 +338,10 @@ test "serve folds a wheel run into one dispatch and keeps the next button" {
 
     // The queue holds the whole burst, so the fold has something to collapse.
     var slot: [16]Msg = undefined;
-    var ch = Channel.init(&slot);
-    var producer = try rt.spawn(sendWheelBurst, .{&ch});
-    try serve(host, &ch);
-    producer.join();
+    var queue: Queue = .init(&slot);
+    var producer = try host.io.concurrent(sendWheelBurst, .{ host.io, &queue });
+    try serve(host, &queue);
+    try producer.await(host.io);
 
     // Five equal steps fold into one event. The opposite direction stays a separate event.
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt(
@@ -358,36 +349,27 @@ test "serve folds a wheel run into one dispatch and keeps the next button" {
     ));
 }
 
-test "a closed channel unblocks serve" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+test "a closed queue unblocks serve" {
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-
-    const host = support.createHost();
+    const host = support.createHostWith(rt.io(), "");
     defer support.destroyHost(host);
-
     try host.eval("globalThis.seen = 0; globalThis.onEvent = () => { globalThis.seen++; };", "count.js");
 
     var slot: [1]Msg = undefined;
-    var ch = Channel.init(&slot);
-    var producer = try rt.spawn(sendThenClose, .{&ch});
-    try serve(host, &ch);
-    producer.join();
+    var queue: Queue = .init(&slot);
+    var producer = try host.io.concurrent(sendKeys, .{ host.io, &queue, "a" });
+    try serve(host, &queue);
+    try producer.await(host.io);
     // `serve` handled `start` plus the key, then the close ended the loop rather than a quit.
     try std.testing.expectEqual(@as(i32, 2), try host.evalInt("globalThis.seen"));
     try std.testing.expect(!host.paint.quit_requested);
 }
 
 test "serve keeps the loop after onEvent throw" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-
-    const host = support.createHost();
+    const host = support.createHostWith(rt.io(), "");
     defer support.destroyHost(host);
     try host.evalModule(
         \\import { term } from "yuke:term";
@@ -398,66 +380,48 @@ test "serve keeps the loop after onEvent throw" {
     , "onEvent.js");
 
     var slot: [1]Msg = undefined;
-    var ch = Channel.init(&slot);
-    var producer = try rt.spawn(sendThrowThenQuit, .{&ch});
-    try serve(host, &ch);
-    producer.join() catch {};
+    var queue: Queue = .init(&slot);
+    var producer = try host.io.concurrent(sendKeys, .{ host.io, &queue, "xq" });
+    try serve(host, &queue);
+    try producer.await(host.io);
     try std.testing.expect(host.paint.quit_requested);
 }
 
 test "tickTask enqueues a tick while armed" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-
-    const host = support.createHost();
+    const host = support.createHostWith(rt.io(), "");
     defer support.destroyHost(host);
-
     host.paint.needs_tick = true;
     host.paint.tick_period_ms = 50;
 
     var slot: [1]Msg = undefined;
-    var ch = Channel.init(&slot);
-    var group: zio.Group = .init;
-    defer group.cancel();
-    try group.spawn(tickTask, .{ host, &ch });
+    var queue: Queue = .init(&slot);
+    var group: std.Io.Group = .init;
+    defer group.cancel(host.io);
+    try group.concurrent(host.io, tickTask, .{ host, &queue });
 
-    const msg = try ch.receive();
-    try std.testing.expect(msg == .tick);
-
-    host.paint.needs_tick = false;
-    host.paint.quit_requested = true;
-    host.wake.set(host.io);
+    try std.testing.expect(try queue.getOne(host.io) == .tick);
 }
 
 test "tickTask wakes for a timer set while it sleeps with no deadline" {
-    var gpa = support.Pool.init;
-    defer std.debug.assert(gpa.deinit() == .ok);
-
-    var rt = try zio.Runtime.init(gpa.allocator(), .{ .executors = .exact(1) });
+    const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-
     const host = support.createHostWith(rt.io(), "");
     defer support.destroyHost(host);
 
     var slot: [1]Msg = undefined;
-    var ch = Channel.init(&slot);
-    var group: zio.Group = .init;
-    defer group.cancel();
-    try group.spawn(tickTask, .{ host, &ch });
+    var queue: Queue = .init(&slot);
+    var group: std.Io.Group = .init;
+    defer group.cancel(host.io);
+    try group.concurrent(host.io, tickTask, .{ host, &queue });
     // Nothing is owed, so the task sleeps on the wake with no deadline before the timer exists.
-    try rt.io().sleep(.fromMilliseconds(20), .awake);
+    try host.io.sleep(.fromMilliseconds(20), .awake);
 
     const started: std.Io.Timestamp = .now(host.io, .awake);
     try host.eval("setTimeout(() => {}, 30);", "tick-timer.js");
-    const msg = try ch.receive();
-    try std.testing.expect(msg == .tick);
+    try std.testing.expect(try queue.getOne(host.io) == .tick);
     try std.testing.expect(started.durationTo(.now(host.io, .awake)).toMilliseconds() >= 25);
-
-    host.paint.quit_requested = true;
-    host.wake.set(host.io);
 }
 
 test "tickDue paces engine work and due timers to the frame gap" {
@@ -466,7 +430,7 @@ test "tickDue paces engine work and due timers to the frame gap" {
     const last: std.Io.Timestamp = .now(host.io, .awake);
     try std.testing.expectEqual(null, tickDue(host, last));
 
-    // Pending engine work waits one frame after the last tick, so a busy engine never floods the channel.
+    // Pending engine work waits one frame after the last tick, so a busy engine never floods the queue.
     host.engine.index_dirty = true;
     try std.testing.expectEqual(last.addDuration(engine_frame).nanoseconds, tickDue(host, last).?.nanoseconds);
     host.engine.index_dirty = false;
@@ -478,37 +442,10 @@ test "tickDue paces engine work and due timers to the frame gap" {
     try std.testing.expect(tickDue(host, last).?.nanoseconds > last.addDuration(engine_frame).nanoseconds);
 }
 
-fn sendQuit(ch: *Channel) !void {
-    try ch.send(Msg.from(.{ .key_press = .{ .codepoint = 'q' } }));
-}
-
-fn sendThrowThenQuit(ch: *Channel) !void {
-    try sendBounded(ch, Msg.from(.{ .key_press = .{ .codepoint = 'x' } }));
-    try sendBounded(ch, Msg.from(.{ .key_press = .{ .codepoint = 'q' } }));
-}
-
-/// Bound a test send at one second, so a stalled `serve` fails rather than hangs.
-const send_tries_max = 100;
-
-/// Send with a bound, so a stalled consumer fails the test instead of parking the producer forever.
-fn sendBounded(ch: *Channel, msg: Msg) !void {
-    var tries: u8 = 0;
-    while (true) : (tries += 1) {
-        ch.trySend(msg) catch |err| switch (err) {
-            error.ChannelFull => {
-                if (tries == send_tries_max) return error.ConsumerStalled;
-                try zio.sleep(.fromMilliseconds(10));
-                continue;
-            },
-            else => |e| return e,
-        };
-        return;
-    }
-}
-
-fn sendThenClose(ch: *Channel) void {
-    ch.send(Msg.from(.{ .key_press = .{ .codepoint = 'a' } })) catch {};
-    ch.close(.graceful);
+/// Send one key press per character, then close the queue.
+fn sendKeys(io: std.Io, queue: *Queue, keys: []const u8) !void {
+    defer queue.close(io);
+    for (keys) |key| try queue.putOne(io, Msg.from(.{ .key_press = .{ .codepoint = key } }));
 }
 
 fn wheelMsg(button: term_pkg.Mouse.Button) Msg {
@@ -516,10 +453,10 @@ fn wheelMsg(button: term_pkg.Mouse.Button) Msg {
 }
 
 /// Send a run of wheel steps, then a different button, then close. `serve` must fold only the run.
-fn sendWheelBurst(ch: *Channel) void {
-    for (0..5) |_| ch.send(wheelMsg(.wheel_down)) catch {};
-    ch.send(wheelMsg(.wheel_up)) catch {};
-    ch.close(.graceful);
+fn sendWheelBurst(io: std.Io, queue: *Queue) !void {
+    defer queue.close(io);
+    for (0..5) |_| try queue.putOne(io, wheelMsg(.wheel_down));
+    try queue.putOne(io, wheelMsg(.wheel_up));
 }
 
 test "a paste message owns its text" {

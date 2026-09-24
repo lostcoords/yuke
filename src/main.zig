@@ -15,7 +15,7 @@ const zio = @import("zio");
 
 pub const std_options: std.Options = .{ .logFn = logFn };
 
-/// The TUI owns the screen, so a log line must never reach stderr; `tui_log_mutex` guards the file, because a log can come from any task.
+/// The TUI owns the screen, so a log line must never reach stderr; `tui_log_mutex` guards the file, because a log can come from any task. Every TUI log step runs on `std.Options.debug_io`, as `logFn` must.
 var tui_mode: std.atomic.Value(bool) = .init(false);
 var tui_log_mutex: std.Io.Mutex = .init;
 var tui_log: ?std.Io.File = null;
@@ -46,13 +46,14 @@ fn appendLog(file: std.Io.File, comptime format: []const u8, args: anytype) void
 }
 
 /// Route the TUI log to `<data>/tui.log`. A failed open discards every later TUI log message.
-fn startTuiLog(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) void {
-    tui_log = openTuiLog(gpa, io, env) catch null;
+fn startTuiLog(gpa: std.mem.Allocator, env: *const std.process.Environ.Map) void {
+    tui_log = openTuiLog(gpa, std.Options.debug_io, env) catch null;
     tui_mode.store(true, .release);
 }
 
 /// Stop the TUI log and close the file. A later log message reaches stderr again.
-fn stopTuiLog(io: std.Io) void {
+fn stopTuiLog() void {
+    const io = std.Options.debug_io;
     tui_mode.store(false, .release);
     tui_log_mutex.lockUncancelable(io);
     defer tui_log_mutex.unlock(io);
@@ -140,8 +141,8 @@ fn run(init: std.process.Init) !u8 {
     };
 
     const tui = command == .tui;
-    if (tui) startTuiLog(init.gpa, init.io, context.env);
-    defer if (tui) stopTuiLog(init.io);
+    if (tui) startTuiLog(init.gpa, context.env);
+    defer if (tui) stopTuiLog();
 
     // A null directory is not an error. The baked UI still runs without a config file.
     const config_dir = try paths.configDir(init.gpa, context.env);

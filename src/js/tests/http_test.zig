@@ -58,8 +58,8 @@ fn run(mode: Mode, options: struct { cleanup: Cleanup = .none, pool: ?PoolCase =
     }
     if (cleanup == .plugin) try host.eval("resumeHttp();", "http-resume.js");
     if (cleanup == .tool) {
-        var drain = try runtime.spawn(Work.drain, .{ &work, host.io });
-        drain.join();
+        var drain = try host.io.concurrent(Work.drain, .{ &work, host.io });
+        drain.await(host.io);
         try std.testing.expectEqual(@as(usize, 0), work.pending);
     }
     if (cleanup == .host) {
@@ -185,9 +185,9 @@ test "run cleanup drains fetch without another owner pump" {
 test "fetch reports a refused connection without a native error name" {
     const runtime = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer runtime.deinit();
-    var listener = try (try zio.net.IpAddress.parseIp4("127.0.0.1", 0)).listen(.{});
-    const port = listener.socket.address.ip.getPort();
-    listener.close();
+    var listener = try (try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0)).listen(runtime.io(), .{});
+    const port = listener.socket.address.getPort();
+    listener.deinit(runtime.io());
     const host = support.createHostWith(runtime.io(), "");
     defer support.destroyHost(host);
     const global = host.ctx.getGlobalObject();

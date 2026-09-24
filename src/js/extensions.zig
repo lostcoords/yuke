@@ -2,7 +2,6 @@
 
 const std = @import("std");
 const execution = @import("../execution.zig");
-const zio = @import("zio");
 const host_mod = @import("host.zig");
 const port = @import("port.zig");
 const App = @import("../app/app.zig").App;
@@ -87,6 +86,7 @@ const rpc = @import("../app/rpc.zig");
 const hookset = @import("../engine/hookset.zig");
 const commands = @import("../engine/commands.zig");
 const app_call = @import("../app/call.zig");
+const zio = @import("zio");
 
 /// The boot a headless test host runs: the kernel and the plugin bus, and nothing of the view tier.
 const kernel_boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";";

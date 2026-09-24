@@ -282,9 +282,10 @@ const Probe = struct {
         const self: *Probe = @ptrCast(@alignCast(userdata.?));
         std.debug.assert(ptr == @as(*const u32, @ptrCast(&self.slot.cancel.event)));
         std.debug.assert(expected == @intFromEnum(std.Io.Event.waiting));
-        std.debug.assert(timeout == .duration and timeout.duration.clock == .awake);
         std.debug.assert(self.wait_count < self.waits.len);
-        const delay_ms: u64 = @intCast(timeout.duration.raw.toMilliseconds());
+        const left = timeout.toDurationFromNow(self.timeIo()).?;
+        std.debug.assert(left.clock == .awake);
+        const delay_ms: u64 = @intCast(left.raw.toMilliseconds());
         std.debug.assert(delay_ms > 0);
         self.waits[self.wait_count] = delay_ms;
         self.wait_count += 1;
@@ -340,8 +341,8 @@ test "a canceled login stops before its first poll" {
     try probe.reserve("xai", .xai);
     probe.slot.cancel.requested.store(true, .release);
 
-    var task = try rt.spawn(Probe.driveTask, .{&probe});
-    try task.join();
+    var task = try rt.io().concurrent(Probe.driveTask, .{&probe});
+    try task.await(rt.io());
 
     try testing.expect(probe.outcome.? == .canceled);
     try testing.expectEqual(@as(usize, 0), probe.wait_count);
@@ -357,8 +358,8 @@ test "a refused poll fails the login and stores nothing" {
     defer probe.deinit();
     try probe.reserve("xai", .xai);
 
-    var task = try rt.spawn(Probe.driveTask, .{&probe});
-    try task.join();
+    var task = try rt.io().concurrent(Probe.driveTask, .{&probe});
+    try task.await(rt.io());
 
     try testing.expectEqualStrings("the provider refused the login", probe.outcome.?.failed.message);
     try testing.expectEqualSlices(u64, &.{1000}, probe.waits[0..probe.wait_count]);
@@ -384,8 +385,8 @@ test "an approved codex login stores the grant" {
     probe.runtime.store.path = try std.Io.Dir.path.join(testing.allocator, &.{ dir, "providers.json" });
     try probe.reserve("openai-codex", .codex);
 
-    var task = try rt.spawn(Probe.driveTask, .{&probe});
-    try task.join();
+    var task = try rt.io().concurrent(Probe.driveTask, .{&probe});
+    try task.await(rt.io());
 
     try testing.expect(probe.outcome.? == .succeeded);
     try testing.expectEqualSlices(u64, &.{1000}, probe.waits[0..probe.wait_count]);
@@ -406,8 +407,8 @@ test "a cancel during a login wait prevents the next poll" {
         defer probe.deinit();
         try probe.reserve("xai", .xai);
         probe.cancel_at_wait = cancel_at_wait;
-        var task = try rt.spawn(Probe.driveTask, .{&probe});
-        try task.join();
+        var task = try rt.io().concurrent(Probe.driveTask, .{&probe});
+        try task.await(rt.io());
         try testing.expect(probe.outcome.? == .canceled);
         try testing.expectEqual(cancel_at_wait, probe.wait_count);
         try testing.expectEqual(cancel_at_wait - 1, probe.canned.index);
@@ -426,8 +427,8 @@ test "a pending login waits another whole interval before its next poll" {
     });
     defer probe.deinit();
     try probe.reserve("xai", .xai);
-    var task = try rt.spawn(Probe.driveTask, .{&probe});
-    try task.join();
+    var task = try rt.io().concurrent(Probe.driveTask, .{&probe});
+    try task.await(rt.io());
     try testing.expectEqualStrings("the provider refused the login", probe.outcome.?.failed.message);
     try testing.expectEqualSlices(u64, &.{ 1000, 1000 }, probe.waits[0..probe.wait_count]);
     try testing.expectEqual(@as(u64, 2000), probe.elapsed_ms);
@@ -443,8 +444,8 @@ test "a login that reaches its lifetime limit does not poll" {
     defer probe.deinit();
     try probe.reserve("xai", .xai);
     probe.slot.start.interval_ms = max_lifetime_ms;
-    var task = try rt.spawn(Probe.driveTask, .{&probe});
-    try task.join();
+    var task = try rt.io().concurrent(Probe.driveTask, .{&probe});
+    try task.await(rt.io());
     try testing.expectEqualStrings("the login expired before approval", probe.outcome.?.failed.message);
     try testing.expectEqualSlices(u64, &.{max_lifetime_ms}, probe.waits[0..probe.wait_count]);
     try testing.expectEqual(@as(usize, 0), probe.canned.index);

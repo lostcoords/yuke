@@ -2,7 +2,6 @@
 
 const std = @import("std");
 const execution = @import("../execution.zig");
-const zio = @import("zio");
 const proto = @import("proto");
 const cli = @import("../cli.zig");
 const call = @import("call.zig");
@@ -361,6 +360,7 @@ fn writeReport(arena: std.mem.Allocator, w: *std.Io.Writer, waiter: *const Waite
 const app_fixture = @import("fixture.zig");
 const testing = std.testing;
 const ai = @import("ai");
+const zio = @import("zio");
 
 const App = @import("app.zig").App;
 

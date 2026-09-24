@@ -8,7 +8,6 @@ const input_gate = @import("input_gate.zig");
 const extensions_mod = @import("../js/extensions.zig");
 const tools_table = @import("../js/tools.zig");
 const Host = extensions_mod.Host;
-const zio = @import("zio");
 
 const App = app.App;
 
@@ -285,7 +284,7 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
     // A positional write answers NXIO on a terminal, and only a pipe falls back to streaming.
     var out_file = std.Io.File.stdout().writerStreaming(io, out_buf);
     var requests_buf: [queue_slots]Request = undefined;
-    var requests = zio.Channel(Request).init(&requests_buf);
+    var requests: std.Io.Queue(Request) = .init(&requests_buf);
     var notifications = NotificationQueue{};
     if (extensions.user_entry_fault) {
         std.log.warn("rpc: JavaScript fault in index.js: {s}", .{extensions.host.faultText()});
@@ -309,19 +308,20 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
         std.log.warn("cannot resume the workspace: {t}", .{err});
     };
 
-    var readers: zio.Group = .init;
+    var readers: std.Io.Group = .init;
     var in_file = std.Io.File.stdin().readerStreaming(io, in_buf);
-    try readers.spawn(readerTask, .{ &in_file.interface, &requests, &extensions.host.wake, gpa, extensions.host.io });
+    try readers.concurrent(io, readerTask, .{ &in_file.interface, &requests, &extensions.host.wake, gpa, io });
     defer {
-        readers.cancel();
-        drainRequests(gpa, &requests);
-        requests.close(.immediate);
+        readers.cancel(io);
+        drainRequests(gpa, io, &requests);
     }
 
     while (true) {
         if (rpc.fatal) return error.RpcFailed;
+        // Reset before looking, so work that lands after the look leaves the wake set.
+        extensions.host.wake.reset();
         var received = false;
-        while (requests.tryReceive()) |request| {
+        while (takeRequest(io, &requests)) |request| {
             received = true;
             var item = request;
             defer item.deinit(gpa);
@@ -345,49 +345,42 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
             absorbOwnerPump(extensions);
             rpc.drainInputs();
             if (rpc.fatal) return error.RpcFailed;
-        } else |_| {}
+        }
 
         absorbOwnerPump(extensions);
         rpc.drainInputs();
         rpc.flushNotifications();
         if (rpc.fatal) return error.RpcFailed;
         if (received) continue;
-
-        extensions.host.wake.reset();
-        if (requests.tryReceive()) |request| {
-            requests.trySend(request) catch unreachable;
-            extensions.host.wake.set(extensions.host.io);
-            continue;
-        } else |_| {}
         extensions.host.waitForWork(null) catch return;
     }
 }
 
 /// Copy one bounded stdin line into the owner queue. This task never enters QuickJS.
-fn readerTask(reader: *std.Io.Reader, requests: *zio.Channel(Request), wake: *std.Io.Event, gpa: std.mem.Allocator, io: std.Io) !void {
+fn readerTask(reader: *std.Io.Reader, requests: *std.Io.Queue(Request), wake: *std.Io.Event, gpa: std.mem.Allocator, io: std.Io) std.Io.Cancelable!void {
     while (true) {
         const borrowed = reader.takeDelimiter('\n') catch |err| switch (err) {
             error.StreamTooLong => {
-                requests.send(.too_long) catch return;
+                requests.putOne(io, .too_long) catch return;
                 wake.set(io);
                 return;
             },
             error.ReadFailed => {
-                requests.send(.read_failed) catch return;
+                requests.putOne(io, .read_failed) catch return;
                 wake.set(io);
                 return;
             },
         } orelse {
-            requests.send(.eof) catch return;
+            requests.putOne(io, .eof) catch return;
             wake.set(io);
             return;
         };
         const line = gpa.dupe(u8, borrowed) catch {
-            requests.send(.read_failed) catch return;
+            requests.putOne(io, .read_failed) catch return;
             wake.set(io);
             return;
         };
-        requests.send(.{ .line = line }) catch {
+        requests.putOne(io, .{ .line = line }) catch {
             gpa.free(line);
             return;
         };
@@ -395,12 +388,20 @@ fn readerTask(reader: *std.Io.Reader, requests: *zio.Channel(Request), wake: *st
     }
 }
 
-/// Free every request the owner never received. Call this before immediate channel close.
-fn drainRequests(gpa: std.mem.Allocator, requests: *zio.Channel(Request)) void {
-    while (requests.tryReceive()) |request| {
+/// Take a queued request without blocking.
+fn takeRequest(io: std.Io, requests: *std.Io.Queue(Request)) ?Request {
+    var one: [1]Request = undefined;
+    const n = requests.getUncancelable(io, &one, 0) catch return null;
+    return if (n == 1) one[0] else null;
+}
+
+/// Close the queue and free every request the owner never received. Call this after the reader stops.
+fn drainRequests(gpa: std.mem.Allocator, io: std.Io, requests: *std.Io.Queue(Request)) void {
+    requests.close(io);
+    while (takeRequest(io, requests)) |request| {
         var item = request;
         item.deinit(gpa);
-    } else |_| {}
+    }
 }
 
 /// Free every notification the owner never wrote. Call this after removing the sink.
@@ -603,13 +604,12 @@ test "the transport writes one line for each value" {
 
 test "draining queued requests releases their line payloads" {
     var requests_buf: [2]Request = undefined;
-    var requests = zio.Channel(Request).init(&requests_buf);
-    try requests.send(.{ .line = try testing.allocator.dupe(u8, "one") });
-    try requests.send(.{ .line = try testing.allocator.dupe(u8, "two") });
+    var requests: std.Io.Queue(Request) = .init(&requests_buf);
+    try requests.putOne(testing.io, .{ .line = try testing.allocator.dupe(u8, "one") });
+    try requests.putOne(testing.io, .{ .line = try testing.allocator.dupe(u8, "two") });
 
-    drainRequests(testing.allocator, &requests);
-    try testing.expectError(error.ChannelEmpty, requests.tryReceive());
-    requests.close(.immediate);
+    drainRequests(testing.allocator, testing.io, &requests);
+    try testing.expectEqual(null, takeRequest(testing.io, &requests));
 }
 
 test "owner writes queued notifications before the response" {

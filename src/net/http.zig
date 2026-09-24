@@ -1,7 +1,7 @@
 //! One JSON request and one bounded JSON response. The caller owns the response buffer.
 
 const std = @import("std");
-const zio = @import("zio");
+const util = @import("../util.zig");
 
 pub const Error = error{
     /// The value is not a URL that this client can request.
@@ -80,13 +80,16 @@ pub const Client = struct {
 
         var leg: PostLeg = .{};
         var future = try io.concurrent(postGrantLeg, .{ self, req, body, &leg });
-        leg.done.waitTimeout(io, req.timeout) catch |err| {
-            // The cancel joins the child, so the connect marker now holds its final value.
+        // The cancel joins the child, so the connect marker then holds its final value.
+        const done = util.waitEvent(io, &leg.done, req.timeout) catch |err| {
             _ = future.cancel(io) catch undefined;
-            if (err != error.Timeout) return err;
+            return err;
+        };
+        if (!done) {
+            _ = future.cancel(io) catch undefined;
             // A connected child may have begun the send, so only an unconnected one is retryable.
             return if (leg.connected.isSet()) Error.Ambiguous else Error.PreFlight;
-        };
+        }
         return future.await(io);
     }
 
@@ -162,6 +165,7 @@ fn encodeValue(w: *std.Io.Writer, raw: []const u8) !void {
     };
 }
 
+const zio = @import("zio");
 const testing = std.testing;
 
 test "a form body percent-encodes every reserved and UTF-8 byte" {
@@ -182,9 +186,10 @@ test "a form body percent-encodes every reserved and UTF-8 byte" {
 }
 
 const FormServer = struct {
-    listener: *zio.net.Server = undefined,
+    io: std.Io = undefined,
+    listener: *std.Io.net.Server = undefined,
     mode: enum { reply, redirect, oversize, stall },
-    release: zio.ResetEvent = .init,
+    release: std.Io.Event = .unset,
     seen_type: [64]u8 = undefined,
     seen_type_len: usize = 0,
     err: ?anyerror = null,
@@ -197,12 +202,12 @@ fn serveFormOnce(s: *FormServer) void {
 }
 
 fn serveFormOnceInner(s: *FormServer) !void {
-    const stream = try s.listener.accept(.{});
-    defer stream.close();
+    const stream = try s.listener.accept(s.io);
+    defer stream.close(s.io);
     var read_buf: [4096]u8 = undefined;
     var write_buf: [4096]u8 = undefined;
-    var reader = stream.reader(&read_buf);
-    var writer = stream.writer(&write_buf);
+    var reader = stream.reader(s.io, &read_buf);
+    var writer = stream.writer(s.io, &write_buf);
     var server = std.http.Server.init(&reader.interface, &writer.interface);
     var request = try server.receiveHead();
 
@@ -223,7 +228,7 @@ fn serveFormOnceInner(s: *FormServer) !void {
         }),
         .oversize => try request.respond("x" ** 512, .{ .status = .bad_request, .keep_alive = false }),
         // Keep the connection open without a response until the client completes.
-        .stall => try s.release.wait(),
+        .stall => try s.release.wait(s.io),
     }
 }
 
@@ -263,23 +268,20 @@ fn postFormOnceInner(c: *FormClient) !void {
 fn exchangeForm(server: *FormServer, client: *FormClient) !void {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const address = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var listener = try address.listen(.{});
-    defer listener.close();
+    const io = rt.io();
+    const address = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var listener = try address.listen(io, .{});
+    defer listener.deinit(io);
+    server.io = io;
     server.listener = &listener;
     client.gpa = testing.allocator;
-    client.io = rt.io();
-    client.port = listener.socket.address.ip.getPort();
+    client.io = io;
+    client.port = listener.socket.address.getPort();
 
-    var server_task = try rt.spawn(serveFormOnce, .{server});
-    errdefer {
-        server_task.cancel();
-        server_task.join();
-    }
-    var client_task = try rt.spawn(postFormOnce, .{client});
-    client_task.join();
-    server.release.set();
-    server_task.join();
+    var server_task = try io.concurrent(serveFormOnce, .{server});
+    postFormOnce(client);
+    server.release.set(io);
+    server_task.await(io);
 }
 
 test "a form post sends the urlencoded content type" {
@@ -323,14 +325,14 @@ test "a form post bounds an oversized error body" {
 test "a refused connection is a pre-flight failure, so a refresh may retry it" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const address = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
-    var listener = try address.listen(.{});
-    const port = listener.socket.address.ip.getPort();
-    listener.close(); // Nothing listens on this port now, so the connect is refused.
+    const io = rt.io();
+    const address = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var listener = try address.listen(io, .{});
+    const port = listener.socket.address.getPort();
+    listener.deinit(io); // Nothing listens on this port now, so the connect is refused.
 
-    var client: FormClient = .{ .gpa = testing.allocator, .io = rt.io(), .port = port };
-    var task = try rt.spawn(postFormOnce, .{&client});
-    task.join();
+    var client: FormClient = .{ .gpa = testing.allocator, .io = io, .port = port };
+    postFormOnce(&client);
 
     // The server never read a byte, so repeating this request cannot look like token reuse.
     try testing.expectEqual(@as(?anyerror, Error.PreFlight), client.err);
@@ -338,43 +340,46 @@ test "a refused connection is a pre-flight failure, so a refresh may retry it" {
 
 /// Fill the listener accept queue. The kernel then drops the next SYN, so that connect never ends.
 const QueueFiller = struct {
+    io: std.Io,
     port: u16,
-    held: [8]?zio.net.Stream = @splat(null),
+    held: [8]?std.Io.net.Stream = @splat(null),
 
     fn fill(self: *QueueFiller) void {
-        const address = zio.net.IpAddress.parseIp4("127.0.0.1", self.port) catch return;
+        const address = std.Io.net.IpAddress.parseIp4("127.0.0.1", self.port) catch return;
         for (&self.held) |*slot| {
             // The first connect the queue cannot take blocks, so a short timeout ends the fill.
-            slot.* = address.connect(.{ .timeout = .fromMilliseconds(100) }) catch return;
+            slot.* = address.connect(self.io, .{
+                .mode = .stream,
+                .timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(100) } },
+            }) catch return;
         }
     }
 
     fn close(self: *QueueFiller) void {
-        for (&self.held) |*slot| if (slot.*) |*stream| stream.close();
+        for (&self.held) |*slot| if (slot.*) |stream| stream.close(self.io);
     }
 };
 
 test "a connect the timeout cancels is a pre-flight failure, never an ambiguous send" {
     const rt = try zio.Runtime.init(testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
-    const address = try zio.net.IpAddress.parseIp4("127.0.0.1", 0);
+    const io = rt.io();
+    const address = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
     // Nothing ever accepts here, so the queue stays full once the filler below saturates it.
-    var listener = try address.listen(.{ .kernel_backlog = 1 });
-    defer listener.close();
+    var listener = try address.listen(io, .{ .kernel_backlog = 1 });
+    defer listener.deinit(io);
 
-    var filler: QueueFiller = .{ .port = listener.socket.address.ip.getPort() };
-    var fill_task = try rt.spawn(QueueFiller.fill, .{&filler});
-    fill_task.join();
+    var filler: QueueFiller = .{ .io = io, .port = listener.socket.address.getPort() };
+    filler.fill();
     defer filler.close();
 
     var client: FormClient = .{
         .gpa = testing.allocator,
-        .io = rt.io(),
+        .io = io,
         .port = filler.port,
         .timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(150) } },
     };
-    var task = try rt.spawn(postFormOnce, .{&client});
-    task.join();
+    postFormOnce(&client);
 
     // The connect never ended, so no request byte reached the server and a repeat spends no token.
     try testing.expectEqual(@as(?anyerror, Error.PreFlight), client.err);

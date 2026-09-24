@@ -1,4 +1,4 @@
-//! Shared helpers for 16-byte IDs and the wall clock hold no engine state, so `run.zig` does not form an import cycle.
+//! Shared helpers for 16-byte IDs, the wall clock, and event waits hold no engine state, so `run.zig` does not form an import cycle.
 
 const std = @import("std");
 
@@ -23,6 +23,22 @@ pub fn newId(io: std.Io) [16]u8 {
     var rand: [10]u8 = undefined;
     io.random(&rand);
     return v7(nowMillis(io), rand);
+}
+
+/// Answer whether `event` was set before `timeout` passed. A spurious wakeup also answers Timeout, so only a passed deadline counts.
+pub fn waitEvent(io: std.Io, event: *std.Io.Event, timeout: std.Io.Timeout) std.Io.Cancelable!bool {
+    const deadline = timeout.toDeadline(io);
+    while (true) {
+        event.waitTimeout(io, deadline) catch |err| switch (err) {
+            error.Canceled => return error.Canceled,
+            error.Timeout => {
+                const left = deadline.toDurationFromNow(io) orelse continue;
+                if (left.raw.nanoseconds > 0) continue;
+                return event.isSet();
+            },
+        };
+        return true;
+    }
 }
 
 test "v7 stamps the version, variant, and a sortable timestamp" {

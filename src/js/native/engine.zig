@@ -3,7 +3,6 @@
 const std = @import("std");
 const execution = @import("../../execution.zig");
 const quickjs = @import("quickjs");
-const zio = @import("zio");
 const proto = @import("proto");
 const host_mod = @import("../host.zig");
 const module = @import("module.zig");
@@ -242,6 +241,7 @@ const testing = std.testing;
 const support = @import("../tests/support.zig");
 const ai = @import("ai");
 const agents = @import("../bench/agents.zig");
+const zio = @import("zio");
 
 test "view integers stay within the protocol safe integer range" {
     const host = support.createHost();
