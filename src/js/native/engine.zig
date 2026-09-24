@@ -48,12 +48,7 @@ pub fn install(host: *Host) void {
 
 /// The run and continuation counts this process carries, so a view counts children without a pin.
 fn jsLoad(ctx: Context, _: Value, _: []const Value) Value {
-    const load = Host.fromContext(ctx).engine.currentLoad();
-    const obj = ctx.newObject();
-    module.set(ctx, obj, "runs", ctx.newInt64(load.runs));
-    module.set(ctx, obj, "childRuns", ctx.newInt64(load.child_runs));
-    module.set(ctx, obj, "continuations", ctx.newInt64(load.continuations));
-    return module.finish(ctx, obj);
+    return module.toJs(ctx, Host.fromContext(ctx).engine.currentLoad());
 }
 
 fn sidArg(ctx: Context, args: []const Value, idx: usize) ?SessionId {

@@ -99,11 +99,7 @@ fn jsListen(ctx: Context, _: Value, _: []const Value) Value {
     const server = address.listen(host.io, .{}) catch return ctx.throwTypeError("the sign-in callback could not listen on a loopback port");
     const port = server.socket.address.getPort();
     const listener = host.oauth.add(host.gpa, .{ .host = host, .server = server });
-    const object = ctx.newObject();
-    if (ctx.isException(object)) return object;
-    module.set(ctx, object, "id", ctx.newUint32(listener.id));
-    module.set(ctx, object, "port", ctx.newUint32(port));
-    return module.finish(ctx, object);
+    return module.toJs(ctx, .{ .id = listener.id, .port = port });
 }
 
 const Accept = struct {

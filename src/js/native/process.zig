@@ -195,14 +195,16 @@ fn settle(host: *Host, proc: *Proc) bool {
         argv[0] = ctx.newString("the host could not reap the process");
         return pending.invoke(host, proc.reject, &argv);
     };
-    argv[0] = ctx.newObject();
-    const code: Value, const signal: Value = switch (outcome) {
-        .exited => |c| .{ ctx.newInt32(c), quickjs.NULL },
-        .signaled => |s| .{ quickjs.NULL, ctx.newInt32(s) },
-        .timed_out => unreachable, // A process has no deadline.
-    };
-    module.set(ctx, argv[0], "code", code);
-    module.set(ctx, argv[0], "signal", signal);
+    std.debug.assert(outcome != .timed_out); // A process has no deadline.
+    argv[0] = module.toJs(ctx, .{
+        .code = if (outcome == .exited) outcome.exited else null,
+        .signal = if (outcome == .signaled) outcome.signaled else null,
+    });
+    // A full QuickJS heap faults the drain, and `exited` stays pending.
+    if (ctx.isException(argv[0])) {
+        host.noteFault();
+        return true;
+    }
     return pending.invoke(host, proc.resolve, &argv);
 }
 

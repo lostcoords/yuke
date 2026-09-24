@@ -51,7 +51,7 @@ pub const FileRead = union(enum) {
 pub const Stat = struct {
     /// The anchored absolute path, so a caller can hand the same file to the engine.
     path: []const u8,
-    is_dir: bool,
+    is_directory: bool,
     /// The last modification time in epoch milliseconds.
     last_modified_ms: u64,
 };

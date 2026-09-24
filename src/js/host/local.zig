@@ -115,7 +115,7 @@ pub const LocalHost = struct {
     pub fn stat(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8) h.HostError!h.Stat {
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
         const info = std.Io.Dir.cwd().statFile(self.io, full, .{}) catch |err| return mapError(err);
-        return .{ .path = full, .is_dir = info.kind == .directory, .last_modified_ms = millisOf(info.mtime) };
+        return .{ .path = full, .is_directory = info.kind == .directory, .last_modified_ms = millisOf(info.mtime) };
     }
 
     /// List the first `limit` subdirectories by name. A file never appears.
@@ -733,9 +733,9 @@ test "stat reports a directory, a file, and a missing path" {
     var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
 
     const dir = try local.stat(a, "sub");
-    try testing.expect(dir.is_dir);
+    try testing.expect(dir.is_directory);
     const file = try local.stat(a, "a.txt");
-    try testing.expect(!file.is_dir);
+    try testing.expect(!file.is_directory);
     try testing.expect(file.last_modified_ms > 0);
     try testing.expectError(error.NotFound, local.stat(a, "gone"));
 }

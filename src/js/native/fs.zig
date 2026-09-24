@@ -199,11 +199,7 @@ fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
         error.NotFound => return resolved(ctx, quickjs.NULL),
         else => return rejected(ctx, errorMessage(err)),
     };
-    const out = ctx.newObject();
-    module.set(ctx, out, "path", ctx.newString(info.path));
-    module.set(ctx, out, "isDirectory", ctx.newBool(info.is_dir));
-    module.set(ctx, out, "lastModifiedMs", ctx.newInt64(@intCast(info.last_modified_ms)));
-    return resolved(ctx, module.finish(ctx, out));
+    return resolved(ctx, module.toJs(ctx, info));
 }
 
 /// Remove one regular file, and resolve false for a missing path, so a cleanup needs no `stat` first.

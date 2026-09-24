@@ -159,7 +159,7 @@ pub fn parseWritten(ctx: Context, text: *std.Io.Writer.Allocating, filename: [:0
     return ctx.parseJSON(json[0 .. json.len - 1 :0], filename);
 }
 
-/// Build a JavaScript value from Zig data: a struct becomes an object with camelCase keys, and a tagged union becomes its payload.
+/// Build a JavaScript value from Zig data: a struct becomes an object with camelCase keys, a byte slice becomes a string, another slice becomes an array, and a tagged union becomes its payload.
 pub fn toJs(ctx: Context, value: anytype) Value {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
@@ -168,8 +168,12 @@ pub fn toJs(ctx: Context, value: anytype) Value {
         .int => return if (std.math.cast(i64, value)) |small| ctx.newInt64(small) else ctx.newNumber(@floatFromInt(value)),
         .optional => return if (value) |inner| toJs(ctx, inner) else quickjs.NULL,
         .pointer => |pointer| {
-            comptime std.debug.assert(pointer.size == .slice and pointer.child == u8);
-            return ctx.newString(value);
+            comptime std.debug.assert(pointer.size == .slice);
+            if (pointer.child == u8) return ctx.newString(value);
+            const array = ctx.newArray();
+            if (ctx.isException(array)) return array;
+            for (value, 0..) |item, i| setIndex(ctx, array, i, toJs(ctx, item));
+            return finish(ctx, array);
         },
         .@"struct" => |info| {
             const object = ctx.newObject();
