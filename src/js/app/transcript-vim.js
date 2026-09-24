@@ -287,7 +287,7 @@ export const transcriptVim = {
   /** @param {Context} ctx */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      ctx.tui.command("chat", {
+      ctx.tui.command(null, {
         "chat:focus-toggle": () => {
           const view = focusedChatView();
           if (!view) return;

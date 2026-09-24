@@ -135,18 +135,18 @@ function once(fn) {
   };
 }
 
-// A command has a predicate and an action. A string predicate matches the active view.
+// A command has a predicate and an action. A key binding, not the command, names the context where it applies.
 /** @type {CommandRegistry} */
 export const command = {
   map: Object.create(null),
 
   // Register a batch under one predicate; a later registration shadows an earlier one. `meta` marks a user action.
   add(predicate, map, meta) {
-    const pred = normalizePredicate(predicate);
+    if (predicate != null && typeof predicate !== "function") throw new TypeError("a command predicate must be a function or null");
     /** @type {Array<[string, CommandEntry]>} */
     const added = [];
     for (const name in map) {
-      const entry = { predicate: pred, perform: /** @type {CommandAction} */ (map[name]), meta: (meta && meta[name]) || null };
+      const entry = { predicate, perform: /** @type {CommandAction} */ (map[name]), meta: (meta && meta[name]) || null };
       const list = this.map[name] || (this.map[name] = []);
       list.unshift(entry);
       added.push([name, entry]);
@@ -229,15 +229,6 @@ function evalPredicate(entry, args) {
   if (!Array.isArray(res)) return res ? args : null;
   if (!res[0]) return null;
   return res.length > 1 ? res.slice(1) : args;
-}
-
-/** @param {string | CommandPredicate | null} predicate @returns {CommandPredicate | null} */
-function normalizePredicate(predicate) {
-  if (predicate == null) return null;
-  if (typeof predicate === "string") {
-    return () => (root.active && root.active.name === predicate ? [true, root.active] : [false]);
-  }
-  return predicate;
 }
 
 // The active context: an ordered atom stack plus plugin flags, where a deeper atom beats a shallower or unscoped one.

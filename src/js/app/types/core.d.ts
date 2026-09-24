@@ -102,7 +102,7 @@ export type CommandMap = Record<string, CommandEntry[]>;
 
 export interface CommandRegistry {
   map: CommandMap;
-  add: (predicate: string | CommandPredicate | null, map: Record<string, CommandAction>, meta?: Record<string, CommandMeta>) => () => void;
+  add: (predicate: CommandPredicate | null, map: Record<string, CommandAction>, meta?: Record<string, CommandMeta>) => () => void;
   perform: (name: string, ...args: any[]) => boolean;
   available: (name: string) => boolean;
   list: () => CommandListing[];
