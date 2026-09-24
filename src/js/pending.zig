@@ -136,6 +136,28 @@ pub fn dropException(ctx: Context) void {
     if (ctx.hasException()) ctx.freeValue(ctx.getException());
 }
 
+/// Call `function` with the borrowed `argv` and answer whether it threw. The host records the fault.
+pub fn invoke(host: *Host, function: Value, argv: []const Value) bool {
+    const answer = host.ctx.call(function, quickjs.UNDEFINED, argv);
+    defer host.ctx.freeValue(answer);
+    if (!host.ctx.isException(answer)) return false;
+    host.noteFault();
+    return true;
+}
+
+/// Hand the borrowed `bytes` to `function` as text after the borrowed `lead`, and answer whether it threw. The host records the fault.
+pub fn deliverText(host: *Host, function: Value, lead: ?Value, bytes: []const u8) bool {
+    std.debug.assert(bytes.len > 0);
+    // A writer cuts on character boundaries, but a command prints any bytes, so the text becomes valid UTF-8 first.
+    const invalid = !std.unicode.utf8ValidateSlice(bytes);
+    const text = if (invalid) utf8.sanitize(host.gpa, bytes) catch unreachable else bytes;
+    defer if (invalid) host.gpa.free(text);
+    host.enterSlice();
+    const argv = [_]Value{ lead orelse quickjs.UNDEFINED, host.ctx.newString(text) };
+    defer host.ctx.freeValue(argv[1]);
+    return invoke(host, function, if (lead == null) argv[1..] else &argv);
+}
+
 pub const Op = struct {
     /// The resolving functions, held as GC roots until this op settles.
     resolve: Value,
@@ -320,7 +342,6 @@ pub const Ops = struct {
 
     /// Hand the live text to `on_text` and answer whether the function threw; the host records the fault.
     fn deliver(host: *Host, op: *Op) bool {
-        const ctx = host.ctx;
         op.live_lock.lockUncancelable(op.io);
         var taken = op.live;
         op.live = op.live_spare;
@@ -332,20 +353,8 @@ pub const Ops = struct {
         }
 
         if (taken.items.len == 0) return false;
-        std.debug.assert(ctx.isFunction(op.on_text)); // only an op with `on_text` streams
-        // A writer cuts on character boundaries, but a command prints any bytes, so the text becomes valid UTF-8 first.
-        const bytes = taken.items;
-        const invalid = !std.unicode.utf8ValidateSlice(bytes);
-        const text = if (invalid) utf8.sanitize(op.gpa, bytes) catch unreachable else bytes;
-        defer if (invalid) op.gpa.free(text);
-        host.enterSlice();
-        var argv = [_]Value{ctx.newString(text)};
-        defer ctx.freeValue(argv[0]);
-        const answer = ctx.call(op.on_text, quickjs.UNDEFINED, &argv);
-        defer ctx.freeValue(answer);
-        if (!ctx.isException(answer)) return false;
-        host.noteFault();
-        return true;
+        std.debug.assert(host.ctx.isFunction(op.on_text)); // only an op with `on_text` streams
+        return deliverText(host, op.on_text, null, taken.items);
     }
 
     /// Answer whether the resolver threw; the caller clears the pending exception and reports the fault.

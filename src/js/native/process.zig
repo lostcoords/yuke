@@ -178,15 +178,7 @@ fn deliver(host: *Host, proc: *Proc, stream: *Stream, number: i32) bool {
 
     stream.finished = finished;
     if (cut == 0) return false;
-    const ctx = host.ctx;
-    const bytes = taken.items[0..cut];
-    const invalid = !std.unicode.utf8ValidateSlice(bytes);
-    const text = if (invalid) utf8.sanitize(host.gpa, bytes) catch unreachable else bytes;
-    defer if (invalid) host.gpa.free(text);
-    host.enterSlice();
-    var argv = [_]Value{ ctx.newInt32(number), ctx.newString(text) };
-    defer for (argv) |arg| ctx.freeValue(arg);
-    return call(host, proc.on_output, &argv);
+    return pending.deliverText(host, proc.on_output, host.ctx.newInt32(number), taken.items[0..cut]);
 }
 
 /// Resolve `exited` with `{ code, signal }`, where exactly one of the two is null. A job resolves with its ended record instead.
@@ -197,11 +189,11 @@ fn settle(host: *Host, proc: *Proc) bool {
     if (proc.job) |job| {
         host.jobs.end(host, job, proc.outcome);
         argv[0] = jobs.toValue(ctx, job);
-        return call(host, proc.resolve, &argv);
+        return pending.invoke(host, proc.resolve, &argv);
     }
     const outcome = proc.outcome orelse {
         argv[0] = ctx.newString("the host could not reap the process");
-        return call(host, proc.reject, &argv);
+        return pending.invoke(host, proc.reject, &argv);
     };
     argv[0] = ctx.newObject();
     const code: Value, const signal: Value = switch (outcome) {
@@ -211,16 +203,7 @@ fn settle(host: *Host, proc: *Proc) bool {
     };
     module.set(ctx, argv[0], "code", code);
     module.set(ctx, argv[0], "signal", signal);
-    return call(host, proc.resolve, &argv);
-}
-
-/// Call `function` and answer whether it threw.
-fn call(host: *Host, function: Value, argv: []Value) bool {
-    const answer = host.ctx.call(function, quickjs.UNDEFINED, argv);
-    defer host.ctx.freeValue(answer);
-    if (!host.ctx.isException(answer)) return false;
-    host.noteFault();
-    return true;
+    return pending.invoke(host, proc.resolve, &argv);
 }
 
 /// Read one stream until its end. A full buffer makes the reader wait, so the child blocks on the pipe and memory stays bounded.
