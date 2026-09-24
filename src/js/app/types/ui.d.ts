@@ -147,6 +147,8 @@ export type PickOptions<T> = WindowOptions & {
   needsTick?: { periodMs: number } | null | undefined;
   filter?: boolean | undefined;
   body?: string | undefined;
+  /** Fit the window to the query line and at most this many rows. */
+  maxRows?: number | undefined;
 };
 
 export type NavAction = (target: NavTarget) => void;

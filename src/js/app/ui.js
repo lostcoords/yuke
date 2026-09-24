@@ -1299,7 +1299,9 @@ export const ui = {
   /** @template T @param {PickOptions<T>} [opts] @returns {{ win: Window, content: Picker<T> }} */
   pick(opts = {}) {
     const content = new Picker(opts);
-    const win = new Window({ ...opts, content: /** @type {WindowContent} */ (content) });
+    const rows = opts.maxRows;
+    const fit = rows ? { contentHeight: () => (content.filter ? 1 : 0) + Math.min(rows, content.list.items.length) } : {};
+    const win = new Window({ ...fit, ...opts, content: /** @type {WindowContent} */ (content) });
     content.win = win;
     return { win, content };
   },

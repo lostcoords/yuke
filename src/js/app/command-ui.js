@@ -99,15 +99,13 @@ export function commandUi(cfg = {}) {
 
       /** @param {Chat} chat @param {Entry[]} ranked @param {number} col @param {string} query @returns {void} */
       const open = (chat, ranked, col, query) => {
-        /** @type {Picker<Entry> | null} */
-        let content = null;
         const p = ui.select(ranked, {
           name: "slash",
           modal: false,
           border,
           panelGroup: "UIFloat",
           anchor: () => chat.composer.rect,
-          contentHeight: () => Math.min(rows, content ? content.list.items.length : 0),
+          maxRows: rows,
           key: (e) => e.name,
           format: (e) => format(e, col),
           keymap: {
@@ -131,7 +129,6 @@ export function commandUi(cfg = {}) {
             dismissed = { chat, text: chat.composer.text };
           },
         });
-        content = p.content;
         ctx.tui.overlay(p.win);
         float = { chat, picker: p.content, win: p.win, query };
       };
@@ -175,21 +172,18 @@ export function commandUi(cfg = {}) {
         const all = entries();
         const col = columnOf(all);
         const chat = focusedChat();
-        /** @type {Picker<Entry> | null} */
-        let content = null;
         const p = ui.pick({
           name: "commands",
           border,
           panelGroup: "UIFloat",
           anchor: chat ? () => chat.composer.rect : null,
-          contentHeight: () => Math.min(rows, content ? content.list.items.length : 0) + 1,
+          maxRows: rows,
           items: all,
           key: (e) => e.name,
           filterText: cfg.filterText || ((e) => wordOf(e) + " " + e.title),
           format: (e) => format(e, col),
           onAccept: (e) => run(e, ""),
         });
-        content = p.content;
         ctx.tui.overlay(p.win);
         return p;
       };
