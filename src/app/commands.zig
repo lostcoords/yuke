@@ -104,7 +104,7 @@ test "the catalog reports the credential and the login of the providers the envi
     var transport = ai.testing.CannedTransport{ .bytes = ai.testing.canned_reply };
     var blobs = std.testing.tmpDir(.{});
     defer blobs.cleanup();
-    var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
+    var blob_dir: [std.Io.Dir.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
     try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], transport.transport(), execution.testContext(&env));
     defer runtime.deinit();
@@ -141,7 +141,7 @@ test "catalog.reload reads the file again and reports whether the revision moved
     var transport = ai.testing.CannedTransport{ .bytes = ai.testing.canned_reply };
     var blobs = std.testing.tmpDir(.{});
     defer blobs.cleanup();
-    var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
+    var blob_dir: [std.Io.Dir.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
     try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], transport.transport(), execution.testContext(&env));
     defer runtime.deinit();
@@ -149,7 +149,7 @@ test "catalog.reload reads the file again and reports whether the revision moved
 
     var dir_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dir = dir_buf[0..try tmp.dir.realPath(rt.io(), &dir_buf)];
-    runtime.store.path = try std.fs.path.join(testing.allocator, &.{ dir, "providers.json" });
+    runtime.store.path = try std.Io.Dir.path.join(testing.allocator, &.{ dir, "providers.json" });
     const path = runtime.store.path.?;
 
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);

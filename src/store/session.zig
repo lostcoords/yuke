@@ -430,7 +430,7 @@ test "prompt sections and the composed text survive a database restart, and a re
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const directory = path_buffer[0..try tmp.dir.realPath(testing.io, &path_buffer)];
     const path = try std.fmt.allocPrintSentinel(a, "{s}/session.db", .{directory}, 0);
     const id = [_]u8{9} ** 16;

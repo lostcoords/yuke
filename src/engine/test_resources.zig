@@ -22,7 +22,7 @@ env: std.process.Environ.Map,
 providers: ProviderStore,
 transport: ai.testing.CannedTransport,
 blobs: testing.TmpDir,
-blob_dir_buf: [std.fs.max_path_bytes]u8,
+blob_dir_buf: [std.Io.Dir.max_path_bytes]u8,
 blob_dir: []const u8,
 
 pub fn init(self: *Resources) !void {

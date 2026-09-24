@@ -38,9 +38,9 @@ pub const LoadError = error{ OutOfMemory, Canceled, TooManySkills };
 
 /// Scan `<workspace>/.agents/skills` then `~/.agents/skills`. Each direct subdirectory with a SKILL.md is a candidate.
 pub fn load(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, workspace: []const u8) LoadError!Catalog {
-    std.debug.assert(std.fs.path.isAbsolute(workspace));
-    const global = if (paths.homeDir(env)) |home| try std.fs.path.join(arena, &.{ home, ".agents", "skills" }) else null;
-    const local = try std.fs.path.join(arena, &.{ workspace, ".agents", "skills" });
+    std.debug.assert(std.Io.Dir.path.isAbsolute(workspace));
+    const global = if (paths.homeDir(env)) |home| try std.Io.Dir.path.join(arena, &.{ home, ".agents", "skills" }) else null;
+    const local = try std.Io.Dir.path.join(arena, &.{ workspace, ".agents", "skills" });
     var entries: std.ArrayList(Entry) = .empty;
     var skipped: std.ArrayList(Skipped) = .empty;
     // The workspace root scans first, so its names and canonical paths win.
@@ -94,7 +94,7 @@ fn scanRoot(arena: std.mem.Allocator, io: std.Io, root: []const u8, scope: proto
     }.lessThan);
     var candidates: usize = 0;
     for (names.items) |name| {
-        const path = try std.fs.path.join(arena, &.{ root, name, "SKILL.md" });
+        const path = try std.Io.Dir.path.join(arena, &.{ root, name, "SKILL.md" });
         const canonical = std.Io.Dir.realPathFileAbsoluteAlloc(io, path, arena) catch |err| switch (err) {
             error.FileNotFound, error.NotDir => continue,
             error.OutOfMemory, error.Canceled => |e| return e,
@@ -406,7 +406,7 @@ pub fn readBody(arena: std.mem.Allocator, io: std.Io, entry: Entry, diagnostic: 
         else => return refuse(arena, diagnostic, entry.path, reasonOf(err)),
     };
     const parsed = (try parseFrontmatter(arena, text)) orelse return refuse(arena, diagnostic, entry.path, "the file has no frontmatter");
-    return .{ .body = parsed.body, .directory = std.fs.path.dirname(entry.canonical_path) orelse entry.canonical_path };
+    return .{ .body = parsed.body, .directory = std.Io.Dir.path.dirname(entry.canonical_path) orelse entry.canonical_path };
 }
 
 fn refuse(arena: std.mem.Allocator, diagnostic: ?*?[]const u8, path: []const u8, reason: []const u8) error{ OutOfMemory, SkillUnreadable } {
@@ -463,7 +463,7 @@ const Roots = struct {
     tmp: testing.TmpDir,
     arena: std.heap.ArenaAllocator,
     env: std.process.Environ.Map,
-    root_buf: [std.fs.max_path_bytes]u8,
+    root_buf: [std.Io.Dir.max_path_bytes]u8,
     workspace: []const u8,
 
     fn init(self: *Roots) !void {
@@ -473,8 +473,8 @@ const Roots = struct {
         try self.tmp.dir.createDirPath(testing.io, "home/.agents/skills");
         try self.tmp.dir.createDirPath(testing.io, "work/.agents/skills");
         const root = self.root_buf[0..try self.tmp.dir.realPath(testing.io, &self.root_buf)];
-        try self.env.put(if (builtin.os.tag == .windows) "USERPROFILE" else "HOME", try std.fs.path.join(self.arena.allocator(), &.{ root, "home" }));
-        self.workspace = try std.fs.path.join(self.arena.allocator(), &.{ root, "work" });
+        try self.env.put(if (builtin.os.tag == .windows) "USERPROFILE" else "HOME", try std.Io.Dir.path.join(self.arena.allocator(), &.{ root, "home" }));
+        self.workspace = try std.Io.Dir.path.join(self.arena.allocator(), &.{ root, "work" });
     }
 
     fn deinit(self: *Roots) void {
@@ -583,7 +583,7 @@ test "the catalog skips invalid UTF-8 directory names and reports a valid path" 
     try testing.expectEqualStrings("visible", catalog.entries[0].name);
     try testing.expectEqual(@as(usize, 1), catalog.skipped.len);
     try testing.expectEqualStrings("a directory name is not valid UTF-8", catalog.skipped[0].reason);
-    const root = try std.fs.path.join(r.arena.allocator(), &.{ r.workspace, ".agents", "skills" });
+    const root = try std.Io.Dir.path.join(r.arena.allocator(), &.{ r.workspace, ".agents", "skills" });
     try testing.expectEqualStrings(root, catalog.skipped[0].path);
     try testing.expect(std.unicode.utf8ValidateSlice(catalog.skipped[0].path));
 }

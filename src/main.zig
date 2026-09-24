@@ -66,7 +66,7 @@ fn openTuiLog(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Enviro
     defer gpa.free(dir);
     try app.ensureDataDir(io, dir);
     const cwd = std.Io.Dir.cwd();
-    const path = try std.fs.path.join(gpa, &.{ dir, "tui.log" });
+    const path = try std.Io.Dir.path.join(gpa, &.{ dir, "tui.log" });
     defer gpa.free(path);
     const file_private = std.Io.File.Permissions.fromMode(0o600);
     const file = try std.Io.Dir.createFileAbsolute(io, path, .{ .truncate = true, .permissions = file_private });

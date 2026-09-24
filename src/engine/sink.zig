@@ -33,7 +33,7 @@ pub const Sinks = struct {
     pub fn remove(self: *Sinks, ctx: *anyopaque) void {
         std.debug.assert(!self.emitting); // a callback must not change the set it runs from
         const i = self.indexOf(ctx).?; // a detach without an attach is a wiring bug
-        std.mem.copyForwards(Sink, self.entries[i .. self.len - 1], self.entries[i + 1 .. self.len]);
+        @memmove(self.entries[i .. self.len - 1], self.entries[i + 1 .. self.len]);
         self.len -= 1;
     }
 

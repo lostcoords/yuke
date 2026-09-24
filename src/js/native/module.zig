@@ -134,7 +134,7 @@ pub fn optionalBool(ctx: Context, options: Value, name: [:0]const u8) error{Inva
 pub fn rootArg(ctx: Context, gpa: std.mem.Allocator, value: Value, default: []const u8) ?[]u8 {
     if (ctx.isUndefined(value) or ctx.isNull(value)) return gpa.dupe(u8, default) catch unreachable;
     const root = owned(ctx, gpa, value) orelse return null;
-    if (std.fs.path.isAbsolute(root)) return root;
+    if (std.Io.Dir.path.isAbsolute(root)) return root;
     gpa.free(root);
     return null;
 }

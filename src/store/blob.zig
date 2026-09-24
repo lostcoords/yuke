@@ -49,7 +49,7 @@ pub const Store = struct {
     /// Copy the file at `path` into the store and describe it. A second put of the same bytes is a no-op.
     pub fn put(self: Store, io: std.Io, arena: std.mem.Allocator, path: []const u8) PutError!MediaBlob {
         std.debug.assert(self.dir.len != 0);
-        if (!std.fs.path.isAbsolute(path)) return error.BlobPathNotAbsolute;
+        if (!std.Io.Dir.path.isAbsolute(path)) return error.BlobPathNotAbsolute;
         const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch |err| return ioFail(err, error.BlobUnreadable);
         if (stat.kind != .file) return error.BlobNotRegularFile;
         if (stat.size == 0) return error.BlobEmpty;
@@ -137,9 +137,9 @@ pub const Store = struct {
 
     /// Sync each directory entry from the blob store through its ancestors.
     fn syncDirectories(io: std.Io, path: []const u8) AdmitError!void {
-        std.debug.assert(std.fs.path.isAbsolute(path));
+        std.debug.assert(std.Io.Dir.path.isAbsolute(path));
         var current: ?[]const u8 = path;
-        while (current) |name| : (current = std.fs.path.dirname(name)) {
+        while (current) |name| : (current = std.Io.Dir.path.dirname(name)) {
             // Linux opens a plain directory handle with O_PATH, which fsync refuses, so ask for an iterable one.
             const dir = std.Io.Dir.openDirAbsolute(io, name, .{ .iterate = true }) catch |err| return ioFail(err, error.BlobStoreFailed);
             defer dir.close(io);
@@ -150,7 +150,7 @@ pub const Store = struct {
 
     fn pathOf(self: Store, arena: std.mem.Allocator, hash: Hash) error{OutOfMemory}![]const u8 {
         const hex = std.fmt.bytesToHex(hash.raw, .lower);
-        return std.fs.path.join(arena, &.{ self.dir, &hex });
+        return std.Io.Dir.path.join(arena, &.{ self.dir, &hex });
     }
 
     fn exists(self: Store, io: std.Io, target: []const u8) bool {
@@ -161,7 +161,7 @@ pub const Store = struct {
 
     /// Publish complete bytes atomically; admission syncs them before a durable reference.
     fn write(io: std.Io, target: []const u8, data: []const u8) PutError!void {
-        std.debug.assert(std.fs.path.isAbsolute(target));
+        std.debug.assert(std.Io.Dir.path.isAbsolute(target));
         std.debug.assert(data.len != 0 and data.len <= max_bytes);
         var atomic = std.Io.Dir.cwd().createFileAtomic(io, target, .{
             .make_path = true,
@@ -226,7 +226,7 @@ pub const png_1x1 = "\x89PNG\r\n\x1a\n" ++ "\x00\x00\x00\x0dIHDR\x00\x00\x00\x01
 
 const Fixture = struct {
     tmp: testing.TmpDir,
-    buf: [std.fs.max_path_bytes]u8,
+    buf: [std.Io.Dir.max_path_bytes]u8,
     store: Store,
     arena: std.heap.ArenaAllocator,
 
@@ -235,7 +235,7 @@ const Fixture = struct {
         errdefer self.tmp.cleanup();
         const root = self.buf[0..try self.tmp.dir.realPath(testing.io, &self.buf)];
         self.arena = .init(testing.allocator);
-        self.store = .{ .dir = try std.fs.path.join(self.arena.allocator(), &.{ root, "blobs" }) };
+        self.store = .{ .dir = try std.Io.Dir.path.join(self.arena.allocator(), &.{ root, "blobs" }) };
     }
 
     fn deinit(self: *Fixture) void {
@@ -246,7 +246,7 @@ const Fixture = struct {
     fn file(self: *Fixture, name: []const u8, data: []const u8) ![]const u8 {
         try self.tmp.dir.writeFile(testing.io, .{ .sub_path = name, .data = data });
         const root = self.buf[0..try self.tmp.dir.realPath(testing.io, &self.buf)];
-        return std.fs.path.join(self.arena.allocator(), &.{ root, name });
+        return std.Io.Dir.path.join(self.arena.allocator(), &.{ root, name });
     }
 };
 
@@ -301,8 +301,8 @@ test "put refuses what the store must never hold" {
     defer f.deinit();
     const a = f.arena.allocator();
     try testing.expectError(error.BlobPathNotAbsolute, f.store.put(testing.io, a, "shot.png"));
-    try testing.expectError(error.BlobUnreadable, f.store.put(testing.io, a, try std.fs.path.join(a, &.{ f.store.dir, "..", "absent.png" })));
-    try testing.expectError(error.BlobNotRegularFile, f.store.put(testing.io, a, std.fs.path.dirname(f.store.dir).?));
+    try testing.expectError(error.BlobUnreadable, f.store.put(testing.io, a, try std.Io.Dir.path.join(a, &.{ f.store.dir, "..", "absent.png" })));
+    try testing.expectError(error.BlobNotRegularFile, f.store.put(testing.io, a, std.Io.Dir.path.dirname(f.store.dir).?));
     try testing.expectError(error.BlobEmpty, f.store.put(testing.io, a, try f.file("empty.png", "")));
     try testing.expectError(error.BlobUnsupportedType, f.store.put(testing.io, a, try f.file("doc.pdf", "%PDF-1.7\n")));
     try testing.expectError(error.BlobUnsupportedType, f.store.put(testing.io, a, try f.file("fake.png", "not a png at all")));
@@ -328,7 +328,7 @@ test "base64 bytes land under the same hash as the file, and bad data never reac
     try testing.expectError(error.BlobEmpty, f.store.putBase64(testing.io, a, ""));
     // The bytes decide the type, so a caller cannot store a document as an image.
     try testing.expectError(error.BlobUnsupportedType, f.store.putBase64(testing.io, a, "JVBERi0xLjcK"));
-    try testing.expectError(error.FileNotFound, std.Io.Dir.accessAbsolute(testing.io, try std.fs.path.join(a, &.{ f.store.dir, "x" }), .{}));
+    try testing.expectError(error.FileNotFound, std.Io.Dir.accessAbsolute(testing.io, try std.Io.Dir.path.join(a, &.{ f.store.dir, "x" }), .{}));
 }
 
 test "admit accepts only refs that match the stored bytes" {

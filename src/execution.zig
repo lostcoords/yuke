@@ -50,7 +50,7 @@ pub fn startup(arena: std.mem.Allocator, io: std.Io, env: *std.process.Environ.M
     try normalizeHome(arena, io, env, probe);
     const shell = try resolveShell(arena, io, env, probe);
     // The shell is final here, so every later owner runs the same one.
-    std.debug.assert(std.fs.path.isAbsolute(shell.path));
+    std.debug.assert(std.Io.Dir.path.isAbsolute(shell.path));
     return .{ .env = env, .shell = shell };
 }
 
@@ -69,7 +69,7 @@ fn normalizeHome(arena: std.mem.Allocator, io: std.Io, env: *std.process.Environ
 /// Answer a home directory the platform names and Yuke can use, or null.
 fn recoverHome(arena: std.mem.Allocator, io: std.Io, probe: Probe) std.mem.Allocator.Error!?[]const u8 {
     const recovered = (try probe.home(io, arena)) orelse return null;
-    if (recovered.len == 0 or !std.fs.path.isAbsolute(recovered)) return null;
+    if (recovered.len == 0 or !std.Io.Dir.path.isAbsolute(recovered)) return null;
     if (std.mem.indexOfScalar(u8, recovered, 0) != null) return null;
     return recovered;
 }
@@ -87,11 +87,11 @@ fn resolveShell(arena: std.mem.Allocator, io: std.Io, env: *const std.process.En
 /// Search `PATH` for Bash. Only an absolute entry is inspected, and an empty entry is not absolute.
 fn bashOnPath(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, probe: Probe) Error!?[]const u8 {
     const list = env.get("PATH") orelse return null;
-    var entries = std.mem.splitScalar(u8, list, std.fs.path.delimiter);
+    var entries = std.mem.splitScalar(u8, list, std.Io.Dir.path.delimiter);
     while (entries.next()) |entry| {
-        if (!std.fs.path.isAbsolute(entry)) continue;
+        if (!std.Io.Dir.path.isAbsolute(entry)) continue;
         // A `PATH` entry may hold `..`, and the answer must be one normalized absolute path.
-        const candidate = try std.fs.path.resolve(arena, &.{ entry, "bash" });
+        const candidate = try std.Io.Dir.path.resolve(arena, &.{ entry, "bash" });
         if (probe.executable(io, candidate)) return candidate;
         arena.free(candidate);
     }
@@ -198,14 +198,14 @@ test "the native probe answers what the process can actually run" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const root = buf[0..try tmp.dir.realPath(testing.io, &buf)];
 
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "plain", .data = "#!/bin/sh\n" });
-    const plain = try std.fs.path.join(a, &.{ root, "plain" });
+    const plain = try std.Io.Dir.path.join(a, &.{ root, "plain" });
 
     // A readable file is not a runnable one, and the mode bits alone would say it is.
     try testing.expect(!Probe.native.executable(testing.io, plain));

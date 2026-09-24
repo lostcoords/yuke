@@ -259,12 +259,12 @@ fn pageOf(arena: std.mem.Allocator, path: []const u8, page: os.DirPage) Page {
     const entries = arena.alloc(Page.Entry, page.items.len) catch unreachable;
     for (page.items, entries) |item, *entry| entry.* = .{
         .name = item.name,
-        .path = std.fs.path.join(arena, &.{ path, item.name }) catch unreachable,
+        .path = std.Io.Dir.path.join(arena, &.{ path, item.name }) catch unreachable,
         .is_git_repo = item.is_git_repo,
     };
     return .{
         .path = path,
-        .parent = std.fs.path.dirname(path),
+        .parent = std.Io.Dir.path.dirname(path),
         .entries = entries,
         .more = page.more,
     };
@@ -296,7 +296,7 @@ test "list answers the directories of a real path and marks a repository" {
     try tmp.dir.createDirPath(testing.io, "beta/.git");
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "note.txt", .data = "x" });
 
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const root = root_buf[0..try tmp.dir.realPath(testing.io, &root_buf)];
 
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);

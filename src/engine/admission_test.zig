@@ -35,7 +35,7 @@ const Fixture = struct {
         errdefer self.resources.deinit();
         self.db = try database.Database.openTest();
         errdefer self.db.deinit();
-        var path: [std.fs.max_path_bytes]u8 = undefined;
+        var path: [std.Io.Dir.max_path_bytes]u8 = undefined;
         try self.resources.env.put("XDG_CONFIG_HOME", path[0..try self.tmp.dir.realPath(testing.io, &path)]);
         try self.resources.env.put("YUKE_APPNAME", "agents-test");
         var local = try provider.config.loadBytes(testing.allocator,
@@ -570,7 +570,7 @@ test "instruction snapshots survive file edits and child creation" {
     const a = f.arena.allocator();
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const workspace = path_buf[0..try tmp.dir.realPath(testing.io, &path_buf)];
     const original = "Use the project rules literally: ${unknown}.\n";
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "AGENTS.md", .data = original });
@@ -582,7 +582,7 @@ test "instruction snapshots survive file edits and child creation" {
     const metadata = (try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id })).instruction_sources.?;
     try testing.expectEqual(@as(usize, 1), metadata.len);
     try testing.expectEqual(.workspace, metadata[0].scope);
-    try testing.expectEqualStrings(try std.fs.path.join(a, &.{ workspace, "AGENTS.md" }), metadata[0].path);
+    try testing.expectEqualStrings(try std.Io.Dir.path.join(a, &.{ workspace, "AGENTS.md" }), metadata[0].path);
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "AGENTS.md", .data = "\xff" });
     f.engine.max_agent_depth = 2;
     var params = f.params("worker");
@@ -648,7 +648,7 @@ test "skill catalogs snapshot at creation, children inherit them, and bodies loa
     const a = f.arena.allocator();
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const workspace = path_buf[0..try tmp.dir.realPath(testing.io, &path_buf)];
     try skillFile(tmp, "pdf", "---\ndescription: Handle PDFs & forms\n---\nDo the pdf thing.\n");
     try skillFile(tmp, "bad", "---\nname: bad\n---\n");
@@ -725,7 +725,7 @@ test "reload replaces both snapshots of an idle session and the stale check trac
     const a = f.arena.allocator();
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const workspace = path_buf[0..try tmp.dir.realPath(testing.io, &path_buf)];
     try skillFile(tmp, "pdf", "---\ndescription: Handle PDFs\n---\nBody.\n");
     const root = try commands.sessionCreate(&f.engine, a, .{ .workspace_path = workspace, .model = "test/model" });

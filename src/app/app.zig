@@ -48,7 +48,7 @@ pub const App = struct {
         const data_dir = (try resolveDataDir(gpa, io, context.env)) orelse return error.NoStateDirectory;
         defer gpa.free(data_dir);
 
-        const db_path = try std.fs.path.joinZ(gpa, &.{ data_dir, paths.db_file });
+        const db_path = try std.Io.Dir.path.joinZ(gpa, &.{ data_dir, paths.db_file });
         defer gpa.free(db_path);
         const blob_dir = try paths.blobDirIn(gpa, data_dir);
         errdefer gpa.free(blob_dir);
@@ -73,7 +73,7 @@ pub const App = struct {
         self.store.path = try configFilePath(gpa, context.env, "providers.json");
         if (self.store.path != null) {
             // The lock is machine state, so it lives beside the store and never in a dotfiles config tree.
-            self.store.lock_path = try std.fs.path.join(gpa, &.{ data_dir, paths.providers_lock_file });
+            self.store.lock_path = try std.Io.Dir.path.join(gpa, &.{ data_dir, paths.providers_lock_file });
             // An absent or empty file installs an empty layer, which every reader treats like none.
             _ = try self.store.reload();
             std.log.info("loaded {d} provider(s) from providers.json", .{self.store.local.?.providers.len});
@@ -150,7 +150,7 @@ pub const App = struct {
 fn configFilePath(gpa: std.mem.Allocator, env: *const std.process.Environ.Map, name: []const u8) !?[]u8 {
     const base = try paths.configDir(gpa, env) orelse return null;
     defer gpa.free(base);
-    return try std.fs.path.join(gpa, &.{ base, name });
+    return try std.Io.Dir.path.join(gpa, &.{ base, name });
 }
 
 /// Resolve and create the data directory, or null when no path exists. The caller owns it.
@@ -188,7 +188,7 @@ test "no base for the store stops startup, and an absolute XDG base opens it wit
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const root = buf[0..try tmp.dir.realPath(testing.io, &buf)];
     var xdg: std.process.Environ.Map = .init(testing.allocator);
     defer xdg.deinit();
@@ -203,7 +203,7 @@ test "a catalog replacement announces the merged revision" {
     defer rt.deinit();
     var blobs = testing.tmpDir(.{});
     defer blobs.cleanup();
-    var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
+    var blob_dir: [std.Io.Dir.max_path_bytes]u8 = undefined;
     var runtime: App = undefined;
     try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], test_transport.transport(), execution.testContext(&test_env));
     defer runtime.deinit();

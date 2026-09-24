@@ -262,7 +262,7 @@ test "a request reaches a command and answers with its result" {
     var canned = ai.testing.CannedTransport{ .bytes = ai.testing.canned_reply };
     var blobs = testing.tmpDir(.{});
     defer blobs.cleanup();
-    var blob_dir: [std.fs.max_path_bytes]u8 = undefined;
+    var blob_dir: [std.Io.Dir.max_path_bytes]u8 = undefined;
     var runtime: app.App = undefined;
     try app_fixture.init(&runtime, testing.allocator, rt.io(), blob_dir[0..try blobs.dir.realPath(testing.io, &blob_dir)], canned.transport(), execution.testContext(&env));
     defer runtime.deinit();

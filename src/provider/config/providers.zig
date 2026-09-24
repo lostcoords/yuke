@@ -228,8 +228,8 @@ pub fn serialize(gpa: Allocator, providers: []const LocalProvider) ![]u8 {
 
 /// Replace the absolute `path` with `bytes` after the caller renders and validates the document; create the parent directory when absent so a first write on a clean machine works.
 pub fn writeFileBytes(io: std.Io, path: []const u8, bytes: []const u8) !void {
-    const parent = std.fs.path.dirname(path) orelse return error.BadPath;
-    const name = std.fs.path.basename(path);
+    const parent = std.Io.Dir.path.dirname(path) orelse return error.BadPath;
+    const name = std.Io.Dir.path.basename(path);
     if (name.len == 0) return error.BadPath;
 
     const permissions: std.Io.File.Permissions = if (builtin.os.tag == .windows)
@@ -710,7 +710,7 @@ test "the writer round-trips the layer through the file schema" {
     );
     defer loaded.deinit();
 
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const path = try tmpPath(&tmp, &path_buf);
     try write(testing.allocator, io, path, loaded.providers);
 
@@ -742,7 +742,7 @@ test "the written file is private" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     try write(testing.allocator, io, try tmpPath(&tmp, &path_buf), &.{});
     const file = try tmp.dir.openFile(io, "providers.json", .{});
     defer file.close(io);

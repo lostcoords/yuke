@@ -249,7 +249,7 @@ const Probe = struct {
     runtime: App = undefined,
     env: std.process.Environ.Map,
     blobs: testing.TmpDir = undefined,
-    blob_dir: [std.fs.max_path_bytes]u8 = undefined,
+    blob_dir: [std.Io.Dir.max_path_bytes]u8 = undefined,
     slot: *login_runtime.LoginSlot = undefined,
     canned: oauth.CannedHttp,
     transport: ai.testing.CannedTransport = .{ .bytes = ai.testing.canned_reply },
@@ -381,7 +381,7 @@ test "an approved codex login stores the grant" {
     // The grant lands in a file, so the store needs a path the writer can create.
     var dir_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dir = dir_buf[0..try tmp.dir.realPath(rt.io(), &dir_buf)];
-    probe.runtime.store.path = try std.fs.path.join(testing.allocator, &.{ dir, "providers.json" });
+    probe.runtime.store.path = try std.Io.Dir.path.join(testing.allocator, &.{ dir, "providers.json" });
     try probe.reserve("openai-codex", .codex);
 
     var task = try rt.spawn(Probe.driveTask, .{&probe});

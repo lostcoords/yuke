@@ -32,12 +32,12 @@ pub fn resolve(
 ) ResolveError![]u8 {
     if (name.len == 0) return error.EmptyPath;
     if (isBaked(name)) return allocator.dupe(u8, name) catch unreachable;
-    if (std.fs.path.isAbsolute(name)) return std.fs.path.resolve(allocator, &.{name}) catch unreachable;
+    if (std.Io.Dir.path.isAbsolute(name)) return std.Io.Dir.path.resolve(allocator, &.{name}) catch unreachable;
 
     if (base.len == 0) return error.MissingBase;
     if (isBaked(base)) return error.MissingBase;
-    const dir = std.fs.path.dirname(base) orelse return error.MissingBase;
-    return std.fs.path.resolve(allocator, &.{ dir, name }) catch unreachable;
+    const dir = std.Io.Dir.path.dirname(base) orelse return error.MissingBase;
+    return std.Io.Dir.path.resolve(allocator, &.{ dir, name }) catch unreachable;
 }
 
 pub const Loader = struct {
@@ -78,7 +78,7 @@ pub const Loader = struct {
 
     /// Read a module file the caller frees, or null when it is absent, too large, or unreadable.
     pub fn readModule(self: *Loader, path: []const u8) ?[:0]u8 {
-        if (!std.fs.path.isAbsolute(path)) return null;
+        if (!std.Io.Dir.path.isAbsolute(path)) return null;
         var file = std.Io.Dir.openFileAbsolute(self.io, path, .{}) catch return null;
         defer file.close(self.io);
         // Read to the end instead of to a stat size, so a file that grows cannot yield a prefix.
@@ -107,7 +107,7 @@ fn read(ctx: quickjs.Context, bytecode: []const u8) ?quickjs.Context.Module {
 }
 
 fn compile(ctx: quickjs.Context, source: [:0]const u8, name: []const u8) ?quickjs.Context.Module {
-    var name_z: [std.fs.max_path_bytes]u8 = undefined;
+    var name_z: [std.Io.Dir.max_path_bytes]u8 = undefined;
     if (name.len >= name_z.len) return null;
     @memcpy(name_z[0..name.len], name);
     name_z[name.len] = 0;
@@ -150,7 +150,7 @@ test "the facade name is reserved and never reaches the config directory" {
     // A longer name that only starts with the facade name stays an ordinary relative import.
     const other = try resolve(gpa, "/cfg/index.js", "yukebox");
     defer gpa.free(other);
-    const expected = try std.fs.path.resolve(gpa, &.{ "/cfg", "yukebox" });
+    const expected = try std.Io.Dir.path.resolve(gpa, &.{ "/cfg", "yukebox" });
     defer gpa.free(expected);
     try std.testing.expectEqualStrings(expected, other);
 }
@@ -165,7 +165,7 @@ test "resolve joins a relative import, leaves the config directory, and keeps an
         errdefer std.debug.print("case: {s} + {s}\n", .{ case.base, case.name });
         const got = try resolve(gpa, case.base, case.name);
         defer gpa.free(got);
-        const want = try std.fs.path.resolve(gpa, case.want);
+        const want = try std.Io.Dir.path.resolve(gpa, case.want);
         defer gpa.free(want);
         try std.testing.expectEqualStrings(want, got);
     }

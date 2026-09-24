@@ -62,14 +62,14 @@ fn run(init: std.process.Init) !void {
         const bytecode = try ctx.writeObject(module, .{ .bytecode = true, .strip_source = true });
         defer ctx.free(bytecode.ptr);
         const file = try std.fmt.allocPrint(a, "{d}.qbc", .{k});
-        try cwd.writeFile(init.io, .{ .sub_path = try std.fs.path.join(a, &.{ out_dir, file }), .data = bytecode });
+        try cwd.writeFile(init.io, .{ .sub_path = try std.Io.Dir.path.join(a, &.{ out_dir, file }), .data = bytecode });
         try zig.writer.print("    .{{ .name = \"{s}\", .bytecode = @embedFile(\"{s}\") }},\n", .{ name, file });
     }
     try zig.writer.writeAll("};\n\n/// The native modules a host installs. The bake accepts an import of these names and no other.\npub const native = [_][]const u8{\n");
     var names = std.mem.splitScalar(u8, native, ',');
     while (names.next()) |name| try zig.writer.print("    \"{s}\",\n", .{name});
     try zig.writer.writeAll("};\n");
-    try cwd.writeFile(init.io, .{ .sub_path = try std.fs.path.join(a, &.{ out_dir, "baked.zig" }), .data = zig.written() });
+    try cwd.writeFile(init.io, .{ .sub_path = try std.Io.Dir.path.join(a, &.{ out_dir, "baked.zig" }), .data = zig.written() });
 
     var it = compiler.modules.valueIterator();
     while (it.next()) |module| ctx.freeValue(module.*);

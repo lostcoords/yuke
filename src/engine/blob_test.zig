@@ -17,7 +17,7 @@ const vision: ai.Modalities = .{ .input = &.{ .text, .image } };
 /// Write an image under the blob test directory and put it. The path is absolute.
 fn putImage(f: *Fixture, name: []const u8, data: []const u8) !proto.content.MediaBlob {
     try f.resources.blobs.dir.writeFile(testing.io, .{ .sub_path = name, .data = data });
-    const path = try std.fs.path.join(f.arena.allocator(), &.{ f.resources.blob_dir, name });
+    const path = try std.Io.Dir.path.join(f.arena.allocator(), &.{ f.resources.blob_dir, name });
     return commands.blobPut(&f.engine, f.arena.allocator(), .{ .path = path });
 }
 

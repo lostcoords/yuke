@@ -26,7 +26,7 @@ const Fixture = struct {
         errdefer self.tmp.cleanup();
         try self.resources.init();
         errdefer self.resources.deinit();
-        var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+        var root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const root = root_buf[0..try self.tmp.dir.realPath(testing.io, &root_buf)];
         const path = try std.fmt.allocPrintSentinel(testing.allocator, "{s}/yuke.db", .{root}, 0);
         defer testing.allocator.free(path);

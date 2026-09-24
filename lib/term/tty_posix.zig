@@ -109,7 +109,7 @@ fn devicePath(buf: *[posix.PATH_MAX]u8) ?[]const u8 {
         if (posix.errno(rc) != .SUCCESS) continue;
         const path = std.mem.sliceTo(buf, 0);
         // A caller can redirect a standard stream from `/dev/tty`; that name is the one to avoid.
-        if (!std.fs.path.isAbsolute(path) or std.mem.eql(u8, path, "/dev/tty")) continue;
+        if (!std.Io.Dir.path.isAbsolute(path) or std.mem.eql(u8, path, "/dev/tty")) continue;
         return path;
     }
     return null;

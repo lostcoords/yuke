@@ -13,7 +13,7 @@ pub const Logs = struct {
         std.debug.assert(name.len > 0 and std.mem.indexOfScalar(u8, name, '/') == null);
         if (self.dir == null) {
             const tmp = env.get("TMPDIR") orelse "/tmp";
-            const base = if (std.fs.path.isAbsolute(tmp)) std.mem.trimEnd(u8, tmp, "/") else "/tmp";
+            const base = if (std.Io.Dir.path.isAbsolute(tmp)) std.mem.trimEnd(u8, tmp, "/") else "/tmp";
             var random: [4]u8 = undefined;
             io.random(&random);
             const dir = std.fmt.allocPrint(gpa, "{s}/yuke-{d}-{x}", .{ base, std.c.getpid(), std.mem.readInt(u32, &random, .little) }) catch unreachable;

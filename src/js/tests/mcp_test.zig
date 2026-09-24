@@ -11,7 +11,7 @@ const Fixture = struct {
     rt: *zio.Runtime,
     host: *Host,
     tmp: std.testing.TmpDir,
-    root_buf: [std.fs.max_path_bytes]u8,
+    root_buf: [std.Io.Dir.max_path_bytes]u8,
     root_len: usize,
     env: std.process.Environ.Map,
     /// The loopback MCP peer of the HTTP case.

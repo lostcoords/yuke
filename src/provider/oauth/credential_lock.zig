@@ -20,7 +20,7 @@ pub fn acquire(io: std.Io, lock_path: []const u8) !?CredentialLock {
 /// Take the lock with the given wait bound. A test waits a short bound where a refresh waits the full one.
 fn acquireFor(io: std.Io, lock_path: []const u8, wait: u64) !?CredentialLock {
     std.debug.assert(wait >= retry_ms);
-    std.debug.assert(std.fs.path.isAbsolute(lock_path));
+    std.debug.assert(std.Io.Dir.path.isAbsolute(lock_path));
 
     const file = try std.Io.Dir.createFileAbsolute(io, lock_path, .{
         .truncate = false,
@@ -52,9 +52,9 @@ test "one holder blocks a second acquire and a release lets it through" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const len = try tmp.dir.realPath(io, &buf);
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const path = try std.fmt.bufPrint(&path_buf, "{s}/providers.lock", .{buf[0..len]});
 
     const first = (try acquire(io, path)) orelse return; // no locks here

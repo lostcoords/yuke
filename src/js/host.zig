@@ -830,7 +830,7 @@ test "user files can import public entries but cannot import cached internal mod
     defer host.destroy();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "public.js", .data =
         \\import { fs, plugins } from "yuke";
@@ -842,19 +842,19 @@ test "user files can import public entries but cannot import cached internal mod
         \\  && typeof agents === "function" && typeof composerVim.apply === "function"
         \\  && typeof transcriptVim.apply === "function" && plugins.names().length === 0;
     });
-    const public_path = try std.fs.path.joinZ(std.testing.allocator, &.{ root, "public.js" });
+    const public_path = try std.Io.Dir.path.joinZ(std.testing.allocator, &.{ root, "public.js" });
     defer std.testing.allocator.free(public_path);
     try std.testing.expect(try host.evalFile(public_path));
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.publicOK"));
 
-    const private_path = try std.fs.path.joinZ(std.testing.allocator, &.{ root, "private.js" });
+    const private_path = try std.Io.Dir.path.joinZ(std.testing.allocator, &.{ root, "private.js" });
     defer std.testing.allocator.free(private_path);
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "private.js", .data = "export { fs } from 'yuke:fs';" });
     try std.testing.expectError(error.JavaScriptFault, host.evalFile(private_path));
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "internal yuke module") != null);
     try std.testing.expectError(error.JavaScriptFault, host.evalModule("import './private.js';", public_path));
 
-    const dynamic_path = try std.fs.path.joinZ(std.testing.allocator, &.{ root, "dynamic.js" });
+    const dynamic_path = try std.Io.Dir.path.joinZ(std.testing.allocator, &.{ root, "dynamic.js" });
     defer std.testing.allocator.free(dynamic_path);
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "dynamic.js", .data =
         \\globalThis.loadPrivate = () => import("yuke:core");
@@ -924,14 +924,14 @@ test "import a file beside the entry" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "util.js", .data = "export const n = 9;\n" });
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
 
     const host = support.createHost();
     defer support.destroyHost(host);
 
-    var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var entry_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});
     try host.evalModule("import { n } from './util.js'; globalThis.result = n;", entry);
     try std.testing.expectEqual(@as(i32, 9), try host.evalInt("globalThis.result"));
@@ -944,18 +944,18 @@ test "a file outside the entry directory loads" {
     defer outside.cleanup();
     try outside.dir.writeFile(std.testing.io, .{ .sub_path = "shared.js", .data = "export const n = 4;\n" });
 
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const root_len = try inside.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
-    var shared_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var shared_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const shared_len = try outside.dir.realPathFile(std.testing.io, "shared.js", &shared_buf);
     const shared = shared_buf[0..shared_len];
 
     const host = support.createHost();
     defer support.destroyHost(host);
-    var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var entry_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});
-    var src_buf: [std.fs.max_path_bytes + 64]u8 = undefined;
+    var src_buf: [std.Io.Dir.max_path_bytes + 64]u8 = undefined;
     const src = try std.fmt.bufPrintZ(&src_buf, "import {{ n }} from '{s}'; globalThis.result = n;", .{shared});
     try host.evalModule(src, entry);
     try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.result"));
@@ -968,7 +968,7 @@ test "an oversize module file does not load" {
         .sub_path = "big.js",
         .data = "export const n = 1;\n",
     });
-    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
     const root = root_buf[0..root_len];
 
@@ -976,7 +976,7 @@ test "an oversize module file does not load" {
     defer _ = pool.deinit();
     const host = Host.createWith(pool.allocator(), std.testing.io, .{ .max_file_bytes = 8, .cwd = "", .execution = support.hostOptions("").execution });
     defer host.destroy();
-    var entry_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var entry_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});
     try std.testing.expectError(
         error.JavaScriptFault,

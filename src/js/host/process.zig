@@ -103,7 +103,7 @@ const Drain = struct {
         const trimmed = (self.head.items.len - head.len) + tail_start;
         const notice = if (gap) std.fmt.bufPrint(joined[head.len..][0..max_notice], notice_format, .{self.dropped + trimmed}) catch unreachable else "";
         const tail_at = head.len + notice.len;
-        std.mem.copyForwards(u8, joined[tail_at..][0..tail.len], tail);
+        @memmove(joined[tail_at..][0..tail.len], tail);
         return joined[0 .. tail_at + tail.len];
     }
 };
@@ -111,7 +111,7 @@ const Drain = struct {
 /// Run `spec` and return its output. It returns an error rather than an assertion, because `spec` is validated tool input.
 pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: std.mem.Allocator, spec: Spec) h.HostError!Result {
     if (spec.timeout_ms == 0 or spec.max_stream_bytes == 0) return error.HostFailure;
-    std.debug.assert(std.fs.path.isAbsolute(context.shell.path));
+    std.debug.assert(std.Io.Dir.path.isAbsolute(context.shell.path));
     const cwd = try resolveCwd(scratch, root, context.env, spec.cwd);
 
     // A log that cannot open costs the log, not the command.
@@ -191,8 +191,8 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
 
 /// Spawn `argv` as the leader of a new session with no terminal. A null `stdin` reads `/dev/null`. std has no session flag yet, so libc does it.
 fn spawnArgv(scratch: std.mem.Allocator, env: *const std.process.Environ.Map, argv: []const []const u8, cwd: []const u8, stdin: ?std.posix.fd_t, stdout: std.posix.fd_t, stderr: std.posix.fd_t) h.HostError!std.process.Child {
-    std.debug.assert(argv.len > 0 and std.fs.path.isAbsolute(argv[0]));
-    std.debug.assert(std.fs.path.isAbsolute(cwd));
+    std.debug.assert(argv.len > 0 and std.Io.Dir.path.isAbsolute(argv[0]));
+    std.debug.assert(std.Io.Dir.path.isAbsolute(cwd));
     // A `dup2` onto its own number keeps CLOEXEC, so every source must sit above the standard streams.
     std.debug.assert(stdout > std.posix.STDERR_FILENO and stderr > std.posix.STDERR_FILENO);
     if (stdin) |fd| std.debug.assert(fd > std.posix.STDERR_FILENO);
@@ -260,7 +260,7 @@ pub fn startProgram(io: std.Io, root: []const u8, env: *const std.process.Enviro
 
     switch (output) {
         .log => |path| {
-            std.debug.assert(std.fs.path.isAbsolute(path));
+            std.debug.assert(std.Io.Dir.path.isAbsolute(path));
             const file = std.Io.Dir.createFileAbsolute(io, path, .{}) catch return error.HostFailure;
             errdefer std.Io.Dir.deleteFileAbsolute(io, path) catch {};
             const fd = try aboveStdio(file.handle);
@@ -294,7 +294,7 @@ fn resolveProgram(io: std.Io, scratch: std.mem.Allocator, env: *const std.proces
 
 /// Answer the absolute path of `name` under `entry` when it is an executable regular file.
 fn executable(io: std.Io, scratch: std.mem.Allocator, dir: []const u8, entry: []const u8, name: []const u8) ?[]const u8 {
-    const path = std.fs.path.resolve(scratch, &.{ dir, entry, name }) catch return null;
+    const path = std.Io.Dir.path.resolve(scratch, &.{ dir, entry, name }) catch return null;
     const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch return null;
     if (stat.kind != .file) return null;
     std.Io.Dir.accessAbsolute(io, path, .{ .execute = true }) catch return null;
@@ -528,7 +528,7 @@ fn runShell(a: std.mem.Allocator, command: []const u8, timeout_ms: u32) !Result 
 test "the runner spawns the shell it receives and gives it the command" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const root = buf[0..try tmp.dir.realPath(testing.io, &buf)];
     // A fixture stands in for a shell, so this proves the argument vector without naming a real one.
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "fake-shell", .data = "#!/bin/sh\necho \"ran $0 with $1 $2\"\n" });
@@ -537,7 +537,7 @@ test "the runner spawns the shell it receives and gives it the command" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const fake = try std.fs.path.join(a, &.{ root, "fake-shell" });
+    const fake = try std.Io.Dir.path.join(a, &.{ root, "fake-shell" });
     const res = try run(testing.io, root, .{ .env = &test_env, .shell = .{ .path = fake } }, a, .{
         .command = "MARKER",
         .timeout_ms = 10_000,
@@ -575,7 +575,7 @@ test "the child reads the environment Yuke resolved, not the one Yuke inherited"
 test "git reads the global configuration from the home directory Yuke resolved" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const home = buf[0..try tmp.dir.realPath(testing.io, &buf)];
     try tmp.dir.writeFile(testing.io, .{
         .sub_path = ".gitconfig",
@@ -785,7 +785,7 @@ test "a tilde cwd without a home directory fails instead of running somewhere el
 test "exec expands a leading tilde in cwd like the file tools" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const home = buf[0..try tmp.dir.realPath(testing.io, &buf)];
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "marker.txt", .data = "found\n" });
 
@@ -835,7 +835,7 @@ test "exec ends a process that left the session after one grace period" {
 test "a cut stream keeps the whole output in the log, and an uncut run deletes it" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const root = buf[0..try tmp.dir.realPath(testing.io, &buf)];
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -843,7 +843,7 @@ test "a cut stream keeps the whole output in the log, and an uncut run deletes i
     var env = try utilityEnv();
     defer env.deinit();
 
-    const cut_path = try std.fs.path.join(a, &.{ root, "cut.log" });
+    const cut_path = try std.Io.Dir.path.join(a, &.{ root, "cut.log" });
     const cut = try run(testing.io, root, execution.testContext(&env), a, .{ .command = "head -c 1000 /dev/zero | tr '\\0' x; echo tail 1>&2", .timeout_ms = 10_000, .max_stream_bytes = 64, .log = cut_path });
     try testing.expect(cut.stdout_dropped > 0);
     try testing.expectEqualStrings(cut_path, cut.log.?);
@@ -851,7 +851,7 @@ test "a cut stream keeps the whole output in the log, and an uncut run deletes i
     try testing.expectEqual(@as(usize, 1005), logged.len);
     try testing.expect(std.mem.indexOf(u8, logged, "tail\n") != null);
 
-    const whole_path = try std.fs.path.join(a, &.{ root, "whole.log" });
+    const whole_path = try std.Io.Dir.path.join(a, &.{ root, "whole.log" });
     const whole = try run(testing.io, root, execution.testContext(&env), a, .{ .command = "echo short", .timeout_ms = 10_000, .max_stream_bytes = 64, .log = whole_path });
     try testing.expect(whole.log == null);
     try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "whole.log", .{}));

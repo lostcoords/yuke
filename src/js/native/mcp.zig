@@ -35,7 +35,7 @@ fn jsConfigPath(ctx: Context, _: Value, _: []const Value) Value {
     const host = Host.fromContext(ctx);
     const base = (paths.configDir(host.gpa, host.execution.env) catch return ctx.throwTypeError("the MCP config directory is invalid")) orelse return quickjs.UNDEFINED;
     defer host.gpa.free(base);
-    const path = std.fs.path.join(host.gpa, &.{ base, ".mcp.json" }) catch unreachable;
+    const path = std.Io.Dir.path.join(host.gpa, &.{ base, ".mcp.json" }) catch unreachable;
     defer host.gpa.free(path);
     return ctx.newString(path);
 }
@@ -48,13 +48,13 @@ const Record = struct {
     name: [64]u8,
 
     fn open(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, cwd: []const u8, scope: Scope, key: []const u8) !Record {
-        std.debug.assert(std.fs.path.isAbsolute(cwd));
+        std.debug.assert(std.Io.Dir.path.isAbsolute(cwd));
         std.debug.assert(key.len > 0);
         var arena: std.heap.ArenaAllocator = .init(gpa);
         errdefer arena.deinit();
         const alloc = arena.allocator();
         const base = (try paths.dataDir(alloc, env)) orelse return error.HomeUnavailable;
-        const path = try std.fs.path.join(alloc, &.{ base, @tagName(scope) });
+        const path = try std.Io.Dir.path.join(alloc, &.{ base, @tagName(scope) });
         var dir = try std.Io.Dir.cwd().createDirPathOpen(io, path, .{
             .permissions = .fromMode(0o700),
             .open_options = .{ .follow_symlinks = false },
@@ -67,7 +67,7 @@ const Record = struct {
         const workspace = try std.Io.Dir.realPathFileAbsoluteAlloc(io, cwd, alloc);
         const canonical = try dir.realPathFileAlloc(io, ".", alloc);
         if (std.mem.startsWith(u8, canonical, workspace) and
-            (canonical.len == workspace.len or workspace.len == 1 or canonical[workspace.len] == std.fs.path.sep))
+            (canonical.len == workspace.len or workspace.len == 1 or canonical[workspace.len] == std.Io.Dir.path.sep))
             return error.RecordInWorkspace;
         var hash: Sha256 = .init(.{});
         if (scope.perWorkspace()) {

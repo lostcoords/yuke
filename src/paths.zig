@@ -28,7 +28,7 @@ fn envNonEmpty(env: *const Map, key: []const u8) ?[]const u8 {
 /// Return the non-empty absolute value for `key`, or null; ignore relative values because the XDG specification requires an absolute base directory.
 fn envBasePath(env: *const Map, key: []const u8) ?[]const u8 {
     const value = envNonEmpty(env, key) orelse return null;
-    return if (std.fs.path.isAbsolute(value)) value else null;
+    return if (std.Io.Dir.path.isAbsolute(value)) value else null;
 }
 
 /// Return the user's home directory, or null when its variable is empty or relative, because a home directory is a base path.
@@ -63,7 +63,7 @@ fn joinUnder(alloc: std.mem.Allocator, env: *const Map, base: []const u8, mid: [
     for (mid, 0..) |segment, i| parts[1 + i] = segment;
     parts[1 + mid.len] = leaf;
 
-    return try std.fs.path.join(alloc, parts[0 .. 2 + mid.len]);
+    return try std.Io.Dir.path.join(alloc, parts[0 .. 2 + mid.len]);
 }
 
 /// Return the shared configuration directory from `APPDATA` on Windows, `XDG_CONFIG_HOME` elsewhere, or `~/.config` under home; return null without a base, return an error for an invalid profile, and let the caller free the result.
@@ -89,14 +89,14 @@ fn platformDir(alloc: std.mem.Allocator, env: *const Map, comptime windows_key: 
 /// Return the blob directory under `base`. The caller frees the result.
 pub fn blobDirIn(alloc: std.mem.Allocator, base: []const u8) ![]u8 {
     std.debug.assert(base.len != 0);
-    return std.fs.path.join(alloc, &.{ base, "blobs" });
+    return std.Io.Dir.path.join(alloc, &.{ base, "blobs" });
 }
 
 pub const ExpandError = error{HomeUnavailable} || std.mem.Allocator.Error;
 
 /// Expand a bare `~` or a `~/...` path against an absolute home directory, or return null when `path` starts with no such tilde.
 fn homeExpansion(alloc: std.mem.Allocator, env: *const Map, path: []const u8) ExpandError!?[]u8 {
-    const sep = std.fs.path.sep;
+    const sep = std.Io.Dir.path.sep;
     if (path.len == 0 or path[0] != '~') return null;
     if (path.len > 1 and path[1] != sep) return null; // `~alice` stays literal.
 
@@ -104,7 +104,7 @@ fn homeExpansion(alloc: std.mem.Allocator, env: *const Map, path: []const u8) Ex
     const home = homeDir(env) orelse return error.HomeUnavailable;
     const rest = std.mem.trimStart(u8, path[1..], &.{sep});
     if (rest.len == 0) return try alloc.dupe(u8, home);
-    return try std.fs.path.join(alloc, &.{ home, rest });
+    return try std.Io.Dir.path.join(alloc, &.{ home, rest });
 }
 
 /// Expand a leading `~` or copy the path into caller-owned memory.
@@ -117,8 +117,8 @@ pub fn anchorAt(alloc: std.mem.Allocator, env: *const Map, root: []const u8, pat
     const owned = try homeExpansion(alloc, env, path);
     defer if (owned) |o| alloc.free(o);
     const expanded = owned orelse path;
-    if (std.fs.path.isAbsolute(expanded)) return std.fs.path.resolve(alloc, &.{expanded});
-    return std.fs.path.resolve(alloc, &.{ root, expanded });
+    if (std.Io.Dir.path.isAbsolute(expanded)) return std.Io.Dir.path.resolve(alloc, &.{expanded});
+    return std.Io.Dir.path.resolve(alloc, &.{ root, expanded });
 }
 
 pub const WorkspaceError = error{RootNotAbsolute};
@@ -128,9 +128,9 @@ pub fn canonicalizeWorkspace(alloc: std.mem.Allocator, env: *const Map, path: []
     const owned = try homeExpansion(alloc, env, path);
     defer if (owned) |o| alloc.free(o);
     const expanded = owned orelse path;
-    const resolved = try std.fs.path.resolve(alloc, &.{expanded});
+    const resolved = try std.Io.Dir.path.resolve(alloc, &.{expanded});
     errdefer alloc.free(resolved);
-    if (!std.fs.path.isAbsolute(resolved)) return WorkspaceError.RootNotAbsolute;
+    if (!std.Io.Dir.path.isAbsolute(resolved)) return WorkspaceError.RootNotAbsolute;
     return resolved;
 }
 

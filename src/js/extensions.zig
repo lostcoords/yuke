@@ -62,7 +62,7 @@ pub const user_entry = "index.js";
 /// Evaluate `<config_dir>/index.js`; an absent file is valid.
 pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
     const dir = config_dir orelse return;
-    const path = std.fs.path.joinZ(host.gpa, &.{ dir, user_entry }) catch unreachable;
+    const path = std.Io.Dir.path.joinZ(host.gpa, &.{ dir, user_entry }) catch unreachable;
     defer host.gpa.free(path);
     errdefer {
         const fault = host.fault_text;
@@ -95,7 +95,7 @@ const kernel_boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";";
 pub const Fixture = struct {
     gpa: support.Pool,
     tmp: std.testing.TmpDir,
-    root_buf: [std.fs.max_path_bytes]u8,
+    root_buf: [std.Io.Dir.max_path_bytes]u8,
     reactor: *zio.Runtime,
     env: std.process.Environ.Map,
     canned: ai.testing.CannedTransport,
@@ -455,7 +455,7 @@ test "a user entry file evaluates and a missing one is not an error" {
         .sub_path = user_entry,
         .data = "globalThis.result = 5;\n",
     });
-    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var dir_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
     const dir = dir_buf[0..dir_len];
 
@@ -467,7 +467,7 @@ test "a user entry file evaluates and a missing one is not an error" {
     try evalUserEntry(host, null);
     var empty = std.testing.tmpDir(.{});
     defer empty.cleanup();
-    var empty_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var empty_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const empty_len = try empty.dir.realPath(std.testing.io, &empty_buf);
     try evalUserEntry(host, empty_buf[0..empty_len]);
 }
@@ -479,7 +479,7 @@ test "a throwing user entry is a JavaScriptFault the loop absorbs" {
         .sub_path = user_entry,
         .data = "throw new Error('bad config');\n",
     });
-    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var dir_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
 
     const host = support.createHost();
@@ -710,7 +710,7 @@ test "entry failure drains partial startup and preserves an independent plugin" 
         \\  throw new Error("startup failure");
         \\} });
     });
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dir = buf[0..try tmp.dir.realPath(std.testing.io, &buf)];
     const host = support.createHostWith(reactor.io(), dir);
     defer support.destroyHost(host);
@@ -731,7 +731,7 @@ test "entry reports a plugin failure after immediate async cleanup" {
         \\import { plugins } from "yuke";
         \\plugins.use({ name: "failed", async apply() { throw new Error("immediate failure"); } });
     });
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dir = buf[0..try tmp.dir.realPath(std.testing.io, &buf)];
     const host = support.createHostWith(reactor.io(), dir);
     defer support.destroyHost(host);

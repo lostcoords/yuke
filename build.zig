@@ -340,7 +340,7 @@ fn addBakedModules(b: *std.Build, quickjs: *std.Build.Module, optimize: std.buil
     const out = run.addOutputDirectoryArg("baked");
     run.addArg(native_js);
     for (listFiles(b, "src/js/app", ".js")) |file| {
-        const stem = std.fs.path.stem(file);
+        const stem = std.Io.Dir.path.stem(file);
         const name = if (std.mem.eql(u8, stem, "facade"))
             "yuke"
         else if (std.mem.eql(u8, stem, "public-ui"))

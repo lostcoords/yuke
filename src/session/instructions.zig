@@ -12,9 +12,9 @@ pub const Snapshot = struct {
 };
 
 pub fn load(arena: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map, workspace: []const u8, diagnostic: ?*?[]const u8) ![]const Snapshot {
-    std.debug.assert(std.fs.path.isAbsolute(workspace));
-    const global = if (paths.homeDir(env)) |home| try std.fs.path.join(arena, &.{ home, ".agents", "AGENTS.md" }) else null;
-    const local = try std.fs.path.join(arena, &.{ workspace, "AGENTS.md" });
+    std.debug.assert(std.Io.Dir.path.isAbsolute(workspace));
+    const global = if (paths.homeDir(env)) |home| try std.Io.Dir.path.join(arena, &.{ home, ".agents", "AGENTS.md" }) else null;
+    const local = try std.Io.Dir.path.join(arena, &.{ workspace, "AGENTS.md" });
     var result: [2]Snapshot = undefined;
     var count: usize = 0;
     candidates: for ([_]?[]const u8{ global, local }, [_]proto.instructions.InstructionScope{ .global, .workspace }) |candidate, scope| {
@@ -66,10 +66,10 @@ test "instruction roots preserve literal text and omit nested files" {
     defer tmp.cleanup();
     try tmp.dir.createDirPath(std.testing.io, "home/.agents");
     try tmp.dir.createDirPath(std.testing.io, "work/nested");
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const root = path_buf[0..try tmp.dir.realPath(std.testing.io, &path_buf)];
-    const home = try std.fs.path.join(scratch, &.{ root, "home" });
-    const workspace = try std.fs.path.join(scratch, &.{ root, "work" });
+    const home = try std.Io.Dir.path.join(scratch, &.{ root, "home" });
+    const workspace = try std.Io.Dir.path.join(scratch, &.{ root, "work" });
     var env: std.process.Environ.Map = .init(a);
     defer env.deinit();
     try env.put(if (builtin.os.tag == .windows) "USERPROFILE" else "HOME", home);
@@ -109,15 +109,15 @@ test "instruction symlinks share one snapshot and can leave the workspace" {
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "shared.md", .data = "shared instructions" });
     try tmp.dir.symLink(std.testing.io, "../../shared.md", "home/.agents/AGENTS.md", .{});
     try tmp.dir.symLink(std.testing.io, "../shared.md", "work/AGENTS.md", .{});
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const root = path_buf[0..try tmp.dir.realPath(std.testing.io, &path_buf)];
     var env: std.process.Environ.Map = .init(std.testing.allocator);
     defer env.deinit();
-    try env.put(if (builtin.os.tag == .windows) "USERPROFILE" else "HOME", try std.fs.path.join(a, &.{ root, "home" }));
-    const snapshots = try load(a, std.testing.io, &env, try std.fs.path.join(a, &.{ root, "work" }), null);
+    try env.put(if (builtin.os.tag == .windows) "USERPROFILE" else "HOME", try std.Io.Dir.path.join(a, &.{ root, "home" }));
+    const snapshots = try load(a, std.testing.io, &env, try std.Io.Dir.path.join(a, &.{ root, "work" }), null);
     try std.testing.expectEqual(@as(usize, 1), snapshots.len);
     try std.testing.expectEqual(.workspace, snapshots[0].source.scope);
-    try std.testing.expectEqualStrings(try std.fs.path.join(a, &.{ root, "shared.md" }), snapshots[0].source.canonical_path);
+    try std.testing.expectEqualStrings(try std.Io.Dir.path.join(a, &.{ root, "shared.md" }), snapshots[0].source.canonical_path);
     try std.testing.expectEqualStrings("shared instructions", snapshots[0].text);
 }
 
@@ -127,7 +127,7 @@ test "invalid instruction sources report their path" {
     const a = arena.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const root = path_buf[0..try tmp.dir.realPath(std.testing.io, &path_buf)];
     var env: std.process.Environ.Map = .init(std.testing.allocator);
     defer env.deinit();

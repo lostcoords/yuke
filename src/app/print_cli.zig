@@ -367,7 +367,7 @@ const App = @import("app.zig").App;
 /// One headless print host over a canned provider, with a key in the environment so a model resolves.
 const Fixture = struct {
     tmp: std.testing.TmpDir,
-    root_buf: [std.fs.max_path_bytes]u8,
+    root_buf: [std.Io.Dir.max_path_bytes]u8,
     root: []const u8,
     reactor: *zio.Runtime,
     env: std.process.Environ.Map,

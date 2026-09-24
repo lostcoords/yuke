@@ -72,8 +72,8 @@ pub const LocalHost = struct {
     pub fn writeFile(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, content: []const u8) h.HostError!void {
         const full = self.resolve(scratch, path) catch |err| return mapError(err);
         // The root has no parent and names a directory, so it can never accept a write.
-        const parent = std.fs.path.dirname(full) orelse return error.NotAFile;
-        const base = std.fs.path.basename(full);
+        const parent = std.Io.Dir.path.dirname(full) orelse return error.NotAFile;
+        const base = std.Io.Dir.path.basename(full);
         if (base.len == 0) return error.NotAFile;
 
         var dir = std.Io.Dir.cwd().openDir(self.io, parent, .{}) catch |err| return mapError(err);
@@ -377,7 +377,7 @@ const test_limits: h.ReadLimits = .{ .max_lines = 2000, .max_line_bytes = 64, .m
 const Fixture = struct {
     tmp: testing.TmpDir,
     arena: std.heap.ArenaAllocator,
-    root_buf: [std.fs.max_path_bytes]u8 = undefined,
+    root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined,
     root_len: usize = 0,
 
     fn init(self: *Fixture, data: []const u8) !void {
@@ -403,7 +403,7 @@ test "LocalHost detects image headers before a range and without a file extensio
         defer f.deinit();
         var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
         const got = try local.readRange(f.arena.allocator(), "a.txt", .{ .start = 2, .end = 2 }, test_limits);
-        try testing.expectEqualStrings(try std.fs.path.join(f.arena.allocator(), &.{ local.root, "a.txt" }), got.image);
+        try testing.expectEqualStrings(try std.Io.Dir.path.join(f.arena.allocator(), &.{ local.root, "a.txt" }), got.image);
     }
 }
 
@@ -570,13 +570,13 @@ test "LocalHost does not confine reads to the workspace" {
     var other = testing.tmpDir(.{});
     defer other.cleanup();
     try other.dir.writeFile(testing.io, .{ .sub_path = "outside.txt", .data = "secret\n" });
-    var other_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var other_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const other_root = other_buf[0..try other.dir.realPath(testing.io, &other_buf)];
 
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const outside = try std.fs.path.join(a, &.{ other_root, "outside.txt" });
+    const outside = try std.Io.Dir.path.join(a, &.{ other_root, "outside.txt" });
     var local: LocalHost = .{ .io = testing.io, .root = f.root_buf[0..f.root_len], .env = &test_env };
     // An absolute path outside the workspace reads freely (no confinement).
     const got = try local.readRange(a, outside, .{}, test_limits);
@@ -670,7 +670,7 @@ test "LocalHost writeFile and removeFile refuse a target that is not a regular f
 /// Build a directory tree for the directory-page tests. The fixture holds the root path.
 const TreeFixture = struct {
     tmp: testing.TmpDir,
-    root_buf: [std.fs.max_path_bytes]u8 = undefined,
+    root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined,
     root_len: usize = 0,
 
     fn init(self: *TreeFixture, dirs: []const []const u8, files: []const []const u8) !void {

@@ -36,11 +36,11 @@ pub const Engine = struct {
     /// The facts that named no session. A plugin reads them beside the index change.
     index_facts: FactSet = .initEmpty(),
     /// The auth events since the last drain, as JSON. A fact name alone cannot carry a login outcome.
-    index_auth: std.ArrayListUnmanaged(Note) = .empty,
+    index_auth: std.ArrayList(Note) = .empty,
     /// The notices since the last drain, as JSON. A fact name alone cannot carry the message.
-    index_notices: std.ArrayListUnmanaged(Note) = .empty,
+    index_notices: std.ArrayList(Note) = .empty,
     /// Every session removed since the last drain. The dirty set can overflow, but a removal must still stop the jobs of its session.
-    removed: std.ArrayListUnmanaged(SessionId) = .empty,
+    removed: std.ArrayList(SessionId) = .empty,
     /// Set when the dirty set overflowed; `drain` then reports an index change, so no lost event leaves a stale view.
     dirty_overflow: bool = false,
     /// The owner sleeps until this fires. An engine task sets it so a change reaches the next frame.
@@ -330,7 +330,7 @@ fn emitIndex(engine: *Engine, ctx: Context, facts: FactSet, auth: []const Note, 
 }
 
 /// Free the owned serialized entries in one queue.
-fn freeNotes(gpa: std.mem.Allocator, list: *std.ArrayListUnmanaged(Note)) void {
+fn freeNotes(gpa: std.mem.Allocator, list: *std.ArrayList(Note)) void {
     for (list.items) |note| gpa.free(note);
     list.deinit(gpa);
 }

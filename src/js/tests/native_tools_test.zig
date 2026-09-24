@@ -18,7 +18,7 @@ const ReactorHost = struct {
     host: *Host,
     cwd: []const u8,
     tmp: ?std.testing.TmpDir = null,
-    root_buf: ?*[std.fs.max_path_bytes]u8 = null,
+    root_buf: ?*[std.Io.Dir.max_path_bytes]u8 = null,
     root_len: usize = 0,
 
     fn init(cwd: []const u8) !@This() {
@@ -30,7 +30,7 @@ const ReactorHost = struct {
     fn initTmp(cwd: ?[]const u8) !@This() {
         var self: @This() = .{ .rt = undefined, .host = undefined, .cwd = undefined, .tmp = std.testing.tmpDir(.{}) };
         errdefer self.tmp.?.cleanup();
-        self.root_buf = try std.testing.allocator.create([std.fs.max_path_bytes]u8);
+        self.root_buf = try std.testing.allocator.create([std.Io.Dir.max_path_bytes]u8);
         errdefer std.testing.allocator.destroy(self.root_buf.?);
         self.root_len = try self.tmp.?.dir.realPath(std.testing.io, self.root_buf.?);
         self.cwd = cwd orelse self.root_buf.?[0..self.root_len];

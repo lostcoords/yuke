@@ -593,7 +593,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     const id: proto.ids.SessionId = .bytes(engine.newId());
     if (content != null and parent == null) try engine.ownNewRoot(id);
     errdefer if (content != null and parent == null) engine.releaseRoot(id);
-    const base = std.fs.path.basename(root);
+    const base = std.Io.Dir.path.basename(root);
     const title = if (params.child) |child| child.name else if (base.len == 0) root else base;
     const resolved = selected orelse try model_config.validate(
         engine,
