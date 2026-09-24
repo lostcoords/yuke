@@ -137,21 +137,13 @@ pub const Call = struct {
 
     pub const State = enum { queued, running, settled };
 
-    /// Record the answer and wake the submitter. Only the owner calls this.
-    pub fn settle(self: *Call, io: std.Io, text: ?[]u8, is_error: bool) void {
+    /// Record the answer and wake the submitter. Only the owner calls this. The call takes `text` and `extra_json`.
+    pub fn settle(self: *Call, io: std.Io, text: ?[]u8, extra_json: ?[]u8, is_error: bool) void {
         std.debug.assert(self.state != .settled); // one call settles one time
-        self.text = text;
-        self.is_error = is_error;
-        self.state = .settled;
-        self.done.set(io);
-        self.changed.set(io);
-    }
-
-    pub fn settleExtra(self: *Call, io: std.Io, text: ?[]u8, extra_json: []u8) void {
-        std.debug.assert(self.state != .settled); // one call settles one time
+        std.debug.assert(extra_json == null or !is_error); // only a success carries a view
         self.text = text;
         self.extra_json = extra_json;
-        self.is_error = false;
+        self.is_error = is_error;
         self.state = .settled;
         self.done.set(io);
         self.changed.set(io);

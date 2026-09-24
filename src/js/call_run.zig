@@ -41,7 +41,7 @@ pub fn abortAll(host: *Host) void {
             cancellation.cancel(host, call.signal);
         }
         if (call.state == .settled or call.submitter_done) continue;
-        call.settle(host.io, null, true);
+        call.settle(host.io, null, null, true);
     }
 }
 
@@ -60,7 +60,7 @@ fn parseArguments(host: *Host, call: *table.Call) ?Value {
     const parsed = host.ctx.parseJSON(text, "call-arguments.json");
     if (!host.ctx.isException(parsed)) return parsed;
     pending.dropException(host.ctx);
-    settleText(host, call, "the arguments are not valid JSON", true);
+    settleText(host, call, "the arguments are not valid JSON", null, true);
     return null;
 }
 
@@ -68,14 +68,14 @@ fn parseArguments(host: *Host, call: *table.Call) ?Value {
 fn startHook(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
     // A withdrawn folder answers no point, so the call proceeds rather than failing the round.
-    const folder = host.hooks.dispatch orelse return settleText(host, call, "", false);
+    const folder = host.hooks.dispatch orelse return settleText(host, call, "", null, false);
     const parsed = parseArguments(host, call) orelse return;
     defer ctx.freeValue(parsed);
 
     const point = ctx.newString(call.name);
     if (ctx.isException(point)) {
         pending.dropException(ctx);
-        return settleText(host, call, "out of memory", true);
+        return settleText(host, call, "out of memory", null, true);
     }
     defer ctx.freeValue(point);
 
@@ -88,7 +88,7 @@ fn startHook(host: *Host, call: *table.Call) void {
 fn startTool(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
     const at = host.tools.find(call.name) orelse
-        return settleText(host, call, "the tool is not registered", true);
+        return settleText(host, call, "the tool is not registered", null, true);
     const parsed = parseArguments(host, call) orelse return;
     defer ctx.freeValue(parsed);
 
@@ -113,7 +113,7 @@ fn startTool(host: *Host, call: *table.Call) void {
         ctx.freeValue(call.signal);
         call.signal = quickjs.UNDEFINED;
         pending.dropException(ctx);
-        return settleText(host, call, "out of memory", true);
+        return settleText(host, call, "out of memory", null, true);
     }
     defer ctx.freeValue(context);
     host.enterSlice();
@@ -135,7 +135,7 @@ fn acceptPromise(host: *Host, call: *table.Call, answer: Value) void {
         return settleText(host, call, switch (call.kind) {
             .tool => "the tool execute function must return a Promise",
             .hook => "the hook dispatcher must return a Promise",
-        }, true);
+        }, null, true);
     }
     call.promise = answer; // the call holds the root until it settles
     call.state = .running;
@@ -164,16 +164,16 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
             .tool => "the tool failed",
             .hook => "the hook failed",
         };
-        return settleText(host, call, if (message) |text| text else fallback, true);
+        return settleText(host, call, if (message) |text| text else fallback, null, true);
     }
     // An empty answer is the proceed decision for a hook, and empty output for a tool.
-    if (ctx.isUndefined(value) or ctx.isNull(value)) return settleText(host, call, "", false);
+    if (ctx.isUndefined(value) or ctx.isNull(value)) return settleText(host, call, "", null, false);
     // A hook answers one object, which never carries model text or a view.
     if (call.kind != .tool) return stringifyValue(host, call, value);
     if (ctx.isString(value)) {
-        const text = cstring(ctx, value) orelse return settleText(host, call, "the tool answered text the host cannot read", true);
+        const text = cstring(ctx, value) orelse return settleText(host, call, "the tool answered text the host cannot read", null, true);
         defer ctx.freeCString(text.ptr);
-        return settleText(host, call, text, false);
+        return settleText(host, call, text, null, false);
     }
 
     if (ctx.isObject(value) and !ctx.isArray(value)) {
@@ -184,21 +184,21 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
         const text_value = ctx.getPropertyStr(value, "text");
         defer ctx.freeValue(text_value);
         if (ctx.isString(text_value)) {
-            const text = cstring(ctx, text_value) orelse return settleText(host, call, "the tool answered text the host cannot read", true);
+            const text = cstring(ctx, text_value) orelse return settleText(host, call, "the tool answered text the host cannot read", null, true);
             defer ctx.freeCString(text.ptr);
             // The extra object holds the view and the media, so a new member needs no host change.
             const extra_value = ctx.getPropertyStr(value, "extra");
             defer ctx.freeValue(extra_value);
-            if (ctx.isUndefined(extra_value) or ctx.isNull(extra_value)) return settleText(host, call, text, false);
+            if (ctx.isUndefined(extra_value) or ctx.isNull(extra_value)) return settleText(host, call, text, null, false);
             const json = ctx.jsonStringify(extra_value, quickjs.UNDEFINED, quickjs.UNDEFINED);
             defer ctx.freeValue(json);
             if (!ctx.isString(json)) {
                 pending.dropException(ctx);
-                return settleText(host, call, "the tool answered a result that is not JSON", true);
+                return settleText(host, call, "the tool answered a result that is not JSON", null, true);
             }
-            const extra_text = cstring(ctx, json) orelse return settleText(host, call, "the tool answered a result that is not JSON", true);
+            const extra_text = cstring(ctx, json) orelse return settleText(host, call, "the tool answered a result that is not JSON", null, true);
             defer ctx.freeCString(extra_text.ptr);
-            return settleTextAndExtra(host, call, text, extra_text);
+            return settleText(host, call, text, extra_text, false);
         }
     }
 
@@ -227,11 +227,11 @@ fn stringifyValue(host: *Host, call: *table.Call, value: Value) void {
     defer ctx.freeValue(json);
     if (!ctx.isString(json)) {
         pending.dropException(ctx);
-        return settleText(host, call, "the tool answered a value that is not JSON", true);
+        return settleText(host, call, "the tool answered a value that is not JSON", null, true);
     }
-    const text = cstring(ctx, json) orelse return settleText(host, call, "the tool answered a value that is not JSON", true);
+    const text = cstring(ctx, json) orelse return settleText(host, call, "the tool answered a value that is not JSON", null, true);
     defer ctx.freeCString(text.ptr);
-    settleText(host, call, text, false);
+    settleText(host, call, text, null, false);
 }
 
 /// Read the text of a rejection. An Error carries `message`; any other value becomes a string.
@@ -253,15 +253,11 @@ fn cstring(ctx: Context, value: Value) ?[:0]const u8 {
     };
 }
 
-/// Sanitize the answer as UTF-8 and wake the submitter.
-fn settleText(host: *Host, call: *table.Call, text: []const u8, is_error: bool) void {
+/// Sanitize the answer and its extra JSON as UTF-8 and wake the submitter.
+fn settleText(host: *Host, call: *table.Call, text: []const u8, extra_json: ?[]const u8, is_error: bool) void {
     if (host.ctx.isObject(call.signal)) cancellation.cancel(host, call.signal);
-    call.settle(host.io, utf8.sanitize(host.gpa, text) catch unreachable, is_error);
-}
-
-fn settleTextAndExtra(host: *Host, call: *table.Call, text: []const u8, extra_json: []const u8) void {
-    if (host.ctx.isObject(call.signal)) cancellation.cancel(host, call.signal);
-    call.settleExtra(host.io, utf8.sanitize(host.gpa, text) catch unreachable, utf8.sanitize(host.gpa, extra_json) catch unreachable);
+    const extra = if (extra_json) |json| utf8.sanitize(host.gpa, json) catch unreachable else null;
+    call.settle(host.io, utf8.sanitize(host.gpa, text) catch unreachable, extra, is_error);
 }
 
 const support = @import("tests/support.zig");
