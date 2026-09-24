@@ -22,8 +22,8 @@ const hintOf = (name) => {
   command.perform("ui:palette");
   const win = root.overlays[root.overlays.length - 1];
   const p = win.content;
-  p.selectKey(name);
-  const it = p.selected();
+  p.list.selectKey(name);
+  const it = p.list.selected();
   root.popOverlay(win);
   return it && it.name === name ? it.hint : null;
 };

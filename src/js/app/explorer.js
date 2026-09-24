@@ -38,7 +38,7 @@ function openExplorer(startPath) {
         if (state.parent != null) go(state.parent);
       },
       right: (_ev, p) => {
-        const e = p.selected();
+        const e = p.list.selected();
         if (e && !e.up && !e.notice) go(e.path);
       },
     },

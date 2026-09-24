@@ -354,7 +354,7 @@ function openModelPicker(ctx, query) {
       },
     });
     ctx.tui.overlay(p.win);
-    p.content.selectKey(currentId);
+    p.content.list.selectKey(currentId);
     return p;
   };
   // Reload the file before the picker lists, so a login from another process shows.
@@ -394,7 +394,7 @@ function pickReasoning(ctx, model, sessionId) {
     onAccept: l => chooseModel(model, l.id, sessionId),
   });
   ctx.tui.overlay(step.win);
-  step.content.selectKey(model.default_reasoning || levels[0]);
+  step.content.list.selectKey(model.default_reasoning || levels[0]);
 }
 
 // The chat's own listeners and the model command.

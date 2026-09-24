@@ -25,7 +25,7 @@ plugins.use({ name: "refresh-test", apply(ctx) {
     const offGet = advice.advise(client, "sessionGet", "before", () => { gets++; });
     const offList = advice.advise(client, "sessionList", "before", () => { lists++; });
     const picker = await openAgents(ctx, chat.sessionId);
-    picker.content.selectKey(child.session.id);
+    picker.content.list.selectKey(child.session.id);
     const offUpdate = advice.advise(picker.content, "setSource", "after", () => { updates++; });
     const activity = () => events.emit("session.changed", { type: "session", session: child.session.id, kind: "quiet", facts: ["session.activity_changed"] });
     gets = lists = 0;

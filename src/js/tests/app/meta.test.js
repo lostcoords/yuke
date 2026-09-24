@@ -17,8 +17,8 @@ equal(listed.filter(name => name.startsWith("test:")).join(","), "test:first,tes
 
 command.perform("ui:palette");
 const p = root.overlays[root.overlays.length - 1].content;
-check("palette-shows-meta", p.selectKey("test:shown") && p.selected().description === "the last one");
-check("palette-hides-plumbing", !p.selectKey("test:plumbing"));
-check("palette-hides-itself", !p.selectKey("ui:palette"));
+check("palette-shows-meta", p.list.selectKey("test:shown") && p.list.selected().description === "the last one");
+check("palette-hides-plumbing", !p.list.selectKey("test:plumbing"));
+check("palette-hides-itself", !p.list.selectKey("ui:palette"));
 root.popOverlay();
 off();

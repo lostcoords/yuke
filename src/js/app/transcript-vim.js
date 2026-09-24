@@ -244,18 +244,11 @@ function move(t, s, k) {
   return false;
 }
 
-/** @param {Transcript} t @param {Position} a @param {Position} b @returns {number} */
-function cmp(t, a, b) {
-  if (a.id !== b.id) {
-    return t.messageIndex(a.id) - t.messageIndex(b.id);
-  }
-  return a.row !== b.row ? a.row - b.row : a.col - b.col;
-}
 
 /** @param {Transcript} t @param {VimState} s @returns {void} */
 function expandLines(t, s) {
   if (!s.cursor || !s.anchor) return;
-  const after = cmp(t, s.cursor, s.anchor) >= 0;
+  const after = t.comparePos(s.cursor, s.anchor) >= 0;
   const lo = after ? s.anchor : s.cursor;
   const hi = after ? s.cursor : s.anchor;
   t.select({ ...lo, col: 0 }, { ...hi, col: rowOf(t, hi).length });

@@ -24,7 +24,7 @@ plugins.use({ name: "picker-test", apply(ctx) {
     events.emit("session.changed", { type: "session", session: child.session.id, facts: ["session.activity_changed"] });
     for (let i = 0; i < 12; i++) await Promise.resolve();
     if (!picker.win.opts.title.includes("1 active") || !childState(child).includes("search")) throw new Error("live summary");
-    picker.content.list.move(1);
+    picker.content.list.navBy(1);
     picker.content.onKey({ type: "key", code: "char", char: "x", mods: 0 });
     await Promise.resolve(); await Promise.resolve();
     picker.content.onKey({ type: "key", code: "char", char: "X", mods: 0 });
@@ -35,7 +35,7 @@ plugins.use({ name: "picker-test", apply(ctx) {
     chat.interrupt();
     if (stopped.length !== 3 || stopped[2][0] !== child.session.id || stopped[2][1] !== undefined) throw new Error("interrupt changed scope");
     const back = await openAgents(ctx, chat.sessionId);
-    back.content.list.move(-1);
+    back.content.list.navBy(-1);
     back.content.accept();
     if (chat.sessionId !== "01".repeat(16)) throw new Error("open main");
     const stale = openAgents(ctx, chat.sessionId);

@@ -22,9 +22,9 @@ const offAgents = command.add(null, { "test:agents": () => {}, "test:models": ()
   "test:agents": { title: "Agents", slash: "agents" }, "test:models": { title: "Agent models", slash: "agent-models" },
 });
 chat.composer.text = "/a";
-root.overlays[0].content.selectKey("test:models");
+root.overlays[0].content.list.selectKey("test:models");
 chat.composer.text = "/agent";
-check("new-query-selects-best", root.overlays[0].content.selected().slash === "agents");
+check("new-query-selects-best", root.overlays[0].content.list.selected().slash === "agents");
 root.onEvent(key("tab"));
 check("agent-completes", chat.composer.text === "/agents");
 offAgents();

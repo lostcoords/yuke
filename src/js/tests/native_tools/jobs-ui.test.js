@@ -28,7 +28,7 @@ plugins.use({ name: "jobs-ui-test", apply(ctx) { ctx.inject(["tui"], (ctx) => { 
   check("rows-newest-first", picker.content.source.map((j) => j.id).join(",") === [quick.id, two.id, one.id].join(","));
   check("row-states", picker.win.opts.title === "Jobs · 2 running · 1 ended");
   key(picker, "x");
-  picker.content.list.move(1);
+  picker.content.list.navBy(1);
   key(picker, "x");
   await jobs.wait(two.id);
   check("x-stops-selected", jobs.get(quick.id)?.state === "exited" && jobs.get(one.id)?.state === "running");
@@ -54,7 +54,7 @@ while :; do wait "$child"; done`, { root: "/tmp" });
   globalThis.talkyId = talky.id;
   // Enter in the list opens the output view of the selected job.
   const list = openJobs(tui);
-  list.content.selectKey(talky.id);
+  list.content.list.selectKey(talky.id);
   list.content.onKey({ type: "key", code: "enter", event: "press", mods: 0 });
   const view = root.overlays.at(-1)?.content;
   check("enter-opens-output", root.overlays.length === 1 && view instanceof JobOutput && view.job.id === talky.id);

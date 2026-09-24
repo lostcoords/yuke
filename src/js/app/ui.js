@@ -175,7 +175,7 @@ export class List {
   }
 
   /** @returns {number} */
-  _selIndex() {
+  selectedIndex() {
     if (this.selectedKey == null) return -1;
     for (let i = 0; i < this.items.length; i++) {
       const item = /** @type {T} */ (this.items[i]);
@@ -186,7 +186,7 @@ export class List {
 
   /** @returns {void} */
   _ensureSelection() {
-    if (this._selIndex() >= 0) return;
+    if (this.selectedIndex() >= 0) return;
     const sel = this._selectable();
     if (sel.length) {
       const index = /** @type {number} */ (sel[0]);
@@ -198,13 +198,8 @@ export class List {
 
   /** @returns {T | null} */
   selected() {
-    const i = this._selIndex();
+    const i = this.selectedIndex();
     return i < 0 ? null : /** @type {T} */ (this.items[i]);
-  }
-
-  /** @returns {number} */
-  selectedIndex() {
-    return this._selIndex();
   }
 
   /** @param {number} h @returns {void} */
@@ -215,9 +210,9 @@ export class List {
   }
 
   /** @param {number} delta @returns {void} */
-  move(delta) {
+  navBy(delta) {
     const dir = delta < 0 ? -1 : 1;
-    let index = this._selIndex();
+    let index = this.selectedIndex();
     if (index < 0) index = this._stepSelectable(-1, 1);
     if (index < 0) return;
     // Walk the items from the selection, so a move allocates no index list.
@@ -240,13 +235,13 @@ export class List {
   }
 
   /** @param {number} dir @returns {void} */
-  moveToEdge(dir) {
-    this.move(dir < 0 ? -this.items.length : this.items.length);
+  navEdge(dir) {
+    this.navBy(dir < 0 ? -this.items.length : this.items.length);
   }
 
   /** @param {number} vis @returns {void} */
   _scrollToVisible(vis) {
-    const i = this._selIndex();
+    const i = this.selectedIndex();
     if (i >= 0 && vis > 0) {
       if (i < this.scroll) this.scroll = i;
       else if (i >= this.scroll + vis) this.scroll = i - vis + 1;
@@ -260,19 +255,9 @@ export class List {
     this.scroll = Math.min(Math.max(this.scroll, 0), max);
   }
 
-  /** @param {number} delta @returns {void} */
-  navBy(delta) {
-    this.move(delta);
-  }
-
   /** @param {number} dir @returns {void} */
   navPage(dir) {
-    this.move(dir * this._page);
-  }
-
-  /** @param {number} dir @returns {void} */
-  navEdge(dir) {
-    this.moveToEdge(dir);
+    this.navBy(dir * this._page);
   }
 
   // Forget the drawn rect when a container draws something else there, so a click cannot hit a row that left.
@@ -290,8 +275,8 @@ export class List {
       // `scrollLines` counts screen lines, so a tall row moves fewer items per step.
       const step = Math.max(1, Math.round(config.mouse.scrollLines / this.itemHeight));
       const n = step * (ev.count || 1);
-      if (ev.button === "wheel_up") this.move(-n);
-      else if (ev.button === "wheel_down") this.move(n);
+      if (ev.button === "wheel_up") this.navBy(-n);
+      else if (ev.button === "wheel_down") this.navBy(n);
       else return false;
       return true;
     }
@@ -1061,11 +1046,6 @@ export class Picker {
     this.refilter();
   }
 
-  /** @param {ItemKey | null | undefined} k @returns {boolean} */
-  selectKey(k) {
-    return this.list.selectKey(k);
-  }
-
   // A menu shows its source as given. A finder takes the order `suggest` returns, or ranks the source and selects the first result.
   /** @returns {void} */
   refilter() {
@@ -1076,11 +1056,6 @@ export class Picker {
     const items = this.suggest ? this.suggest(this.query) || [] : fuzzyRank(this.source, this.query, this.textOf);
     this.list.selectedKey = null;
     this.list.setItems(items);
-  }
-
-  /** @returns {T | null} */
-  selected() {
-    return this.list.selected();
   }
 
   /** @returns {{ periodMs: number } | null} */
@@ -1191,16 +1166,16 @@ export class Picker {
         this.close();
         break;
       case "next":
-        this.list.move(1);
+        this.list.navBy(1);
         break;
       case "prev":
-        this.list.move(-1);
+        this.list.navBy(-1);
         break;
       case "top":
-        this.list.moveToEdge(-1);
+        this.list.navEdge(-1);
         break;
       case "bottom":
-        this.list.moveToEdge(1);
+        this.list.navEdge(1);
         break;
     }
   }
@@ -1247,11 +1222,11 @@ export class Picker {
       return true;
     }
     if (s === "up" || s === "ctrl+p") {
-      this.list.move(-1);
+      this.list.navBy(-1);
       return true;
     }
     if (s === "down" || s === "ctrl+n") {
-      this.list.move(1);
+      this.list.navBy(1);
       return true;
     }
     /** @type {TextInput} */ (this.input).onKey(ev); // the shared buffer takes the edit; its onChange refilters

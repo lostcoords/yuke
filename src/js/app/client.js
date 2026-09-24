@@ -3,7 +3,7 @@ import { native } from "yuke:engine-native";
 import { events } from "yuke:kernel";
 import { gateInput } from "yuke:ext";
 
-/** @import { MemoryUsage, MessagePart, SessionOutline, ViewPart } from "yuke:engine-native" */
+/** @import { MessagePart, SessionOutline, ViewPart } from "yuke:engine-native" */
 
 // This table maps a native event type to its core event name.
 /** @type {Record<string, string>} */
@@ -57,24 +57,6 @@ export async function allChildren(parentId) {
   throw new Error("The child list exceeds 32 pages.");
 }
 
-// Open a view onto a session. The pin holds the engine runtime while a pane shows it.
-/** @param {string} sessionId @returns {boolean} */
-function sessionOpen(sessionId) {
-  return native.sessionOpen(sessionId);
-}
-
-// Close one view. Every open must have exactly one close, or the runtime never evicts.
-/** @param {string} sessionId @returns {void} */
-function sessionClose(sessionId) {
-  native.sessionClose(sessionId);
-}
-
-
-// What the JavaScript runtime holds right now. The process footprint also carries the Zig side.
-/** @returns {MemoryUsage} */
-function memoryUsage() {
-  return native.memoryUsage();
-}
 
 // The transcript outline (message ids, roles, and the draft), or null when the session is not open.
 /** @param {string} sessionId @returns {SessionOutline | null} */
@@ -328,13 +310,15 @@ function authRemove(providerId) {
 
 export const client = {
   // The counts of process-owned runs and continuations; engine.activity.changed fires once per changed load.
-  load: () => native.load(),
+  load: native.load,
   isBusy: () => { const load = native.load(); return load.runs > 0 || load.continuations > 0; },
   request,
   sessionList,
-  sessionOpen,
-  sessionClose,
-  memoryUsage,
+  // A pin holds the engine runtime while a pane shows the session. Every open needs exactly one close, or the runtime never evicts.
+  sessionOpen: native.sessionOpen,
+  sessionClose: native.sessionClose,
+  // What the JavaScript runtime holds right now. The process footprint also carries the Zig side.
+  memoryUsage: native.memoryUsage,
   sessionOutline,
   sessionActivity,
   sessionGet,

@@ -115,7 +115,7 @@ export function commandUi(cfg = {}) {
             "ctrl+p": "prev",
             down: "next",
             "ctrl+n": "next",
-            tab: (_ev, content) => complete(chat, content.selected()),
+            tab: (_ev, content) => complete(chat, content.list.selected()),
             ...(cfg.keymap || {}),
           },
           // The picker closes its own window on accept and cancel, so the handle drops here.
@@ -151,7 +151,7 @@ export function commandUi(cfg = {}) {
         if (ranked.length === 0) return close();
         if (float) {
           float.picker.setSource(ranked);
-          if (float.query !== line.word) float.picker.selectKey(ranked[0]?.name);
+          if (float.query !== line.word) float.picker.list.selectKey(ranked[0]?.name);
           float.query = line.word;
         }
         else open(chat, ranked, columnOf(all), line.word);

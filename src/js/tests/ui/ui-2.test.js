@@ -5,11 +5,11 @@ import { fuzzyMatch, fuzzyRank } from "yuke:fzy";
 
 // A two-line list shows floor(h / itemHeight) items and scrolls in item units.
 const l = new List({ items: [0, 1, 2, 3, 4, 5], itemHeight: 2 });
-l.moveToEdge(1);
+l.navEdge(1);
 check("sel-end", l.selectedIndex() === 5);
 l.ensureVisible(6);
 check("scroll-bottom", l.scroll === 3);
-l.moveToEdge(-1);
+l.navEdge(-1);
 l.ensureVisible(6);
 check("scroll-top", l.scroll === 0 && l.selectedIndex() === 0);
 

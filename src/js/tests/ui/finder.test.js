@@ -18,20 +18,20 @@ const p = ui.pick({
   onAccept: (it, i) => { taken = it.id; at = i; },
 });
 root.pushOverlay(p.win);
-check("selectKey", p.content.selectKey("sea") && p.content.selected().id === "sea");
+check("selectKey", p.content.list.selectKey("sea") && p.content.list.selected().id === "sea");
 
 // `needsTick` reaches the window, so a finder that wants a timer gets one.
 const t = p.win.needsTick();
 check("needsTick", t !== null && t.periodMs === 40);
 
 // A string binding names a default action; only the shared class answers one.
-p.content.selectKey("ay");
+p.content.list.selectKey("ay");
 press("ctrl+g");
-check("string-action", p.content.selected().id === "sea");
+check("string-action", p.content.list.selected().id === "sea");
 
 // The query still filters, so the finder half did not regress.
 press("char", "b");
-check("query", p.content.query === "b" && p.content.selected().id === "bee");
+check("query", p.content.query === "b" && p.content.list.selected().id === "bee");
 
 // The accept carries the row index, and a pick that `onAccept` opens stays on top. The chat model step chains this way.
 const depth = root.overlays.length;

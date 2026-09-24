@@ -88,7 +88,7 @@ export async function openAgents(ctx, sessionId) {
       X: () => run(async () => { const result = await Promise.allSettled(childItems().map((child) => client.sessionCancelRun(child.session.id, true))); notice.show("agents · stopped " + result.filter((r) => r.status === "fulfilled").length + " · failed " + result.filter((r) => r.status === "rejected").length); }),
     },
   });
-  picker.content.selectKey(sessionId);
+  picker.content.list.selectKey(sessionId);
   // A new child lands in the index digest, which names no session; a listed child's state lands in its own digest.
   const off = ctx.on("index.changed", /** @param {EngineEvent} ev */ (ev) => { if (ev.type === "index" && (ev.overflow || ev.facts.includes("session.summary_changed"))) refresh(); });
   const offSession = ctx.on("session.changed", /** @param {Extract<EngineEvent, { type: "session" }>} ev */ (ev) => {

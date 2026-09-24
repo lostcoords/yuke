@@ -37,17 +37,17 @@ press("char", "G");
 content.refilter();
 check("menu-refilter-keeps-selection", sel() === "e");
 content.setSource(["x", "y"]);
-check("menu-set-source", content.selected() === "x");
+check("menu-set-source", content.list.selected() === "x");
 check("menu-no-query", content.query === "");
 
 // A plugin may destructure the kit, so `select` must not depend on its receiver.
 const { select } = ui;
 const loose = select(["p", "q"], { format: x => ({ text: String(x) }) });
-check("detached-select", loose.content.selected() === "p");
+check("detached-select", loose.content.list.selected() === "p");
 
 // A menu edits no query, so the setter changes neither the text nor the rows.
 content.query = "zz";
-check("menu-query-setter", content.query === "" && content.selected() === "x");
+check("menu-query-setter", content.query === "" && content.list.selected() === "x");
 
 // A cancel always closes, in both modes, and `onCancel` only reports it.
 let told = 0;

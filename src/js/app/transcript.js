@@ -773,15 +773,15 @@ export class Transcript {
         const body = this.rowTextAt(p.id, p.row);
         return { id: p.id, row: p.row, col: Math.min(nextGrapheme(body, p.col), body.length) };
       };
-      if (this._cmpPos(b, a) >= 0) b = grow(b);
+      if (this.comparePos(b, a) >= 0) b = grow(b);
       else a = grow(a);
     }
     this.selection = { anchor: a, cursor: b };
   }
 
   /** @param {Position} a @param {Position} b @returns {number} */
-  _cmpPos(a, b) {
-    if (a.id !== b.id) return this._indexOf(a.id) - this._indexOf(b.id);
+  comparePos(a, b) {
+    if (a.id !== b.id) return this.messageIndex(a.id) - this.messageIndex(b.id);
     return a.row !== b.row ? a.row - b.row : a.col - b.col;
   }
 
@@ -865,7 +865,7 @@ export class Transcript {
     const c = this._rows.get(key);
     if (c) stale(c);
     this._counts.delete(key);
-    const i = this._indexOf(id);
+    const i = this.messageIndex(id);
     if (i >= 0) this._prefix.length = Math.min(this._prefix.length, i + 1);
   }
 
@@ -1066,7 +1066,7 @@ export class Transcript {
   // The rendered rows of one message at the drawn width, owned by the render cache, so only this class holds them.
   /** @param {number} id @returns {TranscriptRow[]} */
   _rowsFor(id) {
-    const i = this._indexOf(id);
+    const i = this.messageIndex(id);
     if (i < 0 || this._width <= 0) return [];
     const message = /** @type {MessageDescriptor} */ (this._at(i));
     return this._rowsOf(message, this._width, i);
@@ -1075,7 +1075,7 @@ export class Transcript {
   // The number of rendered rows in one message.
   /** @param {number} id @returns {number} */
   rowCountOf(id) {
-    if (this._width <= 0 || this._indexOf(id) < 0) return 0;
+    if (this._width <= 0 || this.messageIndex(id) < 0) return 0;
     return this._counts.get(String(id)) ?? this._rowsFor(id).length;
   }
 
@@ -1094,7 +1094,7 @@ export class Transcript {
   /** @param {Position | null} pos @returns {number} */
   _globalRow(pos) {
     if (!pos || this._width <= 0 || pos.row < 0) return -1;
-    const i = this._indexOf(pos.id);
+    const i = this.messageIndex(pos.id);
     if (i < 0) return -1;
     this._indexRowsThrough(Infinity);
     return pos.row < this._offset(i + 1) - this._offset(i) ? this._offset(i) + pos.row : -1;
@@ -1317,7 +1317,7 @@ export class Transcript {
     const next = this._actionPlan();
     for (let i = 0; i < oldMessages.length; i++) {
       const m = /** @type {MessageDescriptor} */ (oldMessages[i]);
-      const index = this._indexOf(m.id);
+      const index = this.messageIndex(m.id);
       if (index < 0) continue;
       let changed = oldPlan.joinAfter[i] !== next.joinAfter[index];
       if (!changed && m.type === "assistant") {
@@ -1492,13 +1492,13 @@ export class Transcript {
   partStep(pos, dir) {
     if (!pos) return null;
     const step = dir > 0 ? 1 : -1;
-    for (let i = this._indexOf(pos.id); i >= 0; i += step) {
+    for (let i = this.messageIndex(pos.id); i >= 0; i += step) {
       const m = this._at(i);
       if (!m) break;
       const stops = this._partStopsOf(m);
       for (let n = step > 0 ? 0 : stops.length - 1; n >= 0 && n < stops.length; n += step) {
         const stop = /** @type {Position} */ (stops[n]);
-        if (this._cmpPos(stop, pos) * step > 0) return stop;
+        if (this.comparePos(stop, pos) * step > 0) return stop;
       }
     }
     return null;
@@ -1575,7 +1575,7 @@ export class Transcript {
 
   // The message order index of `id`, or -1. A position outside the outline has no selection.
   /** @param {number} id @returns {number} */
-  _indexOf(id) {
+  messageIndex(id) {
     return this._positions.get(String(id)) ?? -1;
   }
 
@@ -1586,10 +1586,10 @@ export class Transcript {
     if (!sel || !sel.anchor || !sel.cursor) return null;
     const a = sel.anchor;
     const b = sel.cursor;
-    const ia = this._indexOf(a.id);
-    const ib = this._indexOf(b.id);
+    const ia = this.messageIndex(a.id);
+    const ib = this.messageIndex(b.id);
     if (ia < 0 || ib < 0) return null;
-    const ordered = ia < ib || (ia === ib && (a.row < b.row || (a.row === b.row && a.col <= b.col)));
+    const ordered = this.comparePos(a, b) <= 0;
     return ordered ? { start: a, end: b, si: ia, ei: ib } : { start: b, end: a, si: ib, ei: ia };
   }
 
@@ -1720,12 +1720,6 @@ export class Transcript {
     const m = this._at(index);
     if (!m) throw new RangeError("message index out of range");
     return m.id;
-  }
-
-  // The message order index of `id`, or -1.
-  /** @param {number} id @returns {number} */
-  messageIndex(id) {
-    return this._indexOf(id);
   }
 
   /** @param {Rect} rect @returns {void} */

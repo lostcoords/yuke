@@ -31,7 +31,7 @@ check("login-lists", root.overlays.length === 1);
 equal(observer.interaction.pending, 0);
 const picker = root.overlays[0].content;
 check("login-rows", picker.list.items.length === 2);
-check("login-state", picker.selectKey("codex") && picker.selected().state === "needs_credential");
+check("login-state", picker.list.selectKey("codex") && picker.list.selected().state === "needs_credential");
 root.onEvent(key("enter"));
 await settle();
 check("device-dialog", root.overlays.length === 1 && calls.includes("login:codex"));
