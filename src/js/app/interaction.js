@@ -13,7 +13,7 @@ let nextId = 1;
 /** @param {unknown} value @param {string} name @param {boolean} [empty] @returns {string} */
 function text(value, name, empty = false) {
   if (typeof value !== "string") throw new TypeError(name + " must be a string");
-  if ((!empty && value.length === 0) || utf8Length(value) > native.maxTextBytes) {
+  if ((!empty && value.length === 0) || (value.length * 3 > native.maxTextBytes && utf8Length(value) > native.maxTextBytes)) {
     throw new TypeError(name + " has an invalid length");
   }
   return value;

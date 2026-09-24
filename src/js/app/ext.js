@@ -901,11 +901,8 @@ export const plugins = {
       throw error;
     }
     if (instance._phase === "applying") instance._phase = "active";
-    // The handle closes this instance only, so an old handle cannot close a replacement.
-    return Object.freeze({
-      get ready() { return instance.ready; },
-      dispose: () => instance.dispose(),
-    });
+    // The handle closes this instance only, so an old handle cannot close a replacement. `ready` is fixed once `use` returns.
+    return { ready: instance.ready, dispose: () => instance.dispose() };
   },
 
   /** @param {string} name @returns {boolean} */

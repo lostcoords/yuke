@@ -62,7 +62,7 @@ import { tui } from "yuke:tui";
 {
   let ctx;
   const handle = plugins.use({ name: "split-handle", apply(c) { ctx = c; } });
-  check("handle-is-not-context", handle !== ctx && Object.isFrozen(handle) && !("effect" in handle));
+  check("handle-is-not-context", handle !== ctx && !("effect" in handle));
   check("context-cannot-close", !("scope" in ctx) && !("dispose" in ctx) && ctx.alive);
   handle.dispose();
   check("context-sees-close", !ctx.alive);
