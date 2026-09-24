@@ -163,7 +163,6 @@ export interface KeymapRegistry {
   owns: () => boolean;
   onKey: (event: Extract<HostEvent, { type: "key" }>) => boolean;
   _seq: number;
-  arm: (stroke: string, kind: "chord" | "operator", event?: Extract<HostEvent, { type: "key" }> | null) => void;
   pendingLabel: () => string;
   needsTick: () => { periodMs: number } | null;
   tick: () => void;

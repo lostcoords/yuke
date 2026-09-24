@@ -156,10 +156,13 @@ export const command = {
 
   // A rejected predicate lets the next entry run.
   perform(name, ...args) {
-    const found = selectCommand(this.map[name], args);
-    if (!found) return false;
-    found.entry.perform(...found.args);
-    return true;
+    for (const entry of this.map[name] || []) {
+      const call = evalPredicate(entry, args);
+      if (call === null) continue;
+      entry.perform(...call);
+      return true;
+    }
+    return false;
   },
 
   // A throwing predicate counts as available, so one bad predicate never empties a listing.
@@ -173,31 +176,14 @@ export const command = {
     const out = [];
     for (const name in this.map) {
       const list = /** @type {CommandEntry[]} */ (this.map[name]);
-      const meta = metaOf(list);
+      // The newest metadata wins, so a plain shadow keeps the listing under it.
+      const meta = list.find((entry) => entry.meta)?.meta;
       if (meta && isAvailable(list)) out.push({ name, title: meta.title, description: meta.description, slash: meta.slash || null, args: !!meta.args });
     }
     // Code-unit order: localeCompare NFC-normalizes and traps in ReleaseSafe QuickJS.
     return out.sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
   },
 };
-
-// The newest metadata in the list, so a plain shadow keeps the listing under it.
-/** @param {CommandEntry[]} list @returns {CommandMeta | null} */
-function metaOf(list) {
-  for (const entry of list) if (entry.meta) return entry.meta;
-  return null;
-}
-
-// Return the newest entry whose predicate accepts, with the arguments to run it with.
-/** @param {CommandEntry[] | undefined} list @param {any[]} args @returns {{ entry: CommandEntry, args: any[] } | null} */
-function selectCommand(list, args) {
-  if (!list) return null;
-  for (const entry of list) {
-    const call = evalPredicate(entry, args);
-    if (call !== null) return { entry, args: call };
-  }
-  return null;
-}
 
 // Report whether an entry would run, without the allocation a selection needs.
 /** @param {CommandEntry[] | undefined} list @returns {boolean} */
@@ -390,17 +376,6 @@ function collectAtoms(n, out) {
   }
 }
 
-// Return the depth of the deepest atom the expression names that the stack holds.
-/** @param {ContextExpr} expr @param {Record<string, number>} depths @returns {number} */
-function depthOf(expr, depths) {
-  let depth = 0;
-  for (const name of expr.atoms) {
-    const d = depths[name];
-    if (d !== undefined && d > depth) depth = d;
-  }
-  return depth;
-}
-
 // The atom depth index for the active context.
 /** @returns {Record<string, number>} */
 function currentDepths() {
@@ -433,7 +408,10 @@ function rankByContext(entries, copy = true) {
       continue;
     }
     if (!matchContext(e.context.node, depths)) continue;
-    hits.push({ entry: e, depth: depthOf(e.context, depths) });
+    // The deepest atom the expression names that the stack holds.
+    let depth = 0;
+    for (const name of e.context.atoms) depth = Math.max(depth, depths[name] ?? 0);
+    hits.push({ entry: e, depth });
   }
   hits.sort((a, b) => b.depth - a.depth || b.entry.order - a.entry.order);
   return hits.map((h) => h.entry);
@@ -547,12 +525,6 @@ export const keymap = {
     return this.pending !== null;
   },
 
-  // Arm a pending stroke of `kind`.
-  /** @param {string} stroke @param {"chord" | "operator"} kind @param {Extract<HostEvent, { type: "key" }> | null} [ev] @returns {void} */
-  arm(stroke, kind, ev) {
-    this.pending = { stroke, kind, at: Date.now(), ev: ev || null };
-  },
-
   // Return the pending stroke for the status bar.
   /** @returns {string} */
   pendingLabel() {
@@ -590,7 +562,7 @@ export const keymap = {
     }
     const kind = this._armKind(s);
     if (kind) {
-      this.arm(s, kind, ev);
+      this.pending = { stroke: s, kind, at: Date.now(), ev };
       return true;
     }
     return this._perform(s, ev);
@@ -1044,11 +1016,6 @@ export class RootView {
     this.invalidatePaint();
   }
 
-  /** @param {Node | null} leaf @returns {void} */
-  focusLeaf(leaf) {
-    if (leaf && this.root_node && this.root_node.leaves().indexOf(leaf) >= 0) this._setActiveLeaf(leaf);
-  }
-
   // Focus the leaf that holds `view`. Return false when the view is not in the tree.
   /** @param {ViewLike | null} view @returns {boolean} */
   focusView(view) {
@@ -1062,12 +1029,6 @@ export class RootView {
     return false;
   }
 
-  // Return the leaf that contains the cell. Return null over a split rule or outside the tree.
-  /** @param {number} col @param {number} row @returns {Node | null} */
-  leafAt(col, row) {
-    return this.root_node ? this.root_node.leafAt(col, row) : null;
-  }
-
   // Send the event to the leaf under the pointer; a press focuses and captures it, so a drag that leaves it still lands.
   /** @param {Extract<HostEvent, { type: "mouse" }>} ev @returns {boolean} */
   routeMouse(ev) {
@@ -1077,10 +1038,11 @@ export class RootView {
       const live = this.root_node && this.root_node.leaves().indexOf(held) >= 0;
       return live ? !!callHook(leafView(held), "onMouse", ev) : false;
     }
-    const leaf = this.leafAt(ev.col, ev.row);
+    const leaf = this.root_node ? this.root_node.leafAt(ev.col, ev.row) : null;
     if (!leaf) return false;
     if (ev.event === "press" && !isWheel(ev.button)) {
-      this.focusLeaf(leaf);
+      // The leaf came from the live tree, so it needs no membership walk.
+      this._setActiveLeaf(leaf);
       if (ev.button === "left") this._capture = leaf;
     }
     return !!callHook(leafView(leaf), "onMouse", ev);
