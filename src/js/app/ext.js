@@ -61,10 +61,7 @@ export class Scope {
     }
 
     const entry = this._addEntry(/** @type {Disposer} */ (cleanup));
-    return () => {
-      const owner = entry.owner;
-      if (owner) owner._runEntry(entry);
-    };
+    return () => entry.owner?._takeEntry(entry)?.();
   }
 
   // Hold `release` until this scope closes; a closed scope releases at once and throws.
@@ -100,7 +97,7 @@ export class Scope {
     return life.signal;
   }
 
-  /** @param {Disposer} cleanup @returns {ScopeEntry} */
+  /** @param {Disposer | null} cleanup @returns {ScopeEntry} */
   _addEntry(cleanup) {
     /** @type {ScopeEntry} */
     const entry = { owner: this, cleanup, child: null };
@@ -108,15 +105,9 @@ export class Scope {
     return entry;
   }
 
-  /** @param {ScopeEntry} entry @returns {void} */
-  _runEntry(entry) {
-    const cleanup = this._takeEntry(entry);
-    if (cleanup) cleanup();
-  }
-
+  // Every caller passes an entry this scope still owns.
   /** @param {ScopeEntry} entry @returns {Disposer | null} */
   _takeEntry(entry) {
-    if (entry.owner !== this) return null;
     entry.owner = null;
     const at = this._disposers.indexOf(entry);
     if (at >= 0) this._disposers.splice(at, 1);
@@ -130,7 +121,8 @@ export class Scope {
   child(name) {
     if (!this.alive) throw new TypeError("effect on a disposed scope: " + this.name);
     const s = new Scope(name);
-    const parentEntry = this._addEntry(() => { s.dispose(); });
+    // The close walks child entries by `child`, so a child entry holds no cleanup.
+    const parentEntry = this._addEntry(null);
     parentEntry.child = s;
     s._parentEntry = parentEntry;
     return s;
@@ -245,9 +237,6 @@ export class Scope {
 /** @type {Set<Scope>} */
 const closing = new Set();
 
-// The owner of registrations outside a plugin.
-const rootScope = new Scope("root");
-
 // --- advice: named, removable method wrapping ---
 const WHERE = { before: 1, after: 1, around: 1, filterArgs: 1, filterReturn: 1 };
 
@@ -265,7 +254,8 @@ function adviceRecord(obj, prop) {
   let rec = byProp[prop];
   if (!rec) {
     // An accessor is not a method. Assigning the wrapper would call its setter.
-    const desc = findDescriptor(obj, prop);
+    let desc;
+    for (let holder = obj; holder && !desc; holder = Object.getPrototypeOf(holder)) desc = Object.getOwnPropertyDescriptor(holder, prop);
     if (desc && !("value" in desc)) throw new TypeError("advise: " + prop + " is an accessor");
 
     const properties = /** @type {Record<string, unknown>} */ (obj);
@@ -281,18 +271,6 @@ function adviceRecord(obj, prop) {
   }
 
   return rec;
-}
-
-// Find the property descriptor on `obj` or the first prototype that owns it.
-/** @param {object} obj @param {string} prop @returns {PropertyDescriptor | undefined} */
-function findDescriptor(obj, prop) {
-  let holder = obj;
-  while (holder) {
-    const desc = Object.getOwnPropertyDescriptor(holder, prop);
-    if (desc) return desc;
-    holder = Object.getPrototypeOf(holder);
-  }
-  return undefined;
 }
 
 // Fold the advice around one call: filterArgs, before, around, filterReturn, after, with the first `around` outermost.
@@ -385,7 +363,7 @@ export const services = {
   /** @param {string} name @param {unknown} value @returns {Disposer} */
   provide(name, value) {
     if (typeof name !== "string" || name === "") throw new TypeError("provide needs a capability name");
-    if (isReserved(name)) throw new TypeError("provide: `" + name + "` is a plugin context member");
+    if (RESERVED.has(name)) throw new TypeError("provide: `" + name + "` is a plugin context member");
     const list = this._map[name] || (this._map[name] = []);
     // The entry identifies the registration, so two providers of one value stay apart.
     const entry = { value };
@@ -450,24 +428,6 @@ export const services = {
 // The passes one `inject` build takes before the runtime calls the dependency set unsettled.
 const inject_max_passes = 8;
 
-// A capability that registers effects answers `bindTo`, so the block it serves owns what it adds.
-/** @param {unknown} value @param {Context} ctx @returns {unknown} */
-function bindCapability(value, ctx) {
-  const binder = /** @type {{ bindTo?: (ctx: Context) => unknown }} */ (value);
-  return value != null && typeof binder.bindTo === "function" ? binder.bindTo(ctx) : value;
-}
-
-// A block reads a capability as `ctx.<name>`, so a name that shadows a Context member is refused.
-/** @type {Set<string> | null} */
-let reserved = null;
-
-// Build the reserved set on first use, because `Context` is declared after this function.
-/** @param {string} name @returns {boolean} */
-function isReserved(name) {
-  if (!reserved) reserved = new Set([...Object.getOwnPropertyNames(Context.prototype), "id"]);
-  return reserved.has(name);
-}
-
 // `inject` holds a block for the capabilities it needs. A change of a named capability rebuilds the child scope of the block.
 /** @template {string} K @param {Context} parentContext @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
 function injectInto(parentContext, names, apply) {
@@ -476,7 +436,7 @@ function injectInto(parentContext, names, apply) {
   if (!Array.isArray(names) || names.length === 0) throw new TypeError("inject needs at least one capability name");
   for (const n of names) {
     if (typeof n !== "string" || n === "") throw new TypeError("inject: a capability name must be a non-empty string");
-    if (isReserved(n)) throw new TypeError("inject: `" + n + "` is a plugin context member");
+    if (RESERVED.has(n)) throw new TypeError("inject: `" + n + "` is a plugin context member");
   }
   if (typeof apply !== "function") throw new TypeError("inject needs an apply function");
   // One watcher per name, so a name repeated in `names` still builds the block one time per change.
@@ -510,7 +470,11 @@ function injectInto(parentContext, names, apply) {
       const ctx = new Context(child, id);
       // Each build reads the live provider, and a later change builds the block again.
       const bound = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (ctx));
-      for (const n of deps) bound[n] = bindCapability(services.get(n), ctx);
+      // A capability that registers effects answers `bindTo`, so the block it serves owns what it adds.
+      for (const n of deps) {
+        const value = /** @type {{ bindTo?: (ctx: Context) => unknown } | null | undefined} */ (services.get(n));
+        bound[n] = typeof value?.bindTo === "function" ? value.bindTo(ctx) : value;
+      }
       child.effect(() => apply(/** @type {InjectContext<K>} */ (ctx)));
       // The block can drop its own dependency, so confirm the requirement before the block commits.
       if (satisfied() && !stopped && parent.alive && child.alive) {
@@ -734,7 +698,19 @@ export class Context {
 
   // The tools this plugin owns. A dispose withdraws them, so an unload leaves no tool behind.
   get tools() {
-    const tools = toolRegistry(this.#scope);
+    const scope = this.#scope;
+    // The scope owns each tool until its disposer runs or the scope closes.
+    const tools = {
+      /** @param {ToolDefinition} definition @returns {Disposer} */
+      define(definition) {
+        if (definition == null || typeof definition !== "object") throw new TypeError("tools.define expects a tool definition object");
+        const name = definition.name;
+        return scope.effect(() => {
+          defineTool(name, definition);
+          return () => removeTool(name);
+        });
+      },
+    };
     Object.defineProperty(this, "tools", { value: tools });
     return tools;
   }
@@ -754,14 +730,10 @@ export class Context {
   }
 }
 
-// --- plugin registry --- A plugin is `{ name, apply }`; the name keys the registry and prefixes every command, so it is required.
-/** @param {Plugin} plugin @returns {void} */
-function checkPlugin(plugin) {
-  const ok = plugin !== null && typeof plugin === "object" && typeof plugin.apply === "function";
-  if (!ok || typeof plugin.name !== "string" || plugin.name === "")
-    throw new TypeError("invalid plugin: expected { name, apply }");
-}
+// A block reads a capability as `ctx.<name>`, so a name that shadows a Context member is refused.
+const RESERVED = new Set([...Object.getOwnPropertyNames(Context.prototype), "id"]);
 
+// --- plugin registry --- A plugin is `{ name, apply }`; the name keys the registry and prefixes every command, so it is required.
 const readyNow = Promise.resolve();
 
 /** @param {unknown} result */
@@ -857,8 +829,10 @@ export const plugins = {
 
   /** @param {Plugin} plugin @returns {PluginHandle} */
   use(plugin) {
-    checkPlugin(plugin);
-    if (this._closing || !rootScope.alive) throw new TypeError("the plugin registry is closed");
+    // A plugin comes from user code, so its shape is checked here.
+    if (plugin === null || typeof plugin !== "object" || typeof plugin.apply !== "function" || typeof plugin.name !== "string" || plugin.name === "")
+      throw new TypeError("invalid plugin: expected { name, apply }");
+    if (this._closing) throw new TypeError("the plugin registry is closed");
     const name = plugin.name;
     if (this._live[name]) throw new TypeError("plugin `" + name + "` is already in use");
     const instance = new PluginInstance(name);
@@ -945,24 +919,5 @@ const closeTimeoutMs = installLifecycle((force) => {
     if (force) entry._force();
     else if (closed) pending.push(closed);
   }
-  rootScope.dispose();
   return pending.length ? Promise.all(pending).then(NOOP) : undefined;
 });
-
-// The scope owns each tool until its disposer runs or the scope closes.
-/** @param {Scope} scope */
-function toolRegistry(scope) {
-  return {
-    /** @param {ToolDefinition} definition @returns {Disposer} */
-    define(definition) {
-      if (definition == null || typeof definition !== "object") {
-        throw new TypeError("tools.define expects a tool definition object");
-      }
-      const name = definition.name;
-      return scope.effect(() => {
-        defineTool(name, definition);
-        return () => removeTool(name);
-      });
-    },
-  };
-}
