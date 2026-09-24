@@ -1139,7 +1139,7 @@ export class Picker {
       const r = this._layoutRect;
       const { height: bodyHeight } = this._bodyLayout(r);
       if (ev.row >= r.y && ev.row < r.y + bodyHeight) {
-        const step = Math.max(1, ev.count || 1);
+        const step = config.mouse.scrollLines * (ev.count || 1);
         const max = Math.max(0, this._bodyRows.length - bodyHeight);
         this._bodyScroll = Math.min(max, Math.max(0, this._bodyScroll + (ev.button === "wheel_down" ? step : -step)));
         root.invalidate();

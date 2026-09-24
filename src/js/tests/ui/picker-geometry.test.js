@@ -16,7 +16,7 @@ r = p.list._rect;
 const body = p._bodyRows;
 draw();
 check(p._bodyRows === body, "wrap cache");
-check(p.onMouse({ event: "press", button: "wheel_down", col: r.x, row: w.rect.y + 2, count: 1 }) && p._bodyScroll === 1, "body scroll");
+check(p.onMouse({ event: "press", button: "wheel_down", col: r.x, row: w.rect.y + 2, count: 1 }) && p._bodyScroll > 1, "body scroll steps scrollLines");
 check(p.selected() === "No", "body wheel moved action");
 p.onKey({ type: "key", code: "page_down", mods: 0 });
 check(p._bodyScroll > 1 && p.selected() === "No", "body keyboard scroll");
