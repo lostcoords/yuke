@@ -255,7 +255,7 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
     const result = ctx.newObject();
     module.set(ctx, result, "job", toValue(ctx, job));
     module.set(ctx, result, "ended", ended);
-    return pending.resolved(ctx, result);
+    return pending.resolved(ctx, module.finish(ctx, result));
 }
 
 /// Answer every job, newest first.
@@ -264,7 +264,7 @@ fn jsList(ctx: Context, _: Value, _: []const Value) Value {
     const out = ctx.newArray();
     const items = host.jobs.list.items;
     for (items, 0..) |_, i| module.setIndex(ctx, out, i, toValue(ctx, items[items.len - 1 - i]));
-    return out;
+    return module.finish(ctx, out);
 }
 
 fn jsGet(ctx: Context, _: Value, args: []const Value) Value {

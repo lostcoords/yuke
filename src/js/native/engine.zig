@@ -53,7 +53,7 @@ fn jsLoad(ctx: Context, _: Value, _: []const Value) Value {
     module.set(ctx, obj, "runs", ctx.newInt64(load.runs));
     module.set(ctx, obj, "childRuns", ctx.newInt64(load.child_runs));
     module.set(ctx, obj, "continuations", ctx.newInt64(load.continuations));
-    return obj;
+    return module.finish(ctx, obj);
 }
 
 fn sidArg(ctx: Context, args: []const Value, idx: usize) ?SessionId {
@@ -80,11 +80,7 @@ fn jsFactNames(ctx: Context, _: Value, _: []const Value) Value {
         if (ctx.hasException()) break;
         module.setIndex(ctx, names, i, ctx.newString(@tagName(fact)));
     }
-    if (ctx.hasException()) {
-        ctx.freeValue(names);
-        return module.throwPending(ctx);
-    }
-    return names;
+    return module.finish(ctx, names);
 }
 
 /// Return the QuickJS allocation counters, separate from the process footprint.
@@ -105,11 +101,7 @@ fn jsMemoryUsage(ctx: Context, _: Value, _: []const Value) Value {
         .{ "fastArrayElements", usage.fast_array_elements },
     };
     for (fields) |field| module.set(ctx, out, field[0], ctx.newFloat64(@floatFromInt(field[1])));
-    if (ctx.hasException()) {
-        ctx.freeValue(out);
-        return module.throwPending(ctx);
-    }
-    return out;
+    return module.finish(ctx, out);
 }
 
 fn jsSetEventSink(ctx: Context, _: Value, args: []const Value) Value {
@@ -442,9 +434,5 @@ fn jsSetAgentLimits(ctx: Context, _: Value, args: []const Value) Value {
     // The caller keeps the previous pair, so a plugin dispose can put it back.
     const pair = ctx.newArray();
     for (previous, 0..) |limit, i| module.setIndex(ctx, pair, i, ctx.newUint32(limit));
-    if (ctx.hasException()) {
-        ctx.freeValue(pair);
-        return module.throwPending(ctx);
-    }
-    return pair;
+    return module.finish(ctx, pair);
 }

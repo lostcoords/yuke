@@ -103,7 +103,7 @@ fn jsListen(ctx: Context, _: Value, _: []const Value) Value {
     if (ctx.isException(object)) return object;
     module.set(ctx, object, "id", ctx.newUint32(listener.id));
     module.set(ctx, object, "port", ctx.newUint32(port));
-    return object;
+    return module.finish(ctx, object);
 }
 
 const Accept = struct {

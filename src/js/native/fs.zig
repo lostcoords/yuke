@@ -203,12 +203,7 @@ fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
     module.set(ctx, out, "path", ctx.newString(info.path));
     module.set(ctx, out, "isDirectory", ctx.newBool(info.is_dir));
     module.set(ctx, out, "lastModifiedMs", ctx.newInt64(@intCast(info.last_modified_ms)));
-    // A full QuickJS heap throws at the caller, because no promise can be built for it either.
-    if (ctx.hasException()) {
-        ctx.freeValue(out);
-        return module.throwPending(ctx);
-    }
-    return resolved(ctx, out);
+    return resolved(ctx, module.finish(ctx, out));
 }
 
 /// Remove one regular file, and resolve false for a missing path, so a cleanup needs no `stat` first.
@@ -247,9 +242,7 @@ fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     defer aw.deinit();
     std.json.Stringify.value(pageOf(arena, path, page), .{}, &aw.writer) catch unreachable;
     // The page is our own JSON, so the parse fails only once the QuickJS heap is full.
-    const value = module.parseWritten(ctx, &aw, "yuke:fs");
-    if (ctx.isException(value)) return module.throwPending(ctx);
-    return resolved(ctx, value);
+    return resolved(ctx, module.parseWritten(ctx, &aw, "yuke:fs"));
 }
 
 /// Build the answer. Each entry carries its whole path, so the caller never joins one itself.

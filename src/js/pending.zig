@@ -46,11 +46,7 @@ pub const Http = struct {
         const headers = ctx.newObjectProto(quickjs.NULL);
         for (self.headers) |header| module.set(ctx, headers, header.name, ctx.newString(header.value));
         module.set(ctx, object, "headers", headers);
-        if (ctx.hasException()) {
-            ctx.freeValue(object);
-            return module.throwPending(ctx);
-        }
-        return object;
+        return module.finish(ctx, object);
     }
 };
 
@@ -102,8 +98,9 @@ pub const Failure = struct {
     code: ?[]const u8 = null,
 };
 
-/// Answer a resolved promise. `JS_NewSettledPromise` borrows the value, so this frees it.
+/// Answer a resolved promise. `JS_NewSettledPromise` borrows the value, so this frees it. An exception value passes through, because a full QuickJS heap throws at the caller.
 pub fn resolved(ctx: Context, value: Value) Value {
+    if (ctx.isException(value)) return value;
     defer ctx.freeValue(value);
     return ctx.newSettledPromise(false, value);
 }

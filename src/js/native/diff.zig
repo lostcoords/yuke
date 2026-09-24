@@ -48,13 +48,7 @@ fn jsDiff(ctx: Context, _: Value, args: []const Value) Value {
             error.OutOfMemory => unreachable,
         };
 
-    const file = fileOf(ctx, arena, path, hunks);
-    // A full QuickJS heap throws at the caller, because no promise can be built for it either.
-    if (ctx.hasException()) {
-        ctx.freeValue(file);
-        return module.throwPending(ctx);
-    }
-    return resolved(ctx, file);
+    return resolved(ctx, module.finish(ctx, fileOf(ctx, arena, path, hunks)));
 }
 
 /// Build `{path, hunks}`. The caller reads the exception once the whole value is built.

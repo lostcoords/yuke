@@ -68,6 +68,13 @@ pub fn throwPending(ctx: Context) Value {
     return ctx.throw(ctx.getException());
 }
 
+/// Answer the built `value`, or free it and throw when a full QuickJS heap left an exception during the build.
+pub fn finish(ctx: Context, value: Value) Value {
+    if (!ctx.hasException()) return value;
+    ctx.freeValue(value);
+    return throwPending(ctx);
+}
+
 /// Borrow one string argument. Another type answers null, because a conversion would run script code.
 pub fn string(ctx: Context, value: Value) ?[:0]const u8 {
     if (!ctx.isString(value)) return null;
@@ -168,9 +175,7 @@ pub fn toJs(ctx: Context, value: anytype) Value {
             const object = ctx.newObject();
             if (ctx.isException(object)) return object;
             inline for (info.fields) |field| set(ctx, object, comptime camelCase(field.name), toJs(ctx, @field(value, field.name)));
-            if (!ctx.hasException()) return object;
-            ctx.freeValue(object);
-            return throwPending(ctx);
+            return finish(ctx, object);
         },
         .@"union" => switch (value) {
             inline else => |payload| return toJs(ctx, payload),
