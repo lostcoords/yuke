@@ -1,6 +1,7 @@
 // yuke:composer-vim — opt-in modal keys for the chat composer.
 import { root } from "yuke:core";
 import { Emitter } from "yuke:kernel";
+import { windowKeys } from "yuke:keys";
 import { prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:text-input";
 import { Composer } from "yuke:ui";
 import { register } from "yuke:vim";
@@ -246,21 +247,15 @@ export const composerVim = {
       // Normal mode sends a key to the keymap, so no pane inside the chat reads it.
       ctx.tui.route("keymap", NORMAL_MODE);
 
-      /** @param {string} k @returns {() => boolean} */
-      const motion = (k) => () => {
-        const c = chatComposer();
-        return c ? normalKey(c, k) : false;
-      };
-      /** @type {Record<string, () => boolean>} */
-      const normal = {};
-      for (const k of NORMAL_KEYS) normal[k] = motion(k);
-      ctx.tui.keymap(normal, NORMAL_MODE);
-
       /** @param {(c: ComposerType) => boolean} fn @returns {() => boolean} */
       const edit = (fn) => () => {
         const c = chatComposer();
         return c ? fn(c) : false;
       };
+      /** @type {Record<string, () => boolean>} */
+      const normal = {};
+      for (const k of NORMAL_KEYS) normal[k] = edit((c) => normalKey(c, k));
+      ctx.tui.keymap(normal, NORMAL_MODE);
       // `gg` is a chord, while `dd` and `cc` are operators that never expire.
       ctx.tui.keymap({ "g g": edit((c) => pair(c, "g", "g")) }, NORMAL_MODE);
       ctx.tui.keymap(
@@ -272,20 +267,7 @@ export const composerVim = {
       // A null answer leaves the composer its own glyph.
       ctx.tui.slot(Composer, "prompt", /** @param {ComposerType} c @returns {string | null} */ (c) => (composerMode(c) === "normal" ? NORMAL_PROMPT : null));
 
-      ctx.tui.keymap({
-        "ctrl+w h": "focus:left",
-        "ctrl+w j": "focus:down",
-        "ctrl+w k": "focus:up",
-        "ctrl+w l": "focus:right",
-        "ctrl+w left": "focus:left",
-        "ctrl+w down": "focus:down",
-        "ctrl+w up": "focus:up",
-        "ctrl+w right": "focus:right",
-        "ctrl+w w": "focus:next",
-        "ctrl+w v": "window:split-right",
-        "ctrl+w s": "window:split-down",
-        "ctrl+w c": "window:close",
-      });
+      ctx.tui.keymap(windowKeys("ctrl+w"));
 
       ctx.tui.status({ side: "right", order: 0, render: () => {
         const mode = composerMode(chatComposer());

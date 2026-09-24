@@ -2,6 +2,7 @@
 import { keymap, Node, root } from "yuke:core";
 import { plugins } from "yuke:ext";
 import { ui, NAV_KEYS } from "yuke:ui";
+import { windowKeys } from "yuke:keys";
 import { notice, noticePlugin } from "yuke:notice";
 import { commandUi } from "yuke:command-ui";
 import { explorerPlugin } from "yuke:explorer";
@@ -137,18 +138,7 @@ plugins.use({
         "ctrl+c": "session:interrupt",
         "ctrl+q": "quit",
         "ctrl+z": "suspend",
-        "ctrl+k h": "focus:left",
-        "ctrl+k j": "focus:down",
-        "ctrl+k k": "focus:up",
-        "ctrl+k l": "focus:right",
-        "ctrl+k left": "focus:left",
-        "ctrl+k down": "focus:down",
-        "ctrl+k up": "focus:up",
-        "ctrl+k right": "focus:right",
-        "ctrl+k w": "focus:next",
-        "ctrl+k v": "window:split-right",
-        "ctrl+k s": "window:split-down",
-        "ctrl+k c": "window:close",
+        ...windowKeys("ctrl+k"),
       });
       });
 },

@@ -1,4 +1,11 @@
 // Normalize terminal key events and configured strokes.
+
+// The window keys under one leader: move the focus, split, and close.
+/** @param {string} leader @returns {Record<string, string>} */
+export function windowKeys(leader) {
+  const map = { h: "focus:left", j: "focus:down", k: "focus:up", l: "focus:right", left: "focus:left", down: "focus:down", up: "focus:up", right: "focus:right", w: "focus:next", v: "window:split-right", s: "window:split-down", c: "window:close" };
+  return Object.fromEntries(Object.entries(map).map(([key, name]) => [leader + " " + key, name]));
+}
 /** @param {string} seq @returns {string} */
 export function normalizeSeq(seq) {
   const s = String(seq);
