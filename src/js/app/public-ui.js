@@ -1,6 +1,5 @@
 // The public UI kit has no default shell or plugin activation.
 export { View, Node, root, style, text, fill, copy, quit, suspend } from "yuke:core";
-export { command, keymap, route, slot, context, status } from "yuke:core";
 export { ui, List, Composer, Text, Window, Picker, Prompt, borders, NAV_KEYS } from "yuke:ui";
 export { TextInput } from "yuke:text-input";
 export { Pager } from "yuke:pager";

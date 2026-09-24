@@ -11,7 +11,7 @@ const off = plugins.use({
     ctx.effect(() => () => { disposed++; });
     ctx.own(() => {
       releases++;
-      check("registrations leave before the release", !ctx.scope.alive);
+      check("registrations leave before the release", !ctx.alive);
       nested = plugins.dispose(ctx.id);
       return new Promise(resolve => { finish = resolve; });
     });
@@ -29,10 +29,10 @@ finish();
 globalThis.stopDone = false;
 first.then(() => {
   equal(disposed, 1);
-  equal(plugins.get("async-release"), undefined);
+  equal(plugins.has("async-release"), false);
   plugins.use({ name: "async-release", apply() {} });
   off.dispose();
-  check("old handle cannot close replacement", plugins.get("async-release"));
+  check("old handle cannot close replacement", plugins.has("async-release"));
   plugins.dispose("async-release");
   globalThis.stopDone = true;
 });

@@ -12,7 +12,7 @@ plugins.use({
   },
 });
 check("refused-all", refused === 6);
-check("plugin-survived", !!plugins.get("bad-args"));
+check("plugin-survived", plugins.has("bad-args"));
 
 // A block that throws reports the fault and stays inactive; the plugin keeps its other work.
 let sibling = 0;
@@ -25,6 +25,6 @@ plugins.use({
 });
 const offX = services.provide("x", 1);
 check("sibling-ran", sibling === 1);
-check("boom-alive", !!plugins.get("boom"));
+check("boom-alive", plugins.has("boom"));
 offX();
 check("clean-withdraw", !services.has("x"));

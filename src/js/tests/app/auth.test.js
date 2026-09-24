@@ -1,5 +1,5 @@
 import { check, equal } from "yuke:test";
-import { Context, Scope, plugins } from "yuke:ext";
+import { Context, Scope, plugins, scopeOf } from "yuke:ext";
 import { authPlugin } from "yuke:auth";
 import { command, root } from "yuke:core";
 import { events } from "yuke:kernel";
@@ -138,5 +138,5 @@ await settle();
 equal(observer.interaction.pending, 0);
 equal(root.overlays.length, 0);
 check("late login canceled", calls.includes("cancel:late"));
-observer.scope.dispose();
+scopeOf(observer).dispose();
 })();

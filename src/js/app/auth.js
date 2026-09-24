@@ -93,7 +93,7 @@ function finishLogin(p, outcome) {
 // The shared interaction owns the dialog; this call owns the provider login.
 /** @param {Ctx} ctx @param {ProviderRow} p @returns {Promise<void>} */
 async function deviceLogin(ctx, p) {
-  if (!ctx.scope.alive) return;
+  if (!ctx.alive) return;
   const login = client.authLoginTracked(p.id);
   let loginId = "";
   let finished = false;
@@ -101,15 +101,15 @@ async function deviceLogin(ctx, p) {
   try {
     const start = await login.start;
     loginId = start.login_id;
-    if (!ctx.scope.alive) return;
+    if (!ctx.alive) return;
     const outcome = await ctx.interaction.deviceLogin(start, login.outcome);
     finished = outcome !== undefined;
-    if (ctx.scope.alive) {
+    if (ctx.alive) {
       if (outcome) finishLogin(p, outcome);
       else notice.show("login canceled");
     }
   } catch (error) {
-    if (ctx.scope.alive) notice.show("login failed · " + errorText(error));
+    if (ctx.alive) notice.show("login failed · " + errorText(error));
   } finally {
     release();
     if (loginId && !finished) await client.authCancelLogin(loginId).catch(() => {});
@@ -120,14 +120,14 @@ async function deviceLogin(ctx, p) {
 async function keyLogin(ctx, p) {
   try {
     const key = await ctx.interaction.input("api key · " + p.id, "paste the API key", { secret: true });
-    if (!key || !ctx.scope.alive) return;
+    if (!key || !ctx.alive) return;
     await client.authSetApiKey(p.id, key);
-    if (ctx.scope.alive) {
+    if (ctx.alive) {
       notice.show("key saved · " + p.id);
       await loadCatalog();
     }
   } catch (error) {
-    if (ctx.scope.alive) notice.show("key rejected · " + errorText(error));
+    if (ctx.alive) notice.show("key rejected · " + errorText(error));
   }
 }
 

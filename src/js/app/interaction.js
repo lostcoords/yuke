@@ -113,7 +113,7 @@ function ask(ctx, request, options) {
   return new Promise((resolve, reject) => {
     if (options !== undefined && (options === null || typeof options !== "object" || Array.isArray(options))) throw new TypeError("interaction options must be an object");
     if (options?.signal !== undefined) native.validateSignal(options.signal);
-    if (!ctx.scope.alive || options?.signal?.aborted) { resolve(undefined); return; }
+    if (!ctx.alive || options?.signal?.aborted) { resolve(undefined); return; }
     const entry = answerers[answerers.length - 1];
     if (!entry) { reject(unavailable()); return; }
     if (!entry.answerer.interactive) {
@@ -174,7 +174,7 @@ function ask(ctx, request, options) {
 export function bindInteraction(ctx) {
   return {
     get pending() { return pending; },
-    get interactive() { return ctx.scope.alive && (answerers[answerers.length - 1]?.answerer.interactive ?? false); },
+    get interactive() { return ctx.alive && (answerers[answerers.length - 1]?.answerer.interactive ?? false); },
     confirm(title, message = "", options) { return ask(ctx, confirmRequest(title, message), options); },
     select(title, choices, options) { return ask(ctx, selectRequest(title, choices), options); },
     input(title, placeholder, options) { return ask(ctx, inputRequest(title, placeholder, options?.secret), options); },
@@ -187,7 +187,7 @@ export function bindInteraction(ctx) {
     notify(message, level = "info") {
       text(message, "notify message");
       noticeLevel(level);
-      if (!ctx.scope.alive) return;
+      if (!ctx.alive) return;
       const entry = answerers[answerers.length - 1];
       if (!entry) throw unavailable();
       entry.answerer.notify(ctx.id, message, level);

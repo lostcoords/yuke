@@ -15,7 +15,7 @@ handle.dispose().then(async () => {
   equal(await ready, "AbortError");
   equal(released, 1);
   equal(faults, 1);
-  check("stuck startup releases its name", !plugins.get("stuck-start"));
+  check("stuck startup releases its name", !plugins.has("stuck-start"));
   off();
   globalThis.startDone = true;
 }).catch(error => { globalThis.startFailure = String(error.stack); globalThis.startDone = true; });

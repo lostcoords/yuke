@@ -7,11 +7,11 @@ import { chats, chatOf } from "yuke:chat";
 import { feedOf } from "yuke:sessions";
 const fail = [];
 // The shell loads the notice as a plugin, so its segment and listeners can be taken back out.
-if (!plugins.get("notice")) fail.push("notice-plugin");
-if (!plugins.get("command-ui")) fail.push("command-ui-plugin");
-if (!plugins.get("catalog")) fail.push("catalog-plugin");
-if (!plugins.get("chat")) fail.push("chat-plugin");
-if (!plugins.get("explorer")) fail.push("explorer-plugin");
+if (!plugins.has("notice")) fail.push("notice-plugin");
+if (!plugins.has("command-ui")) fail.push("command-ui-plugin");
+if (!plugins.has("catalog")) fail.push("catalog-plugin");
+if (!plugins.has("chat")) fail.push("chat-plugin");
+if (!plugins.has("explorer")) fail.push("explorer-plugin");
 if (!command.available("catalog:reload")) fail.push("catalog-reload-command");
 if (!command.available("suspend")) fail.push("suspend-command");
 {

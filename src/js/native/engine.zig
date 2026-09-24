@@ -362,7 +362,8 @@ test "process activity uses live engine state and scoped coalesced notifications
         \\import { client } from "yuke:client";
         \\import { Context, Scope } from "yuke:ext";
         \\globalThis.client = client;
-        \\globalThis.observer = new Context(new Scope("activity-test"), "activity-test");
+        \\globalThis.observerScope = new Scope("activity-test");
+        \\globalThis.observer = new Context(observerScope, "activity-test");
         \\globalThis.seen = [];
         \\observer.on("engine.activity.changed", (...args) => {
         \\  if (args.length !== 0) throw new Error("activity carries no payload");
@@ -417,7 +418,7 @@ test "process activity uses live engine state and scoped coalesced notifications
     try testing.expectEqual(@as(i32, 1), try host.evalInt("JSON.stringify(client.load()) === '{\"runs\":0,\"childRuns\":0,\"continuations\":0}'"));
     host.engine.attach(&tree.app);
     try host.pump();
-    try host.evalModule("observer.scope.dispose();", "dispose.js");
+    try host.evalModule("observerScope.dispose();", "dispose.js");
     tree.app.engine.endContinuation();
     try host.pump();
     try testing.expectEqual(@as(i32, 6), try host.evalInt("seen.length"));

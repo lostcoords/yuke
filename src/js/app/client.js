@@ -1,7 +1,7 @@
 // yuke:client — the in-process JavaScript seam over `yuke:engine-native`.
 import { native } from "yuke:engine-native";
 import { events } from "yuke:kernel";
-import { sendInput, createSession } from "yuke:ext";
+import { gateInput } from "yuke:ext";
 
 /** @import { MemoryUsage, MessagePart, SessionOutline, ViewPart } from "yuke:engine-native" */
 
@@ -15,10 +15,11 @@ events.on("engine.drained", (ev) => {
   if (name) events.emit(name, ev);
 });
 
-// The native task answers JSON after the command and its hooks settle.
+// The native task answers JSON after the command and its hooks settle. Input passes the `input.before` gate first.
 /** @template {keyof Wire.Methods} M @param {M} method @param {Wire.Methods[M]["paramsType"]} args @returns {Promise<Wire.Methods[M]["returnType"]>} */
 async function request(method, ...args) {
-  const text = await native.request(method, JSON.stringify(args[0] ?? {}));
+  const params = await gateInput(method, args[0] ?? /** @type {any} */ ({}));
+  const text = await native.request(method, JSON.stringify(params));
   try {
     return JSON.parse(text);
   } catch {
@@ -203,16 +204,15 @@ function textContent(text) {
   return [{ type: "text", text }];
 }
 
-// Input goes through the gate in `yuke:ext`, so a plugin reads it before the engine does.
 /** @param {string} id @param {readonly Wire.ContentPart[]} content @param {Wire.ToolSite} [parentTool] @returns {Promise<Wire.SessionSendInputResult>} */
 function sessionSendInput(id, content, parentTool) {
-  return sendInput({ ...(parentTool ? { parent_tool: parentTool } : {}), session_id: id, input: { type: "content", content } });
+  return request("session.send_input", { ...(parentTool ? { parent_tool: parentTool } : {}), session_id: id, input: { type: "content", content } });
 }
 
 // Send an explicit skill invocation. The engine loads the body and appends one user message with the arguments after it.
 /** @param {string} id @param {string} name @param {string} [args] @returns {Promise<Wire.SessionSendInputResult>} */
 function sessionSendSkill(id, name, args) {
-  return sendInput({ session_id: id, input: { type: "skill", name, ...(args ? { arguments: args } : {}) } });
+  return request("session.send_input", { session_id: id, input: { type: "skill", name, ...(args ? { arguments: args } : {}) } });
 }
 
 // Stop the active run. The queue survives unless `clearQueue` asks otherwise, and the next queued input starts at once.
@@ -239,7 +239,7 @@ function sessionCancelInput(id, inputId) {
 // Create a session. An unset reasoning takes the default of the model, and a session with no model is refused.
 /** @param {Wire.CreateSession} params @returns {Promise<Wire.SessionResult>} */
 function sessionCreate(params) {
-  return createSession(params);
+  return request("session.create", params);
 }
 
 // Change the named settings of one session; an absent field keeps its current value.

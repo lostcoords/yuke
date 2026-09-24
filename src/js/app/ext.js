@@ -4,7 +4,6 @@ import { events } from "yuke:kernel";
 import { bindInteraction } from "yuke:interaction";
 import { defineTool, removeTool } from "yuke:tools";
 import { installDispatcher, installLifecycle, setPoints } from "yuke:hooks";
-import { native } from "yuke:engine-native";
 export { interaction } from "yuke:interaction";
 
 /** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, PluginAsync, PluginHandle, Release, ReleaseEntry, ScopeEntry, ScopeLife, ToolDefinition } from "./types/ext.js" */
@@ -471,14 +470,15 @@ let reserved = null;
 // Build the reserved set on first use, because `Context` is declared after this function.
 /** @param {string} name @returns {boolean} */
 function isReserved(name) {
-  if (!reserved) reserved = new Set([...Object.getOwnPropertyNames(Context.prototype), "scope", "id"]);
+  if (!reserved) reserved = new Set([...Object.getOwnPropertyNames(Context.prototype), "id"]);
   return reserved.has(name);
 }
 
 // `inject` holds a block for the capabilities it needs. A change of a named capability rebuilds the child scope of the block.
 /** @template {string} K @param {Context} parentContext @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
 function injectInto(parentContext, names, apply) {
-  const { scope: parent, id } = parentContext;
+  const parent = scopeOf(parentContext);
+  const id = parentContext.id;
   if (!Array.isArray(names) || names.length === 0) throw new TypeError("inject needs at least one capability name");
   for (const n of names) {
     if (typeof n !== "string" || n === "") throw new TypeError("inject: a capability name must be a non-empty string");
@@ -655,77 +655,95 @@ async function prepareInput(sessionId, input, create = null) {
   return decision?.type === "replace" ? { type: "content", content: decision.value.content } : input;
 }
 
-/** @param {Wire.SessionSendInputParams} params @returns {Promise<Wire.SessionSendInputResult>} */
-export async function sendInput(params) {
-  const input = await prepareInput(params.session_id, params.input);
-  return JSON.parse(await native.request("session.send_input", JSON.stringify({ ...params, input })));
+// Every engine request passes here, so no caller reaches native admission with input the hook did not read.
+/** @template {keyof Wire.Methods} M @param {M} method @param {Wire.Methods[M]["paramsType"][0]} params @returns {Promise<Wire.Methods[M]["paramsType"][0]>} */
+export async function gateInput(method, params) {
+  if (method === "session.send_input") {
+    const send = /** @type {Wire.SessionSendInputParams} */ (params);
+    return { ...send, input: await prepareInput(send.session_id, send.input) };
+  }
+  if (method === "session.create") {
+    const create = /** @type {Wire.CreateSession} */ (params);
+    if (create.initial_input == null) return params;
+    const { initial_input, ...rest } = create;
+    return { ...rest, initial_input: await prepareInput(null, initial_input, rest) };
+  }
+  return params;
 }
 
-/** @param {Wire.CreateSession} params @returns {Promise<Wire.SessionResult>} */
-export async function createSession(params) {
-  if (params.initial_input != null) {
-    const { initial_input, ...create } = params;
-    params = { ...create, initial_input: await prepareInput(null, initial_input, create) };
-  }
-  return JSON.parse(await native.request("session.create", JSON.stringify(params)));
-}
+// Internal modules read the scope of a context through this function; plugin code cannot import it.
+/** @type {(ctx: Context) => Scope} */
+export let scopeOf;
 
 // --- plugin context: the register-through-me surface --- Every registration is an effect on the scope, so an unload reverts all of them.
 export class Context {
+  // The plugin never holds its scope, so it cannot close itself around the registry.
+  /** @type {Scope} */
+  #scope;
+
   /** @param {Scope} scope @param {string} id */
   constructor(scope, id) {
-    this.scope = scope;
+    this.#scope = scope;
     this.id = id; // the plugin id; it namespaces commands and owns this plugin's advice
+  }
+
+  static {
+    scopeOf = (ctx) => ctx.#scope;
+  }
+
+  // False once the close starts, so late async work can skip its registrations.
+  get alive() {
+    return this.#scope.alive;
   }
 
   // A close cancels this signal before any effect reverts, so I/O started with it aborts.
   get signal() {
-    return this.scope.signal;
+    return this.#scope.signal;
   }
 
   // Hold a resource until the close; its release may be async and runs after the effects revert, newest first.
   /** @param {Release} release @returns {() => void | Promise<void>} */
   own(release) {
-    return this.scope.own(release);
+    return this.#scope.own(release);
   }
 
   /** @param {Effect} fn @returns {Disposer} */
   effect(fn) {
-    return this.scope.effect(fn);
+    return this.#scope.effect(fn);
   }
 
   /** @param {string} name @param {EventHandler} fn @param {EventOptions} [opts] @returns {Disposer} */
   on(name, fn, opts) {
-    return this.scope.effect(() => events.on(name, fn, opts));
+    return this.#scope.effect(() => events.on(name, fn, opts));
   }
 
   /** @param {string} name @param {EventHandler} fn @returns {Disposer} */
   once(name, fn) {
-    return this.scope.effect(() => events.once(name, fn));
+    return this.#scope.effect(() => events.once(name, fn));
   }
 
   /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
   advise(obj, prop, where, fn, opts) {
-    return this.scope.effect(() =>
+    return this.#scope.effect(() =>
       advice.advise(obj, prop, where, fn, Object.assign({}, opts, { owner: this.id })),
     );
   }
 
   /** @param {string} name @param {unknown} value @returns {Disposer} */
   provide(name, value) {
-    return this.scope.effect(() => services.provide(name, value));
+    return this.#scope.effect(() => services.provide(name, value));
   }
 
   // Answer one point. The chain runs in registration order and this plugin's turn reverts on unload.
   /** @template {HookPoint} P @param {P} point @param {HookHandler<P>} fn @returns {Disposer} */
   hook(point, fn) {
     if (typeof fn !== "function") throw new TypeError("hook needs a handler function");
-    return this.scope.effect(() => addHook(point, this.id, fn));
+    return this.#scope.effect(() => addHook(point, this.id, fn));
   }
 
   // The tools this plugin owns. A dispose withdraws them, so an unload leaves no tool behind.
   get tools() {
-    const tools = toolRegistry(this.scope);
+    const tools = toolRegistry(this.#scope);
     Object.defineProperty(this, "tools", { value: tools });
     return tools;
   }
@@ -768,10 +786,12 @@ function startupCanceled() {
 }
 
 // One loaded plugin: its scope, its startup, and the close that holds its name until the scope and the startup settle.
-class PluginInstance extends Context {
+// Only the registry holds an instance; `apply` gets the context and the caller gets a handle.
+class PluginInstance {
   /** @param {string} name */
   constructor(name) {
-    super(new Scope(name), name);
+    this.scope = new Scope(name);
+    this.context = new Context(this.scope, name);
     this._name = name;
     /** @type {"applying" | "active" | "closing" | "closed"} */
     this._phase = "applying";
@@ -853,7 +873,7 @@ export const plugins = {
     const instance = new PluginInstance(name);
     this._live[name] = instance;
     try {
-      const result = plugin.apply(instance);
+      const result = plugin.apply(instance.context);
       if (result != null && typeof /** @type {any} */ (result).then === "function") {
         /** @type {(error: unknown) => void} */
         let rejectReady = NOOP;
@@ -890,11 +910,15 @@ export const plugins = {
       throw error;
     }
     if (instance._phase === "applying") instance._phase = "active";
-    return instance;
+    // The handle closes this instance only, so an old handle cannot close a replacement.
+    return Object.freeze({
+      get ready() { return instance.ready; },
+      dispose: () => instance.dispose(),
+    });
   },
 
-  /** @param {string} name @returns {Scope | undefined} */
-  get(name) { return this._live[name]?.scope; },
+  /** @param {string} name @returns {boolean} */
+  has(name) { return this._live[name] !== undefined; },
 
   /** @param {string} name @returns {void | Promise<void>} */
   dispose(name) { return this._live[name]?.dispose(); },

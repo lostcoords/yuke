@@ -6,6 +6,7 @@ It must not return a disposer.
 A plugin has no `stop`; it releases each resource with `ctx.own`.
 
 `plugins.use()` returns a handle with `ready` and `dispose()`.
+The handle and the context are different objects. The context cannot dispose its plugin.
 Await `handle.ready` before use of a plugin that has async startup.
 Startup failure or cancellation rejects `ready`.
 Call `await handle.dispose()` or `await plugins.dispose(name)` before replacement.

@@ -22,7 +22,7 @@ check("revealed", seen.join(",") === "A,A2,A");
 
 // A capability must not shadow a context member, or the block would lose that method.
 let refused = 0;
-for (const bad of ["effect", "inject", "provide", "on", "scope", "id"]) {
+for (const bad of ["effect", "inject", "provide", "on", "alive", "id"]) {
   try { services.provide(bad, 1); } catch { refused += 1; }
 }
 check("provide-refuses-reserved", refused === 6);

@@ -21,7 +21,7 @@ equal(order.join(","), "early,first,fault,last");
 equal(faults.join(","), "release failed");
 globalThis.resourcesDone = false;
 closed.then(() => {
-  check("resource fault releases the name", !plugins.get("release"));
+  check("resource fault releases the name", !plugins.has("release"));
   off();
   globalThis.resourcesDone = true;
 });

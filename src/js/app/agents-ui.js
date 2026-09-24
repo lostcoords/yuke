@@ -75,7 +75,7 @@ export async function openAgents(ctx, sessionId) {
   let items = await agentRows(sessionId);
   const mainId = items[0].item.session.id;
   const childItems = () => items.filter((row) => row.item.session.origin.type === "child").map((row) => row.item);
-  if (!ctx.scope.alive || currentChat !== focusedChat() || currentChat?.sessionId !== sessionId) return;
+  if (!ctx.alive || currentChat !== focusedChat() || currentChat?.sessionId !== sessionId) return;
   const picker = ui.pick({
     title: agentSummary(childItems()), footer: "↵ open · x stop · X stop all agents · esc close",
     border: "rounded", width: max => Math.round(max * 0.9), height: max => Math.round(max * 0.6), filter: false,

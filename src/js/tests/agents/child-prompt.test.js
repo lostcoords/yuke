@@ -1,4 +1,5 @@
-import { plugins, createSession } from "yuke:ext";
+import { plugins } from "yuke:ext";
+import { client } from "yuke:client";
 import { config } from "yuke:kernel";
 config.systemPrompt = "base prompt";
 const prompts = [];
@@ -8,7 +9,7 @@ plugins.use({ name: "inspect-prompt", apply(ctx) {
 (async () => {
   const params = { workspace_path: "/work", child: { name: "child", site: {} }, initial_input: { type: "content", content: [{ type: "text", text: "task" }] } };
   for (const value of [params, { ...params, system_prompt: "custom" }]) {
-    try { await createSession(value); throw new Error("input was not blocked"); }
+    try { await client.request("session.create", value); throw new Error("input was not blocked"); }
     catch (error) { if (error.code !== "bad_request") throw error; }
   }
   if (prompts[0] !== undefined) throw new Error("unexpected JS prompt");

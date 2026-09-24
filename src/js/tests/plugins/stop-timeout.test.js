@@ -20,7 +20,7 @@ plugins.dispose("stalled").then(async () => {
   plugins.use({ name: "stalled", apply() {} });
   reject(new Error("late failure"));
   await Promise.resolve();
-  check("late failure keeps replacement", plugins.get("stalled"));
+  check("late failure keeps replacement", plugins.has("stalled"));
   equal(faults, 1);
   plugins.dispose("stalled");
   unwatch();

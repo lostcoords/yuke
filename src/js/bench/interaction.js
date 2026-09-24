@@ -1,4 +1,4 @@
-import { Context, Scope, plugins } from "yuke:ext";
+import { Context, Scope, plugins, scopeOf } from "yuke:ext";
 import { root } from "yuke:core";
 import { tuiPlugin } from "yuke:tui";
 import { tuiInteractionPlugin } from "yuke:interaction-ui";
@@ -21,7 +21,7 @@ async function step() {
     if (root.overlays.length !== 0) throw new Error("the prompt remains open");
     return ++count;
   } finally {
-    if (fresh) ctx.scope.dispose();
+    if (fresh) scopeOf(ctx).dispose();
   }
 }
 

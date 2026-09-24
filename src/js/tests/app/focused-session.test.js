@@ -1,6 +1,6 @@
 import { check, equal } from "yuke:test";
 import { client } from "yuke";
-import { Context, Scope } from "yuke:ext";
+import { Context, Scope, scopeOf } from "yuke:ext";
 import { Chat, focusedChat, focusedSessionId } from "yuke/chat";
 import { focusedSessionId as internalQuery } from "yuke:chat";
 import { root, Node } from "yuke:core";
@@ -70,7 +70,7 @@ stop();
 root.setRoot(null);
 equal(focusedSessionId(), null);
 const beforeDispose = seen.length;
-observer.scope.dispose();
+scopeOf(observer).dispose();
 root.setRoot(Node.leaf(a.view));
 equal(focusedSessionId(), "replacement");
 equal(seen.length, beforeDispose);

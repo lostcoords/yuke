@@ -21,7 +21,7 @@ globalThis.stopDone = false;
 Promise.all([plugins.dispose("fault-false"), plugins.dispose("fault-true")]).then(() => {
   equal(disposed, 2);
   equal(faults.join(","), "fault-false:sync,fault-true:async");
-  check("faults release both names", !plugins.get("fault-false") && !plugins.get("fault-true"));
+  check("faults release both names", !plugins.has("fault-false") && !plugins.has("fault-true"));
   unwatch();
   globalThis.stopDone = true;
 });

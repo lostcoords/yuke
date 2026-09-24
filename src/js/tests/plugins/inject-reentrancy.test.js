@@ -8,7 +8,7 @@ plugins.use({ name: "victim", apply: (ctx) => { ctx.inject(["c"], () => { log.pu
 services.provide("c", 1);
 // The victim died during the same change, so its copied watcher must build nothing.
 check("no-orphan-build", log.join(",") === "");
-check("victim-gone", !plugins.get("victim"));
+check("victim-gone", !plugins.has("victim"));
 
 // A block that drops its own dependency must not stay active; the provider exists first, so the block builds at once and can withdraw it from inside.
 const seen = [];

@@ -23,7 +23,7 @@ import { tui } from "yuke:tui";
   plugins.use(p);
   let threw = false;
   try { plugins.use(p); } catch (e) { threw = e instanceof TypeError; }
-  const kept = disposals === 0 && !!plugins.get("dup");
+  const kept = disposals === 0 && plugins.has("dup");
   plugins.dispose("dup");
   check("plugin-duplicate-rejected", threw && kept && disposals === 1 && plugins.names().indexOf("dup") < 0);
 }
@@ -33,7 +33,7 @@ import { tui } from "yuke:tui";
   const bad = { name: "bad", apply(ctx) { const t = tui.bindTo(ctx); t.command(null, { act: () => {} }); throw new Error("nope"); } };
   let threw = false;
   try { plugins.use(bad); } catch (e) { threw = true; }
-  check("plugin-partial-revert", threw && !command.map["bad:act"] && !plugins.get("bad"));
+  check("plugin-partial-revert", threw && !command.map["bad:act"] && !plugins.has("bad"));
 }
 
 // A plugin is `{ name, apply }` and nothing else, so no shape can register under a guessed name.
@@ -55,5 +55,15 @@ import { tui } from "yuke:tui";
 {
   const handle = plugins.use({ name: "stable-key", apply(ctx) { ctx.id = "changed"; } });
   handle.dispose();
-  check("registry-key-is-stable", !plugins.get("stable-key"));
+  check("registry-key-is-stable", !plugins.has("stable-key"));
+}
+
+// The plugin holds a context and the caller holds a handle, so neither can close or register through the other.
+{
+  let ctx;
+  const handle = plugins.use({ name: "split-handle", apply(c) { ctx = c; } });
+  check("handle-is-not-context", handle !== ctx && Object.isFrozen(handle) && !("effect" in handle));
+  check("context-cannot-close", !("scope" in ctx) && !("dispose" in ctx) && ctx.alive);
+  handle.dispose();
+  check("context-sees-close", !ctx.alive);
 }

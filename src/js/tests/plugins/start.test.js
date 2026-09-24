@@ -33,11 +33,11 @@ globalThis.startDone = false;
   equal(released, 1);
   check("registration is gone", !services.has("pending-service"));
   equal(await ready, "AbortError");
-  check("name stays held while startup exits", plugins.get("pending"));
+  check("name stays held while startup exits", plugins.has("pending"));
   resume();
   await closed;
   equal(released, 2);
-  equal(plugins.get("pending"), undefined);
+  equal(plugins.has("pending"), false);
   check("signal stays aborted", context.signal.aborted);
 
   const next = plugins.use({ name: "pending", async apply(ctx) {
@@ -47,7 +47,7 @@ globalThis.startDone = false;
   await next.ready;
   check("registration after await is live", services.has("started"));
   handle.dispose();
-  check("old handle keeps replacement", plugins.get("pending"));
+  check("old handle keeps replacement", plugins.has("pending"));
   await next.dispose();
 
   let partial = 0;

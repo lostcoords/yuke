@@ -905,7 +905,7 @@ export function mcp(options = {}) {
         if (user !== undefined) sources.push([await readServers(user, problems), true]);
       } catch (error) { problems.push(errorText(error)); }
       sources.push([await readServers(WORKSPACE_FILE, problems), false]);
-      if (!ctx.scope.alive) return;
+      if (!ctx.alive) return;
       for (const [configs, trusted] of sources) for (const [name, config] of Object.entries(configs)) {
         if (servers.some((server) => server.name === name)) continue;
         if (!record(config)) { problems.push(name + ": the server entry must be an object"); continue; }
@@ -916,7 +916,7 @@ export function mcp(options = {}) {
       let searchDescription = "";
       // One search tool covers every connected server. Its description names them, so the model knows when to search.
       const refreshSearchTool = () => {
-        if (!ctx.scope.alive) return;
+        if (!ctx.alive) return;
         const connected = servers.filter((server) => server.state === "connected");
         const description = connected.length === 0 ? "" : ("Search the MCP tool catalog by keywords and load the matching tools. Servers: " + connected.map((server) => server.name + (server.instructions ? " (" + server.instructions + ")" : "")).join("; ") + ".").slice(0, SEARCH_DESCRIPTION_MAX);
         if (description === searchDescription) return;
@@ -956,7 +956,7 @@ export function mcp(options = {}) {
             if (!ctx.interaction.interactive) { server.fail("disabled", "not trusted"); continue; }
             const endpoint = /** @type {Endpoint} */ (server.endpoint);
             const ok = await ctx.interaction.confirm("Start the MCP server " + server.name + "?", WORKSPACE_FILE + " " + endpoint.describe + "\nRemember this decision for this workspace and server configuration.");
-            if (ok === undefined || !ctx.scope.alive || server.state !== "untrusted") continue;
+            if (ok === undefined || !ctx.alive || server.state !== "untrusted") continue;
             try { writeTrust(server.name, endpoint.identity, ok); }
             catch (error) { problems.push(server.name + ": " + errorText(error)); }
             if (ok) server.start(); else server.fail("disabled", "not trusted");

@@ -29,7 +29,7 @@ check("shared-stops-last", !root.hasTickable(svc) && log.join(",") === "start,st
 const bad = { onStart() { throw new Error("bad start"); } };
 let threw = 0;
 try { plugins.use({ name: "bad", apply(ctx) { const t = tui.bindTo(ctx); t.tickable(bad); } }); } catch (e) { threw = 1; }
-check("bad-start-rejected", threw === 1 && !root.hasTickable(bad) && !plugins.get("bad"));
+check("bad-start-rejected", threw === 1 && !root.hasTickable(bad) && !plugins.has("bad"));
 
 // A throwing `onStop` still restores the tick state.
 let synced = 0;

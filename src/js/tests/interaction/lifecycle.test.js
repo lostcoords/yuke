@@ -1,5 +1,5 @@
 import { check, equal } from "yuke:test";
-import { Context, Scope, interaction } from "yuke:ext";
+import { Context, Scope, interaction, scopeOf } from "yuke:ext";
 import { events } from "yuke:kernel";
 
 const owner = () => new Context(new Scope("interaction-test"), "same-name");
@@ -30,7 +30,7 @@ equal(changes.join(), "1,2");
 shown[1].resolve("private");
 equal(surface.pending, 1);
 equal(await second, "private");
-a.scope.dispose();
+scopeOf(a).dispose();
 equal(surface.pending, 0);
 equal(await first, undefined);
 equal(closed, 2);
@@ -68,7 +68,7 @@ equal(unavailable.name, "InteractionUnavailable");
 equal(changes.length, before);
 
 // Synchronous completion and open failure leave no request or scope effect.
-const effects = b.scope._disposers.length;
+const effects = scopeOf(b)._disposers.length;
 for (const fail of [false, true]) {
   const remove = interaction.install({ ...answerer, open(request, ctx, options, resolve) {
     if (fail) throw new Error("open failed");
@@ -79,7 +79,7 @@ for (const fail of [false, true]) {
   try { equal(await b.interaction.confirm("Immediate"), true); } catch (e) { error = e; }
   equal(error?.message, fail ? "open failed" : undefined);
   equal(b.interaction.pending, 0);
-  equal(b.scope._disposers.length, effects);
+  equal(scopeOf(b)._disposers.length, effects);
   remove();
 }
 equal(changes.length, before);
@@ -88,7 +88,7 @@ equal(changes.length, before);
 const remove = interaction.install(answerer);
 const reentrant = owner();
 const off = events.on("interaction.changed", () => {
-  if (b.interaction.pending > 0) reentrant.scope.dispose();
+  if (b.interaction.pending > 0) scopeOf(reentrant).dispose();
 });
 equal(await reentrant.interaction.confirm("Reentrant"), undefined);
 equal(b.interaction.pending, 0);
@@ -105,8 +105,8 @@ equal(failure.message, "request failed");
 offFault();
 remove();
 const observed = changes.length;
-observer.scope.dispose();
-b.scope.dispose();
+scopeOf(observer).dispose();
+scopeOf(b).dispose();
 equal(surface.pending, 0);
 
 // A disposer fault rejects its request and does not stop the frontend sweep.
@@ -120,13 +120,13 @@ broken();
 equal(c.interaction.pending, 0);
 equal(cleanupCalls, 2);
 check("both requests reject", (await results).every(result => result.status === "rejected" && result.reason.message === "close failed"));
-c.scope.dispose();
+scopeOf(c).dispose();
 
 // Disposal inside open closes its returned resource without a transient count.
 const duringOpen = owner();
 let closeCalls = 0;
 const removeDuringOpen = interaction.install({ ...answerer, open() {
-  duringOpen.scope.dispose();
+  scopeOf(duringOpen).dispose();
   return () => { closeCalls++; };
 } });
 equal(await duringOpen.interaction.confirm("During open"), undefined);
@@ -146,6 +146,6 @@ let setupError;
 try { await invalidOpen.interaction.confirm("Invalid open"); } catch (error) { setupError = error; }
 equal(setupError.message, "setup failed after answer");
 equal(invalidOpen.interaction.pending, 0);
-equal(invalidOpen.scope._disposers.length, 0);
+equal(scopeOf(invalidOpen)._disposers.length, 0);
 removeInvalid();
-invalidOpen.scope.dispose();
+scopeOf(invalidOpen).dispose();

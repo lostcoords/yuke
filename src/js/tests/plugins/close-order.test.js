@@ -1,5 +1,5 @@
 import { check, equal } from "yuke:test";
-import { plugins, services, Scope } from "yuke:ext";
+import { plugins, services, Scope, scopeOf } from "yuke:ext";
 import { events } from "yuke:kernel";
 import * as cancellation from "yuke:cancellation-native";
 
@@ -50,7 +50,7 @@ globalThis.closeDone = false;
     const withdraw = services.provide("self-close", 1);
     let builds = 0;
     const handle = plugins.use({ name: "self-close", apply(ctx) {
-      ctx.inject(["self-close"], (block) => { builds++; if (builds === 1) block.scope.dispose(); });
+      ctx.inject(["self-close"], (block) => { builds++; if (builds === 1) scopeOf(block).dispose(); });
     } });
     const again = services.provide("self-close", 2);
     check("dead-block-not-live", builds === 2);

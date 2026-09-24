@@ -2,6 +2,7 @@
 import { command, keymap, route, slot, context, status, style, root } from "yuke:core";
 import { events } from "yuke:kernel";
 import { ChatView } from "yuke:chat-view";
+import { scopeOf } from "yuke:ext";
 
 /** @import { PresentationContext, PresentationProvider } from "yuke:chat-view" */
 /** @import { LayoutNode } from "./types/layout.js" */
@@ -67,7 +68,7 @@ function bindTo(ctx) {
         /** @type {PresentationProvider} */
         const provider = {
           mount(view) {
-            const scope = ctx.scope.child("presentation");
+            const scope = scopeOf(ctx).child("presentation");
             try {
               const layout = create(view, scope);
               if (typeof layout !== "function") throw new TypeError("presentation factory must return a layout function");
@@ -116,7 +117,7 @@ function bindTo(ctx) {
       if (root.overlays.indexOf(layer) < 0) throw new TypeError("overlay: the layer is not on the stack");
 
       // A dead scope reverts nothing, so the overlay closes now and never outlives its block.
-      if (!ctx.scope.alive) {
+      if (!ctx.alive) {
         root.popOverlay(layer);
         return () => {};
       }

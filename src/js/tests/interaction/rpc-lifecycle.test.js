@@ -1,5 +1,5 @@
 import { equal } from "yuke:test";
-import { Context, Scope, plugins } from "yuke:ext";
+import { Context, Scope, plugins, scopeOf } from "yuke:ext";
 import { rpcInteractionPlugin } from "yuke:interaction";
 import { native } from "yuke:interaction-native";
 
@@ -28,4 +28,4 @@ complete({ type: "succeeded" });
 equal((await login).type, "succeeded");
 equal(ctx.interaction.pending, 0);
 equal(events.join(), "1,0");
-ctx.scope.dispose();
+scopeOf(ctx).dispose();

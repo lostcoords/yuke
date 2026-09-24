@@ -10,5 +10,5 @@ check("block-never-built", built === 0);
 
 plugins.use(composerVim);
 plugins.use(transcriptVim);
-check("composer-vim-live", plugins.get("composer-vim") !== undefined);
-check("transcript-vim-live", plugins.get("transcript-vim") !== undefined);
+check("composer-vim-live", plugins.has("composer-vim"));
+check("transcript-vim-live", plugins.has("transcript-vim"));
