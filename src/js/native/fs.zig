@@ -58,25 +58,6 @@ fn ownedPath(ctx: Context, gpa: std.mem.Allocator, args: []const Value, idx: usi
     return gpa.dupe(u8, if (raw.len == 0) default else raw) catch unreachable;
 }
 
-/// One scratch arena and one local host for a single call. The host anchors a relative path.
-const Call = struct {
-    arena: std.heap.ArenaAllocator,
-    local: LocalHost,
-
-    fn open(host: *Host, root: []const u8) Call {
-        return .{
-            .arena = .init(host.gpa),
-            .local = .{ .io = host.io, .root = root, .env = host.execution.env },
-        };
-    }
-    fn close(self: *Call) void {
-        self.arena.deinit();
-    }
-    fn alloc(self: *Call) std.mem.Allocator {
-        return self.arena.allocator();
-    }
-};
-
 /// One read, copied so the task can use it after the call returns.
 const ReadRequest = struct {
     path: []u8,
@@ -126,28 +107,29 @@ fn jsReadRange(ctx: Context, _: Value, args: []const Value) Value {
 /// Read one file on a task; it writes bytes into the op and never enters JavaScript; `Host.close` cancels this group and waits for it, so a task must reach a cancellation point, and the task must stay within input and output.
 fn readTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
     defer req.free(host.gpa);
-    var call = Call.open(host, req.root);
-    defer call.close();
-
-    const text = call.local.readAllInto(call.alloc(), host.gpa, req.path, max_read_bytes) catch |err|
+    var arena: std.heap.ArenaAllocator = .init(host.gpa);
+    defer arena.deinit();
+    var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.execution.env };
+    const text = local.readAllInto(arena.allocator(), host.gpa, req.path, max_read_bytes) catch |err|
         return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
     op.finish(.{ .text = text });
 }
 
 fn readRangeTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
     defer req.free(host.gpa);
-    var call = Call.open(host, req.root);
-    const got = call.local.readRange(call.alloc(), req.path, req.range, read_limits) catch |err| {
-        call.close();
+    var arena: std.heap.ArenaAllocator = .init(host.gpa);
+    var local: LocalHost = .{ .io = host.io, .root = req.root, .env = host.execution.env };
+    const got = local.readRange(arena.allocator(), req.path, req.range, read_limits) catch |err| {
+        arena.deinit();
         return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
     };
-    const answer = call.alloc().create(RangeAnswer) catch unreachable;
+    const answer = arena.allocator().create(RangeAnswer) catch unreachable;
     answer.* = switch (got) {
         .text => |range| .{ .text = .{ .text = range.text, .next = range.next_line, .long_lines = range.long_lines } },
         .image => |path| .{ .image = .{ .image_path = path } },
     };
     // The result takes the arena, so the text reaches the script with no copy on the task.
-    op.finish(.{ .object = .init(call.arena, answer) });
+    op.finish(.{ .object = .init(arena, answer) });
 }
 
 /// The object `readRange` answers: `{ text, next, longLines }` or `{ imagePath }`.
@@ -173,16 +155,17 @@ fn jsWriteFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     const root = ownedPath(ctx, host.gpa, args, 2, host.cwd) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
     defer host.gpa.free(root);
-    var call = Call.open(host, root);
-    defer call.close();
+    var arena: std.heap.ArenaAllocator = .init(host.gpa);
+    defer arena.deinit();
+    var local: LocalHost = .{ .io = host.io, .root = root, .env = host.execution.env };
 
     if (args.len < 2) return rejected(ctx, "writeFile needs a path and content");
-    const path = ownedPath(ctx, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
+    const path = ownedPath(ctx, arena.allocator(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
     if (!ctx.isString(args[1])) return rejected(ctx, "the content must be a string");
     const raw = ctx.toCStringLen(args[1]) catch return rejected(ctx, "the content must be a string");
     defer ctx.freeCString(raw.ptr);
 
-    call.local.writeFile(call.alloc(), path, raw) catch |err| return rejected(ctx, errorMessage(err));
+    local.writeFile(arena.allocator(), path, raw) catch |err| return rejected(ctx, errorMessage(err));
     return resolved(ctx, ctx.newInt64(@intCast(raw.len)));
 }
 
@@ -191,11 +174,12 @@ fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     const root = ownedPath(ctx, host.gpa, args, 1, host.cwd) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
     defer host.gpa.free(root);
-    var call = Call.open(host, root);
-    defer call.close();
+    var arena: std.heap.ArenaAllocator = .init(host.gpa);
+    defer arena.deinit();
+    var local: LocalHost = .{ .io = host.io, .root = root, .env = host.execution.env };
 
-    const path = ownedPath(ctx, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
-    const info = call.local.stat(call.alloc(), path) catch |err| switch (err) {
+    const path = ownedPath(ctx, arena.allocator(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
+    const info = local.stat(arena.allocator(), path) catch |err| switch (err) {
         error.NotFound => return resolved(ctx, quickjs.NULL),
         else => return rejected(ctx, errorMessage(err)),
     };
@@ -208,11 +192,12 @@ fn jsRemoveFile(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len < 1 or !ctx.isString(args[0])) return rejected(ctx, "removeFile needs a path");
     const root = ownedPath(ctx, host.gpa, args, 1, host.cwd) orelse return rejected(ctx, "the workspace root must be a string with no NUL byte");
     defer host.gpa.free(root);
-    var call = Call.open(host, root);
-    defer call.close();
+    var arena: std.heap.ArenaAllocator = .init(host.gpa);
+    defer arena.deinit();
+    var local: LocalHost = .{ .io = host.io, .root = root, .env = host.execution.env };
 
-    const path = ownedPath(ctx, call.alloc(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
-    call.local.removeFile(call.alloc(), path) catch |err| switch (err) {
+    const path = ownedPath(ctx, arena.allocator(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
+    local.removeFile(arena.allocator(), path) catch |err| switch (err) {
         error.NotFound => return resolved(ctx, ctx.newBool(false)),
         else => return rejected(ctx, errorMessage(err)),
     };
@@ -222,16 +207,17 @@ fn jsRemoveFile(ctx: Context, _: Value, args: []const Value) Value {
 /// List the directories inside one path as a `Page`; a null or absent path is the directory the TUI runs in, and an unreadable one rejects.
 fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    var call = Call.open(host, host.cwd);
-    defer call.close();
-    const arena = call.alloc();
+    var arena_state: std.heap.ArenaAllocator = .init(host.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var local: LocalHost = .{ .io = host.io, .root = host.cwd, .env = host.execution.env };
 
     const requested = ownedPath(ctx, arena, args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string with no NUL byte");
     const path = paths.canonicalizeWorkspace(arena, host.execution.env, requested) catch |err| switch (err) {
         error.HomeUnavailable => return rejected(ctx, errorMessage(error.HomeUnavailable)),
         else => return rejected(ctx, "the path is not a directory this process can read"),
     };
-    const page = call.local.listDir(arena, path, max_entries) catch |err|
+    const page = local.listDir(arena, path, max_entries) catch |err|
         return rejected(ctx, errorMessage(err));
 
     var aw: std.Io.Writer.Allocating = .init(host.gpa);
