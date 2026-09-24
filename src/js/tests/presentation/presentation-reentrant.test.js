@@ -6,8 +6,8 @@ import { Context, Scope } from "yuke:ext";
 import { tui } from "yuke:tui";
 const view = new ChatView(), bounds = { x: 0, y: 0, w: 30, h: 10 };
 const mountScope = new Scope("mount");
-tui.bindTo(new Context(mountScope, "mount")).presentation((_chat, owner) => {
-  owner.dispose(); return state => state.defaultLayout;
+tui.bindTo(new Context(mountScope, "mount")).presentation(() => {
+  mountScope.dispose(); return state => state.defaultLayout;
 });
 view.layout(bounds);
 const mountClosed = view.presentation === null && view.presentationViews.length === 0;

@@ -2,12 +2,11 @@
 import { command, keymap, route, slot, context, status, style, root } from "yuke:core";
 import { events } from "yuke:kernel";
 import { ChatView } from "yuke:chat-view";
-import { scopeOf } from "yuke:ext";
+import { Context, scopeOf } from "yuke:ext";
 import { registerLabels } from "yuke:transcript";
 
 /** @import { PresentationContext, PresentationProvider } from "yuke:chat-view" */
 /** @import { LayoutNode } from "./types/layout.js" */
-/** @import { Context, Scope } from "yuke:ext" */
 /** @typedef {() => void} Disposer */
 /** @typedef {Parameters<typeof command.add>[0]} CommandPredicate */
 /** @typedef {Parameters<typeof command.add>[1]} CommandMap */
@@ -60,8 +59,8 @@ function bindTo(ctx) {
       return ctx.effect(() => slot.add(target, name, fn));
     },
 
-    // The nearest class wins, then the newest registration; each mounted pane owns one child scope.
-    /** @param {(view: ChatView, scope: Scope) => (context: PresentationContext) => LayoutNode | null} create @returns {Disposer} */
+    // The nearest class wins, then the newest registration; each mounted pane owns one child context.
+    /** @param {(view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null} create @returns {Disposer} */
     presentation(create) {
       if (typeof create !== "function") throw new TypeError("presentation needs a factory");
       return ctx.effect(() => {
@@ -72,7 +71,7 @@ function bindTo(ctx) {
           mount(view) {
             const scope = scopeOf(ctx).child("presentation");
             try {
-              const layout = create(view, scope);
+              const layout = create(view, new Context(scope, ctx.id));
               if (typeof layout !== "function") throw new TypeError("presentation factory must return a layout function");
               if (!scope.alive) throw new TypeError("presentation scope closed during mount");
               mounted.add(view);
