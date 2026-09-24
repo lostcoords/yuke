@@ -25,6 +25,12 @@ const QUOTE = /^( {0,3})>([ \t]?)(.*)$/;
 const UL_ITEM = /^( {0,3})([-*+])([ \t]+)(.*)$/;
 const OL_ITEM = /^( {0,3})(\d{1,9})([.)])([ \t]+)(.*)$/;
 const SETEXT = /^( {0,3})(=+|-+)[ \t]*$/;
+// QuickJS builds a new RegExp each time a literal runs, so the per-line and per-delimiter tests hold one each.
+const TABLE_RULE = /^:?-{1,}:?$/;
+const HEADING_TAIL = /[ \t]+#+[ \t]*$/;
+const SPACE = /\s/u;
+const PUNCT = /[\p{P}\p{S}]/u;
+const NOT_SPACE = /[^ ]/;
 
 /** @param {string} line @returns {Fence | null} */
 function fenceOpen(line) {
@@ -49,7 +55,7 @@ function isBlockStart(line) {
 /** @param {string} line @returns {boolean} */
 function isTableSeparator(line) {
   const cells = splitTableRow(line, 0);
-  return cells.length > 0 && cells.every((cell) => /^:?-{1,}:?$/.test(cell.text));
+  return cells.length > 0 && cells.every((cell) => TABLE_RULE.test(cell.text));
 }
 
 /** @param {string} line @returns {boolean} */
@@ -129,9 +135,10 @@ function segment(text, from = 0) {
 
   /** @param {Block} b @param {number} first @param {number} last @returns {void} */
   const push = (b, first, last) => {
-    b.raw = lines.slice(first, last).join("\n");
     b.at = /** @type {number} */ (starts[first]);
     b.end = /** @type {number} */ (starts[last]) - 1;
+    // `starts` holds absolute offsets and each line but the last ends in "\n", so the source slice is the joined lines.
+    b.raw = text.slice(b.at, b.end);
     blocks.push(b);
   };
 
@@ -170,7 +177,7 @@ function segment(text, from = 0) {
     const heading = HEADING.exec(line);
     if (heading) {
       const m = /** @type {HeadingMatch} */ (/** @type {unknown} */ (heading));
-      const headingText = (m[4] || "").replace(/[ \t]+#+[ \t]*$/, "").trim();
+      const headingText = (m[4] || "").replace(HEADING_TAIL, "").trim();
       const src = /** @type {number} */ (starts[i]) + m[1].length + m[2].length + (m[3] ? m[3].length : 0);
       push(/** @type {HeadingBlock} */ ({ kind: "heading", level: m[2].length, text: headingText, runs: oneRun(headingText, src) }), i, i + 1);
       i++;
@@ -311,12 +318,12 @@ const INLINE_MARKERS = new Set(["\\", "`", "[", "*", "_"]);
 
 /** @param {string | undefined} c @returns {boolean} */
 function isSpace(c) {
-  return c === undefined || /\s/u.test(c);
+  return c === undefined || SPACE.test(c);
 }
 
 /** @param {string | undefined} c @returns {boolean} */
 function isPunctuation(c) {
-  return c !== undefined && /[\p{P}\p{S}]/u.test(c);
+  return c !== undefined && PUNCT.test(c);
 }
 
 // The emphasis group for a bold and italic depth.
@@ -444,7 +451,7 @@ function parseInline(text, baseGroup) {
         let from = i + n;
         let to = close;
         let code = cps.slice(from, to).join("").replace(/[\r\n]/g, " ");
-        if (code.length > 2 && code[0] === " " && code[code.length - 1] === " " && /[^ ]/.test(code)) {
+        if (code.length > 2 && code[0] === " " && code[code.length - 1] === " " && NOT_SPACE.test(code)) {
           code = code.slice(1, -1);
           from++;
           to--;

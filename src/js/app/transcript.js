@@ -1288,11 +1288,11 @@ export class Transcript {
 
   // Mark stale every message whose action group changed. Walk the old outline, because a message that left it still holds rows drawn against the old plan.
   /** @param {ActionPlan | null} oldPlan @param {MessageDescriptor[]} [oldMessages] @returns {void} */
-  _refreshActionRows(oldPlan, oldMessages = this.messages()) {
+  _refreshActionRows(oldPlan, oldMessages) {
     if (!oldPlan) return;
     const next = this._actionPlan();
-    for (let i = 0; i < oldMessages.length; i++) {
-      const m = /** @type {MessageDescriptor} */ (oldMessages[i]);
+    // Without a new order the live list is the old one, so a streamed part copies no message.
+    for (let i = 0, m; (m = oldMessages ? oldMessages[i] : this._at(i)); i++) {
       const index = this.messageIndex(m.id);
       if (index < 0) continue;
       let changed = oldPlan.joinAfter[i] !== next.joinAfter[index];

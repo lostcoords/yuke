@@ -659,15 +659,15 @@ export const slot = {
     }
     /** @type {SlotEntry} */
     const entry = { fn };
-    const list = names[name] || (names[name] = []);
-    list.unshift(entry);
+    // A change replaces the list, so `get` walks a list no provider can change under it.
+    names[name] = [entry, ...(names[name] || [])];
     return once(() => {
       const held = this._map.get(proto);
       const cur = held ? held[name] : undefined;
       if (!held || !cur) return;
-      const i = cur.indexOf(entry);
-      if (i >= 0) cur.splice(i, 1);
-      if (cur.length === 0) delete held[name];
+      const rest = cur.filter((e) => e !== entry);
+      if (rest.length) held[name] = rest;
+      else delete held[name];
       if (Object.keys(held).length === 0) this._map.delete(proto);
     });
   },
@@ -682,8 +682,7 @@ export const slot = {
       const names = this._map.get(proto);
       const list = names ? names[name] : undefined;
       if (list) {
-        // A provider may dispose itself, so walk a copy the way the event bus does.
-        for (const e of list.slice()) {
+        for (const e of list) {
           // One bad provider must not take the frame with it.
           try {
             const v = e.fn(obj, arg);
