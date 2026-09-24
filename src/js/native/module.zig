@@ -127,16 +127,6 @@ pub fn optionalString(ctx: Context, gpa: std.mem.Allocator, options: Value, name
     return owned(ctx, gpa, value) orelse error.InvalidOption;
 }
 
-/// Read one optional boolean option. An absent option is false, and a wrong type is an error.
-pub fn optionalBool(ctx: Context, options: Value, name: [:0]const u8) error{InvalidOption}!bool {
-    if (!ctx.isObject(options)) return false;
-    const value = ctx.getPropertyStr(options, name);
-    defer ctx.freeValue(value);
-    if (ctx.isUndefined(value) or ctx.isNull(value)) return false;
-    if (!ctx.isBool(value)) return error.InvalidOption;
-    return ctx.toBool(value) catch error.InvalidOption;
-}
-
 /// Copy a workspace root argument, or `default` when it is absent. A relative root answers null, because a spawn asserts an absolute directory.
 pub fn rootArg(ctx: Context, gpa: std.mem.Allocator, value: Value, default: []const u8) ?[]u8 {
     if (ctx.isUndefined(value) or ctx.isNull(value)) return gpa.dupe(u8, default) catch unreachable;

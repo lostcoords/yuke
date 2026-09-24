@@ -57,12 +57,6 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
     };
 }
 
-fn awaitCall(host: *Host, call: *tools.Call) error{Canceled}!void {
-    host.wake.set(host.io);
-    try call.done.wait(host.io);
-    std.debug.assert(call.state == .settled);
-}
-
 fn finishCall(host: *Host, call: *tools.Call) void {
     call.finish();
     host.wake.set(host.io);
@@ -85,7 +79,8 @@ fn askFor(ctx: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payl
     const host: *Host = @ptrCast(@alignCast(ctx));
     const call = host.calls.submitHook(point.wireName(), payload);
     defer finishCall(host, call);
-    awaitCall(host, call) catch return .canceled;
+    host.wake.set(host.io);
+    call.done.wait(host.io) catch return .canceled;
     if (host.phase != .open) return .canceled;
     return answerOf(out, point, call);
 }

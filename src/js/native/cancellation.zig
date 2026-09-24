@@ -101,15 +101,11 @@ pub fn get(ctx: Context, value: Value) ?*Signal {
     return @ptrCast(@alignCast(ptr));
 }
 
-fn raw(value: Value) ?*Signal {
-    var id: quickjs.ClassID = 0;
-    const ptr = (Context{ .ptr = null }).getAnyOpaque(value, &id) orelse return null;
-    std.debug.assert(id != 0);
-    return @ptrCast(@alignCast(ptr));
-}
-
 fn finalize(runtime: quickjs.RuntimeHandle, value: Value) void {
-    const signal = raw(value) orelse return;
+    var id: quickjs.ClassID = 0;
+    const ptr = (Context{ .ptr = null }).getAnyOpaque(value, &id) orelse return;
+    std.debug.assert(id != 0);
+    const signal: *Signal = @ptrCast(@alignCast(ptr));
     std.debug.assert(signal.operations == 0);
     std.debug.assert(!signal.has_waiter);
     c.js_free_rt(runtime.ptr, signal);

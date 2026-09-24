@@ -90,7 +90,10 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     if (!ctx.isUndefined(on_output) and !ctx.isFunction(on_output)) return rejected(ctx, "onOutput must be a function");
 
     // The task cannot touch JavaScript, so every argument is copied before it starts.
-    const wants_log = module.optionalBool(ctx, options, "log") catch return rejected(ctx, "log must be a boolean");
+    const log = if (ctx.isObject(options)) ctx.getPropertyStr(options, "log") else quickjs.UNDEFINED;
+    defer ctx.freeValue(log);
+    if (!ctx.isUndefined(log) and !ctx.isNull(log) and !ctx.isBool(log)) return rejected(ctx, "log must be a boolean");
+    const wants_log = ctx.isBool(log) and (ctx.toBool(log) catch unreachable); // `isBool` holds, so the conversion cannot fail.
     var request = Request.parse(ctx, host.gpa, args, options, host.cwd) catch |err|
         return rejected(ctx, switch (err) {
             error.CommandType => "the command must be a string",

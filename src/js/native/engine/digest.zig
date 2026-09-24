@@ -98,7 +98,7 @@ pub const Engine = struct {
     fn onActivity(ctx: *anyopaque) void {
         const self: *Engine = @ptrCast(@alignCast(ctx));
         self.activity_dirty = true;
-        self.wakeOwner();
+        self.wake.set(self.io);
     }
 
     /// Mark the event's session dirty. This runs on an engine task, so it must not enter JavaScript.
@@ -113,21 +113,16 @@ pub const Engine = struct {
             self.index_facts.insert(note.method);
             self.keepAuth(note);
             self.keepNotice(note);
-            self.wakeOwner();
+            self.wake.set(self.io);
             return;
         };
         self.markDirty(id, Change.of(note));
-        self.wakeOwner();
+        self.wake.set(self.io);
     }
 
     /// Report whether `drain` has anything to deliver. The owner asks before it sleeps.
     pub fn hasPending(self: *const Engine) bool {
         return self.activity_dirty or self.index_dirty or self.dirty_overflow or self.dirty.count() != 0 or self.removed.items.len != 0;
-    }
-
-    /// Wake the owner so it drains this event on the next frame, not on the next keystroke.
-    fn wakeOwner(self: *Engine) void {
-        self.wake.set(self.io);
     }
 
     /// Keep the whole event for a login, because the overlay reads the outcome and the failure text.
@@ -185,11 +180,6 @@ const Change = struct {
         reload,
         /// The session is gone. This outranks every other kind.
         gone,
-
-        /// Rank the kinds so a merge keeps the stronger one.
-        fn rank(self: View) u8 {
-            return @intFromEnum(self);
-        }
     };
 
     /// Classify one event by the projection it moves, then record it as a fact.
@@ -246,7 +236,8 @@ const Change = struct {
             if (a.message.id != b.message.id) return .reload;
             if (a.message.part != b.message.part) return .{ .message = .{ .id = a.message.id, .part = null } };
         }
-        return if (b.rank() > a.rank()) b else a;
+        // The tag order ranks the kinds, so a merge keeps the stronger one.
+        return if (@intFromEnum(b) > @intFromEnum(a)) b else a;
     }
 
     /// Name the kind for the sink. A view branches on this string; a plugin reads the facts instead.

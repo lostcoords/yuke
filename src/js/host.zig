@@ -259,7 +259,7 @@ pub const Host = struct {
             call_run.pump(self);
         }
         if (faulted) {
-            self.dropPendingException();
+            pending.dropException(self.ctx);
             return error.JavaScriptFault;
         }
     }
@@ -331,7 +331,8 @@ pub const Host = struct {
         self.engine.detach();
         // A turn task may wait on a tool call. Answer each one, or that task never wakes.
         call_run.abortAll(self);
-        self.endChildren();
+        // Request all child stops before `tasks.cancel`, so their grace periods overlap.
+        self.procs.stopAll(self.io);
         self.net.closeAll();
         self.oauth.closeAll();
         // `Group.cancel` cancels and joins, so every task has returned here and `Ops.deinit` can free the ops a task pointed to.
@@ -348,7 +349,7 @@ pub const Host = struct {
         self.jobs.deinit(self.gpa);
         self.interactions.close();
         if (self.ops.settle(self)) {
-            self.dropPendingException();
+            pending.dropException(self.ctx);
             return error.JavaScriptFault;
         }
         var rounds: u32 = 0;
@@ -397,9 +398,9 @@ pub const Host = struct {
             self.net.reap(self.gpa);
             self.oauth.reap(self.gpa);
             self.bodies.reap(self.gpa);
-            if (self.procs.drain(self)) self.dropPendingException();
-            if (self.ops.settle(self)) self.dropPendingException();
-            if (self.timers.fire(self, std.Io.Timestamp.now(self.io, .awake))) self.dropPendingException();
+            if (self.procs.drain(self)) pending.dropException(self.ctx);
+            if (self.ops.settle(self)) pending.dropException(self.ctx);
+            if (self.timers.fire(self, std.Io.Timestamp.now(self.io, .awake))) pending.dropException(self.ctx);
             self.drainJobs() catch return;
             if (self.ctx.promiseState(promise) != .Pending) break;
             if (self.runtime.isJobPending() or self.ops.anyReady() or self.procs.hasWork()) continue;
@@ -426,11 +427,6 @@ pub const Host = struct {
             return self.host.onInterrupt() or std.Io.Timestamp.now(self.host.io, .awake).nanoseconds >= self.deadline.nanoseconds;
         }
     };
-
-    /// Request all child stops before `tasks.cancel`, so their grace periods overlap.
-    pub fn endChildren(self: *Host) void {
-        self.procs.stopAll(self.io);
-    }
 
     /// Recover the host from a QuickJS context opaque pointer.
     pub fn fromContext(ctx: quickjs.Context) *Host {
@@ -586,7 +582,7 @@ pub const Host = struct {
         defer self.ctx.freeValue(exc);
         self.captureFault(exc);
         // QuickJS can return a string and still leave an exception. Handle it; do not assert it.
-        self.dropPendingException();
+        pending.dropException(self.ctx);
     }
 
     /// Copy the exception text into the fixed buffer, because the Host allocates nothing after an out-of-memory fault.
@@ -609,7 +605,7 @@ pub const Host = struct {
         if (self.fault_text_len == 0) return;
         const stack = self.ctx.getPropertyStr(exc, "stack");
         defer self.ctx.freeValue(stack);
-        if (self.ctx.isException(stack)) return self.dropPendingException();
+        if (self.ctx.isException(stack)) return pending.dropException(self.ctx);
         if (!self.ctx.isString(stack)) return;
         const mark = self.fault_text_len;
         self.appendFaultText(" ");
@@ -619,7 +615,7 @@ pub const Host = struct {
     /// Append the first line of the string form of `val`. Return true when it appends bytes.
     fn appendFaultValue(self: *Host, val: quickjs.Value) bool {
         const s = self.ctx.toCStringLen(val) catch {
-            self.dropPendingException();
+            pending.dropException(self.ctx);
             return false;
         };
         defer self.ctx.freeCString(s.ptr);
@@ -637,11 +633,6 @@ pub const Host = struct {
         std.debug.assert(n <= room);
         @memcpy(self.fault_text[self.fault_text_len..][0..n], text[0..n]);
         self.fault_text_len += n;
-    }
-
-    /// Drop a pending exception before the next owner turn.
-    fn dropPendingException(self: *Host) void {
-        pending.dropException(self.ctx);
     }
 
     /// Return the last script fault text, or an empty slice when the Host has no fault.

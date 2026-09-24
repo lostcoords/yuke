@@ -47,7 +47,7 @@ pub const Extensions = struct {
     pub fn deinit(self: *Extensions) void {
         self.host.stopPlugins();
         // A child waiter reaps with cancelation blocked, so children end first; a command leaves before the last turn stops.
-        self.host.endChildren();
+        self.host.procs.stopAll(self.host.io);
         self.host.tasks.cancel(self.host.io);
         self.app.engine.stopTurns();
         self.app.engine.clearExtensions();

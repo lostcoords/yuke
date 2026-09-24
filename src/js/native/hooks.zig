@@ -53,7 +53,7 @@ fn jsSetPoints(ctx: Context, _: Value, args: []const Value) Value {
     if (table.Point.parse(changed) == .@"prompt.build") if (host.engine.runtime) |runtime| {
         runtime.engine.prompt_generation += 1;
     };
-    host.hooks.setPoints(points);
+    host.hooks.points = points;
     return quickjs.UNDEFINED;
 }
 

@@ -508,7 +508,7 @@ fn readWorker(host: *Host, read: Read, result: *pending.Result) error{}!void {
             }
             // A stream that ends inside a character answers the repaired bytes now and its end on the next read.
             if (filled > 0) {
-                result.* = .{ .text = text(gpa, body.carry[0..body.carry_len]) };
+                result.* = .{ .text = utf8.sanitize(gpa, body.carry[0..body.carry_len]) catch unreachable };
                 body.carry_len = 0;
                 return;
             }
@@ -524,7 +524,7 @@ fn readWorker(host: *Host, read: Read, result: *pending.Result) error{}!void {
             body.carry_len = @intCast(filled - cut);
             @memcpy(body.carry[0..body.carry_len], buffer[cut..filled]);
             defer gpa.free(buffer);
-            result.* = .{ .text = text(gpa, buffer[0..cut]) };
+            result.* = .{ .text = utf8.sanitize(gpa, buffer[0..cut]) catch unreachable };
             return;
         }
         // Fewer than four bytes of one character wait for the rest, so the next read always fits.
@@ -538,10 +538,4 @@ fn complete(body: *const Body) bool {
         .received_head, .body_remaining_content_length, .body_remaining_chunk_len => false,
         .ready, .body_none, .closing => true,
     };
-}
-
-/// Copy `bytes` as text the owner may hand to QuickJS, with invalid sequences repaired.
-fn text(gpa: std.mem.Allocator, bytes: []const u8) []u8 {
-    if (std.unicode.utf8ValidateSlice(bytes)) return gpa.dupe(u8, bytes) catch unreachable;
-    return utf8.sanitize(gpa, bytes) catch unreachable;
 }

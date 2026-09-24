@@ -11,7 +11,7 @@ pub const Point = proto.hook.Point;
 pub const PointSet = std.EnumSet(Point);
 
 pub const Hooks = struct {
-    /// The points that hold at least one handler. Only the owner writes it.
+    /// The points that hold at least one handler. Only the owner writes it, after `yuke:ext` adds or drops a handler.
     points: PointSet = .initEmpty(),
     /// The chain folder, held as a GC root until the table dies. A null folder answers no point.
     dispatch: ?Value = null,
@@ -31,11 +31,6 @@ pub const Hooks = struct {
         if (self.dispatch) |old| ctx.freeValue(old);
         self.dispatch = folder;
     }
-
-    /// Record which points hold a handler. `yuke:ext` calls this after every add and drop.
-    pub fn setPoints(self: *Hooks, points: PointSet) void {
-        self.points = points;
-    }
 };
 
 const testing = std.testing;
@@ -44,7 +39,7 @@ test "a point holds nothing until a folder is installed" {
     var hooks: Hooks = .{};
     var points: PointSet = .initEmpty();
     points.insert(.@"tool.before");
-    hooks.setPoints(points);
+    hooks.points = points;
     // The set alone cannot answer a call, so a table without a folder still holds nothing.
     try testing.expect(!hooks.holds(.@"tool.before"));
 }
