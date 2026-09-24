@@ -1444,12 +1444,8 @@ export function quit() {
   term.quit();
 }
 
-export function suspend() {
-  term.suspend();
-}
-
 // A bare key never quits. A stray key in a modal layer must not end the session.
-command.add(null, { quit, suspend }, {
+command.add(null, { quit, suspend: () => term.suspend() }, {
   quit: { title: "Quit", description: "leave yuke", slash: "quit" },
   suspend: { title: "Suspend", description: "stop yuke so the shell can run fg", slash: "suspend" },
 });

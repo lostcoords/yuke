@@ -149,6 +149,9 @@ function bindTo(ctx) {
       };
     },
 
+    // Ask for a frame after state changes outside an input event, such as an async load.
+    invalidate: () => root.invalidate(),
+
     // A tickable joins the frame loop and receives `onStart`, `onStop`, `needsTick`, and `tick`.
     /** @param {Tickable} tickable @returns {Disposer} */
     tickable(tickable) {

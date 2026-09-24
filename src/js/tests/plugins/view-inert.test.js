@@ -1,11 +1,11 @@
 import { check } from "yuke:test";
-import { plugins, services } from "yuke";
+import { plugins } from "yuke";
 import { composerVim, transcriptVim } from "yuke/plugins";
 
 // A view plugin holds its work behind `inject(["tui"])`, and no frontend provides that service here.
 let built = 0;
 plugins.use({ name: "probe", apply: (ctx) => { ctx.inject(["tui"], () => { built += 1; }); } });
-check("no-tui-service", services.get("tui") === undefined);
+check("no-tui-plugin", !plugins.has("tui"));
 check("block-never-built", built === 0);
 
 plugins.use(composerVim);

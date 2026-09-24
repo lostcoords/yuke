@@ -1,6 +1,6 @@
 // The public root has no UI dependency or default plugin activation. Every registration goes through a plugin context.
 export { defineConfig, config } from "yuke:kernel";
-export { plugins, services } from "yuke:ext";
+export { plugins } from "yuke:ext";
 export { fs } from "yuke:fs";
 export { env } from "yuke:env";
 export { fetch } from "yuke:http";

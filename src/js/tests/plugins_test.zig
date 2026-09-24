@@ -363,7 +363,8 @@ test "plugin disposal joins native work from a withdrawn injection" {
     const host = support.createHostWith(reactor.io(), "/tmp");
     defer support.destroyHost(host);
     try host.evalModule(
-        \\import { plugins, exec, services } from "yuke";
+        \\import { plugins, exec } from "yuke";
+        \\import { services } from "yuke:ext";
         \\globalThis.childCanceled = false;
         \\globalThis.disposed = false;
         \\const withdraw = services.provide("child-resource", 1);
