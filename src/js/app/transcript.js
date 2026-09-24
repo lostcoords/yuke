@@ -2,7 +2,7 @@ import { Pager, rowText, rowSourceSpan, rowSourceAt } from "yuke:pager";
 // yuke:transcript — the chat transcript, its row rendering, and the pane that holds it.
 import { term } from "yuke:term";
 import { root, isWheel } from "yuke:core";
-import { clip, caretAtCol, wrapOffsets, wrapPreview, nextGrapheme } from "yuke:text-input";
+import { clip, caretAtCol, wrapPreview, nextGrapheme } from "yuke:text-input";
 import { Document, isLinear, normalizeSource } from "yuke:md";
 import { Window, ScrollView } from "yuke:ui";
 import { byteLabel } from "yuke:format";
@@ -46,7 +46,6 @@ export function inputSourceLabel(source) {
   const label = sources[source.type];
   return label ? label(source) : source.type.replace(/_/g, " ");
 }
-
 
 // Rendered messages beyond this count leave the cache oldest first; the viewport and live anchors never leave.
 const CACHE_MESSAGES = 16;
@@ -259,7 +258,7 @@ function messageRows(id, body, width, kind, base = 0) {
   body = body || "";
   const group = kind === "user" ? "TxUser" : kind === "error" ? "TxError" : "TxThought";
   /** @type {TranscriptRow[]} */
-  const rows = wrapOffsets(body, Math.max(1, width - TX_GUTTER)).map((row, i) => {
+  const rows = wrapPreview(body, Math.max(1, width - TX_GUTTER), 0).rows.map((row, i) => {
     const segments = [{ text: body.slice(row.start, row.end), group, src: base + row.start, srcEnd: base + row.end }];
     return kind === "user" ? {
       segments,

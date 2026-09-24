@@ -2,7 +2,7 @@
 import { term } from "yuke:term";
 import { text, fill, root, claimView, style, slot, isWheel, contains } from "yuke:core";
 import { config, events } from "yuke:kernel";
-import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapOffsets, nextGrapheme } from "yuke:text-input";
+import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapPreview, nextGrapheme } from "yuke:text-input";
 import { strokeOf } from "yuke:keys";
 import { fuzzyRank } from "yuke:fzy";
 import { Pager } from "yuke:pager";
@@ -48,8 +48,6 @@ style.add(UI_GROUPS);
 
 // Default page jump before a draw sets the real page height.
 const PAGE_FALLBACK = 10;
-
-
 
 // The nav vocabulary, written once. The shell binds these strokes and a modal layer reads them.
 /** @type {Record<string, NavAction | undefined>} */
@@ -341,8 +339,6 @@ export class List {
   }
 }
 
-
-
 // A message input grows with its text. Enter submits and the newline keys add a line.
 export class Composer {
   /** @param {ComposerOptions} [opts] */
@@ -475,7 +471,7 @@ export class Composer {
   _rowsAt(width) {
     if (this._rows && this._rowsW === width) return this._rows;
     this._rowsW = width;
-    this._rows = wrapOffsets(this._projection().text, width);
+    this._rows = wrapPreview(this._projection().text, width, 0).rows;
     return this._rows;
   }
 
@@ -687,7 +683,6 @@ export class Composer {
   }
 }
 
-
 // A retained text leaf wraps during layout, so paint only copies its cached visible rows.
 export class Text {
   /** @param {TextOptions} [opts] */
@@ -713,7 +708,7 @@ export class Text {
     width = Math.max(0, Math.floor(width));
     const cache = this._measurement;
     if (cache.width === width && cache.text === this.text) return cache.size;
-    const rows = width > 0 ? wrapOffsets(this.text, width) : [];
+    const rows = width > 0 ? wrapPreview(this.text, width, 0).rows : [];
     const widths = rows.map((row) => term.measure(this.text.slice(row.start, row.end)));
     let w = 0;
     for (const rw of widths) w = Math.max(w, rw);
@@ -729,7 +724,7 @@ export class Text {
     if (cache.text === this.text && cache.width === rect.w && cache.height === rect.h) return;
     // Reuse the measured rows at the same width. Measure the rows again when the width changes.
     const m = this._measurement.text === this.text && this._measurement.width === rect.w ? this._measurement : null;
-    const rows = rect.w > 0 && rect.h > 0 ? (m ? m.rows : wrapOffsets(this.text, rect.w)).slice(0, rect.h) : [];
+    const rows = rect.w > 0 && rect.h > 0 ? (m ? m.rows : wrapPreview(this.text, rect.w, 0).rows).slice(0, rect.h) : [];
     this._layoutCache = { text: this.text, width: rect.w, height: rect.h, rows: rows.map((row, i) => {
       const line = this.text.slice(row.start, row.end);
       const lw = m ? /** @type {number} */ (m.widths[i]) : term.measure(line);
@@ -792,7 +787,6 @@ export const borders = {
   rounded: { tl: "╭", t: "─", tr: "╮", r: "│", br: "╯", b: "─", bl: "╰", l: "│" },
   double: { tl: "╔", t: "═", tr: "╗", r: "║", br: "╝", b: "═", bl: "╚", l: "║" },
 };
-
 
 // A floating, bordered, titled window as an overlay layer.
 export class Window {
@@ -981,7 +975,7 @@ export class Picker {
     if (this._bodyWidth !== width || this._bodyText !== this.body) {
       this._bodyWidth = width;
       this._bodyText = this.body;
-      this._bodyRows = this.body ? wrapOffsets(this.body, width) : [];
+      this._bodyRows = this.body ? wrapPreview(this.body, width, 0).rows : [];
     }
     return this._bodyRows.length;
   }

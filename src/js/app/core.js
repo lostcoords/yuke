@@ -741,7 +741,6 @@ const HOST_TO_CORE_EVENT = {
   focus: "focus.changed",
 };
 
-
 export class View {
   constructor() {
     /** @type {Rect} */
@@ -811,10 +810,10 @@ export class Node {
     return n;
   }
 
-  /** @param {"row" | "col"} kind @param {Node} a @param {Node} b @param {number | undefined} [ratio] @returns {void} */
-  becomeSplit(kind, a, b, ratio) {
+  /** @param {"row" | "col"} kind @param {Node} a @param {Node} b @returns {void} */
+  becomeSplit(kind, a, b) {
     if (this.shape.type !== "leaf") throw new TypeError("a split node cannot split again");
-    this.shape = { type: "split", kind, a, b, ratio: ratio == null ? 0.5 : ratio };
+    this.shape = { type: "split", kind, a, b, ratio: 0.5 };
     a.parent = this;
     b.parent = this;
   }

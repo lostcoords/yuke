@@ -421,7 +421,6 @@ export const chatPlugin = {
         }
       }));
 
-
       // A closed pane must drop its pin, or the engine never evicts the session.
       ctx.on("pane.closed", view => {
         const c = chatOf(view);

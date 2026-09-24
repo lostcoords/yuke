@@ -32,11 +32,6 @@ export function clip(s, max, ellipsis = true, width = -1) {
 }
 
 // Wrap `s` and keep its UTF-16 offsets as [start, end) plus a soft flag, because a plain wrap drops the space runs.
-/** @param {string} s @param {number} width @returns {WrapRow[]} */
-export function wrapOffsets(s, width) {
-  return wrapPreview(s, width, 0).rows;
-}
-
 // A zero head returns all rows; a positive head keeps that prefix and an optional tail.
 /** @param {string} s @param {number} width @param {number} head @param {number} [tail] @returns {{ rows: WrapRow[], omitted: boolean }} */
 export function wrapPreview(s, width, head, tail = 0) {
@@ -48,7 +43,7 @@ export function wrapPreview(s, width, head, tail = 0) {
   return { rows, omitted: wrapped.omitted };
 }
 
-// Place `caret` in the rows of `wrapOffsets`; a soft break takes the next row, so the caret stays on the screen.
+// Place `caret` in the rows of `wrapPreview`; a soft break takes the next row, so the caret stays on the screen.
 /** @param {string} s @param {WrapRow[]} rows @param {number} caret @returns {{ row: number, col: number }} */
 export function caretRowCol(s, rows, caret) {
   for (let i = 0; i < rows.length; i++) {
