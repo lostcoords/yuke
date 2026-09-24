@@ -1317,19 +1317,19 @@ export class Prompt {
   }
 }
 
-// The kit's public surface. `select` navigates a set, `pick` adds the query line, and both return { win, content, close }.
+// The kit's public surface. `select` navigates a set, `pick` adds the query line, and both build { win, content }.
+// A builder shows nothing; `ctx.tui.overlay(win)` shows the window, so a plugin owns every overlay it opens.
 export const ui = {
-  /** @template T @param {T[]} items @param {PickOptions<T>} [opts] @returns {{ win: Window, content: Picker<T>, close: () => void }} */
+  /** @template T @param {T[]} items @param {PickOptions<T>} [opts] @returns {{ win: Window, content: Picker<T> }} */
   select(items, opts = {}) {
     return ui.pick({ ...opts, items: items || [], filter: false });
   },
 
-  /** @template T @param {PickOptions<T>} [opts] @returns {{ win: Window, content: Picker<T>, close: () => void }} */
+  /** @template T @param {PickOptions<T>} [opts] @returns {{ win: Window, content: Picker<T> }} */
   pick(opts = {}) {
     const content = new Picker(opts);
     const win = new Window({ ...opts, content: /** @type {WindowContent} */ (content) });
     content.win = win;
-    root.pushOverlay(win);
-    return { win, content, close: () => root.popOverlay(win) };
+    return { win, content };
   },
 };

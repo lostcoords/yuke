@@ -17,6 +17,7 @@ const p = ui.pick({
   keymap: { "ctrl+g": "bottom" },
   onAccept: (it, i) => { taken = it.id; at = i; },
 });
+root.pushOverlay(p.win);
 check("selectKey", p.content.selectKey("sea") && p.content.selected().id === "sea");
 
 // `needsTick` reaches the window, so a finder that wants a timer gets one.
@@ -39,8 +40,9 @@ p.content.onAccept = (it, i) => {
   taken = it.id;
   at = i;
   chained = ui.pick({ items: [{ id: "level" }], key: x => x.id, format: x => ({ text: x.id }) });
+  root.pushOverlay(chained.win);
 };
 press("enter");
 check("accepted", taken === "bee" && at === 0);
 check("chained-on-top", root.overlays.length === depth && root.overlays[root.overlays.length - 1] === chained.win);
-chained.close();
+chained.content.close();

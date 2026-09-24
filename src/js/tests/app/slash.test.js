@@ -65,6 +65,7 @@ chat.view.focusRegion("composer");
 chat.composer.text = "";
 // A dialog on top keeps the float shut, so a restored draft never opens a menu under it.
 const modal = ui.pick({ items: [] });
+root.pushOverlay(modal.win);
 chat.composer.text = "/ech";
 check("no-float-under-modal", root.overlays.length === 1 && root.overlays[0] === modal.win);
 root.popOverlay(modal.win);

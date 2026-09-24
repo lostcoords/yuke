@@ -60,11 +60,12 @@ root.pushOverlay(again);
 plugins.dispose("re");
 check("re-push-stays-owned", root.overlays.length === base);
 
-// A layer that never reached the stack is a caller error, such as a picker handle in place of its window.
-let threw = false;
-plugins.use({ name: "bad", apply(ctx) { const t = tui.bindTo(ctx); try { t.overlay(layer("loose")); } catch (e) { threw = true; } } });
-check("rejects-a-layer-off-the-stack", threw && root.overlays.length === base);
-plugins.dispose("bad");
+// The claim shows a layer off the stack, and `onClose` runs once at the unload.
+let closes = 0;
+plugins.use({ name: "show", apply(ctx) { tui.bindTo(ctx).overlay(layer("shown"), () => { closes++; }); } });
+check("shows-a-layer-off-the-stack", root.overlays.length === base + 1);
+plugins.dispose("show");
+check("unload-closes-once", root.overlays.length === base && closes === 1);
 
 // The overlay cleanup keeps its place among the plugin's own effects, so the order stays LIFO.
 const seen = [];

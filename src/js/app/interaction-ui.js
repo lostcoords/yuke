@@ -1,7 +1,6 @@
 // The terminal answerer presents requests; the shared lifecycle owns their disposal.
 import { native } from "yuke:interaction-native";
 import { DeviceDialog } from "yuke:auth";
-import { root } from "yuke:core";
 import { term } from "yuke:term";
 import { Prompt, Window, ui } from "yuke:ui";
 import { interaction, watchCancellation } from "yuke:interaction";
@@ -55,14 +54,12 @@ function createAnswerer(frontend) {
         case "input": {
           const prompt = new Prompt({ placeholder: request.placeholder || "", mask: request.secret || false, settle: resolve });
           win = new Window({ title, footer: "↵ submit · esc cancel", border: "rounded", width: max => Math.round(max * 0.6), contentHeight: 1, content: prompt });
-          root.pushOverlay(win);
           break;
         }
         case "device_login": {
           const device = new DeviceDialog(request.start);
           device.onCancel = cancel;
           win = new Window({ title, footer: "c copy code · o open browser · esc cancel", border: "rounded", width: max => Math.round(max * 0.7), contentHeight: 3, content: device });
-          root.pushOverlay(win);
           request.outcome.then(resolve, reject);
           break;
         }

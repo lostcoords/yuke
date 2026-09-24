@@ -126,29 +126,18 @@ export class JobOutput extends ScrollView {
 
 /** @param {Context} ctx @param {Job} job */
 export function openOutput(ctx, job) {
-  /** @type {() => void} */
-  let release = () => {};
   const view = new JobOutput(job, () => close());
   const win = new Window({
     title: () => name(view.job) + " · " + jobState(view.job, Date.now()) + " · " + shortCommand(view.job.command), footer: "x stop · esc close",
     border: "rounded", width: (max) => Math.round(max * 0.9), height: (max) => Math.round(max * 0.8), content: view,
   });
-  root.pushOverlay(win);
-  release = ctx.tui.overlay(win);
   // The end of a job needs one last read, because its tick stops with the run.
   const off = ctx.on("jobs.changed", (/** @type {Job} */ changed) => {
     if (changed.id !== job.id) return;
     view.job = changed;
     view.read().catch(failed);
   });
-  let alive = true;
-  const cleanup = ctx.effect(() => () => close());
-  function close() {
-    if (!alive) return;
-    alive = false;
-    view.closed = true;
-    off(); release(); cleanup();
-  }
+  const close = ctx.tui.overlay(win, () => { view.closed = true; off(); });
   view.read().catch(failed);
   return view;
 }
@@ -173,7 +162,6 @@ export function openJobs(ctx) {
       },
     },
   });
-  const release = ctx.tui.overlay(picker.win);
   const offChanged = ctx.on("jobs.changed", () => {
     items = list();
     picker.win.opts.title = summary(items);
@@ -182,14 +170,7 @@ export function openJobs(ctx) {
   });
   // A running job shows its age, so the list repaints each second while one runs.
   const timer = setInterval(() => { if (items.some((j) => j.state === "running")) root.invalidate(); }, 1000);
-  let alive = true;
-  const cleanup = ctx.effect(() => () => close());
-  function close() {
-    if (!alive) return;
-    alive = false;
-    clearInterval(timer);
-    offChanged(); release(); cleanup();
-  }
+  const close = ctx.tui.overlay(picker.win, () => { clearInterval(timer); offChanged(); });
   return { ...picker, close };
 }
 

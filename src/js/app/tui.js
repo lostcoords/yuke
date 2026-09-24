@@ -20,7 +20,8 @@ import { scopeOf } from "yuke:ext";
 /** @typedef {Parameters<typeof context.add>[0]} ContextFlags */
 
 // The surface that owns an overlay. A later claim replaces the earlier one.
-/** @type {WeakMap<object, object>} */
+/** @typedef {{ surface: object, onClose: (() => void) | undefined }} OverlayClaim */
+/** @type {WeakMap<object, OverlayClaim>} */
 const OVERLAY_OWNER = new WeakMap();
 
 // Build the terminal surface for one block, so the disposal of that block reverts every registration.
@@ -110,33 +111,41 @@ function bindTo(ctx) {
       return ctx.effect(() => style.add(groups));
     },
 
-    // Claim an overlay by layer so an unload takes it off the stack and a re-push stays owned; pass `ui.pick(...).win`.
-    /** @param {Overlay} layer @returns {Disposer} */
-    overlay(layer) {
-      // A layer off the stack is a caller error, such as a picker handle in place of its window.
-      if (root.overlays.indexOf(layer) < 0) throw new TypeError("overlay: the layer is not on the stack");
-
-      // A dead scope reverts nothing, so the overlay closes now and never outlives its block.
+    // Show a layer that this block owns; an unload takes it off the stack. `onClose` runs once, at the disposer or at the unload.
+    /** @param {Overlay} layer @param {() => void} [onClose] @returns {Disposer} */
+    overlay(layer, onClose) {
+      // A dead scope reverts nothing, so a late layer never shows and never outlives its block.
       if (!ctx.alive) {
         root.popOverlay(layer);
+        onClose?.();
         return () => {};
       }
+      if (root.overlays.indexOf(layer) < 0) root.pushOverlay(layer);
 
       // The map holds the claim, so a frozen layer and a proxy layer both stay untouched.
-      OVERLAY_OWNER.set(layer, surface);
+      /** @type {OverlayClaim} */
+      const claim = { surface, onClose };
+      OVERLAY_OWNER.set(layer, claim);
       // One effect per surface keeps the disposal order that the block's own effects observe.
       if (!ownsOverlays) {
         ownsOverlays = true;
         ctx.effect(() => () => {
-          for (const l of root.overlays.slice()) if (OVERLAY_OWNER.get(l) === surface) root.popOverlay(l);
+          for (const l of root.overlays.slice()) {
+            const owner = OVERLAY_OWNER.get(l);
+            if (owner?.surface !== surface) continue;
+            OVERLAY_OWNER.delete(l);
+            root.popOverlay(l);
+            owner.onClose?.();
+          }
         });
       }
 
       // Drop this one claim, so the block can release a layer before it unloads.
       return () => {
-        if (OVERLAY_OWNER.get(layer) !== surface) return;
+        if (OVERLAY_OWNER.get(layer) !== claim) return;
         OVERLAY_OWNER.delete(layer);
         root.popOverlay(layer);
+        onClose?.();
       };
     },
 

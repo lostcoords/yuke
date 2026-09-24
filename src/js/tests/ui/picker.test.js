@@ -2,7 +2,8 @@ import { check } from "yuke:test";
 import { root, keymap } from "yuke:core";
 import { ui } from "yuke:ui";
 const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });
-const { content, close } = ui.select(["a", "b", "c", "d", "e"], { format: (x) => ({ text: String(x) }) });
+const { win, content } = ui.select(["a", "b", "c", "d", "e"], { format: (x) => ({ text: String(x) }) });
+root.pushOverlay(win);
 const press = (code, char) => root.onEvent(key(code, char));
 const sel = () => content.list.selected();
 
@@ -43,7 +44,6 @@ check("menu-no-query", content.query === "");
 const { select } = ui;
 const loose = select(["p", "q"], { format: x => ({ text: String(x) }) });
 check("detached-select", loose.content.selected() === "p");
-loose.close();
 
 // A menu edits no query, so the setter changes neither the text nor the rows.
 content.query = "zz";
@@ -52,10 +52,10 @@ check("menu-query-setter", content.query === "" && content.selected() === "x");
 // A cancel always closes, in both modes, and `onCancel` only reports it.
 let told = 0;
 const deep = root.overlays.length;
-ui.select(["m"], { format: x => ({ text: String(x) }), onCancel: () => { told++; } });
+root.pushOverlay(ui.select(["m"], { format: x => ({ text: String(x) }), onCancel: () => { told++; } }).win);
 press("esc");
 check("menu-cancel-closes", root.overlays.length === deep && told === 1);
-ui.pick({ items: ["f"], format: x => ({ text: String(x) }), onCancel: () => { told++; } });
+root.pushOverlay(ui.pick({ items: ["f"], format: x => ({ text: String(x) }), onCancel: () => { told++; } }).win);
 press("esc");
 check("finder-cancel-closes", root.overlays.length === deep && told === 2);
 
@@ -89,4 +89,4 @@ press("f9");
 check("removed-stack-keeps-modal-boundary", leaked === 0);
 off();
 
-close();
+content.close();

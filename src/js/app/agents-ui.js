@@ -89,7 +89,6 @@ export async function openAgents(ctx, sessionId) {
     },
   });
   picker.content.selectKey(sessionId);
-  const release = ctx.tui.overlay(picker.win);
   // A new child lands in the index digest, which names no session; a listed child's state lands in its own digest.
   const off = ctx.on("index.changed", /** @param {EngineEvent} ev */ (ev) => { if (ev.type === "index" && (ev.overflow || ev.facts.includes("session.summary_changed"))) refresh(); });
   const offSession = ctx.on("session.changed", /** @param {Extract<EngineEvent, { type: "session" }>} ev */ (ev) => {
@@ -99,13 +98,7 @@ export async function openAgents(ctx, sessionId) {
   });
   /** @type {Set<string>} */
   const pending = new Set();
-  const cleanup = ctx.effect(() => () => close());
-  function close() {
-    if (!alive) return;
-    alive = false;
-    pending.clear();
-    off(); offSession(); release(); cleanup();
-  }
+  const close = ctx.tui.overlay(picker.win, () => { alive = false; pending.clear(); off(); offSession(); });
   let refreshRunning = false;
   let reload = false;
   /** @param {string} [session] */
