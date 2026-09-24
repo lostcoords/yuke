@@ -149,7 +149,11 @@ export class List {
   setItems(items) {
     /** @type {T[]} */
     this.items = items || [];
-    this._ensureSelection();
+    // A selection that left the list moves to the first selectable item, found without an index list.
+    if (this.selectedIndex() < 0) {
+      const first = this._stepSelectable(-1, 1);
+      this.selectedKey = first < 0 ? null : this.key(/** @type {T} */ (this.items[first]));
+    }
     this._clampScroll(this._page);
   }
 
@@ -165,16 +169,6 @@ export class List {
     return false;
   }
 
-  /** @returns {number[]} */
-  _selectable() {
-    const out = [];
-    for (let i = 0; i < this.items.length; i++) {
-      const item = /** @type {T} */ (this.items[i]);
-      if (this.isSelectable(item)) out.push(i);
-    }
-    return out;
-  }
-
   /** @returns {number} */
   selectedIndex() {
     if (this.selectedKey == null) return -1;
@@ -183,18 +177,6 @@ export class List {
       if (this.isSelectable(item) && this.key(item) === this.selectedKey) return i;
     }
     return -1;
-  }
-
-  /** @returns {void} */
-  _ensureSelection() {
-    if (this.selectedIndex() >= 0) return;
-    const sel = this._selectable();
-    if (sel.length) {
-      const index = /** @type {number} */ (sel[0]);
-      this.selectedKey = this.key(/** @type {T} */ (this.items[index]));
-    } else {
-      this.selectedKey = null;
-    }
   }
 
   /** @returns {T | null} */
@@ -1153,27 +1135,13 @@ export class Picker {
   /** @param {PickerAction} name @returns {void} */
   action(name) {
     switch (name) {
-      case "accept":
-        this.accept();
-        break;
-      case "cancel":
-        this.cancel();
-        break;
-      case "close":
-        this.close();
-        break;
-      case "next":
-        this.list.navBy(1);
-        break;
-      case "prev":
-        this.list.navBy(-1);
-        break;
-      case "top":
-        this.list.navEdge(-1);
-        break;
-      case "bottom":
-        this.list.navEdge(1);
-        break;
+      case "accept": return this.accept();
+      case "cancel": return this.cancel();
+      case "close": return this.close();
+      case "next": return this.list.navBy(1);
+      case "prev": return this.list.navBy(-1);
+      case "top": return this.list.navEdge(-1);
+      case "bottom": return this.list.navEdge(1);
     }
   }
 

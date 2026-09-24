@@ -68,10 +68,10 @@ function reanchor(t, s) {
   if (pos) s.cursor = pos;
 }
 
+// Every caller seeds only a state with no cursor.
 /** @param {ChatView} view @param {VimState} s @returns {void} */
 function seed(view, s) {
   const t = view.transcript;
-  if (s.cursor && t.screenAt(s.cursor)) return;
   const r = t.pager.rect();
   for (let y = r ? r.y + r.h - 1 : -1; r && y >= r.y; y--) {
     const pos = t.posAt(r.x, y, false);
@@ -228,14 +228,9 @@ function move(t, s, k) {
       return blockStep(t, s, 1);
     case "{":
       return blockStep(t, s, -1);
-    case "J": {
-      const pos = t.partStep(s.cursor, 1);
-      if (!pos) return false;
-      s.cursor = pos;
-      return true;
-    }
+    case "J":
     case "K": {
-      const pos = t.partStep(s.cursor, -1);
+      const pos = t.partStep(s.cursor, k === "J" ? 1 : -1);
       if (!pos) return false;
       s.cursor = pos;
       return true;

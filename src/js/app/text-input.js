@@ -75,19 +75,15 @@ export function caretAtCol(s, row, col) {
   return row.end;
 }
 
-/** @param {string} s @param {number} caret @returns {number} */
-function deleteWordBack(s, caret) {
-  let i = caret;
-  while (i > 0 && s[i - 1] === " ") i--;
-  while (i > 0 && s[i - 1] !== " ") i--;
-  return i;
-}
+// QuickJS builds a new RegExp each time a literal runs, so the per-grapheme tests hold one each.
+const BLANK = /\s/u;
+const WORD = /[\p{L}\p{N}_]/u;
 
 // A blank, a word character, or punctuation. A word motion stops where the class changes.
 /** @param {string} g @returns {number} */
 function graphemeClass(g) {
-  if (!g || /\s/u.test(g)) return 0;
-  return /[\p{L}\p{N}_]/u.test(g) ? 1 : 2;
+  if (!g || BLANK.test(g)) return 0;
+  return WORD.test(g) ? 1 : 2;
 }
 
 // The graphemes of `s` with their offset and class, so a word motion never lands inside a cluster.
@@ -116,16 +112,8 @@ export function nextWordStart(s, at) {
   const cells = graphemeCells(s);
   let i = cellIndex(cells, at);
   const cls = i < cells.length ? /** @type {GraphemeCell} */ (cells[i]).cls : 0;
-  while (i < cells.length && cls !== 0) {
-    const cell = /** @type {GraphemeCell} */ (cells[i]);
-    if (cell.cls !== cls) break;
-    i++;
-  }
-  while (i < cells.length) {
-    const cell = /** @type {GraphemeCell} */ (cells[i]);
-    if (cell.cls !== 0) break;
-    i++;
-  }
+  if (cls !== 0) while (i < cells.length && /** @type {GraphemeCell} */ (cells[i]).cls === cls) i++;
+  while (i < cells.length && /** @type {GraphemeCell} */ (cells[i]).cls === 0) i++;
   return i < cells.length ? /** @type {GraphemeCell} */ (cells[i]).at : s.length;
 }
 
@@ -248,7 +236,10 @@ export class TextInput {
         return true;
       }
       case "ctrl+w": {
-        const p = deleteWordBack(this.text, this.caret);
+        // Delete back over blanks, then over the word before them.
+        let p = this.caret;
+        while (p > 0 && this.text[p - 1] === " ") p--;
+        while (p > 0 && this.text[p - 1] !== " ") p--;
         if (p !== this.caret) this.replace(p, this.caret, "");
         return true;
       }

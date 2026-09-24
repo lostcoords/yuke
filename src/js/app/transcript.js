@@ -798,25 +798,9 @@ export class Transcript {
     this._resetOrder();
     this._actionPlanCache = null;
     this._refreshActionRows(oldPlan, oldMessages);
-    this._pruneKeyed(this._expand, this._liveIds());
+    // `_positions` now holds every live id, the draft included; an override key is "id:partId".
+    for (const k of this._expand.keys()) if (!this._positions.has(k.slice(0, k.indexOf(":")))) this._expand.delete(k);
     this.clearSelection();
-  }
-
-  /** @returns {Set<string>} */
-  _liveIds() {
-    const live = new Set();
-    for (const m of this._messages) live.add(String(m.id));
-    if (this._active) live.add(String(this._active.id));
-    return live;
-  }
-
-  /** @param {Map<string, unknown>} map @param {Set<string>} live @returns {void} */
-  _pruneKeyed(map, live) {
-    for (const k of [...map.keys()]) {
-      const cut = String(k).indexOf(":");
-      const id = cut < 0 ? String(k) : String(k).slice(0, cut);
-      if (!live.has(id)) map.delete(k);
-    }
   }
 
   /** @returns {void} */

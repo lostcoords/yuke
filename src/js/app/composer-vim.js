@@ -137,22 +137,15 @@ function enter(c, caret) {
   return true;
 }
 
-/** @param {ComposerType} c @param {string} first @param {string} k @returns {boolean} */
-function pair(c, first, k) {
+// `dd` and `cc` take the whole line; the register keeps only its body.
+/** @param {ComposerType} c @param {"d" | "c"} op @returns {boolean} */
+function lineOp(c, op) {
   const t = c.input;
   const { start, end } = lineAt(t.text, t.caret);
-  if (first === "g" && k === "g") return to(c, 0);
-  if (first === "d" && k === "d") {
-    const body = t.text.slice(start, end);
-    if (end < t.text.length) return cut(c, start, end + 1, true, body);
-    return cut(c, start > 0 ? start - 1 : 0, end, true, body);
-  }
-  if (first === "c" && k === "c") {
-    register.set(t.text.slice(start, end), true);
-    t.replace(start, end, "");
-    return enter(c, start);
-  }
-  return false;
+  const body = t.text.slice(start, end);
+  if (op === "c") return cut(c, start, end, true, body) && enter(c, start);
+  if (end < t.text.length) return cut(c, start, end + 1, true, body);
+  return cut(c, start > 0 ? start - 1 : 0, end, true, body);
 }
 
 /** @param {ComposerType} c @param {string} k @returns {boolean} */
@@ -254,9 +247,9 @@ export const composerVim = {
       for (const k of NORMAL_KEYS) normal[k] = edit((c) => normalKey(c, k));
       ctx.tui.keymap(normal, NORMAL_MODE);
       // `gg` is a chord, while `dd` and `cc` are operators that never expire.
-      ctx.tui.keymap({ "g g": edit((c) => pair(c, "g", "g")) }, NORMAL_MODE);
+      ctx.tui.keymap({ "g g": edit((c) => to(c, 0)) }, NORMAL_MODE);
       ctx.tui.keymap(
-        { "d d": edit((c) => pair(c, "d", "d")), "c c": edit((c) => pair(c, "c", "c")) },
+        { "d d": edit((c) => lineOp(c, "d")), "c c": edit((c) => lineOp(c, "c")) },
         NORMAL_MODE,
         { pending: "operator" },
       );
