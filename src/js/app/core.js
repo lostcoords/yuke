@@ -1,7 +1,7 @@
 import { clip } from "yuke:text-input";
 import { normalizeSeq, stripCtrl, strokeOf } from "yuke:keys";
 import { term } from "yuke:term";
-import { callHook, config, events } from "yuke:kernel";
+import { callHook, config, events, once } from "yuke:kernel";
 
 /** @import { Color, Style } from "yuke:term" */
 /** @import { CommandAction, CommandEntry, CommandListing, CommandMeta, CommandPredicate, CommandRegistry, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, SlotEntry, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
@@ -125,17 +125,6 @@ export function fill(x, y, w, h, group) {
 /** @param {number} x @param {number} y @param {string} s @param {string} group @returns {void} */
 export function text(x, y, s, group) {
   term.text(x, y, s, style.resolve(group));
-}
-
-// Wrap a disposer so a second call does nothing.
-/** @param {() => void} fn @returns {() => void} */
-function once(fn) {
-  let done = false;
-  return () => {
-    if (done) return;
-    done = true;
-    fn();
-  };
 }
 
 // A command has a predicate and an action. A key binding, not the command, names the context where it applies.

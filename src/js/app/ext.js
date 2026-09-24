@@ -1,6 +1,6 @@
 // yuke:ext — the plugin runtime: a Scope owns effects and releases, a Context registers, and `advice` wraps methods.
 import * as cancellation from "yuke:cancellation-native";
-import { events } from "yuke:kernel";
+import { events, once } from "yuke:kernel";
 import { bindInteraction } from "yuke:interaction";
 import { defineTool, removeTool } from "yuke:tools";
 import { installDispatcher, installLifecycle, setPoints } from "yuke:hooks";
@@ -392,10 +392,7 @@ export const services = {
     list.unshift(entry);
     this._changed(name);
 
-    let done = false;
-    return () => {
-      if (done) return;
-      done = true;
+    return once(() => {
       const at = list.indexOf(entry);
       if (at < 0) return;
       list.splice(at, 1);
@@ -403,7 +400,7 @@ export const services = {
       if (list.length === 0 && this._map[name] === list) delete this._map[name];
       // Only a withdrawal of the live provider changes what `get` answers.
       if (at === 0) this._changed(name);
-    };
+    });
   },
 
   /** @param {string} name @returns {unknown} */
@@ -425,13 +422,10 @@ export const services = {
     const set = this._watchers[name] || (this._watchers[name] = new Set());
     set.add(fn);
 
-    let done = false;
-    return () => {
-      if (done) return;
-      done = true;
+    return once(() => {
       set.delete(fn);
       if (set.size === 0 && this._watchers[name] === set) delete this._watchers[name];
-    };
+    });
   },
 
   // Announce one change of the live provider. A watcher reacts first, so an observer reads a settled registry.
@@ -598,14 +592,11 @@ function addHook(point, owner, fn) {
     throw e;
   }
 
-  let done = false;
-  return () => {
-    if (done) return;
-    done = true;
+  return once(() => {
     const next = /** @type {readonly HookEntry[]} */ (HOOKS[point]).filter((held) => held !== entry);
     if (next.length === 0) delete HOOKS[point]; else HOOKS[point] = next;
     publishPoints(point);
-  };
+  });
 }
 
 // Fold one chain and answer one decision. The runtime calls this, and it never throws.

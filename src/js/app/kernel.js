@@ -9,6 +9,17 @@ import { native } from "yuke:engine-native";
 /** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
 
+// Wrap a disposer so a second call does nothing.
+/** @param {() => void} fn @returns {() => void} */
+export function once(fn) {
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    fn();
+  };
+}
+
 // Runtime configuration. A direct write bypasses validation, so use `defineConfig`.
 /** @type {Config} */
 export const config = {
@@ -126,12 +137,9 @@ export class Emitter {
     const added = names.filter((n) => !table.has(n));
     for (const n of added) table.add(n);
 
-    let done = false;
-    return () => {
-      if (done) return;
-      done = true;
+    return once(() => {
       for (const n of added) table.delete(n);
-    };
+    });
   }
 
   // Reject a name a closed bus does not declare, so a typo fails at the call and not in silence.
