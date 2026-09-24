@@ -48,7 +48,7 @@ function reportLabel(source) {
 /** @param {ToolPart} part @returns {string | null} */
 function childOf(part) {
     const state = part.state;
-    if (!state || state.type !== "completed") return null;
+    if (state.type !== "completed") return null;
     try {
         const id = JSON.parse(String(state.output || "")).session_id;
         return typeof id === "string" && SESSION_ID.test(id) ? id : null;

@@ -27,8 +27,7 @@ class SessionFeed {
   seed(listResult) {
     feedsRev++;
     this.items.clear();
-    const items = listResult && listResult.items ? listResult.items : [];
-    for (const it of items) if (it && it.session) this.items.set(it.session.id, it);
+    for (const it of listResult.items) this.items.set(it.session.id, it);
   }
 
   // Read the list again. A burst shares one read and one follow-up catches changes during it.
@@ -75,7 +74,7 @@ export function newestLocalModelSession() {
   let best = null;
   for (const it of feed.items.values()) {
     const s = it.session;
-    if (!s || !s.model) continue;
+    if (!s.model) continue;
     if (!best || (s.updated_at_ms || 0) > (best.updated_at_ms || 0)) best = s;
   }
   newestLocal = { rev: feedsRev, session: best };
@@ -95,14 +94,14 @@ export function feedOf() {
 
 /** @param {Wire.Session} s @returns {string} */
 function sessionTitle(s) {
-  const t = (s && s.title ? s.title : "").trim();
+  const t = s.title.trim();
   return t !== "" ? t : "untitled";
 }
 
 // A one-cell activity mark: "●" working, "" idle.
 /** @param {FeedActivity} activity @returns {string} */
 export function activityMark(activity) {
-  const type = activity && activity.state ? activity.state.type : "idle";
+  const type = activity.state.type;
   return type === "idle" ? "" : "●";
 }
 

@@ -235,7 +235,7 @@ function actionBodyAttrs(tree) {
 // Report a part that names a blob; the set is closed, so every other user part is text.
 /** @param {MessagePart} part @returns {part is Extract<MessagePart, { type: "image" | "audio" | "file" }>} */
 function isMedia(part) {
-  return part != null && (part.type === "image" || part.type === "audio" || part.type === "file");
+  return part.type === "image" || part.type === "audio" || part.type === "file";
 }
 
 // Return the cuts that the projection recorded on a part, or none for a whole part.
@@ -330,32 +330,27 @@ function describe(part) {
   return { verb: String(part.name || "tool"), subject: "", category: "other" };
 }
 
-/** @param {Wire.ToolState | null | undefined} state @returns {Wire.ToolState["type"]} */
-function toolStateKind(state) {
-  return state && state.type ? state.type : "pending";
-}
-
-/** @param {Wire.ToolState | null | undefined} state @returns {string} */
+/** @param {Wire.ToolState} state @returns {string} */
 function toolStateLabel(state) {
-  const t = toolStateKind(state);
+  const t = state.type;
   // A completed call needs no word, because the absence of an error already says it.
   if (t === "completed") return "";
   return t;
 }
 
 // Report a duration only over one second. A sub-second value is not a fact a reader acts on.
-/** @param {Wire.ToolState | null | undefined} state @returns {string} */
+/** @param {Wire.ToolState} state @returns {string} */
 function rightLabel(state) {
   const label = toolStateLabel(state);
-  const ms = /** @type {{ duration_ms?: number }} */ (state || {}).duration_ms;
+  const ms = /** @type {{ duration_ms?: number }} */ (state).duration_ms;
   const took = typeof ms === "number" && ms >= 1000 ? (ms / 1000).toFixed(1) + "s" : "";
   if (label && took) return label + " · " + took;
   return label || took;
 }
 
-/** @param {Wire.ToolState | null | undefined} state @returns {boolean} */
+/** @param {Wire.ToolState} state @returns {boolean} */
 function defaultExpanded(state) {
-  const t = toolStateKind(state);
+  const t = state.type;
   return t === "running" || t === "error" || t === "canceled";
 }
 
@@ -368,8 +363,8 @@ function toolHeaderSource(label) {
 function toolHeaderRow(part, expanded, width, label, tree) {
   const name = label.verb;
   const summary = label.subject;
-  const state = part.state || {};
-  const kind = toolStateKind(state);
+  const state = part.state;
+  const kind = state.type;
   const right = rightLabel(state);
   const err = kind === "error";
   const contentW = Math.max(1, width);
@@ -425,12 +420,12 @@ function toolHeaderSame(before, fresh) {
   const was = /** @type {{ duration_ms?: number } | null} */ (before.state);
   const now = /** @type {{ duration_ms?: number } | null} */ (fresh.state);
   return before.name === fresh.name && before.arguments === fresh.arguments
-    && toolStateKind(before.state) === toolStateKind(fresh.state) && was?.duration_ms === now?.duration_ms;
+    && before.state.type === fresh.state.type && was?.duration_ms === now?.duration_ms;
 }
 
 /** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @returns {string} */
 function toolBodyText(part) {
-  const s = part.state || {};
+  const s = part.state;
   if (s.type === "error") return s.error || "";
   const output = /** @type {{ output?: string }} */ (s);
   if (output.output) return output.output;
@@ -441,7 +436,7 @@ function toolBodyText(part) {
 function diffRows(view, width, limit = Infinity) {
   const rows = /** @type {TranscriptRow[]} */ ([]);
   let source = "";
-  for (const f of view.files || []) {
+  for (const f of view.files) {
     if (f.path) {
       if (source) source += "\n";
       const base = source.length;
@@ -451,8 +446,8 @@ function diffRows(view, width, limit = Infinity) {
         indent: TX_GUTTER,
       });
     }
-    for (const h of f.hunks || []) {
-      for (const line of h.lines || []) {
+    for (const h of f.hunks) {
+      for (const line of h.lines) {
         if (source) source += "\n";
         const base = source.length;
         source += line;
@@ -469,10 +464,10 @@ function diffRows(view, width, limit = Infinity) {
 function viewRows(views, width, limit = Infinity) {
   const rows = /** @type {TranscriptRow[]} */ ([]);
   let source = "";
-  for (const v of views || []) {
+  for (const v of views) {
     if (source) source += "\n";
     const base = source.length;
-    const t = v && v.type;
+    const t = v.type;
     if (t === "diff") {
       const built = diffRows(/** @type {Extract<Wire.View, { type: "diff" }>} */ (v), width, limit - rows.length);
       source += built.source;
@@ -488,7 +483,7 @@ function viewRows(views, width, limit = Infinity) {
       }
     } else {
       const view = /** @type {{ text?: string }} */ (v);
-      const body = v && view.text ? view.text : "";
+      const body = view.text ?? "";
       source += body;
       for (const r of wrapBody(body, width, "TxToolBody", limit - rows.length)) rows.push(rowAtBase(r, base));
     }
@@ -498,9 +493,9 @@ function viewRows(views, width, limit = Infinity) {
 
 /** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {number} width @param {number} [limit] @returns {{ rows: TranscriptRow[], source: string }} */
 function toolBody(part, width, limit = Infinity) {
-  const views = part.state && /** @type {{ view?: readonly Wire.View[] }} */ (part.state).view;
+  const views = /** @type {{ view?: readonly Wire.View[] }} */ (part.state).view;
   const body = views && views.length ? viewRows(views, width, limit) : textBody(part, width, limit);
-  const media = part.state && part.state.type === "completed" ? part.state.media : undefined;
+  const media = part.state.type === "completed" ? part.state.media : undefined;
   if (!media || media.length === 0) return body;
   // An image has no text, so one label per image follows the output, numbered like a user attachment.
   media.forEach((blob, i) => {
@@ -516,7 +511,7 @@ function toolBody(part, width, limit = Infinity) {
 /** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {number} width @param {number} limit @returns {{ rows: TranscriptRow[], source: string }} */
 function textBody(part, width, limit) {
   const text = toolBodyText(part);
-  const kind = toolStateKind(part.state);
+  const kind = part.state.type;
   const group = kind === "error" ? "TxToolError" : "TxToolBody";
   return { rows: wrapBody(text, width, group, limit), source: text };
 }
@@ -623,7 +618,7 @@ function toolRows(part, width, expanded, tree) {
     }
   }
   const cut = cutsOf(part);
-  const field = toolStateKind(part.state) === "error" ? "error" : "output";
+  const field = part.state.type === "error" ? "error" : "output";
   if (body.rows.length > shown.length || cut.some((c) => c.field === field && c.next != null) || args.indexOf("\n") >= 0) {
     rows.push({ text: "… Enter or click to view all", group: "TxToolMeta", ...actionBodyAttrs(tree), markerGroup: "TxToolMeta", kind: "tool-detail", partId: part.id });
   }
@@ -684,16 +679,15 @@ function errorLabel(error) {
 function textOfParts(parts) {
   /** @type {string | null} */
   let text = null;
-  for (const part of parts) if (part && part.type === "text") text = text === null ? part.text : text + part.text;
+  for (const part of parts) if (part.type === "text") text = text === null ? part.text : text + part.text;
   return text ?? "";
 }
 
 // A child report has two text parts, and the rows show only the body, not the preamble of the model.
 /** @param {readonly MessagePart[]} parts @param {string} text @returns {string} */
 function reportBody(parts, text) {
-  const texts = parts.filter((part) => part && part.type === "text");
-  const last = texts.length >= 2 ? texts[texts.length - 1] : undefined;
-  return last && last.type === "text" ? last.text : text;
+  const texts = parts.filter((part) => part.type === "text");
+  return texts.length >= 2 ? /** @type {Extract<MessagePart, { type: "text" }>} */ (texts[texts.length - 1]).text : text;
 }
 
 // Put each attachment label of a user message at the position of its part.
@@ -796,10 +790,10 @@ export class Transcript {
     const oldPlan = this._actionPlanCache;
     const oldMessages = oldPlan ? this.messages() : [];
     const keep = new Set();
-    for (const m of messages || []) if (!sameId(m.id, this._active?.id)) keep.add(String(m.id));
+    for (const m of messages) if (!sameId(m.id, this._active?.id)) keep.add(String(m.id));
     for (const key of new Set([...this._rows.keys(), ...this._parts.keys()])) if (!keep.has(key)) this._evict(key);
     for (const key of this._counts.keys()) if (!keep.has(key)) this._counts.delete(key);
-    this._messages = messages || [];
+    this._messages = messages;
     this._active = active || null;
     this._resetOrder();
     this._actionPlanCache = null;
@@ -950,7 +944,7 @@ export class Transcript {
   _refreshParts(id, partId) {
     const state = this._parts.get(String(id));
     if (!state || !state.list) return { groupingChanged: true, rowsChanged: true };
-    const at = partId == null ? -1 : state.list.findIndex((part) => part && sameId(part.id, partId));
+    const at = partId == null ? -1 : state.list.findIndex((part) => sameId(part.id, partId));
     const fresh = at < 0 || !this.partOf ? null : this._partOne(id, /** @type {number} */ (partId), state.list[at]);
     if (fresh && (fresh.type === "text" || fresh.type === "tool" || fresh.type === "reasoning")) {
       const before = /** @type {Wire.AssistantPart} */ (state.list[at]);
@@ -1227,7 +1221,7 @@ export class Transcript {
 
   /** @param {number} id @returns {Wire.AssistantPart[]} */
   _readParts(id) {
-    return /** @type {Wire.AssistantPart[]} */ (this._allParts(id).filter((part) => part && (part.type === "text" || part.type === "tool" || part.type === "reasoning")));
+    return /** @type {Wire.AssistantPart[]} */ (this._allParts(id).filter((part) => part.type === "text" || part.type === "tool" || part.type === "reasoning"));
   }
 
   // The parts of one rendered message stay held until a delta or an eviction drops them.
@@ -1361,14 +1355,12 @@ export class Transcript {
     const k = this._expandKey(id, partId);
     if (this._expand.has(k)) return /** @type {boolean} */ (this._expand.get(k));
     if (part && part.type === "reasoning") return this._reasoningLive(id, partId);
-    const state = part == null ? part : part.type === "tool" ? part.state : undefined;
-    return defaultExpanded(state);
+    return part?.type === "tool" && defaultExpanded(part.state);
   }
 
   // Flip the user override for one foldable part. A missing part is a no-op.
   /** @param {number} id @param {number} partId @returns {void} */
   togglePart(id, partId) {
-    if (id == null || partId == null) return;
     const k = this._expandKey(id, partId);
     let part = null;
     if (partId !== -1) {
@@ -1405,7 +1397,7 @@ export class Transcript {
   openTool(id, partId) {
     const part = this._partState(id).list.find((entry) => sameId(entry.id, partId));
     if (!part || part.type !== "tool") return false;
-    const state = part.state || {};
+    const state = part.state;
     const field = state.type === "error" ? "error" : "output";
     const output = state.type === "error" ? state.error || "" : String(/** @type {{ output?: string }} */ (state).output || "");
     const input = this._wholePartField(id, part.id, part, "arguments", String(part.arguments || ""));
@@ -1581,7 +1573,7 @@ export class Transcript {
   /** @returns {SelectionRange | null} */
   _range() {
     const sel = this.selection;
-    if (!sel || !sel.anchor || !sel.cursor) return null;
+    if (!sel) return null;
     const a = sel.anchor;
     const b = sel.cursor;
     const ia = this.messageIndex(a.id);

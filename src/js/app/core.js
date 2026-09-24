@@ -1412,7 +1412,7 @@ export class RootView {
         const viewTakes = !keymapFirst && callHook(this.active, "onKey", ev);
         if (!viewTakes && ev.type === "key") keymap.onKey(ev);
       }
-    } else if (ev.type === "mouse") {
+    } else {
       if (!consumedByOverlay("onMouse")) this.routeMouse(ev);
     }
     this.invalidate();

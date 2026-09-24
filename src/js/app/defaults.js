@@ -47,7 +47,7 @@ const workspace = Node.leaf(chat.view);
 function openSessionFinder(ctx) {
   const feed = feedOf();
   const show = () => {
-    const rows = feed.rows().filter((row) => row.session.origin?.type !== "child").sort((a, b) => (b.session.updated_at_ms || 0) - (a.session.updated_at_ms || 0));
+    const rows = feed.rows().filter((row) => row.session.origin.type !== "child").sort((a, b) => (b.session.updated_at_ms || 0) - (a.session.updated_at_ms || 0));
     if (rows.length === 0) {
       notice.show("no sessions yet");
       return null;

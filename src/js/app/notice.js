@@ -38,7 +38,6 @@ export const noticePlugin = {
 
       // A byte count means the sequence left this process, not that the terminal accepted it.
       ctx.on("clipboard.copied", /** @param {{ text: string, bytes: number, what: string }} e @returns {void} */ (e) => {
-        if (!e) return;
         if (e.text === "") notice.show("nothing to copy");
         else if (e.bytes < 0) notice.show("too large to copy · over " + term.clipboardMax + " bytes");
         else notice.show("copied " + e.what + " · " + e.bytes + " bytes");
@@ -46,7 +45,7 @@ export const noticePlugin = {
 
       // The native digest carries the complete body because the fact name has no message.
       ctx.on("notice", /** @param {Extract<EngineEvent, { type: "index" }>} ev @returns {void} */ (ev) => {
-        const notes = ev?.notices;
+        const notes = ev.notices;
         const latest = notes && notes[notes.length - 1];
         if (latest) notice.show(latest.message);
       });

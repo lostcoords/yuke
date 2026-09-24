@@ -110,7 +110,7 @@ async function read(args, _signal, context) {
   const path = stringArg(name, args, "path");
   const start = lineArg(name, args, "start");
   const end = lineArg(name, args, "end");
-  const got = await hostCall(name, fs.readRange(path, { start, end }, context?.workspaceRoot));
+  const got = await hostCall(name, fs.readRange(path, { start, end }, context.workspaceRoot));
   if ("imagePath" in got) {
     const blob = await hostCall(name, client.blobPut(got.imagePath));
     const kind = blob.mime.slice(blob.mime.indexOf("/") + 1).toUpperCase();
@@ -126,10 +126,10 @@ async function write(args, _signal, context) {
   const content = stringArg(name, args, "content");
   let old = "";
   let canDiff = true;
-  try { old = await fs.readFile(path, context?.workspaceRoot); }
+  try { old = await fs.readFile(path, context.workspaceRoot); }
   catch (e) { if (errorText(e) !== "the path does not exist") canDiff = false; }
   const mapped = canDiff ? await diff(path, old, content) : null;
-  const bytes = await hostCall(name, fs.writeFile(path, content, context?.workspaceRoot));
+  const bytes = await hostCall(name, fs.writeFile(path, content, context.workspaceRoot));
   const view = mapped == null ? null : viewOf(mapped);
   const text = view == null ? `The tool wrote ${bytes} bytes.` : `The tool wrote ${bytes} bytes and changed ${changedLines(view)} line(s).`;
   return result(text, view == null ? null : { view });
@@ -167,13 +167,13 @@ async function edit(args, _signal, context) {
   if (typeof replaceAll !== "boolean") invalid(name, "the argument replace_all has the wrong type or range");
   if (oldString.length === 0) invalid(name, "the argument old_string has the wrong type or range");
   if (oldString === newString) invalid(name, "old_string and new_string match. The edit changes nothing");
-  const old = await hostCall(name, fs.readFile(path, context?.workspaceRoot));
+  const old = await hostCall(name, fs.readFile(path, context.workspaceRoot));
   const replaced = replaceAt(old, oldString, newString);
   if (replaced.count === 0) invalid(name, "the file lacks old_string");
   if (replaced.count > 1 && !replaceAll) invalid(name, "old_string appears more than one time. You must add context or set replace_all");
   if (utf8Length(replaced.text) > MAX_FILE_BYTES) invalid(name, "the file exceeds the size limit");
   const mapped = await diff(path, old, replaced.text);
-  await hostCall(name, fs.writeFile(path, replaced.text, context?.workspaceRoot));
+  await hostCall(name, fs.writeFile(path, replaced.text, context.workspaceRoot));
   const view = viewOf(mapped);
   const text = view == null ? `The tool replaced ${replaced.count} match(es).` : `The tool replaced ${replaced.count} match(es) and changed ${changedLines(view)} line(s).`;
   return result(text, view == null ? null : { view });
@@ -210,11 +210,11 @@ events.on("jobs.changed", (/** @type {Job} */ job) => {
 
 /** @param {string} command @param {ToolContext} context @returns {Promise<string>} */
 async function startBackground(command, context) {
-  const root = context?.workspaceRoot;
-  const sessionId = context?.sessionId;
-  const same = sessionJobs(sessionId).find(j => j.state === "running" && j.command === command && (root === undefined || j.cwd === root));
+  const root = context.workspaceRoot;
+  const sessionId = context.sessionId;
+  const same = sessionJobs(sessionId).find(j => j.state === "running" && j.command === command && j.cwd === root);
   if (same) return `[job ${jobName(same)} already runs this command. Log: ${same.log}]`;
-  const job = await hostCall("exec", startJob(command, { ...(root !== undefined ? { root } : {}), ...(sessionId !== undefined ? { sessionId } : {}) }));
+  const job = await hostCall("exec", startJob(command, { root, ...(sessionId !== undefined ? { sessionId } : {}) }));
   return `[job ${jobName(job)} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use jobs with id and stop: true to request its stop.]`;
 }
 
@@ -222,8 +222,8 @@ async function startBackground(command, context) {
 /** @param {string} name @param {string} id @param {ToolContext} context @returns {Job} */
 function jobOf(name, id, context) {
   const job = /^j[1-9][0-9]*$/.test(id) ? getJob(Number(id.slice(1))) : null;
-  if (job && (job.session_id ?? null) === (context?.sessionId ?? null)) return job;
-  const ids = sessionJobs(context?.sessionId).map(jobName);
+  if (job && (job.session_id ?? null) === (context.sessionId ?? null)) return job;
+  const ids = sessionJobs(context.sessionId).map(jobName);
   return invalid(name, `the job ${id} does not exist. ${ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`}`);
 }
 
@@ -239,7 +239,7 @@ async function jobs(args, _signal, context) {
   if (typeof stop !== "boolean") invalid(name, "the argument stop must be a boolean");
   if (args.id == null) {
     if (stop) invalid(name, "the argument stop needs the argument id");
-    const own = sessionJobs(context?.sessionId);
+    const own = sessionJobs(context.sessionId);
     return own.length === 0 ? "[no job]" : own.map(jobLine).join("\n");
   }
   const job = jobOf(name, stringArg(name, args, "id"), context);
@@ -261,7 +261,7 @@ async function exec(args, signal, context) {
   }
   const timeout = timeoutValue == null ? 120000 : timeoutValue;
   if (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < 1 || timeout > 600000) invalid(name, "the argument timeout_ms has the wrong type or range");
-  const r = await hostCall(name, runCommand(command, { timeoutMs: timeout, signal, maxBytes: EXEC_STREAM_BYTES, log: true, onOutput: context?.output }, context?.workspaceRoot));
+  const r = await hostCall(name, runCommand(command, { timeoutMs: timeout, signal, maxBytes: EXEC_STREAM_BYTES, log: true, onOutput: context.output }, context.workspaceRoot));
   let text = r.stdout;
   if (r.stderr.length !== 0) text = `${endLine(text)}[stderr]\n${r.stderr}`;
   const empty = text.length === 0;
@@ -279,7 +279,7 @@ async function exec(args, signal, context) {
 async function skill(args, _signal, context) {
   const name = "skill";
   const skillName = stringArg(name, args, "name");
-  if (!context?.sessionId) invalid(name, "the tool has no session");
+  if (!context.sessionId) invalid(name, "the tool has no session");
   const loaded = await hostCall(name, client.skillLoad(context.sessionId, skillName));
   return loaded.content;
 }

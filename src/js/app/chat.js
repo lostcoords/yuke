@@ -314,7 +314,7 @@ function openModelPicker(ctx, query) {
   const chat = focusedChat();
   if (!chat) return null;
   const current = chatEntry();
-  const currentId = current && current.session ? current.session.model : null;
+  const currentId = current ? current.session.model : null;
   const show = () => {
     // Code-unit order: localeCompare NFC-normalizes and traps in ReleaseSafe QuickJS.
     const models = catalogOf().models.slice().sort((a, b) => (a.provider < b.provider ? -1 : a.provider > b.provider ? 1 : 0) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));

@@ -51,7 +51,6 @@ export const activityPlugin = {
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.on("session.changed", /** @param {NativeSessionEvent} ev */ (ev) => {
-      if (!ev) return;
       if (ev.kind === "gone") forget(ev.session);
       else if (ev.facts.indexOf("session.activity_changed") >= 0) refreshActivity(ev.session);
     });

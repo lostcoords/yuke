@@ -34,10 +34,10 @@ export function modelOf(selector) {
 
 const refresh = new Refresh(
   () => client.catalogList(catalog.rev).then((r) => {
-    if (r && r.type === "full") {
+    if (r.type === "full") {
       catalog.rev = r.catalog_rev;
-      catalog.providers = r.providers || [];
-      catalog.models = r.models || [];
+      catalog.providers = r.providers;
+      catalog.models = r.models;
     }
   }),
   () => { root.invalidate(); return catalog; },
@@ -144,7 +144,7 @@ export function modelCatalog(cfg = {}) {
         order: 10,
         render: () => {
           const e = entry();
-          if (e && e.session && e.session.model) return e.session.model;
+          if (e && e.session.model) return e.session.model;
           return defaultModel().model || "";
         },
       });

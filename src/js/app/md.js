@@ -503,12 +503,12 @@ function parseInline(text, baseGroup) {
 function foldEmphasis(nodes, delims) {
   for (let ci = 0; ci < delims.length; ci++) {
     const closer = /** @type {DelimiterNode} */ (nodes[/** @type {number} */ (delims[ci])]);
-    if (closer.kind !== "delim" || !closer.canClose) continue;
+    if (!closer.canClose) continue;
     while (closer.count > 0) {
       let matched = false;
       for (let oi = ci - 1; oi >= 0; oi--) {
         const opener = /** @type {DelimiterNode} */ (nodes[/** @type {number} */ (delims[oi])]);
-        if (opener.kind !== "delim" || opener.marker !== closer.marker || !opener.canOpen || opener.count === 0) continue;
+        if (opener.marker !== closer.marker || !opener.canOpen || opener.count === 0) continue;
         // The rule of three: an open-and-close run matches only when the lengths allow it.
         const oddMatch = (closer.canOpen || opener.canClose) && (opener.count + closer.count) % 3 === 0 && !(opener.count % 3 === 0 && closer.count % 3 === 0);
         if (oddMatch) continue;
@@ -568,7 +568,7 @@ function flattenInline(nodes, base) {
 // Map inline segments onto source offsets, so every piece stays linear (`srcEnd - src === text.length`) unless the markup is not.
 /** @param {InlinePiece[]} segments @param {SourceRun[]} runs @returns {Segment[]} */
 function resolveSegments(segments, runs) {
-  if (!runs || runs.length === 0) return segments.map((s) => ({ text: s.text, group: s.group }));
+  if (runs.length === 0) return segments.map((s) => ({ text: s.text, group: s.group }));
   const out = /** @type {Segment[]} */ ([]);
   for (const s of segments) {
     if (s.text.length === 0) {
