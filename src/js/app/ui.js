@@ -612,7 +612,7 @@ export class Composer {
     this.input.insert(t);
     // The owner may claim a paste, for example a path it attaches as an image. A claimed paste never collapses.
     if (this.onPaste && this.onPaste(t, from)) return true;
-    if (pasteCollapses(t)) {
+    if (t.length > COMPOSER_PASTE_CHARS || lineCount(t) >= COMPOSER_PASTE_LINES) {
       this.spans.push({ start: from, end: from + t.length });
       this._invalidate();
     }
@@ -645,15 +645,6 @@ export class Composer {
     return true;
   }
 
-  // Scroll the smallest amount that keeps the caret row on the screen.
-  /** @param {WrapRow[]} rows @param {number} h @returns {void} */
-  _scrollTo(rows, h) {
-    const { row } = caretRowCol(this._projection().text, rows, this._toDisplay(this.input.caret));
-    this.scroll = Math.min(this.scroll, Math.max(0, rows.length - h));
-    if (row < this.scroll) this.scroll = row;
-    else if (row >= this.scroll + h) this.scroll = row - h + 1;
-  }
-
   /** @param {boolean} _focused @returns {void} */
   draw(_focused) {
     const { x, y, w, h } = this.rect;
@@ -668,7 +659,11 @@ export class Composer {
     const tw = this._textWidth(w);
     const rows = this._rowsAt(tw);
     const proj = this._projection().text;
-    this._scrollTo(rows, h);
+    // Scroll the smallest amount that keeps the caret row on the screen.
+    const { row: caretRow } = caretRowCol(proj, rows, this._toDisplay(this.input.caret));
+    this.scroll = Math.min(this.scroll, Math.max(0, rows.length - h));
+    if (caretRow < this.scroll) this.scroll = caretRow;
+    else if (caretRow >= this.scroll + h) this.scroll = caretRow - h + 1;
     const pw = w - tw;
     // The prompt marks the first row only. A later row aligns under it.
     if (this.scroll === 0) text(x, y, this._prompt(), "UIComposer");
@@ -757,11 +752,6 @@ const COMPOSER_ROWS_MAX = 10;
 // A paste over one of these collapses to a label.
 const COMPOSER_PASTE_LINES = 3;
 const COMPOSER_PASTE_CHARS = 150;
-
-/** @param {string} t @returns {boolean} */
-function pasteCollapses(t) {
-  return t.length > COMPOSER_PASTE_CHARS || lineCount(t) >= COMPOSER_PASTE_LINES;
-}
 
 // A newline at the end closes the last line. It does not open an empty one.
 /** @param {string} t @returns {number} */

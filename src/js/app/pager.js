@@ -112,7 +112,7 @@ export class Pager {
       if (r.bg) fill(x, sy, w, 1, r.bg);
       if (r.marker) text(x, sy, r.marker, /** @type {string} */ (r.markerGroup));
       const ind = r.indent || 0;
-      let segs = rowSegments(r);
+      let segs = r.segments || (r.text ? [{ text: r.text, group: /** @type {string} */ (r.group) }] : null);
       if (segs && r.sel) segs = markSelection(segs, r.sel.from, r.sel.to, r.selGroup || "TxSelect");
       if (segs) drawSegments(x + ind, sy, Math.max(0, w - ind), segs);
     }
@@ -144,13 +144,6 @@ export class Pager {
     else return false;
     return true;
   }
-}
-
-// A row holds either `segments` or a plain `text`. Fold both into one segment list.
-/** @param {TranscriptRow} r @returns {Segment[] | null} */
-function rowSegments(r) {
-  if (r.segments) return r.segments;
-  return r.text ? [{ text: r.text, group: /** @type {string} */ (r.group) }] : null;
 }
 
 // The plain text of a row, without the indent. A selection indexes into this string.

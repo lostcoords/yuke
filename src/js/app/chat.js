@@ -36,11 +36,6 @@ export function soleText(content) {
   return only && only.type === "text" ? only.text : null;
 }
 
-/** @param {{ name: string, args: string }} invocation @returns {Wire.Input} */
-function skillInput(invocation) {
-  return { type: "skill", name: invocation.name, ...(invocation.args ? { arguments: invocation.args } : {}) };
-}
-
 // One chat pane and the session it drives. Each pane owns its own view, transcript and session.
 export class Chat {
   constructor() {
@@ -115,7 +110,7 @@ export class Chat {
   send(content) {
     const text = soleText(content);
     const invocation = text === null ? null : parseSkillLine(text);
-    if (!this.sessionId) return this.startChat(invocation ? skillInput(invocation) : { type: "content", content });
+    if (!this.sessionId) return this.startChat(invocation ? { type: "skill", name: invocation.name, ...(invocation.args ? { arguments: invocation.args } : {}) } : { type: "content", content });
     const snap = this.composer.snapshot();
     const sent = invocation ? client.sessionSendSkill(this.sessionId, invocation.name, invocation.args) : client.sessionSendInput(this.sessionId, content);
     sent.catch((e) => {
@@ -318,21 +313,15 @@ function openModelPicker(ctx, query) {
   const show = () => {
     // Code-unit order: localeCompare NFC-normalizes and traps in ReleaseSafe QuickJS.
     const models = catalogOf().models.slice().sort((a, b) => (a.provider < b.provider ? -1 : a.provider > b.provider ? 1 : 0) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    if (models.length === 0) {
-      notice.show("no model in the catalog");
-      return null;
-    }
+    if (models.length === 0) return notice.show("no model in the catalog");
     if (query) {
       const m = models.find((x) => x.selector === query || x.id === query || x.name === query);
       if (m) {
         if (modelAvailable(m)) chooseModel(m, m.default_reasoning || m.reasoning_levels[0] || "", chat.sessionId);
       }
       else notice.show("no model named " + query);
-      return null;
+      return;
     }
-    // The catalog owns the selector format. The picker keys on it and never builds one.
-    /** @param {Wire.ModelInfo} m @returns {string} */
-    const qualified = (m) => m.selector;
     const p = ui.pick({
       title: "select a model",
       footer: "type to filter · ↵ select · esc close",
@@ -341,7 +330,8 @@ function openModelPicker(ctx, query) {
       anchor: () => chat.composer.rect,
       maxRows: 6,
       items: models,
-      key: qualified,
+      // The catalog owns the selector format. The picker keys on it and never builds one.
+      key: (m) => m.selector,
       filterText: m => m.provider + " " + m.name + " " + m.id,
       // A model with a provider that cannot serve shows the reason before the user starts a run.
       format: m => {
@@ -354,7 +344,6 @@ function openModelPicker(ctx, query) {
     });
     ctx.tui.overlay(p.win);
     p.content.list.selectKey(currentId);
-    return p;
   };
   // Reload the file before the picker lists, so a login from another process shows.
   reloadCatalog().then(show);
