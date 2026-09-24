@@ -42,16 +42,16 @@ check("tail-position", t.posAt(4, 7, false)?.id === "m39");
 // A selection spans evicted history, and survives an eviction and a resize.
 t.select(t.posAtSource("m0", 0), t.posAtSource("m39", 1000000));
 const selected = t.selectedText();
-const source = t.selectedSource();
+const source = t.selectedText(true);
 check("selection", selected.includes("old thought") && selected.includes("old output") && source.includes("middle answer"));
 t.rows(32, 0, 8);
 t.rows(32, wide.length - 8, 8);
-check("selection-after-eviction", t.selectedText() === selected && t.selectedSource() === source);
+check("selection-after-eviction", t.selectedText() === selected && t.selectedText(true) === source);
 const narrow = reference(18);
 check("resize-total", t.rowCount(18) === narrow.length);
 const plain = (rows) => rows.map(({ sel, ...row }) => row); // the reference holds no selection
 check("resize-tail-rows", JSON.stringify(plain(t.rows(18, narrow.length - 8, 8))) === JSON.stringify(narrow.slice(-8)));
-check("selection-after-resize", t.selectedSource() === source);
+check("selection-after-resize", t.selectedText(true) === source);
 
 // A fold on an evicted message changes the count and shows at its own location.
 t.clearSelection();

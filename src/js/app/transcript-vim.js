@@ -256,7 +256,7 @@ function yank(t, s, source, linewise) {
     const body = rowOf(t, s.cursor);
     t.select({ ...s.cursor, col: 0 }, { ...s.cursor, col: body.length });
   }
-  const text = source ? t.selectedSource() : t.selectedText();
+  const text = t.selectedText(source);
   register.set(text, linewise === undefined ? !s.visual : linewise);
   copy(text, source ? "source" : "selection");
   s.visual = false;

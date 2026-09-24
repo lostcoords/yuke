@@ -1551,9 +1551,9 @@ export class Transcript {
     return to < from ? null : { from, to };
   }
 
-  // The selected text, with one line feed between rows. The indent stays out of the copy.
-  /** @returns {string} */
-  selectedText() {
+  // The selection as shown text, one line feed between rows and no indent. With `source`, a turn whose rows map to markdown gives that markdown instead.
+  /** @param {boolean} [source] @returns {string} */
+  selectedText(source = false) {
     const range = this._range();
     if (!range || this._width <= 0) return "";
     const out = [];
@@ -1561,27 +1561,7 @@ export class Transcript {
       const m = this._at(i);
       if (!m) break;
       const rows = this._rowsOf(m, this._width, i);
-      for (let k = 0; k < rows.length; k++) {
-        const row = /** @type {TranscriptRow} */ (rows[k]);
-        const body = rowText(row);
-        const r = this._rowRange(range, i, k, body.length);
-        if (r) out.push(body.slice(r.from, r.to));
-      }
-    }
-    return out.join("\n");
-  }
-
-  // The markdown under the selection, kept separate from `selectedText`; an unmapped turn is its own source.
-  /** @returns {string} */
-  selectedSource() {
-    const range = this._range();
-    if (!range || this._width <= 0) return "";
-    const out = [];
-    for (let i = range.si; i <= range.ei; i++) {
-      const m = this._at(i);
-      if (!m) break;
-      const rows = this._rowsOf(m, this._width, i);
-      const cache = this._rows.get(String(m.id));
+      const cache = source ? this._rows.get(String(m.id)) : undefined;
       const plain = [];
       let from = -1;
       let to = -1;
@@ -1591,16 +1571,13 @@ export class Transcript {
         const r = this._rowRange(range, i, k, body.length);
         if (!r) continue;
         plain.push(body.slice(r.from, r.to));
-        const span = rowSourceSpan(row, r.from, r.to, rowSourceBase(cache, row));
+        const span = source ? rowSourceSpan(row, r.from, r.to, rowSourceBase(cache, row)) : null;
         if (!span) continue;
         if (from < 0 || span.from < from) from = span.from;
         if (span.to > to) to = span.to;
       }
-      if (from < 0) {
-        if (plain.length) out.push(plain.join("\n"));
-        continue;
-      }
-      out.push(this._sourceOf(m.id).slice(from, to));
+      if (from >= 0) out.push(this._sourceOf(m.id).slice(from, to));
+      else if (plain.length) out.push(plain.join("\n"));
     }
     return out.join("\n");
   }

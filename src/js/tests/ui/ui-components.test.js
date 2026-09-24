@@ -67,7 +67,7 @@ check("mix-text", rowsHave(mixRows, "hi") && rowsHave(mixRows, "there"));
 check("mix-tool", rowsHave(mixRows, "Read") && rowsHave(mixRows, "c.zig"));
 const srcEnd = mix._sourceOf("mix").length;
 mix.select(mix.posAtSource("mix", 0), mix.posAtSource("mix", srcEnd));
-const src = mix.selectedSource();
+const src = mix.selectedText(true);
 check("mix-source-md", src.indexOf("hi") >= 0 && src.indexOf("there") >= 0);
 check("mix-source-tool", src.indexOf("Read") >= 0 && src.indexOf("c.zig") >= 0);
 

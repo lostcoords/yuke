@@ -9,7 +9,7 @@ transcript.togglePart(1, -1);
 const expandedRows = transcript.rowCount(80);
 check("skill expands", expandedRows > 40);
 transcript.select({ id: 1, row: 1, col: 0 }, { id: 1, row: expandedRows - 2, col: 1000 });
-equal(transcript.selectedSource(), body);
+equal(transcript.selectedText(true), body);
 transcript.togglePart(1, -1);
 check("skill folds again", transcript.rowCount(80) < 5);
 const plain = new Transcript({ partsOf: textParts(() => body) });

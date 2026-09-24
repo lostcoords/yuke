@@ -16,26 +16,26 @@ const rows = t.rows(40, 0, 12);
 const colOf = (row, s) => (rows[row].indent || 0) + rowText(rows[row]).indexOf(s);
 const endOf = (row) => (rows[row].indent || 0) + rowText(rows[row]).length;
 
-check("no-selection", t.selectedSource() === "");
+check("no-selection", t.selectedText(true) === "");
 
 // Row 2 is the assistant paragraph, past the user turn and its blank row.
 t.onMouse(at(colOf(2, "bold"), 2, "press"));
 t.onMouse(at(endOf(2), 2, "drag"));
 check("rendered-text", t.selectedText() === "bold and code");
 // The copy keeps the rendered text; the source keeps the markup between the two ends.
-check("source-text", t.selectedSource() === "bold** and `code");
+check("source-text", t.selectedText(true) === "bold** and `code");
 
 // One word inside a code span maps to that word, not to the backticks.
 t.onMouse(at(colOf(2, "code"), 2, "press"));
 t.onMouse(at(endOf(2), 2, "drag"));
-check("inside-code", t.selectedText() === "code" && t.selectedSource() === "code");
+check("inside-code", t.selectedText() === "code" && t.selectedText(true) === "code");
 
 // A bullet hides its markup, so one character of it still maps to the whole marker.
 t.onMouse(at(colOf(4, "•"), 4, "press"));
 t.onMouse(at(colOf(4, "•") + 1, 4, "drag"));
-check("mark-whole", t.selectedText() === "•" && t.selectedSource() === "- ");
+check("mark-whole", t.selectedText() === "•" && t.selectedText(true) === "- ");
 
 // A user turn is plain text, so its source is what it renders.
 t.onMouse(at(colOf(0, "plain"), 0, "press"));
 t.onMouse(at(colOf(0, "plain") + 5, 0, "drag"));
-check("user-plain", t.selectedText() === "plain" && t.selectedSource() === "plain");
+check("user-plain", t.selectedText() === "plain" && t.selectedText(true) === "plain");

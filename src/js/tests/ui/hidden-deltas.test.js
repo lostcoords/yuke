@@ -14,7 +14,7 @@ const initial = JSON.stringify(rows());
 part.state.output = "fresh hidden output";
 t.setActive(1, 7);
 check("hidden-rows", JSON.stringify(rows()) === initial);
-check("hidden-selection", t.selectedSource() === source);
+check("hidden-selection", t.selectedText(true) === source);
 t.openTool(1, 7);
 check("hidden-details", root.overlays[0].content.sections[1].text === part.state.output);
 root.popOverlay();
