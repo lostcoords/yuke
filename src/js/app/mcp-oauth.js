@@ -55,8 +55,9 @@ function bare(url) {
   return secure(url) && !/[?#]/.test(url);
 }
 
+// The lowercase scheme and authority of an absolute URL, and its path.
 /** @param {string} url @returns {{ origin: string, path: string }} */
-function split(url) {
+export function split(url) {
   const match = /^(https?:\/\/[^/?#]+)([^?#]*)/i.exec(url);
   return { origin: match?.[1]?.toLowerCase() ?? "", path: match?.[2] ?? "" };
 }

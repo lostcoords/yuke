@@ -2,6 +2,7 @@
 import { events } from "yuke:kernel";
 import { native } from "yuke:interaction-native";
 import * as cancellation from "yuke:cancellation-native";
+import { utf8Length } from "yuke:format";
 /** @import { CancellationSignal } from "yuke:cancellation-native" */
 /** @import { Context } from "yuke:ext" */
 /** @import { Answerer, Disposer, InteractionOptions, InteractionRequest, InteractionSurface } from "./types/ext.js" */
@@ -9,28 +10,10 @@ import * as cancellation from "yuke:cancellation-native";
 const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
 let nextId = 1;
 
-// A UTF-16 unit costs at most three UTF-8 bytes, so a short string needs no walk.
-/** @param {string} value @returns {boolean} */
-function withinTextLimit(value) {
-  if (value.length * 3 <= native.maxTextBytes) return true;
-  let bytes = 0;
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i);
-    if (code < 0x80) bytes += 1;
-    else if (code < 0x800) bytes += 2;
-    else if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length && value.charCodeAt(i + 1) >= 0xdc00 && value.charCodeAt(i + 1) <= 0xdfff) {
-      bytes += 4;
-      i += 1;
-    } else bytes += 3;
-    if (bytes > native.maxTextBytes) return false;
-  }
-  return true;
-}
-
 /** @param {unknown} value @param {string} name @param {boolean} [empty] @returns {string} */
 function text(value, name, empty = false) {
   if (typeof value !== "string") throw new TypeError(name + " must be a string");
-  if ((!empty && value.length === 0) || !withinTextLimit(value)) {
+  if ((!empty && value.length === 0) || utf8Length(value) > native.maxTextBytes) {
     throw new TypeError(name + " has an invalid length");
   }
   return value;

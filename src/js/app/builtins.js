@@ -7,7 +7,7 @@ import { events } from "yuke:kernel";
 import { diff } from "yuke:diff";
 import { hasTool } from "yuke:tools";
 import { client } from "yuke:client";
-import { byteLabel, errorText } from "yuke:format";
+import { byteLabel, errorText, utf8Length } from "yuke:format";
 
 /** @import { DiffFile as ParsedDiffFile } from "yuke:diff" */
 /** @import { RangeRead } from "yuke:fs" */
@@ -73,21 +73,6 @@ function lineArg(name, args, key) {
   if (value == null) return null;
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > MAX_LINE) invalid(name, `the argument ${key} has the wrong type or range`);
   return value;
-}
-
-/** @param {string} text @returns {number} */
-function utf8Length(text) {
-  let bytes = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
-    if (c < 0x80) bytes += 1;
-    else if (c < 0x800) bytes += 2;
-    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) {
-      bytes += 4;
-      i++;
-    } else bytes += 3;
-  }
-  return bytes;
 }
 
 /** @param {ParsedDiffFile} file @returns {DiffView[] | null} */

@@ -5,7 +5,7 @@ import { spawn, lines } from "yuke:spawn";
 import { fetch } from "yuke:http";
 import { sseParser } from "yuke:sse";
 import { utf8 } from "yuke:utf8";
-import { authFor, record } from "yuke:mcp-oauth";
+import { authFor, record, split } from "yuke:mcp-oauth";
 import { errorText } from "yuke:format";
 
 /** @import { CancellationSignal } from "yuke:cancellation-native" */
@@ -151,18 +151,12 @@ function stdioEndpoint(config) {
   };
 }
 
-// The scheme and the authority of an absolute URL.
-/** @param {string} url @returns {string} */
-function originOf(url) {
-  return /^https?:\/\/[^/?#]+/i.exec(url)?.[0]?.toLowerCase() ?? "";
-}
-
 // Resolve the old transport's endpoint against the stream URL. Reject a different origin because it could read the requests.
 /** @param {string} base @param {string} target @returns {string} */
 function endpointUrl(base, target) {
-  const origin = originOf(base);
+  const origin = split(base).origin;
   const resolved = /^https?:\/\//i.test(target) ? target : target.startsWith("/") ? origin + target : base.replace(/[?#].*$/, "").replace(/[^/]*$/, "") + target;
-  if (originOf(resolved) !== origin) throw new Error("the event stream names an endpoint on another origin");
+  if (split(resolved).origin !== origin) throw new Error("the event stream names an endpoint on another origin");
   return resolved;
 }
 
