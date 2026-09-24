@@ -33,9 +33,12 @@ equal(b.interaction.pending, 0);
 equal(root.overlays.length, 0);
 
 const before = root.overlays.length;
+// Any signal can cancel an interaction, not only a tool-call signal.
 const signal = create();
+const live = b.interaction.confirm("Live", "", { signal });
+equal(root.overlays.length, before + 1);
 cancel(signal);
-equal(await b.interaction.confirm("Canceled", "", { signal }), undefined);
+equal(await live, undefined);
 equal(root.overlays.length, before);
 equal(b.interaction.pending, 0);
 

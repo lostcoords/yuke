@@ -29,11 +29,9 @@ fn addLimits(_: *Host, ctx: Context, native: Value) void {
     module.set(ctx, native, "maxOptions", ctx.newInt64(interactions.max_options));
 }
 
+// Any signal cancels the interaction; a tool-call signal also names its session.
 fn jsValidateSignal(ctx: Context, _: Value, args: []const Value) Value {
-    if (args.len != 1) return ctx.throwTypeError("the interaction needs a cancellation signal");
-    const token = cancellation.get(ctx, args[0]) orelse return ctx.throwTypeError("the interaction needs a cancellation signal");
-    if (!token.aborted and !Host.fromContext(ctx).calls.acceptsSignal(ctx, args[0]))
-        return ctx.throwTypeError("the interaction signal has no live call");
+    if (args.len != 1 or cancellation.get(ctx, args[0]) == null) return ctx.throwTypeError("the interaction needs a cancellation signal");
     return quickjs.UNDEFINED;
 }
 
@@ -51,12 +49,17 @@ fn jsRequest(ctx: Context, _: Value, args: []const Value) Value {
     const id = module.integer(ctx, args[0], 1, interactions.max_safe_id) orelse return pending.rejected(ctx, "interaction.request needs a safe positive integer id");
     const json = module.string(ctx, args[1]) orelse return pending.rejected(ctx, "interaction.request needs a JSON string");
     defer ctx.freeCString(json.ptr);
-    const owner = if (args.len > 2 and !ctx.isUndefined(args[2])) host.calls.callForSignal(ctx, args[2]) orelse return pending.rejected(ctx, "the interaction signal has no live call") else null;
+    const signal = if (args.len > 2 and !ctx.isUndefined(args[2])) args[2] else null;
+    const token = if (signal) |s| cancellation.get(ctx, s) orelse return pending.rejected(ctx, "the interaction needs a cancellation signal") else null;
+    if (token != null and token.?.aborted) return pending.rejected(ctx, "the operation was canceled");
     const promise = host.interactions.start(&host.ops, ctx, id, json) catch |err| return switch (err) {
         error.Exception => module.throwPending(ctx),
         else => pending.rejected(ctx, errorMessage(err)),
     };
-    if (owner) |call| host.interactions.attribute(ctx, id, if (call.site) |site| site.session_id else null, args[2]);
+    if (signal) |s| {
+        const site = if (host.calls.callForSignal(ctx, s)) |call| call.site else null;
+        host.interactions.attribute(ctx, id, if (site) |known| known.session_id else null, s);
+    }
     return promise;
 }
 

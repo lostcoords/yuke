@@ -209,11 +209,6 @@ pub const Calls = struct {
         }
     }
 
-    /// Only an active tool signal can authorize an interaction.
-    pub fn acceptsSignal(self: *const Calls, ctx: Context, signal: Value) bool {
-        return self.callForSignal(ctx, signal) != null;
-    }
-
     pub fn callForSignal(self: *const Calls, ctx: Context, signal: Value) ?*Call {
         if (!ctx.isObject(signal)) return null;
         for (self.live.items) |call| {
