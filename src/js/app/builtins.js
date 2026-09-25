@@ -16,19 +16,19 @@ import { utf8Length } from "yuke:interaction";
 /** @import { CancellationSignal as ToolSignal } from "yuke:cancellation-native" */
 /** @import { Context } from "yuke:ext" */
 /** @import { Job } from "yuke:jobs-native" */
-/** @import { ToolContext, ToolDefinition as NamedToolDefinition } from "./types/ext.js" */
+/** @import { ToolContext, ToolDefinition } from "./types/ext.js" */
 /** @typedef {{ old_start: number, old_lines: number, new_start: number, new_lines: number, lines: string[] }} DiffHunk */
 /** @typedef {{ path: string, hunks: DiffHunk[] }} DiffFile */
 /** @typedef {{ type: "diff", files: DiffFile[] }} DiffView */
 /** @typedef {{ view?: DiffView[], media?: Wire.MediaBlob[] }} ResultExtra */
 /** @typedef {{ __yuke_result: true, text: string, extra: ResultExtra | null }} BuiltinResult */
-/** @typedef {Omit<NamedToolDefinition, "name">} ToolDefinition */
+/** @typedef {Omit<ToolDefinition, "name">} BuiltinTool */
 
 /** @param {string} text @param {ResultExtra | null} extra @returns {BuiltinResult} */
 const result = (text, extra) => ({ __yuke_result: true, text, extra });
 
 // A user tool with the same name wins, so the built-in steps aside.
-/** @param {Context} ctx @param {string} name @param {ToolDefinition} definition @returns {void} */
+/** @param {Context} ctx @param {string} name @param {BuiltinTool} definition @returns {void} */
 function builtin(ctx, name, definition) {
   if (hasTool(name)) return;
   const properties = /** @type {{ properties: Record<string, unknown> }} */ (definition.parameters);

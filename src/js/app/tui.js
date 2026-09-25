@@ -7,7 +7,7 @@ import { registerLabels } from "yuke:transcript";
 
 /** @import { PresentationContext, PresentationProvider } from "yuke:chat-view" */
 /** @import { LayoutNode } from "./types/layout.js" */
-/** @typedef {() => void} Disposer */
+/** @import { Disposer } from "./types/ext.js" */
 /** @typedef {Parameters<typeof command.add>[0]} CommandPredicate */
 /** @typedef {Parameters<typeof command.add>[1]} CommandMap */
 /** @typedef {NonNullable<Parameters<typeof command.add>[2]>} CommandMetaMap */

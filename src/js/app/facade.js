@@ -12,6 +12,9 @@ export { jobs } from "yuke:jobs";
 export { diff } from "yuke:diff";
 export { client } from "yuke:client";
 
+/** @typedef {import("yuke:ext").Context} Context */
+/** @typedef {import("./types/ext.js").InjectContext} InjectContext */
+/** @typedef {import("./types/ext.js").ToolContext} ToolContext */
 /** @typedef {import("./types/ext.js").ToolDefinition} ToolDefinition */
 /** @typedef {import("./types/ext.js").ToolExecute} ToolExecute */
 /** @typedef {import("./types/ext.js").Plugin} Plugin */
@@ -21,6 +24,10 @@ export { client } from "yuke:client";
 /** @typedef {import("./types/ext.js").AdviceWhere} AdviceWhere */
 /** @typedef {import("./types/ext.js").AdviceOptions} AdviceOptions */
 /** @typedef {import("./types/ext.js").InteractionSurface} InteractionSurface */
+/** @typedef {import("./types/ext.js").InteractionOptions} InteractionOptions */
+/** @typedef {import("./types/ext.js").Release} Release */
+/** @typedef {import("./types/ext.js").HookPoint} HookPoint */
+/** @typedef {import("./types/ext.js").HookHandler} HookHandler */
 /** @typedef {import("yuke:kernel").ConfigPatch} ConfigPatch */
 /** @typedef {import("yuke:jobs-native").Job} Job */
 
