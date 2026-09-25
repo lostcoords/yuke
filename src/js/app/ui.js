@@ -1,6 +1,6 @@
 // The widget kit over yuke:internal/core: List and Window to subclass, plus the pickers on `ui`.
 import { term } from "yuke:internal/native/term";
-import { text, fill, root, claimView, style, slot, isWheel, contains } from "yuke:internal/core";
+import { text, fill, root, claimView, style, isWheel, contains } from "yuke:internal/core";
 import { config, events } from "yuke:internal/kernel";
 import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapPreview, nextGrapheme } from "yuke:internal/text-input";
 import { strokeOf } from "yuke:internal/keys";
@@ -8,6 +8,8 @@ import { fuzzyRank } from "yuke:internal/fzy";
 import { Pager } from "yuke:internal/pager";
 
 /** @import { HostMouseEvent as MouseEvent, Rect, StyleGroup } from "./types/core.js" */
+// The composer asks this point for its prompt glyph; the newest listener that answers wins.
+events.declare(["composer.prompt"]);
 /** @import { BorderSet, ComposerOptions, ComposerSnapshot, ComposerSpan, Dimension, ItemKey, ListItem, ListKey, ListOptions, NavAction, PickerAction, PickOptions, Projection, PromptOptions, TextOptions, WindowContent, WindowOptions, WrapRow } from "./types/ui.js" */
 
 // The kit adds only an absent highlight group, so a theme that set one first keeps it and a re-import does not re-seed.
@@ -458,7 +460,7 @@ export class Composer {
 
   /** @returns {string} */
   _prompt() {
-    const supplied = slot.get(this, "prompt");
+    const supplied = events.bail("composer.prompt", this);
     return typeof supplied === "string" ? supplied : this.prompt;
   }
 

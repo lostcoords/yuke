@@ -5,9 +5,9 @@ import { ui } from "yuke:internal/ui";
 import { client } from "yuke:internal/client";
 import { notice } from "yuke:internal/notice";
 import { inputSourceLabel } from "yuke:internal/transcript";
-import { ChatView } from "yuke:internal/chat-view";
 import { chatOf, focusedChat } from "yuke:internal/chat";
 import { errorText } from "yuke:internal/format";
+/** @import { ChatView } from "yuke:internal/chat-view" */
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { InjectContext as Ctx } from "./types/ext.js" */
@@ -131,7 +131,7 @@ export const queuePlugin = {
         else if (a.queued !== queueOf(id).length) refreshQueue(id);
       });
 
-      ctx.tui.slot(ChatView, "strip", /** @param {ChatView} view */ (view) => {
+      ctx.on("chat.strip", /** @param {ChatView} view */ (view) => {
         const c = chatOf(view);
         return c && c.sessionId ? stripRows(queueOf(c.sessionId)) : null;
       });

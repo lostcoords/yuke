@@ -24,7 +24,7 @@ export const quitGuard = {
   apply(ctx) {
     // The wall-clock time of the first ask, or 0 while no ask is armed.
     let armedAt = 0;
-    ctx.on("quit.requested", () => {
+    ctx.on("quit.request", () => {
       const load = client.load();
       if (load.runs === 0 && load.continuations === 0) return false;
       const now = Date.now();

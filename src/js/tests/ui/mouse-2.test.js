@@ -1,5 +1,6 @@
 import { check, textParts } from "yuke:internal/test";
-import { root, Node, slot } from "yuke:internal/core";
+import { root, Node } from "yuke:internal/core";
+import { events } from "yuke:internal/kernel";
 import { term } from "yuke:internal/native/term";
 import { ChatView } from "yuke:internal/chat-view";
 const body = { a1: "alpha bravo charlie\nsecond line here\nthird line xx" };
@@ -18,18 +19,18 @@ check("drag-outside-still-drags", v.transcript._dragging === true);
 mouse(v.composer.rect.y, "release");
 check("release-outside-ends-drag", v.transcript._dragging === false);
 
-// A non-left button never reaches the press slot.
+// A non-left button never reaches the press point.
 let calls = 0;
-const off = slot.add(ChatView, "press", () => { calls++; return true; });
+const off = events.on("chat.press", () => { calls++; return true; });
 mouse(r.y, "press", "right");
-check("right-button-skips-slot", calls === 0);
+check("right-button-skips-point", calls === 0);
 mouse(r.y, "drag");
-check("drag-skips-slot", calls === 0);
+check("drag-skips-point", calls === 0);
 mouse(r.y, "press");
-check("left-press-reaches-slot", calls === 1);
+check("left-press-reaches-point", calls === 1);
 off();
 
 // The pane claims the press only for a literal true, so a truthy value does not.
-const offTruthy = slot.add(ChatView, "press", () => "yes");
+const offTruthy = events.on("chat.press", () => "yes");
 check("truthy-does-not-claim", v.onMouse({ type: "mouse", col: r.x + 2, row: v.composer.rect.y, button: "left", event: "press", mods: 0 }) === false);
 offTruthy();

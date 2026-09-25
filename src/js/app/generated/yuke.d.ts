@@ -476,7 +476,6 @@ import Rect = $types_core.Rect;
 import RootEvent = $types_core.RootEvent;
 import RouteEntry = $types_core.RouteEntry;
 import RouteWhere = $types_core.RouteWhere;
-import SlotEntry = $types_core.SlotEntry;
 import StatusEntry = $types_core.StatusEntry;
 import StatusSegment = $types_core.StatusSegment;
 import StyleConfig = $types_core.StyleConfig;
@@ -519,14 +518,6 @@ export const route: {
     add(where: RouteWhere, ctx?: string): () => void;
     /** @returns {RouteWhere} */
     reader(): RouteWhere;
-};
-export const slot: {
-    /** @type {Map<object, Record<string, SlotEntry[]>>} */
-    _map: Map<object, Record<string, SlotEntry[]>>;
-    /** @param {Function} target @param {string} name @param {(obj: any, arg?: any) => unknown} fn @returns {() => void} */
-    add(target: Function, name: string, fn: (obj: any, arg?: any) => unknown): () => void;
-    /** @param {object | null} obj @param {string} name @param {any} [arg] @returns {any} */
-    get(obj: object | null, name: string, arg?: any): any;
 };
 /** @param {string | null | undefined} text @param {string | undefined} what @returns {number} */
 export function copy(text: string | null | undefined, what: string | undefined): number;
@@ -976,7 +967,7 @@ export function defineConfig(partial: ConfigPatch): ConfigPatch;
 export function callHook(obj: object | null | undefined, name: string, ...args: unknown[]): unknown;
 export class Emitter {
     /** @type {ListenerMap} */
-    _hooks: ListenerMap;
+    _listeners: ListenerMap;
     /** @type {Set<string> | null} */
     _names: Set<string> | null;
     /** @type {((error: unknown, name: string) => void) | null} */
@@ -1513,8 +1504,8 @@ export function caretCol(w: number, prompt: string, before: string): number;
 }
 
 declare namespace $transcript_vim {
-import ChatView = $chat_view.ChatView;
 import Context = $ext.Context;
+import ChatView = $chat_view.ChatView;
 export type Transcript = ChatView["transcript"];
 export type Position = {
     id: number;
@@ -1822,8 +1813,6 @@ function bindTo(ctx: Context): {
     keymap(bindings: KeyBindings, at?: string, opts?: Parameters<typeof keymap.add>[2]): Disposer;
     /** @param {RouteWhere} where @param {string} [at] @returns {Disposer} */
     route(where: RouteWhere, at?: string): Disposer;
-    /** @param {Function} target @param {string} name @param {(obj: any, arg?: any) => unknown} fn @returns {Disposer} */
-    slot(target: Function, name: string, fn: (obj: any, arg?: any) => unknown): Disposer;
     /** @param {(view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null} create @returns {Disposer} */
     presentation(create: (view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null): Disposer;
     /** @param {Parameters<typeof registerLabels>[0]} entries @returns {Disposer} */
@@ -2797,10 +2786,6 @@ export interface RouteEntry {
   where: RouteWhere;
   context: ContextExpr | null;
   order: number;
-}
-
-export interface SlotEntry {
-  fn: (object: any, argument?: any) => unknown;
 }
 
 export interface KeyEntry {

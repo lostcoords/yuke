@@ -133,10 +133,6 @@ export interface RouteEntry {
   order: number;
 }
 
-export interface SlotEntry {
-  fn: (object: any, argument?: any) => unknown;
-}
-
 export interface KeyEntry {
   fn: KeyBinding;
   context: ContextExpr | null;

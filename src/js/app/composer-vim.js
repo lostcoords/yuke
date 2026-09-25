@@ -2,7 +2,6 @@
 import { events } from "yuke:internal/kernel";
 import { windowKeys } from "yuke:internal/keys";
 import { prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:internal/text-input";
-import { Composer } from "yuke:internal/ui";
 import { register } from "yuke:internal/vim";
 import { focusedChatView } from "yuke:internal/chat";
 
@@ -236,7 +235,7 @@ export const composerVim = {
       );
 
       // A null answer leaves the composer its own glyph.
-      ctx.tui.slot(Composer, "prompt", /** @param {ComposerType} c @returns {string | null} */ (c) => (normal.has(c) ? NORMAL_PROMPT : null));
+      ctx.on("composer.prompt", /** @param {ComposerType} c @returns {string | null} */ (c) => (normal.has(c) ? NORMAL_PROMPT : null));
 
       ctx.tui.keymap(windowKeys("ctrl+w"));
 

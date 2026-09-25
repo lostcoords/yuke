@@ -1,8 +1,8 @@
 // The working line on the rule above the composer: a spinner, the phase, the elapsed time, and the child runs.
-import { ChatView } from "yuke:internal/chat-view";
 import { chatOf, chats } from "yuke:internal/chat";
 import { client } from "yuke:internal/client";
 import { activityOf, agentsLabel, isWorking } from "yuke:internal/activity";
+/** @import { ChatView } from "yuke:internal/chat-view" */
 
 /** @import { Context } from "yuke:internal/ext" */
 
@@ -76,7 +76,7 @@ export const indicatorPlugin = {
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      ctx.tui.slot(ChatView, "rule", /** @param {ChatView} view @returns {{ text: string, group: string } | null} */ (view) => {
+      ctx.on("chat.rule", /** @param {ChatView} view @returns {{ text: string, group: string } | null} */ (view) => {
         const c = chatOf(view);
         if (!c || !c.sessionId) return null;
         const line = indicatorLine(c.sessionId, activityOf(c.sessionId), Date.now(), client.load().childRuns);

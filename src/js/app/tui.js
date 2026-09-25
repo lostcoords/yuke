@@ -1,5 +1,5 @@
 // The terminal capability. A block that declares `tui` registers its view effects here.
-import { command, keymap, route, slot, context, status, style, root } from "yuke:internal/core";
+import { command, keymap, route, context, status, style, root } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { ChatView } from "yuke:internal/chat-view";
 import { Context, scopeOf } from "yuke:internal/ext";
@@ -54,12 +54,7 @@ function bindTo(ctx) {
       return ctx.effect(() => route.add(where, at));
     },
 
-    /** @param {Function} target @param {string} name @param {(obj: any, arg?: any) => unknown} fn @returns {Disposer} */
-    slot(target, name, fn) {
-      return ctx.effect(() => slot.add(target, name, fn));
-    },
-
-    // The nearest class wins, then the newest registration; each mounted pane owns one child context.
+    // The newest registration wins; each mounted pane owns one child context.
     /** @param {(view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null} create @returns {Disposer} */
     presentation(create) {
       if (typeof create !== "function") throw new TypeError("presentation needs a factory");
@@ -82,13 +77,13 @@ function bindTo(ctx) {
             }
           },
         };
-        const offSlot = slot.add(ChatView, "presentation", () => provider);
+        const offAnswer = events.on("chat.presentation", () => provider);
         const offClose = events.on("pane.closed", view => {
           if (view instanceof ChatView) view.clearPresentation(provider);
         });
         root.invalidate();
         return () => {
-          offSlot();
+          offAnswer();
           offClose();
           for (const view of mounted) view.clearPresentation(provider);
           root.invalidate();

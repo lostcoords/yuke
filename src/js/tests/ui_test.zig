@@ -316,11 +316,7 @@ test "a focused transcript takes the keys even while the composer sits in normal
     try support.runPainted(20, 24, "ui/both.test.js");
 }
 
-test "a slot lets a plugin answer for a widget it does not own" {
-    try support.run("ui/slot.test.js");
-}
-
-test "composer-vim supplies the prompt glyph through the slot" {
+test "composer-vim supplies the prompt glyph through the composer.prompt point" {
     try support.run("ui/prompt.test.js");
 }
 
@@ -346,7 +342,7 @@ test "the pager follows the tail and counts the rows once per frame" {
     try support.runPainted(24, 80, "ui/pager.test.js");
 }
 
-test "the chat pane routes a drag that leaves the transcript and guards its press slot" {
+test "the chat pane routes a drag that leaves the transcript and guards its press point" {
     // A drag that ends over the composer must still reach the transcript, or its drag never ends.
     try support.runPainted(20, 40, "ui/mouse-2.test.js");
 }

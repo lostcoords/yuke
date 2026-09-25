@@ -2,12 +2,11 @@
 import { term } from "yuke:internal/native/term";
 import { root, copy } from "yuke:internal/core";
 import { caretAtCol, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:internal/text-input";
-import { ChatView } from "yuke:internal/chat-view";
 import { register } from "yuke:internal/vim";
 import { focusedChatView } from "yuke:internal/chat";
 
 /** @import { Context } from "yuke:internal/ext" */
-/** @import { ChatRegion } from "yuke:internal/chat-view" */
+/** @import { ChatRegion, ChatView } from "yuke:internal/chat-view" */
 /** @typedef {ChatView["transcript"]} Transcript */
 /** @typedef {{ id: number, row: number, col: number }} Position */
 /** @typedef {{ cursor: Position | null, src: number, anchor: Position | null, visual: boolean, goal: number | null }} VimState */
@@ -410,7 +409,7 @@ export const transcriptVim = {
       );
 
       // The transcript supplies the caret only while it holds the region.
-      ctx.tui.slot(ChatView, "cursor", /** @param {ChatView} view @returns {Cursor | null} */ (view) => {
+      ctx.on("chat.cursor", /** @param {ChatView} view @returns {Cursor | null} */ (view) => {
         if (view.focus !== "transcript") return null;
         const s = stateOf(view);
         if (!s.cursor) seed(view, s);
@@ -419,7 +418,7 @@ export const transcriptVim = {
       });
 
       // A click is the plugin's own way into the region, so it moves the focus itself.
-      ctx.tui.slot(ChatView, "press", /** @param {ChatView} view @param {HostMouseEvent} ev @returns {boolean} */ (view, ev) => {
+      ctx.on("chat.press", /** @param {ChatView} view @param {HostMouseEvent} ev @returns {boolean} */ (view, ev) => {
         const s = stateOf(view);
         const pos = view.transcript.posAt(ev.col, ev.row, false);
         if (!pos) {

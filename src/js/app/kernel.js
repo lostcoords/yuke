@@ -101,7 +101,7 @@ function applyConfigPatch(section, fields, src, label) {
 }
 
 // The kernel declares only the events that neutral code emits. Each tier declares its own names.
-const CORE_EVENTS = new Set(["ext.error", "engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", "quit.requested", ...native.factNames()]);
+const CORE_EVENTS = new Set(["ext.error", "engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", "quit.request", ...native.factNames()]);
 
 // True for an `owner:event` name. A plugin owns such a name, so no declaration can enumerate it.
 /** @param {string} name @returns {boolean} */
@@ -122,7 +122,7 @@ export class Emitter {
   /** @param {Set<string> | null} [names] */
   constructor(names) {
     /** @type {ListenerMap} */
-    this._hooks = Object.create(null);
+    this._listeners = Object.create(null);
     /** @type {Set<string> | null} */
     this._names = names || null;
     /** @type {((error: unknown, name: string) => void) | null} */
@@ -154,12 +154,15 @@ export class Emitter {
   /** @param {string} name @param {(...args: any[]) => unknown} fn @param {{ prepend?: boolean } | undefined} [opts] @returns {() => void} */
   on(name, fn, opts) {
     this._check(name);
-    const list = this._hooks[name] || (this._hooks[name] = []);
-    if (opts && opts.prepend) list.unshift(fn);
-    else list.push(fn);
+    const list = this._listeners[name];
+    // A change replaces the list, so an emit walks a list no listener can change under it.
+    this._listeners[name] = !list ? [fn] : opts && opts.prepend ? [fn, ...list] : [...list, fn];
     return () => {
-      const i = list.indexOf(fn);
-      if (i >= 0) list.splice(i, 1);
+      const held = this._listeners[name];
+      const i = held ? held.indexOf(fn) : -1;
+      if (!held || i < 0) return;
+      if (held.length === 1) delete this._listeners[name];
+      else this._listeners[name] = held.slice(0, i).concat(held.slice(i + 1));
     };
   }
 
@@ -175,9 +178,9 @@ export class Emitter {
   /** @param {string} name @param {...any} args @returns {void} */
   emit(name, ...args) {
     this._check(name);
-    const list = this._hooks[name];
+    const list = this._listeners[name];
     if (!list) return;
-    for (const fn of list.slice()) {
+    for (const fn of list) {
       try {
         fn(...args);
       } catch (e) {
@@ -197,13 +200,14 @@ export class Emitter {
   /** @param {string} name @param {...any} args @returns {unknown} */
   bail(name, ...args) {
     this._check(name);
-    const list = this._hooks[name];
+    const list = this._listeners[name];
     if (!list) return undefined;
-    for (const fn of list.slice()) {
+    // The newest listener answers first, so a later plugin overrides an earlier one.
+    for (let i = list.length - 1; i >= 0; i--) {
       let r;
       // A listener that throws claims nothing, so the next listener gets the event.
       try {
-        r = fn(...args);
+        r = /** @type {(...args: any[]) => unknown} */ (list[i])(...args);
       } catch (e) {
         this._fault(e, name);
         continue;

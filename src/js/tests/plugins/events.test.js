@@ -27,14 +27,14 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   check("emit-isolate", hits === 2);
 }
 
-// bail stops at the first listener that claims the event.
+// bail asks the newest listener first and stops at the first answer; null passes on, and a listener that leaves keeps the next one.
 {
   const em = new Emitter();
   const seen = [];
-  em.on("k", () => { seen.push(1); });
+  em.on("k", () => { seen.push(1); return "old"; });
   em.on("k", () => { seen.push(2); return "claimed"; });
-  em.on("k", () => { seen.push(3); });
-  check("bail", em.bail("k") === "claimed" && seen.join(",") === "1,2");
+  const off = em.on("k", () => { seen.push(3); off(); return null; });
+  check("bail", em.bail("k") === "claimed" && seen.join(",") === "3,2" && em.bail("k") === "claimed");
 }
 
 // bail reports a listener that throws and asks the next one.
@@ -42,8 +42,8 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   const em = new Emitter();
   const faults = [];
   em.onError = (e, name) => faults.push(name);
-  em.on("k", () => { throw new Error("boom"); });
   em.on("k", () => "claimed");
+  em.on("k", () => { throw new Error("boom"); });
   check("bail-isolate", em.bail("k") === "claimed" && faults.join(",") === "k");
 }
 

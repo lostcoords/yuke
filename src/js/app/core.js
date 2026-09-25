@@ -4,7 +4,7 @@ import { term } from "yuke:internal/native/term";
 import { callHook, config, events, once } from "yuke:internal/kernel";
 
 /** @import { Color, Style } from "yuke:internal/native/term" */
-/** @import { CommandAction, CommandEntry, CommandListing, CommandMeta, CommandPredicate, CommandRegistry, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, SlotEntry, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
+/** @import { CommandAction, CommandEntry, CommandListing, CommandMeta, CommandPredicate, CommandRegistry, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
 
 // True for a wheel button. The wheel scrolls a pane but never moves the focus.
 /** @param {string} button @returns {boolean} */
@@ -608,65 +608,6 @@ export const route = {
     if (this._list.length === 0) return "view";
     const hit = rankByContext(this._list, false)[0];
     return hit ? hit.where : "view";
-  },
-};
-
-// A widget asks for a value it does not own. The nearest class answers first, then the newest provider.
-export const slot = {
-  /** @type {Map<object, Record<string, SlotEntry[]>>} */
-  _map: new Map(),
-
-  // Register a provider for one named slot on a class and return a disposer.
-  /** @param {Function} target @param {string} name @param {(obj: any, arg?: any) => unknown} fn @returns {() => void} */
-  add(target, name, fn) {
-    if (typeof target !== "function" || !target.prototype) throw new TypeError("slot: target must be a class");
-    if (typeof fn !== "function") throw new TypeError("slot: fn must be a function");
-    const proto = target.prototype;
-    let names = this._map.get(proto);
-    if (!names) {
-      /** @type {Record<string, SlotEntry[]>} */
-      const fresh = Object.create(null);
-      this._map.set(proto, fresh);
-      names = fresh;
-    }
-    /** @type {SlotEntry} */
-    const entry = { fn };
-    // A change replaces the list, so `get` walks a list no provider can change under it.
-    names[name] = [entry, ...(names[name] || [])];
-    return once(() => {
-      const held = this._map.get(proto);
-      const cur = held ? held[name] : undefined;
-      if (!held || !cur) return;
-      const rest = cur.filter((e) => e !== entry);
-      if (rest.length) held[name] = rest;
-      else delete held[name];
-      if (Object.keys(held).length === 0) this._map.delete(proto);
-    });
-  },
-
-  // The first value a provider gives for `obj`. A null or undefined answer passes the slot on.
-  /** @param {object | null} obj @param {string} name @param {any} [arg] @returns {any} */
-  get(obj, name, arg) {
-    if (!obj) return null;
-    let proto = Object.getPrototypeOf(obj);
-    // A subclass reads the slot its base class declares.
-    while (proto) {
-      const names = this._map.get(proto);
-      const list = names ? names[name] : undefined;
-      if (list) {
-        for (const e of list) {
-          // One bad provider must not take the frame with it.
-          try {
-            const v = e.fn(obj, arg);
-            if (v != null) return v;
-          } catch (err) {
-            events.emit("ext.error", err, name);
-          }
-        }
-      }
-      proto = Object.getPrototypeOf(proto);
-    }
-    return null;
   },
 };
 
@@ -1383,7 +1324,7 @@ export const root = new RootView();
 
 // A guard claims the ask while work runs, so the key, the palette, the slash word, and user code follow one rule.
 export function quit() {
-  if (events.bail("quit.requested")) return;
+  if (events.bail("quit.request")) return;
   term.quit();
 }
 
