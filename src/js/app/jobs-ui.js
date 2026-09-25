@@ -167,9 +167,12 @@ export function openJobs(ctx) {
     picker.content.setSource(items);
     root.invalidate();
   });
-  // A running job shows its age, so the list repaints each second while one runs.
-  const timer = setInterval(() => { if (items.some((j) => j.state === "running")) root.invalidate(); }, 1000);
-  const close = ctx.tui.overlay(picker.win, () => { clearInterval(timer); offChanged(); });
+  // A running job shows its age, so the frame loop repaints the list each second while one runs, and not at all otherwise.
+  const offTick = ctx.tui.tickable({
+    needsTick: () => (items.some((j) => j.state === "running") ? { periodMs: 1000 } : null),
+    tick: () => root.invalidate(),
+  });
+  const close = ctx.tui.overlay(picker.win, () => { offTick(); offChanged(); });
   return { ...picker, close };
 }
 

@@ -18,7 +18,7 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 
 // emit runs every listener and isolates a throwing one.
 {
-  const em = new Emitter();
+  const em = new Emitter(new Set(["x"]));
   em.onError = () => {};
   let hits = 0;
   em.on("x", () => { hits++; throw new Error("boom"); });
@@ -29,7 +29,7 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 
 // bail asks the newest listener first and stops at the first answer; null passes on, and a listener that leaves keeps the next one.
 {
-  const em = new Emitter();
+  const em = new Emitter(new Set(["k"]));
   const seen = [];
   em.on("k", () => { seen.push(1); return "old"; });
   em.on("k", () => { seen.push(2); return "claimed"; });
@@ -39,7 +39,7 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 
 // bail reports a listener that throws and asks the next one.
 {
-  const em = new Emitter();
+  const em = new Emitter(new Set(["k"]));
   const faults = [];
   em.onError = (e, name) => faults.push(name);
   em.on("k", () => "claimed");

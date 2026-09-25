@@ -437,7 +437,7 @@ test "a headless MCP denial is not a persistent user decision" {
     try f.init("trust");
     defer f.deinit();
     const host = f.host;
-    try host.evalModule("import { interaction } from \"yuke:internal/ext\"; globalThis.mcpHeadless = interaction.install({ interactive: false, notify() {} }); globalThis.mcpReady = false; mcpStart().then(() => { globalThis.mcpReady = true; });", "mcp-headless.js");
+    try host.evalModule("import { interaction } from \"yuke:internal/interaction\"; globalThis.mcpHeadless = interaction.install({ interactive: false, notify() {} }); globalThis.mcpReady = false; mcpStart().then(() => { globalThis.mcpReady = true; });", "mcp-headless.js");
     try support.pumpUntilTrue(host, "mcpReady === true");
     try askSelect(host);
     try expectState(host, "ws", "disabled · not trusted");

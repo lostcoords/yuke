@@ -8,7 +8,7 @@ import { newestLocalModelSession } from "yuke:internal/sessions";
 import { errorText } from "yuke:internal/format";
 
 /** @import { Context } from "yuke:internal/ext" */
-/** @typedef {{ rev: Wire.CatalogRev | null, providers: readonly Wire.ProviderInfo[], models: readonly Wire.ModelInfo[], loading: boolean }} CatalogState */
+/** @typedef {{ rev: Wire.CatalogRev | null, providers: readonly Wire.ProviderInfo[], models: readonly Wire.ModelInfo[] }} CatalogState */
 /** @typedef {{ model: string | null, reasoning: string }} ModelDefaults */
 /** @typedef {{ session: Wire.Session, activity: { context_usage?: Wire.TokenUsage } | null }} StatusEntry */
 /** @typedef {{ entry?: () => StatusEntry | null }} CatalogConfig */
@@ -18,7 +18,6 @@ const catalog = {
   rev: null,
   providers: [],
   models: [],
-  get loading() { return refresh.loading; },
 };
 
 /** @returns {CatalogState} */

@@ -10,7 +10,7 @@ const feed = feedOf();
 const mk = (id, model, at) => ({ session: { id, model, reasoning: "", updated_at_ms: at }, activity: null });
 
 // The model status segment reads this on every frame, so it must be cached and correct.
-feed.clear();
+feed.seed({ items: [] });
 check("no-feed-no-model", newestLocalModelSession() === null);
 feed.seed({ items: [mk("a", "old-model", 100), mk("b", "", 900), mk("c", "new-model", 500)] });
 // "b" is newest but names no model, so the newest session that names one wins.

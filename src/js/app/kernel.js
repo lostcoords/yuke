@@ -120,12 +120,11 @@ export function callHook(obj, name, ...args) {
 }
 
 export class Emitter {
-  /** @param {Set<string> | null} [names] */
+  /** @param {Set<string>} names */
   constructor(names) {
     /** @type {ListenerMap} */
     this._listeners = Object.create(null);
-    /** @type {Set<string> | null} */
-    this._names = names || null;
+    this._names = names;
     /** @type {((error: unknown, name: string) => void) | null} */
     this.onError = null;
   }
@@ -134,7 +133,6 @@ export class Emitter {
   /** @param {string[]} names @returns {() => void} */
   declare(names) {
     const table = this._names;
-    if (!table) return () => {};
     const added = names.filter((n) => !table.has(n));
     for (const n of added) table.add(n);
 
@@ -146,7 +144,7 @@ export class Emitter {
   // Reject a name a closed bus does not declare, so a typo fails at the call and not in silence.
   /** @param {string} name @returns {void} */
   _check(name) {
-    if (!this._names || this._names.has(name)) return;
+    if (this._names.has(name)) return;
     // An `owner:event` name belongs to its owner, so the core set never declares it.
     if (isNamespaced(name)) return;
     throw new TypeError("unknown event: " + name);

@@ -4,7 +4,6 @@ import { events, once } from "yuke:internal/kernel";
 import { bindInteraction } from "yuke:internal/interaction";
 import { defineTool, removeTool } from "yuke:internal/native/tools";
 import { installDispatcher, installLifecycle, setPoints } from "yuke:internal/native/hooks";
-export { interaction } from "yuke:internal/interaction";
 
 /** @import { AdviceFunction, AdviceOptions, AdviceWhere, Disposer, EventName, EventOptions, Events, HookAnswer, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, PluginHandle, Release, ToolDefinition } from "./types/ext.js" */
 /** @import { AdviceEntry, AdviceInfo, AdviceRecord, HookDecision, HookEntry, PluginAsync, ReleaseEntry, ScopeEntry, ScopeLife } from "./types/runtime.js" */

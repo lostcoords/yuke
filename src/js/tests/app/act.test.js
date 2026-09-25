@@ -70,7 +70,7 @@ root.popOverlay();
   // Closing the session clears the reading, so the status does not name a gone session.
   chat.session.sessionGone();
   chat.session.sessionId = null;
-  feed.clear();
+  feed.seed({ items: [] });
   if (status.side("right").indexOf("wired-model") >= 0) fail.push("catalog-entry-clears");
 }
 

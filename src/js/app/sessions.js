@@ -36,12 +36,6 @@ class SessionFeed {
     return this._refresh.run();
   }
 
-  /** @returns {void} */
-  clear() {
-    feedsRev++;
-    this.items.clear();
-  }
-
   /** @returns {SessionRow[]} */
   rows() {
     /** @type {SessionRow[]} */

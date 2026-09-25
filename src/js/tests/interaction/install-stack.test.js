@@ -1,5 +1,6 @@
 import { equal } from "yuke:internal/test";
-import { interaction, plugins } from "yuke:internal/ext";
+import { plugins } from "yuke:internal/ext";
+import { interaction } from "yuke:internal/interaction";
 const answerer = (tag) => ({ interactive: false, notify: (owner, m) => { globalThis.heard.push(tag + ":" + m); } });
 globalThis.heard = [];
 const first = interaction.install(answerer("first"));

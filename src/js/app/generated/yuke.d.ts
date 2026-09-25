@@ -666,7 +666,6 @@ export function quit(): void;
 
 declare namespace $ext {
 import cancellation = $native_cancellation;
-export import interaction = $interaction.interaction;
 import AdviceFunction = $types_ext.AdviceFunction;
 import AdviceOptions = $types_ext.AdviceOptions;
 import AdviceWhere = $types_ext.AdviceWhere;
@@ -871,38 +870,6 @@ class Response {
 export function fetch(url: string, options?: FetchOptions): Promise<Response>;
 }
 
-declare namespace $interaction {
-import CancellationSignal = $native_cancellation.CancellationSignal;
-import Context = $ext.Context;
-import Disposer = $types_ext.Disposer;
-import InteractionSurface = $types_ext.InteractionSurface;
-import Answerer = $types_runtime.Answerer;
-/** @param {string} text @returns {number} */
-export function utf8Length(text: string): number;
-/** @param {CancellationSignal | undefined} signal @param {() => void} canceled @returns {() => void} */
-export function watchCancellation(signal: CancellationSignal | undefined, canceled: () => void): () => void;
-export type Registration = {
-    answerer: Answerer;
-    requests: Set<Disposer>;
-};
-export const interaction: {
-    /** @param {Answerer} answerer @returns {Disposer} */
-    install(answerer: Answerer): Disposer;
-};
-/** @param {Context} ctx @returns {InteractionSurface} */
-export function bindInteraction(ctx: Context): InteractionSurface;
-export const rpcInteractionPlugin: {
-    name: string;
-    /** @param {Context} ctx */
-    apply(ctx: Context): void;
-};
-export const printInteractionPlugin: {
-    name: string;
-    /** @param {Context} ctx */
-    apply(ctx: Context): void;
-};
-}
-
 declare namespace $jobs {
 import native = $native_jobs;
 import Job = $native_jobs.Job;
@@ -970,12 +937,11 @@ export function callHook(obj: object | null | undefined, name: string, ...args: 
 export class Emitter {
     /** @type {ListenerMap} */
     _listeners: ListenerMap;
-    /** @type {Set<string> | null} */
-    _names: Set<string> | null;
+    _names: Set<string>;
     /** @type {((error: unknown, name: string) => void) | null} */
     onError: ((error: unknown, name: string) => void) | null;
-    /** @param {Set<string> | null} [names] */
-    constructor(names?: Set<string> | null);
+    /** @param {Set<string>} names */
+    constructor(names: Set<string>);
     /** @param {string[]} names @returns {() => void} */
     declare(names: string[]): () => void;
     /** @param {string} name @returns {void} */
@@ -1402,8 +1368,6 @@ class SessionFeed {
     seed(listResult: Wire.SessionListResult): void;
     /** @returns {Promise<void>} */
     refresh(): Promise<void>;
-    /** @returns {void} */
-    clear(): void;
     /** @returns {SessionRow[]} */
     rows(): SessionRow[];
 }

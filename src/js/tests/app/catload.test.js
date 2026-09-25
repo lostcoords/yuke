@@ -5,7 +5,7 @@ import { catalogOf, loadCatalog } from "yuke:internal/catalog";
 
 const sent = [];
 const c = catalogOf();
-check("starts-idle", !c.loading && c.rev === null && c.models.length === 0);
+check("starts-idle", c.rev === null && c.models.length === 0);
 
 client.catalogList = (sinceRev) => {
   sent.push(sinceRev);
@@ -14,7 +14,6 @@ client.catalogList = (sinceRev) => {
 equal(await loadCatalog(), c);
 check("full-stores-models", c.models.length === 1 && c.models[0].selector === "m1");
 check("full-stores-rev", c.rev === "r1");
-check("load-clears-loading", c.loading === false);
 
 // The second load sends the stored revision, and an unchanged reply keeps what the catalog holds.
 client.catalogList = (sinceRev) => { sent.push(sinceRev); return Promise.resolve({ type: "unchanged" }); };
@@ -26,5 +25,5 @@ check("sends-since-rev", sent.length === 2 && sent[0] === null && sent[1] === "r
 client.catalogList = () => Promise.reject(new Error("offline"));
 root._needsDraw = false;
 equal(await loadCatalog(), c);
-check("refusal-keeps-models", c.models.length === 1 && c.rev === "r1" && c.loading === false);
+check("refusal-keeps-models", c.models.length === 1 && c.rev === "r1");
 check("refusal-repaints", root._needsDraw);

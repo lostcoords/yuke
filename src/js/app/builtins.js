@@ -3,7 +3,6 @@
 import { fs } from "yuke:internal/native/fs";
 import { exec as runCommand } from "yuke:internal/native/exec";
 import { start as startJob, stop as stopJob, list as listJobs, get as getJob, name as jobName, endLabel, tail as jobTail, shortCommand } from "yuke:internal/jobs";
-import { events } from "yuke:internal/kernel";
 import { diff } from "yuke:internal/native/diff";
 import { hasTool } from "yuke:internal/native/tools";
 import { client } from "yuke:internal/client";
@@ -195,19 +194,6 @@ function jobState(job) {
   return job.stop_requested ? `${jobName(job)} ${endLabel(job)}: ${shortCommand(job.command)}` : job.state === "exited" ? `${jobName(job)} exited (${endLabel(job)}): ${shortCommand(job.command)}` : `${jobName(job)} ${job.state}: ${shortCommand(job.command)}`;
 }
 
-// A job that exits by itself tells its session once, in exit order, even when its log cannot be read; a stop sends nothing.
-/** @type {Promise<unknown>} */
-let exitMessages = Promise.resolve();
-events.on("jobs.changed", (/** @type {Job} */ job) => {
-  const sessionId = job.session_id;
-  if (job.state === "running" || job.stop_requested || sessionId === undefined) return;
-  const tail = jobTail(job.id, 20).catch(() => "");
-  exitMessages = exitMessages
-    .then(() => tail)
-    .then(out => client.sessionSendInput(sessionId, client.textContent(`[job ${jobState(job)}. Log: ${job.log}]\n${out === "" ? "[no output]" : out}`)))
-    .catch(() => {});
-});
-
 /** @param {string} command @param {ToolContext} context @returns {Promise<string>} */
 async function startBackground(command, context) {
   const root = context.workspaceRoot;
@@ -288,6 +274,19 @@ export const builtins = {
   name: "builtins",
   /** @param {Context} ctx */
   apply(ctx) {
+    // A job that exits by itself tells its session once, in exit order, even when its log cannot be read; a stop sends nothing.
+    /** @type {Promise<unknown>} */
+    let exitMessages = Promise.resolve();
+    ctx.on("jobs.changed", (job) => {
+      const sessionId = job.session_id;
+      if (job.state === "running" || job.stop_requested || sessionId === undefined) return;
+      const tail = jobTail(job.id, 20).catch(() => "");
+      exitMessages = exitMessages
+        .then(() => tail)
+        .then(out => client.sessionSendInput(sessionId, client.textContent(`[job ${jobState(job)}. Log: ${job.log}]\n${out === "" ? "[no output]" : out}`)))
+        .catch(() => {});
+    });
+
     builtin(ctx, "read", {
       description: "Read a file with 1-indexed line numbers. Pass the start and end values for a line range. A PNG, JPEG, GIF, or WebP file returns the image.",
       parameters: { type: "object", properties: {

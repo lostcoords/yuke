@@ -1,5 +1,6 @@
 import { check, equal } from "yuke:internal/test";
-import { Context, Scope, interaction, scopeOf } from "yuke:internal/ext";
+import { Context, Scope, scopeOf } from "yuke:internal/ext";
+import { interaction } from "yuke:internal/interaction";
 import { events } from "yuke:internal/kernel";
 
 const owner = () => new Context(new Scope("interaction-test"), "same-name");

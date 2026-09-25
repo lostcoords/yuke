@@ -1,6 +1,7 @@
 import { lines } from "yuke:internal/spawn";
 import { fs } from "yuke:internal/native/fs";
-import { interaction, plugins } from "yuke:internal/ext";
+import { plugins } from "yuke:internal/ext";
+import { interaction } from "yuke:internal/interaction";
 import { mcp, toolName, decodeMessage, toolResult, mirroredParams } from "yuke:internal/mcp";
 import { headerValue } from "yuke:internal/mcp-transport";
 import { check, equal } from "yuke:internal/test";
