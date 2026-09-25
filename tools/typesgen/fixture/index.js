@@ -22,6 +22,7 @@ plugins.use(demo);
 plugins.use(agents({ catalog: { research: { tools: ["read"] } }, maxDepth: 2 }));
 fs.readFile("x", { workspaceRoot: "/tmp" }).then((text) => text.toUpperCase());
 exec("true", { workspaceRoot: "/tmp" }).then((result) => result.code);
+new Promise((resolve) => setTimeout(resolve, 1));
 labels.role;
 // @ts-expect-error The root is an option, not a positional argument.
 fs.readFile("x", "/tmp");

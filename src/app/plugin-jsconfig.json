@@ -4,6 +4,7 @@
     "checkJs": true,
     "noEmit": true,
     "strict": true,
+    "noImplicitAny": false,
     "module": "esnext",
     "moduleResolution": "bundler",
     "target": "es2022",
