@@ -68,12 +68,15 @@ fn runtimeArg(ctx: Context, args: []const Value) ?*Session {
     return runtime.engine.sessions.get(sid);
 }
 
-/// `factNames()` answers every fact the engine can publish, so a bus declares them without drift.
+/// `factNames()` answers every fact a drain carries, so a bus declares them without drift and never a fact that cannot fire.
 fn jsFactNames(ctx: Context, _: Value, _: []const Value) Value {
     const names = ctx.newArray();
-    for (std.meta.tags(proto.enums.BroadcastName), 0..) |fact, i| {
+    var count: usize = 0;
+    for (std.meta.tags(proto.enums.BroadcastName)) |fact| {
         if (ctx.hasException()) break;
-        module.setIndex(ctx, names, i, ctx.newString(@tagName(fact)));
+        if (!digest.delivers(fact)) continue;
+        module.setIndex(ctx, names, count, ctx.newString(@tagName(fact)));
+        count += 1;
     }
     return module.finish(ctx, names);
 }

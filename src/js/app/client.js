@@ -5,6 +5,9 @@ import { gateInput } from "yuke:internal/ext";
 
 /** @import { MessagePart, SessionOutline, ViewPart } from "yuke:internal/native/engine" */
 
+// This module emits the drain per kind in every frontend, so it declares the names and a headless bus accepts them.
+events.declare(["session.changed", "index.changed"]);
+
 // The kernel owns the sink, so the view tier reads the digest from the bus like everything else.
 events.on("engine.drained", (ev) => {
   if (ev.type === "session") events.emit("session.changed", ev);

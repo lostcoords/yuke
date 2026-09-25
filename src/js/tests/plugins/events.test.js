@@ -83,7 +83,7 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   check("bus-once-typo", throws(() => events.once("ui.tik", () => {})));
   check("bus-bail-typo", throws(() => events.bail("ui.tik")));
   const core = ["ui.started", "ui.closed", "ui.resized", "ui.ticked", "key.pressed", "mouse.input",
-    "paste.received", "focus.changed", "clipboard.copied", "session.changed", "index.changed",
+    "paste.received", "focus.changed", "clipboard.copied",
     "ext.failed"];
   const bad = core.filter((n) => throws(() => events.on(n, () => {})()));
   check("bus-core-declared:" + bad.join("|"), bad.length === 0);

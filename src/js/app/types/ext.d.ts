@@ -1,5 +1,5 @@
 import type { CancellationSignal } from "yuke:internal/native/cancellation";
-import type { EngineEvent } from "yuke:internal/native/engine";
+import type { DrainFact, EngineEvent } from "yuke:internal/native/engine";
 import type { Job } from "yuke:internal/native/jobs";
 import type { Context, Scope } from "../ext.js";
 import type { tui } from "../tui.js";
@@ -21,7 +21,7 @@ export interface AdviceOptions {
 
 /** An engine drain that names facts; each fact event carries the whole drain. */
 export type EngineFactEvent = Exclude<EngineEvent, { type: "activity" }>;
-type EngineFacts = { [K in Exclude<Wire.BroadcastName, "notice" | "auth.login_finished">]: (ev: EngineFactEvent) => void };
+type EngineFacts = { [K in Exclude<DrainFact, "notice" | "auth.login_finished">]: (ev: EngineFactEvent) => void };
 
 /**
  * Every event on the bus, as its listener signature. A fact such as `x.changed` answers nothing; a point is asked

@@ -9,11 +9,14 @@ declare module "yuke:internal/native/engine" {
   /** The digest keeps each auth event whole, because a login outcome carries a message a fact name cannot. */
   export type AuthNote = { method: "auth.login_finished"; params: Wire.AuthLoginFinishedData };
 
+  /** A fact a drain can carry. A job change never reaches a drain; the jobs module reports it. */
+  export type DrainFact = Exclude<Wire.BroadcastName, "job.changed">;
+
   /** A drain names transcript work and broadcast facts; index overflow requires a full refresh for dropped session facts. */
   export type EngineEvent =
     | { type: "activity" }
-    | { type: "index"; overflow: boolean; facts: Wire.BroadcastName[]; auth?: AuthNote[]; notices?: Wire.Notice[] }
-    | { type: "session"; session: string; kind: "quiet" | "active" | "reload" | "gone"; id?: number; part?: number; facts: Wire.BroadcastName[] };
+    | { type: "index"; overflow: boolean; facts: DrainFact[]; auth?: AuthNote[]; notices?: Wire.Notice[] }
+    | { type: "session"; session: string; kind: "quiet" | "active" | "reload" | "gone"; id?: number; part?: number; facts: DrainFact[] };
 
   /** One page of text. `next` is the offset to ask for, or null at the end. */
   export type TextPage = { text: string; next: number | null; bytes: number };

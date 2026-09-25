@@ -665,8 +665,6 @@ events.declare([
   "composer.changed",
   "composer.attached",
   "model.changed",
-  "session.changed",
-  "index.changed",
   "activity.changed",
 ]);
 

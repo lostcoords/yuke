@@ -17,6 +17,11 @@ const SessionId = proto.ids.SessionId;
 
 /// Bound the dirty set so a storm cannot grow it without limit. A full set marks everything dirty.
 pub const max_dirty_sessions: usize = 256;
+
+/// True for a fact a drain carries. A job change names no session and moves no view, so the jobs module reports it instead.
+pub fn delivers(fact: proto.enums.BroadcastName) bool {
+    return fact != .@"job.changed";
+}
 /// Bound the auth payloads one drain carries. A login is rare, so a burst over this drops the oldest.
 const max_auth_notes: usize = 16;
 /// Bound the notice payloads one drain carries. A burst over this drops the oldest.
@@ -104,8 +109,7 @@ pub const Engine = struct {
     /// Mark the event's session dirty. This runs on an engine task, so it must not enter JavaScript.
     fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
         const self: *Engine = @ptrCast(@alignCast(ctx));
-        // A job change names no session and moves no view, so it must not mark the index dirty.
-        if (note.method == .@"job.changed") return;
+        if (!delivers(note.method)) return;
         self.activity_dirty = true;
         if (note.params == .session_removed_data) self.removed.append(self.gpa, note.params.session_removed_data.session_id) catch unreachable;
         const id = sessionOf(note) orelse {
