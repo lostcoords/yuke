@@ -31,6 +31,23 @@ jobs:
       - name: Test
         run: zig build test --test-timeout 2m --summary all
 
+  # zig build does not run tsc, so this job checks the JavaScript types and the generated plugin declarations.
+  types:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install_args: node npm:typescript
+
+      - name: Type-check
+        run: mise run check-ts
+
+      # A change to the plugin API must commit the regenerated declarations.
+      - name: Check the plugin declarations
+        run: mise run types && git diff --exit-code src/js/app/generated/yuke.d.ts
+
   # Only this job runs the macOS code. Ten files branch on the host system.
   # zio selects kqueue there, and lib/term/tty_posix.zig has a Darwin path.
   test-macos:

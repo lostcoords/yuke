@@ -22,5 +22,5 @@
       "yuke:*": ["./*.js"]
     }
   },
-  "include": ["./**/*.js", "./types/**/*.d.ts", "./generated/**/*.d.ts"]
+  "include": ["./**/*.js", "./types/**/*.d.ts", "./generated/proto.d.ts"]
 }

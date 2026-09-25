@@ -3,6 +3,6 @@
   "include": [
     "typecheck.ts",
     "../../src/js/app/types/**/*.d.ts",
-    "../../src/js/app/generated/**/*.d.ts"
+    "../../src/js/app/generated/proto.d.ts"
   ]
 }

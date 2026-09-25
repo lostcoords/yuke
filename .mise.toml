@@ -1,7 +1,17 @@
 [tools]
 zig = "0.16.0"
+node = "26.10.0"
 "npm:typescript" = "7.0.2"
 
 [tasks.check-ts]
-description = "Type-check the TUI JavaScript and generated protocol contract"
-run = ["tsc -p src/js/app/tsconfig.json --noEmit", "tsc -p bench/tsconfig.json --noEmit", "tsc -p tools/protogen/tsconfig.json --noEmit"]
+description = "Type-check the app JavaScript, the generated contracts, and the plugin declarations"
+run = ["tsc -p src/js/app/tsconfig.json --noEmit", "tsc -p bench/tsconfig.json --noEmit", "tsc -p tools/protogen/tsconfig.json --noEmit", "tsc -p tools/typesgen/tsconfig.json", "tsc -p tools/typesgen/fixture/tsconfig.json"]
+
+[tasks.types]
+description = "Generate the plugin API declarations in src/js/app/generated/yuke.d.ts"
+run = """
+out="$(mktemp -d)"
+trap 'rm -rf "$out"' EXIT
+tsc -p src/js/app/tsconfig.decl.json --outDir "$out"
+node tools/typesgen/main.ts "$out" src/js/app/generated/yuke.d.ts
+"""

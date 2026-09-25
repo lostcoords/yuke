@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "."
+  },
+  "files": ["facade.js", "public-ui.js", "public-chat.js", "public-plugins.js"],
+  "include": ["types/**/*.d.ts", "generated/proto.d.ts"]
+}
