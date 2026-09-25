@@ -76,7 +76,7 @@ function wellKnown(url, suffix) {
   return trimmed ? [origin + "/.well-known/" + suffix + trimmed, origin + "/.well-known/" + suffix] : [origin + "/.well-known/" + suffix];
 }
 
-/** @param {string} url @returns {Promise<Record<string, any> | null>} */
+/** @param {string} url @returns {Promise<Record<string, unknown> | null>} */
 async function getJson(url) {
   if (!secure(url)) return null;
   const response = await fetch(url, { headers: { accept: "application/json" }, timeoutMs: EXCHANGE_MS });
@@ -131,11 +131,11 @@ async function discover(url, challenge) {
   if (!Array.isArray(meta.code_challenge_methods_supported) || !meta.code_challenge_methods_supported.includes("S256")) throw new Error("the authorization server does not state PKCE S256 support");
   const supported = resourceMeta?.scopes_supported;
   const scope = params.scope ?? (Array.isArray(supported) && supported.every((item) => typeof item === "string") ? supported.join(" ") : undefined);
-  return { issuer, meta, resource, scope };
+  return { issuer, meta, authorization: meta.authorization_endpoint, token: meta.token_endpoint, resource, scope };
 }
 
 // Name the client: a configured id first, then dynamic registration (RFC 7591) as a public native client.
-/** @param {Record<string, any>} meta @param {string} redirect @param {OAuthConfig} config @returns {Promise<Client>} */
+/** @param {Record<string, unknown>} meta @param {string} redirect @param {OAuthConfig} config @returns {Promise<Client>} */
 async function register(meta, redirect, config) {
   if (config.clientId) return config.clientSecret ? { client_id: config.clientId, client_secret: config.clientSecret } : { client_id: config.clientId };
   if (typeof meta.registration_endpoint !== "string" || !secure(meta.registration_endpoint)) throw new Error("the server offers no client registration; set oauth.clientId in .mcp.json");
@@ -152,7 +152,7 @@ async function register(meta, redirect, config) {
 }
 
 // One token request. A confidential client authenticates with HTTP Basic, as RFC 6749 section 2.3.1 asks.
-/** @param {string} endpoint @param {Client} client @param {Record<string, string | undefined>} fields @returns {Promise<Record<string, any>>} */
+/** @param {string} endpoint @param {Client} client @param {Record<string, string | undefined>} fields @returns {Promise<Record<string, unknown> & { access_token: string }>} */
 async function tokenRequest(endpoint, client, fields) {
   /** @type {Record<string, string>} */
   const headers = { "content-type": "application/x-www-form-urlencoded", accept: "application/json" };
@@ -163,18 +163,20 @@ async function tokenRequest(endpoint, client, fields) {
     const reason = record(answer) && typeof answer.error === "string" ? answer.error + (typeof answer.error_description === "string" ? ": " + answer.error_description : "") : "HTTP " + response.status;
     throw new Error("the token request failed (" + reason + ")");
   }
-  if (typeof answer.access_token !== "string" || answer.access_token === "" || typeof answer.token_type !== "string" || answer.token_type.toLowerCase() !== "bearer") throw new Error("the token answer holds no bearer token");
-  return answer;
+  const access_token = answer.access_token;
+  if (typeof access_token !== "string" || access_token === "" || typeof answer.token_type !== "string" || answer.token_type.toLowerCase() !== "bearer") throw new Error("the token answer holds no bearer token");
+  return { ...answer, access_token };
 }
 
-/** @param {Record<string, any>} token @param {Omit<Grant, "access_token" | "refresh_token" | "expires_at" | "scope">} base @param {Grant} [previous] @returns {Grant} */
+/** @param {Record<string, unknown> & { access_token: string }} token @param {Omit<Grant, "access_token" | "refresh_token" | "expires_at" | "scope">} base @param {Grant} [previous] @returns {Grant} */
 function grantOf(token, base, previous) {
   /** @type {Grant} */
   const grant = { ...base, access_token: token.access_token };
   // A refresh that answers no new refresh token keeps the old one.
   const refresh = typeof token.refresh_token === "string" ? token.refresh_token : previous?.refresh_token;
   if (refresh) grant.refresh_token = refresh;
-  if (Number.isFinite(token.expires_in) && token.expires_in > 0) grant.expires_at = Date.now() + token.expires_in * 1000;
+  const expires = token.expires_in;
+  if (typeof expires === "number" && Number.isFinite(expires) && expires > 0) grant.expires_at = Date.now() + expires * 1000;
   const scope = typeof token.scope === "string" ? token.scope : previous?.scope;
   if (scope) grant.scope = scope;
   return grant;
@@ -213,7 +215,7 @@ export async function signIn(url, { challenge = "", config = {}, open, signal })
     const client = await register(found.meta, redirect, config);
     const verifier = native.random(32);
     const state = native.random(16);
-    const endpoint = /** @type {string} */ (found.meta.authorization_endpoint);
+    const endpoint = found.authorization;
     const authorize = endpoint + (endpoint.includes("?") ? "&" : "?") + form({
       response_type: "code",
       client_id: client.client_id,
@@ -232,8 +234,8 @@ export async function signIn(url, { challenge = "", config = {}, open, signal })
     // RFC 9207: an answer that names an issuer must name this one, and a server that promises the parameter must send it.
     if (answer.iss !== undefined ? answer.iss !== found.issuer : found.meta.authorization_response_iss_parameter_supported === true) throw new Error("the sign-in answer names another issuer");
     if (!answer.code) throw new Error("the sign-in answer holds no code");
-    const token = await tokenRequest(found.meta.token_endpoint, client, { grant_type: "authorization_code", code: answer.code, redirect_uri: redirect, code_verifier: verifier, resource: found.resource });
-    const grant = grantOf(token, { client, token_endpoint: found.meta.token_endpoint, issuer: found.issuer, resource: found.resource });
+    const token = await tokenRequest(found.token, client, { grant_type: "authorization_code", code: answer.code, redirect_uri: redirect, code_verifier: verifier, resource: found.resource });
+    const grant = grantOf(token, { client, token_endpoint: found.token, issuer: found.issuer, resource: found.resource });
     mcpNative.writeRecord("mcp-oauth", url, JSON.stringify(grant));
     return grant;
   } finally {

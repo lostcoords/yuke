@@ -18,7 +18,12 @@ import { notice } from "yuke:notice";
 /** @typedef {{ servers?: Record<string, ServerConfig>, startupMs?: number, callMs?: number }} McpOptions */
 /** @typedef {{ startupMs: number, callMs: number }} Limits */
 /** @typedef {"pending" | "untrusted" | "connecting" | "connected" | "needs auth" | "failed" | "disabled" | "stopped"} ServerState */
-/** @typedef {{ resolve: (value: any) => void, reject: (error: Error) => void, done: () => void, bytes: number, cancelable: boolean, progress?: (value: number, report: Record<string, unknown>) => void }} Waiting */
+/** @typedef {{ resolve: (value: unknown) => void, reject: (error: Error) => void, done: () => void, bytes: number, cancelable: boolean, progress?: (value: number, report: Record<string, unknown>) => void }} Waiting */
+/** @typedef {{ jsonrpc: "2.0", id?: string | number | null, method: string, params?: Record<string, unknown> }} Incoming */
+/** @typedef {{ jsonrpc: "2.0", id: string | number | null, result?: Record<string, unknown>, error?: { code: number, message: string, data?: unknown } }} Reply */
+/** @typedef {Incoming | Reply} Message */
+/** @typedef {{ type: "text", text: string } | { type: "image" | "audio", data: string, mimeType: string } | { type: "resource_link", uri: string, name: string } | { type: "resource", resource: { uri: string, text?: string, blob?: string, mimeType?: string } }} Content */
+/** @typedef {{ name: string, description?: string, title?: string, inputSchema: Record<string, unknown>, outputSchema?: Record<string, unknown> }} ServerTool */
 /** @typedef {{ name: string, path: string[] }} Mirrored */
 
 const WORKSPACE_FILE = ".mcp.json";
@@ -69,10 +74,11 @@ export function toolName(server, tool) {
 }
 
 // The model reads text. Every other block becomes a one-line description.
-/** @param {any[]} content @param {unknown} structured @returns {string} */
+/** @param {Content[]} content @param {unknown} structured @returns {string} */
 function contentText(content, structured) {
-  if (content.length === 1 && content[0].type === "text") {
-    const text = content[0].text;
+  // A single block exists once the length is one, so the reads need no guard.
+  if (content.length === 1 && /** @type {Content} */ (content[0]).type === "text") {
+    const text = /** @type {Extract<Content, { type: "text" }>} */ (content[0]).text;
     return text.length <= MAX_RESULT_CHARS ? text : text.slice(0, MAX_RESULT_CHARS) + "\n[truncated " + (text.length - MAX_RESULT_CHARS) + " characters]";
   }
   /** @type {string[]} */
@@ -107,7 +113,7 @@ function contentText(content, structured) {
 function invalid(message) { throw new Error("invalid MCP " + message); }
 
 // Extension fields remain legal; known envelope fields must identify exactly one message kind.
-/** @param {string} line @returns {any} */
+/** @param {string} line @returns {Message} */
 export function decodeMessage(line) {
   let message;
   try { message = JSON.parse(line); } catch { return invalid("JSON"); }
@@ -125,10 +131,11 @@ export function decodeMessage(line) {
     if (hasResult && !record(message.result)) return invalid("response result");
     if (hasError && (!record(message.error) || !Number.isSafeInteger(message.error.code) || typeof message.error.message !== "string")) return invalid("response error");
   }
-  return message;
+  // The checks above prove one message kind with valid fields.
+  return /** @type {Message} */ (message);
 }
 
-/** @param {any} result @param {boolean} modern */
+/** @param {unknown} result @param {boolean} modern @returns {asserts result is Record<string, unknown>} */
 function complete(result, modern) {
   if (!record(result)) return invalid("result");
   if ((modern || result.resultType !== undefined) && result.resultType !== "complete") return invalid("result type");
@@ -136,7 +143,7 @@ function complete(result, modern) {
 }
 
 // The catalog owns the parsed schema; validation does not clone or serialize it.
-/** @param {any} tool */
+/** @param {unknown} tool @returns {asserts tool is ServerTool} */
 function validateTool(tool) {
   if (!record(tool) || typeof tool.name !== "string" || tool.name === "" || tool.name.length > 1024) return invalid("tool name");
   if (tool.description !== undefined && typeof tool.description !== "string") return invalid("tool description");
@@ -144,11 +151,11 @@ function validateTool(tool) {
   const schema = tool.inputSchema;
   if (!record(schema) || schema.type !== "object") return invalid("tool input schema");
   if (schema.properties !== undefined && !record(schema.properties)) return invalid("tool properties");
-  if (schema.required !== undefined && (!Array.isArray(schema.required) || !schema.required.every((/** @type {any} */ name) => typeof name === "string"))) return invalid("tool required fields");
+  if (schema.required !== undefined && (!Array.isArray(schema.required) || !schema.required.every((name) => typeof name === "string"))) return invalid("tool required fields");
   if (tool.outputSchema !== undefined && (!record(tool.outputSchema) || tool.outputSchema.type !== "object")) return invalid("tool output schema");
 }
 
-/** @param {any} block */
+/** @param {unknown} block @returns {asserts block is Content} */
 function validateContent(block) {
   if (!record(block)) return invalid("content block");
   switch (block.type) {
@@ -173,7 +180,7 @@ function validateContent(block) {
 }
 
 // The text the model reads, and the base64 image bytes that go beside it.
-/** @param {any} result @param {boolean} [modern] @returns {{ text: string, images: readonly string[] }} */
+/** @param {unknown} result @param {boolean} [modern] @returns {{ text: string, images: readonly string[] }} */
 export function toolResult(result, modern = false) {
   if (record(result) && modern && result.resultType === "input_required") throw new Error("the tool asks for input, which this client cannot answer");
   complete(result, modern);
@@ -500,7 +507,7 @@ class Server {
   receive(text) {
     let message;
     try { message = decodeMessage(text); } catch (error) { this.fail("failed", errorText(error)); return undefined; }
-    if (typeof message.method !== "string") {
+    if (!("method" in message)) {
       if (typeof message.id !== "number") return undefined;
       const slot = this.waiting.get(message.id);
       if (slot) slot.bytes = text.length;
@@ -517,7 +524,7 @@ class Server {
     if (message.method === "notifications/tools/list_changed" && this.hasTools) this.refreshTools();
     else if (message.method === "notifications/progress") this.progress(message.params);
     // The acknowledgment names the subset the server honors; a stream without tool changes serves nothing, so it closes.
-    else if (message.method === "notifications/subscriptions/acknowledged" && message.params?.notifications?.toolsListChanged !== true) {
+    else if (message.method === "notifications/subscriptions/acknowledged" && !(record(message.params?.notifications) && message.params.notifications.toolsListChanged === true)) {
       this.listenRefused = true;
       if (this.listenId !== 0) this.transport?.cancel(this.listenId, "the server honors no tool list changes");
     }
@@ -532,7 +539,7 @@ class Server {
 
   // A handshake request is not cancelable: the legacy rules forbid a cancel of `initialize`.
   // A progress-enabled request uses its id as the token. Each larger report resets the timer, up to a cap.
-  /** @param {string} method @param {Record<string, unknown>} params @param {{ timeoutMs: number, signal?: CancellationSignal, cancelable?: boolean, received?: { bytes: number }, headers?: Record<string, string> | undefined, progress?: ((report: Record<string, unknown>) => void) | undefined }} options @returns {Promise<any>} */
+  /** @param {string} method @param {Record<string, unknown>} params @param {{ timeoutMs: number, signal?: CancellationSignal, cancelable?: boolean, received?: { bytes: number }, headers?: Record<string, string> | undefined, progress?: ((report: Record<string, unknown>) => void) | undefined }} options @returns {Promise<unknown>} */
   request(method, params, { timeoutMs, signal, cancelable = true, received, headers, progress }) {
     if (signal?.aborted) return Promise.reject(new Error("the call was canceled"));
     const id = this.nextId++;
@@ -616,7 +623,7 @@ class Server {
     this.settle(id, undefined, new Error(reason));
   }
 
-  /** @param {any} answer */
+  /** @param {Record<string, unknown>} answer */
   accept(answer) {
     // The answer comes from the server, so its shape is checked here.
     const capabilities = answer.capabilities;
@@ -637,7 +644,8 @@ class Server {
       found = await this.request("server/discover", {}, { timeoutMs: Math.min(deadline - Date.now(), this.limits.startupMs / 2), cancelable: false });
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === UNSUPPORTED_VERSION) {
-        const supported = /** @type {any} */ (error).data?.supported;
+        const data = "data" in error ? error.data : undefined;
+        const supported = record(data) ? data.supported : undefined;
         if (!Array.isArray(supported) || !supported.some((version) => LEGACY_KNOWN.includes(version))) throw new Error("the server supports no protocol version this client speaks");
       } else if (this.state !== "connecting" || !this.transport || (error instanceof Error && (("code" in error && error.code === HEADER_MISMATCH) || "signIn" in error))) throw error;
       this.era = "legacy";
@@ -645,14 +653,14 @@ class Server {
     if (this.era === "modern") {
       complete(found, true);
       const versions = found.supportedVersions;
-      if (!Array.isArray(versions) || !versions.every((/** @type {any} */ value) => typeof value === "string")) return invalid("supported versions");
+      if (!Array.isArray(versions) || !versions.every((value) => typeof value === "string")) return invalid("supported versions");
       if (versions.includes(MODERN)) return this.accept(found);
       if (!versions.some((version) => LEGACY_KNOWN.includes(version))) throw new Error("the server supports no protocol version this client speaks");
       this.era = "legacy";
     }
     const init = await this.request("initialize", { protocolVersion: LEGACY, capabilities: {}, clientInfo: CLIENT }, { timeoutMs: deadline - Date.now(), cancelable: false });
     complete(init, false);
-    if (!LEGACY_KNOWN.includes(init.protocolVersion)) throw new Error("the server answered initialize with an unknown protocol version");
+    if (typeof init.protocolVersion !== "string" || !LEGACY_KNOWN.includes(init.protocolVersion)) throw new Error("the server answered initialize with an unknown protocol version");
     this.accept(init);
     if (!record(init.serverInfo) || typeof init.serverInfo.name !== "string" || typeof init.serverInfo.version !== "string") return invalid("initialize result");
     this.transport?.negotiated(init.protocolVersion);
@@ -701,10 +709,11 @@ class Server {
         names.add(tool.name);
         tools.push(tool);
       }
-      cursor = answer.nextCursor;
-      if (cursor === undefined) break;
-      if (typeof cursor !== "string" || cursor === "" || cursors.has(cursor)) return invalid("tool cursor");
-      cursors.add(cursor);
+      const next = answer.nextCursor;
+      if (next === undefined) break;
+      if (typeof next !== "string" || next === "" || cursors.has(next)) return invalid("tool cursor");
+      cursors.add(next);
+      cursor = next;
     }
     tools.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     // A server that stopped or failed while the list was in flight defines nothing.

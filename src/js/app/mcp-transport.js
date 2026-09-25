@@ -261,8 +261,9 @@ function openHttp(target, sink) {
 
   /** @param {Record<string, unknown>} message @param {Record<string, string>} params_headers */
   const headersFor = (message, params_headers) => {
-    const params = /** @type {Record<string, any> | undefined} */ (message.params);
-    const modern = params?._meta?.[VERSION_KEY];
+    const params = /** @type {Record<string, unknown> | undefined} */ (message.params);
+    const meta = params?._meta;
+    const modern = record(meta) ? meta[VERSION_KEY] : undefined;
     /** @type {Record<string, string>} */
     const extra = { "content-type": "application/json", accept: "application/json, text/event-stream" };
     if (typeof modern === "string") {
