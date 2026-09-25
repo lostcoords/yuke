@@ -137,15 +137,15 @@ export class ChatView {
       if (active) tree = active.instance.layout(context) || defaultLayout;
       if (active !== this.presentation) tree = defaultLayout;
       const placed = this.presentation;
-      this._placePresentation(tree, bounds);
+      this.#placePresentation(tree, bounds);
       if (placed !== this.presentation) {
-        this._releasePresentationViews();
-        this._placePresentation(defaultLayout, bounds);
+        this.#releasePresentationViews();
+        this.#placePresentation(defaultLayout, bounds);
       }
     } catch (error) {
       this.clearPresentation();
       events.emit("ext.error", error, "presentation");
-      this._placePresentation(defaultLayout, bounds);
+      this.#placePresentation(defaultLayout, bounds);
     }
     if (this.transcriptRect.w === 0 || this.transcriptRect.h === 0) this.transcript.hide();
   }
@@ -155,11 +155,11 @@ export class ChatView {
     if (provider && provider !== this.presentation?.provider) return;
     const held = this.presentation;
     this.presentation = null;
-    this._releasePresentationViews();
+    this.#releasePresentationViews();
     held?.instance.dispose();
   }
 
-  _releasePresentationViews() {
+  #releasePresentationViews() {
     for (const view of this.presentationViews) releaseView(view, this);
     this.presentationViews = [];
     this.presentationFocus = null;
@@ -167,7 +167,7 @@ export class ChatView {
   }
 
   /** @param {LayoutNode} tree @param {Rect} bounds */
-  _placePresentation(tree, bounds) {
+  #placePresentation(tree, bounds) {
     const result = solve(tree, bounds);
     /** @type {Map<string | PresentationView, Rect>} */
     const placements = new Map();
@@ -232,14 +232,14 @@ export class ChatView {
       const row = /** @type {StripRow} */ (this.strip[i]);
       text(this.stripRect.x, this.stripRect.y + i, clip(row.text, this.stripRect.w), row.group || "UIDim");
     }
-    if (this.ruleRect.h > 0) this._drawRule(this.ruleRect.x, this.ruleRect.y, this.ruleRect.w);
+    if (this.ruleRect.h > 0) this.#drawRule(this.ruleRect.x, this.ruleRect.y, this.ruleRect.w);
     this.composer.draw(focused && !this.presentationFocus);
     for (const view of this.presentationViews) if (view.rect.w > 0 && view.rect.h > 0) view.draw(focused && view === this.presentationFocus);
   }
 
   // The rule row. A plugin puts a line on it, such as the working indicator, and the rule fills the rest.
   /** @param {number} x @param {number} y @param {number} w @returns {void} */
-  _drawRule(x, y, w) {
+  #drawRule(x, y, w) {
     const line = /** @type {StripRow | null} */ (slot.get(this, "rule"));
     const label = line ? clip(line.text, w) : "";
     const used = label ? term.measure(label) : 0;
