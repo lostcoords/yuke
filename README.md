@@ -18,6 +18,7 @@ zig build test          # build and run all tests
 zig build test-js       # run the process and QuickJS host tests
 zig build               # compile yuke
 zig build gen-schema    # regenerate schema/proto.json from the Zig types
+mise run types          # regenerate the plugin declarations in src/js/app/generated
 zig build sqlgen -- --migrations <dir> --queries <dir> --queries-out <file>
 ```
 
@@ -26,6 +27,15 @@ zig build sqlgen -- --migrations <dir> --queries <dir> --queries-out <file>
 Run `yuke --rpc` for a local JSONL client on stdin and stdout.
 `initialize` is optional version discovery. It accepts empty parameters and reports the server protocol version.
 A client can call it before other methods to check compatibility. The server has no version handshake or client-version field.
+
+## Plugin types
+
+`yuke types` writes the plugin API declarations into the profile's configuration directory, next to `index.js`:
+
+- `yuke.d.ts` and `yuke-modules.d.ts` declare `yuke`, `yuke/ui`, `yuke/chat`, and `yuke/plugins`.
+- `jsconfig.json` makes the editor check `index.js` against them. The command writes it only when none exists.
+
+Run `yuke types` again after an upgrade. For another profile, set its name: `YUKE_APPNAME=work yuke types`.
 
 ## Agent configuration
 
