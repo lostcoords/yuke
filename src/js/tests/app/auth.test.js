@@ -12,7 +12,7 @@ const key = (code, o = {}) => ({ type: "key", code, char: "", text: "", event: "
 const settle = async () => { for (let i = 0; i < 64; i++) await Promise.resolve(); };
 const finished = (login_id, outcome) => events.emit("auth.login_finished", { type: "index", facts: ["auth.login_finished"],
   auth: [{ method: "auth.login_finished", params: { login_id, provider_id: "codex", outcome } }] });
-root.focusView(chat.view);
+root.focusView(chat);
 const calls = [];
 const observer = new Context(new Scope("auth-observer"), "auth-observer");
 client.catalogReload = () => Promise.resolve({ changed: false });

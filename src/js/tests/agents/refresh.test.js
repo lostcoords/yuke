@@ -1,28 +1,29 @@
 import { root, Node } from "yuke:internal/core";
+import { ChatView } from "yuke:internal/chat-view";
 import { events } from "yuke:internal/kernel";
 import { plugins, advice } from "yuke:internal/ext";
-import { Chat } from "yuke:internal/chat";
+import { Session } from "yuke:internal/chat";
 import { openAgents, childState } from "yuke:internal/agents-ui";
 const copy = value => JSON.parse(JSON.stringify(value));
 const settle = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const check = (ok, why) => { if (!ok) throw new Error(why); };
 plugins.use({ name: "refresh-test", apply(ctx) {
   ctx.inject(["tui"], ctx => { (async () => {
-    const chat = new Chat();
-    root.setRoot(Node.leaf(chat.view)); root.focusView(chat.view);
-    chat.sessionId = "01".repeat(16);
+    const chat = new ChatView(new Session());
+    root.setRoot(Node.leaf(chat)); root.focusView(chat);
+    chat.session.sessionId = "01".repeat(16);
     let gets = 0, lists = 0, updates = 0, getGate, listGate;
     let children = [child];
     const read = client.sessionGet;
     client.sessionGet = async (...args) => { const value = copy(await read(...args)); if (getGate) await getGate; return value; };
     client.sessionList = async params => {
-      const value = { items: params.population.parent_id === chat.sessionId ? copy(children) : [], next_cursor: null, total: children.length };
+      const value = { items: params.population.parent_id === chat.session.sessionId ? copy(children) : [], next_cursor: null, total: children.length };
       if (listGate) await listGate;
       return value;
     };
     const offGet = advice.advise(client, "sessionGet", "before", () => { gets++; });
     const offList = advice.advise(client, "sessionList", "before", () => { lists++; });
-    const picker = await openAgents(ctx, chat.sessionId);
+    const picker = await openAgents(ctx, chat.session.sessionId);
     picker.content.list.selectKey(child.session.id);
     const offUpdate = advice.advise(picker.content, "setSource", "after", () => { updates++; });
     const activity = () => events.emit("session.changed", { type: "session", session: child.session.id, kind: "quiet", facts: ["session.activity_changed"] });
@@ -61,7 +62,7 @@ plugins.use({ name: "refresh-test", apply(ctx) {
     getGate = undefined; release(); await settle();
     check(updates === beforeClose && root.overlays.length === 0, "closed picker accepted result");
     offUpdate(); offList(); offGet();
-    chat.sessionId = null; chat.dispose();
+    chat.session.sessionId = null; chat.session.leave(chat);
     result = "ok";
   })().catch(e => result = e.stack || e.message); });
 } });

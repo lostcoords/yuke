@@ -1,10 +1,11 @@
 import { equal } from "yuke:internal/test";
+import { Session } from "yuke:internal/chat";
 import { ChatView } from "yuke:internal/chat-view";
 import { events } from "yuke:internal/kernel";
 import { column, child, fixed } from "yuke:internal/layout";
 import { Context, Scope } from "yuke:internal/ext";
 import { tui } from "yuke:internal/tui";
-const view = new ChatView(), scope = new Scope("bad");
+const view = new ChatView(new Session()), scope = new Scope("bad");
 let errors = 0, disposed = 0;
 const off = events.on("ext.failed", () => errors++);
 const surface = tui.bindTo(new Context(scope, "bad"));

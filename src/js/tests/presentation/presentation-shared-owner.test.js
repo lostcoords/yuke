@@ -1,4 +1,5 @@
 import { equal } from "yuke:internal/test";
+import { Session } from "yuke:internal/chat";
 import { ChatView } from "yuke:internal/chat-view";
 import { Text, Window } from "yuke:internal/ui";
 import { RootView } from "yuke:internal/core";
@@ -6,7 +7,7 @@ import { events } from "yuke:internal/kernel";
 import { row, child, fixed, grow } from "yuke:internal/layout";
 import { Context, Scope } from "yuke:internal/ext";
 import { tui } from "yuke:internal/tui";
-const view = new ChatView(), scope = new Scope("owners"), otherRoot = new RootView();
+const view = new ChatView(new Session()), scope = new Scope("owners"), otherRoot = new RootView();
 const side = new Text({ text: "one owner" }), bounds = { x: 0, y: 0, w: 30, h: 10 };
 let errors = 0;
 const off = events.on("ext.failed", () => errors++);

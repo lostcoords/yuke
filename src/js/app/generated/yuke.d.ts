@@ -4,10 +4,11 @@
 export {};
 
 declare module "yuke:chat" {
-export import Chat = $chat.Chat;
-export import chats = $chat.chats;
+export import Session = $chat.Session;
+export import sessions = $chat.sessions;
 export import currentChat = $chat.currentChat;
-export import chatOf = $chat.chatOf;
+export import showSession = $chat.showSession;
+export import openSession = $chat.openSession;
 export import chatEntry = $chat.chatEntry;
 export import ChatView = $chat_view.ChatView;
 export import Transcript = $transcript.Transcript;
@@ -18,7 +19,6 @@ export import ROLE_TEXT = $transcript.ROLE_TEXT;
 export import attachPath = $attach.attachPath;
 export import attachClipboard = $attach.attachClipboard;
 export type PresentationContext = $chat_view.PresentationContext;
-export type ChatViewOptions = $chat_view.ChatViewOptions;
 }
 
 declare module "yuke:plugins" {
@@ -165,14 +165,7 @@ export type StripRow = {
     text: string;
     group?: string;
 };
-export type ChatViewOptions = {
-    partsOf?: PartsOf | null | undefined;
-    partOf?: PartOf | null | undefined;
-    partTextPage?: PartTextPage | null | undefined;
-    onSelect?: ((text: string) => void) | null | undefined;
-    onSubmit?: ((content: Wire.ContentPart[]) => boolean | void) | null | undefined;
-    sessionId?: () => string | null;
-};
+import Session = $chat.Session;
 import MouseEvent = $types_core.HostMouseEvent;
 import NavTarget = $types_core.NavTarget;
 import Rect = $types_core.Rect;
@@ -192,9 +185,6 @@ export type PresentationInstance = {
 export type PresentationProvider = {
     mount: (view: ChatView) => PresentationInstance;
 };
-import PartOf = $types_transcript.PartOf;
-import PartsOf = $types_transcript.PartsOf;
-import PartTextPage = $types_transcript.PartTextPage;
 export class ChatView {
     rect: {
         x: number;
@@ -202,9 +192,9 @@ export class ChatView {
         w: number;
         h: number;
     };
+    session: Session;
     transcript: Transcript;
     composer: Composer;
-    sessionId: () => string | null;
     /** @type {{ provider: PresentationProvider, instance: PresentationInstance } | null} */
     presentation: {
         provider: PresentationProvider;
@@ -238,8 +228,8 @@ export class ChatView {
     strip: StripRow[];
     /** @type {ChatRegion} */
     focus: ChatRegion;
-    /** @param {ChatViewOptions} [opts] */
-    constructor(opts?: ChatViewOptions);
+    /** @param {Session} session */
+    constructor(session: Session);
     get name(): string;
     /** @returns {string[]} */
     contexts(): string[];
@@ -279,47 +269,58 @@ export class ChatView {
 
 declare namespace $chat {
 import ChatView = $chat_view.ChatView;
+import Composer = $ui.Composer;
+import MessagePart = $native_engine.MessagePart;
 import Context = $ext.Context;
 export type CreateSessionDraft = Wire.CreateSession;
 import FeedItem = $sessions.FeedItem;
 /** @param {readonly Wire.ContentPart[]} content @returns {string | null} */
 export function soleText(content: readonly Wire.ContentPart[]): string | null;
-export class Chat {
+export class Session {
     /** @type {string | null} */
     sessionId: string | null;
     creating: boolean;
     gen: number;
-    view: ChatView;
+    /** @type {Set<ChatView>} */
+    views: Set<ChatView>;
     constructor();
-    get transcript(): $transcript.Transcript;
-    get composer(): $ui.Composer;
-    /** @param {string} id */
-    open(id: string): void;
+    /** @param {number} id @returns {readonly MessagePart[]} */
+    partsOf(id: number): readonly MessagePart[];
+    /** @param {number} id @param {number} partId @param {MessagePart} [previous] @returns {MessagePart | null} */
+    partOf(id: number, partId: number, previous?: MessagePart): MessagePart | null;
+    /** @param {number} id @param {number} partId @param {string} field @param {number} [offset] @param {number} [limit] @returns {{ text: string, next: number | null }} */
+    partTextPage(id: number, partId: number, field: string, offset?: number, limit?: number): {
+        text: string;
+        next: number | null;
+    };
+    /** @param {string} id @returns {boolean} */
+    open(id: string): boolean;
     /** @param {string} id */
     checkContext(id: string): void;
-    /** @param {readonly Wire.ContentPart[]} content @returns {boolean} */
-    send(content: readonly Wire.ContentPart[]): boolean;
+    /** @param {readonly Wire.ContentPart[]} content @param {Composer} composer @returns {boolean} */
+    send(content: readonly Wire.ContentPart[], composer: Composer): boolean;
     /** @returns {string} */
     modelSelector(): string;
-    /** @param {string} [selector] @returns {void} */
-    checkVision(selector?: string): void;
     interrupt(): void;
-    reload(): void;
+    /** @param {Iterable<ChatView>} [views] */
+    reload(views?: Iterable<ChatView>): void;
     /** @param {number} id @param {number} [partId] */
     active(id: number, partId?: number): void;
-    /** @param {Wire.Input} input @returns {boolean} */
-    startChat(input: Wire.Input): boolean;
-    newChat(): void;
+    /** @param {Wire.Input} input @param {Composer} composer @returns {boolean} */
+    startChat(input: Wire.Input, composer: Composer): boolean;
     sessionGone(): void;
     release(): void;
-    dispose(): void;
+    /** @param {ChatView} view */
+    leave(view: ChatView): void;
 }
-/** @type {Set<Chat>} */
-export const chats: Set<Chat>;
-/** @param {unknown} view @returns {Chat | null} */
-export function chatOf(view: unknown): Chat | null;
-/** @returns {Chat | null} */
-export function currentChat(): Chat | null;
+/** @type {Set<Session>} */
+export const sessions: Set<Session>;
+/** @param {ChatView} view @param {Session} session @returns {void} */
+export function showSession(view: ChatView, session: Session): void;
+/** @param {ChatView} view @param {string} id @returns {void} */
+export function openSession(view: ChatView, id: string): void;
+/** @returns {ChatView | null} */
+export function currentChat(): ChatView | null;
 /** @returns {FeedItem | null} */
 export function chatEntry(): FeedItem | null;
 export const chatPlugin: {

@@ -1,7 +1,8 @@
 import { check } from "yuke:internal/test";
+import { ChatView } from "yuke:internal/chat-view";
 import { root, Node, View } from "yuke:internal/core";
 import { plugins, services } from "yuke:internal/ext";
-import { Chat } from "yuke:internal/chat";
+import { Session } from "yuke:internal/chat";
 import { composerVim } from "yuke:internal/composer-vim";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
@@ -12,7 +13,7 @@ class Side extends View {
   draw() {}
   onKey(ev) { seen++; return true; }
 }
-const v = new Chat().view;
+const v = new ChatView(new Session());
 const side = new Side();
 root.setRoot(Node.branch("row", Node.leaf(side), Node.leaf(v), 0.3));
 root.focusView(v);

@@ -1,5 +1,5 @@
 // The working line on the rule above the composer: a spinner, the phase, the elapsed time, and the child runs.
-import { chatOf, chats } from "yuke:internal/chat";
+import { sessions } from "yuke:internal/chat";
 import { client } from "yuke:internal/client";
 import { activityOf, agentsLabel, isWorking } from "yuke:internal/activity";
 
@@ -66,7 +66,7 @@ export function indicatorLine(sessionId, activity, now, childRuns = 0) {
 /** @returns {boolean} */
 function anyWorking() {
   if (client.load().childRuns > 0) return true;
-  for (const c of chats) if (c.sessionId && isWorking(activityOf(c.sessionId))) return true;
+  for (const session of sessions) if (session.sessionId && isWorking(activityOf(session.sessionId))) return true;
   return false;
 }
 
@@ -76,9 +76,9 @@ export const indicatorPlugin = {
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       ctx.on("chat.rule", (view) => {
-        const c = chatOf(view);
-        if (!c || !c.sessionId) return null;
-        const line = indicatorLine(c.sessionId, activityOf(c.sessionId), Date.now(), client.load().childRuns);
+        const id = view.session.sessionId;
+        if (!id) return null;
+        const line = indicatorLine(id, activityOf(id), Date.now(), client.load().childRuns);
         return line ? { text: line, group: "YukeStatus" } : null;
       });
       // The frame loop runs only while a pane or a child run works, so an idle screen costs no wakeups.

@@ -3,7 +3,7 @@ import { command, root, status, keymap } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import "yuke:internal/native/term";
 import { chat } from "yuke:internal/defaults";
-import { chats, chatOf } from "yuke:internal/chat";
+import { sessions, currentChat } from "yuke:internal/chat";
 import { feedOf } from "yuke:internal/sessions";
 const fail = [];
 // The shell loads the notice as a plugin, so its segment and listeners can be taken back out.
@@ -21,9 +21,9 @@ if (!command.available("suspend")) fail.push("suspend-command");
 
 // The status bar reports a pending key.
 {
-  root.focusView(chat.view);
+  root.focusView(chat);
   // A `g` prefix only arms outside the composer, so the transcript takes the focus first.
-  chat.view.focus = "transcript";
+  chat.focus = "transcript";
   const g = { type: "key", code: "char", char: "g", text: "g", event: "press", mods: 0 };
   const beforeG = status.side("right");
   root.onEvent(g);
@@ -31,15 +31,15 @@ if (!command.available("suspend")) fail.push("suspend-command");
   if (status.side("right") === beforeG) fail.push("showcmd-on");
   root.onEvent(g);
   if (keymap.pendingLabel() !== "") fail.push("showcmd-off");
-  chat.view.focus = "composer";
-  root.focusView(chat.view);
+  chat.focus = "composer";
+  root.focusView(chat);
 }
 // Tab keeps the composer focus without the Vim plugin.
 {
   const tab = { type: "key", code: "tab", char: "", text: "", event: "press", mods: 0 };
-  if (chat.view.focus !== "composer") fail.push("boot-region");
+  if (chat.focus !== "composer") fail.push("boot-region");
   root.onEvent(tab);
-  if (chat.view.focus !== "composer") fail.push("tab-keeps-composer");
+  if (chat.focus !== "composer") fail.push("tab-keeps-composer");
   if (command.available("chat:focus-toggle")) fail.push("focus-toggle-without-vim");
 }
 command.perform("ui:palette");
@@ -47,7 +47,7 @@ if (root.overlays.length !== 1) fail.push("palette");
 root.popOverlay();
 // PageUp scrolls the history while the composer types, through the nav binding.
 {
-  root.focusView(chat.view);
+  root.focusView(chat);
   if (root.navTarget() !== chat.transcript.pager) fail.push("chat-nav-target");
   let paged = 0;
   const realPage = chat.transcript.pager.navPage.bind(chat.transcript.pager);
@@ -62,14 +62,14 @@ root.popOverlay();
   const feed = feedOf();
   feed.seed({ items: [{ session: { id: "probe", model: "wired-model", message_count: 3, updated_at_ms: 1 },
     activity: { state: { type: "idle" }, queued: 0, context_usage: { input: 2500 }, pending_compaction: null } }] });
-  chat.sessionId = "probe";
+  chat.session.sessionId = "probe";
   const right = status.side("right");
   if (right.indexOf("wired-model") < 0) fail.push("catalog-entry-wired");
   if (right.indexOf("2.5k context") < 0) fail.push("context-usage-wired");
 
   // Closing the session clears the reading, so the status does not name a gone session.
-  chat.sessionGone();
-  chat.sessionId = null;
+  chat.session.sessionGone();
+  chat.session.sessionId = null;
   feed.clear();
   if (status.side("right").indexOf("wired-model") >= 0) fail.push("catalog-entry-clears");
 }
@@ -77,22 +77,22 @@ root.popOverlay();
 
 // The split command builds a real chat pane, and a tree with no leaf keeps no orphan.
 {
-  const before = chats.size;
+  const before = sessions.size;
   command.perform("window:split-right");
-  if (chats.size !== before + 1) fail.push("split-makes-a-chat");
-  if (chatOf(root.active) == null) fail.push("split-focuses-the-new-chat");
+  if (sessions.size !== before + 1) fail.push("split-makes-a-chat");
+  if (currentChat() !== root.active) fail.push("split-focuses-the-new-chat");
   command.perform("window:close");
-  if (chats.size !== before) fail.push("close-releases-the-chat");
+  if (sessions.size !== before) fail.push("close-releases-the-chat");
   const saved = root.root_node;
   root.setRoot(null);
-  const empty = chats.size;
+  const empty = sessions.size;
   command.perform("window:split-right");
-  if (chats.size !== empty) fail.push("failed-split-keeps-no-orphan");
+  if (sessions.size !== empty) fail.push("failed-split-keeps-no-orphan");
   root.setRoot(saved);
 }
 // The shell's own plugin owns the pending-key reading, so an unload takes it away.
 {
-  root.focusView(chat.view);
+  root.focusView(chat);
   // A test-owned prefix outlives the shell's bindings, so the pending stroke survives disposal.
   const offPrefix = keymap.add({ "f9 x": () => true });
   const f9 = { type: "key", code: "f9", char: "", text: "", event: "press", mods: 0 };
@@ -105,6 +105,6 @@ root.popOverlay();
   if (status.side("right").indexOf("f9") >= 0) fail.push("showcmd-unloads");
   keymap.pending = null;
   offPrefix();
-  root.focusView(chat.view);
+  root.focusView(chat);
 }
 equal(fail.length ? fail.join(",") : "ok", "ok");

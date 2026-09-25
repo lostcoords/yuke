@@ -1,10 +1,11 @@
 import { check, textParts } from "yuke:internal/test";
+import { Session } from "yuke:internal/chat";
 import { root, Node } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { term } from "yuke:internal/native/term";
 import { ChatView } from "yuke:internal/chat-view";
 const body = { a1: "alpha bravo charlie\nsecond line here\nthird line xx" };
-const v = new ChatView({ partsOf: textParts((id) => body[id] || "") });
+const v = new ChatView(Object.assign(new Session(), { partsOf: textParts((id) => body[id] || "") }));
 v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
 root.setRoot(Node.leaf(v));
 v.rect = { x: 0, y: 0, w: 40, h: 18 }; v.layout(v.rect);

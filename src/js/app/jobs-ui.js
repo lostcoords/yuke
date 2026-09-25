@@ -145,7 +145,7 @@ export function openOutput(ctx, job) {
 // The list shows every job of this process, newest first, and marks the jobs of the focused session.
 /** @param {Context} ctx */
 export function openJobs(ctx) {
-  const current = currentChat()?.sessionId;
+  const current = currentChat()?.session.sessionId;
   let items = list();
   const picker = ui.select(items, {
     title: summary(items), footer: "↵ output · x stop · X stop all · esc close",

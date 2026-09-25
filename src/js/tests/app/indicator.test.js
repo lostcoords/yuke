@@ -1,4 +1,5 @@
 import { check } from "yuke:internal/test";
+import { Session, openSession, showSession } from "yuke:internal/chat";
 import { root, command, status } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { client } from "yuke:internal/client";
@@ -32,31 +33,31 @@ client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r1", pr
   models: [{ id: "m", provider: "p", selector: "p/m", name: "m", context_window: 1000, reasoning_levels: [], default_reasoning: "", cost: { input: 10, output: 50 } }] });
 await loadCatalog();
 feedOf().seed({ items: [{ session: { id: "s1", model: "p/m", message_count: 19, updated_at_ms: 1, usage_total: { input: 1000000, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 } }, activity: idle }] });
-root.focusView(chat.view);
-chat.open("s1");
+root.focusView(chat);
+openSession(chat, "s1");
 await settle();
 // Idle: no rule line, no strip, and no queue command.
-check("idle-rule", events.bail("chat.rule", chat.view) === undefined);
-check("idle-strip", stripRows([]).length === 0 && events.bail("chat.strip", chat.view).length === 0);
+check("idle-rule", events.bail("chat.rule", chat) === undefined);
+check("idle-strip", stripRows([]).length === 0 && events.bail("chat.strip", chat).length === 0);
 check("idle-status", status.side("right").indexOf("[█░░░░░] 20% context") >= 0);
 check("idle-no-queue-cmd", !command.available("queue:drop"));
 // A resting pane still shows the child runs, and the time counts from the moment the count rose from zero.
 load = { runs: 2, childRuns: 2, continuations: 0 };
-const agentsLine = events.bail("chat.rule", chat.view);
+const agentsLine = events.bail("chat.rule", chat);
 check("agents-rule", agentsLine && agentsLine.text.indexOf("2 agents working · 0s") > 0);
 load = { runs: 0, childRuns: 0, continuations: 0 };
-check("agents-gone", events.bail("chat.rule", chat.view) === undefined);
+check("agents-gone", events.bail("chat.rule", chat) === undefined);
 // Working with two queued: the rule names the tool and the elapsed time, and the strip reads the queue once.
 answer = tool;
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
 await settle();
-const line = events.bail("chat.rule", chat.view);
+const line = events.bail("chat.rule", chat);
 check("rule-line", line && line.text.indexOf("bash · 1m05s · 2 queued") > 0 && line.text.indexOf("agent") < 0);
 load = { runs: 3, childRuns: 1, continuations: 0 };
-check("rule-line-agents", events.bail("chat.rule", chat.view).text.indexOf("bash · 1m05s · 2 queued · 1 agent ") > 0);
+check("rule-line-agents", events.bail("chat.rule", chat).text.indexOf("bash · 1m05s · 2 queued · 1 agent ") > 0);
 load = { runs: 0, childRuns: 0, continuations: 0 };
 check("queue-read-once", queueReads === 1);
-const strip = events.bail("chat.strip", chat.view);
+const strip = events.bail("chat.strip", chat);
 check("strip-rows", strip.length === 2 && strip[0].text === " ↳ first line…" && strip[1].text === " ↳ [image] look");
 check("working-status", status.side("right").indexOf("[█░░░░░] 20% context") >= 0);
 // The same count reads nothing again; a changed count reads once more.
@@ -73,7 +74,7 @@ check("dropped-first", dropped.length === 1 && dropped[0] === 11 && root.overlay
 answer = { ...tool, queued: 1 };
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
 await settle();
-check("changed-count-reads", queueReads === 2 && events.bail("chat.strip", chat.view).length === 1);
+check("changed-count-reads", queueReads === 2 && events.bail("chat.strip", chat).length === 1);
 // The strip folds a long queue into a count row.
 const many = stripRows([items[0], items[0], items[0], items[0]]);
 check("strip-folds", many.length === 3 && many[2].text === " ↳ … 2 more queued");
@@ -98,7 +99,7 @@ check("cost-cache-write", sessionCost({ input: 1000000, output: 0, reasoning: 0,
 // A peer that reports more cached tokens than input tokens leaves no fresh remainder to charge.
 check("cost-cache-over", sessionCost({ input: 100, output: 0, reasoning: 0, cache_read: 500, cache_write: 0 }, { input: 10, cache_read: 0 }) === 0);
 // With no session the reading describes the next chat: the default model's window and 0%.
-chat.newChat();
+showSession(chat, new Session());
 check("empty-reading", status.side("right").indexOf("[░░░░░░] 0% context") >= 0);
 check("queued-text", queuedText(items[1]) === "[image] look");
 // A new run restarts the elapsed time, and the same run keeps its start across a state with no start time.
@@ -110,12 +111,12 @@ check("agents-elapsed", indicatorLine("s1", idle, 66000, 3).indexOf("3 agents wo
 // A queue read that lands after the pane let the session go stays out, and the close clears both points.
 let land = null;
 client.sessionQueue = () => new Promise((resolve) => { land = resolve; });
-chat.open("s1");
+openSession(chat, "s1");
 answer = { ...tool, queued: 3 };
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
 answer = null;
-chat.newChat();
-check("close-forgets", events.bail("chat.strip", chat.view) === undefined && events.bail("chat.rule", chat.view) === undefined);
+showSession(chat, new Session());
+check("close-forgets", events.bail("chat.strip", chat) === undefined && events.bail("chat.rule", chat) === undefined);
 land({ items });
 await settle();
 check("late-read-ignored", queueOf("s1").length === 0);

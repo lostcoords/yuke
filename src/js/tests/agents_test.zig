@@ -334,5 +334,5 @@ test "dirty overflow refreshes a picker even beside unrelated index facts" {
     sink.on_event(sink.ctx, .{ .method = .notice, .params = .{ .notice = .{ .level = .info, .source = "bench", .message = "unrelated" } } });
     try host.pump();
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("picker.win.opts.title.includes('1 active') ? 1 : 0"));
-    try host.evalModule("picker.content.cancel(); chat.sessionId = null; chat.dispose();", "close.js");
+    try host.evalModule("picker.content.cancel(); chat.session.sessionId = null; chat.session.leave(chat);", "close.js");
 }

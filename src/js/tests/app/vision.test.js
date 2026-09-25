@@ -51,12 +51,12 @@ check("removed-images-are-quiet", notice.text.indexOf("reads no images") < 0);
 // An open session checks the model the patch sets, because the feed still names the old model.
 client.sessionPatch = async () => ({});
 feedOf().items.set("s1", { session: { id: "s1", model: "p/seeing" }, activity: null });
-chat.sessionId = "s1";
+chat.session.sessionId = "s1";
 chat.composer.text = "/a.png";
 attach();
 notice.clear();
 chooseModel(blind, "", "s1");
 check("open-session-warns", notice.text === "Blind reads no images");
-chat.sessionId = null;
+chat.session.sessionId = null;
 feedOf().items.delete("s1");
 clear();

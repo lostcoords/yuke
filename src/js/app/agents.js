@@ -2,7 +2,7 @@
 import { root } from "yuke:internal/core";
 import { client } from "yuke:internal/client";
 import { native } from "yuke:internal/native/engine";
-import { chats, currentChat } from "yuke:internal/chat";
+import { sessions, currentChat } from "yuke:internal/chat";
 import { notice } from "yuke:internal/notice";
 import { errorText } from "yuke:internal/format";
 import { tokenLabel } from "yuke:internal/catalog";
@@ -213,7 +213,7 @@ export function agents(options) {
             function rebuild(entry) {
                 const site = entry.view?.site;
                 if (!site) return;
-                for (const c of chats) if (c.sessionId === site.session_id) c.transcript.refreshRow(site.message_id, site.part_id);
+                for (const session of sessions) if (session.sessionId === site.session_id) for (const view of session.views) view.transcript.refreshRow(site.message_id, site.part_id);
                 root.invalidate();
             }
             /** @param {string} id */
@@ -263,8 +263,8 @@ export function agents(options) {
                     child_input_canceled: (source) => "Message from " + source.name + " · queued work canceled",
                 } });
 
-                ctx.tui.command(() => currentChat()?.sessionId != null, {
-                    "agents:open": () => { const id = currentChat()?.sessionId; if (id) openAgents(ctx, id).catch((error) => notice.show("agents · " + errorText(error))); },
+                ctx.tui.command(() => currentChat()?.session.sessionId != null, {
+                    "agents:open": () => { const id = currentChat()?.session.sessionId; if (id) openAgents(ctx, id).catch((error) => notice.show("agents · " + errorText(error))); },
                 }, { "agents:open": { title: "Agents", description: "open or stop child agents", slash: "agents" } });
             });
         },

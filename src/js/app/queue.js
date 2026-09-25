@@ -5,7 +5,7 @@ import { ui } from "yuke:internal/ui";
 import { client } from "yuke:internal/client";
 import { notice } from "yuke:internal/notice";
 import { inputSourceLabel } from "yuke:internal/transcript";
-import { chatOf, currentChat } from "yuke:internal/chat";
+import { currentChat } from "yuke:internal/chat";
 import { errorText } from "yuke:internal/format";
 
 /** @import { Context } from "yuke:internal/ext" */
@@ -131,23 +131,22 @@ export const queuePlugin = {
       });
 
       ctx.on("chat.strip", (view) => {
-        const c = chatOf(view);
-        return c && c.sessionId ? stripRows(queueOf(c.sessionId)) : null;
+        const id = view.session.sessionId;
+        return id ? stripRows(queueOf(id)) : null;
       });
 
       const hasQueue = () => {
-        const c = currentChat();
-        return c != null && c.sessionId != null && queueOf(c.sessionId).length > 0;
+        const id = currentChat()?.session.sessionId;
+        return id != null && queueOf(id).length > 0;
       };
       ctx.tui.command(hasQueue, {
         "queue:drop": () => {
-          const c = currentChat();
-          if (c && c.sessionId) openQueuePicker(ctx, c.sessionId);
+          const id = currentChat()?.session.sessionId;
+          if (id) openQueuePicker(ctx, id);
         },
         "queue:clear": () => {
-          const c = currentChat();
-          if (!c || !c.sessionId) return;
-          const id = c.sessionId;
+          const id = currentChat()?.session.sessionId;
+          if (!id) return;
           clearWorkQueue(id).then((result) => {
             notice.show("queue · removed " + result.removed + " · failed " + result.failed + " · protected " + result.protected);
           }, (error) => notice.show("cannot clear queue · " + errorText(error)));

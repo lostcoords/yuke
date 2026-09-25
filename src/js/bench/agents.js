@@ -1,9 +1,10 @@
 import { root, Node } from "yuke:internal/core";
+import { ChatView } from "yuke:internal/chat-view";
 import { events } from "yuke:internal/kernel";
 import { plugins, advice } from "yuke:internal/ext";
 import { tuiPlugin } from "yuke:internal/tui";
 import { client } from "yuke:internal/client";
-import { Chat } from "yuke:internal/chat";
+import { Session } from "yuke:internal/chat";
 import { openAgents } from "yuke:internal/agents-ui";
 
 /** @import { InjectContext } from "../app/types/ext.js" */
@@ -11,7 +12,7 @@ import { openAgents } from "yuke:internal/agents-ui";
 let context;
 /** @type {Awaited<ReturnType<typeof openAgents>>} */
 let picker;
-/** @type {Chat | undefined} */
+/** @type {ChatView | undefined} */
 let chat;
 let phase = "", count = 0, gets = 0, lists = 0, updates = 0, steps = 0;
 /** @type {(() => void) | undefined} */
@@ -34,12 +35,12 @@ async function open() {
 async function start(name, scale) {
   picker?.content.cancel();
   off?.();
-  if (chat) { chat.sessionId = null; chat.dispose(); }
+  if (chat) { chat.session.sessionId = null; chat.session.leave(chat); }
   phase = name; count = scale;
   if (phase === "engine_activity" || phase === "engine_activity_changed") return 1;
-  chat = new Chat();
-  root.setRoot(Node.leaf(chat.view)); root.focusView(chat.view);
-  chat.sessionId = AGENTS_ROOT;
+  chat = new ChatView(new Session());
+  root.setRoot(Node.leaf(chat)); root.focusView(chat);
+  chat.session.sessionId = AGENTS_ROOT;
   await open();
   gets = lists = updates = steps = 0;
   return 1;

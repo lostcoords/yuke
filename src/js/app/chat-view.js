@@ -1,15 +1,16 @@
 // Own the chat layout, composer, and presentation views.
 import { term } from "yuke:internal/native/term";
-import { text, root, claimView, releaseView, contains } from "yuke:internal/core";
-import { events } from "yuke:internal/kernel";
+import { text, root, claimView, releaseView, contains, copy } from "yuke:internal/core";
+import { config, events } from "yuke:internal/kernel";
 import { clip } from "yuke:internal/text-input";
 import { Composer } from "yuke:internal/ui";
 import { Transcript } from "yuke:internal/transcript";
 import { column, child, fixed, fit, grow, solve } from "yuke:internal/layout";
+import { pasteAttaches } from "yuke:internal/attach";
 
 /** @typedef {"composer" | "transcript"} ChatRegion */
 /** @typedef {{ text: string, group?: string }} StripRow */
-/** @typedef {{ partsOf?: PartsOf | null | undefined, partOf?: PartOf | null | undefined, partTextPage?: PartTextPage | null | undefined, onSelect?: ((text: string) => void) | null | undefined, onSubmit?: ((content: Wire.ContentPart[]) => boolean | void) | null | undefined, sessionId?: () => string | null }} ChatViewOptions */
+/** @import { Session } from "yuke:internal/chat" */
 /** @import { HostMouseEvent as MouseEvent, NavTarget, Rect, ViewLike as PresentationView } from "./types/core.js" */
 /** @import { LayoutNode, LayoutResult } from "./types/layout.js" */
 /** @typedef {{ bounds: Rect, empty: boolean, sessionId: string | null, composerRows: number, defaultLayout: LayoutNode }} PresentationContext */
@@ -20,15 +21,30 @@ import { column, child, fixed, fit, grow, solve } from "yuke:internal/layout";
 // A chat pane asks these points; the newest listener that answers wins, so a plugin can supply a value it does not own.
 events.declare(["chat.press", "chat.strip", "chat.presentation", "chat.rule", "chat.cursor"]);
 
+// A drag that ends copies the selection when the config asks; one function serves every view.
+/** @param {string} text @returns {void} */
+function copySelection(text) {
+  if (config.mouse.copyOnSelect) copy(text, "selection");
+}
+
 // The chat pane: a transcript above a composer in one leaf. Draw, layout, and mouse routing.
 export class ChatView {
-  /** @param {ChatViewOptions} [opts] */
-  constructor(opts = {}) {
+  // The view reads and sends through `session`; `showSession` moves it to another one.
+  /** @param {Session} session */
+  constructor(session) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this.transcript = new Transcript({ partsOf: opts.partsOf, partOf: opts.partOf, partTextPage: opts.partTextPage, onSelect: opts.onSelect });
-    this.composer = new Composer({ placeholder: "Message…", onSubmit: opts.onSubmit });
+    this.session = session;
+    session.views.add(this);
+    this.transcript = new Transcript({
+      partsOf: (id) => this.session.partsOf(id),
+      partOf: (id, partId, previous) => this.session.partOf(id, partId, previous),
+      partTextPage: (id, partId, field, offset, limit) => this.session.partTextPage(id, partId, field, offset, limit),
+      onSelect: copySelection,
+    });
+    this.composer = new Composer({ placeholder: "Message…", onSubmit: (content) => this.session.send(content, this.composer) });
+    // A pasted image path attaches here instead of staying text; every other paste keeps its old behavior.
+    this.composer.onPaste = (text, from) => pasteAttaches(this.composer, text, from);
     claimView(this.composer, this);
-    this.sessionId = opts.sessionId || (() => null);
     /** @type {{ provider: PresentationProvider, instance: PresentationInstance } | null} */
     this.presentation = null;
     /** @type {PresentationView[]} */
@@ -128,7 +144,7 @@ export class ChatView {
       child("rule", fixed(h > composerRows && w > 0 ? 1 : 0)),
       child("composer", fit(), { intrinsic: { w, h: composerRows } }),
     ]);
-    const context = { bounds, empty: this.transcript._messages.length === 0 && !this.transcript._active, sessionId: this.sessionId(), composerRows, defaultLayout };
+    const context = { bounds, empty: this.transcript._messages.length === 0 && !this.transcript._active, sessionId: this.session.sessionId, composerRows, defaultLayout };
     const provider = events.bail("chat.presentation", this, context);
     let tree = defaultLayout;
     try {

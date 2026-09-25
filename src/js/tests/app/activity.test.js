@@ -5,7 +5,7 @@ import { plugins } from "yuke:internal/ext";
 import { client } from "yuke:internal/client";
 import { feedOf } from "yuke:internal/sessions";
 import { activityOf, isWorking } from "yuke:internal/activity";
-import { chatEntry } from "yuke:internal/chat";
+import { chatEntry, Session, openSession } from "yuke:internal/chat";
 import { chat } from "yuke:internal/defaults";
 const idle = { state: { type: "idle" }, queued: 0, context_usage: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, pending_compaction: null };
 const streaming = { ...idle, state: { type: "streaming", run_id: 1, started_at_ms: 5 }, queued: 2 };
@@ -18,8 +18,8 @@ client.sessionCancelRun = (id, clear) => { cancels.push([id, clear]); return Pro
 feedOf().seed({ items: [{ session: { id: "s1", model: "m", updated_at_ms: 1 }, activity: idle }] });
 const seen = [];
 events.on("activity.changed", (id, a) => seen.push(id + ":" + (a ? a.state.type : "null")));
-root.focusView(chat.view);
-chat.open("s1");
+root.focusView(chat);
+openSession(chat, "s1");
 check("open-reads", reads === 1 && isWorking(activityOf("s1")) && activityOf("s1").queued === 2);
 check("entry-overlays", chatEntry().activity === streaming && chatEntry().session.model === "m");
 // A quiet digest without the fact costs no read; one with the fact reads once.
@@ -38,7 +38,7 @@ events.emit("session.changed", { type: "session", session: "s1", kind: "gone", f
 check("gone-forgets", activityOf("s1") === null);
 check("events", seen.join(",") === "s1:streaming,s1:idle,s1:null,s1:streaming,s1:null");
 // An interrupt stops the run and never clears the queue.
-chat.sessionId = "s1";
-chat.interrupt();
+chat.session.sessionId = "s1";
+chat.session.interrupt();
 check("interrupt-keeps-queue", cancels.length === 1 && cancels[0][0] === "s1" && cancels[0][1] === undefined);
 plugins.dispose("activity");

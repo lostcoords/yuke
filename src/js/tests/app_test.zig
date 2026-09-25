@@ -210,9 +210,9 @@ test "navigation after initial admission neither sends twice nor closes an unown
     const host = support.createHostWith(std.testing.io, "/work");
     defer support.destroyHost(host);
     try support.eval(host, "app/navigation.test.js");
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.submitted && globalThis.firstInput === 'first task' && globalThis.chat.sessionId === null"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.submitted && globalThis.firstInput === 'first task' && globalThis.chat.session.sessionId === null"));
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.closes + globalThis.sends"));
-    try host.eval("globalThis.chat.dispose()", "dispose.js");
+    try host.eval("globalThis.chat.session.leave(globalThis.chat)", "dispose.js");
 }
 
 test "refresh shares callers through follow-up reads and refusals" {

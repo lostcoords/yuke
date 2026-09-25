@@ -8,7 +8,8 @@ import { commandUi } from "yuke:internal/command-ui";
 import { modelCatalog } from "yuke:internal/catalog";
 import { jobsUiPlugin } from "yuke:internal/jobs-ui";
 import { authPlugin } from "yuke:internal/auth";
-import { Chat, chatEntry, chatPlugin, currentChat } from "yuke:internal/chat";
+import { Session, chatEntry, chatPlugin, currentChat, openSession, showSession } from "yuke:internal/chat";
+import { ChatView } from "yuke:internal/chat-view";
 import { client } from "yuke:internal/client";
 import { attachClipboard } from "yuke:internal/attach";
 import { activityMark, feedOf, sessionsPlugin } from "yuke:internal/sessions";
@@ -22,24 +23,24 @@ import { quitGuard } from "yuke:internal/quit";
 /** @import { InjectContext } from "./types/ext.js" */
 /** @import { Context } from "yuke:internal/ext" */
 
-// The first chat pane. A split adds another, and each pane drives its own session.
-const chat = new Chat();
+// The first chat pane. A split adds another, and each pane starts on its own new session.
+const chat = new ChatView(new Session());
 
-// Split the focused pane into a new chat. A tree with no active leaf keeps no orphan chat.
+// Split the focused pane into a new chat. A tree with no active leaf keeps no orphan session.
 /** @param {"row" | "col"} kind @returns {void} */
 function splitChat(kind) {
-  const c = new Chat();
-  if (!root.split(kind, c.view)) c.dispose();
+  const view = new ChatView(new Session());
+  if (!root.split(kind, view)) view.session.leave(view);
 }
 
 // Run `fn` on the chat a command acts on. A tree with no chat pane runs nothing.
-/** @param {(c: Chat) => void} fn @returns {void} */
+/** @param {(c: ChatView) => void} fn @returns {void} */
 function withChat(fn) {
   const c = currentChat();
   if (c) fn(c);
 }
 
-const workspace = Node.leaf(chat.view);
+const workspace = Node.leaf(chat);
 
 // A session finder reads the sessions, fuzzy-searches them by title, then opens one; this is the only place the session list appears, so nothing keeps it on screen.
 /** @param {InjectContext} ctx @returns {null} */
@@ -64,7 +65,7 @@ function openSessionFinder(ctx) {
       format: r => ({ text: r.title, right: activityMark(activityOf(r.id) || r.activity) }),
       onAccept: r => {
         const c = currentChat();
-        if (c) c.open(r.id);
+        if (c) openSession(c, r.id);
       },
     });
     ctx.tui.overlay(p.win);
@@ -84,8 +85,8 @@ plugins.use({
       ctx.tui.status({ side: "right", order: -1, render: () => keymap.pendingLabel() });
 
       // The interrupt command is available only with a session open.
-      ctx.tui.command(() => { const c = currentChat(); return c != null && c.sessionId != null; }, {
-        "session:interrupt": () => withChat(c => c.interrupt()),
+      ctx.tui.command(() => currentChat()?.session.sessionId != null, {
+        "session:interrupt": () => withChat(c => c.session.interrupt()),
       }, {
         "session:interrupt": { title: "Interrupt", description: "stop the run", slash: "interrupt" },
       });
@@ -101,7 +102,10 @@ plugins.use({
         "window:split-right": () => splitChat("row"),
         "window:split-down": () => splitChat("col"),
         "window:close": () => root.close(),
-        "chat:new": () => withChat(c => c.newChat()),
+        "chat:new": () => withChat(c => {
+          showSession(c, new Session());
+          root.focusView(c);
+        }),
         "chat:paste-image": () => withChat(c => { attachClipboard(c.composer); }),
         "debug:memory": () => {
           const m = client.memoryUsage();
@@ -158,6 +162,6 @@ plugins.use(cachePlugin);
 plugins.use(quitGuard);
 
 root.setRoot(workspace);
-root.focusView(chat.view);
+root.focusView(chat);
 
 export { chat, openSessionFinder };

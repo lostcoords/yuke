@@ -1,19 +1,19 @@
 // The chat pane, the session it drives, and the pickers that read its transcript.
-import { root, copy, command } from "yuke:internal/core";
-import { config, events } from "yuke:internal/kernel";
+import { root, command } from "yuke:internal/core";
+import { events } from "yuke:internal/kernel";
 import { term } from "yuke:internal/native/term";
 import { ui, Text } from "yuke:internal/ui";
 import { column, child, fixed, grow } from "yuke:internal/layout";
-import { ChatView } from "yuke:internal/chat-view";
 import { client } from "yuke:internal/client";
 import { notice } from "yuke:internal/notice";
 import { feedItem } from "yuke:internal/sessions";
 import { activityOf, refreshActivity } from "yuke:internal/activity";
 import { catalogOf, modelOf, reloadCatalog, chooseModel, defaultModel, providerState, providerStateLabel } from "yuke:internal/catalog";
-import { pasteAttaches } from "yuke:internal/attach";
 import { errorText } from "yuke:internal/format";
 
-/** @import { PresentationContext } from "yuke:internal/chat-view" */
+/** @import { ChatView, PresentationContext } from "yuke:internal/chat-view" */
+/** @import { Composer } from "yuke:internal/ui" */
+/** @import { MessagePart } from "yuke:internal/native/engine" */
 /** @import { InjectContext } from "./types/ext.js" */
 /** @import { Context } from "yuke:internal/ext" */
 /** @typedef {Wire.CreateSession} CreateSessionDraft */
@@ -34,58 +34,58 @@ export function soleText(content) {
   return only && only.type === "text" ? only.text : null;
 }
 
-// One chat pane and the session it drives. Each pane owns its own view, transcript and session.
-export class Chat {
+// One engine session in the TUI: its id, its pin, and the views that show it. A draft has no id until its first input creates one.
+export class Session {
   constructor() {
-    // Use open or newChat to change the session and its native pin.
+    // Use open, or show a view another session, to change the id and its native pin.
     /** @type {string | null} */
     this.sessionId = null;
     this.creating = false;
     this.gen = 0;
-    this.view = new ChatView({
-      partsOf: id => (this.sessionId ? client.sessionParts(this.sessionId, id) : []),
-      partOf: (id, partId, previous) => (this.sessionId ? client.sessionPart(this.sessionId, id, partId, previous) : null),
-      partTextPage: (id, partId, field, offset, limit) => (this.sessionId ? client.partTextPage(this.sessionId, id, partId, field, offset, limit) : { text: "", next: null }),
-      onSubmit: content => this.send(content),
-      onSelect: text => {
-        if (config.mouse.copyOnSelect) copy(text, "selection");
-      },
-      sessionId: () => this.sessionId,
-    });
-    // A pasted image path attaches here instead of staying text; every other paste keeps its old behavior.
-    this.composer.onPaste = (text, from) => pasteAttaches(this.composer, text, from);
-    CHAT_OF.set(this.view, this);
-    chats.add(this);
+    /** @type {Set<ChatView>} */
+    this.views = new Set();
+    sessions.add(this);
   }
 
-  get transcript() {
-    return this.view.transcript;
+  /** @param {number} id @returns {readonly MessagePart[]} */
+  partsOf(id) {
+    return this.sessionId ? client.sessionParts(this.sessionId, id) : [];
   }
 
-  get composer() {
-    return this.view.composer;
+  /** @param {number} id @param {number} partId @param {MessagePart} [previous] @returns {MessagePart | null} */
+  partOf(id, partId, previous) {
+    return this.sessionId ? client.sessionPart(this.sessionId, id, partId, previous) : null;
   }
 
-  // Open a session in this pane. The engine counts the pins, so one open owes exactly one close.
-  /** @param {string} id */
+  /** @param {number} id @param {number} partId @param {string} field @param {number} [offset] @param {number} [limit] @returns {{ text: string, next: number | null }} */
+  partTextPage(id, partId, field, offset, limit) {
+    return this.sessionId ? client.partTextPage(this.sessionId, id, partId, field, offset, limit) : { text: "", next: null };
+  }
+
+  // Pin `id` and show it in every view. The engine counts pins, so one open owes exactly one release. False when the engine refuses.
+  /** @param {string} id @returns {boolean} */
   open(id) {
-    if (this.sessionId === id) return this.reload(); // already pinned by this pane
-    // A second pane on one session must not lose it, so a later open cannot reuse a stale creation.
+    if (this.sessionId === id) {
+      this.reload();
+      return true;
+    }
+    // A later open cannot reuse a stale creation.
     this.gen++;
     this.creating = false;
     if (!client.sessionOpen(id)) {
       notice.show("open failed · session unavailable");
       root.invalidate();
-      return;
+      return false;
     }
-    if (this.sessionId) this.release();
+    this.release();
     this.sessionId = id;
     refreshActivity(id);
     // Message ids repeat across sessions, so the old render must go before the new outline lands.
-    this.transcript.setOutline([], null);
+    for (const view of this.views) view.transcript.setOutline([], null);
     this.reload();
     this.checkContext(id);
     notifyCurrent();
+    return true;
   }
 
   // Tell the user once per open when the files behind the stored snapshots changed. The user decides on /reload.
@@ -93,7 +93,7 @@ export class Chat {
   checkContext(id) {
     const token = this.gen;
     client.sessionCheckContext(id).then((item) => {
-      // A later open or new chat moves the generation, so a slow answer for an earlier open stays silent.
+      // A later open moves the generation, so a slow answer for an earlier open stays silent.
       if (token !== this.gen || this.sessionId !== id) return;
       const changes = item.context_changes;
       if (!changes || (!changes.instructions && !changes.skills)) return;
@@ -103,37 +103,26 @@ export class Chat {
     }).catch(() => {});
   }
 
-  // Send composer content into the open session, or return false so the composer keeps it.
-  /** @param {readonly Wire.ContentPart[]} content @returns {boolean} */
-  send(content) {
+  // Send composer content into the session, or return false so the composer keeps it. A failure restores that composer.
+  /** @param {readonly Wire.ContentPart[]} content @param {Composer} composer @returns {boolean} */
+  send(content, composer) {
     const text = soleText(content);
     const invocation = text === null ? null : parseSkillLine(text);
-    if (!this.sessionId) return this.startChat(invocation ? { type: "skill", name: invocation.name, ...(invocation.args ? { arguments: invocation.args } : {}) } : { type: "content", content });
-    const snap = this.composer.snapshot();
+    if (!this.sessionId) return this.startChat(invocation ? { type: "skill", name: invocation.name, ...(invocation.args ? { arguments: invocation.args } : {}) } : { type: "content", content }, composer);
+    const snap = composer.snapshot();
     const sent = invocation ? client.sessionSendSkill(this.sessionId, invocation.name, invocation.args) : client.sessionSendInput(this.sessionId, content);
     sent.catch((e) => {
-      this.composer.restore(snap);
+      composer.restore(snap);
       notice.show("send failed · " + errorText(e));
     });
     return true;
   }
 
-  // The model this chat's next input goes to: the open session's own, or the default a new chat takes.
+  // The model the next input goes to: the session's own, or the default a new chat takes.
   /** @returns {string} */
   modelSelector() {
     const item = this.sessionId ? feedItem(this.sessionId) : null;
     return (item && item.session.model) || defaultModel().model || "";
-  }
-
-  // Warn when the images now in the composer will not reach the model the next input goes to.
-  /** @param {string} [selector] @returns {void} */
-  checkVision(selector = this.modelSelector()) {
-    if (!this.composer.hasImages()) return;
-    const model = selector === "" ? null : modelOf(selector);
-    // An unknown model, and one whose catalog entry says nothing, never raise a warning.
-    if (!model || model.supports_vision !== false) return;
-    notice.show(model.name + " reads no images");
-    root.invalidate();
   }
 
   // Stop the run and keep the queue, so an interrupt never drops a message the user already typed.
@@ -142,31 +131,32 @@ export class Chat {
     client.sessionCancelRun(this.sessionId).catch(() => {});
   }
 
-  // Re-pull the outline on a structural change; a closed session must not empty the pane.
-  reload() {
+  // Re-pull the outline into `views` on a structural change; a closed session must not empty them.
+  /** @param {Iterable<ChatView>} [views] */
+  reload(views = this.views) {
     if (!this.sessionId) return;
     const o = client.sessionOutline(this.sessionId);
     if (!o || !Array.isArray(o.messages)) return;
-    this.transcript.setOutline(o.messages, o.active || null);
+    for (const view of views) view.transcript.setOutline(o.messages, o.active || null);
     root.invalidate();
   }
 
   // A draft delta: re-wrap only the streaming message `id`, or only its part `partId` when the digest names one.
   /** @param {number} id @param {number} [partId] */
   active(id, partId) {
-    this.transcript.setActive(id, partId);
+    for (const view of this.views) view.transcript.setActive(id, partId);
     root.invalidate();
   }
 
   // Accept the session and first input together, then open the accepted session. The composer takes the input back on failure.
-  /** @param {Wire.Input} input @returns {boolean} */
-  startChat(input) {
+  /** @param {Wire.Input} input @param {Composer} composer @returns {boolean} */
+  startChat(input, composer) {
     if (this.creating) return false;
     if (!term.cwd) {
       notice.show("no workspace directory");
       return false;
     }
-    const snap = this.composer.snapshot();
+    const snap = composer.snapshot();
     const d = defaultModel();
     const params = /** @type {CreateSessionDraft} */ ({ workspace_path: term.cwd, ...(d.model ? { model: d.model } : {}), ...(d.reasoning ? { reasoning: d.reasoning } : {}), initial_input: input });
     const token = ++this.gen;
@@ -174,15 +164,15 @@ export class Chat {
     client
       .sessionCreate(params)
       .then((r) => {
-        // Navigation changes the pane; accepted work still belongs to the new session.
+        // Navigation leaves this draft; accepted work still belongs to the new session.
         if (token !== this.gen) return null;
         this.open(r.session.id);
         return null;
       })
       .catch((e) => {
-        // A cancelled create must not restore an input into a pane the user already moved on from.
+        // A cancelled create must not restore an input into a view the user already moved on from.
         if (token !== this.gen) return;
-        this.composer.restore(snap);
+        composer.restore(snap);
         notice.show("new chat failed · " + errorText(e));
       })
       .then(() => {
@@ -191,27 +181,15 @@ export class Chat {
     return true;
   }
 
-  // Leave the open session and show an empty pane; the engine creates a session on the next message.
-  newChat() {
-    this.gen++;
-    this.creating = false;
-    this.release();
-    this.sessionId = null;
-    this.transcript.setOutline([], null);
-    root.focusView(this.view);
-    root.invalidate();
-    notifyCurrent();
-  }
-
-  // The engine lost the session. Clear the pane back to the placeholder.
+  // The engine lost the session. Clear its views back to the placeholder.
   sessionGone() {
     this.sessionId = null;
-    this.transcript.setOutline([], null);
+    for (const view of this.views) view.transcript.setOutline([], null);
     root.invalidate();
     notifyCurrent();
   }
 
-  // Drop this pane's pin. The engine counts pins, so a second pane on the same session keeps it.
+  // Drop the pin. The engine counts pins, so an unrelated open of the same id elsewhere keeps it.
   release() {
     if (!this.sessionId) return;
     const id = this.sessionId;
@@ -220,40 +198,72 @@ export class Chat {
     refreshActivity(id);
   }
 
-  // The pane left the tree, so the session goes and the chat leaves the registry.
-  dispose() {
-    this.view.clearPresentation();
+  // A view stops showing this session. The last view releases the pin and takes the session out of the registry.
+  /** @param {ChatView} view */
+  leave(view) {
+    this.views.delete(view);
+    if (this.views.size !== 0) return;
     this.gen++;
     this.creating = false;
     this.release();
     this.sessionId = null;
-    chats.delete(this);
-    CHAT_OF.delete(this.view);
-    if (current === this) current = null;
-    notifyCurrent();
+    sessions.delete(this);
   }
 }
 
-// Every live chat pane, so an event reaches each pane that shows the session it names.
-/** @type {Set<Chat>} */
-export const chats = new Set();
+// Every live session, drafts too, so an event reaches each session it names once, however many views show it.
+/** @type {Set<Session>} */
+export const sessions = new Set();
 
-// The Chat that owns a view, so a pane in the tree leads back to its session.
-/** @type {WeakMap<object, Chat>} */
-const CHAT_OF = new WeakMap();
+// A chat pane is a view that shows a session. A custom view joins by holding one.
+/** @param {unknown} view @returns {view is ChatView} */
+function isChat(view) {
+  return /** @type {{ session?: unknown } | null} */ (view)?.session instanceof Session;
+}
 
-/** @param {unknown} view @returns {Chat | null} */
-export function chatOf(view) {
-  if (!view) return null;
-  return CHAT_OF.get(/** @type {object} */ (view)) || null;
+// Show `session` in `view`. The old session leaves, and its last view releases it.
+/** @param {ChatView} view @param {Session} session @returns {void} */
+export function showSession(view, session) {
+  if (view.session === session) return;
+  view.session.leave(view);
+  view.session = session;
+  session.views.add(view);
+  // Message ids repeat across sessions, so the old render must go before the new outline lands.
+  // Only the joining view loads it, so a view already on the session keeps its selection.
+  view.transcript.setOutline([], null);
+  session.reload([view]);
+  root.invalidate();
+  notifyCurrent();
+}
+
+// Open session `id` in `view`. A view on the same id already holds it, so the two share one session and one pin.
+/** @param {ChatView} view @param {string} id @returns {void} */
+export function openSession(view, id) {
+  for (const held of sessions) {
+    if (held.sessionId === id) return showSession(view, held);
+  }
+  const session = new Session();
+  if (session.open(id)) showSession(view, session);
+  else sessions.delete(session);
+}
+
+// Warn when the images in a view's composer will not reach the model its next input goes to.
+/** @param {ChatView} view @param {string} [selector] @returns {void} */
+function checkVision(view, selector = view.session.modelSelector()) {
+  if (!view.composer.hasImages()) return;
+  const model = selector === "" ? null : modelOf(selector);
+  // An unknown model, and one whose catalog entry says nothing, never raise a warning.
+  if (!model || model.supports_vision !== false) return;
+  notice.show(model.name + " reads no images");
+  root.invalidate();
 }
 
 // The current chat: the chat pane that had focus last and is still in the tree. Session commands, the status bar,
 // and `chat.current.changed` all read it, so a focused pane that is not a chat, such as a panel, leaves it in place.
-/** @type {Chat | null} */
+/** @type {ChatView | null} */
 let current = null;
 
-/** @returns {Chat | null} */
+/** @returns {ChatView | null} */
 export function currentChat() {
   return current;
 }
@@ -264,28 +274,27 @@ let announced = null;
 
 // Announce a change of the current session once, so a repeat open of the same session stays quiet.
 function notifyCurrent() {
-  const id = current?.sessionId ?? null;
+  const id = current?.session.sessionId ?? null;
   if (id === announced) return;
   announced = id;
   events.emit("chat.current.changed");
 }
 
 events.on("pane.focused", (view) => {
-  const chat = chatOf(view);
-  if (!chat) return;
-  current = chat;
+  if (!isChat(view)) return;
+  current = view;
   notifyCurrent();
 });
 
 // A closed current chat hands over to the focused chat, else to the first chat left in the tree.
 events.on("pane.closed", (view) => {
-  if (current && current.view !== view) return;
-  current = chatOf(root.active);
-  if (!current && root.root_node) {
-    for (const leaf of root.root_node.leaves()) {
-      current = chatOf(leaf.shape.type === "leaf" ? leaf.shape.view : null);
-      if (current) break;
-    }
+  if (current && current !== view) return;
+  current = null;
+  const candidates = root.root_node ? [root.active, ...root.root_node.leaves().map((leaf) => (leaf.shape.type === "leaf" ? leaf.shape.view : null))] : [];
+  for (const candidate of candidates) {
+    if (!isChat(candidate)) continue;
+    current = candidate;
+    break;
   }
   notifyCurrent();
 });
@@ -293,11 +302,11 @@ events.on("pane.closed", (view) => {
 // The current chat's entry with the live activity, or null with no open session.
 /** @returns {FeedItem | null} */
 export function chatEntry() {
-  const c = current;
-  if (!c || !c.sessionId) return null;
-  const item = feedItem(c.sessionId);
+  const id = current?.session.sessionId;
+  if (!id) return null;
+  const item = feedItem(id);
   if (!item) return null;
-  const activity = activityOf(c.sessionId);
+  const activity = activityOf(id);
   return activity ? { session: item.session, activity } : item;
 }
 
@@ -315,7 +324,7 @@ function openModelPicker(ctx, query) {
     if (query) {
       const m = models.find((x) => x.selector === query || x.id === query || x.name === query);
       if (m) {
-        if (modelAvailable(m)) chooseModel(m, m.default_reasoning || m.reasoning_levels[0] || "", chat.sessionId);
+        if (modelAvailable(m)) chooseModel(m, m.default_reasoning || m.reasoning_levels[0] || "", chat.session.sessionId);
       }
       else notice.show("no model named " + query);
       return;
@@ -337,7 +346,7 @@ function openModelPicker(ctx, query) {
         return label ? { text: m.name, right: m.provider + " · " + label, group: "UIDim" } : { text: m.name, right: m.provider };
       },
       onAccept: m => {
-        if (modelAvailable(m)) pickReasoning(ctx, m, chat.sessionId);
+        if (modelAvailable(m)) pickReasoning(ctx, m, chat.session.sessionId);
       },
     });
     ctx.tui.overlay(p.win);
@@ -401,36 +410,40 @@ export const chatPlugin = {
         };
       });
       // The composer owns its own attachments, so each pane answers for the model it sends to.
-      ctx.on("composer.attached", () => { for (const c of chats) c.checkVision(); });
+      ctx.on("composer.attached", () => { for (const session of sessions) for (const view of session.views) checkVision(view); });
       // The feed reads the patch back later, so a pane on the patched session checks the new model directly.
       ctx.on("model.changed", (ev) => {
-        for (const c of chats) c.checkVision(ev.sessionId !== null && c.sessionId === ev.sessionId ? ev.model.selector : c.modelSelector());
+        for (const session of sessions) {
+          const selector = ev.sessionId !== null && session.sessionId === ev.sessionId ? ev.model.selector : session.modelSelector();
+          for (const view of session.views) checkVision(view, selector);
+        }
       });
 
-      // Two panes can show one session, so the event reaches every pane that names it.
-      ctx.on("session.changed", (ev => {
+      // Views on one session share it, so the event reaches that session once and it updates every view.
+      ctx.on("session.changed", (ev) => {
         // A quiet digest changes only state outside the transcript.
-        if (!ev || ev.kind === "quiet") return;
-        for (const c of chats) {
-          if (c.sessionId !== ev.session) continue;
-          if (ev.kind === "gone") c.sessionGone();
-          else if (ev.kind === "active") c.active(/** @type {number} */ (ev.id), ev.part);
-          else c.reload();
+        if (ev.kind === "quiet") return;
+        for (const session of sessions) {
+          if (session.sessionId !== ev.session) continue;
+          if (ev.kind === "gone") session.sessionGone();
+          else if (ev.kind === "active") session.active(/** @type {number} */ (ev.id), ev.part);
+          else session.reload();
         }
-      }));
+      });
 
-      // A closed pane must drop its pin, or the engine never evicts the session.
-      ctx.on("pane.closed", view => {
-        const c = chatOf(view);
-        if (c) c.dispose();
+      // A closed pane leaves its session, and the last view releases the pin, or the engine never evicts it.
+      ctx.on("pane.closed", (view) => {
+        if (!isChat(view)) return;
+        view.clearPresentation();
+        view.session.leave(view);
       });
 
       ctx.tui.command(null, {
         "model:pick": (/** @type {string | undefined} */ query) => openModelPicker(ctx, query),
         "context:reload": () => {
-          const c = current;
-          if (!c || !c.sessionId) return notice.show("no open chat");
-          client.sessionReloadContext(c.sessionId).then((r) => {
+          const id = current?.session.sessionId;
+          if (!id) return notice.show("no open chat");
+          client.sessionReloadContext(id).then((r) => {
             notice.show("Context reloaded: " + r.instruction_sources.length + " AGENTS.md, " + r.skills.length + " skills.");
             root.invalidate();
           }).catch((e) => {
@@ -438,9 +451,9 @@ export const chatPlugin = {
           });
         },
         "context:compact": () => {
-          const c = current;
-          if (!c || !c.sessionId) return notice.show("no open chat");
-          client.sessionCompact(c.sessionId).then((r) => {
+          const id = current?.session.sessionId;
+          if (!id) return notice.show("no open chat");
+          client.sessionCompact(id).then((r) => {
             notice.show(r.status === "started" ? "Compacting the context." : "Compaction waits for the active run.");
             root.invalidate();
           }).catch((e) => {

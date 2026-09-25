@@ -2,10 +2,11 @@
 import { command, keymap, root } from "yuke:internal/core";
 import { ui } from "yuke:internal/ui";
 import { fuzzyRank } from "yuke:internal/fzy";
-import { Chat, currentChat, soleText } from "yuke:internal/chat";
+import { Session, currentChat, soleText } from "yuke:internal/chat";
 
 /** @import { Context } from "yuke:internal/ext" */
-/** @import { Picker, Window } from "yuke:internal/ui" */
+/** @import { Composer, Picker, Window } from "yuke:internal/ui" */
+/** @import { ChatView } from "yuke:internal/chat-view" */
 /** @import { CommandListing } from "./types/core.js" */
 /** @import { Border, ListItem, PickOptions } from "./types/ui.js" */
 /** @typedef {CommandListing & { hint: string }} Entry */
@@ -79,10 +80,10 @@ export function commandUi(cfg = {}) {
 
     ctx.inject(["tui"], (ctx) => {
       // One float, for the composer that has the focus.
-      /** @type {{ chat: Chat, picker: Picker<Entry>, win: Window, query: string } | null} */
+      /** @type {{ chat: ChatView, picker: Picker<Entry>, win: Window, query: string } | null} */
       let float = null;
       // The text Escape dismissed in one chat. That menu stays closed until its text changes.
-      /** @type {{ chat: Chat, text: string } | null} */
+      /** @type {{ chat: ChatView, text: string } | null} */
       let dismissed = null;
 
       const close = () => {
@@ -92,12 +93,12 @@ export function commandUi(cfg = {}) {
       };
 
       // Replace the composer text with the word. A command with an argument gets the space that starts it.
-      /** @param {Chat} chat @param {Entry | null} e @returns {void} */
+      /** @param {ChatView} chat @param {Entry | null} e @returns {void} */
       const complete = (chat, e) => {
         if (e) chat.composer.text = "/" + e.slash + (e.args ? " " : "");
       };
 
-      /** @param {Chat} chat @param {Entry[]} ranked @param {number} col @param {string} query @returns {void} */
+      /** @param {ChatView} chat @param {Entry[]} ranked @param {number} col @param {string} query @returns {void} */
       const open = (chat, ranked, col, query) => {
         const p = ui.select(ranked, {
           name: "slash",
@@ -137,7 +138,7 @@ export function commandUi(cfg = {}) {
       const sync = () => {
         const chat = currentChat();
         // `root.focused` is the composer's view only with no modal above it, so a float never opens under a dialog.
-        const typing = chat && root.focused === chat.view && chat.view.focus === "composer";
+        const typing = chat && root.focused === chat && chat.focus === "composer";
         const line = typing ? parseSlash(chat.composer.text) : null;
         const held = chat && dismissed && dismissed.chat === chat && dismissed.text === chat.composer.text;
         if (!chat || !line || line.complete || held) return close();
@@ -159,11 +160,11 @@ export function commandUi(cfg = {}) {
       ctx.on("pane.closed", sync);
 
       // A submitted slash line runs its command with the rest as the argument; any other text is a message.
-      ctx.advise(Chat.prototype, "send", "around", /** @param {(content: readonly Wire.ContentPart[]) => boolean} next @param {readonly Wire.ContentPart[]} content */ (next, content) => {
+      ctx.advise(Session.prototype, "send", "around", /** @param {(content: readonly Wire.ContentPart[], composer: Composer) => boolean} next @param {readonly Wire.ContentPart[]} content @param {Composer} composer */ (next, content, composer) => {
         const text = soleText(content);
         const line = text === null ? null : parseSlash(text);
         const e = line ? slashEntries(entries()).find((c) => c.slash === line.word) : null;
-        if (!e || !run(e, /** @type {SlashLine} */ (line).rest)) return next(content);
+        if (!e || !run(e, /** @type {SlashLine} */ (line).rest)) return next(content, composer);
         return true;
       }, { name: "slash" });
 

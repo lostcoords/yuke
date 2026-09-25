@@ -1,9 +1,9 @@
 import { check, textParts } from "yuke:internal/test";
+import { ChatView } from "yuke:internal/chat-view";
 import { term } from "yuke:internal/native/term";
 import { root, Node, keymap, command } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
-import { Chat } from "yuke:internal/chat";
-import { client } from "yuke:internal/client";
+import { Session } from "yuke:internal/chat";
 import { transcriptVim } from "yuke:internal/transcript-vim";
 import { register } from "yuke:internal/vim";
 import { tuiPlugin } from "yuke:internal/tui";
@@ -14,12 +14,8 @@ const key = (code, char) => ({ type: "key", code: code || "char", char: char || 
 const body = { a1: "alpha **bravo** charlie delta" };
 let copied = null;
 term.copy = (x) => { copied = x; return x.length; };
-// A chat reads its parts through the client, so the test serves them for its session.
-const partsOf = textParts((id) => body[id] || "");
-client.sessionParts = (_session, id) => partsOf(id);
-const chat = new Chat();
-chat.sessionId = "s1";
-const v = chat.view;
+// The view reads its parts through its session, so the test's session serves them.
+const v = new ChatView(Object.assign(new Session(), { partsOf: textParts((id) => body[id] || "") }));
 v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
 root.setRoot(Node.leaf(v));
 v.rect = { x: 0, y: 0, w: 24, h: 18 }; v.layout(v.rect);
