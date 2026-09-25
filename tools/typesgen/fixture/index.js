@@ -3,6 +3,8 @@ import { defineConfig, plugins, fs, exec } from "yuke";
 import { ui } from "yuke/ui";
 import { labels } from "yuke/chat";
 import { agents } from "yuke/plugins";
+// @ts-expect-error Internal modules stay private; the loader rejects them too.
+import { scopeOf } from "yuke:ext";
 
 /** @type {import("yuke").Plugin} */
 const demo = {
@@ -25,6 +27,10 @@ labels.role;
 fs.readFile("x", "/tmp");
 // @ts-expect-error A label names an engine source type.
 plugins.use({ name: "x", apply(ctx) { ctx.inject(["tui"], (c) => c.tui.labels({ sources: { run_interrupted: () => "" } })); } });
+// @ts-expect-error The host owns the event entry point.
+onEvent;
+// @ts-expect-error An internal namespace is not a global.
+$ext;
 // @ts-expect-error The config has no agents key; agent limits belong to the agents plugin.
 defineConfig({ agents: {} });
 export default defineConfig({ mouse: { scrollLines: 5 } });

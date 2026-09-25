@@ -8,10 +8,10 @@ description = "Type-check the app JavaScript, the generated contracts, and the p
 run = ["tsc -p src/js/app/tsconfig.json --noEmit", "tsc -p bench/tsconfig.json --noEmit", "tsc -p tools/protogen/tsconfig.json --noEmit", "tsc -p tools/typesgen/tsconfig.json", "tsc -p tools/typesgen/fixture/tsconfig.json"]
 
 [tasks.types]
-description = "Generate the plugin API declarations in src/js/app/generated/yuke.d.ts"
+description = "Generate the plugin API declarations in src/js/app/generated"
 run = """
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 tsc -p src/js/app/tsconfig.decl.json --outDir "$out"
-node tools/typesgen/main.ts "$out" src/js/app/generated/yuke.d.ts
+node tools/typesgen/main.ts "$out" src/js/app/generated
 """

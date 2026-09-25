@@ -46,7 +46,7 @@ jobs:
 
       # A change to the plugin API must commit the regenerated declarations.
       - name: Check the plugin declarations
-        run: mise run types && git diff --exit-code src/js/app/generated/yuke.d.ts
+        run: mise run types && git add --intent-to-add src/js/app/generated && git diff --exit-code src/js/app/generated
 
   # Only this job runs the macOS code. Ten files branch on the host system.
   # zio selects kqueue there, and lib/term/tty_posix.zig has a Darwin path.
