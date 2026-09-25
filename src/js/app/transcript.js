@@ -9,7 +9,7 @@ import { byteLabel } from "yuke:format";
 
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
 /** @import { ItemKey, Segment, TranscriptRow } from "./types/pager.js" */
-/** @import { ActionEntry, ActionPlan, MessageDescriptor, PartCache, PartHit, PartOf, PartState, Position, Presenter, RowCache, Selection, SelectionAnchors, SelectionRange, ToolLabel, TranscriptOptions } from "./types/transcript.js" */
+/** @import { ActionEntry, ActionPlan, MessageDescriptor, PartCache, PartHit, PartOf, PartState, Position, Presenter, RowCache, Selection, SelectionAnchors, SelectionRange, ToolLabel, TranscriptOptions, SourceLabels } from "./types/transcript.js" */
 /** @import { MessagePart } from "yuke:engine-native" */
 /** @import { Block } from "./types/md.js" */
 
@@ -36,14 +36,14 @@ export const ROLE_ACTION = 1;
 export const ROLE_TEXT = 2;
 
 // The label a reader sees above an input with an engine source.
-/** @type {Record<string, (source: any) => string>} */
-let sources = Object.create(null);
-sources.run_interrupted = (source) => "Engine notice · run " + source.run_id + " interrupted";
+/** @type {SourceLabels} */
+let sources = { engine_interruption: (source) => "Engine notice · run " + source.run_id + " interrupted" };
 
 /** @param {Wire.InputSource | undefined | null} source @returns {string} */
 export function inputSourceLabel(source) {
   if (!source) return "";
-  const label = sources[source.type];
+  // The table keys each label by its source type, so the label reads the source it names.
+  const label = /** @type {((source: Wire.InputSource) => string) | undefined} */ (sources[source.type]);
   return label ? label(source) : source.type.replace(/_/g, " ");
 }
 
@@ -139,7 +139,7 @@ presenters.edit = { category: "write", present: (o) => ({ verb: "Edit", subject:
 presenters.exec = { category: "run", present: (o) => ({ verb: "Run", subject: shortCommand(o.command) }) };
 presenters.skill = { category: "other", present: (o) => ({ verb: "Skill", subject: String(o.name || "") }) };
 
-/** @typedef {{ tools?: Record<string, Presenter>, sources?: Record<string, (source: any) => string> }} LabelRegistration */
+/** @typedef {{ tools?: Record<string, Presenter>, sources?: SourceLabels }} LabelRegistration */
 /** @type {LabelRegistration[]} */
 const registrations = [{ tools: presenters, sources }];
 let labelRevision = 0;
@@ -147,7 +147,7 @@ let labelRevision = 0;
 // Resolve ownership on registration changes, not on each rendered label.
 function refreshLabels() {
   presenters = Object.create(null);
-  sources = Object.create(null);
+  sources = {};
   for (const entry of registrations) {
     Object.assign(presenters, entry.tools);
     Object.assign(sources, entry.sources);

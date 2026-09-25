@@ -22,7 +22,7 @@ import { utf8Length } from "yuke:interaction";
 /** @typedef {{ type: "diff", files: DiffFile[] }} DiffView */
 /** @typedef {{ view?: DiffView[], media?: Wire.MediaBlob[] }} ResultExtra */
 /** @typedef {{ __yuke_result: true, text: string, extra: ResultExtra | null }} BuiltinResult */
-/** @typedef {Omit<ToolDefinition, "name">} BuiltinTool */
+/** @typedef {Omit<ToolDefinition, "name" | "execute"> & { execute: (args: ToolArgs, signal: ToolSignal, context: ToolContext) => Promise<unknown> }} BuiltinTool */
 
 /** @param {string} text @param {ResultExtra | null} extra @returns {BuiltinResult} */
 const result = (text, extra) => ({ __yuke_result: true, text, extra });
@@ -40,7 +40,7 @@ function builtin(ctx, name, definition) {
     execute: (args, signal, context) => {
       if (args == null || typeof args !== "object" || Array.isArray(args)) invalid(name, "the arguments must be an object");
       for (const key of Object.keys(args)) if (!fields.has(key)) invalid(name, `the argument ${key} does not exist. The arguments are: ${[...fields].join(", ")}.`);
-      return execute(args, signal, context);
+      return execute(/** @type {ToolArgs} */ (args), signal, context);
     },
   });
 }

@@ -624,7 +624,7 @@ class Server {
     const tools = capabilities.tools;
     if (tools !== undefined && (!record(tools) || (tools.listChanged !== undefined && typeof tools.listChanged !== "boolean"))) invalid("tool capabilities");
     this.hasTools = tools !== undefined;
-    this.listChanged = this.hasTools && tools.listChanged === true;
+    this.listChanged = tools?.listChanged === true;
     this.instructions = typeof answer.instructions === "string" ? answer.instructions.slice(0, INSTRUCTIONS_MAX) : "";
   }
 
@@ -835,7 +835,8 @@ async function readServers(path, problems) {
   try {
     const servers = JSON.parse(text)?.mcpServers;
     if (!record(servers)) throw new Error("mcpServers must be an object");
-    return servers;
+    // Each entry is checked where its server starts, so a bad entry fails only that server.
+    return /** @type {Record<string, ServerConfig>} */ (servers);
   } catch (error) {
     problems.push(path + ": " + errorText(error));
     return {};

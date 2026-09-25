@@ -18,7 +18,7 @@ events.on("engine.drained", (ev) => {
 // The native task answers JSON after the command and its hooks settle. Input passes the `input.before` gate first.
 /** @template {keyof Wire.Methods} M @param {M} method @param {Wire.Methods[M]["paramsType"]} args @returns {Promise<Wire.Methods[M]["returnType"]>} */
 async function request(method, ...args) {
-  const params = await gateInput(method, args[0] ?? /** @type {any} */ ({}));
+  const params = await gateInput(method, args[0] ?? /** @type {Wire.Methods[M]["paramsType"][0]} */ ({}));
   const text = await native.request(method, JSON.stringify(params));
   try {
     return JSON.parse(text);

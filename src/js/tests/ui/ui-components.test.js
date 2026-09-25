@@ -137,7 +137,7 @@ const unknownRows = unknown.rows(60, 0, 4);
 check("fallback-name", rowsHave(unknownRows, "mcp_thing") && rowsHave(unknownRows, "x.txt"));
 
 const presenterOwner = plugins.use({ name: "test-presenter", apply(ctx) {
-  tui.bindTo(ctx).labels({ tools: { exec: { category: "run", present: () => ({ verb: "$", subject: "custom" }) } }, sources: { run_interrupted: () => "first" } });
+  tui.bindTo(ctx).labels({ tools: { exec: { category: "run", present: () => ({ verb: "$", subject: "custom" }) } }, sources: { engine_interruption: () => "first" } });
 } });
 const over = new Transcript({ partsOf: (id) => parts[id] || [] });
 over.setOutline([{ id: "pres", type: "assistant" }], null);
@@ -147,14 +147,14 @@ check("override-source", over._sourceOf("pres").indexOf("$ custom") === 0);
 check("cached-presenter-changes", rowsHave(pres.rows(60, 0, 4), "custom"));
 
 const faultyOwner = plugins.use({ name: "test-faulty-presenter", apply(ctx) {
-  tui.bindTo(ctx).labels({ tools: { exec: { category: "run", present: () => { throw new Error("bad"); } } }, sources: { run_interrupted: () => "second" } });
+  tui.bindTo(ctx).labels({ tools: { exec: { category: "run", present: () => { throw new Error("bad"); } } }, sources: { engine_interruption: () => "second" } });
 } });
 presenterOwner.dispose();
-check("hidden-source-owner-leaves", inputSourceLabel({ type: "run_interrupted", run_id: 1 }) === "second");
+check("hidden-source-owner-leaves", inputSourceLabel({ type: "engine_interruption", run_id: 1, kind: "turn" }) === "second");
 const faulty = new Transcript({ partsOf: (id) => parts[id] || [] });
 faulty.setOutline([{ id: "pres", type: "assistant" }], null);
 check("presenter-fault-falls-back", rowsHave(faulty.rows(60, 0, 4), "exec"));
 faultyOwner.dispose();
 faultyOwner.dispose();
-check("source-owner-restores-default", inputSourceLabel({ type: "run_interrupted", run_id: 1 }) === "Engine notice · run 1 interrupted");
+check("source-owner-restores-default", inputSourceLabel({ type: "engine_interruption", run_id: 1, kind: "turn" }) === "Engine notice · run 1 interrupted");
 check("cached-presenter-restores-default", rowsHave(over.rows(60, 0, 4), "Run"));

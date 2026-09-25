@@ -48,7 +48,7 @@ export class Scope {
 
     const cleanup = fn();
     if (typeof cleanup !== "function") {
-      if (cleanup != null && typeof /** @type {any} */ (cleanup).then === "function") {
+      if (cleanup != null && typeof /** @type {{ then?: unknown }} */ (cleanup).then === "function") {
         Promise.resolve(cleanup).catch(() => {});
         throw new TypeError("scope effects must be synchronous");
       }
@@ -225,7 +225,7 @@ export class Scope {
     const report = (error) => { if (!this._quiet()) events.emit("ext.error", error, this.name); };
     try {
       const result = fn();
-      if (result != null && typeof /** @type {any} */ (result).then === "function") return Promise.resolve(result).then(NOOP, report);
+      if (result != null && typeof /** @type {{ then?: unknown }} */ (result).then === "function") return Promise.resolve(result).then(NOOP, report);
     } catch (error) {
       report(error);
     }
@@ -604,7 +604,7 @@ async function prepareInput(sessionId, input, create = null) {
   if (decision?.type === "block") {
     const error = new Error("an extension stopped the input");
     error.name = "EngineError";
-    /** @type {any} */ (error).code = "bad_request";
+    Object.assign(error, { code: "bad_request" });
     throw error;
   }
   return decision?.type === "replace" ? { type: "content", content: decision.value.content } : input;
@@ -839,7 +839,7 @@ export const plugins = {
     this._live[name] = instance;
     try {
       const result = plugin.apply(instance.context);
-      if (result != null && typeof /** @type {any} */ (result).then === "function") {
+      if (result != null && typeof /** @type {{ then?: unknown }} */ (result).then === "function") {
         /** @type {(error: unknown) => void} */
         let rejectReady = NOOP;
         let resolveReady = NOOP;

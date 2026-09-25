@@ -52,7 +52,8 @@ export interface ToolContext {
 }
 
 export type ToolExecute = (
-  args: any,
+  /** The JSON the model wrote. It may be any value, so a tool checks it before use. */
+  args: unknown,
   signal: CancellationSignal,
   context: ToolContext,
 ) => Promise<unknown>;

@@ -91,5 +91,8 @@ export interface ToolLabel {
 
 export interface Presenter {
   category: string;
-  present(args: Record<string, any>, raw: string, part: Extract<Wire.AssistantPart, { type: "tool" }>): { verb: string; subject: string };
+  present(args: Record<string, unknown>, raw: string, part: Extract<Wire.AssistantPart, { type: "tool" }>): { verb: string; subject: string };
 }
+
+/** The label above an input from each engine source; a missing source shows its type name. */
+export type SourceLabels = { [K in Wire.InputSource["type"]]?: (source: Extract<Wire.InputSource, { type: K }>) => string };

@@ -18,7 +18,7 @@ const CALLBACK_MS = 300_000;
 const EXPIRY_MARGIN_MS = 60_000;
 const CLIENT_NAME = "yuke";
 
-/** @param {unknown} value @returns {value is Record<string, any>} */
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
 export const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
 // The `application/x-www-form-urlencoded` byte encoding: every byte but alphanumerics and `*-._` is escaped, and a space is `+`.

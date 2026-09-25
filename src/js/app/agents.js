@@ -34,7 +34,7 @@ const CHILD_POLICY = "You are ${agent_name}, a child agent with one assignment f
 const RULE = "Do not spawn a child unless the user asks for delegation, a subagent, or parallel work. A request for depth or research is not permission. After you start a child, end your turn. Its report arrives as a new message.";
 
 /** The header of a child report: who, the outcome, and what the child spent. */
-/** @param {any} source @returns {string} */
+/** @param {Extract<Wire.InputSource, { type: "child_report" }>} source @returns {string} */
 function reportLabel(source) {
     const usage = source.usage;
     const outcome = source.outcome;
@@ -105,13 +105,13 @@ function spawnDescription(catalog) {
     return "Start a child on one self-contained task. Give a complete brief: goal, files or areas, and the result to return. This call returns when the child starts. " + RULE + "\n\nAgents:\n" + rows.join("\n");
 }
 
-/** @param {unknown} value @param {string[]} fields @returns {Record<string, any>} */
+/** @param {unknown} value @param {string[]} fields @returns {Record<string, unknown>} */
 function argsOf(value, fields) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw failure("bad_request", "The arguments must be an object.");
     for (const field of Object.keys(value)) if (!fields.includes(field)) throw failure("bad_request", "Unknown argument: " + field);
-    return value;
+    return /** @type {Record<string, unknown>} */ (value);
 }
-/** @param {Record<string, any>} args @param {string} key @returns {string} */
+/** @param {Record<string, unknown>} args @param {string} key @returns {string} */
 function required(args, key) {
     if (typeof args[key] !== "string" || !args[key].trim()) throw failure("bad_request", key + " must be a nonempty string.");
     return args[key];
@@ -255,13 +255,13 @@ export function agents(options) {
             ctx.effect(() => () => children.clear());
 
             ctx.effect(() => registerLabels({ tools: {
-                spawn_agent: { category: "agent", present: (/** @type {any} */ o, /** @type {string} */ _raw, /** @type {ToolPart} */ part) => ({ verb: "Agent", subject: String(o.agent || catalog.default) + liveSuffix(part) }) },
-                send_agent_input: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Send", subject: String(o.child || "") }) },
-                stop_agent: { category: "agent", present: (/** @type {any} */ o) => ({ verb: "Stop", subject: String(o.child || "") }) },
+                spawn_agent: { category: "agent", present: (o, _raw, part) => ({ verb: "Agent", subject: String(o.agent || catalog.default) + liveSuffix(part) }) },
+                send_agent_input: { category: "agent", present: (o) => ({ verb: "Send", subject: String(o.child || "") }) },
+                stop_agent: { category: "agent", present: (o) => ({ verb: "Stop", subject: String(o.child || "") }) },
             }, sources: {
                 parent_instruction: () => "From the parent session",
                 child_report: reportLabel,
-                child_input_canceled: (/** @type {any} */ source) => "Message from " + source.name + " · queued work canceled",
+                child_input_canceled: (source) => "Message from " + source.name + " · queued work canceled",
             } }));
 
             ctx.inject(["tui"], (ctx) => {
