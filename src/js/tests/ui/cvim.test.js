@@ -1,13 +1,13 @@
 import { check } from "yuke:internal/test";
 import { root, Node, View, keymap } from "yuke:internal/core";
 import { plugins, services } from "yuke:internal/ext";
-import { ChatView } from "yuke:internal/chat-view";
+import { Chat } from "yuke:internal/chat";
 import { composerVim } from "yuke:internal/composer-vim";
 import { register } from "yuke:internal/vim";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 
-const v = new ChatView({});
+const v = new Chat().view;
 root.setRoot(Node.leaf(v));
 root.focusView(v);
 const off = plugins.use(composerVim);

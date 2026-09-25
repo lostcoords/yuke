@@ -5,7 +5,7 @@ import { ui } from "yuke:internal/ui";
 import { client } from "yuke:internal/client";
 import { notice } from "yuke:internal/notice";
 import { inputSourceLabel } from "yuke:internal/transcript";
-import { chatOf, focusedChat } from "yuke:internal/chat";
+import { chatOf, currentChat } from "yuke:internal/chat";
 import { errorText } from "yuke:internal/format";
 
 /** @import { Context } from "yuke:internal/ext" */
@@ -136,16 +136,16 @@ export const queuePlugin = {
       });
 
       const hasQueue = () => {
-        const c = focusedChat();
+        const c = currentChat();
         return c != null && c.sessionId != null && queueOf(c.sessionId).length > 0;
       };
       ctx.tui.command(hasQueue, {
         "queue:drop": () => {
-          const c = focusedChat();
+          const c = currentChat();
           if (c && c.sessionId) openQueuePicker(ctx, c.sessionId);
         },
         "queue:clear": () => {
-          const c = focusedChat();
+          const c = currentChat();
           if (!c || !c.sessionId) return;
           const id = c.sessionId;
           clearWorkQueue(id).then((result) => {

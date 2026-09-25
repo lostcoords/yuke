@@ -2,7 +2,7 @@
 import { events } from "yuke:internal/kernel";
 import { prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:internal/text-input";
 import { register } from "yuke:internal/vim";
-import { focusedChatView } from "yuke:internal/chat";
+import { currentChat } from "yuke:internal/chat";
 
 /** @import { ChatView } from "yuke:internal/chat-view" */
 /** @import { Context } from "yuke:internal/ext" */
@@ -49,8 +49,7 @@ function firstWord(text, caret) {
 
 /** @returns {ComposerType | null} */
 function chatComposer() {
-  const v = /** @type {ChatView | null} */ (focusedChatView());
-  return v ? v.composer : null;
+  return currentChat()?.composer ?? null;
 }
 
 /** @param {ComposerType} c @returns {true} */

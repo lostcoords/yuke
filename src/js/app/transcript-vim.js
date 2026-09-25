@@ -3,7 +3,7 @@ import { term } from "yuke:internal/native/term";
 import { root, copy } from "yuke:internal/core";
 import { caretAtCol, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:internal/text-input";
 import { register } from "yuke:internal/vim";
-import { focusedChatView } from "yuke:internal/chat";
+import { currentChat } from "yuke:internal/chat";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { ChatView } from "yuke:internal/chat-view" */
@@ -275,7 +275,7 @@ export const transcriptVim = {
     ctx.inject(["tui"], (ctx) => {
       ctx.tui.command(null, {
         "chat:focus-toggle": () => {
-          const view = focusedChatView();
+          const view = currentChat()?.view;
           if (!view) return;
           view.focusRegion(view.focus === "transcript" ? "composer" : "transcript");
           root.invalidate();
@@ -289,7 +289,7 @@ export const transcriptVim = {
       // Visual mode is plugin state, so it rides a flag rather than an atom.
       ctx.tui.context({
         transcript_visual: () => {
-          const v = /** @type {ChatView | null} */ (focusedChatView());
+          const v = currentChat()?.view;
           const s = v ? panes.get(v) : undefined;
           return s && s.visual ? "on" : "";
         },
@@ -307,7 +307,7 @@ export const transcriptVim = {
       /** @param {(view: ChatView, s: VimState, t: Transcript) => boolean} fn @returns {() => boolean} */
       const act = (fn) => () => {
         // The binding context already limits this to a focused transcript in the active pane.
-        const view = /** @type {ChatView | null} */ (focusedChatView());
+        const view = currentChat()?.view;
         if (!view) return false;
         const s = stateOf(view);
         const t = view.transcript;
@@ -433,7 +433,7 @@ export const transcriptVim = {
       });
 
       return () => {
-        const view = /** @type {ChatView | null} */ (focusedChatView());
+        const view = currentChat()?.view;
         if (view) {
           panes.delete(view);
           view.transcript.clearSelection();

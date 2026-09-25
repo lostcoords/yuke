@@ -3,7 +3,8 @@ import { term } from "yuke:internal/native/term";
 import { root, Node } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import { Transcript, inputSourceLabel } from "yuke:internal/transcript";
-import { ChatView } from "yuke:internal/chat-view";
+import { Chat } from "yuke:internal/chat";
+import { client } from "yuke:internal/client";
 import { transcriptVim } from "yuke:internal/transcript-vim";
 import { tui, tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
@@ -79,7 +80,11 @@ check("diff-path", rowsHave(diffRows, "d.zig"));
 check("diff-del", rowsHave(diffRows, "-old") && rowsGroup(diffRows, "TxToolDel"));
 check("diff-add", rowsHave(diffRows, "+new") && rowsGroup(diffRows, "TxToolAdd"));
 
-const v = new ChatView({ partsOf: (id) => parts[id] || [] });
+// A chat reads its parts through the client, so the test serves them for its session.
+client.sessionParts = (_session, id) => parts[id] || [];
+const chat = new Chat();
+chat.sessionId = "s1";
+const v = chat.view;
 v.transcript.setOutline([{ id: "done", type: "assistant" }], null);
 root.setRoot(Node.leaf(v));
 v.rect = { x: 0, y: 0, w: 40, h: 12 }; v.layout(v.rect);

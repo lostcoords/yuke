@@ -1,11 +1,12 @@
 import { check, equal } from "yuke:internal/test";
 import { client } from "yuke";
 import { Context, Scope, scopeOf } from "yuke:internal/ext";
-import { Chat, focusedChat, focusedSessionId } from "yuke:chat";
-import { focusedSessionId as internalQuery } from "yuke:internal/chat";
+import { Chat, currentChat } from "yuke:chat";
+import { currentChat as internalQuery } from "yuke:internal/chat";
 import { root, Node } from "yuke:internal/core";
 
-equal(focusedSessionId, internalQuery);
+equal(currentChat, internalQuery);
+const currentSessionId = () => currentChat()?.sessionId ?? null;
 client.sessionOpen = id => id !== "missing";
 client.sessionClose = () => {};
 client.sessionActivity = () => null;
@@ -14,19 +15,19 @@ client.sessionCheckContext = async () => ({});
 
 const observer = new Context(new Scope("focus-test"), "focus-test");
 const seen = [];
-observer.on("session.focused", (...args) => {
+observer.on("chat.current.changed", (...args) => {
   equal(args.length, 0);
-  seen.push(focusedSessionId());
+  seen.push(currentSessionId());
 });
 const a = new Chat(), b = new Chat();
-equal(focusedSessionId(), null);
+equal(currentSessionId(), null);
 a.open("a");
 b.open("b");
 equal(seen.length, 0);
 root.setRoot(Node.leaf(a.view));
-equal(focusedSessionId(), "a");
+equal(currentSessionId(), "a");
 root.split("h", b.view);
-equal(focusedSessionId(), "b");
+equal(currentSessionId(), "b");
 b.open("c");
 b.open("c");
 b.open("missing");
@@ -36,44 +37,47 @@ equal(seen.length, 3);
 
 const overlay = { layout() {}, draw() {} };
 root.pushOverlay(overlay);
-equal(focusedSessionId(), "c");
+equal(currentSessionId(), "c");
 root.popOverlay(overlay);
 equal(seen.length, 3);
 
+// A focused pane that is not a chat leaves the current chat in place and announces nothing.
 const other = { name: "other", layout() {}, draw() {} };
 root.split("v", other);
-equal(focusedSessionId(), null);
-check("commands retain their fallback", focusedChat() !== null);
+equal(root.active, other);
+check("a non-chat pane keeps the current chat", currentChat() === b);
+equal(seen.length, 3);
 root.close();
-equal(focusedSessionId(), "c");
+equal(currentSessionId(), "c");
+equal(seen.length, 3);
 b.newChat();
-equal(focusedSessionId(), null);
+equal(currentSessionId(), null);
 b.open("gone");
 b.sessionGone();
-equal(focusedSessionId(), null);
+equal(currentSessionId(), null);
 b.open("background");
 const beforeClose = seen.length;
 root.close();
-equal(focusedSessionId(), "background");
+equal(currentSessionId(), "background");
 equal(seen.length, beforeClose);
 b.dispose();
 equal(seen.length, beforeClose);
 
 // A listener can replace the session after the first open has completed.
-const stop = observer.on("session.focused", () => {
-  if (focusedSessionId() === "replace") a.open("replacement");
+const stop = observer.on("chat.current.changed", () => {
+  if (currentSessionId() === "replace") a.open("replacement");
 });
 a.open("replace");
-equal(focusedSessionId(), "replacement");
+equal(currentSessionId(), "replacement");
 equal(seen.slice(-2).join(","), "replace,replacement");
 stop();
 root.setRoot(null);
-equal(focusedSessionId(), null);
+equal(currentSessionId(), null);
 const beforeDispose = seen.length;
 scopeOf(observer).dispose();
 root.setRoot(Node.leaf(a.view));
-equal(focusedSessionId(), "replacement");
+equal(currentSessionId(), "replacement");
 equal(seen.length, beforeDispose);
 a.dispose();
-equal(focusedSessionId(), null);
+equal(currentSessionId(), null);
 root.setRoot(null);

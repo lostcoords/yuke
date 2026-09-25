@@ -2,7 +2,7 @@
 import { command, keymap, root } from "yuke:internal/core";
 import { ui } from "yuke:internal/ui";
 import { fuzzyRank } from "yuke:internal/fzy";
-import { Chat, focusedChat, soleText } from "yuke:internal/chat";
+import { Chat, currentChat, soleText } from "yuke:internal/chat";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { Picker, Window } from "yuke:internal/ui" */
@@ -135,7 +135,7 @@ export function commandUi(cfg = {}) {
 
       // Follow the focused composer: open, refilter, or close the menu to match its text.
       const sync = () => {
-        const chat = focusedChat();
+        const chat = currentChat();
         // `root.focused` is the composer's view only with no modal above it, so a float never opens under a dialog.
         const typing = chat && root.focused === chat.view && chat.view.focus === "composer";
         const line = typing ? parseSlash(chat.composer.text) : null;
@@ -171,7 +171,7 @@ export function commandUi(cfg = {}) {
       const openPalette = () => {
         const all = entries();
         const col = columnOf(all);
-        const chat = focusedChat();
+        const chat = currentChat();
         const p = ui.pick({
           name: "commands",
           border,

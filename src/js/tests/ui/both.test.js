@@ -2,7 +2,8 @@ import { equal, textParts } from "yuke:internal/test";
 import { term } from "yuke:internal/native/term";
 import { root, Node, keymap } from "yuke:internal/core";
 import { plugins, services } from "yuke:internal/ext";
-import { ChatView } from "yuke:internal/chat-view";
+import { Chat } from "yuke:internal/chat";
+import { client } from "yuke:internal/client";
 import { composerVim } from "yuke:internal/composer-vim";
 import { transcriptVim } from "yuke:internal/transcript-vim";
 import { tuiPlugin } from "yuke:internal/tui";
@@ -10,8 +11,14 @@ plugins.use(tuiPlugin);
 const key = (char) => ({ type: "key", code: "char", char: char, text: char, event: "press", mods: 0 });
 const body = { a1: "alpha bravo charlie\nsecond line here\nthird line xx" };
 
+// A chat reads its parts through the client, so the test serves them for its session.
+const partsOf = textParts((id) => body[id] || "");
+client.sessionParts = (_session, id) => partsOf(id);
+
 const run = (order) => {
-  const v = new ChatView({ partsOf: textParts((id) => body[id] || "") });
+  const chat = new Chat();
+  chat.sessionId = "s1";
+  const v = chat.view;
   v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
   root.setRoot(Node.leaf(v));
   root.focusView(v);

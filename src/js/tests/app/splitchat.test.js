@@ -2,7 +2,7 @@ import { check } from "yuke:internal/test";
 import { root, Node } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { plugins } from "yuke:internal/ext";
-import { Chat, chats, chatOf, focusedChat, focusedChatView, chatPlugin } from "yuke:internal/chat";
+import { Chat, chats, chatOf, currentChat, chatPlugin } from "yuke:internal/chat";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 plugins.use(chatPlugin);
@@ -10,12 +10,12 @@ plugins.use(chatPlugin);
 const a = new Chat();
 root.setRoot(Node.leaf(a.view));
 root.focusView(a.view);
-check("first-is-focused", focusedChat() === a);
+check("first-is-focused", currentChat() === a);
 
 // The split leaves the new pane focused, so a command acts on the pane the user just made.
 const b = new Chat();
 root.split("row", b.view);
-check("split-focuses-new", root.active === b.view && focusedChat() === b);
+check("split-focuses-new", root.active === b.view && currentChat() === b);
 check("view-leads-back", chatOf(b.view) === b && chatOf(a.view) === a);
 
 // Each pane holds its own session, so one pane cannot move the other.
@@ -46,7 +46,7 @@ const had = chats.size;
 root.focusView(b.view);
 root.close();
 check("close-drops-the-chat", chats.size === had - 1 && !chats.has(b));
-check("close-leaves-the-other", chats.has(a) && focusedChat() === a);
+check("close-leaves-the-other", chats.has(a) && currentChat() === a);
 
 // A replaced tree drops its panes, so a whole-tree swap releases them like a close.
 const c1 = new Chat();
@@ -73,10 +73,16 @@ const tried = new Chat();
 if (!root.split("row", tried.view)) tried.dispose();
 check("failed-split-keeps-no-orphan", chats.size === orphans);
 
-// A bare view is a pane for a layer, but it owns no session, so a command finds none.
+// A focused pane that is not a chat leaves the current chat in place, as a sidebar leaves the previous window.
+const keep = new Chat();
 const bare = { name: "chat", rect: { x: 0, y: 0, w: 1, h: 1 }, layout() {}, draw() {} };
-root.setRoot(Node.leaf(bare));
-check("bare-view-is-a-pane", focusedChatView() === bare);
-check("bare-view-owns-no-session", focusedChat() === null);
+root.setRoot(Node.branch("row", Node.leaf(keep.view), Node.leaf(bare), 0.5));
+root.focusView(bare);
+check("non-chat-pane-keeps-current", root.active === bare && currentChat() === keep);
+// A closed current chat hands over to a chat left in the tree, and to none when no chat is left.
+root.focusView(keep.view);
+root.close();
+check("closed-current-hands-over", root.active === bare && currentChat() === null);
+root.setRoot(null);
 
 plugins.dispose("chat");

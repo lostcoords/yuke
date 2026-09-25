@@ -8,7 +8,7 @@ import { commandUi } from "yuke:internal/command-ui";
 import { modelCatalog } from "yuke:internal/catalog";
 import { jobsUiPlugin } from "yuke:internal/jobs-ui";
 import { authPlugin } from "yuke:internal/auth";
-import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:internal/chat";
+import { Chat, chatEntry, chatPlugin, currentChat } from "yuke:internal/chat";
 import { client } from "yuke:internal/client";
 import { attachClipboard } from "yuke:internal/attach";
 import { activityMark, feedOf, sessionsPlugin } from "yuke:internal/sessions";
@@ -35,7 +35,7 @@ function splitChat(kind) {
 // Run `fn` on the chat a command acts on. A tree with no chat pane runs nothing.
 /** @param {(c: Chat) => void} fn @returns {void} */
 function withChat(fn) {
-  const c = focusedChat();
+  const c = currentChat();
   if (c) fn(c);
 }
 
@@ -63,7 +63,7 @@ function openSessionFinder(ctx) {
       // An open session reads its live activity; the rest shows what the list reported.
       format: r => ({ text: r.title, right: activityMark(activityOf(r.id) || r.activity) }),
       onAccept: r => {
-        const c = focusedChat();
+        const c = currentChat();
         if (c) c.open(r.id);
       },
     });
@@ -84,7 +84,7 @@ plugins.use({
       ctx.tui.status({ side: "right", order: -1, render: () => keymap.pendingLabel() });
 
       // The interrupt command is available only with a session open.
-      ctx.tui.command(() => { const c = focusedChat(); return c != null && c.sessionId != null; }, {
+      ctx.tui.command(() => { const c = currentChat(); return c != null && c.sessionId != null; }, {
         "session:interrupt": () => withChat(c => c.interrupt()),
       }, {
         "session:interrupt": { title: "Interrupt", description: "stop the run", slash: "interrupt" },

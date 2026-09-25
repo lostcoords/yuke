@@ -1,11 +1,11 @@
 import { check } from "yuke:internal/test";
 import { root, Node } from "yuke:internal/core";
 import { plugins, services } from "yuke:internal/ext";
-import { ChatView } from "yuke:internal/chat-view";
+import { Chat } from "yuke:internal/chat";
 import { composerVim } from "yuke:internal/composer-vim";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
-const v = new ChatView({});
+const v = new Chat().view;
 root.setRoot(Node.leaf(v));
 root.focusView(v);
 
@@ -20,7 +20,7 @@ vim.setMode(v.composer, "normal");
 check("normal-again", v.composer._prompt() === "▪ ");
 
 // The unload drops every mode, so a pane without focus also returns to insert on the next load.
-const side = new ChatView({});
+const side = new Chat().view;
 vim.setMode(side.composer, "normal");
 off.dispose();
 check("unload-restores", v.composer._prompt() === own);

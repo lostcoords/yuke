@@ -2,7 +2,7 @@
 import { root } from "yuke:internal/core";
 import { client } from "yuke:internal/client";
 import { native } from "yuke:internal/native/engine";
-import { chats, focusedChat } from "yuke:internal/chat";
+import { chats, currentChat } from "yuke:internal/chat";
 import { notice } from "yuke:internal/notice";
 import { errorText } from "yuke:internal/format";
 import { tokenLabel } from "yuke:internal/catalog";
@@ -263,8 +263,8 @@ export function agents(options) {
                     child_input_canceled: (source) => "Message from " + source.name + " · queued work canceled",
                 } });
 
-                ctx.tui.command(() => focusedChat()?.sessionId != null, {
-                    "agents:open": () => { const id = focusedChat()?.sessionId; if (id) openAgents(ctx, id).catch((error) => notice.show("agents · " + errorText(error))); },
+                ctx.tui.command(() => currentChat()?.sessionId != null, {
+                    "agents:open": () => { const id = currentChat()?.sessionId; if (id) openAgents(ctx, id).catch((error) => notice.show("agents · " + errorText(error))); },
                 }, { "agents:open": { title: "Agents", description: "open or stop child agents", slash: "agents" } });
             });
         },

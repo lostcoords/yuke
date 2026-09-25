@@ -6,9 +6,7 @@ export {};
 declare module "yuke:chat" {
 export import Chat = $chat.Chat;
 export import chats = $chat.chats;
-export import focusedChat = $chat.focusedChat;
-export import focusedChatView = $chat.focusedChatView;
-export import focusedSessionId = $chat.focusedSessionId;
+export import currentChat = $chat.currentChat;
 export import chatOf = $chat.chatOf;
 export import chatEntry = $chat.chatEntry;
 export import ChatView = $chat_view.ChatView;
@@ -320,12 +318,8 @@ export class Chat {
 export const chats: Set<Chat>;
 /** @param {unknown} view @returns {Chat | null} */
 export function chatOf(view: unknown): Chat | null;
-/** @returns {string | null} */
-export function focusedSessionId(): string | null;
-/** @returns {ChatView | null} */
-export function focusedChatView(): ChatView | null;
 /** @returns {Chat | null} */
-export function focusedChat(): Chat | null;
+export function currentChat(): Chat | null;
 /** @returns {FeedItem | null} */
 export function chatEntry(): FeedItem | null;
 export const chatPlugin: {
@@ -2907,7 +2901,8 @@ export interface EventsBase extends EngineFacts {
   "session.changed"(ev: Extract<EngineEvent, { type: "session" }>): void;
   "index.changed"(ev: Extract<EngineEvent, { type: "index" }>): void;
   "activity.changed"(sessionId: string, activity: Wire.SessionActivity | null): void;
-  "session.focused"(): void;
+  /** The current chat or its session changed; read `currentChat()`. */
+  "chat.current.changed"(): void;
   /** A true answer claims a left press in the chat pane. */
   "chat.press"(view: ChatView, ev: HostMouseEvent): boolean | null | undefined;
   "chat.strip"(view: ChatView): StripRow[] | null | undefined;

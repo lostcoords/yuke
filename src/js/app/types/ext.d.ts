@@ -56,7 +56,8 @@ export interface Events extends EngineFacts {
   "session.changed"(ev: Extract<EngineEvent, { type: "session" }>): void;
   "index.changed"(ev: Extract<EngineEvent, { type: "index" }>): void;
   "activity.changed"(sessionId: string, activity: Wire.SessionActivity | null): void;
-  "session.focused"(): void;
+  /** The current chat or its session changed; read `currentChat()`. */
+  "chat.current.changed"(): void;
   /** A true answer claims a left press in the chat pane. */
   "chat.press"(view: ChatView, ev: HostMouseEvent): boolean | null | undefined;
   "chat.strip"(view: ChatView): StripRow[] | null | undefined;

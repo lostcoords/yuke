@@ -85,7 +85,7 @@ export class Chat {
     this.transcript.setOutline([], null);
     this.reload();
     this.checkContext(id);
-    notifyFocusedSession();
+    notifyCurrent();
   }
 
   // Tell the user once per open when the files behind the stored snapshots changed. The user decides on /reload.
@@ -200,7 +200,7 @@ export class Chat {
     this.transcript.setOutline([], null);
     root.focusView(this.view);
     root.invalidate();
-    notifyFocusedSession();
+    notifyCurrent();
   }
 
   // The engine lost the session. Clear the pane back to the placeholder.
@@ -208,7 +208,7 @@ export class Chat {
     this.sessionId = null;
     this.transcript.setOutline([], null);
     root.invalidate();
-    notifyFocusedSession();
+    notifyCurrent();
   }
 
   // Drop this pane's pin. The engine counts pins, so a second pane on the same session keeps it.
@@ -229,7 +229,8 @@ export class Chat {
     this.sessionId = null;
     chats.delete(this);
     CHAT_OF.delete(this.view);
-    notifyFocusedSession();
+    if (current === this) current = null;
+    notifyCurrent();
   }
 }
 
@@ -247,53 +248,52 @@ export function chatOf(view) {
   return CHAT_OF.get(/** @type {object} */ (view)) || null;
 }
 
-// Overlays retain the active pane; a non-chat pane has no focused session.
-/** @returns {string | null} */
-export function focusedSessionId() {
-  return chatOf(root.active)?.sessionId ?? null;
-}
+// The current chat: the chat pane that had focus last and is still in the tree. Session commands, the status bar,
+// and `chat.current.changed` all read it, so a focused pane that is not a chat, such as a panel, leaves it in place.
+/** @type {Chat | null} */
+let current = null;
 
-events.declare(["session.focused"]);
-/** @type {string | null} */
-let lastFocusedSession = null;
-
-function notifyFocusedSession() {
-  const id = focusedSessionId();
-  if (id === lastFocusedSession) return;
-  lastFocusedSession = id;
-  events.emit("session.focused");
-}
-
-events.on("pane.focused", notifyFocusedSession);
-events.on("pane.closed", notifyFocusedSession);
-
-// The focused view that `match` accepts, or the first one in the tree.
-/** @param {(v: any) => boolean} match @returns {any} */
-function focusedLeaf(match) {
-  const v = root.active;
-  if (v && match(v)) return v;
-  const rn = root.root_node;
-  if (!rn) return null;
-  for (const leaf of rn.leaves()) if (leaf.shape.type === "leaf" && match(leaf.shape.view)) return leaf.shape.view;
-  return null;
-}
-
-// The chat pane a layer drives. A bare ChatView counts, because a layer reads the view alone.
-/** @returns {ChatView | null} */
-export function focusedChatView() {
-  return focusedLeaf(v => v.name === "chat");
-}
-
-// The chat a session command acts on. Only a pane this module built owns a session.
 /** @returns {Chat | null} */
-export function focusedChat() {
-  return chatOf(focusedLeaf(v => CHAT_OF.has(v)));
+export function currentChat() {
+  return current;
 }
 
-// The focused chat's entry with the live activity, or null with no open session.
+events.declare(["chat.current.changed"]);
+/** @type {string | null} */
+let announced = null;
+
+// Announce a change of the current session once, so a repeat open of the same session stays quiet.
+function notifyCurrent() {
+  const id = current?.sessionId ?? null;
+  if (id === announced) return;
+  announced = id;
+  events.emit("chat.current.changed");
+}
+
+events.on("pane.focused", (view) => {
+  const chat = chatOf(view);
+  if (!chat) return;
+  current = chat;
+  notifyCurrent();
+});
+
+// A closed current chat hands over to the focused chat, else to the first chat left in the tree.
+events.on("pane.closed", (view) => {
+  if (current && current.view !== view) return;
+  current = chatOf(root.active);
+  if (!current && root.root_node) {
+    for (const leaf of root.root_node.leaves()) {
+      current = chatOf(leaf.shape.type === "leaf" ? leaf.shape.view : null);
+      if (current) break;
+    }
+  }
+  notifyCurrent();
+});
+
+// The current chat's entry with the live activity, or null with no open session.
 /** @returns {FeedItem | null} */
 export function chatEntry() {
-  const c = focusedChat();
+  const c = current;
   if (!c || !c.sessionId) return null;
   const item = feedItem(c.sessionId);
   if (!item) return null;
@@ -304,10 +304,10 @@ export function chatEntry() {
 // Load the catalog, then pick a model and its effort. A `query` names the model and skips the picker.
 /** @param {InjectContext} ctx @param {string} [query] */
 function openModelPicker(ctx, query) {
-  const chat = focusedChat();
+  const chat = current;
   if (!chat) return null;
-  const current = chatEntry();
-  const currentId = current ? current.session.model : null;
+  const entry = chatEntry();
+  const currentId = entry ? entry.session.model : null;
   const show = () => {
     // Code-unit order: localeCompare NFC-normalizes and traps in ReleaseSafe QuickJS.
     const models = catalogOf().models.slice().sort((a, b) => (a.provider < b.provider ? -1 : a.provider > b.provider ? 1 : 0) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -365,7 +365,7 @@ function pickReasoning(ctx, model, sessionId) {
     chooseModel(model, model.default_reasoning || levels[0] || "", sessionId);
     return;
   }
-  const chat = focusedChat();
+  const chat = current;
   const step = ui.pick({
     title: model.name + " · effort",
     footer: "↵ select · esc close",
@@ -428,7 +428,7 @@ export const chatPlugin = {
       ctx.tui.command(null, {
         "model:pick": (/** @type {string | undefined} */ query) => openModelPicker(ctx, query),
         "context:reload": () => {
-          const c = focusedChat();
+          const c = current;
           if (!c || !c.sessionId) return notice.show("no open chat");
           client.sessionReloadContext(c.sessionId).then((r) => {
             notice.show("Context reloaded: " + r.instruction_sources.length + " AGENTS.md, " + r.skills.length + " skills.");
@@ -438,7 +438,7 @@ export const chatPlugin = {
           });
         },
         "context:compact": () => {
-          const c = focusedChat();
+          const c = current;
           if (!c || !c.sessionId) return notice.show("no open chat");
           client.sessionCompact(c.sessionId).then((r) => {
             notice.show(r.status === "started" ? "Compacting the context." : "Compaction waits for the active run.");
