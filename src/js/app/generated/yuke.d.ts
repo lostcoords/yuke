@@ -3,53 +3,6 @@
 
 export {};
 
-declare namespace $activity {
-import Context = $ext.Context;
-import EngineEvent = $engine_native.EngineEvent;
-export type NativeSessionEvent = Extract<EngineEvent, {
-    type: "session";
-}>;
-/** @param {string} sessionId @returns {Wire.SessionActivity | null} */
-export function activityOf(sessionId: string): Wire.SessionActivity | null;
-/** @param {{ state: { type: string } } | null | undefined} activity @returns {boolean} */
-export function isWorking(activity: {
-    state: {
-        type: string;
-    };
-} | null | undefined): boolean;
-/** The words for the child runs the process carries, or "" without one. */
-/** @param {number} count @returns {string} */
-export function agentsLabel(count: number): string;
-/** @param {string} sessionId */
-export function refreshActivity(sessionId: string): void;
-export const activityPlugin: {
-    name: string;
-    /** @param {Context} ctx @returns {void} */
-    apply(ctx: Context): void;
-};
-}
-
-declare namespace $agents_ui {
-import Context = $types_ext.InjectContext;
-export type AgentRow = {
-    item: Wire.SessionListItem;
-    depth: number;
-};
-/** The state words of a child. A spawn row passes the view it keeps, so the shape is only what the words read. */
-/** @param {{ activity: Wire.SessionActivity, last_run?: Wire.RunOutcome | null }} child */
-export function childState(child: {
-    activity: Wire.SessionActivity;
-    last_run?: Wire.RunOutcome | null;
-}): string;
-/** @param {string} sessionId @returns {Promise<[AgentRow, ...AgentRow[]]>} */
-export function agentRows(sessionId: string): Promise<[AgentRow, ...AgentRow[]]>;
-/** @param {Context} ctx @param {string} sessionId */
-export function openAgents(ctx: Context, sessionId: string): Promise<{
-    win: $ui.Window;
-    content: $ui.Picker<AgentRow>;
-} | undefined>;
-}
-
 declare namespace $agents {
 import Context = $ext.Context;
 export type AgentRow = {
@@ -113,60 +66,6 @@ export function attachPath(composer: Composer, text: string, from: number): Prom
 export function attachClipboard(composer: Composer): Promise<boolean>;
 /** @param {Composer} composer @param {string} text @param {number} from @returns {boolean} */
 export function pasteAttaches(composer: Composer, text: string, from: number): boolean;
-}
-
-declare namespace $browser {
-/** @param {string} url @returns {void} */
-export function openUrl(url: string): void;
-}
-
-declare namespace $catalog {
-import Context = $ext.Context;
-export type CatalogState = {
-    rev: Wire.CatalogRev | null;
-    providers: readonly Wire.ProviderInfo[];
-    models: readonly Wire.ModelInfo[];
-    loading: boolean;
-};
-export type ModelDefaults = {
-    model: string | null;
-    reasoning: string;
-};
-export type StatusEntry = {
-    session: Wire.Session;
-    activity: {
-        context_usage?: Wire.TokenUsage;
-    } | null;
-};
-export type CatalogConfig = {
-    entry?: () => StatusEntry | null;
-};
-/** @returns {CatalogState} */
-export function catalogOf(): CatalogState;
-/** @param {string | null | undefined} selector @returns {Wire.ModelInfo | null} */
-export function modelOf(selector: string | null | undefined): Wire.ModelInfo | null;
-/** @returns {Promise<CatalogState>} */
-export function loadCatalog(): Promise<CatalogState>;
-/** @returns {Promise<CatalogState>} */
-export function reloadCatalog(): Promise<CatalogState>;
-/** @param {string} providerId @returns {Wire.ProviderState | null} */
-export function providerState(providerId: string): Wire.ProviderState | null;
-/** @param {Wire.ProviderState | null} state @param {boolean} [canLogin] @returns {string} */
-export function providerStateLabel(state: Wire.ProviderState | null, canLogin?: boolean): string;
-/** @param {string | null | undefined} modelId @returns {number} */
-export function contextWindowOf(modelId: string | null | undefined): number;
-/** @param {Wire.ModelInfo} model @param {string} reasoning @param {string | null} [sessionId] @returns {void} */
-export function chooseModel(model: Wire.ModelInfo, reasoning: string, sessionId?: string | null): void;
-/** @returns {ModelDefaults} */
-export function defaultModel(): ModelDefaults;
-/** @param {number} n @returns {string} */
-export function tokenLabel(n: number): string;
-/** @param {CatalogConfig} [cfg] */
-export function modelCatalog(cfg?: CatalogConfig): {
-    name: string;
-    /** @param {Context} ctx @returns {void} */
-    apply(ctx: Context): void;
-};
 }
 
 declare namespace $chat_view {
@@ -450,19 +349,6 @@ export const client: {
     authCancelLogin: typeof authCancelLogin;
     authSetApiKey: typeof authSetApiKey;
     authRemove: typeof authRemove;
-};
-}
-
-declare namespace $clipboard {
-export type ClipboardRead = {
-    path: string;
-} | {
-    error: string;
-};
-/** @returns {Promise<ClipboardRead>} */
-function readImage(): Promise<ClipboardRead>;
-export const clipboard: {
-    readImage: typeof readImage;
 };
 }
 
@@ -819,21 +705,6 @@ export type ConfigPatch = $kernel.ConfigPatch;
 export type Job = $jobs_native.Job;
 }
 
-declare namespace $format {
-/** @param {number} n @returns {string} */
-export function byteLabel(n: number): string;
-/** The message of a thrown value. A rejection can carry any value, so one without a message reads as its string. */
-/** @param {unknown} error @returns {string} */
-export function errorText(error: unknown): string;
-}
-
-declare namespace $fzy {
-/** @param {string} text @param {string} query @returns {number | null} */
-export function fuzzyMatch(text: string, query: string): number | null;
-/** @template T @param {T[]} items @param {string} query @param {(item: T) => string} textOf @returns {T[]} */
-export function fuzzyRank<T>(items: T[], query: string, textOf: (item: T) => string): T[];
-}
-
 declare namespace $http {
 import FetchOptions = $http_native.FetchOptions;
 import HttpHead = $http_native.HttpHead;
@@ -873,12 +744,6 @@ class Response {
 }
 /** @param {string} url @param {FetchOptions} [options] @returns {Promise<Response>} */
 export function fetch(url: string, options?: FetchOptions): Promise<Response>;
-}
-
-declare namespace $info_panel {
-import InjectContext = $types_ext.InjectContext;
-/** @param {InjectContext<"tui">} ctx @param {string} title @param {[string, string][]} rows @returns {void} */
-export function showInfo(ctx: InjectContext<"tui">, title: string, rows: [string, string][]): void;
 }
 
 declare namespace $interaction {
@@ -1295,21 +1160,6 @@ export const net: {
 };
 }
 
-declare namespace $notice {
-import Context = $ext.Context;
-export const notice: {
-    text: string;
-    /** @param {string} s */
-    show(s: string): void;
-    clear(): void;
-};
-export const noticePlugin: {
-    name: string;
-    /** @param {Context} ctx */
-    apply(ctx: Context): void;
-};
-}
-
 declare namespace $pager {
 import MouseEvent = $types_core.HostMouseEvent;
 import Rect = $types_core.Rect;
@@ -1416,24 +1266,6 @@ export type LayoutNode = $types_layout.LayoutNode;
 export type Tui = $types_ext.Capabilities["tui"];
 }
 
-declare namespace $refresh {
-/** @template T */
-export class Refresh<T> {
-    read: () => Promise<unknown>;
-    finish: () => T;
-    /** @type {Promise<T> | null} */
-    flight: Promise<T> | null;
-    again: boolean;
-    /** @param {() => Promise<unknown>} read @param {() => T} finish */
-    constructor(read: () => Promise<unknown>, finish: () => T);
-    get loading(): boolean;
-    /** @returns {Promise<T>} */
-    run(): Promise<T>;
-    /** @returns {Promise<T>} */
-    start(): Promise<T>;
-}
-}
-
 declare namespace $sessions {
 import Context = $ext.Context;
 export type FeedActivity = Wire.SessionActivity | {
@@ -1503,19 +1335,6 @@ export type ChildProcess = {
 export function spawn(argv: string[], options?: SpawnOptions): ChildProcess;
 /** @param {(line: string) => void} onLine @param {() => void} [onOverflow] @returns {(text: string) => void} */
 export function lines(onLine: (line: string) => void, onOverflow?: () => void): (text: string) => void;
-}
-
-declare namespace $sse {
-export type SseEvent = {
-    event: string;
-    data: string;
-    id: string;
-};
-/** @param {(event: SseEvent) => void} onEvent @param {{ maxChars?: number, onRetry?: ((ms: number) => void) | undefined }} [options] @returns {(chunk: string) => void} */
-export function sseParser(onEvent: (event: SseEvent) => void, { maxChars, onRetry }?: {
-    maxChars?: number;
-    onRetry?: ((ms: number) => void) | undefined;
-}): (chunk: string) => void;
 }
 
 declare namespace $text_input {
@@ -2217,15 +2036,6 @@ export const ui: {
 };
 }
 
-declare namespace $vim {
-/** @type {{ text: string, linewise: boolean, set: (text: unknown, linewise: unknown) => void }} */
-export const register: {
-    text: string;
-    linewise: boolean;
-    set: (text: unknown, linewise: unknown) => void;
-};
-}
-
 declare namespace $cancellation_native {
   const brand: unique symbol;
   export interface CancellationSignal {
@@ -2818,12 +2628,6 @@ function clearTimeout(id: number | undefined): void;
 function clearInterval(id: number | undefined): void;
 }
 
-declare namespace $hooks {
-  export function installDispatcher(dispatch: (point: string, payload: any) => Promise<unknown>): void;
-  export function installLifecycle(callback: (force: boolean) => void | Promise<void>): number;
-  export function setPoints(names: string[], changed: string): void;
-}
-
 type KeyCode =
   | "tab"
   | "enter"
@@ -2922,18 +2726,6 @@ declare namespace $http_native {
   export function close(id: number): void;
 }
 
-declare namespace $interaction_native {
-  export const native: {
-    readonly maxTextBytes: number;
-    readonly maxOptions: number;
-    validateSignal(signal: { aborted: boolean }): void;
-    sessionId(signal: { aborted: boolean }): string | null;
-    request(id: number, requestJson: string, signal?: { aborted: boolean }): Promise<unknown>;
-    notify(source: string, message: string, level: string): void;
-    cancel(id: number): boolean;
-  };
-}
-
 declare namespace $jobs_native {
   /** The wire job and the private log that holds both streams without host metadata. */
   type Job = Wire.Job & { log: string };
@@ -2990,16 +2782,6 @@ export interface LayoutResult {
   rect: Rect;
   children: LayoutResult[];
 }
-}
-
-declare namespace $mcp_native {
-  export type RecordScope = "mcp-trust" | "mcp-oauth";
-  export function configPath(): string | undefined;
-  /** Answers the private record, or undefined; a trust record belongs to the current workspace. */
-  export function readRecord(scope: RecordScope, key: string): string | undefined;
-  /** Replaces the private record; at most 64 KiB. */
-  export function writeRecord(scope: RecordScope, key: string, text: string): void;
-  export function removeRecord(scope: RecordScope, key: string): void;
 }
 
 declare namespace $types_md {
@@ -3125,21 +2907,6 @@ declare namespace $net_native {
   /** Copy and send the whole chunk, up to 1048576 bytes; another write rejects with code BUSY. */
   export function write(id: number, bytes: Uint8Array, options?: Options): Promise<void>;
   /** Close is idempotent; native tasks drain before the descriptor is released. */
-  export function close(id: number): void;
-}
-
-declare namespace $oauth_native {
-  import CancellationSignal = $cancellation_native.CancellationSignal;
-
-  /** Answers `count` secure random bytes (16 to 64) as base64url without padding. */
-  export function random(count: number): string;
-  /** Answers the SHA-256 of the UTF-8 text as base64url without padding, the PKCE S256 challenge. */
-  export function sha256(text: string): string;
-  /** Binds a random loopback port for one redirect to `http://127.0.0.1:<port>/callback`. */
-  export function listen(): { id: number; port: number };
-  /** Answers the request target of the first GET to `/callback`, then closes the listener. The default wait is 300000 ms. */
-  export function accept(id: number, options?: { timeoutMs?: number; signal?: CancellationSignal }): Promise<string>;
-  /** Closes a listener that never took its callback; repeat calls are safe. */
   export function close(id: number): void;
 }
 
@@ -3351,14 +3118,6 @@ declare namespace $term {
     width: number;
     height: number;
   };
-}
-
-declare namespace $tools {
-  import ToolDefinition = $types_ext.ToolDefinition;
-
-  export function defineTool(name: string, definition: Omit<ToolDefinition, "name">): void;
-  export function removeTool(name: string): boolean;
-  export function hasTool(name: string): boolean;
 }
 
 declare namespace $types_transcript {
