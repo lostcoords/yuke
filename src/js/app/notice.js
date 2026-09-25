@@ -31,7 +31,7 @@ export const noticePlugin = {
       notice.clear();
 
       // Clear the notice before each key press dispatches. A key release must not clear a fresh notice.
-      ctx.on("key.press", (ev) => {
+      ctx.on("key.pressed", (ev) => {
         if (ev.event === "press") notice.clear();
       });
 

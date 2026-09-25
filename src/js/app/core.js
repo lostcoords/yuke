@@ -650,13 +650,13 @@ export function releaseView(view, owner) {
 
 // The view tier emits these names, so it declares them and a headless bus refuses them.
 events.declare([
-  "ui.start",
+  "ui.started",
   "ui.closed",
-  "ui.resize",
-  "ui.tick",
-  "key.press",
+  "ui.resized",
+  "ui.ticked",
+  "key.pressed",
   "mouse.input",
-  "paste.input",
+  "paste.received",
   "focus.changed",
   "pane.focused",
   "pane.closed",
@@ -672,13 +672,13 @@ events.declare([
 
 // This table maps a host event type to its core event name.
 const HOST_TO_CORE_EVENT = /** @type {const} */ ({
-  start: "ui.start",
+  start: "ui.started",
   input_closed: "ui.closed",
-  resize: "ui.resize",
-  tick: "ui.tick",
-  key: "key.press",
+  resize: "ui.resized",
+  tick: "ui.ticked",
+  key: "key.pressed",
   mouse: "mouse.input",
-  paste: "paste.input",
+  paste: "paste.received",
   focus: "focus.changed",
 });
 
@@ -859,7 +859,7 @@ export const status = {
       try {
         t = seg.render();
       } catch (e) {
-        events.emit("ext.error", e, "status");
+        events.emit("ext.failed", e, "status");
       }
       if (t) out.push(String(t));
     }

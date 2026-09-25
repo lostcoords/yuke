@@ -102,7 +102,7 @@ function applyConfigPatch(section, fields, src, label) {
 }
 
 // The kernel declares only the events that neutral code emits. Each tier declares its own names.
-const CORE_EVENTS = new Set(["ext.error", "engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", "quit.request", ...native.factNames()]);
+const CORE_EVENTS = new Set(["ext.failed", "engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", "quit.request", ...native.factNames()]);
 
 // True for an `owner:event` name. A plugin owns such a name, so no declaration can enumerate it.
 /** @param {string} name @returns {boolean} */
@@ -234,5 +234,5 @@ native.setEventSink((ev) => {
 
 // Report a listener fault where every other fault goes, and never re-enter on the report itself.
 events.onError = (error, name) => {
-  if (name !== "ext.error") events.emit("ext.error", error, name);
+  if (name !== "ext.failed") events.emit("ext.failed", error, name);
 };

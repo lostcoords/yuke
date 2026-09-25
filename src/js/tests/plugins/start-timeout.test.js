@@ -4,7 +4,7 @@ import { events } from "yuke:internal/kernel";
 
 let released = 0;
 let faults = 0;
-const off = events.on("ext.error", (_error, name) => { if (name === "stuck-start") faults++; });
+const off = events.on("ext.failed", (_error, name) => { if (name === "stuck-start") faults++; });
 const handle = plugins.use({ name: "stuck-start", async apply(ctx) {
   ctx.own(() => { released++; });
   await new Promise(() => {});

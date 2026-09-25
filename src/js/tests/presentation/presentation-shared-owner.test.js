@@ -9,7 +9,7 @@ import { tui } from "yuke:internal/tui";
 const view = new ChatView(), scope = new Scope("owners"), otherRoot = new RootView();
 const side = new Text({ text: "one owner" }), bounds = { x: 0, y: 0, w: 30, h: 10 };
 let errors = 0;
-const off = events.on("ext.error", () => errors++);
+const off = events.on("ext.failed", () => errors++);
 tui.bindTo(new Context(scope, "owners")).presentation(() => state => row([
   child(null, grow(), { layout: state.defaultLayout }), child(side, fixed(10)),
 ]));

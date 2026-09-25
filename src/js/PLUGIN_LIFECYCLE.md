@@ -33,7 +33,7 @@ Late registrations fail.
 Late resource ownership releases the resource at once and fails.
 JavaScript promises cannot force arbitrary plugin code to stop.
 
-A release failure or timeout emits `ext.error` with the plugin name.
+A release failure or timeout emits `ext.failed` with the plugin name.
 The disposal promise resolves after the releases and the native drain, even on a release failure.
 A release fault after the deadline stays silent, so it cannot touch a replacement.
 

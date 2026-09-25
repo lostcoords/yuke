@@ -6,7 +6,7 @@ import { Context, Scope } from "yuke:internal/ext";
 import { tui } from "yuke:internal/tui";
 const view = new ChatView(), scope = new Scope("bad");
 let errors = 0, disposed = 0;
-const off = events.on("ext.error", () => errors++);
+const off = events.on("ext.failed", () => errors++);
 const surface = tui.bindTo(new Context(scope, "bad"));
 const remove = surface.presentation((_chat, owner) => {
   owner.effect(() => () => disposed++);

@@ -147,7 +147,7 @@ export class ChatView {
       }
     } catch (error) {
       this.clearPresentation();
-      events.emit("ext.error", error, "presentation");
+      events.emit("ext.failed", error, "presentation");
       this._placePresentation(defaultLayout, bounds);
     }
     if (this.transcriptRect.w === 0 || this.transcriptRect.h === 0) this.transcript.hide();

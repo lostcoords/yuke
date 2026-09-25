@@ -5,7 +5,7 @@ import { events } from "yuke:internal/kernel";
 let reject;
 let disposed = 0;
 let faults = 0;
-const unwatch = events.on("ext.error", (_error, owner) => { if (owner === "stalled") faults++; });
+const unwatch = events.on("ext.failed", (_error, owner) => { if (owner === "stalled") faults++; });
 plugins.use({
   name: "stalled",
   apply(ctx) {

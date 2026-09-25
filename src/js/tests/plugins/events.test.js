@@ -7,7 +7,7 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 // A throwing teardown reports on the bus and never stops the rest.
 {
   const seen = [];
-  const off = events.on("ext.error", (e, name) => seen.push(name));
+  const off = events.on("ext.failed", (e, name) => seen.push(name));
   const s = new Scope("t3");
   s.effect(() => () => { throw new Error("boom"); });
   s.effect(() => () => seen.push("after"));
@@ -52,10 +52,10 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   const s = new Scope("t5");
   const ctx = new Context(s, "p5");
   let got = 0;
-  ctx.on("ui.tick", () => got++);
-  events.emit("ui.tick", null);
+  ctx.on("ui.ticked", () => got++);
+  events.emit("ui.ticked", null);
   s.dispose();
-  events.emit("ui.tick", null);
+  events.emit("ui.ticked", null);
   check("ctx-on-dispose", got === 1);
 }
 
@@ -82,9 +82,9 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 {
   check("bus-once-typo", throws(() => events.once("ui.tik", () => {})));
   check("bus-bail-typo", throws(() => events.bail("ui.tik")));
-  const core = ["ui.start", "ui.closed", "ui.resize", "ui.tick", "key.press", "mouse.input",
-    "paste.input", "focus.changed", "clipboard.copied", "session.changed", "index.changed",
-    "ext.error"];
+  const core = ["ui.started", "ui.closed", "ui.resized", "ui.ticked", "key.pressed", "mouse.input",
+    "paste.received", "focus.changed", "clipboard.copied", "session.changed", "index.changed",
+    "ext.failed"];
   const bad = core.filter((n) => throws(() => events.on(n, () => {})()));
   check("bus-core-declared:" + bad.join("|"), bad.length === 0);
 }
@@ -93,14 +93,14 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 {
   const seen = [];
   const offs = [
-    events.on("key.press", () => { throw new Error("listener"); }),
-    events.on("key.press", () => seen.push("key")),
+    events.on("key.pressed", () => { throw new Error("listener"); }),
+    events.on("key.pressed", () => seen.push("key")),
     events.on("mouse.input", () => seen.push("mouse")),
-    events.on("ui.tick", () => seen.push("tick")),
+    events.on("ui.ticked", () => seen.push("tick")),
     events.on("focus.changed", () => seen.push("focus")),
-    events.on("paste.input", () => seen.push("paste")),
-    events.on("ui.resize", () => seen.push("resize")),
-    events.on("ui.start", () => seen.push("start")),
+    events.on("paste.received", () => seen.push("paste")),
+    events.on("ui.resized", () => seen.push("resize")),
+    events.on("ui.started", () => seen.push("start")),
   ];
   root.onEvent({ type: "start" });
   root.onEvent({ type: "resize", w: 80, h: 24 });

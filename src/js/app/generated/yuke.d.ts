@@ -2873,7 +2873,7 @@ type EngineFacts = { [K in Exclude<Wire.BroadcastName, "notice" | "auth.login_fi
  */
 export type Events = import("yuke").Events;
 export interface EventsBase extends EngineFacts {
-  "ext.error"(error: unknown, owner: string): void;
+  "ext.failed"(error: unknown, owner: string): void;
   "engine.drained"(ev: EngineFactEvent): void;
   /** A notice and a login outcome name no session, so they arrive only in an index drain. */
   "notice"(ev: Extract<EngineEvent, { type: "index" }>): void;
@@ -2883,13 +2883,13 @@ export interface EventsBase extends EngineFacts {
   "interaction.changed"(): void;
   /** A true answer holds the quit. */
   "quit.request"(): boolean | null | undefined;
-  "ui.start"(ev: { type: "start" }): void;
+  "ui.started"(ev: { type: "start" }): void;
   "ui.closed"(ev: { type: "input_closed" }): void;
-  "ui.resize"(ev: Extract<HostEvent, { type: "resize" }>): void;
-  "ui.tick"(ev: Extract<HostEvent, { type: "tick" }>): void;
-  "key.press"(ev: Extract<HostEvent, { type: "key" }>): void;
+  "ui.resized"(ev: Extract<HostEvent, { type: "resize" }>): void;
+  "ui.ticked"(ev: Extract<HostEvent, { type: "tick" }>): void;
+  "key.pressed"(ev: Extract<HostEvent, { type: "key" }>): void;
   "mouse.input"(ev: HostMouseEvent): void;
-  "paste.input"(ev: Extract<HostEvent, { type: "paste" }>): void;
+  "paste.received"(ev: Extract<HostEvent, { type: "paste" }>): void;
   "focus.changed"(ev: Extract<HostEvent, { type: "focus" }>): void;
   "pane.focused"(view: ViewLike): void;
   "pane.closed"(view: ViewLike): void;
