@@ -1,8 +1,8 @@
 import { check } from "yuke:internal/test";
 import { root, Node, View, keymap } from "yuke:internal/core";
-import { plugins } from "yuke:internal/ext";
+import { plugins, services } from "yuke:internal/ext";
 import { ChatView } from "yuke:internal/chat-view";
-import { composerVim, setComposerMode, composerMode } from "yuke:internal/composer-vim";
+import { composerVim } from "yuke:internal/composer-vim";
 import { register } from "yuke:internal/vim";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
@@ -11,13 +11,14 @@ const v = new ChatView({});
 root.setRoot(Node.leaf(v));
 root.focusView(v);
 const off = plugins.use(composerVim);
+const vim = services.get("composer-vim");
 const t = v.composer.input;
 const key = (ch) => ({ type: "key", code: "char", char: ch, text: ch, event: "press", mods: 0 });
 // The keys go through the real dispatch, so the bindings and the context both run.
 const press = (str) => { for (const ch of str) root.onEvent(key(ch)); };
 
 t.setText("alpha bravo charlie");
-setComposerMode(v.composer, "normal");
+vim.setMode(v.composer, "normal");
 press("$");
 // Normal mode holds the caret on a character, so it never sits past the last one.
 check("dollar", t.caret === 18);
@@ -43,7 +44,7 @@ check("put-char", t.text === "alpha bravo charli");
 
 // "p" leaves the caret on the last character it put.
 t.setText("abc");
-setComposerMode(v.composer, "normal");
+vim.setMode(v.composer, "normal");
 press("gg");
 register.set("XY", false);
 press("p");
@@ -51,7 +52,7 @@ check("put-caret", t.text === "aXYbc" && t.caret === 2);
 
 // "dd" on the last line takes the newline before it, but the register keeps only the body.
 t.setText("one\ntwo");
-setComposerMode(v.composer, "normal");
+vim.setMode(v.composer, "normal");
 press("$dd");
 check("dd-last", t.text === "one" && register.text === "two" && register.linewise);
 press("p");
@@ -60,26 +61,26 @@ check("put-line", t.text === "one\ntwo");
 // Normal mode holds the caret on a character after every motion.
 v.composer.rect = { x: 0, y: 0, w: 40, h: 3 };
 t.setText("abcdef\ntwo");
-setComposerMode(v.composer, "normal");
+vim.setMode(v.composer, "normal");
 press("gg$j");
 check("row-clamp", t.caret === t.text.length - 1);
 t.setText("one\n");
-setComposerMode(v.composer, "normal");
+vim.setMode(v.composer, "normal");
 press("G");
 check("trailing-newline", t.caret === 2);
 
 // "x" and "s" never join two lines, and a blank line keeps the register.
 t.setText("a\n\nb");
-setComposerMode(v.composer, "normal");
+vim.setMode(v.composer, "normal");
 press("gg");
 press("jx");
 check("x-blank-line", t.text === "a\n\nb");
 press("s");
-check("s-blank-line", t.text === "a\n\nb" && composerMode(v.composer) === "insert");
+check("s-blank-line", t.text === "a\n\nb" && vim.mode(v.composer) === "insert");
 
 // An unbound letter inserts nothing in normal mode and runs no command.
 t.setText("abc");
-setComposerMode(v.composer, "normal");
+vim.setMode(v.composer, "normal");
 press("z");
 check("swallow", t.text === "abc");
 check("named-key-passes", v.composer.onKey({ type: "key", code: "tab", char: "", text: "", event: "press", mods: 0 }) === false);
@@ -89,7 +90,7 @@ check("named-key-passes", v.composer.onKey({ type: "key", code: "tab", char: "",
   let hits = 0;
   const off = keymap.add({ z: () => { hits++; return true; } }, "chat && composer_vim == normal");
   t.setText("abc");
-  setComposerMode(v.composer, "normal");
+  vim.setMode(v.composer, "normal");
   press("z");
   check("normal-uses-keymap", hits === 1);
   off();
@@ -98,7 +99,7 @@ check("named-key-passes", v.composer.onKey({ type: "key", code: "tab", char: "",
 // An unresolved sequence runs its second stroke on its own rather than dropping it.
 {
   t.setText("abc def");
-  setComposerMode(v.composer, "normal");
+  vim.setMode(v.composer, "normal");
   press("$");
   const at = t.caret;
   press("dh");
@@ -107,7 +108,7 @@ check("named-key-passes", v.composer.onKey({ type: "key", code: "tab", char: "",
 
 // Esc reaches its binding while an operator waits, so a mode always has an exit.
 {
-  setComposerMode(v.composer, "normal");
+  vim.setMode(v.composer, "normal");
   press("d");
   check("operator-armed", keymap.pending !== null);
   root.onEvent({ type: "key", code: "esc", char: "", text: "", event: "press", mods: 0 });
@@ -117,7 +118,7 @@ check("named-key-passes", v.composer.onKey({ type: "key", code: "tab", char: "",
 // Insert mode still inserts through the real dispatch.
 {
   t.setText("");
-  setComposerMode(v.composer, "insert");
+  vim.setMode(v.composer, "insert");
   press("hi");
   check("insert-inserts", t.text === "hi");
 }
@@ -127,7 +128,7 @@ check("named-key-passes", v.composer.onKey({ type: "key", code: "tab", char: "",
   class Side extends View { get name() { return "side"; } draw() {} }
   const side = new Side();
   t.setText("abc");
-  setComposerMode(v.composer, "normal");
+  vim.setMode(v.composer, "normal");
   root.setRoot(Node.branch("row", Node.leaf(side), Node.leaf(v), 0.5));
   root.focusView(side);
   press("x");
@@ -138,10 +139,10 @@ check("named-key-passes", v.composer.onKey({ type: "key", code: "tab", char: "",
 
 // "i" types again, and an unload leaves the composer plain.
 press("i");
-check("insert", composerMode(v.composer) === "insert");
-setComposerMode(v.composer, "normal");
+check("insert", vim.mode(v.composer) === "insert");
+vim.setMode(v.composer, "normal");
 t.setText("");
 off.dispose();
-check("unloaded", composerMode(v.composer) === "insert");
+check("unloaded", v.composer._prompt() !== "▪ ");
 v.composer.onKey(key("z"));
 check("types-after-unload", t.text === "z");

@@ -1,9 +1,9 @@
 import { equal, textParts } from "yuke:internal/test";
 import { term } from "yuke:internal/native/term";
 import { root, Node, keymap } from "yuke:internal/core";
-import { plugins } from "yuke:internal/ext";
+import { plugins, services } from "yuke:internal/ext";
 import { ChatView } from "yuke:internal/chat-view";
-import { composerVim, setComposerMode, composerMode } from "yuke:internal/composer-vim";
+import { composerVim } from "yuke:internal/composer-vim";
 import { transcriptVim } from "yuke:internal/transcript-vim";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
@@ -20,11 +20,12 @@ const run = (order) => {
   const offs = order === "composer-first"
     ? [plugins.use(composerVim), plugins.use(transcriptVim)]
     : [plugins.use(transcriptVim), plugins.use(composerVim)];
+  const vim = services.get("composer-vim");
   v.composer.input.setText("hello\nworld");
-  setComposerMode(v.composer, "normal");
+  vim.setMode(v.composer, "normal");
   v.focusRegion("transcript");
   // The composer stays in normal mode, so both layers really are live.
-  const both = composerMode(v.composer) === "normal";
+  const both = vim.mode(v.composer) === "normal";
   const c0 = v.cursor();
   const caret0 = v.composer.input.caret;
   root.onEvent(key("j"));
@@ -41,14 +42,14 @@ const run = (order) => {
   offBare();
   // A composer binding must not fire at all while the transcript holds the region.
   root.onEvent(key("i"));
-  const leaked = composerMode(v.composer) !== "normal";
+  const leaked = vim.mode(v.composer) !== "normal";
   // Back in the composer the same key belongs to the other layer again.
   v.focusRegion("composer");
   const caret1 = v.composer.input.caret;
   root.onEvent(key("j"));
   const composerBack = v.composer.input.caret !== caret1;
   // Insert mode must still type, so no transcript binding may own the whole pane.
-  setComposerMode(v.composer, "insert");
+  vim.setMode(v.composer, "insert");
   const len0 = v.composer.input.text.length;
   root.onEvent(key("h"));
   const typed = v.composer.input.text.length === len0 + 1;

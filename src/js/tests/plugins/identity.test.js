@@ -8,4 +8,4 @@ import * as chat from "yuke:chat";
 equal(viaFacade, viaExt);
 equal(composerVim, internalVim);
 equal(agents, internalAgents);
-for (const name of ["composerVim", "composerMode", "setComposerMode", "transcriptVim", "agents"]) equal(Object.hasOwn(chat, name), false);
+for (const name of ["composerVim", "transcriptVim", "agents"]) equal(Object.hasOwn(chat, name), false);

@@ -1,6 +1,5 @@
 // Opt-in modal keys for the chat composer.
-import { root } from "yuke:internal/core";
-import { Emitter } from "yuke:internal/kernel";
+import { events } from "yuke:internal/kernel";
 import { windowKeys } from "yuke:internal/keys";
 import { prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:internal/text-input";
 import { Composer } from "yuke:internal/ui";
@@ -11,7 +10,9 @@ import { focusedChatView } from "yuke:internal/chat";
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { Composer as ComposerType } from "yuke:internal/ui" */
 /** @typedef {"insert" | "normal"} ComposerMode */
-/** @typedef {{ mode: ComposerMode }} ComposerVimState */
+/** @typedef {{ mode: (c: ComposerType | null) => ComposerMode | null, setMode: (c: ComposerType | null, mode: ComposerMode) => void }} ComposerVim */
+// A key answers false when it does not apply, true when it edits, and "insert" when it also leaves normal mode.
+/** @typedef {boolean | "insert"} KeyResult */
 /** @typedef {{ start: number, end: number }} LineBounds */
 
 const NORMAL_PROMPT = "▪ ";
@@ -25,38 +26,6 @@ const NORMAL_KEYS = [
   "i", "a", "I", "A", "o", "O", "x", "s", "D", "C", "p", "P",
   "left", "right", "up", "down", "enter",
 ];
-/** @type {WeakMap<ComposerType, ComposerVimState>} */
-const states = new WeakMap();
-
-// Each load owns its bus, so a listener never carries across an unload.
-let bus = new Emitter();
-
-/** @param {ComposerType} c @returns {ComposerVimState} */
-function stateOf(c) {
-  let s = states.get(c);
-  if (!s) {
-    s = { mode: "insert" };
-    states.set(c, s);
-  }
-  return s;
-}
-
-/** @param {ComposerType | null} c @returns {ComposerMode | null} */
-export function composerMode(c) {
-  return c ? stateOf(c).mode : null;
-}
-
-/** @param {ComposerType | null} c @param {ComposerMode} mode @returns {void} */
-export function setComposerMode(c, mode) {
-  if (!c) return;
-  const s = stateOf(c);
-  if (s.mode === mode) return;
-  s.mode = mode;
-  if (mode === "normal") c.input.caret = clamp(c.input.text, c.input.caret);
-  bus.emit("mode", mode);
-  root.invalidate();
-}
-
 /** @param {string} text @param {number} caret @returns {LineBounds} */
 function lineAt(text, caret) {
   const at = caret > 0 && caret === text.length && text[caret - 1] === "\n" ? caret - 1 : caret;
@@ -84,11 +53,6 @@ function firstWord(text, caret) {
 function chatComposer() {
   const v = /** @type {ChatView | null} */ (focusedChatView());
   return v ? v.composer : null;
-}
-
-/** @param {ComposerMode} mode @returns {void} */
-function setFocusedMode(mode) {
-  setComposerMode(chatComposer(), mode);
 }
 
 /** @param {ComposerType} c @returns {true} */
@@ -130,15 +94,15 @@ function put(c, after) {
   return to(c, clamp(t.text, prevGrapheme(t.text, at + register.text.length)));
 }
 
-/** @param {ComposerType} c @param {number} caret @returns {true} */
+// Place the caret for an insert command; the caller leaves normal mode.
+/** @param {ComposerType} c @param {number} caret @returns {"insert"} */
 function enter(c, caret) {
   c.input.caret = Math.max(0, Math.min(caret, c.input.text.length));
-  setComposerMode(c, "insert");
-  return true;
+  return "insert";
 }
 
 // `dd` and `cc` take the whole line; the register keeps only its body.
-/** @param {ComposerType} c @param {"d" | "c"} op @returns {boolean} */
+/** @param {ComposerType} c @param {"d" | "c"} op @returns {KeyResult} */
 function lineOp(c, op) {
   const t = c.input;
   const { start, end } = lineAt(t.text, t.caret);
@@ -148,7 +112,7 @@ function lineOp(c, op) {
   return cut(c, start > 0 ? start - 1 : 0, end, true, body);
 }
 
-/** @param {ComposerType} c @param {string} k @returns {boolean} */
+/** @param {ComposerType} c @param {string} k @returns {KeyResult} */
 function normalKey(c, k) {
   const t = c.input;
   const text = t.text;
@@ -221,31 +185,48 @@ export const composerVim = {
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      bus = new Emitter();
+      // The block owns the modes, so an unload drops them and every composer types again.
+      /** @type {WeakSet<ComposerType>} */
+      const normal = new WeakSet();
+      /** @param {ComposerType | null} c @returns {ComposerMode | null} */
+      const mode = (c) => (c ? (normal.has(c) ? "normal" : "insert") : null);
+      /** @param {ComposerType | null} c @param {ComposerMode} next @returns {void} */
+      const setMode = (c, next) => {
+        if (!c || mode(c) === next) return;
+        if (next === "normal") {
+          normal.add(c);
+          c.input.caret = clamp(c.input.text, c.input.caret);
+        } else normal.delete(c);
+        events.emit("composer-vim:mode", c, next);
+        ctx.tui.invalidate();
+      };
       const inChat = () => chatComposer() != null;
 
       ctx.tui.command(inChat, {
-        normal: () => setFocusedMode("normal"),
-        insert: () => setFocusedMode("insert"),
+        normal: () => setMode(chatComposer(), "normal"),
+        insert: () => setMode(chatComposer(), "insert"),
       });
 
       ctx.tui.keymap({ esc: "composer-vim:normal" });
 
       // The plugin exposes the mode as a flag, so each binding gates on it.
-      ctx.tui.context({ composer_vim: () => composerMode(chatComposer()) || "" });
+      ctx.tui.context({ composer_vim: () => mode(chatComposer()) || "" });
 
       // Normal mode sends a key to the keymap, so no pane inside the chat reads it.
       ctx.tui.route("keymap", NORMAL_MODE);
 
-      /** @param {(c: ComposerType) => boolean} fn @returns {() => boolean} */
+      /** @param {(c: ComposerType) => KeyResult} fn @returns {() => boolean} */
       const edit = (fn) => () => {
         const c = chatComposer();
-        return c ? fn(c) : false;
+        if (!c) return false;
+        const done = fn(c);
+        if (done === "insert") setMode(c, "insert");
+        return done !== false;
       };
       /** @type {Record<string, () => boolean>} */
-      const normal = {};
-      for (const k of NORMAL_KEYS) normal[k] = edit((c) => normalKey(c, k));
-      ctx.tui.keymap(normal, NORMAL_MODE);
+      const keys = {};
+      for (const k of NORMAL_KEYS) keys[k] = edit((c) => normalKey(c, k));
+      ctx.tui.keymap(keys, NORMAL_MODE);
       // `gg` is a chord, while `dd` and `cc` are operators that never expire.
       ctx.tui.keymap({ "g g": edit((c) => to(c, 0)) }, NORMAL_MODE);
       ctx.tui.keymap(
@@ -255,29 +236,20 @@ export const composerVim = {
       );
 
       // A null answer leaves the composer its own glyph.
-      ctx.tui.slot(Composer, "prompt", /** @param {ComposerType} c @returns {string | null} */ (c) => (composerMode(c) === "normal" ? NORMAL_PROMPT : null));
+      ctx.tui.slot(Composer, "prompt", /** @param {ComposerType} c @returns {string | null} */ (c) => (normal.has(c) ? NORMAL_PROMPT : null));
 
       ctx.tui.keymap(windowKeys("ctrl+w"));
 
       ctx.tui.status({ side: "right", order: 0, render: () => {
-        const mode = composerMode(chatComposer());
-        return mode ? mode.toUpperCase() : "";
+        const m = mode(chatComposer());
+        return m ? m.toUpperCase() : "";
       } });
 
-      ctx.provide("composer-vim", {
-        bus,
-        mode: () => composerMode(chatComposer()),
-        isNormal: () => inChat() && composerMode(chatComposer()) === "normal",
-      });
+      /** @type {ComposerVim} */
+      const service = { mode, setMode };
+      ctx.provide("composer-vim", service);
 
-      setFocusedMode("normal");
-      return () => {
-        const c = chatComposer();
-        if (c) {
-          setComposerMode(c, "insert");
-          states.delete(c);
-        }
-      };
-      });
-},
+      setMode(chatComposer(), "normal");
+    });
+  },
 };

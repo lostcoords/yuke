@@ -25,8 +25,6 @@ export type ChatViewOptions = $chat_view.ChatViewOptions;
 
 declare module "yuke:plugins" {
 export import composerVim = $composer_vim.composerVim;
-export import composerMode = $composer_vim.composerMode;
-export import setComposerMode = $composer_vim.setComposerMode;
 export import transcriptVim = $transcript_vim.transcriptVim;
 export import agents = $agents.agents;
 export import mcp = $mcp.mcp;
@@ -450,17 +448,15 @@ declare namespace $composer_vim {
 import Context = $ext.Context;
 import ComposerType = $ui.Composer;
 export type ComposerMode = "insert" | "normal";
-export type ComposerVimState = {
-    mode: ComposerMode;
+export type ComposerVim = {
+    mode: (c: ComposerType | null) => ComposerMode | null;
+    setMode: (c: ComposerType | null, mode: ComposerMode) => void;
 };
+export type KeyResult = boolean | "insert";
 export type LineBounds = {
     start: number;
     end: number;
 };
-/** @param {ComposerType | null} c @returns {ComposerMode | null} */
-export function composerMode(c: ComposerType | null): ComposerMode | null;
-/** @param {ComposerType | null} c @param {ComposerMode} mode @returns {void} */
-export function setComposerMode(c: ComposerType | null, mode: ComposerMode): void;
 export const composerVim: {
     name: string;
     /** @param {Context} ctx @returns {void} */

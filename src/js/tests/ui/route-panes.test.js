@@ -1,8 +1,8 @@
 import { check } from "yuke:internal/test";
 import { root, Node, View } from "yuke:internal/core";
-import { plugins } from "yuke:internal/ext";
+import { plugins, services } from "yuke:internal/ext";
 import { ChatView } from "yuke:internal/chat-view";
-import { composerVim, setComposerMode } from "yuke:internal/composer-vim";
+import { composerVim } from "yuke:internal/composer-vim";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 
@@ -22,7 +22,7 @@ const key = (ch) => ({ type: "key", code: "char", char: ch, text: ch, event: "pr
 const press = (str) => { for (const ch of str) root.onEvent(key(ch)); };
 
 t.setText("abcd");
-setComposerMode(v.composer, "normal");
+services.get("composer-vim").setMode(v.composer, "normal");
 // Put the caret on a character, because "x" past the last one deletes nothing.
 press("$");
 
