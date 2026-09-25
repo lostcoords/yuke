@@ -1,20 +1,20 @@
-// yuke:mcp — MCP servers as yuke tools. `.mcp.json` names them; `yuke:mcp-transport` carries each one.
-import * as mcpNative from "yuke:mcp-native";
-import { sha256 } from "yuke:oauth-native";
-import * as cancellation from "yuke:cancellation-native";
-import { fs } from "yuke:fs";
-import { showInfo } from "yuke:info-panel";
-import { endpointFor, headerValue, LISTEN_RETRY_MS, LISTEN_RETRY_MAX_MS } from "yuke:mcp-transport";
-import { client } from "yuke:client";
-import { signIn, forget, record } from "yuke:mcp-oauth";
-import { errorText } from "yuke:format";
-import { openUrl } from "yuke:browser";
-import { notice } from "yuke:notice";
+// MCP servers as yuke tools. `.mcp.json` names them; `yuke:internal/mcp-transport` carries each one.
+import * as mcpNative from "yuke:internal/native/mcp";
+import { sha256 } from "yuke:internal/native/oauth";
+import * as cancellation from "yuke:internal/native/cancellation";
+import { fs } from "yuke:internal/native/fs";
+import { showInfo } from "yuke:internal/info-panel";
+import { endpointFor, headerValue, LISTEN_RETRY_MS, LISTEN_RETRY_MAX_MS } from "yuke:internal/mcp-transport";
+import { client } from "yuke:internal/client";
+import { signIn, forget, record } from "yuke:internal/mcp-oauth";
+import { errorText } from "yuke:internal/format";
+import { openUrl } from "yuke:internal/browser";
+import { notice } from "yuke:internal/notice";
 
-/** @import { Context } from "yuke:ext" */
+/** @import { Context } from "yuke:internal/ext" */
 /** @import { Plugin, ToolContext, ToolDefinition } from "./types/ext.js" */
-/** @import { CancellationSignal } from "yuke:cancellation-native" */
-/** @import { Endpoint, ServerConfig, Transport } from "yuke:mcp-transport" */
+/** @import { CancellationSignal } from "yuke:internal/native/cancellation" */
+/** @import { Endpoint, ServerConfig, Transport } from "yuke:internal/mcp-transport" */
 /** @typedef {{ servers?: Record<string, ServerConfig>, startupMs?: number, callMs?: number }} McpOptions */
 /** @typedef {{ startupMs: number, callMs: number }} Limits */
 /** @typedef {"pending" | "untrusted" | "connecting" | "connected" | "needs auth" | "failed" | "disabled" | "stopped"} ServerState */

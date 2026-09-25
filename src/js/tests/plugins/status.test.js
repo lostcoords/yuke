@@ -1,7 +1,7 @@
-import { check } from "yuke:test";
-import { status } from "yuke:core";
-import { plugins } from "yuke:ext";
-import { tui } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { status } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { tui } from "yuke:internal/tui";
 const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 
 // The status registry orders each side, rejects a bad segment, and disposes with the scope.

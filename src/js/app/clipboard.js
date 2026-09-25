@@ -1,6 +1,6 @@
-// yuke:clipboard — read one image off the OS clipboard into a temporary file.
-import { exec } from "yuke:exec";
-import { fs } from "yuke:fs";
+// Read one image off the OS clipboard into a temporary file.
+import { exec } from "yuke:internal/native/exec";
+import { fs } from "yuke:internal/native/fs";
 
 /** @typedef {{ path: string } | { error: string }} ClipboardRead */
 

@@ -2,7 +2,9 @@ const std = @import("std");
 const quickjs = @import("quickjs");
 
 pub const default_max_file_bytes: usize = 256 * 1024;
-pub const host_module_prefix = "yuke:host/";
+/// Only `yuke` and `yuke:*` modules may import a name under this prefix.
+const internal_prefix = "yuke:internal/";
+pub const host_module_prefix = internal_prefix ++ "host/";
 
 pub const BakedModule = struct {
     name: []const u8,
@@ -21,7 +23,7 @@ const ResolveError = error{
 
 /// True for the public entries and every internal module name.
 fn isBaked(name: []const u8) bool {
-    return std.mem.eql(u8, name, "yuke") or std.mem.startsWith(u8, name, "yuke/") or std.mem.startsWith(u8, name, "yuke:");
+    return std.mem.eql(u8, name, "yuke") or std.mem.startsWith(u8, name, "yuke:");
 }
 
 /// Resolve a module name against `base` and keep baked names; the user owns the config directory, so nothing contains it.
@@ -52,8 +54,8 @@ pub const Loader = struct {
         base: []const u8,
         name: []const u8,
     ) ?[:0]u8 {
-        if (std.mem.startsWith(u8, name, "yuke:") and !isBaked(base)) {
-            _ = ctx.throwReferenceError("internal yuke module: use yuke, yuke/ui, yuke/chat, or yuke/plugins");
+        if (std.mem.startsWith(u8, name, internal_prefix) and !isBaked(base)) {
+            _ = ctx.throwReferenceError("internal yuke module: use yuke, yuke:ui, yuke:chat, or yuke:plugins");
             return null;
         }
         if (isBaked(name)) return dupJs(ctx, name);
@@ -123,13 +125,13 @@ fn dupJs(ctx: quickjs.Context, s: []const u8) ?[:0]u8 {
 
 test "resolve keeps yuke names and rejects a relative name with no base" {
     const gpa = std.testing.allocator;
-    const a = try resolve(gpa, "", "yuke:core");
+    const a = try resolve(gpa, "", "yuke:internal/core");
     defer gpa.free(a);
-    try std.testing.expectEqualStrings("yuke:core", a);
+    try std.testing.expectEqualStrings("yuke:internal/core", a);
 
     try std.testing.expectError(error.EmptyPath, resolve(gpa, "/cfg/a.js", ""));
     try std.testing.expectError(error.MissingBase, resolve(gpa, "", "./b.js"));
-    try std.testing.expectError(error.MissingBase, resolve(gpa, "yuke:core", "./b.js"));
+    try std.testing.expectError(error.MissingBase, resolve(gpa, "yuke:internal/core", "./b.js"));
     try std.testing.expectError(error.MissingBase, resolve(gpa, "yuke", "./b.js"));
 }
 
@@ -140,7 +142,7 @@ test "the facade name is reserved and never reaches the config directory" {
     defer gpa.free(bare);
     try std.testing.expectEqualStrings("yuke", bare);
 
-    for ([_][]const u8{ "yuke/ui", "yuke/chat", "yuke/plugins", "yuke/unknown" }) |name| {
+    for ([_][]const u8{ "yuke:ui", "yuke:chat", "yuke:plugins", "yuke:unknown" }) |name| {
         const public = try resolve(gpa, "/cfg/index.js", name);
         defer gpa.free(public);
         try std.testing.expectEqualStrings(name, public);

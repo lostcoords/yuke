@@ -1,4 +1,4 @@
-declare module "yuke:term" {
+declare module "yuke:internal/native/term" {
   export interface Style {
     fg?: Color;
     bg?: Color;

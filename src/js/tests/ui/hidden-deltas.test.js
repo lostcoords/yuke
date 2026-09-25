@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { root } from "yuke:core";
-import { Transcript } from "yuke:transcript";
+import { check } from "yuke:internal/test";
+import { root } from "yuke:internal/core";
+import { Transcript } from "yuke:internal/transcript";
 let part = { type: "tool", id: 7, name: "exec", arguments: "{}", state: { type: "completed", duration_ms: 1, output: "old" } };
 const copy = (p) => JSON.parse(JSON.stringify(p));
 const t = new Transcript({ partsOf: () => [copy(part)], partOf: () => copy(part) });

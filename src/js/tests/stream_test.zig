@@ -2,6 +2,6 @@
 
 const support = @import("support.zig");
 
-test "yuke:transcript keeps suffix rows local across an earlier part update" {
+test "yuke:internal/transcript keeps suffix rows local across an earlier part update" {
     try support.run("stream/stream.test.js");
 }

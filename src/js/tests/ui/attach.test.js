@@ -1,10 +1,10 @@
-import { check } from "yuke:test";
-import { Composer } from "yuke:ui";
-import { fs } from "yuke:fs";
-import { client } from "yuke:client";
-import { notice } from "yuke:notice";
-import { term } from "yuke:term";
-import { cleanPath, looksLikeImagePath, pasteAttaches } from "yuke:attach";
+import { check } from "yuke:internal/test";
+import { Composer } from "yuke:internal/ui";
+import { fs } from "yuke:internal/native/fs";
+import { client } from "yuke:internal/client";
+import { notice } from "yuke:internal/notice";
+import { term } from "yuke:internal/native/term";
+import { cleanPath, looksLikeImagePath, pasteAttaches } from "yuke:internal/attach";
 const paste = (t) => ({ type: "paste", text: t });
 const png = { hash: "a".repeat(64), mime: "image/png", bytes: 2048 };
 

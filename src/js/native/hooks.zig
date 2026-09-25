@@ -9,9 +9,9 @@ const table = @import("../hooks.zig");
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
-/// Register `yuke:hooks` and its functions.
+/// Register `yuke:internal/native/hooks` and its functions.
 pub fn install(host: *Host) void {
-    module.installFunctions(host, "yuke:hooks", &.{
+    module.installFunctions(host, "yuke:internal/native/hooks", &.{
         .{ .name = "installDispatcher", .arity = 1, .call = jsInstallDispatcher },
         .{ .name = "installLifecycle", .arity = 1, .call = jsInstallLifecycle },
         .{ .name = "setPoints", .arity = 2, .call = jsSetPoints },

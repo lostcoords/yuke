@@ -1,5 +1,5 @@
-import { equal } from "yuke:test";
-import { Document } from "yuke:md";
+import { equal } from "yuke:internal/test";
+import { Document } from "yuke:internal/md";
 // Every block kind, with lookahead cases: a setext heading, a table, and a fence that closes late.
 const text = "Intro para\nsecond line\n\n# Head\n\nSetext\n===\n\n- one\n- two\n\n1. first\n2. second\n\n> quoted\n> more\n\n" +
   "a | b\n---|---\n1 | 2\n\n```zig\nconst x = 1;\nconst y = 2;\n```\n\n---\n\nlast **bold** para\nwith a|pipe\n---|---\nx|y\n";

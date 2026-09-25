@@ -1,8 +1,8 @@
-import { check } from "yuke:test";
-import { keymap } from "yuke:core";
-import { config, defineConfig } from "yuke:kernel";
-import { TextInput } from "yuke:text-input";
-import { strokeOf } from "yuke:keys";
+import { check } from "yuke:internal/test";
+import { keymap } from "yuke:internal/core";
+import { config, defineConfig } from "yuke:internal/kernel";
+import { TextInput } from "yuke:internal/text-input";
+import { strokeOf } from "yuke:internal/keys";
 const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } };
 
 // defineConfig merges values and rejects invalid fields.

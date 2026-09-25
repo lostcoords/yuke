@@ -1,11 +1,11 @@
 // The terminal answerer presents requests; the shared lifecycle owns their disposal.
-import { native } from "yuke:interaction-native";
-import { DeviceDialog } from "yuke:auth";
-import { term } from "yuke:term";
-import { Prompt, Window, ui } from "yuke:ui";
-import { interaction, watchCancellation } from "yuke:interaction";
-import { notice } from "yuke:notice";
-/** @import { Context } from "yuke:ext" */
+import { native } from "yuke:internal/native/interaction";
+import { DeviceDialog } from "yuke:internal/auth";
+import { term } from "yuke:internal/native/term";
+import { Prompt, Window, ui } from "yuke:internal/ui";
+import { interaction, watchCancellation } from "yuke:internal/interaction";
+import { notice } from "yuke:internal/notice";
+/** @import { Context } from "yuke:internal/ext" */
 /** @import { InjectContext } from "./types/ext.js" */
 /** @import { Answerer } from "./types/runtime.js" */
 

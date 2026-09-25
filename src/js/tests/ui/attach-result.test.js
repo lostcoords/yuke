@@ -1,4 +1,4 @@
-import { check } from "yuke:test";
+import { check } from "yuke:internal/test";
 
 // The later phase of `attach.test.js`, after the host pumped every attach to its answer.
 check("attached", globalThis.ok.spans.length === 1 && globalThis.ok.projection().text === "[PNG #1]");

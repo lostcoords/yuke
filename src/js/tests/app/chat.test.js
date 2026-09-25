@@ -1,9 +1,9 @@
-import { check } from "yuke:test";
-import { command, root, Node } from "yuke:core";
-import { events } from "yuke:kernel";
-import { plugins } from "yuke:ext";
-import { Chat, chatEntry, chatPlugin } from "yuke:chat";
-import { tuiPlugin } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { command, root, Node } from "yuke:internal/core";
+import { events } from "yuke:internal/kernel";
+import { plugins } from "yuke:internal/ext";
+import { Chat, chatEntry, chatPlugin } from "yuke:internal/chat";
+import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 // The pane must sit in the tree, because a session command acts on the focused chat.
 const chat = new Chat();

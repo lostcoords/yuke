@@ -1,5 +1,5 @@
-import { equal } from "yuke:test";
-import { column, row, child, fixed, fit, grow, solve, clipRect } from "yuke:layout";
+import { equal } from "yuke:internal/test";
+import { column, row, child, fixed, fit, grow, solve, clipRect } from "yuke:internal/layout";
 
 // A column fits fixed content and gives the remainder to grow.
 const col = column([

@@ -1,4 +1,4 @@
-//! The native `yuke:engine` module is the JavaScript seam onto the in-process engine; `drain` delivers events on the owner, and a text read is paged.
+//! The native `yuke:internal/native/engine` module is the JavaScript seam onto the in-process engine; `drain` delivers events on the owner, and a text read is paged.
 
 const std = @import("std");
 const execution = @import("../../execution.zig");
@@ -25,9 +25,9 @@ const SessionId = proto.ids.SessionId;
 pub const Engine = digest.Engine;
 pub const drain = digest.drain;
 
-/// Register `yuke:engine-native` and its one `native` object.
+/// Register `yuke:internal/native/engine` and its one `native` object.
 pub fn install(host: *Host) void {
-    module.installObject(host, "yuke:engine-native", "native", &.{
+    module.installObject(host, "yuke:internal/native/engine", "native", &.{
         .{ .name = "setAgentLimits", .arity = 2, .call = jsSetAgentLimits },
         .{ .name = "setEventSink", .arity = 1, .call = jsSetEventSink },
         .{ .name = "factNames", .arity = 0, .call = jsFactNames },
@@ -260,7 +260,7 @@ test "a request reaches a command and answers with its result" {
 
     // With no engine, a view read answers its empty projection and a request refuses.
     try host.evalModule(
-        \\import { native } from "yuke:engine-native";
+        \\import { native } from "yuke:internal/native/engine";
         \\globalThis.detached = 0;
         \\native.request("catalog.list", "{}").catch(() => { globalThis.detached = 1; });
     , "detached.js");
@@ -270,7 +270,7 @@ test "a request reaches a command and answers with its result" {
     // With the engine attached, the same call reaches `commands.catalogList`.
     host.engine.attach(&runtime);
     try host.evalModule(
-        \\import { native } from "yuke:engine-native";
+        \\import { native } from "yuke:internal/native/engine";
         \\native.request("catalog.list", "{}").then((text) => {
         \\  const r = JSON.parse(text);
         \\  globalThis.ok = r && Array.isArray(r.models) ? 1 : 0;
@@ -281,7 +281,7 @@ test "a request reaches a command and answers with its result" {
 
     // A command with real parameters must decode them, not fall back to an empty object.
     try host.evalModule(
-        \\import { native } from "yuke:engine-native";
+        \\import { native } from "yuke:internal/native/engine";
         \\native.request("session.create", JSON.stringify({ workspace_path: "/tmp/yuke-probe", model: "test/model" })).then((text) => {
         \\  const r = JSON.parse(text);
         \\  globalThis.created = r && r.session ? 1 : 0;
@@ -294,7 +294,7 @@ test "a request reaches a command and answers with its result" {
 
     // The client shape of an input must decode. A wrong shape refuses every message a person sends.
     try host.evalModule(
-        \\import { client } from "yuke:client";
+        \\import { client } from "yuke:internal/client";
         \\globalThis.sent = 0;
         \\client.sessionSendInput(globalThis.sid, client.textContent("probe")).then(() => { globalThis.sent = 1; }, () => { globalThis.sent = 2; });
     , "send.js");
@@ -303,7 +303,7 @@ test "a request reaches a command and answers with its result" {
 
     // The text a person typed must come back through the part read.
     try host.evalModule(
-        \\import { client } from "yuke:client";
+        \\import { client } from "yuke:internal/client";
         \\const o = client.sessionOutline(globalThis.sid);
         \\const first = o && o.messages.length ? o.messages[0].id : 0;
         \\globalThis.text = first ? client.sessionParts(globalThis.sid, first).map((p) => p.text).join("") : "";
@@ -312,7 +312,7 @@ test "a request reaches a command and answers with its result" {
     try testing.expectEqual(@as(i32, 5), try host.evalInt("globalThis.len")); // "probe"
 
     try host.evalModule(
-        \\import { native } from "yuke:engine-native";
+        \\import { native } from "yuke:internal/native/engine";
         \\let coerced = 0;
         \\const field = { toString() { coerced++; native.sessionClose(globalThis.sid); return "text"; } };
         \\const page = JSON.parse(native.partText(globalThis.sid, 1, 1, field));
@@ -324,7 +324,7 @@ test "a request reaches a command and answers with its result" {
 
     // A refusal reaches JavaScript as an error that names its wire code.
     try host.evalModule(
-        \\import { native } from "yuke:engine-native";
+        \\import { native } from "yuke:internal/native/engine";
         \\globalThis.code = "";
         \\native.request("session.config", JSON.stringify({ session_id: "00".repeat(16), config_rev: 1 })).catch((e) => {
         \\  globalThis.isUnknown = e.code === "unknown_session" ? 1 : 0;
@@ -333,7 +333,7 @@ test "a request reaches a command and answers with its result" {
     try support.pumpUntilIdle(host);
     try testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.isUnknown"));
     try host.evalModule(
-        \\import { native } from "yuke:engine-native";
+        \\import { native } from "yuke:internal/native/engine";
         \\native.sessionClose(globalThis.sid);
     , "close.js");
     host.engine.detach();
@@ -346,8 +346,8 @@ test "process activity uses live engine state and scoped coalesced notifications
     const host = support.createHostWith(rt.io(), "");
     defer support.destroyHost(host);
     try host.evalModule(
-        \\import { client } from "yuke:client";
-        \\import { Context, Scope } from "yuke:ext";
+        \\import { client } from "yuke:internal/client";
+        \\import { Context, Scope } from "yuke:internal/ext";
         \\globalThis.client = client;
         \\globalThis.observerScope = new Scope("activity-test");
         \\globalThis.observer = new Context(observerScope, "activity-test");

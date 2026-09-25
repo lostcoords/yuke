@@ -1,13 +1,13 @@
-// yuke:catalog — the model catalog, and the model a new chat starts with.
-import { Refresh } from "yuke:refresh";
-import { root } from "yuke:core";
-import { events } from "yuke:kernel";
-import { client } from "yuke:client";
-import { notice } from "yuke:notice";
-import { newestLocalModelSession } from "yuke:sessions";
-import { errorText } from "yuke:format";
+// The model catalog, and the model a new chat starts with.
+import { Refresh } from "yuke:internal/refresh";
+import { root } from "yuke:internal/core";
+import { events } from "yuke:internal/kernel";
+import { client } from "yuke:internal/client";
+import { notice } from "yuke:internal/notice";
+import { newestLocalModelSession } from "yuke:internal/sessions";
+import { errorText } from "yuke:internal/format";
 
-/** @import { Context } from "yuke:ext" */
+/** @import { Context } from "yuke:internal/ext" */
 /** @typedef {{ rev: Wire.CatalogRev | null, providers: readonly Wire.ProviderInfo[], models: readonly Wire.ModelInfo[], loading: boolean }} CatalogState */
 /** @typedef {{ model: string | null, reasoning: string }} ModelDefaults */
 /** @typedef {{ session: Wire.Session, activity: { context_usage?: Wire.TokenUsage } | null }} StatusEntry */
@@ -117,7 +117,7 @@ export function tokenLabel(n) {
   return (n / 1000).toFixed(n < 10000 ? 1 : 0) + "k";
 }
 
-// The model reading on the right of the status bar. `yuke:context` shows the usage beside it.
+// The model reading on the right of the status bar. `yuke:internal/context` shows the usage beside it.
 /** @param {CatalogConfig} [cfg] */
 export function modelCatalog(cfg = {}) {
   return {

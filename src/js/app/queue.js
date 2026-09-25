@@ -1,15 +1,15 @@
-// yuke:queue — the queued inputs of each open session: rows above the rule, a picker that drops one, and a clear command.
-import { root } from "yuke:core";
-import { clip } from "yuke:text-input";
-import { ui } from "yuke:ui";
-import { client } from "yuke:client";
-import { notice } from "yuke:notice";
-import { inputSourceLabel } from "yuke:transcript";
-import { ChatView } from "yuke:chat-view";
-import { chatOf, focusedChat } from "yuke:chat";
-import { errorText } from "yuke:format";
+// The queued inputs of each open session: rows above the rule, a picker that drops one, and a clear command.
+import { root } from "yuke:internal/core";
+import { clip } from "yuke:internal/text-input";
+import { ui } from "yuke:internal/ui";
+import { client } from "yuke:internal/client";
+import { notice } from "yuke:internal/notice";
+import { inputSourceLabel } from "yuke:internal/transcript";
+import { ChatView } from "yuke:internal/chat-view";
+import { chatOf, focusedChat } from "yuke:internal/chat";
+import { errorText } from "yuke:internal/format";
 
-/** @import { Context } from "yuke:ext" */
+/** @import { Context } from "yuke:internal/ext" */
 /** @import { InjectContext as Ctx } from "./types/ext.js" */
 
 // The rows the strip shows before it folds the rest into a count.

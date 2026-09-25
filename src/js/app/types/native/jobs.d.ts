@@ -1,4 +1,4 @@
-declare module "yuke:jobs-native" {
+declare module "yuke:internal/native/jobs" {
   /** The wire job and the private log that holds both streams without host metadata. */
   type Job = Wire.Job & { log: string };
 

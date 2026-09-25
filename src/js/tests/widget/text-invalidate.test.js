@@ -1,6 +1,6 @@
-import { equal } from "yuke:test";
-import { Text } from "yuke:ui";
-import { root } from "yuke:core";
+import { equal } from "yuke:internal/test";
+import { Text } from "yuke:internal/ui";
+import { root } from "yuke:internal/core";
 const t = new Text({ text: "same" });
 t.layout({ x: 0, y: 0, w: 10, h: 2 });
 root.needsDraw = false; root.layoutDirty = false;

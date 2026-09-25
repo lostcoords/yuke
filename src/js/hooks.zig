@@ -11,7 +11,7 @@ pub const Point = proto.hook.Point;
 pub const PointSet = std.EnumSet(Point);
 
 pub const Hooks = struct {
-    /// The points that hold at least one handler. Only the owner writes it, after `yuke:ext` adds or drops a handler.
+    /// The points that hold at least one handler. Only the owner writes it, after `yuke:internal/ext` adds or drops a handler.
     points: PointSet = .initEmpty(),
     /// The chain folder, held as a GC root until the table dies. A null folder answers no point.
     dispatch: ?Value = null,

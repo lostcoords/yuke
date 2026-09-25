@@ -1,5 +1,5 @@
-import { check, equal } from "yuke:test";
-import { Refresh } from "yuke:refresh";
+import { check, equal } from "yuke:internal/test";
+import { Refresh } from "yuke:internal/refresh";
 
 const pending = [];
 let calls = 0, finishes = 0;

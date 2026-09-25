@@ -1,8 +1,8 @@
 import { plugins } from "yuke";
-import { builtins } from "yuke:builtins";
-import { prompt } from "yuke:prompt";
-import { hasTool } from "yuke:tools";
-import { check, equal } from "yuke:test";
+import { builtins } from "yuke:internal/builtins";
+import { prompt } from "yuke:internal/prompt";
+import { hasTool } from "yuke:internal/native/tools";
+import { check, equal } from "yuke:internal/test";
 
 equal(plugins.names().length, 0);
 check("builtin-import-is-inert", !hasTool("read"));

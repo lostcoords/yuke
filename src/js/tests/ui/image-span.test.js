@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { Composer } from "yuke:ui";
+import { check } from "yuke:internal/test";
+import { Composer } from "yuke:internal/ui";
 const key = (code, extra) => Object.assign({ type: "key", code, char: "", text: "", mods: 0 }, extra);
 const png = { hash: "a".repeat(64), mime: "image/png", bytes: 12288 };
 const jpg = { hash: "b".repeat(64), mime: "image/jpeg", bytes: 2048 };

@@ -1,9 +1,9 @@
-import { check } from "yuke:test";
-import { status, root } from "yuke:core";
-import { plugins } from "yuke:ext";
-import { notice, noticePlugin } from "yuke:notice";
-import { modelCatalog, catalogOf, chooseModel, tokenLabel, contextWindowOf } from "yuke:catalog";
-import { tuiPlugin } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { status, root } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { notice, noticePlugin } from "yuke:internal/notice";
+import { modelCatalog, catalogOf, chooseModel, tokenLabel, contextWindowOf } from "yuke:internal/catalog";
+import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 
 let open = null;

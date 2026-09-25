@@ -1,5 +1,5 @@
 import type { Node } from "../core.js";
-import type { Color, Style } from "yuke:term";
+import type { Color, Style } from "yuke:internal/native/term";
 
 export interface Rect {
   x: number;

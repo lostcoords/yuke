@@ -1,15 +1,15 @@
-// yuke:composer-vim — opt-in modal keys for the chat composer.
-import { root } from "yuke:core";
-import { Emitter } from "yuke:kernel";
-import { windowKeys } from "yuke:keys";
-import { prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:text-input";
-import { Composer } from "yuke:ui";
-import { register } from "yuke:vim";
-import { focusedChatView } from "yuke:chat";
+// Opt-in modal keys for the chat composer.
+import { root } from "yuke:internal/core";
+import { Emitter } from "yuke:internal/kernel";
+import { windowKeys } from "yuke:internal/keys";
+import { prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:internal/text-input";
+import { Composer } from "yuke:internal/ui";
+import { register } from "yuke:internal/vim";
+import { focusedChatView } from "yuke:internal/chat";
 
-/** @import { ChatView } from "yuke:chat-view" */
-/** @import { Context } from "yuke:ext" */
-/** @import { Composer as ComposerType } from "yuke:ui" */
+/** @import { ChatView } from "yuke:internal/chat-view" */
+/** @import { Context } from "yuke:internal/ext" */
+/** @import { Composer as ComposerType } from "yuke:internal/ui" */
 /** @typedef {"insert" | "normal"} ComposerMode */
 /** @typedef {{ mode: ComposerMode }} ComposerVimState */
 /** @typedef {{ start: number, end: number }} LineBounds */

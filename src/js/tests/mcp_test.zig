@@ -129,7 +129,7 @@ test "an MCP call timeout cancels the request and ignores its late reply" {
     try std.testing.expect(call.is_error);
     try std.testing.expectEqualStrings("the request timed out", call.text orelse "");
     try support.dropCall(host, call);
-    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpDisposed = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => { globalThis.mcpDisposed = true; });", "mcp-timeout-dispose.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpDisposed = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => { globalThis.mcpDisposed = true; });", "mcp-timeout-dispose.js");
     try support.pumpUntilTrue(host, "mcpDisposed === true");
     try std.testing.expect(!support.hasTool(host, "mcp_modern_echo"));
     try host.close();
@@ -189,13 +189,13 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     @memcpy(big[100_000..], marker);
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"big\"}", .{ .text = .{ .equals = big } });
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"input\"}", .{ .is_error = true, .text = .{ .equals = "the tool asks for input, which this client cannot answer" } });
-    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpConflict = false; plugins.use({ name: \"mcp-conflict\", apply(ctx) { ctx.tools.define({ name: \"mcp_modern_added\", description: \"Occupied name.\", parameters: { type: \"object\", properties: {} }, execute() { return \"other\"; } }); } }).ready.then(() => { globalThis.mcpConflict = true; });", "mcp-conflict.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpConflict = false; plugins.use({ name: \"mcp-conflict\", apply(ctx) { ctx.tools.define({ name: \"mcp_modern_added\", description: \"Occupied name.\", parameters: { type: \"object\", properties: {} }, execute() { return \"other\"; } }); } }).ready.then(() => { globalThis.mcpConflict = true; });", "mcp-conflict.js");
     try support.pumpUntilTrue(host, "mcpConflict === true");
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"change\"}", .{ .text = .{ .equals = "changed" } });
     try support.pumpUntilTrue(host, "mcpStates().modern.includes('another tool already has this name')");
     try std.testing.expect(support.hasTool(host, "mcp_modern_a_tool"));
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"restored\"}", .{ .text = .{ .equals = "modern: restored" } });
-    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpConflict = true; Promise.resolve(plugins.dispose(\"mcp-conflict\")).then(() => { globalThis.mcpConflict = false; });", "mcp-unconflict.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpConflict = true; Promise.resolve(plugins.dispose(\"mcp-conflict\")).then(() => { globalThis.mcpConflict = false; });", "mcp-unconflict.js");
     try support.pumpUntilTrue(host, "mcpConflict === false");
     // A list change installs a new tool set and removes the old yuke names first.
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"change\"}", .{ .text = .{ .equals = "changed" } });
@@ -215,7 +215,7 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     const slow = host.calls.submit("mcp_modern_echo", "{\"text\":\"slow\"}", host.cwd);
     try host.pump();
     try std.testing.expect(slow.state == .running);
-    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpDisposed = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => { globalThis.mcpDisposed = true; });", "mcp-dispose.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpDisposed = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => { globalThis.mcpDisposed = true; });", "mcp-dispose.js");
     try support.pumpUntilSettled(host, slow);
     try std.testing.expect(slow.is_error);
     try std.testing.expectEqualStrings("the MCP server stopped", slow.text orelse "");
@@ -232,7 +232,7 @@ test "a search tool name conflict clears on the next catalog change" {
     const host = f.host;
     try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
     try support.pumpUntilTrue(host, "(mcpStates().config ?? '').includes('tool_search: another tool already has this name')");
-    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpHeld = true; Promise.resolve(plugins.dispose(\"search-holder\")).then(() => { globalThis.mcpHeld = false; });", "mcp-release.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpHeld = true; Promise.resolve(plugins.dispose(\"search-holder\")).then(() => { globalThis.mcpHeld = false; });", "mcp-release.js");
     try support.pumpUntilTrue(host, "mcpHeld === false");
     try std.testing.expect(!support.hasTool(host, "tool_search"));
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"change\"}", .{ .text = .{ .equals = "changed" } });
@@ -295,7 +295,7 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     try support.expectTool(host, "mcp_legacy_echo", "{\"text\":\"change\"}", .{ .text = .{ .equals = "legacy http: change" } });
     try support.pumpUntilTrue(host, "mcpStates().legacy === 'connected · legacy · 2 tools: added, echo'");
 
-    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpDisposed = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => { globalThis.mcpDisposed = true; });", "mcp-http-dispose.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpDisposed = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => { globalThis.mcpDisposed = true; });", "mcp-http-dispose.js");
     try support.pumpUntilTrue(host, "mcpDisposed === true");
     try std.testing.expect(peer.deleted.load(.acquire));
     try host.close();
@@ -368,7 +368,7 @@ test "a workspace server starts only after the user trusts it at the first run" 
     try askSelect(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("asked.length"));
 
-    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(mcpStart).then(() => { globalThis.mcpReady = true; });", "mcp-denied-reload.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(mcpStart).then(() => { globalThis.mcpReady = true; });", "mcp-denied-reload.js");
     try support.pumpUntilTrue(host, "mcpReady === true");
     try expectState(host, "ws", "disabled · not trusted");
     try askSelect(host);
@@ -376,18 +376,18 @@ test "a workspace server starts only after the user trusts it at the first run" 
     try host.evalModule("globalThis.mcpReset = false; mcpPlugin.resetTrust().then(() => { globalThis.mcpReset = true; });", "mcp-reset.js");
     try support.pumpUntilTrue(host, "mcpReset === true");
 
-    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpAnswer = true; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(mcpStart).then(() => { globalThis.mcpReady = true; });", "mcp-restart.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpAnswer = true; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(mcpStart).then(() => { globalThis.mcpReady = true; });", "mcp-restart.js");
     try support.pumpUntilTrue(host, "mcpReady === true");
     try askSelect(host);
     try support.pumpUntilTrue(host, "mcpStates().ws === 'connected · legacy · 1 tool: echo · 1 stray stdout line'");
     try std.testing.expect(support.hasTool(host, "mcp_ws_echo"));
     try support.expectTool(host, "mcp_ws_echo", "{\"text\":\"you\"}", .{ .text = .{ .equals = "hello says you pinged" } });
-    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpReorder = true; globalThis.mcpTimeout = 800; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(mcpStart).then(() => { globalThis.mcpReady = true; });", "mcp-approved-reload.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpReorder = true; globalThis.mcpTimeout = 800; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(mcpStart).then(() => { globalThis.mcpReady = true; });", "mcp-approved-reload.js");
     try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
     try askSelect(host);
     try std.testing.expectEqual(@as(i32, 2), try host.evalInt("asked.length"));
     try std.testing.expect(support.hasTool(host, "mcp_ws_echo"));
-    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => mcpStart(\"changed\")).then(() => { globalThis.mcpReady = true; });", "mcp-changed.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => mcpStart(\"changed\")).then(() => { globalThis.mcpReady = true; });", "mcp-changed.js");
     try support.pumpUntilTrue(host, "mcpReady === true");
     try expectState(host, "ws", "untrusted");
     try askSelect(host);
@@ -401,12 +401,12 @@ test "a workspace server starts only after the user trusts it at the first run" 
     try support.pumpUntilTrue(host, "mcpSettled()");
     try std.testing.expect(support.hasTool(host, "mcp_ws_echo"));
     try std.testing.expectEqual(@as(i32, 4), try host.evalInt("asked.length"));
-    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpEnabled = false; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => mcpStart(\"changed\")).then(() => { globalThis.mcpReady = true; });", "mcp-disabled.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpEnabled = false; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => mcpStart(\"changed\")).then(() => { globalThis.mcpReady = true; });", "mcp-disabled.js");
     try support.pumpUntilTrue(host, "mcpReady === true");
     try expectState(host, "ws", "disabled");
     try host.evalModule("globalThis.mcpReset = false; mcpPlugin.resetTrust().then(() => { globalThis.mcpReset = true; });", "mcp-disabled-reset.js");
     try support.pumpUntilTrue(host, "mcpReset === true");
-    try host.evalModule("import { plugins } from \"yuke:ext\"; globalThis.mcpEnabled = true; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => mcpStart(\"changed\")).then(() => { globalThis.mcpReady = true; });", "mcp-enabled.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpEnabled = true; globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => mcpStart(\"changed\")).then(() => { globalThis.mcpReady = true; });", "mcp-enabled.js");
     try support.pumpUntilTrue(host, "mcpReady === true");
     try expectState(host, "ws", "untrusted");
 }
@@ -437,12 +437,12 @@ test "a headless MCP denial is not a persistent user decision" {
     try f.init("trust");
     defer f.deinit();
     const host = f.host;
-    try host.evalModule("import { interaction } from \"yuke:ext\"; globalThis.mcpHeadless = interaction.install({ interactive: false, notify() {} }); globalThis.mcpReady = false; mcpStart().then(() => { globalThis.mcpReady = true; });", "mcp-headless.js");
+    try host.evalModule("import { interaction } from \"yuke:internal/ext\"; globalThis.mcpHeadless = interaction.install({ interactive: false, notify() {} }); globalThis.mcpReady = false; mcpStart().then(() => { globalThis.mcpReady = true; });", "mcp-headless.js");
     try support.pumpUntilTrue(host, "mcpReady === true");
     try askSelect(host);
     try expectState(host, "ws", "disabled · not trusted");
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("asked.length"));
-    try host.evalModule("import { plugins } from \"yuke:ext\"; mcpHeadless(); globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(mcpStart).then(() => { globalThis.mcpReady = true; });", "mcp-interactive.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; mcpHeadless(); globalThis.mcpReady = false; Promise.resolve(plugins.dispose(\"mcp\")).then(mcpStart).then(() => { globalThis.mcpReady = true; });", "mcp-interactive.js");
     try support.pumpUntilTrue(host, "mcpReady === true");
     try expectState(host, "ws", "untrusted");
 }

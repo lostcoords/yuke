@@ -1,4 +1,4 @@
-declare module "yuke:utf8" {
+declare module "yuke:internal/native/utf8" {
   export const utf8: {
     /** Encode a string as independent UTF-8 bytes; reject lone surrogates with TypeError. */
     encode(text: string): Uint8Array;

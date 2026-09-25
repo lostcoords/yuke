@@ -1,8 +1,8 @@
-// Long-lived children over `yuke:process`. Tie a child to a plugin with `ctx.effect(() => () => child.kill())`.
+// Long-lived children over `yuke:internal/native/process`. Tie a child to a plugin with `ctx.effect(() => () => child.kill())`.
 
-import * as native from "yuke:process";
+import * as native from "yuke:internal/native/process";
 
-/** @import { ProcessExit } from "yuke:process" */
+/** @import { ProcessExit } from "yuke:internal/native/process" */
 /** @typedef {{ cwd?: string, env?: Record<string, string>, workspaceRoot?: string }} SpawnOptions */
 /** @typedef {{ onStdout(listener: (text: string) => void): void, onStderr(listener: (text: string) => void): void, write(text: string): Promise<void>, closeStdin(): void, kill(): boolean, exited: Promise<ProcessExit> }} ChildProcess */
 

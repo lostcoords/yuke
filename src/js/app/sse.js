@@ -1,4 +1,4 @@
-// yuke:sse — the `text/event-stream` parser. It takes text chunks and answers each complete event once.
+// The `text/event-stream` parser. It takes text chunks and answers each complete event once.
 
 /** @typedef {{ event: string, data: string, id: string }} SseEvent */
 

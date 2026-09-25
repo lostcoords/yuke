@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { term } from "yuke:term";
+import { check } from "yuke:internal/test";
+import { term } from "yuke:internal/native/term";
 // term.copy writes OSC 52 and returns the byte count. It refuses a payload over the cap.
 check("copy-ok", term.copy("hi") === 2);
 check("copy-utf8-bytes", term.copy("héllo 🙂") === 11);

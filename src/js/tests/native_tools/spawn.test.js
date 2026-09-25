@@ -1,8 +1,8 @@
-import { exec } from "yuke:exec";
-import { spawn as spawnNative } from "yuke:process";
-import { spawn as spawnWith, lines } from "yuke:spawn";
-import { start as startJob, jobs } from "yuke:jobs";
-import { events } from "yuke:kernel";
+import { exec } from "yuke:internal/native/exec";
+import { spawn as spawnNative } from "yuke:internal/native/process";
+import { spawn as spawnWith, lines } from "yuke:internal/spawn";
+import { start as startJob, jobs } from "yuke:internal/jobs";
+import { events } from "yuke:internal/kernel";
 // The test host has no PATH, so every child names the utility directories.
 const env = { PATH: "/usr/bin:/bin" };
 const spawn = (argv, options = {}) => spawnWith(argv, { ...options, env: { ...env, ...(options.env ?? {}) } });

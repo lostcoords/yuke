@@ -1,5 +1,5 @@
 import { net, plugins } from "yuke";
-import { check, equal } from "yuke:test";
+import { check, equal } from "yuke:internal/test";
 
 async function refused(promise, code) {
   let error;

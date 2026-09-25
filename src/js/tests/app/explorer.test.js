@@ -1,8 +1,8 @@
-import { check } from "yuke:test";
-import { command, root } from "yuke:core";
-import { plugins } from "yuke:ext";
-import { explorerPlugin } from "yuke:explorer";
-import { tuiPlugin } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { command, root } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { explorerPlugin } from "yuke:internal/explorer";
+import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 
 check("absent-before-load", !command.available("app:explorer"));

@@ -1,7 +1,7 @@
-import { check } from "yuke:test";
-import { command, keymap } from "yuke:core";
-import { Scope, Context, advice, services } from "yuke:ext";
-import { tui } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { command, keymap } from "yuke:internal/core";
+import { Scope, Context, advice, services } from "yuke:internal/ext";
+import { tui } from "yuke:internal/tui";
 
 // advice folds before, around, filterReturn, and after, then restores on removal.
 {

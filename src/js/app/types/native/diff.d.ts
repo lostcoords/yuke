@@ -1,4 +1,4 @@
-declare module "yuke:diff" {
+declare module "yuke:internal/native/diff" {
   interface DiffHunk {
     /** The start values are 1-based. A side with no line has start 0 and count 0. */
     oldStart: number;

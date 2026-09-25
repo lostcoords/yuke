@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { Document } from "yuke:md";
-import { renderRows } from "yuke:test-markdown";
+import { check } from "yuke:internal/test";
+import { Document } from "yuke:internal/md";
+import { renderRows } from "yuke:internal/test-markdown";
 const has = (rows, group, text) => rows.some((r) => r.segments.some((s) => s.group === group && s.text === text));
 
 check("inline", has(renderRows("hello **bold** and `code`", 80), "MdStrong", "bold") &&

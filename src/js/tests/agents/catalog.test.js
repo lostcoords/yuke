@@ -1,4 +1,4 @@
-import { agents } from "yuke:agents";
+import { agents } from "yuke:internal/agents";
 const bad = [
   [undefined, "options must be an object"], [[], "options must be an object"], [{}, "catalog must be an object"], [{ catalog: [] }, "catalog must be an object"],
   [{ catalog: {} }, "at least one agent"], [{ catalog: { Root: {} } }, "bad key"], [{ catalog: { root: {} } }, "bad key"], [{ catalog: { "a b": {} } }, "bad key"],

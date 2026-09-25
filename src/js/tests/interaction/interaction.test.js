@@ -1,5 +1,5 @@
-import { plugins } from "yuke:ext";
-import { rpcInteractionPlugin } from "yuke:interaction";
+import { plugins } from "yuke:internal/ext";
+import { rpcInteractionPlugin } from "yuke:internal/interaction";
 plugins.use(rpcInteractionPlugin);
 globalThis.result = "pending";
 plugins.use({ name: "ask", apply(ctx) {

@@ -1,10 +1,10 @@
-import { check } from "yuke:test";
-import { Composer } from "yuke:ui";
-import { fs } from "yuke:fs";
-import { client } from "yuke:client";
-import { notice } from "yuke:notice";
-import { clipboard } from "yuke:clipboard";
-import { attachClipboard } from "yuke:attach";
+import { check } from "yuke:internal/test";
+import { Composer } from "yuke:internal/ui";
+import { fs } from "yuke:internal/native/fs";
+import { client } from "yuke:internal/client";
+import { notice } from "yuke:internal/notice";
+import { clipboard } from "yuke:internal/clipboard";
+import { attachClipboard } from "yuke:internal/attach";
 const png = { hash: "c".repeat(64), mime: "image/png", bytes: 4096 };
 
 globalThis.removed = [];

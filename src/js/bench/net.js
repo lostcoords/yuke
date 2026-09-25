@@ -1,6 +1,6 @@
-import { net } from "yuke:net";
+import { net } from "yuke:internal/net";
 
-/** @import { Socket } from "yuke:net-native" */
+/** @import { Socket } from "yuke:internal/native/net" */
 
 let fresh = false, steps = 0;
 let bytes = new Uint8Array();

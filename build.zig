@@ -324,7 +324,7 @@ fn listFiles(b: *std.Build, dir_path: []const u8, suffix: []const u8) []const []
 }
 
 /// The modules that `src/js/native` installs in every host. The bake stubs them and rejects any other unknown import.
-const native_js = "yuke:cancellation-native,yuke:diff,yuke:engine-native,yuke:env,yuke:exec,yuke:fs,yuke:hooks,yuke:http-native,yuke:interaction-native,yuke:jobs-native,yuke:mcp-native,yuke:net-native,yuke:oauth-native,yuke:process,yuke:term,yuke:tools,yuke:utf8";
+const native_js = "yuke:internal/native/cancellation,yuke:internal/native/diff,yuke:internal/native/engine,yuke:internal/native/env,yuke:internal/native/exec,yuke:internal/native/fs,yuke:internal/native/hooks,yuke:internal/native/http,yuke:internal/native/interaction,yuke:internal/native/jobs,yuke:internal/native/mcp,yuke:internal/native/net,yuke:internal/native/oauth,yuke:internal/native/process,yuke:internal/native/term,yuke:internal/native/tools,yuke:internal/native/utf8";
 
 fn addBakedModules(b: *std.Build, quickjs: *std.Build.Module, optimize: std.builtin.OptimizeMode) *std.Build.Module {
     const tool = b.addExecutable(.{
@@ -339,19 +339,14 @@ fn addBakedModules(b: *std.Build, quickjs: *std.Build.Module, optimize: std.buil
     const run = b.addRunArtifact(tool);
     const out = run.addOutputDirectoryArg("baked");
     run.addArg(native_js);
-    for (listFiles(b, "src/js/app", ".js")) |file| {
+    // `public/yuke.js` is `yuke` and `public/<name>.js` is `yuke:<name>`; every other file is `yuke:internal/<stem>`.
+    for (listFiles(b, "src/js/app/public", ".js")) |file| {
         const stem = std.Io.Dir.path.stem(file);
-        const name = if (std.mem.eql(u8, stem, "facade"))
-            "yuke"
-        else if (std.mem.eql(u8, stem, "public-ui"))
-            "yuke/ui"
-        else if (std.mem.eql(u8, stem, "public-chat"))
-            "yuke/chat"
-        else if (std.mem.eql(u8, stem, "public-plugins"))
-            "yuke/plugins"
-        else
-            b.fmt("yuke:{s}", .{stem});
-        run.addArg(name);
+        run.addArg(if (std.mem.eql(u8, stem, "yuke")) "yuke" else b.fmt("yuke:{s}", .{stem}));
+        run.addFileArg(b.path(b.fmt("src/js/app/public/{s}", .{file})));
+    }
+    for (listFiles(b, "src/js/app", ".js")) |file| {
+        run.addArg(b.fmt("yuke:internal/{s}", .{std.Io.Dir.path.stem(file)}));
         run.addFileArg(b.path(b.fmt("src/js/app/{s}", .{file})));
     }
     return b.createModule(.{ .root_source_file = out.path(b, "baked.zig") });

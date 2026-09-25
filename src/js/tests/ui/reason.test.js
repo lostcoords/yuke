@@ -1,6 +1,6 @@
-import { check, textParts } from "yuke:test";
-import { term } from "yuke:term";
-import { Transcript } from "yuke:transcript";
+import { check, textParts } from "yuke:internal/test";
+import { term } from "yuke:internal/native/term";
+import { Transcript } from "yuke:internal/transcript";
 const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
 const markerOf = (rs) => ((rs.find((r) => r.kind === "reasoning-header") || {}).marker || "").trimStart();
 // A collapsed thought keeps its title on the header row, so the body rows report the fold.

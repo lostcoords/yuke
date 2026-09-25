@@ -1,10 +1,10 @@
-import { exec } from "yuke:exec";
-import { fs } from "yuke:fs";
-import { spawn } from "yuke:spawn";
-import { JobOutput } from "yuke:jobs-ui";
+import { exec } from "yuke:internal/native/exec";
+import { fs } from "yuke:internal/native/fs";
+import { spawn } from "yuke:internal/spawn";
+import { JobOutput } from "yuke:internal/jobs-ui";
 
-/** @import { Job } from "yuke:jobs-native" */
-/** @import { ChildProcess } from "yuke:spawn" */
+/** @import { Job } from "yuke:internal/native/jobs" */
+/** @import { ChildProcess } from "yuke:internal/spawn" */
 
 let phase = "", scale = 1, received = 0, steps = 0, expected = 0;
 /** @type {(() => void) | null} */

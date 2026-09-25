@@ -1,9 +1,9 @@
 // Scroll and paint rows with source-coordinate maps.
-import { term } from "yuke:term";
-import { text, fill, isWheel } from "yuke:core";
-import { config } from "yuke:kernel";
-import { clip } from "yuke:text-input";
-import { isLinear } from "yuke:md";
+import { term } from "yuke:internal/native/term";
+import { text, fill, isWheel } from "yuke:internal/core";
+import { config } from "yuke:internal/kernel";
+import { clip } from "yuke:internal/text-input";
+import { isLinear } from "yuke:internal/md";
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
 /** @import { RowSource, Segment, TranscriptRow } from "./types/pager.js" */
 export class Pager {

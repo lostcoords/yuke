@@ -1,5 +1,5 @@
 import { env } from "yuke";
-import { check, equal } from "yuke:test";
+import { check, equal } from "yuke:internal/test";
 
 equal(env.get("YUKE_ENV_VALUE"), "hello 世界");
 equal(env.get("YUKE_ENV_EMPTY"), "");

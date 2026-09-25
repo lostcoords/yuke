@@ -6,7 +6,7 @@ const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
 
 pub fn install(host: *Host) void {
-    module.installObject(host, "yuke:env", "env", &.{
+    module.installObject(host, "yuke:internal/native/env", "env", &.{
         .{ .name = "get", .arity = 1, .call = jsGet },
     }, null);
 }

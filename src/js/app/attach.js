@@ -1,13 +1,13 @@
-// yuke:attach — a pasted path to an image becomes an attachment on the composer.
-import { fs } from "yuke:fs";
-import { client } from "yuke:client";
-import { notice } from "yuke:notice";
-import { root } from "yuke:core";
-import { events } from "yuke:kernel";
-import { clipboard } from "yuke:clipboard";
-import { errorText } from "yuke:format";
+// A pasted path to an image becomes an attachment on the composer.
+import { fs } from "yuke:internal/native/fs";
+import { client } from "yuke:internal/client";
+import { notice } from "yuke:internal/notice";
+import { root } from "yuke:internal/core";
+import { events } from "yuke:internal/kernel";
+import { clipboard } from "yuke:internal/clipboard";
+import { errorText } from "yuke:internal/format";
 
-/** @import { Composer } from "yuke:ui" */
+/** @import { Composer } from "yuke:internal/ui" */
 
 // The engine sniffs the magic bytes, so this list decides one thing only: whether a paste is an attach at all.
 const IMAGE_EXT = [".png", ".jpg", ".jpeg", ".gif", ".webp"];

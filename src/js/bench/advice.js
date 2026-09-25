@@ -1,4 +1,4 @@
-import { advice } from "yuke:ext";
+import { advice } from "yuke:internal/ext";
 
 /** @import { AdviceWhere, AdviceFunction, Disposer } from "../app/types/ext.js" */
 let batch = 1000;

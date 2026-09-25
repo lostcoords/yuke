@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { client, allChildren } from "yuke:client";
+import { check } from "yuke:internal/test";
+import { client, allChildren } from "yuke:internal/client";
 
 const original = client.sessionList;
 try {

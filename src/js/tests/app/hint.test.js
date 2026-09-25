@@ -1,8 +1,8 @@
-import { check } from "yuke:test";
-import { command, keymap, root } from "yuke:core";
-import { plugins } from "yuke:ext";
-import { commandUi } from "yuke:command-ui";
-import { tuiPlugin } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { command, keymap, root } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { commandUi } from "yuke:internal/command-ui";
+import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 plugins.use(commandUi());
 

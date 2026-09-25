@@ -1,4 +1,4 @@
-import { defineTool } from "yuke:tools";
+import { defineTool } from "yuke:internal/native/tools";
 const params = { type: "object", properties: { city: { type: "string", description: "The city." } } };
 defineTool("sync", { description: "d", parameters: params, execute: (a) => ({ got: a.city }) });
 defineTool("later", { description: "d", parameters: params, execute: async (a) => ({ got: a.city, async: true }) });

@@ -1,6 +1,6 @@
-import { textParts } from "yuke:test";
-import { Transcript, inputSourceLabel } from "yuke:transcript";
-import { clearWorkQueue, queuedText } from "yuke:queue";
+import { textParts } from "yuke:internal/test";
+import { Transcript, inputSourceLabel } from "yuke:internal/transcript";
+import { clearWorkQueue, queuedText } from "yuke:internal/queue";
 (async () => {
   const source = { type: "child_report", name: "one", outcome: { type: "turn" }, partial: false, truncated: false, usage: { rounds: 1, tool_calls: 0, tokens: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 } } };
   const full = Array.from({ length: 200 }, (_, i) => "line " + i).join("\n");

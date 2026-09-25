@@ -1,15 +1,15 @@
-// yuke:auth — /login and /logout: the provider list, the device-code dialog, and the API key prompt.
-import { copy, text } from "yuke:core";
-import { clip } from "yuke:text-input";
-import { strokeOf } from "yuke:keys";
-import { ui } from "yuke:ui";
-import { client } from "yuke:client";
-import { notice } from "yuke:notice";
-import { errorText } from "yuke:format";
-import { openUrl } from "yuke:browser";
-import { loadCatalog, providerStateLabel, reloadCatalog } from "yuke:catalog";
+// /login and /logout: the provider list, the device-code dialog, and the API key prompt.
+import { copy, text } from "yuke:internal/core";
+import { clip } from "yuke:internal/text-input";
+import { strokeOf } from "yuke:internal/keys";
+import { ui } from "yuke:internal/ui";
+import { client } from "yuke:internal/client";
+import { notice } from "yuke:internal/notice";
+import { errorText } from "yuke:internal/format";
+import { openUrl } from "yuke:internal/browser";
+import { loadCatalog, providerStateLabel, reloadCatalog } from "yuke:internal/catalog";
 
-/** @import { Context } from "yuke:ext" */
+/** @import { Context } from "yuke:internal/ext" */
 /** @import { InjectContext as Ctx } from "./types/ext.js" */
 /** @typedef {Wire.ProviderInfo} ProviderRow */
 

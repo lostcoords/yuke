@@ -1,4 +1,4 @@
-//! The native `yuke:jobs-native` module: the background job table that the tools, the TUI, and RPC share.
+//! The native `yuke:internal/native/jobs` module: the background job table that the tools, the TUI, and RPC share.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -167,7 +167,7 @@ pub fn jobRead(host: *Host, arena: std.mem.Allocator, params: proto.job.JobReadP
 }
 
 pub fn install(host: *Host) void {
-    module.installFunctions(host, "yuke:jobs-native", &.{
+    module.installFunctions(host, "yuke:internal/native/jobs", &.{
         .{ .name = "start", .arity = 3, .call = jsStart },
         .{ .name = "list", .arity = 0, .call = jsList },
         .{ .name = "get", .arity = 1, .call = jsGet },
@@ -195,7 +195,7 @@ pub fn toValue(ctx: Context, job: *const Job) Value {
     jw.objectField("log") catch unreachable;
     jw.write(job.log) catch unreachable;
     jw.endObject() catch unreachable;
-    return module.parseWritten(ctx, &text, "yuke:jobs");
+    return module.parseWritten(ctx, &text, "yuke:internal/jobs");
 }
 
 /// Start a shell line as a job with both streams on a private log. It resolves `{ job, ended }`, and `ended` resolves with the final job.

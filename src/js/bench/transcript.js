@@ -1,9 +1,9 @@
-import { Transcript } from "yuke:transcript";
-import { term } from "yuke:term";
-import { client } from "yuke:client";
-import { route } from "yuke:core";
+import { Transcript } from "yuke:internal/transcript";
+import { term } from "yuke:internal/native/term";
+import { client } from "yuke:internal/client";
+import { route } from "yuke:internal/core";
 
-/** @import { MessagePart, SessionOutline } from "yuke:engine-native" */
+/** @import { MessagePart, SessionOutline } from "yuke:internal/native/engine" */
 /** @import { TranscriptRow } from "../app/types/pager.js" */
 /** @import { MessageDescriptor, TranscriptOptions } from "../app/types/transcript.js" */
 /** @typedef {{ type: MessageDescriptor["type"], text?: string, parts?: Wire.AssistantPart[] }} FixtureMessage */

@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { client } from "yuke:client";
-import { feedOf } from "yuke:sessions";
+import { check } from "yuke:internal/test";
+import { client } from "yuke:internal/client";
+import { feedOf } from "yuke:internal/sessions";
 
 const feed = feedOf();
 feed.seed({ items: [{ session: { id: "old" }, activity: null }] });

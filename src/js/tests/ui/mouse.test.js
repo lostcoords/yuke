@@ -1,9 +1,9 @@
-import { check } from "yuke:test";
-import { term } from "yuke:term";
-import { root, Node, View, isWheel } from "yuke:core";
-import { config, defineConfig } from "yuke:kernel";
-import { List } from "yuke:ui";
-import { Pager } from "yuke:pager";
+import { check } from "yuke:internal/test";
+import { term } from "yuke:internal/native/term";
+import { root, Node, View, isWheel } from "yuke:internal/core";
+import { config, defineConfig } from "yuke:internal/kernel";
+import { List } from "yuke:internal/ui";
+import { Pager } from "yuke:internal/pager";
 const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } };
 
 check("mouse-default-lines", config.mouse.scrollLines === 3);

@@ -23,7 +23,7 @@ const Scope = enum {
 };
 
 pub fn install(host: *Host) void {
-    module.installFunctions(host, "yuke:mcp-native", &.{
+    module.installFunctions(host, "yuke:internal/native/mcp", &.{
         .{ .name = "configPath", .arity = 0, .call = jsConfigPath },
         .{ .name = "readRecord", .arity = 2, .call = jsRead },
         .{ .name = "writeRecord", .arity = 3, .call = jsWrite },

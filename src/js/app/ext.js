@@ -1,10 +1,10 @@
-// yuke:ext — the plugin runtime: a Scope owns effects and releases, a Context registers, and `advice` wraps methods.
-import * as cancellation from "yuke:cancellation-native";
-import { events, once } from "yuke:kernel";
-import { bindInteraction } from "yuke:interaction";
-import { defineTool, removeTool } from "yuke:tools";
-import { installDispatcher, installLifecycle, setPoints } from "yuke:hooks";
-export { interaction } from "yuke:interaction";
+// The plugin runtime: a Scope owns effects and releases, a Context registers, and `advice` wraps methods.
+import * as cancellation from "yuke:internal/native/cancellation";
+import { events, once } from "yuke:internal/kernel";
+import { bindInteraction } from "yuke:internal/interaction";
+import { defineTool, removeTool } from "yuke:internal/native/tools";
+import { installDispatcher, installLifecycle, setPoints } from "yuke:internal/native/hooks";
+export { interaction } from "yuke:internal/interaction";
 
 /** @import { AdviceFunction, AdviceOptions, AdviceWhere, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, PluginHandle, Release, ToolDefinition } from "./types/ext.js" */
 /** @import { AdviceEntry, AdviceInfo, AdviceRecord, HookDecision, HookEntry, PluginAsync, ReleaseEntry, ScopeEntry, ScopeLife } from "./types/runtime.js" */

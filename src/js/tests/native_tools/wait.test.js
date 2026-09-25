@@ -1,5 +1,5 @@
-import { defineTool } from "yuke:tools";
-import * as cancellation from "yuke:cancellation-native";
+import { defineTool } from "yuke:internal/native/tools";
+import * as cancellation from "yuke:internal/native/cancellation";
 globalThis.seen = "pending";
 defineTool("wait", { description: "Wait", parameters: { type: "object", properties: {} }, execute: async (args, signal) => {
   cancellation.listen(signal, () => { globalThis.seen = "canceled"; });

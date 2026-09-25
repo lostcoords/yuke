@@ -1,4 +1,4 @@
-//! The native `yuke:tools` module: `defineTool` registers one tool the model can call; a refused registration THROWS; `index.js` is user input, never internal state, so this code validates and reports and never asserts; a throw at boot paints the fault and names the file.
+//! The native `yuke:internal/native/tools` module: `defineTool` registers one tool the model can call; a refused registration THROWS; `index.js` is user input, never internal state, so this code validates and reports and never asserts; a throw at boot paints the fault and names the file.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -9,9 +9,9 @@ const table = @import("../tools.zig");
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
-/// Register `yuke:tools` and its functions.
+/// Register `yuke:internal/native/tools` and its functions.
 pub fn install(host: *Host) void {
-    module.installFunctions(host, "yuke:tools", &.{
+    module.installFunctions(host, "yuke:internal/native/tools", &.{
         .{ .name = "defineTool", .arity = 2, .call = jsDefineTool },
         .{ .name = "removeTool", .arity = 1, .call = jsRemoveTool },
         .{ .name = "hasTool", .arity = 1, .call = jsHasTool },

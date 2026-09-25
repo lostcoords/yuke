@@ -61,7 +61,7 @@ pub const Listener = struct {
 pub const Listeners = module.Table(Listener);
 
 pub fn install(host: *Host) void {
-    module.installFunctions(host, "yuke:oauth-native", &.{
+    module.installFunctions(host, "yuke:internal/native/oauth", &.{
         .{ .name = "random", .arity = 1, .call = jsRandom },
         .{ .name = "sha256", .arity = 1, .call = jsSha256 },
         .{ .name = "listen", .arity = 0, .call = jsListen },

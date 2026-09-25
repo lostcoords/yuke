@@ -1,4 +1,4 @@
-import { check, equal } from "yuke:test";
+import { check, equal } from "yuke:internal/test";
 import { plugins } from "yuke";
 
 let finish;

@@ -1,9 +1,9 @@
-import { check } from "yuke:test";
-import { root, Node } from "yuke:core";
-import { events } from "yuke:kernel";
-import { plugins } from "yuke:ext";
-import { Chat, chats, chatOf, focusedChat, focusedChatView, chatPlugin } from "yuke:chat";
-import { tuiPlugin } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { root, Node } from "yuke:internal/core";
+import { events } from "yuke:internal/kernel";
+import { plugins } from "yuke:internal/ext";
+import { Chat, chats, chatOf, focusedChat, focusedChatView, chatPlugin } from "yuke:internal/chat";
+import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 plugins.use(chatPlugin);
 

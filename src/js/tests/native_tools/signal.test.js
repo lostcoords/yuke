@@ -1,4 +1,4 @@
-import { defineTool } from "yuke:tools";
+import { defineTool } from "yuke:internal/native/tools";
 globalThis.seen = "none";
 // The handler keeps the signal, so it reads the flag long after the call record is gone.
 defineTool("watch", {

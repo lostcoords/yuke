@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { root } from "yuke:core";
-import { Transcript } from "yuke:transcript";
+import { check } from "yuke:internal/test";
+import { root } from "yuke:internal/core";
+import { Transcript } from "yuke:internal/transcript";
 const tool = (id, name) => ({ type: "tool", id, name, arguments: '{"value":"' + name + '"}', state: { type: "completed", output: name + " output", duration_ms: id } });
 const parts = {
   a: [tool(1, "one"), tool(2, "two")],

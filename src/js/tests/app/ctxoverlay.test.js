@@ -1,7 +1,7 @@
-import { check } from "yuke:test";
-import { command, root } from "yuke:core";
-import { plugins } from "yuke:ext";
-import { tui } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { command, root } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { tui } from "yuke:internal/tui";
 const layer = (n) => ({ name: n, rect: { x: 0, y: 0, w: 1, h: 1 }, layout() {}, draw() {} });
 
 const owner = { name: "ov", apply(ctx) { const t = tui.bindTo(ctx); t.command(null, { "ov:open": () => t.overlay(root.pushOverlay(layer("own"))) }); } };

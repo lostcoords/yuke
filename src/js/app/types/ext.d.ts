@@ -1,4 +1,4 @@
-import type { CancellationSignal } from "yuke:cancellation-native";
+import type { CancellationSignal } from "yuke:internal/native/cancellation";
 import type { Context, Scope } from "../ext.js";
 import type { events } from "../kernel.js";
 import type { tui } from "../tui.js";

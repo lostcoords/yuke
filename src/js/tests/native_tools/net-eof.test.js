@@ -1,5 +1,5 @@
 import { net } from "yuke";
-import { equal } from "yuke:test";
+import { equal } from "yuke:internal/test";
 async function run() {
   const socket = await net.connect({ path: socketPath });
   equal(await socket.read(), null);

@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { hitRate, cacheSaving, cacheRows, rateLabelOf } from "yuke:cache";
+import { check } from "yuke:internal/test";
+import { hitRate, cacheSaving, cacheRows, rateLabelOf } from "yuke:internal/cache";
 
 const usage = { input: 1000000, output: 20000, reasoning: 5000, cache_read: 900000, cache_write: 0 };
 const cold = { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 };

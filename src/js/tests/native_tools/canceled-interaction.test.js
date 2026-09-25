@@ -1,7 +1,7 @@
-import { check } from "yuke:test";
-import { defineTool } from "yuke:tools";
-import { cancel, listen } from "yuke:cancellation-native";
-import { native } from "yuke:interaction-native";
+import { check } from "yuke:internal/test";
+import { defineTool } from "yuke:internal/native/tools";
+import { cancel, listen } from "yuke:internal/native/cancellation";
+import { native } from "yuke:internal/native/interaction";
 
 defineTool("probe", {
   description: "Refuse work after cancellation.",

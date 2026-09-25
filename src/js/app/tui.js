@@ -1,11 +1,11 @@
-// yuke:tui — the terminal capability. A block that declares `tui` registers its view effects here.
-import { command, keymap, route, slot, context, status, style, root } from "yuke:core";
-import { events } from "yuke:kernel";
-import { ChatView } from "yuke:chat-view";
-import { Context, scopeOf } from "yuke:ext";
-import { registerLabels } from "yuke:transcript";
+// The terminal capability. A block that declares `tui` registers its view effects here.
+import { command, keymap, route, slot, context, status, style, root } from "yuke:internal/core";
+import { events } from "yuke:internal/kernel";
+import { ChatView } from "yuke:internal/chat-view";
+import { Context, scopeOf } from "yuke:internal/ext";
+import { registerLabels } from "yuke:internal/transcript";
 
-/** @import { PresentationContext, PresentationProvider } from "yuke:chat-view" */
+/** @import { PresentationContext, PresentationProvider } from "yuke:internal/chat-view" */
 /** @import { LayoutNode } from "./types/layout.js" */
 /** @import { Disposer } from "./types/ext.js" */
 /** @typedef {Parameters<typeof command.add>[0]} CommandPredicate */

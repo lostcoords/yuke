@@ -446,7 +446,7 @@ test "an auth event reaches the sink whole, and a session event does not" {
     defer support.destroyHost(host);
 
     try host.evalModule(
-        \\import { native } from "yuke:engine-native";
+        \\import { native } from "yuke:internal/native/engine";
         \\globalThis.seen = [];
         \\native.setEventSink((ev) => { globalThis.seen.push(ev); });
     , "sink.js");
@@ -502,7 +502,7 @@ test "a notice burst stays bounded and keeps the newest bodies" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try host.evalModule(
-        \\import { native } from "yuke:engine-native";
+        \\import { native } from "yuke:internal/native/engine";
         \\globalThis.seen = [];
         \\native.setEventSink((ev) => { globalThis.seen.push(ev); });
     , "sink.js");
@@ -532,7 +532,7 @@ test "a throwing event sink faults once and leaves no pending exception" {
     defer support.destroyHost(host);
 
     try host.evalModule(
-        \\import { native } from "yuke:engine-native";
+        \\import { native } from "yuke:internal/native/engine";
         \\globalThis.seen = 0;
         \\native.setEventSink(() => { globalThis.seen++; throw new Error("bad handler"); });
     , "sink.js");
@@ -549,7 +549,7 @@ test "a throwing event sink faults once and leaves no pending exception" {
 
     // A clean sink reports no fault.
     try host.evalModule(
-        \\import { native } from "yuke:engine-native";
+        \\import { native } from "yuke:internal/native/engine";
         \\native.setEventSink(() => {});
     , "ok.js");
     host.engine.markDirty(SessionId.bytes([_]u8{3} ** 16), .{ .view = .reload });

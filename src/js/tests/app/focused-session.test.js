@@ -1,9 +1,9 @@
-import { check, equal } from "yuke:test";
+import { check, equal } from "yuke:internal/test";
 import { client } from "yuke";
-import { Context, Scope, scopeOf } from "yuke:ext";
-import { Chat, focusedChat, focusedSessionId } from "yuke/chat";
-import { focusedSessionId as internalQuery } from "yuke:chat";
-import { root, Node } from "yuke:core";
+import { Context, Scope, scopeOf } from "yuke:internal/ext";
+import { Chat, focusedChat, focusedSessionId } from "yuke:chat";
+import { focusedSessionId as internalQuery } from "yuke:internal/chat";
+import { root, Node } from "yuke:internal/core";
 
 equal(focusedSessionId, internalQuery);
 client.sessionOpen = id => id !== "missing";

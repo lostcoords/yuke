@@ -1,7 +1,7 @@
-import { check } from "yuke:test";
-import { style } from "yuke:core";
-import { plugins } from "yuke:ext";
-import { tui } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { style } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { tui } from "yuke:internal/tui";
 
 // style.add seeds only an absent name, invalidates a cached miss, and reverts on dispose.
 {

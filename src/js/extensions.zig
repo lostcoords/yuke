@@ -33,12 +33,12 @@ pub const Extensions = struct {
         try host.evalModule(opts.boot, "boot.js");
         host.interrupt_budget = host_mod.default_interrupt_budget;
         // The prompt plugin loads before the user entry, so a user handler runs after it in every prompt.build chain.
-        try host.evalModule("import { plugins } from \"yuke:ext\"; import { prompt } from \"yuke:prompt\"; plugins.use(prompt);", "prompt.js");
+        try host.evalModule("import { plugins } from \"yuke:internal/ext\"; import { prompt } from \"yuke:internal/prompt\"; plugins.use(prompt);", "prompt.js");
         evalUserEntry(host, opts.config_dir) catch {
             self.user_entry_fault = true;
         };
         // Load built-ins last so a user tool with the same name wins.
-        try host.evalModule("import { plugins } from \"yuke:ext\"; import { builtins } from \"yuke:builtins\"; plugins.use(builtins);", "builtins.js");
+        try host.evalModule("import { plugins } from \"yuke:internal/ext\"; import { builtins } from \"yuke:internal/builtins\"; plugins.use(builtins);", "builtins.js");
 
         app.engine.installTools(port.toolSet(host));
         app.engine.installHooks(port.hookSet(host));
@@ -66,12 +66,12 @@ pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
     errdefer {
         const fault = host.fault_text;
         const fault_len = host.fault_text_len;
-        host.evalStartup("import { plugins } from \"yuke:ext\"; await plugins.cancelStartup();", "plugins-cancel.js") catch {};
+        host.evalStartup("import { plugins } from \"yuke:internal/ext\"; await plugins.cancelStartup();", "plugins-cancel.js") catch {};
         host.fault_text = fault;
         host.fault_text_len = fault_len;
     }
     _ = try host.evalFile(path);
-    try host.evalStartup("import { plugins } from \"yuke:ext\"; await plugins.ready();", "plugins-ready.js");
+    try host.evalStartup("import { plugins } from \"yuke:internal/ext\"; await plugins.ready();", "plugins-ready.js");
 }
 
 // ---------------------------------------------------------------- tests
@@ -88,7 +88,7 @@ const app_call = @import("../app/call.zig");
 const zio = @import("zio");
 
 /// The boot a headless test host runs: the kernel and the plugin bus, and nothing of the view tier.
-const kernel_boot = "import \"yuke:kernel\";\nimport \"yuke:ext\";";
+const kernel_boot = "import \"yuke:internal/kernel\";\nimport \"yuke:internal/ext\";";
 
 /// One headless host over a canned engine, with the user entry the test writes. It must not move after `init`.
 pub const Fixture = struct {
@@ -197,7 +197,7 @@ test "the tool port answers the declarations in table order, and a removed tool 
     try std.testing.expect(decls.len >= 2);
     for (decls[1..], 0..) |decl, i| try std.testing.expect(std.mem.order(u8, decls[i].name, decl.name) == .lt);
     try host.evalModule(
-        \\import { removeTool } from "yuke:tools";
+        \\import { removeTool } from "yuke:internal/native/tools";
         \\globalThis.removed = removeTool("hidden_tool") ? 1 : 0;
     , "remove.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.removed"));
@@ -577,7 +577,7 @@ test "the agents plugin sets the native limits from its options and a dispose re
     var f: Fixture = undefined;
     try f.init(
         \\import { plugins } from "yuke";
-        \\import { agents } from "yuke/plugins";
+        \\import { agents } from "yuke:plugins";
         \\plugins.use(agents({ catalog: { only: {} }, maxConcurrent: 2, maxDepth: 3 }));
     , kernel_boot);
     defer f.deinit();
@@ -592,7 +592,7 @@ test "the largest agent limit survives the answer a dispose reads" {
     var f: Fixture = undefined;
     try f.init(
         \\import { plugins } from "yuke";
-        \\import { agents } from "yuke/plugins";
+        \\import { agents } from "yuke:plugins";
         \\plugins.use(agents({ catalog: { only: {} }, maxConcurrent: 0xffffffff }));
     , kernel_boot);
     defer f.deinit();
@@ -605,7 +605,7 @@ test "an agents catalog with no limit option keeps the engine limits" {
     var f: Fixture = undefined;
     try f.init(
         \\import { plugins } from "yuke";
-        \\import { agents } from "yuke/plugins";
+        \\import { agents } from "yuke:plugins";
         \\plugins.use(agents({ catalog: { only: {} }, maxConcurrent: 2 }));
     , kernel_boot);
     defer f.deinit();

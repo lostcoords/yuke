@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { term } from "yuke:term";
-import { Transcript } from "yuke:transcript";
+import { check } from "yuke:internal/test";
+import { term } from "yuke:internal/native/term";
+import { Transcript } from "yuke:internal/transcript";
 const messages = [];
 const parts = {};
 for (let i = 0; i < 40; i++) {

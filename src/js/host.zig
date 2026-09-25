@@ -80,11 +80,11 @@ pub const Host = struct {
     fault_text: [fault_text_max]u8,
     fault_text_len: usize,
     paint: term_module.Paint,
-    /// Engine seam state for `yuke:engine-native`.
+    /// Engine seam state for `yuke:internal/native/engine`.
     engine: *engine_module.Engine,
     /// The directory the process runs in. The caller owns these bytes for the life of the host.
     cwd: []const u8,
-    /// The reactor I/O. `yuke:fs` reads the file system through it.
+    /// The reactor I/O. `yuke:internal/native/fs` reads the file system through it.
     io: std.Io,
     /// The startup answers. The caller owns them for the life of the host.
     execution: execution_mod.Context,
@@ -92,7 +92,7 @@ pub const Host = struct {
     ops: pending.Ops,
     /// The tools `index.js` registered. The process reads its declarations after boot.
     tools: tools_table.Tools,
-    /// The hook points a plugin holds, and the chain folder `yuke:ext` installs.
+    /// The hook points a plugin holds, and the chain folder `yuke:internal/ext` installs.
     hooks: hooks_table.Hooks,
     /// Every tool call a turn task waits on. The owner answers them in `pump`.
     calls: tools_table.Calls,
@@ -108,7 +108,7 @@ pub const Host = struct {
     logs: Logs = .{},
     /// The `setTimeout` and `setInterval` table. Only the owner touches it.
     timers: timers_mod.Timers = .{},
-    /// The `yuke:process` children. `close` ends them before it cancels their tasks.
+    /// The `yuke:internal/native/process` children. `close` ends them before it cancels their tasks.
     procs: process_module.Procs = .{},
     /// The background job table. A record outlives its process, and `close` frees it after the processes.
     jobs: jobs_module.Jobs = .{},
@@ -813,7 +813,7 @@ test "an unknown yuke module is a JavaScriptFault" {
     defer support.destroyHost(host);
     try std.testing.expectError(
         error.JavaScriptFault,
-        host.evalModule("import { n } from 'yuke:missing';", "entry.js"),
+        host.evalModule("import { n } from 'yuke:internal/missing';", "entry.js"),
     );
 }
 
@@ -826,9 +826,9 @@ test "user files can import public entries but cannot import cached internal mod
     const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "public.js", .data =
         \\import { fs, plugins } from "yuke";
-        \\import { Composer } from "yuke/ui";
-        \\import { composerVim, transcriptVim, agents } from "yuke/plugins";
-        \\import { Chat } from "yuke/chat";
+        \\import { Composer } from "yuke:ui";
+        \\import { composerVim, transcriptVim, agents } from "yuke:plugins";
+        \\import { Chat } from "yuke:chat";
         \\globalThis.publicOK = typeof fs.readFile === "function"
         \\  && typeof Composer === "function" && typeof Chat === "function"
         \\  && typeof agents === "function" && typeof composerVim.apply === "function"
@@ -841,7 +841,7 @@ test "user files can import public entries but cannot import cached internal mod
 
     const private_path = try std.Io.Dir.path.joinZ(std.testing.allocator, &.{ root, "private.js" });
     defer std.testing.allocator.free(private_path);
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "private.js", .data = "export { fs } from 'yuke:fs';" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "private.js", .data = "export { fs } from 'yuke:internal/native/fs';" });
     try std.testing.expectError(error.JavaScriptFault, host.evalFile(private_path));
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "internal yuke module") != null);
     try std.testing.expectError(error.JavaScriptFault, host.evalModule("import './private.js';", public_path));
@@ -849,8 +849,8 @@ test "user files can import public entries but cannot import cached internal mod
     const dynamic_path = try std.Io.Dir.path.joinZ(std.testing.allocator, &.{ root, "dynamic.js" });
     defer std.testing.allocator.free(dynamic_path);
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "dynamic.js", .data =
-        \\globalThis.loadPrivate = () => import("yuke:core");
-        \\globalThis.evalPrivate = () => eval('import("yuke:core")');
+        \\globalThis.loadPrivate = () => import("yuke:internal/core");
+        \\globalThis.evalPrivate = () => eval('import("yuke:internal/core")');
     });
     try std.testing.expect(try host.evalFile(dynamic_path));
     try std.testing.expectError(error.JavaScriptFault, host.evalModule("await loadPrivate();", "callback.js"));
@@ -886,8 +886,8 @@ test "an event asks for a frame and the flush paints it once" {
     paint.bind(host);
 
     try host.evalModule(
-        \\import { term } from "yuke:term";
-        \\import { root, View } from "yuke:core";
+        \\import { term } from "yuke:internal/native/term";
+        \\import { root, View } from "yuke:internal/core";
         \\globalThis.paints = 0;
         \\class Counter extends View {
         \\  draw() { globalThis.paints++; term.text(0, 0, "x"); }
@@ -1006,15 +1006,15 @@ test "a stack trace from a baked module keeps its line numbers" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try host.evalModule(
-        \\import { grow } from "yuke:layout";
+        \\import { grow } from "yuke:internal/layout";
         \\try { grow(0); } catch (error) { globalThis.stack = String(error.stack); }
     , "stack.js");
     const value = try host.ctx.eval("globalThis.stack", "read-stack.js", .{});
     defer host.ctx.freeValue(value);
     const stack = try host.ctx.toCStringLen(value);
     defer host.ctx.freeCString(stack.ptr);
-    const at = std.mem.indexOf(u8, stack, "yuke:layout:") orelse return error.MissingBakedFrame;
-    try std.testing.expect(std.ascii.isDigit(stack[at + "yuke:layout:".len]));
+    const at = std.mem.indexOf(u8, stack, "yuke:internal/layout:") orelse return error.MissingBakedFrame;
+    try std.testing.expect(std.ascii.isDigit(stack[at + "yuke:internal/layout:".len]));
 }
 
 test {

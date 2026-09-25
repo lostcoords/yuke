@@ -1,5 +1,5 @@
 import { utf8 } from "yuke";
-import { check, equal } from "yuke:test";
+import { check, equal } from "yuke:internal/test";
 
 function rejects(fn) {
   let rejected = false;

@@ -1,4 +1,4 @@
-import { wrapPreview, caretRowCol } from "yuke:text-input";
+import { wrapPreview, caretRowCol } from "yuke:internal/text-input";
 const join = (s, rows) => rows.map((r) => s.slice(r.start, r.end)).join("|");
 // A row plus its break covers the whole string, so no byte is lost.
 const covers = (s, rows) => {

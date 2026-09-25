@@ -1,4 +1,4 @@
-import { View, root, keymap, route } from "yuke:core";
+import { View, root, keymap, route } from "yuke:internal/core";
 globalThis.hits = "";
 class Pane extends View {
   contexts() { return ["pane", "inner"]; }

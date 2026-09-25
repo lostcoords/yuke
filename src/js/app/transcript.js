@@ -1,16 +1,16 @@
-import { Pager, rowText, rowSourceSpan, rowSourceAt } from "yuke:pager";
-// yuke:transcript — the chat transcript, its row rendering, and the pane that holds it.
-import { term } from "yuke:term";
-import { root, isWheel } from "yuke:core";
-import { clip, caretAtCol, wrapPreview, nextGrapheme } from "yuke:text-input";
-import { Document, isLinear, normalizeSource } from "yuke:md";
-import { Window, ScrollView } from "yuke:ui";
-import { byteLabel } from "yuke:format";
+import { Pager, rowText, rowSourceSpan, rowSourceAt } from "yuke:internal/pager";
+// The chat transcript, its row rendering, and the pane that holds it.
+import { term } from "yuke:internal/native/term";
+import { root, isWheel } from "yuke:internal/core";
+import { clip, caretAtCol, wrapPreview, nextGrapheme } from "yuke:internal/text-input";
+import { Document, isLinear, normalizeSource } from "yuke:internal/md";
+import { Window, ScrollView } from "yuke:internal/ui";
+import { byteLabel } from "yuke:internal/format";
 
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
 /** @import { ItemKey, Segment, TranscriptRow } from "./types/pager.js" */
 /** @import { ActionEntry, ActionPlan, MessageDescriptor, PartCache, PartHit, PartOf, PartState, Position, Presenter, RowCache, Selection, SelectionAnchors, SelectionRange, ToolLabel, TranscriptOptions, SourceLabels } from "./types/transcript.js" */
-/** @import { MessagePart } from "yuke:engine-native" */
+/** @import { MessagePart } from "yuke:internal/native/engine" */
 /** @import { Block } from "./types/md.js" */
 
 // Left gutter for a transcript row marker; the body indents past it.

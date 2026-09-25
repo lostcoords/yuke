@@ -1,27 +1,27 @@
-// yuke:defaults — the bundled UI shell, built from plugins so a user's index.js layers on top.
-import { keymap, Node, root } from "yuke:core";
-import { plugins } from "yuke:ext";
-import { ui, NAV_KEYS } from "yuke:ui";
-import { windowKeys } from "yuke:keys";
-import { notice, noticePlugin } from "yuke:notice";
-import { commandUi } from "yuke:command-ui";
-import { explorerPlugin } from "yuke:explorer";
-import { modelCatalog } from "yuke:catalog";
-import { jobsUiPlugin } from "yuke:jobs-ui";
-import { authPlugin } from "yuke:auth";
-import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:chat";
-import { client } from "yuke:client";
-import { attachClipboard } from "yuke:attach";
-import { activityMark, feedOf, sessionsPlugin } from "yuke:sessions";
-import { activityOf, activityPlugin } from "yuke:activity";
-import { indicatorPlugin } from "yuke:indicator";
-import { queuePlugin } from "yuke:queue";
-import { contextUsage } from "yuke:context";
-import { cachePlugin } from "yuke:cache";
-import { quitGuard } from "yuke:quit";
+// The bundled UI shell, built from plugins so a user's index.js layers on top.
+import { keymap, Node, root } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { ui, NAV_KEYS } from "yuke:internal/ui";
+import { windowKeys } from "yuke:internal/keys";
+import { notice, noticePlugin } from "yuke:internal/notice";
+import { commandUi } from "yuke:internal/command-ui";
+import { explorerPlugin } from "yuke:internal/explorer";
+import { modelCatalog } from "yuke:internal/catalog";
+import { jobsUiPlugin } from "yuke:internal/jobs-ui";
+import { authPlugin } from "yuke:internal/auth";
+import { Chat, chatEntry, chatPlugin, focusedChat } from "yuke:internal/chat";
+import { client } from "yuke:internal/client";
+import { attachClipboard } from "yuke:internal/attach";
+import { activityMark, feedOf, sessionsPlugin } from "yuke:internal/sessions";
+import { activityOf, activityPlugin } from "yuke:internal/activity";
+import { indicatorPlugin } from "yuke:internal/indicator";
+import { queuePlugin } from "yuke:internal/queue";
+import { contextUsage } from "yuke:internal/context";
+import { cachePlugin } from "yuke:internal/cache";
+import { quitGuard } from "yuke:internal/quit";
 /** @import { NavTarget } from "./types/core.js" */
 /** @import { InjectContext } from "./types/ext.js" */
-/** @import { Context } from "yuke:ext" */
+/** @import { Context } from "yuke:internal/ext" */
 
 // The first chat pane. A split adds another, and each pane drives its own session.
 const chat = new Chat();

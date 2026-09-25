@@ -11,11 +11,11 @@ test "focused session identity follows pane and session lifetimes" {
     try support.run("app/focused-session.test.js");
 }
 
-test "yuke:client answers a closed session with no outline" {
+test "yuke:internal/client answers a closed session with no outline" {
     try support.run("app/c.test.js");
 }
 
-test "yuke:defaults boots the shell, seeds the session feed, and wires commands" {
+test "yuke:internal/defaults boots the shell, seeds the session feed, and wires commands" {
     var paint: Paint = undefined;
     try paint.setup(std.testing.allocator, 24, 80);
     defer paint.deinit();

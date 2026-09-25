@@ -1,6 +1,6 @@
-import { equal } from "yuke:test";
-import { claimView, releaseView, root, Node } from "yuke:core";
-import { Window } from "yuke:ui";
+import { equal } from "yuke:internal/test";
+import { claimView, releaseView, root, Node } from "yuke:internal/core";
+import { Window } from "yuke:internal/ui";
 const view = { layout() {}, draw() {} };
 const first = {}, second = {};
 claimView(view, first);

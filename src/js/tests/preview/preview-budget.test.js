@@ -1,5 +1,5 @@
-import { equal, textParts } from "yuke:test";
-import { Transcript } from "yuke:transcript";
+import { equal, textParts } from "yuke:internal/test";
+import { Transcript } from "yuke:internal/transcript";
 const line = (prefix, i) => prefix + "-" + i + " with enough context to wrap";
 const large = Array.from({ length: 4096 }, (_, i) => line("preview-budget", i)).join("\\n");
 const tools = [

@@ -1,9 +1,9 @@
-import { check } from "yuke:test";
-import { root, status, copy } from "yuke:core";
-import { term } from "yuke:term";
-import { plugins } from "yuke:ext";
-import { notice, noticePlugin } from "yuke:notice";
-import { tuiPlugin } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { root, status, copy } from "yuke:internal/core";
+import { term } from "yuke:internal/native/term";
+import { plugins } from "yuke:internal/ext";
+import { notice, noticePlugin } from "yuke:internal/notice";
+import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 term.copy = (x) => x.length;
 

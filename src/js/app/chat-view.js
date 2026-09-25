@@ -1,11 +1,11 @@
 // Own the chat layout, composer, and presentation views.
-import { term } from "yuke:term";
-import { text, root, slot, claimView, releaseView, contains } from "yuke:core";
-import { events } from "yuke:kernel";
-import { clip } from "yuke:text-input";
-import { Composer } from "yuke:ui";
-import { Transcript } from "yuke:transcript";
-import { column, child, fixed, fit, grow, solve } from "yuke:layout";
+import { term } from "yuke:internal/native/term";
+import { text, root, slot, claimView, releaseView, contains } from "yuke:internal/core";
+import { events } from "yuke:internal/kernel";
+import { clip } from "yuke:internal/text-input";
+import { Composer } from "yuke:internal/ui";
+import { Transcript } from "yuke:internal/transcript";
+import { column, child, fixed, fit, grow, solve } from "yuke:internal/layout";
 
 /** @typedef {"composer" | "transcript"} ChatRegion */
 /** @typedef {{ text: string, group?: string }} StripRow */

@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { Transcript } from "yuke:transcript";
+import { check } from "yuke:internal/test";
+import { Transcript } from "yuke:internal/transcript";
 let source = "# Prefix\n\nstable 世界 é 👩‍💻\n\n```txt\nbody\n```\n\nTail";
 const part = () => ({ type: "text", id: 0, text: source });
 const make = () => {

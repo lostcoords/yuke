@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { Document } from "yuke:md";
+import { check } from "yuke:internal/test";
+import { Document } from "yuke:internal/md";
 const doc = new Document();
 let source = "# Prefix\n\nstable 世界 é 👩‍💻\n\n```txt\nbody\n```\n\nTail";
 doc.setText(source);

@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { root } from "yuke:core";
-import { ui } from "yuke:ui";
+import { check } from "yuke:internal/test";
+import { root } from "yuke:internal/core";
+import { ui } from "yuke:internal/ui";
 const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });
 const press = (code, char) => root.onEvent(key(code, char));
 const items = [{ id: "ay" }, { id: "bee" }, { id: "sea" }];

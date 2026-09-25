@@ -1,4 +1,4 @@
-//! The native `yuke:diff` module describes one text change as bounded unified hunks for the reader; the model never sees the view.
+//! The native `yuke:internal/native/diff` module describes one text change as bounded unified hunks for the reader; the model never sees the view.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -16,9 +16,9 @@ const Value = quickjs.Value;
 /// The largest side this module compares. A line table costs about 20 bytes for each line.
 const max_side_bytes: usize = 1024 * 1024;
 
-/// Register `yuke:diff` and its functions.
+/// Register `yuke:internal/native/diff` and its functions.
 pub fn install(host: *Host) void {
-    module.installFunctions(host, "yuke:diff", &.{
+    module.installFunctions(host, "yuke:internal/native/diff", &.{
         .{ .name = "diff", .arity = 3, .call = jsDiff },
     });
 }

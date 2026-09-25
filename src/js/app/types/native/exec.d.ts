@@ -1,5 +1,5 @@
-declare module "yuke:exec" {
-  import type { CancellationSignal } from "yuke:cancellation-native";
+declare module "yuke:internal/native/exec" {
+  import type { CancellationSignal } from "yuke:internal/native/cancellation";
 
   interface ExecOptions {
     /** A relative path resolves against `workspaceRoot`, or the host directory without one. */

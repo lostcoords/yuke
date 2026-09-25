@@ -6,7 +6,7 @@ const Host = @import("../host.zig").Host;
 const module = @import("module.zig");
 
 pub fn install(host: *Host) void {
-    module.installObject(host, "yuke:utf8", "utf8", &.{
+    module.installObject(host, "yuke:internal/native/utf8", "utf8", &.{
         .{ .name = "encode", .arity = 1, .call = jsEncode },
         .{ .name = "decode", .arity = 1, .call = jsDecode },
     }, null);

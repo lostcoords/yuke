@@ -1,4 +1,4 @@
-declare module "yuke:fs" {
+declare module "yuke:internal/native/fs" {
   interface Stat {
     /** The anchored absolute path, so a caller can hand the same file to the engine. */
     path: string;

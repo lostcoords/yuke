@@ -1,5 +1,5 @@
-import { defineTool } from "yuke:tools";
-import { exec } from "yuke:exec";
+import { defineTool } from "yuke:internal/native/tools";
+import { exec } from "yuke:internal/native/exec";
 globalThis.refusals = 0;
 globalThis.prelaunch = 0;
 globalThis.late = 0;

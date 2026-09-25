@@ -6,6 +6,6 @@
     "emitDeclarationOnly": true,
     "rootDir": "."
   },
-  "files": ["facade.js", "public-ui.js", "public-chat.js", "public-plugins.js"],
+  "files": ["public/yuke.js", "public/ui.js", "public/chat.js", "public/plugins.js"],
   "include": ["types/**/*.d.ts", "generated/proto.d.ts"]
 }

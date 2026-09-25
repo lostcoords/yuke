@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { plugins, services } from "yuke:ext";
+import { check } from "yuke:internal/test";
+import { plugins, services } from "yuke:internal/ext";
 
 // A block sees the capabilities it declared, and no other.
 let saw = null;

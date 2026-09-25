@@ -1,5 +1,5 @@
-import { equal } from "yuke:test";
-import { events, config } from "yuke:kernel";
+import { equal } from "yuke:internal/test";
+import { events, config } from "yuke:internal/kernel";
 let fired = 0;
 events.on("myplugin:ready", () => { fired += 1; });
 events.emit("myplugin:ready");

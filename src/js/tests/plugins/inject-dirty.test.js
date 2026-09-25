@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { events } from "yuke:kernel";
-import { plugins, services } from "yuke:ext";
+import { check } from "yuke:internal/test";
+import { events } from "yuke:internal/kernel";
+import { plugins, services } from "yuke:internal/ext";
 
 // The block replaces its own provider while it builds, so the first bound value goes stale.
 const log = [];

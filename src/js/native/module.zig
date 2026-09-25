@@ -13,7 +13,7 @@ const Value = quickjs.Value;
 /// One exported function: its name, its declared arity, and the Zig callback.
 pub const Fn = struct { name: [:0]const u8, arity: c_int, call: fn (Context, Value, []const Value) Value };
 
-/// A module whose exports are bare functions: `import { a, b } from "yuke:x"`.
+/// A module whose exports are bare functions: `import { a, b } from "yuke:internal/native/x"`.
 pub fn installFunctions(host: *Host, comptime name: [:0]const u8, comptime fns: []const Fn) void {
     std.debug.assert(host.phase == .open);
     const Init = struct {

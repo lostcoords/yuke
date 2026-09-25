@@ -1,4 +1,4 @@
-declare module "yuke:cancellation-native" {
+declare module "yuke:internal/native/cancellation" {
   const brand: unique symbol;
   export interface CancellationSignal {
     readonly [brand]: true;

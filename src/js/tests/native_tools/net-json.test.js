@@ -1,5 +1,5 @@
 import { net, utf8 } from "yuke";
-import { check, equal } from "yuke:test";
+import { check, equal } from "yuke:internal/test";
 
 // The frame limit excludes the newline and applies to bytes, not characters.
 function frames(limit) {

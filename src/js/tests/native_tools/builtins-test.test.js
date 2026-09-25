@@ -1,6 +1,6 @@
-import { plugins } from "yuke:ext";
-import { builtins } from "yuke:builtins";
-import { client } from "yuke:client";
+import { plugins } from "yuke:internal/ext";
+import { builtins } from "yuke:internal/builtins";
+import { client } from "yuke:internal/client";
 plugins.use(builtins);
 
 // The engine is absent here, so the stub records the anchored path and answers one image.

@@ -1,6 +1,6 @@
-import { check, equal } from "yuke:test";
+import { check, equal } from "yuke:internal/test";
 import { plugins } from "yuke";
-import { services } from "yuke:ext";
+import { services } from "yuke:internal/ext";
 
 let child;
 let released = 0;

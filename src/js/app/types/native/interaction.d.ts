@@ -1,4 +1,4 @@
-declare module "yuke:interaction-native" {
+declare module "yuke:internal/native/interaction" {
   export const native: {
     readonly maxTextBytes: number;
     readonly maxOptions: number;

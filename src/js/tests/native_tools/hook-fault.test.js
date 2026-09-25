@@ -1,5 +1,5 @@
-import { events } from "yuke:kernel";
-import { plugins } from "yuke:ext";
+import { events } from "yuke:internal/kernel";
+import { plugins } from "yuke:internal/ext";
 globalThis.faults = [];
 events.on("ext.error", (e, owner) => globalThis.faults.push(String(owner) + ":" + e.message));
 plugins.use({ name: "getter", apply(ctx) {

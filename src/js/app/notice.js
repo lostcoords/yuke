@@ -1,9 +1,9 @@
-// yuke:notice — the short message line on the left of the status bar.
-import { root } from "yuke:core";
-import { term } from "yuke:term";
+// The short message line on the left of the status bar.
+import { root } from "yuke:internal/core";
+import { term } from "yuke:internal/native/term";
 
-/** @import { Context } from "yuke:ext" */
-/** @import { EngineEvent } from "yuke:engine-native" */
+/** @import { Context } from "yuke:internal/ext" */
+/** @import { EngineEvent } from "yuke:internal/native/engine" */
 
 // The message itself. A caller keeps its own reference, so this survives a plugin unload.
 export const notice = {

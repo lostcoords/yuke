@@ -1,9 +1,9 @@
-// yuke:sessions — the session feed the finder and the catalog read.
-import { Refresh } from "yuke:refresh";
-import { root } from "yuke:core";
-import { client } from "yuke:client";
+// The session feed the finder and the catalog read.
+import { Refresh } from "yuke:internal/refresh";
+import { root } from "yuke:internal/core";
+import { client } from "yuke:internal/client";
 
-/** @import { Context } from "yuke:ext" */
+/** @import { Context } from "yuke:internal/ext" */
 /** @typedef {Wire.SessionActivity | { state: { type: "idle" }, queued: number, context_usage: Wire.TokenUsage, pending_compaction: null }} FeedActivity */
 /** @typedef {{ session: Wire.Session, activity: FeedActivity }} FeedItem */
 /** @typedef {{ id: string, title: string, activity: FeedActivity, session: Wire.Session }} SessionRow */

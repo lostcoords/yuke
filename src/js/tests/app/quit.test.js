@@ -1,7 +1,7 @@
-import { check } from "yuke:test";
-import { command, keymap } from "yuke:core";
-import { client } from "yuke:client";
-import { notice } from "yuke:notice";
+import { check } from "yuke:internal/test";
+import { command, keymap } from "yuke:internal/core";
+import { client } from "yuke:internal/client";
+import { notice } from "yuke:internal/notice";
 // The stub stands for the native counts, so the guard reads one load shape in the test and in the app.
 let load = { runs: 0, childRuns: 0, continuations: 0 };
 client.load = () => load;

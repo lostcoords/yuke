@@ -1,9 +1,9 @@
-// yuke:mcp-oauth — OAuth 2.1 sign-in for MCP servers over HTTP: discovery, registration, PKCE with a loopback callback, and refresh.
-import * as native from "yuke:oauth-native";
-import * as mcpNative from "yuke:mcp-native";
-import { fetch } from "yuke:http";
+// OAuth 2.1 sign-in for MCP servers over HTTP: discovery, registration, PKCE with a loopback callback, and refresh.
+import * as native from "yuke:internal/native/oauth";
+import * as mcpNative from "yuke:internal/native/mcp";
+import { fetch } from "yuke:internal/http";
 
-/** @import { CancellationSignal } from "yuke:cancellation-native" */
+/** @import { CancellationSignal } from "yuke:internal/native/cancellation" */
 
 /** @typedef {{ client_id: string, client_secret?: string }} Client */
 /** @typedef {{ access_token: string, refresh_token?: string, expires_at?: number, scope?: string, client: Client, token_endpoint: string, issuer: string, resource: string }} Grant */

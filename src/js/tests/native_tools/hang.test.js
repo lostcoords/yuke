@@ -1,4 +1,4 @@
-import { defineTool } from "yuke:tools";
+import { defineTool } from "yuke:internal/native/tools";
 // This handler never settles, so only the close can answer the waiting turn.
 defineTool("hangs", {
   description: "d",

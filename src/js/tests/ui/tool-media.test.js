@@ -1,8 +1,8 @@
-import { check } from "yuke:test";
-import { term } from "yuke:term";
-import { plugins } from "yuke:ext";
-import { Transcript } from "yuke:transcript";
-import { tuiPlugin } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { term } from "yuke:internal/native/term";
+import { plugins } from "yuke:internal/ext";
+import { Transcript } from "yuke:internal/transcript";
+import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
 const png = { hash: "a".repeat(64), mime: "image/png", bytes: 2048 };

@@ -1,4 +1,4 @@
-import { fs } from "yuke:fs";
+import { fs } from "yuke:internal/native/fs";
 const fail = [];
 const check = (name, cond) => { if (!cond) fail.push(name); };
 globalThis.done = 0;

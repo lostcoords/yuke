@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { plugins, services, Scope } from "yuke:ext";
+import { check } from "yuke:internal/test";
+import { plugins, services, Scope } from "yuke:internal/ext";
 
 // The killer registers its watcher first, so it runs before the victim in one change.
 const log = [];

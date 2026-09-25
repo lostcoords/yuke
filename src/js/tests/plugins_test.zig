@@ -187,7 +187,7 @@ const KernelLoader = struct {
     inner: *loader_mod.Loader,
 
     pub fn onNormalize(self: *@This(), ctx: quickjs.Context, base: []const u8, name: []const u8) ?[:0]u8 {
-        for ([_][]const u8{ "yuke:kernel", "yuke:engine-native", "yuke:test" }) |allowed| {
+        for ([_][]const u8{ "yuke:internal/kernel", "yuke:internal/native/engine", "yuke:internal/test" }) |allowed| {
             if (std.mem.eql(u8, name, allowed)) return self.inner.onNormalize(ctx, base, name);
         }
         _ = ctx.throwReferenceError("the kernel imported a module outside its boundary");
@@ -238,7 +238,7 @@ test "shutdown permits process I/O and timers before resource release" {
         \\  child.onStdout(text => { globalThis.stopped += text; });
         \\  ctx.own(() => { child.kill(); globalThis.stopped += "disposed"; });
         \\  ctx.own(async () => {
-        \\    await import("yuke/ui");
+        \\    await import("yuke:ui");
         \\    await new Promise(resolve => setTimeout(resolve, 1));
         \\    await child.write("flushed:");
         \\    child.closeStdin();
@@ -364,7 +364,7 @@ test "plugin disposal joins native work from a withdrawn injection" {
     defer support.destroyHost(host);
     try host.evalModule(
         \\import { plugins, exec } from "yuke";
-        \\import { services } from "yuke:ext";
+        \\import { services } from "yuke:internal/ext";
         \\globalThis.childCanceled = false;
         \\globalThis.disposed = false;
         \\const withdraw = services.provide("child-resource", 1);

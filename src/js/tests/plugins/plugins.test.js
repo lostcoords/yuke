@@ -1,7 +1,7 @@
-import { check } from "yuke:test";
-import { command } from "yuke:core";
-import { plugins } from "yuke:ext";
-import { tui } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { command } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { tui } from "yuke:internal/tui";
 
 // A plugin registers on use, reverts on dispose, and comes back on reload.
 {

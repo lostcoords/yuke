@@ -21,9 +21,9 @@ const max_entries: u32 = 512;
 /// The most bytes `readFile` returns. A tool that needs more should read a range.
 const max_read_bytes: u32 = 10 * 1024 * 1024;
 
-/// Register `yuke:fs` and its one `fs` object.
+/// Register `yuke:internal/native/fs` and its one `fs` object.
 pub fn install(host: *Host) void {
-    module.installObject(host, "yuke:fs", "fs", &.{
+    module.installObject(host, "yuke:internal/native/fs", "fs", &.{
         .{ .name = "list", .arity = 1, .call = jsList },
         .{ .name = "readFile", .arity = 1, .call = jsReadFile },
         .{ .name = "readRange", .arity = 2, .call = jsReadRange },
@@ -222,7 +222,7 @@ fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     defer aw.deinit();
     std.json.Stringify.value(pageOf(arena, path, page), .{}, &aw.writer) catch unreachable;
     // The page is our own JSON, so the parse fails only once the QuickJS heap is full.
-    return resolved(ctx, module.parseWritten(ctx, &aw, "yuke:fs"));
+    return resolved(ctx, module.parseWritten(ctx, &aw, "yuke:internal/native/fs"));
 }
 
 /// Build the answer. Each entry carries its whole path, so the caller never joins one itself.

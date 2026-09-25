@@ -1,4 +1,4 @@
-import { View, root, text } from "yuke:core";
+import { View, root, text } from "yuke:internal/core";
 globalThis.seen = 0;
 class Base extends View {
   get name() { return "base"; }

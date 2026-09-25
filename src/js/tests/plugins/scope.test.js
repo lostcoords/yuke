@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { Scope } from "yuke:ext";
+import { check } from "yuke:internal/test";
+import { Scope } from "yuke:internal/ext";
 
 // A scope reverts its effects newest first.
 {

@@ -1,5 +1,5 @@
-// yuke:browser — open a URL in the system browser.
-import { exec } from "yuke:exec";
+// Open a URL in the system browser.
+import { exec } from "yuke:internal/native/exec";
 
 // Quote the URL so the shell cannot parse it as syntax; `setsid -f` keeps the browser alive after `exec` ends its group.
 /** @param {string} url @returns {void} */

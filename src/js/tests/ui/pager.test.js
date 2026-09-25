@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { term } from "yuke:term";
-import { Pager } from "yuke:pager";
+import { check } from "yuke:internal/test";
+import { term } from "yuke:internal/native/term";
+import { Pager } from "yuke:internal/pager";
 const rows = (n) => Array.from({ length: n }, (_, i) => ({ text: "row " + i }));
 const frame = (p) => { term.beginFrame(); p.draw({ x: 0, y: 0, w: 10, h: 4 }); term.endFrame(); };
 

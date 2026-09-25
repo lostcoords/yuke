@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { Document } from "yuke:md";
-import { renderRows } from "yuke:test-markdown";
+import { check } from "yuke:internal/test";
+import { Document } from "yuke:internal/md";
+import { renderRows } from "yuke:internal/test-markdown";
 const segsOf = (rows) => { const out = []; for (const r of rows) for (const s of r.segments) out.push(s); return out; };
 const find = (rows, group, text) => segsOf(rows).find((s) => s.group === group && s.text === text);
 

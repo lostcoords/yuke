@@ -1,7 +1,7 @@
-import { Context, Scope, plugins, scopeOf } from "yuke:ext";
-import { root } from "yuke:core";
-import { tuiPlugin } from "yuke:tui";
-import { tuiInteractionPlugin } from "yuke:interaction-ui";
+import { Context, Scope, plugins, scopeOf } from "yuke:internal/ext";
+import { root } from "yuke:internal/core";
+import { tuiPlugin } from "yuke:internal/tui";
+import { tuiInteractionPlugin } from "yuke:internal/interaction-ui";
 
 plugins.use(tuiPlugin);
 plugins.use(tuiInteractionPlugin);

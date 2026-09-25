@@ -1,7 +1,7 @@
-import { check, equal } from "yuke:test";
-import { root } from "yuke:core";
-import { client } from "yuke:client";
-import { catalogOf, loadCatalog } from "yuke:catalog";
+import { check, equal } from "yuke:internal/test";
+import { root } from "yuke:internal/core";
+import { client } from "yuke:internal/client";
+import { catalogOf, loadCatalog } from "yuke:internal/catalog";
 
 const sent = [];
 const c = catalogOf();

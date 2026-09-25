@@ -1,7 +1,7 @@
-import { check } from "yuke:test";
-import { root } from "yuke:core";
-import { plugins } from "yuke:ext";
-import { tui } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { root } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { tui } from "yuke:internal/tui";
 // A service starts and stops only after the shell starts, the way `onStart` already worked.
 root.onEvent({ type: "start" });
 

@@ -70,7 +70,7 @@ test "env reads the effective host environment through the public facade" {
     try support.eval(host, "native_tools/env.test.js");
 }
 
-test "yuke:fs reads, writes and stats a real directory through promises" {
+test "yuke:internal/native/fs reads, writes and stats a real directory through promises" {
     var fixture = try ReactorHost.initTmp(null);
     defer fixture.deinit();
     try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "hello.txt", .data = "one\ntwo\n" });
@@ -420,7 +420,7 @@ test "exec call abort ends its process group and preserves unrelated work" {
     defer fixture.deinit();
     const root = fixture.root();
     const host = fixture.host;
-    try host.evalModule("import { plugins } from \"yuke:ext\"; import { builtins } from \"yuke:builtins\"; plugins.use(builtins);", "builtins.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; import { builtins } from \"yuke:internal/builtins\"; plugins.use(builtins);", "builtins.js");
 
     const canceled = host.calls.submit("exec",
         \\{"command":"sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\""}
@@ -512,7 +512,7 @@ test "exec completion detaches before call abort and host close rejects late exe
 test "session cancel reaches the builtin exec process group" {
     const runs = run;
     var f: extensions.Fixture = undefined;
-    try f.init("", "import \"yuke:kernel\"; import \"yuke:ext\";");
+    try f.init("", "import \"yuke:internal/kernel\"; import \"yuke:internal/ext\";");
     defer f.deinit();
     const host = f.extensions.host;
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
@@ -593,7 +593,7 @@ test "a JS tool's live output reaches the engine as ordered output deltas while 
         \\} });
     ;
     var f: extensions.Fixture = undefined;
-    try f.init(entry, "import \"yuke:kernel\"; import \"yuke:ext\";");
+    try f.init(entry, "import \"yuke:internal/kernel\"; import \"yuke:internal/ext\";");
     defer f.deinit();
     const host = f.extensions.host;
     var recorder: Recorder = .{ .io = host.io };
@@ -634,7 +634,7 @@ test "a JS tool's live output reaches the engine as ordered output deltas while 
     try support.pumpUntil(host, host, callsDone);
 }
 
-test "yuke:exec runs commands on tasks and reports each outcome" {
+test "yuke:internal/native/exec runs commands on tasks and reports each outcome" {
     var fixture = try ReactorHost.initTmp(null);
     defer fixture.deinit();
     try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "marker.txt", .data = "found\n" });
@@ -645,7 +645,7 @@ test "yuke:exec runs commands on tasks and reports each outcome" {
     try support.expectString(host, "result", "ok");
 }
 
-test "yuke:exec ends a command that passes its deadline" {
+test "yuke:internal/native/exec ends a command that passes its deadline" {
     var fixture = try ReactorHost.init("/tmp");
     defer fixture.deinit();
     const rt = fixture.rt;
@@ -663,7 +663,7 @@ test "yuke:exec ends a command that passes its deadline" {
     try std.testing.expect(started.durationTo(.now(rt.io(), .awake)).toNanoseconds() < 20 * std.time.ns_per_s);
 }
 
-test "yuke:diff describes a change, an equal pair, and a new file" {
+test "yuke:internal/native/diff describes a change, an equal pair, and a new file" {
     // The compare stays on the owner, so this needs no reactor.
     const host = support.createHost();
     defer support.destroyHost(host);
@@ -721,7 +721,7 @@ test "a throwing onOutput faults the pump with its message, and the command stil
     defer fixture.deinit();
     const host = fixture.host;
     try host.evalModule(
-        \\import { exec } from "yuke:exec";
+        \\import { exec } from "yuke:internal/native/exec";
         \\globalThis.done = 0;
         \\exec("printf out", { onOutput: () => { throw new Error("onOutput boom"); } }).then(() => { globalThis.done = 1; });
     , "exec-fault.js");
@@ -751,7 +751,7 @@ test "run cleanup stops signaled exec without another owner pump" {
     const root = fixture.root();
     const runtime = fixture.rt;
     const host = fixture.host;
-    try host.evalModule("import { plugins } from \"yuke:ext\"; import { builtins } from \"yuke:builtins\"; plugins.use(builtins);", "builtins.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; import { builtins } from \"yuke:internal/builtins\"; plugins.use(builtins);", "builtins.js");
     var work: Work = .{};
     const call = host.calls.submit("exec",
         \\{"command":"sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\""}
@@ -807,7 +807,7 @@ test "a callback may remove a later listener, and a wrapped id skips a live one"
     defer support.destroyHost(host);
     host.next_listener = std.math.maxInt(u32);
     try host.evalModule(
-        \\import * as cancellation from "yuke:cancellation-native";
+        \\import * as cancellation from "yuke:internal/native/cancellation";
         \\const signal = cancellation.create();
         \\globalThis.heard = [];
         \\let second = 0;
@@ -822,9 +822,9 @@ test "a callback may remove a later listener, and a wrapped id skips a live one"
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("heard.length"));
     try std.testing.expectEqual(@as(usize, 0), host.abort_listeners.items.len);
     // A live id is never handed out twice.
-    try host.evalModule("import * as c from \"yuke:cancellation-native\"; globalThis.live = c.create(); globalThis.held = c.listen(live, () => {});", "listen-held.js");
+    try host.evalModule("import * as c from \"yuke:internal/native/cancellation\"; globalThis.live = c.create(); globalThis.held = c.listen(live, () => {});", "listen-held.js");
     host.next_listener = @intCast(try host.evalInt("held"));
-    try host.evalModule("import * as c from \"yuke:cancellation-native\"; globalThis.fresh = c.listen(live, () => {});", "listen-fresh.js");
+    try host.evalModule("import * as c from \"yuke:internal/native/cancellation\"; globalThis.fresh = c.listen(live, () => {});", "listen-fresh.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("fresh - held"));
 }
 
@@ -891,10 +891,10 @@ test "background jobs start, list, stop, and report a natural exit once to their
     const host = fixture.host;
     try support.eval(host, "native_tools/builtins.test.js");
     try host.evalModule(
-        \\import { client } from "yuke:client";
+        \\import { client } from "yuke:internal/client";
         \\globalThis.sent = [];
         \\globalThis.j1Ended = false;
-        \\import { events } from "yuke:kernel";
+        \\import { events } from "yuke:internal/kernel";
         \\events.on("jobs.changed", job => { if (job.id === 1 && job.state !== "running") j1Ended = true; });
         \\client.sessionSendInput = async (id, content) => { sent.push(content[0].text); return {}; };
     , "job-messages.js");
@@ -919,7 +919,7 @@ test "background jobs start, list, stop, and report a natural exit once to their
     try support.expectTool(host, "jobs", "{\"id\":\"j2\",\"stop\":true}", .{ .text = .{ .contains = "[j2 exited (exit code 2): echo done; exit 2]" } });
 }
 
-test "yuke:spawn runs a child over pipes, delivers ordered text, and resolves its exit" {
+test "yuke:internal/spawn runs a child over pipes, delivers ordered text, and resolves its exit" {
     var fixture = try ReactorHost.initTmp("/tmp");
     defer fixture.deinit();
     try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "yuke-fixture-hello", .data = "#!/bin/sh\necho fixture\n" });
@@ -934,12 +934,12 @@ test "yuke:spawn runs a child over pipes, delivers ordered text, and resolves it
     try support.expectString(host, "result", "ok");
 }
 
-test "yuke:spawn retains an incomplete UTF-8 character until the next read" {
+test "yuke:internal/spawn retains an incomplete UTF-8 character until the next read" {
     var fixture = try ReactorHost.init("/tmp");
     defer fixture.deinit();
     const host = fixture.host;
     try host.evalModule(
-        \\import { spawn } from "yuke:spawn";
+        \\import { spawn } from "yuke:internal/spawn";
         \\globalThis.splitText = "";
         \\globalThis.splitExit = null;
         \\globalThis.split = spawn(["/bin/sh", "-c", "printf '\\346'; read release; printf '\\227\\245'"]);
@@ -994,13 +994,13 @@ test "the jobs status segment and the /jobs list show, refresh, and stop backgro
     try support.expectString(host, "result", "ok");
 }
 
-test "a yuke:spawn reader stops at the buffer cap until the owner drains it" {
+test "a yuke:internal/spawn reader stops at the buffer cap until the owner drains it" {
     const process_module = process;
     var fixture = try ReactorHost.init("/tmp");
     defer fixture.deinit();
     const host = fixture.host;
     try host.evalModule(
-        \\import { spawn } from "yuke:spawn";
+        \\import { spawn } from "yuke:internal/spawn";
         \\globalThis.bytes = 0;
         \\spawn(["yes"], { env: { PATH: "/usr/bin:/bin" } }).onStdout((text) => { bytes += text.length; });
     , "spawn-cap.js");
@@ -1031,7 +1031,7 @@ test "a yuke:spawn reader stops at the buffer cap until the owner drains it" {
 
 test "extension teardown ends a live child instead of waiting for it" {
     var f: extensions.Fixture = undefined;
-    try f.init("import { spawn } from \"yuke\"; spawn([\"/bin/sleep\", \"60\"]);", "import \"yuke:kernel\";\nimport \"yuke:ext\";");
+    try f.init("import { spawn } from \"yuke\"; spawn([\"/bin/sleep\", \"60\"]);", "import \"yuke:internal/kernel\";\nimport \"yuke:internal/ext\";");
     const pid = f.extensions.host.procs.live.items[0].pid;
     f.deinit();
     try std.testing.expectError(error.ProcessNotFound, std.posix.kill(pid, @enumFromInt(0)));

@@ -1,6 +1,6 @@
-import { check, equal } from "yuke:test";
+import { check, equal } from "yuke:internal/test";
 import { plugins } from "yuke";
-import { events } from "yuke:kernel";
+import { events } from "yuke:internal/kernel";
 
 const faults = [];
 const off = events.on("ext.error", (error, name) => { if (name === "release") faults.push(error.message); });

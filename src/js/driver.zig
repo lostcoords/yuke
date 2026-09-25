@@ -66,11 +66,11 @@ const frame_buf_bytes = 256 * 1024;
 
 /// Boot the terminal composition and publish its terminal capability.
 pub const boot =
-    \\import { plugins } from "yuke:ext";
-    \\import { tuiPlugin } from "yuke:tui";
-    \\import { tuiInteractionPlugin } from "yuke:interaction-ui";
-    \\import "yuke:core";
-    \\import "yuke:defaults";
+    \\import { plugins } from "yuke:internal/ext";
+    \\import { tuiPlugin } from "yuke:internal/tui";
+    \\import { tuiInteractionPlugin } from "yuke:internal/interaction-ui";
+    \\import "yuke:internal/core";
+    \\import "yuke:internal/defaults";
     \\plugins.use(tuiPlugin);
     \\plugins.use(tuiInteractionPlugin);
 ;
@@ -372,7 +372,7 @@ test "serve keeps the loop after onEvent throw" {
     const host = support.createHostWith(rt.io(), "");
     defer support.destroyHost(host);
     try host.evalModule(
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\globalThis.onEvent = (ev) => {
         \\  if (ev.char === "x") throw new Error("nope");
         \\  if (ev.char === "q") term.quit();

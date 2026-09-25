@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { term } from "yuke:term";
-import { Transcript } from "yuke:transcript";
+import { check } from "yuke:internal/test";
+import { term } from "yuke:internal/native/term";
+import { Transcript } from "yuke:internal/transcript";
 const parts = {
   old: [{ type: "text", id: 0, text: "old committed" }],
   gone: [{ type: "text", id: 0, text: "truncated" }],

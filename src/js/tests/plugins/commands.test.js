@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { command } from "yuke:core";
+import { check } from "yuke:internal/test";
+import { command } from "yuke:internal/core";
 const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 
 // A later registration shadows an earlier one; its dispose uncovers what it hid.

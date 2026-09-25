@@ -1,12 +1,12 @@
-import { check, equal } from "yuke:test";
-import { Context, Scope, plugins, scopeOf } from "yuke:ext";
-import { authPlugin } from "yuke:auth";
-import { command, root } from "yuke:core";
-import { events } from "yuke:kernel";
-import { client } from "yuke:client";
-import { notice } from "yuke:notice";
-import { defaultModel } from "yuke:catalog";
-import { chat } from "yuke:defaults";
+import { check, equal } from "yuke:internal/test";
+import { Context, Scope, plugins, scopeOf } from "yuke:internal/ext";
+import { authPlugin } from "yuke:internal/auth";
+import { command, root } from "yuke:internal/core";
+import { events } from "yuke:internal/kernel";
+import { client } from "yuke:internal/client";
+import { notice } from "yuke:internal/notice";
+import { defaultModel } from "yuke:internal/catalog";
+import { chat } from "yuke:internal/defaults";
 globalThis.authTest = (async () => {
 const key = (code, o = {}) => ({ type: "key", code, char: "", text: "", event: "press", mods: 0, ...o });
 const settle = async () => { for (let i = 0; i < 64; i++) await Promise.resolve(); };

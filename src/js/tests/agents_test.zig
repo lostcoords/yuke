@@ -33,8 +33,8 @@ fn answerHook(host: *Host, point: []const u8, payload: []const u8) ![]u8 {
 }
 
 const tool_fixture =
-    \\import { plugins } from "yuke:ext";
-    \\import { agents } from "yuke:agents";
+    \\import { plugins } from "yuke:internal/ext";
+    \\import { agents } from "yuke:internal/agents";
     \\plugins.use(agents({ default: "small", maxRounds: 7, catalog: { small: { description: "Narrow research.", model: "p/family/model" }, review: { description: "Read-only review.", prompt: "Review only. Do not edit.", tools: ["read", "exec"] } } }));
     \\globalThis.child = { session: { id: "02".repeat(16), name: "small", root: "/work", model: "p/family/model", origin: { type: "child", site: { session_id: "01".repeat(16), message_id: 1, part_id: 0 } } }, activity: { state: { type: "idle" }, queued: 0 }, last_run: { type: "turn" } };
     \\client.sessionList = async (params) => { return { items: params.population.parent_id === "01".repeat(16) ? [child] : [], next_cursor: null, total: 1 }; };
@@ -57,8 +57,8 @@ test "a catalog with no maxRounds starts a child with no round cap" {
     defer support.destroyHost(host);
     try support.eval(host, "agents/fixture.js");
     try host.evalModule(
-        \\import { plugins } from "yuke:ext";
-        \\import { agents } from "yuke:agents";
+        \\import { plugins } from "yuke:internal/ext";
+        \\import { agents } from "yuke:internal/agents";
         \\plugins.use(agents({ catalog: { only: { description: "One agent." } } }));
         \\client.sessionGet = async (id) => ({ session: { id, title: "Main conversation", root: "/work", model: "parent/large", origin: { type: "root" } }, activity: { state: { type: "idle" }, queued: 0 } });
     , "rounds.js");
@@ -133,7 +133,7 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     defer std.testing.allocator.free(foreign.text);
     try std.testing.expect(foreign.is_error);
     try host.evalModule(
-        \\import { Transcript } from "yuke:transcript";
+        \\import { Transcript } from "yuke:internal/transcript";
         \\globalThis.toolSource = (name, args) => {
         \\  const view = new Transcript({ partsOf: () => [{ type: "tool", id: 0, name, arguments: JSON.stringify(args), state: { type: "pending" } }] });
         \\  view.setOutline([{ id: 1, type: "assistant" }], null);
@@ -145,7 +145,7 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("presented"));
     // A dispose withdraws the tools and the presenters it installed.
     try host.evalModule(
-        \\import { plugins } from "yuke:ext";
+        \\import { plugins } from "yuke:internal/ext";
         \\plugins.dispose("agents");
         \\globalThis.presentersGone = ["spawn_agent", "send_agent_input", "stop_agent"].every((name) => toolSource(name, {}).startsWith(name)) ? 1 : 0;
     , "dispose.js");
@@ -273,7 +273,7 @@ test "JavaScript leaves child prompt composition to native admission" {
 }
 
 const tree_fixture =
-    \\import { client } from "yuke:client";
+    \\import { client } from "yuke:internal/client";
     \\globalThis.nodes = {
     \\  root: { session: { id: "root", name: "main", origin: { type: "root" } }, activity: { state: { type: "idle" }, queued: 0 } },
     \\  a: { session: { id: "a", name: "a", origin: { type: "child", site: { session_id: "root" } } }, activity: { state: { type: "idle" }, queued: 0 } },

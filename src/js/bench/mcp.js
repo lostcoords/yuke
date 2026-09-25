@@ -1,4 +1,4 @@
-import { toolResult } from "yuke:mcp";
+import { toolResult } from "yuke:internal/mcp";
 
 let wire = "", fresh = false, steps = 0, length = 0;
 /** @type {any} */

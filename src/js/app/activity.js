@@ -1,10 +1,10 @@
-// yuke:activity — the live activity of every open session, read back after each activity fact.
-import { root } from "yuke:core";
-import { events } from "yuke:kernel";
-import { client } from "yuke:client";
+// The live activity of every open session, read back after each activity fact.
+import { root } from "yuke:internal/core";
+import { events } from "yuke:internal/kernel";
+import { client } from "yuke:internal/client";
 
-/** @import { Context } from "yuke:ext" */
-/** @import { EngineEvent } from "yuke:engine-native" */
+/** @import { Context } from "yuke:internal/ext" */
+/** @import { EngineEvent } from "yuke:internal/native/engine" */
 /** @typedef {Extract<EngineEvent, { type: "session" }>} NativeSessionEvent */
 
 // The last activity the engine reported for each session a pane holds open.

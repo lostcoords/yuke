@@ -1,16 +1,16 @@
-// yuke:mcp-transport — how MCP messages travel: a child's stdio, Streamable HTTP, or the old HTTP+SSE transport.
-import * as cancellation from "yuke:cancellation-native";
-import { env } from "yuke:env";
-import { spawn, lines } from "yuke:spawn";
-import { fetch } from "yuke:http";
-import { sseParser } from "yuke:sse";
-import { utf8 } from "yuke:utf8";
-import { authFor, record, split } from "yuke:mcp-oauth";
-import { errorText } from "yuke:format";
+// How MCP messages travel: a child's stdio, Streamable HTTP, or the old HTTP+SSE transport.
+import * as cancellation from "yuke:internal/native/cancellation";
+import { env } from "yuke:internal/native/env";
+import { spawn, lines } from "yuke:internal/spawn";
+import { fetch } from "yuke:internal/http";
+import { sseParser } from "yuke:internal/sse";
+import { utf8 } from "yuke:internal/native/utf8";
+import { authFor, record, split } from "yuke:internal/mcp-oauth";
+import { errorText } from "yuke:internal/format";
 
-/** @import { CancellationSignal } from "yuke:cancellation-native" */
-/** @import { Auth, OAuthConfig } from "yuke:mcp-oauth" */
-/** @import { SseEvent } from "yuke:sse" */
+/** @import { CancellationSignal } from "yuke:internal/native/cancellation" */
+/** @import { Auth, OAuthConfig } from "yuke:internal/mcp-oauth" */
+/** @import { SseEvent } from "yuke:internal/sse" */
 /** @typedef {Awaited<ReturnType<typeof fetch>>} HttpResponse */
 /** @typedef {{ type?: string, command?: string, args?: string[], env?: Record<string, string>, cwd?: string, url?: string, headers?: Record<string, string>, oauth?: OAuthConfig | false, enabled?: boolean, timeout?: number, alwaysLoad?: boolean }} ServerConfig */
 /** @typedef {{ url: string, headers: Record<string, string>, auth: Auth | null }} Target */

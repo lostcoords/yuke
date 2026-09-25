@@ -1,7 +1,7 @@
 // Edit text and map its UTF-16 offsets to terminal cells.
-import { term } from "yuke:term";
-import { callHook } from "yuke:kernel";
-import { strokeOf, textOf } from "yuke:keys";
+import { term } from "yuke:internal/native/term";
+import { callHook } from "yuke:internal/kernel";
+import { strokeOf, textOf } from "yuke:internal/keys";
 
 /** @typedef {{ onChange?: (() => void) | null, onEdit?: ((from: number, to: number, insertedLength: number) => void) | null }} TextInputOptions */
 /** @typedef {{ at: number, cls: number }} GraphemeCell */

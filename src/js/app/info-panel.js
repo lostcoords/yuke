@@ -1,4 +1,4 @@
-import { Window, ScrollView } from "yuke:ui";
+import { Window, ScrollView } from "yuke:internal/ui";
 
 /** @import { InjectContext } from "./types/ext.js" */
 

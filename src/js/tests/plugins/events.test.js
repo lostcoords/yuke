@@ -1,7 +1,7 @@
-import { check } from "yuke:test";
-import { root } from "yuke:core";
-import { events, Emitter } from "yuke:kernel";
-import { Scope, Context } from "yuke:ext";
+import { check } from "yuke:internal/test";
+import { root } from "yuke:internal/core";
+import { events, Emitter } from "yuke:internal/kernel";
+import { Scope, Context } from "yuke:internal/ext";
 const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 
 // A throwing teardown reports on the bus and never stops the rest.

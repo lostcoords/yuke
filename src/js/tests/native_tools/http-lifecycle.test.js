@@ -1,5 +1,5 @@
 import { fetch, plugins } from "yuke";
-import { equal } from "yuke:test";
+import { equal } from "yuke:internal/test";
 
 // Repeat a block to avoid the per-character fill loop in QuickJS.
 const options = () => httpMode === "upload_stall" ? { method: "POST", body: "x".repeat(1024).repeat(16 * 1024) } : {};

@@ -1,5 +1,5 @@
-import { equal } from "yuke:test";
-import { root } from "yuke:core";
+import { equal } from "yuke:internal/test";
+import { root } from "yuke:internal/core";
 const log = [];
 const b = { onStart() { log.push("b-start"); }, onStop() { log.push("b-stop"); } };
 const a = { onStart() { log.push("a-start"); root.removeTickable(b); } };

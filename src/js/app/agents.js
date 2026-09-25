@@ -1,16 +1,16 @@
-// yuke:agents — child sessions from a user catalog. Native stays policy-free; this plugin owns every rule.
-import { root } from "yuke:core";
-import { client } from "yuke:client";
-import { native } from "yuke:engine-native";
-import { registerLabels } from "yuke:transcript";
-import { chats, focusedChat } from "yuke:chat";
-import { notice } from "yuke:notice";
-import { errorText } from "yuke:format";
-import { tokenLabel } from "yuke:catalog";
-import { childState, openAgents } from "yuke:agents-ui";
+// Child sessions from a user catalog. Native stays policy-free; this plugin owns every rule.
+import { root } from "yuke:internal/core";
+import { client } from "yuke:internal/client";
+import { native } from "yuke:internal/native/engine";
+import { registerLabels } from "yuke:internal/transcript";
+import { chats, focusedChat } from "yuke:internal/chat";
+import { notice } from "yuke:internal/notice";
+import { errorText } from "yuke:internal/format";
+import { tokenLabel } from "yuke:internal/catalog";
+import { childState, openAgents } from "yuke:internal/agents-ui";
 
-/** @import { Context } from "yuke:ext" */
-/** @import { EngineEvent } from "yuke:engine-native" */
+/** @import { Context } from "yuke:internal/ext" */
+/** @import { EngineEvent } from "yuke:internal/native/engine" */
 /** @typedef {{ description?: string, model?: string, prompt?: string, tools?: string[] }} AgentRow */
 /** @typedef {{ default?: string, catalog: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} AgentsOptions */
 /** @typedef {{ default: string, rows: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} Catalog */

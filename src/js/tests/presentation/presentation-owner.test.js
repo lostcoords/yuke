@@ -1,9 +1,9 @@
-import { check } from "yuke:test";
-import { ChatView } from "yuke:chat-view";
-import { root } from "yuke:core";
-import { row, child, fixed, grow } from "yuke:layout";
-import { Context, Scope } from "yuke:ext";
-import { tui } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { ChatView } from "yuke:internal/chat-view";
+import { root } from "yuke:internal/core";
+import { row, child, fixed, grow } from "yuke:internal/layout";
+import { Context, Scope } from "yuke:internal/ext";
+import { tui } from "yuke:internal/tui";
 const seen = [];
 const a = new Scope("a"), b = new Scope("b");
 const view = new ChatView();

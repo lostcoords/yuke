@@ -1,6 +1,6 @@
 import { net, plugins } from "yuke";
-import { equal } from "yuke:test";
-import * as cancellation from "yuke:cancellation-native";
+import { equal } from "yuke:internal/test";
+import * as cancellation from "yuke:internal/native/cancellation";
 
 async function refused(promise, code) {
   let error;

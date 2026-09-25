@@ -15,11 +15,9 @@
     "noUncheckedIndexedAccess": true,
 
     "paths": {
-      "yuke": ["./facade.js"],
-      "yuke/ui": ["./public-ui.js"],
-      "yuke/chat": ["./public-chat.js"],
-      "yuke/plugins": ["./public-plugins.js"],
-      "yuke:*": ["./*.js"]
+      "yuke": ["./public/yuke.js"],
+      "yuke:internal/*": ["./*.js"],
+      "yuke:*": ["./public/*.js"]
     }
   },
   "include": ["./**/*.js", "./types/**/*.d.ts", "./generated/proto.d.ts"]

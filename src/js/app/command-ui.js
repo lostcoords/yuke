@@ -1,11 +1,11 @@
-// yuke:command-ui — the command float: the slash menu under the composer text, and the same list on ctrl+p.
-import { command, keymap, root } from "yuke:core";
-import { ui } from "yuke:ui";
-import { fuzzyRank } from "yuke:fzy";
-import { Chat, focusedChat, soleText } from "yuke:chat";
+// The command float: the slash menu under the composer text, and the same list on ctrl+p.
+import { command, keymap, root } from "yuke:internal/core";
+import { ui } from "yuke:internal/ui";
+import { fuzzyRank } from "yuke:internal/fzy";
+import { Chat, focusedChat, soleText } from "yuke:internal/chat";
 
-/** @import { Context } from "yuke:ext" */
-/** @import { Picker, Window } from "yuke:ui" */
+/** @import { Context } from "yuke:internal/ext" */
+/** @import { Picker, Window } from "yuke:internal/ui" */
 /** @import { CommandListing } from "./types/core.js" */
 /** @import { Border, ListItem, PickOptions } from "./types/ui.js" */
 /** @typedef {CommandListing & { hint: string }} Entry */

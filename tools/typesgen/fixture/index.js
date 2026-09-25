@@ -1,10 +1,10 @@
 // A plugin as a user writes it, checked against the generated yuke.d.ts alone.
 import { defineConfig, plugins, fs, exec } from "yuke";
-import { ui } from "yuke/ui";
-import { labels } from "yuke/chat";
-import { agents } from "yuke/plugins";
+import { ui } from "yuke:ui";
+import { labels } from "yuke:chat";
+import { agents } from "yuke:plugins";
 // @ts-expect-error Internal modules stay private; the loader rejects them too.
-import { scopeOf } from "yuke:ext";
+import { scopeOf } from "yuke:internal/ext";
 
 /** @type {import("yuke").Plugin} */
 const demo = {

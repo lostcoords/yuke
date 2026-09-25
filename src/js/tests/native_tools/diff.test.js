@@ -1,4 +1,4 @@
-import { diff } from "yuke:diff";
+import { diff } from "yuke:internal/native/diff";
 const fail = [];
 const check = (name, cond) => { if (!cond) fail.push(name); };
 globalThis.result = "pending";

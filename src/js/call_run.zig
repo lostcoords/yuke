@@ -284,7 +284,7 @@ test "a tool signal aborts at settlement before its submitter leaves" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try host.evalModule(
-        \\import { defineTool } from "yuke:tools";
+        \\import { defineTool } from "yuke:internal/native/tools";
         \\defineTool("probe", { description: "Probe", parameters: { type: "object", properties: {} }, execute: async (_, signal) => { await 0; globalThis.signal = signal; return "ok"; } });
     , "settled-signal.js");
     const invocation = host.calls.submit("probe", "{}", "");

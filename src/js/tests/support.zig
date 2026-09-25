@@ -9,8 +9,8 @@ const Paint = @import("paint.zig").Paint;
 const execution = @import("../../execution.zig");
 
 const modules = host_mod.default_baked ++ [_]BakedModule{
-    .{ .name = "yuke:test-markdown", .code = .{ .source = @embedFile("markdown.js") } },
-    .{ .name = "yuke:test", .code = .{ .source = @embedFile("assert.js") } },
+    .{ .name = "yuke:internal/test-markdown", .code = .{ .source = @embedFile("markdown.js") } },
+    .{ .name = "yuke:internal/test", .code = .{ .source = @embedFile("assert.js") } },
 };
 
 const environment: std.process.Environ.Map = .init(std.testing.allocator);

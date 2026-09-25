@@ -1,11 +1,11 @@
-import { check, textParts } from "yuke:test";
-import { term } from "yuke:term";
-import { root, Node, keymap, command } from "yuke:core";
-import { plugins } from "yuke:ext";
-import { ChatView } from "yuke:chat-view";
-import { transcriptVim } from "yuke:transcript-vim";
-import { register } from "yuke:vim";
-import { tuiPlugin } from "yuke:tui";
+import { check, textParts } from "yuke:internal/test";
+import { term } from "yuke:internal/native/term";
+import { root, Node, keymap, command } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { ChatView } from "yuke:internal/chat-view";
+import { transcriptVim } from "yuke:internal/transcript-vim";
+import { register } from "yuke:internal/vim";
+import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: "", event: "press", mods: 0 });
 

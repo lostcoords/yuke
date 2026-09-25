@@ -1,4 +1,4 @@
-import { defineTool } from "yuke:tools";
+import { defineTool } from "yuke:internal/native/tools";
 defineTool("get_weather", {
   description: "Report the weather of one city.",
   parameters: {

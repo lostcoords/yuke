@@ -1,4 +1,4 @@
-import { style } from "yuke:core";
+import { style } from "yuke:internal/core";
 style.groups.Cycle = { link: "Pong" };
 style.groups.Pong = { link: "Cycle" };
 style.groups.Selfie = { link: "Selfie" };

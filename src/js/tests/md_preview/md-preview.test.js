@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { Document } from "yuke:md";
+import { check } from "yuke:internal/test";
+import { Document } from "yuke:internal/md";
 const rowText = (row) => (row.segments || []).map((segment) => segment.text).join("");
 const encoded = (rows) => JSON.stringify(rows);
 const sourceSpansMatch = (source, rows) => rows.every((row) => (row.segments || []).every((segment) =>

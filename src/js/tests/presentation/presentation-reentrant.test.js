@@ -1,9 +1,9 @@
-import { equal } from "yuke:test";
-import { ChatView } from "yuke:chat-view";
-import { Text } from "yuke:ui";
-import { row, child, fixed, grow } from "yuke:layout";
-import { Context, Scope } from "yuke:ext";
-import { tui } from "yuke:tui";
+import { equal } from "yuke:internal/test";
+import { ChatView } from "yuke:internal/chat-view";
+import { Text } from "yuke:internal/ui";
+import { row, child, fixed, grow } from "yuke:internal/layout";
+import { Context, Scope } from "yuke:internal/ext";
+import { tui } from "yuke:internal/tui";
 const view = new ChatView(), bounds = { x: 0, y: 0, w: 30, h: 10 };
 const mountScope = new Scope("mount");
 tui.bindTo(new Context(mountScope, "mount")).presentation(() => {

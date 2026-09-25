@@ -1,15 +1,15 @@
-// yuke:explorer — a filesystem picker that walks directories and reports the chosen path.
-import { root } from "yuke:core";
-import { ui } from "yuke:ui";
-import { fs } from "yuke:fs";
+// A filesystem picker that walks directories and reports the chosen path.
+import { root } from "yuke:internal/core";
+import { ui } from "yuke:internal/ui";
+import { fs } from "yuke:internal/native/fs";
 
 
-/** @import { Context } from "yuke:ext" */
+/** @import { Context } from "yuke:internal/ext" */
 /** @typedef {{ name: string, path: string, is_git_repo: boolean }} FsEntry */
 /** @typedef {{ path: string, parent: string | null, entries: FsEntry[], more: boolean }} FsPage */
 /** @typedef {{ key: string, notice: true, text: string, up?: never, dest?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, up: true, dest: string, notice?: never, text?: never, name?: never, path?: never, is_git_repo?: never } | { key: string, name: string, path: string, is_git_repo?: boolean, notice?: never, up?: never, dest?: never, text?: never }} ExplorerRow */
 
-// A floating directory navigator over `yuke:fs`: Enter or → descends, ← goes up, Esc closes; the listing is a direct read, so the promise settles at once.
+// A floating directory navigator over `yuke:internal/native/fs`: Enter or → descends, ← goes up, Esc closes; the listing is a direct read, so the promise settles at once.
 /** @param {string | null | undefined} [startPath] */
 function openExplorer(startPath) {
   const state = /** @type {{ path: string, parent: string | null | undefined }} */ ({ path: startPath || "", parent: null });

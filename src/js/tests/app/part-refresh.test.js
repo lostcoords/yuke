@@ -1,6 +1,6 @@
-import { client } from "yuke:client";
-import { native } from "yuke:engine-native";
-import { equal } from "yuke:test";
+import { client } from "yuke:internal/client";
+import { native } from "yuke:internal/native/engine";
+import { equal } from "yuke:internal/test";
 
 const sid = globalThis.PROJECTION_SESSION;
 const source = globalThis.PROJECTION_TEXT;

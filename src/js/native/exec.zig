@@ -1,4 +1,4 @@
-//! The native `yuke:exec` module runs one shell command on its own task and answers what it printed as JSON.
+//! The native `yuke:internal/native/exec` module runs one shell command on its own task and answers what it printed as JSON.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -21,9 +21,9 @@ const max_timeout_ms: u32 = 600_000;
 /// The default and the largest cap for each stream. A command that prints more loses its middle, not its result.
 const max_stream_bytes: u32 = 64 * 1024;
 
-/// Register `yuke:exec` and its functions.
+/// Register `yuke:internal/native/exec` and its functions.
 pub fn install(host: *Host) void {
-    module.installFunctions(host, "yuke:exec", &.{
+    module.installFunctions(host, "yuke:internal/native/exec", &.{
         .{ .name = "exec", .arity = 2, .call = jsExec },
     });
 }

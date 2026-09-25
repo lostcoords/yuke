@@ -1,21 +1,21 @@
 // The built-in tools. They use only the asynchronous host primitives.
 
-import { fs } from "yuke:fs";
-import { exec as runCommand } from "yuke:exec";
-import { start as startJob, stop as stopJob, list as listJobs, get as getJob, name as jobName, endLabel, tail as jobTail, shortCommand } from "yuke:jobs";
-import { events } from "yuke:kernel";
-import { diff } from "yuke:diff";
-import { hasTool } from "yuke:tools";
-import { client } from "yuke:client";
-import { byteLabel, errorText } from "yuke:format";
-import { utf8Length } from "yuke:interaction";
+import { fs } from "yuke:internal/native/fs";
+import { exec as runCommand } from "yuke:internal/native/exec";
+import { start as startJob, stop as stopJob, list as listJobs, get as getJob, name as jobName, endLabel, tail as jobTail, shortCommand } from "yuke:internal/jobs";
+import { events } from "yuke:internal/kernel";
+import { diff } from "yuke:internal/native/diff";
+import { hasTool } from "yuke:internal/native/tools";
+import { client } from "yuke:internal/client";
+import { byteLabel, errorText } from "yuke:internal/format";
+import { utf8Length } from "yuke:internal/interaction";
 
-/** @import { DiffFile as ParsedDiffFile } from "yuke:diff" */
-/** @import { RangeRead } from "yuke:fs" */
+/** @import { DiffFile as ParsedDiffFile } from "yuke:internal/native/diff" */
+/** @import { RangeRead } from "yuke:internal/native/fs" */
 /** @typedef {Record<string, unknown>} ToolArgs */
-/** @import { CancellationSignal as ToolSignal } from "yuke:cancellation-native" */
-/** @import { Context } from "yuke:ext" */
-/** @import { Job } from "yuke:jobs-native" */
+/** @import { CancellationSignal as ToolSignal } from "yuke:internal/native/cancellation" */
+/** @import { Context } from "yuke:internal/ext" */
+/** @import { Job } from "yuke:internal/native/jobs" */
 /** @import { ToolContext, ToolDefinition } from "./types/ext.js" */
 /** @typedef {{ old_start: number, old_lines: number, new_start: number, new_lines: number, lines: string[] }} DiffHunk */
 /** @typedef {{ path: string, hunks: DiffHunk[] }} DiffFile */

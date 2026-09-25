@@ -3,7 +3,7 @@ Each named Zig test owns a fresh host and its teardown.
 A file has no test entry point until a Zig test calls it.
 
 Use `support.eval` for an ES module. A path is relative to this directory.
-Use `check(name, condition)` or `equal(actual, expected)` from `yuke:test` for JS assertions.
+Use `check(name, condition)` or `equal(actual, expected)` from `yuke:internal/test` for JS assertions.
 The helper reports the file path and the JS fault.
 Test modules stay outside the production module table.
 

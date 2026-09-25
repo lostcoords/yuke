@@ -1,6 +1,6 @@
-import { check, textParts } from "yuke:test";
-import { term } from "yuke:term";
-import { Transcript } from "yuke:transcript";
+import { check, textParts } from "yuke:internal/test";
+import { term } from "yuke:internal/native/term";
+import { Transcript } from "yuke:internal/transcript";
 const at = (col, row, event) => ({ type: "mouse", col, row, button: "left", event, mods: 0 });
 
 // Two user turns. A user row is plain text with a two-column gutter.

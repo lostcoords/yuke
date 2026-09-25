@@ -1,5 +1,5 @@
-import { command, root } from "yuke:core";
-import { client } from "yuke:client";
+import { command, root } from "yuke:internal/core";
+import { client } from "yuke:internal/client";
 const settle = async () => { for (let i = 0; i < 64; i++) await Promise.resolve(); };
 const start = (login_id) => ({ login_id, verification_url: "https://x/y", user_code: "AB-CD" });
 client.catalogReload = () => Promise.resolve({ changed: false });

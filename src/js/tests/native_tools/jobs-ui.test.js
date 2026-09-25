@@ -1,10 +1,10 @@
-import { root, status } from "yuke:core";
-import { plugins } from "yuke:ext";
-import { tuiPlugin } from "yuke:tui";
-import { notice } from "yuke:notice";
-import { jobsUiPlugin, openJobs, openOutput, JobOutput } from "yuke:jobs-ui";
-import { start, jobs } from "yuke:jobs";
-import { until } from "yuke:test";
+import { root, status } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { tuiPlugin } from "yuke:internal/tui";
+import { notice } from "yuke:internal/notice";
+import { jobsUiPlugin, openJobs, openOutput, JobOutput } from "yuke:internal/jobs-ui";
+import { start, jobs } from "yuke:internal/jobs";
+import { until } from "yuke:internal/test";
 const fail = [];
 const check = (name, cond) => { if (!cond) fail.push(name); };
 const key = (picker, char) => picker.content.onKey({ type: "key", code: "char", char, text: char, event: "press", mods: 0 });

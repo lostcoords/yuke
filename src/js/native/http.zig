@@ -44,7 +44,7 @@ pub const Client = struct {
 };
 
 pub fn install(host: *Host) void {
-    module.installFunctions(host, "yuke:http-native", &.{
+    module.installFunctions(host, "yuke:internal/native/http", &.{
         .{ .name = "fetch", .arity = 2, .call = jsFetch },
         .{ .name = "read", .arity = 2, .call = jsRead },
         .{ .name = "readAll", .arity = 2, .call = jsReadAll },

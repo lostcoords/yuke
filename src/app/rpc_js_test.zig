@@ -51,7 +51,7 @@ test "an interaction question and its answer share the RPC stream" {
     const host = f.fixture.extensions.host;
     try host.evalModule(
         \\
-        \\import { plugins as registry } from "yuke:ext";
+        \\import { plugins as registry } from "yuke:internal/ext";
         \\registry.use({ name: "ask", apply(ctx) { ctx.interaction.confirm("allow", "run"); } });
     , "rpc-interaction.js");
 
@@ -86,7 +86,7 @@ test "a pending input hook still accepts an interaction response" {
     defer f.deinit();
     const extensions = &f.fixture.extensions;
     try extensions.host.evalModule(
-        \\import { plugins } from "yuke:ext";
+        \\import { plugins } from "yuke:internal/ext";
         \\plugins.use({ name: "gate", apply(ctx) {
         \\  ctx.hook("input.before", async () =>
         \\    await ctx.interaction.confirm("allow", "input") ? undefined : { block: "denied" });
@@ -129,7 +129,7 @@ test "a hooked create gates its initial input, and a refusal leaves no session" 
     defer f.deinit();
     const host = f.fixture.extensions.host;
     try host.evalModule(
-        \\import { plugins } from "yuke:ext";
+        \\import { plugins } from "yuke:internal/ext";
         \\globalThis.mode = "block";
         \\plugins.use({ name: "initial", apply(ctx) {
         \\  ctx.hook("input.before", async (value) => {
@@ -176,8 +176,8 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
     defer f.fixture.app.engine.sinks.remove(@ptrCast(&f.stream));
 
     try host.evalModule(
-        \\import { start } from "yuke:jobs";
-        \\import { events } from "yuke:kernel";
+        \\import { start } from "yuke:internal/jobs";
+        \\import { events } from "yuke:internal/kernel";
         \\globalThis.started = 0;
         \\globalThis.indexDigests = 0;
         \\events.on("engine.drained", (ev) => { if (ev.type === "index") indexDigests++; });
@@ -226,7 +226,7 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
         \\{"id":"stop","method":"job.stop","params":{"id":1}}
     );
     try testing.expect(std.mem.indexOf(u8, f.out.written(), "{\"id\":\"stop\",\"result\":{\"job\":{\"id\":1,") != null);
-    try host.evalModule("import { events } from \"yuke:kernel\"; globalThis.ended = 0; events.on(\"jobs.changed\", (job) => { if (job.state === \"exited\" && job.stop_requested) ended = 1; });", "rpc-job-end.js");
+    try host.evalModule("import { events } from \"yuke:internal/kernel\"; globalThis.ended = 0; events.on(\"jobs.changed\", (job) => { if (job.state === \"exited\" && job.stop_requested) ended = 1; });", "rpc-job-end.js");
     try support.pumpUntilTrue(host, "globalThis.ended === 1");
     f.stream.flushNotifications();
     try testing.expect(std.mem.indexOf(u8, f.out.written(), "\"state\":\"exited\",\"stop_requested\":true,\"signal\":15,") != null);
@@ -249,8 +249,8 @@ test "a removed session stops its running jobs" {
     const id = created.result.session.id;
 
     const source = try std.fmt.allocPrintSentinel(a,
-        \\import {{ start }} from "yuke:jobs";
-        \\import {{ events }} from "yuke:kernel";
+        \\import {{ start }} from "yuke:internal/jobs";
+        \\import {{ events }} from "yuke:internal/kernel";
         \\globalThis.state = "";
         \\events.on("jobs.changed", (job) => {{ state = job.state; }});
         \\start("sleep 30", {{ workspaceRoot: "/tmp", sessionId: "{s}" }});

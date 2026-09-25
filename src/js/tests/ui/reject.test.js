@@ -1,4 +1,4 @@
-import { View, root } from "yuke:core";
+import { View, root } from "yuke:internal/core";
 class Ok extends View { draw() {} }
 const reject = (fn, want) => {
   try { fn(); } catch (e) {

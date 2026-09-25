@@ -1,5 +1,5 @@
-import { term } from "yuke:term";
-import { Composer } from "yuke:ui";
+import { term } from "yuke:internal/native/term";
+import { Composer } from "yuke:internal/ui";
 const c = new Composer();
 c.rect = { x: 0, y: 0, w: 7, h: 2 };
 c.text = "hello world";

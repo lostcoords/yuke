@@ -1,13 +1,13 @@
-// yuke:transcript-vim — opt-in cursor and yank keys for the transcript.
-import { term } from "yuke:term";
-import { root, copy } from "yuke:core";
-import { caretAtCol, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:text-input";
-import { ChatView } from "yuke:chat-view";
-import { register } from "yuke:vim";
-import { focusedChatView } from "yuke:chat";
+// Opt-in cursor and yank keys for the transcript.
+import { term } from "yuke:internal/native/term";
+import { root, copy } from "yuke:internal/core";
+import { caretAtCol, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:internal/text-input";
+import { ChatView } from "yuke:internal/chat-view";
+import { register } from "yuke:internal/vim";
+import { focusedChatView } from "yuke:internal/chat";
 
-/** @import { Context } from "yuke:ext" */
-/** @import { ChatRegion } from "yuke:chat-view" */
+/** @import { Context } from "yuke:internal/ext" */
+/** @import { ChatRegion } from "yuke:internal/chat-view" */
 /** @typedef {ChatView["transcript"]} Transcript */
 /** @typedef {{ id: number, row: number, col: number }} Position */
 /** @typedef {{ cursor: Position | null, src: number, anchor: Position | null, visual: boolean, goal: number | null }} VimState */

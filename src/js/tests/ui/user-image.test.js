@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { Transcript } from "yuke:transcript";
+import { check } from "yuke:internal/test";
+import { Transcript } from "yuke:internal/transcript";
 const png = { hash: "a".repeat(64), mime: "image/png", bytes: 12288 };
 const jpg = { hash: "b".repeat(64), mime: "image/jpeg", bytes: 2200000 };
 const tiny = { hash: "c".repeat(64), mime: "image/gif", bytes: 900 };

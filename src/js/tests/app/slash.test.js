@@ -1,8 +1,8 @@
-import { check } from "yuke:test";
-import { command, root, keymap } from "yuke:core";
-import { ui } from "yuke:ui";
-import { Chat } from "yuke:chat";
-import { chat } from "yuke:defaults";
+import { check } from "yuke:internal/test";
+import { command, root, keymap } from "yuke:internal/core";
+import { ui } from "yuke:internal/ui";
+import { Chat } from "yuke:internal/chat";
+import { chat } from "yuke:internal/defaults";
 const key = (code, o = {}) => ({ type: "key", code, char: "", text: "", event: "press", mods: 0, ...o });
 root.focusView(chat.view);
 chat.view.focus = "composer";

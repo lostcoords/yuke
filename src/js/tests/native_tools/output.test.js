@@ -1,4 +1,4 @@
-import { defineTool } from "yuke:tools";
+import { defineTool } from "yuke:internal/native/tools";
 
 // The tool tests a destructured output function, the context method, and a late write.
 globalThis.lateOutput = null;

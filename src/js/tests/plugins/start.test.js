@@ -1,7 +1,7 @@
-import { check, equal } from "yuke:test";
+import { check, equal } from "yuke:internal/test";
 import { plugins } from "yuke";
-import { events } from "yuke:kernel";
-import { services } from "yuke:ext";
+import { events } from "yuke:internal/kernel";
+import { services } from "yuke:internal/ext";
 
 const faults = [];
 const unwatch = events.on("ext.error", (error, name) => faults.push(name + ":" + error.message));

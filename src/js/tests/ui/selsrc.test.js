@@ -1,7 +1,7 @@
-import { check, textParts } from "yuke:test";
-import { term } from "yuke:term";
-import { Transcript } from "yuke:transcript";
-import { rowText } from "yuke:pager";
+import { check, textParts } from "yuke:internal/test";
+import { term } from "yuke:internal/native/term";
+import { Transcript } from "yuke:internal/transcript";
+import { rowText } from "yuke:internal/pager";
 const at = (col, row, event) => ({ type: "mouse", col, row, button: "left", event, mods: 0 });
 
 const body = { u1: "plain user text", a1: "hello **bold** and `code`", a2: "- alpha" };

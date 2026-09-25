@@ -1,6 +1,6 @@
-import { equal } from "yuke:test";
-import { Text } from "yuke:ui";
-import { term } from "yuke:term";
+import { equal } from "yuke:internal/test";
+import { Text } from "yuke:internal/ui";
+import { term } from "yuke:internal/native/term";
 const t = new Text({ text: "αβ gamma delta", group: "UIBody" });
 const rect = { x: 1, y: 1, w: 5, h: 2 };
 const measured = t.measure(5);

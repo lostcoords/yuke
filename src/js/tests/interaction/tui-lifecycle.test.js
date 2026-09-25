@@ -1,9 +1,9 @@
-import { check, equal } from "yuke:test";
-import { create, cancel } from "yuke:cancellation-native";
-import { Context, Scope, plugins, scopeOf } from "yuke:ext";
-import { root } from "yuke:core";
-import { tuiPlugin } from "yuke:tui";
-import { tuiInteractionPlugin } from "yuke:interaction-ui";
+import { check, equal } from "yuke:internal/test";
+import { create, cancel } from "yuke:internal/native/cancellation";
+import { Context, Scope, plugins, scopeOf } from "yuke:internal/ext";
+import { root } from "yuke:internal/core";
+import { tuiPlugin } from "yuke:internal/tui";
+import { tuiInteractionPlugin } from "yuke:internal/interaction-ui";
 
 plugins.use(tuiPlugin);
 plugins.use(tuiInteractionPlugin);

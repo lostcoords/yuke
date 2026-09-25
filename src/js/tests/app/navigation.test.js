@@ -1,5 +1,5 @@
-import { Chat } from "yuke:chat";
-import { client } from "yuke:client";
+import { Chat } from "yuke:internal/chat";
+import { client } from "yuke:internal/client";
 globalThis.closes = 0;
 globalThis.sends = 0;
 client.sessionCreate = (params) => {

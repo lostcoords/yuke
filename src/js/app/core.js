@@ -1,9 +1,9 @@
-import { clip } from "yuke:text-input";
-import { normalizeSeq, stripCtrl, strokeOf } from "yuke:keys";
-import { term } from "yuke:term";
-import { callHook, config, events, once } from "yuke:kernel";
+import { clip } from "yuke:internal/text-input";
+import { normalizeSeq, stripCtrl, strokeOf } from "yuke:internal/keys";
+import { term } from "yuke:internal/native/term";
+import { callHook, config, events, once } from "yuke:internal/kernel";
 
-/** @import { Color, Style } from "yuke:term" */
+/** @import { Color, Style } from "yuke:internal/native/term" */
 /** @import { CommandAction, CommandEntry, CommandListing, CommandMeta, CommandPredicate, CommandRegistry, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, SlotEntry, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
 
 // True for a wheel button. The wheel scrolls a pane but never moves the focus.

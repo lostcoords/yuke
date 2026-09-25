@@ -1,9 +1,9 @@
-import { equal, textParts } from "yuke:test";
-import { ChatView } from "yuke:chat-view";
-import { root } from "yuke:core";
-import { plugins } from "yuke:ext";
-import { tuiPlugin } from "yuke:tui";
-import { chatPlugin } from "yuke:chat";
+import { equal, textParts } from "yuke:internal/test";
+import { ChatView } from "yuke:internal/chat-view";
+import { root } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { tuiPlugin } from "yuke:internal/tui";
+import { chatPlugin } from "yuke:internal/chat";
 plugins.use(tuiPlugin); const off = plugins.use(chatPlugin);
 const view = new ChatView({ partsOf: textParts(() => "history") });
 root.setActive(view); root.flush();

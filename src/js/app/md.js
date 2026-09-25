@@ -1,5 +1,5 @@
-import { term } from "yuke:term";
-import { style } from "yuke:core";
+import { term } from "yuke:internal/native/term";
+import { style } from "yuke:internal/core";
 /** @import { Block, BlockSummary, BreakPiece, CacheEntry, CodeBlock, DelimiterNode, Fence, FenceCloseMatch, FenceMatch, HeadingBlock, HeadingMatch, InlineNode, InlinePiece, InlineSource, LinearSegment, ListBlock, ListItem, NumberList, OlItemMatch, ParagraphBlock, QuoteBlock, QuoteMatch, Row, RuleBlock, Segment, SourceRun, StringList, TableBlock, TableCell, UlItemMatch, Word, WrapOptions } from "./types/md.js" */
 
 // Register the Markdown groups once.

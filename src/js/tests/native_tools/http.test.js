@@ -1,5 +1,5 @@
 import { fetch } from "yuke";
-import { check, equal } from "yuke:test";
+import { check, equal } from "yuke:internal/test";
 
 // The head refuses these before any body exists.
 const failures = {

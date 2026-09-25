@@ -1,6 +1,6 @@
-import { plugins } from "yuke:ext";
-import { client } from "yuke:client";
-import { config } from "yuke:kernel";
+import { plugins } from "yuke:internal/ext";
+import { client } from "yuke:internal/client";
+import { config } from "yuke:internal/kernel";
 config.systemPrompt = "base prompt";
 const prompts = [];
 plugins.use({ name: "inspect-prompt", apply(ctx) {

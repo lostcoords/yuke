@@ -1,7 +1,7 @@
-import { check, textParts } from "yuke:test";
-import { List } from "yuke:ui";
-import { Transcript } from "yuke:transcript";
-import { fuzzyMatch, fuzzyRank } from "yuke:fzy";
+import { check, textParts } from "yuke:internal/test";
+import { List } from "yuke:internal/ui";
+import { Transcript } from "yuke:internal/transcript";
+import { fuzzyMatch, fuzzyRank } from "yuke:internal/fzy";
 
 // A two-line list shows floor(h / itemHeight) items and scrolls in item units.
 const l = new List({ items: [0, 1, 2, 3, 4, 5], itemHeight: 2 });
@@ -30,7 +30,7 @@ const rows = t.rows(40, 0, 100);
 check("user-band", rows.some((r) => r.marker === "⟩" && r.bg === "TxUser"));
 check("assistant-md", rows.some((r) => r.segments && r.segments.some((s) => s.group === "MdStrong" && s.text === "bold")));
 
-// A draft delta re-renders the assistant turn through yuke:md.
+// A draft delta re-renders the assistant turn through yuke:internal/md.
 texts.a2 = "streamed";
 t.setActive("a2");
 const rows2 = t.rows(40, 0, 100);

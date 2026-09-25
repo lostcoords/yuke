@@ -1,8 +1,8 @@
-import { check } from "yuke:test";
-import "yuke:core";
-import { plugins } from "yuke:ext";
-import { sessionsPlugin, feedOf, newestLocalModelSession } from "yuke:sessions";
-import { tuiPlugin } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { sessionsPlugin, feedOf, newestLocalModelSession } from "yuke:internal/sessions";
+import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 plugins.use(sessionsPlugin, {});
 

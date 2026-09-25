@@ -1,4 +1,4 @@
-// yuke:layout — a small terminal-cell layout solver for retained views.
+// A small terminal-cell layout solver for retained views.
 
 /** @import { Rect } from "./types/core.js" */
 /** @import { IntrinsicSize, LayoutChild, LayoutNode, LayoutResult, Padding, SizeSpec } from "./types/layout.js" */

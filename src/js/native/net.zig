@@ -61,7 +61,7 @@ const Connection = struct {
 pub const Connections = module.Table(Connection);
 
 pub fn install(host: *Host) void {
-    module.installFunctions(host, "yuke:net-native", &.{
+    module.installFunctions(host, "yuke:internal/native/net", &.{
         .{ .name = "connect", .arity = 1, .call = jsConnect },
         .{ .name = "read", .arity = 2, .call = jsRead },
         .{ .name = "write", .arity = 3, .call = jsWrite },

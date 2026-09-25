@@ -1,6 +1,6 @@
-import { check, textParts } from "yuke:test";
-import { root } from "yuke:core";
-import { Transcript } from "yuke:transcript";
+import { check, textParts } from "yuke:internal/test";
+import { root } from "yuke:internal/core";
+import { Transcript } from "yuke:internal/transcript";
 const rowText = (row) => row.text || (row.segments || []).map((segment) => segment.text).join("");
 const sourceSpan = (source, rows, needle) => {
   const segment = rows.flatMap((row) => row.segments || []).find((entry) => entry.text.indexOf(needle) >= 0);

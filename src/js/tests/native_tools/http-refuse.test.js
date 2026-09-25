@@ -1,6 +1,6 @@
 import { fetch } from "yuke";
-import { check, equal } from "yuke:test";
-import * as cancellation from "yuke:cancellation-native";
+import { check, equal } from "yuke:internal/test";
+import * as cancellation from "yuke:internal/native/cancellation";
 
 async function refuses(args, message) {
   const result = fetch(...args);

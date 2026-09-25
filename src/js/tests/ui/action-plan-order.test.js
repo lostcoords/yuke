@@ -1,5 +1,5 @@
-import { equal } from "yuke:test";
-import { Transcript } from "yuke:transcript";
+import { equal } from "yuke:internal/test";
+import { Transcript } from "yuke:internal/transcript";
 const parts = id => [{ type: "ignored", id: 0 }, { type: "text", id: 1, text: "" }, { type: "tool", id: 2, name: "tool" + id, arguments: "{}", state: { type: "completed", duration_ms: 1, output: "output" } }];
 let outline = Array.from({ length: 40 }, (_, i) => ({ id: i + 1, type: "assistant" }));
 const t = new Transcript({ partsOf: parts });

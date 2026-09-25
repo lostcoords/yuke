@@ -1,7 +1,7 @@
-// yuke:prompt — the default prompt sections. The engine supplies the facts at run start; this plugin writes the text.
-import { config } from "yuke:kernel";
+// The default prompt sections. The engine supplies the facts at run start; this plugin writes the text.
+import { config } from "yuke:internal/kernel";
 
-/** @import { Context } from "yuke:ext" */
+/** @import { Context } from "yuke:internal/ext" */
 /** @import { PromptBuild, PromptContext, PromptSection as Section } from "./types/ext.js" */
 
 const DEFAULT_BASE = [

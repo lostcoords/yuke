@@ -1,5 +1,5 @@
-import { exec } from "yuke:exec";
-import { create, cancel } from "yuke:cancellation-native";
+import { exec } from "yuke:internal/native/exec";
+import { create, cancel } from "yuke:internal/native/cancellation";
 const fail = [];
 const check = (name, cond) => { if (!cond) fail.push(name); };
 globalThis.result = "pending";

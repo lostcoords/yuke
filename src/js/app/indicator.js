@@ -1,10 +1,10 @@
-// yuke:indicator — the working line on the rule above the composer: a spinner, the phase, the elapsed time, and the child runs.
-import { ChatView } from "yuke:chat-view";
-import { chatOf, chats } from "yuke:chat";
-import { client } from "yuke:client";
-import { activityOf, agentsLabel, isWorking } from "yuke:activity";
+// The working line on the rule above the composer: a spinner, the phase, the elapsed time, and the child runs.
+import { ChatView } from "yuke:internal/chat-view";
+import { chatOf, chats } from "yuke:internal/chat";
+import { client } from "yuke:internal/client";
+import { activityOf, agentsLabel, isWorking } from "yuke:internal/activity";
 
-/** @import { Context } from "yuke:ext" */
+/** @import { Context } from "yuke:internal/ext" */
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const PERIOD_MS = 100;

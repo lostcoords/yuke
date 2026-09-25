@@ -1,4 +1,4 @@
-//! The native `yuke:process` module: child processes whose output tasks read and the owner delivers in `Host.pump`.
+//! The native `yuke:internal/native/process` module: child processes whose output tasks read and the owner delivers in `Host.pump`.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -23,7 +23,7 @@ const max_write_bytes = 1024 * 1024;
 const max_writes = 1024;
 
 pub fn install(host: *Host) void {
-    module.installFunctions(host, "yuke:process", &.{
+    module.installFunctions(host, "yuke:internal/native/process", &.{
         .{ .name = "spawn", .arity = 4, .call = jsSpawn },
         .{ .name = "write", .arity = 2, .call = jsWrite },
         .{ .name = "closeStdin", .arity = 1, .call = jsCloseStdin },
@@ -502,7 +502,7 @@ test "a failed task admission preserves the child exit and releases its handle" 
     vtable.groupConcurrent = Fail.concurrent;
     host.io.vtable = &vtable;
     try host.evalModule(
-        \\import { spawn } from "yuke:spawn";
+        \\import { spawn } from "yuke:internal/spawn";
         \\globalThis.exitKept = false;
         \\spawn(["/bin/sh", "-c", "exit 7"], { workspaceRoot: "/tmp" }).exited.then(
         \\  end => { exitKept = end.code !== null || end.signal !== null; }

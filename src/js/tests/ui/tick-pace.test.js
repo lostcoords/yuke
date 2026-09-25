@@ -1,4 +1,4 @@
-import { root } from "yuke:core";
+import { root } from "yuke:internal/core";
 const check = (name, ok) => { if (!ok) throw new Error(name); };
 let now = 1000;
 Date.now = () => now;

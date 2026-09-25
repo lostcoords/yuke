@@ -1,7 +1,7 @@
-import { check, textParts } from "yuke:test";
-import { root, Node, slot } from "yuke:core";
-import { term } from "yuke:term";
-import { ChatView } from "yuke:chat-view";
+import { check, textParts } from "yuke:internal/test";
+import { root, Node, slot } from "yuke:internal/core";
+import { term } from "yuke:internal/native/term";
+import { ChatView } from "yuke:internal/chat-view";
 const body = { a1: "alpha bravo charlie\nsecond line here\nthird line xx" };
 const v = new ChatView({ partsOf: textParts((id) => body[id] || "") });
 v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);

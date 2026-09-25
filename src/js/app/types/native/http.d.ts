@@ -1,5 +1,5 @@
-declare module "yuke:http-native" {
-  import type { CancellationSignal } from "yuke:cancellation-native";
+declare module "yuke:internal/native/http" {
+  import type { CancellationSignal } from "yuke:internal/native/cancellation";
 
   export interface FetchOptions {
     method?: "GET" | "POST" | "PUT" | "PATCH" | "HEAD" | "DELETE";

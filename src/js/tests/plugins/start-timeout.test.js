@@ -1,6 +1,6 @@
-import { check, equal } from "yuke:test";
+import { check, equal } from "yuke:internal/test";
 import { plugins } from "yuke";
-import { events } from "yuke:kernel";
+import { events } from "yuke:internal/kernel";
 
 let released = 0;
 let faults = 0;

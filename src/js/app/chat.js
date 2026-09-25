@@ -1,25 +1,25 @@
-// yuke:chat — the chat pane, the session it drives, and the pickers that read its transcript.
-import { root, copy, command } from "yuke:core";
-import { config, events } from "yuke:kernel";
-import { term } from "yuke:term";
-import { ui, Text } from "yuke:ui";
-import { column, child, fixed, grow } from "yuke:layout";
-import { ChatView } from "yuke:chat-view";
-import { client } from "yuke:client";
-import { notice } from "yuke:notice";
-import { feedItem } from "yuke:sessions";
-import { activityOf, refreshActivity } from "yuke:activity";
-import { catalogOf, modelOf, reloadCatalog, chooseModel, defaultModel, providerState, providerStateLabel } from "yuke:catalog";
-import { pasteAttaches } from "yuke:attach";
-import { errorText } from "yuke:format";
+// The chat pane, the session it drives, and the pickers that read its transcript.
+import { root, copy, command } from "yuke:internal/core";
+import { config, events } from "yuke:internal/kernel";
+import { term } from "yuke:internal/native/term";
+import { ui, Text } from "yuke:internal/ui";
+import { column, child, fixed, grow } from "yuke:internal/layout";
+import { ChatView } from "yuke:internal/chat-view";
+import { client } from "yuke:internal/client";
+import { notice } from "yuke:internal/notice";
+import { feedItem } from "yuke:internal/sessions";
+import { activityOf, refreshActivity } from "yuke:internal/activity";
+import { catalogOf, modelOf, reloadCatalog, chooseModel, defaultModel, providerState, providerStateLabel } from "yuke:internal/catalog";
+import { pasteAttaches } from "yuke:internal/attach";
+import { errorText } from "yuke:internal/format";
 
-/** @import { PresentationContext } from "yuke:chat-view" */
+/** @import { PresentationContext } from "yuke:internal/chat-view" */
 /** @import { InjectContext } from "./types/ext.js" */
-/** @import { Context } from "yuke:ext" */
-/** @import { EngineEvent } from "yuke:engine-native" */
+/** @import { Context } from "yuke:internal/ext" */
+/** @import { EngineEvent } from "yuke:internal/native/engine" */
 /** @typedef {Extract<EngineEvent, { type: "session" }>} NativeSessionEvent */
 /** @typedef {Wire.CreateSession} CreateSessionDraft */
-/** @import { FeedItem } from "yuke:sessions" */
+/** @import { FeedItem } from "yuke:internal/sessions" */
 
 // `/skill:<name> [arguments]`: the name ends at the first whitespace character, and the trimmed rest is the arguments text.
 /** @param {string} text @returns {{ name: string, args: string } | null} */

@@ -1,4 +1,4 @@
-declare module "yuke:process" {
+declare module "yuke:internal/native/process" {
   interface SpawnOptions {
     /** A relative path resolves against `workspaceRoot`, or the host directory without one. */
     cwd?: string;

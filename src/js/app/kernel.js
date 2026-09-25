@@ -1,5 +1,5 @@
-// The frontend-neutral runtime: process configuration and the event bus. A headless frontend loads it, so it never imports `yuke:term`.
-import { native } from "yuke:engine-native";
+// The frontend-neutral runtime: process configuration and the event bus. A headless frontend loads it, so it never imports `yuke:internal/native/term`.
+import { native } from "yuke:internal/native/engine";
 
 /** @typedef {{ copyOnSelect: boolean, scrollLines: number }} MouseConfig */
 /** @typedef {{ chordMs: number }} KeymapConfig */

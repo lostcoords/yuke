@@ -1,7 +1,7 @@
-import { check } from "yuke:test";
-import { Chat } from "yuke:chat";
-import { client } from "yuke:client";
-import { notice } from "yuke:notice";
+import { check } from "yuke:internal/test";
+import { Chat } from "yuke:internal/chat";
+import { client } from "yuke:internal/client";
+import { notice } from "yuke:internal/notice";
 const opened = [], closed = [];
 client.sessionOpen = id => { opened.push(id); return id !== "missing"; };
 client.sessionClose = id => { closed.push(id); };

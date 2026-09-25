@@ -1,12 +1,12 @@
-// yuke:quit — hold a quit while a run works. A second ask inside the window leaves, and the engine close cancels the runs.
-import { keymap } from "yuke:core";
-import { term } from "yuke:term";
-import { client } from "yuke:client";
-import { notice } from "yuke:notice";
-import { agentsLabel } from "yuke:activity";
+// Hold a quit while a run works. A second ask inside the window leaves, and the engine close cancels the runs.
+import { keymap } from "yuke:internal/core";
+import { term } from "yuke:internal/native/term";
+import { client } from "yuke:internal/client";
+import { notice } from "yuke:internal/notice";
+import { agentsLabel } from "yuke:internal/activity";
 
-/** @import { Context } from "yuke:ext" */
-/** @import { EngineLoad } from "yuke:engine-native" */
+/** @import { Context } from "yuke:internal/ext" */
+/** @import { EngineLoad } from "yuke:internal/native/engine" */
 
 // A second ask inside this window confirms; fx and Gemini CLI use the same three seconds.
 const WINDOW_MS = 3000;

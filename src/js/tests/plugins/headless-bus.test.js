@@ -1,5 +1,5 @@
-import { equal } from "yuke:test";
-import { events } from "yuke:kernel";
+import { equal } from "yuke:internal/test";
+import { events } from "yuke:internal/kernel";
 const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 const view = ["ui.start", "key.press", "mouse.input", "session.changed", "index.changed"];
 const accepted = view.filter((n) => !throws(() => events.on(n, () => {})));

@@ -1,2 +1,2 @@
-import { plugins } from "yuke:ext";
+import { plugins } from "yuke:internal/ext";
 plugins.dispose("toolbox");

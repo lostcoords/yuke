@@ -1,9 +1,9 @@
-import { equal } from "yuke:test";
-import { ChatView } from "yuke:chat-view";
-import { events } from "yuke:kernel";
-import { column, child, fixed } from "yuke:layout";
-import { Context, Scope } from "yuke:ext";
-import { tui } from "yuke:tui";
+import { equal } from "yuke:internal/test";
+import { ChatView } from "yuke:internal/chat-view";
+import { events } from "yuke:internal/kernel";
+import { column, child, fixed } from "yuke:internal/layout";
+import { Context, Scope } from "yuke:internal/ext";
+import { tui } from "yuke:internal/tui";
 const view = new ChatView(), scope = new Scope("bad");
 let errors = 0, disposed = 0;
 const off = events.on("ext.error", () => errors++);

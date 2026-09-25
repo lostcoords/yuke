@@ -1,5 +1,5 @@
-import { defineTool } from "yuke:tools";
-import { exec } from "yuke:exec";
+import { defineTool } from "yuke:internal/native/tools";
+import { exec } from "yuke:internal/native/exec";
 globalThis.finished = 0;
 defineTool("probe", {
   description: "Probe completed exec.", parameters: { type: "object", properties: {} },

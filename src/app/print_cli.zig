@@ -14,8 +14,8 @@ const Extensions = extensions_mod.Extensions;
 
 /// Boot the headless graph with an answerer that denies every question.
 pub const boot =
-    \\import { plugins } from "yuke:ext";
-    \\import { printInteractionPlugin } from "yuke:interaction";
+    \\import { plugins } from "yuke:internal/ext";
+    \\import { printInteractionPlugin } from "yuke:internal/interaction";
     \\plugins.use(printInteractionPlugin);
 ;
 

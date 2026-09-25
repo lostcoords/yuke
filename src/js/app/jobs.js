@@ -1,9 +1,9 @@
-// yuke:jobs — background jobs over the native table: every start and end emits `jobs.changed` with a fresh copy of the job.
+// Background jobs over the native table: every start and end emits `jobs.changed` with a fresh copy of the job.
 
-import * as native from "yuke:jobs-native";
-import { events } from "yuke:kernel";
+import * as native from "yuke:internal/native/jobs";
+import { events } from "yuke:internal/kernel";
 
-/** @import { Job } from "yuke:jobs-native" */
+/** @import { Job } from "yuke:internal/native/jobs" */
 
 export const { list, get, read } = native;
 

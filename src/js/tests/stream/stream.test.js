@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { Transcript } from "yuke:transcript";
+import { check } from "yuke:internal/test";
+import { Transcript } from "yuke:internal/transcript";
 const rowText = (row) => (row.segments || []).map((segment) => segment.text).join("");
 const parts = [
   { type: "text", id: 1, text: "head" },

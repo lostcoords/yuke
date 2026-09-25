@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { root, Node, context } from "yuke:core";
-import { ChatView } from "yuke:chat-view";
+import { check } from "yuke:internal/test";
+import { root, Node, context } from "yuke:internal/core";
+import { ChatView } from "yuke:internal/chat-view";
 const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });
 
 const v = new ChatView({});

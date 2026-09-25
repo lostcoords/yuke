@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { events } from "yuke:kernel";
-import { plugins, services } from "yuke:ext";
+import { check } from "yuke:internal/test";
+import { events } from "yuke:internal/kernel";
+import { plugins, services } from "yuke:internal/ext";
 
 // Record whether each announced value matched the registry at the moment it arrived.
 const agreed = [];

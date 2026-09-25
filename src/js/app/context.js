@@ -1,10 +1,10 @@
-// yuke:context — the context reading on the status bar and the `/context` breakdown window.
-import { client } from "yuke:client";
-import { showInfo } from "yuke:info-panel";
-import { chatEntry } from "yuke:chat";
-import { modelOf, contextWindowOf, defaultModel, tokenLabel } from "yuke:catalog";
+// The context reading on the status bar and the `/context` breakdown window.
+import { client } from "yuke:internal/client";
+import { showInfo } from "yuke:internal/info-panel";
+import { chatEntry } from "yuke:internal/chat";
+import { modelOf, contextWindowOf, defaultModel, tokenLabel } from "yuke:internal/catalog";
 
-/** @import { Context } from "yuke:ext" */
+/** @import { Context } from "yuke:internal/ext" */
 /** @typedef {{ model: string, count: number, usage: Wire.TokenUsage, total: Wire.TokenUsage, queued: number, compaction: boolean }} Reading */
 /** @typedef {{ bar?: string }} ContextConfig */
 

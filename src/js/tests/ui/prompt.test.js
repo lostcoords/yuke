@@ -1,9 +1,9 @@
-import { check } from "yuke:test";
-import { root, Node } from "yuke:core";
-import { plugins } from "yuke:ext";
-import { ChatView } from "yuke:chat-view";
-import { composerVim, setComposerMode } from "yuke:composer-vim";
-import { tuiPlugin } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { root, Node } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import { ChatView } from "yuke:internal/chat-view";
+import { composerVim, setComposerMode } from "yuke:internal/composer-vim";
+import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 const v = new ChatView({});
 root.setRoot(Node.leaf(v));

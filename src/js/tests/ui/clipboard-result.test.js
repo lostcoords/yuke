@@ -1,4 +1,4 @@
-import { check } from "yuke:test";
+import { check } from "yuke:internal/test";
 
 // The later phase of `clipboard.test.js`, after the host pumped every read to its answer.
 check("attached", globalThis.good.spans.length === 1 && globalThis.good.projection().text === "[PNG #1]");

@@ -1,4 +1,4 @@
-declare module "yuke:mcp-native" {
+declare module "yuke:internal/native/mcp" {
   export type RecordScope = "mcp-trust" | "mcp-oauth";
   export function configPath(): string | undefined;
   /** Answers the private record, or undefined; a trust record belongs to the current workspace. */

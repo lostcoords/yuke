@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { slot } from "yuke:core";
-import { events } from "yuke:kernel";
+import { check } from "yuke:internal/test";
+import { slot } from "yuke:internal/core";
+import { events } from "yuke:internal/kernel";
 class Base { label() { return slot.get(this, "label") ?? "base"; } }
 class Sub extends Base {}
 const b = new Base();

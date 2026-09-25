@@ -269,7 +269,7 @@ test "a parser key paints and a missing endFrame still commits" {
     paint.bind(host);
 
     try host.evalModule(
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\globalThis.onEvent = (ev) => {
         \\  globalThis.code = ev.code;
         \\  globalThis.ch = ev.char;
@@ -375,7 +375,7 @@ test "resize updates term.width before JS reads ev.w" {
     paint.bind(host);
 
     try host.evalModule(
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\globalThis.onEvent = (ev) => {
         \\  globalThis.w = ev.w;
         \\  globalThis.tw = term.width;

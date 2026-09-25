@@ -1,10 +1,10 @@
-import { equal } from "yuke:test";
+import { equal } from "yuke:internal/test";
 import { plugins as viaFacade } from "yuke";
-import { plugins as viaExt } from "yuke:ext";
-import { composerVim, agents } from "yuke/plugins";
-import { composerVim as internalVim } from "yuke:composer-vim";
-import { agents as internalAgents } from "yuke:agents";
-import * as chat from "yuke/chat";
+import { plugins as viaExt } from "yuke:internal/ext";
+import { composerVim, agents } from "yuke:plugins";
+import { composerVim as internalVim } from "yuke:internal/composer-vim";
+import { agents as internalAgents } from "yuke:internal/agents";
+import * as chat from "yuke:chat";
 equal(viaFacade, viaExt);
 equal(composerVim, internalVim);
 equal(agents, internalAgents);

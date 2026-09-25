@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { Composer } from "yuke:ui";
+import { check } from "yuke:internal/test";
+import { Composer } from "yuke:internal/ui";
 const key = (code, extra) => Object.assign({ type: "key", code, char: "", text: "", mods: 0 }, extra);
 const paste = (t) => ({ type: "paste", text: t });
 const big = "one\ntwo\nthree\nfour";

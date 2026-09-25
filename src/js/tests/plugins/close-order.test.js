@@ -1,7 +1,7 @@
-import { check, equal } from "yuke:test";
-import { plugins, services, Scope, scopeOf } from "yuke:ext";
-import { events } from "yuke:kernel";
-import * as cancellation from "yuke:cancellation-native";
+import { check, equal } from "yuke:internal/test";
+import { plugins, services, Scope, scopeOf } from "yuke:internal/ext";
+import { events } from "yuke:internal/kernel";
+import * as cancellation from "yuke:internal/native/cancellation";
 
 globalThis.closeDone = false;
 (async () => {

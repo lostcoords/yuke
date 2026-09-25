@@ -79,7 +79,7 @@ pub fn deinit(host: *Host) void {
 }
 
 pub fn install(host: *Host) void {
-    module.installFunctions(host, "yuke:cancellation-native", &.{
+    module.installFunctions(host, "yuke:internal/native/cancellation", &.{
         .{ .name = "create", .arity = 0, .call = jsCreate },
         .{ .name = "cancel", .arity = 1, .call = jsCancel },
         .{ .name = "drain", .arity = 1, .call = jsDrain },

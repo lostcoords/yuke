@@ -1,6 +1,6 @@
-import { check, equal } from "yuke:test";
-import { create, cancel, drain } from "yuke:cancellation-native";
-import { exec } from "yuke:exec";
+import { check, equal } from "yuke:internal/test";
+import { create, cancel, drain } from "yuke:internal/native/cancellation";
+import { exec } from "yuke:internal/native/exec";
 
 const token = create();
 let invalid = 0;

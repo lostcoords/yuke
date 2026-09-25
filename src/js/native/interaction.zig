@@ -12,9 +12,9 @@ const cancellation = @import("cancellation.zig");
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
-/// Register `yuke:interaction-native` and its one `native` object, which also states the host limits.
+/// Register `yuke:internal/native/interaction` and its one `native` object, which also states the host limits.
 pub fn install(host: *Host) void {
-    module.installObject(host, "yuke:interaction-native", "native", &.{
+    module.installObject(host, "yuke:internal/native/interaction", "native", &.{
         .{ .name = "sessionId", .arity = 1, .call = jsSessionId },
         .{ .name = "validateSignal", .arity = 1, .call = jsValidateSignal },
         .{ .name = "request", .arity = 2, .call = jsRequest },

@@ -1,4 +1,4 @@
-// yuke:fzy — the fzy fuzzy matcher that ranks picker candidates.
+// The fzy fuzzy matcher that ranks picker candidates.
 
 // The fzy algorithm over code points, so an astral char never splits. See github.com/jhawthorn/fzy.
 const SCORE_MIN = -Infinity;

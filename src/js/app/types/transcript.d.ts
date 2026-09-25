@@ -1,6 +1,6 @@
 import type { Document } from "../md.js";
 import type { TranscriptRow } from "./pager.js";
-import type { MessagePart } from "yuke:engine-native";
+import type { MessagePart } from "yuke:internal/native/engine";
 
 export interface MessageDescriptor {
   id: number;

@@ -1,5 +1,5 @@
-declare module "yuke:oauth-native" {
-  import type { CancellationSignal } from "yuke:cancellation-native";
+declare module "yuke:internal/native/oauth" {
+  import type { CancellationSignal } from "yuke:internal/native/cancellation";
 
   /** Answers `count` secure random bytes (16 to 64) as base64url without padding. */
   export function random(count: number): string;

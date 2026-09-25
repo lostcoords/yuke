@@ -1,5 +1,5 @@
-import { Picker, Prompt, Window } from "yuke:ui";
-import { term } from "yuke:term";
+import { Picker, Prompt, Window } from "yuke:internal/ui";
+import { term } from "yuke:internal/native/term";
 const check = (ok, message) => { if (!ok) throw new Error(message); };
 const p = new Picker({ body: "one two three four five six seven eight nine ten eleven twelve", filter: false, items: ["Yes", "No"] });
 const w = new Window({ border: "rounded", width: 16, height: 6, content: p });

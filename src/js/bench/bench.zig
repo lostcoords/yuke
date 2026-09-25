@@ -256,10 +256,10 @@ pub const Harness = struct {
 
     /// The frontend boots this way, so the phase pays for the runtime, the modules, and the plugins.
     const boot_source =
-        \\import { plugins } from "yuke:ext";
-        \\import { tuiPlugin } from "yuke:tui";
-        \\import "yuke:core";
-        \\import "yuke:defaults";
+        \\import { plugins } from "yuke:internal/ext";
+        \\import { tuiPlugin } from "yuke:internal/tui";
+        \\import "yuke:internal/core";
+        \\import "yuke:internal/defaults";
         \\plugins.use(tuiPlugin);
     ;
 
@@ -272,7 +272,7 @@ pub const Harness = struct {
     }
 
     const plugin_source =
-        \\import { plugins } from "yuke:ext";
+        \\import { plugins } from "yuke:internal/ext";
         \\let mode, count = 0;
         \\const sync = { name: "probe", apply(ctx) { ctx.effect(() => () => { count++; }); } };
         \\const async = { name: "probe", async apply(ctx) {
@@ -292,14 +292,14 @@ pub const Harness = struct {
     ;
 
     const tool_source =
-        \\import { defineTool } from "yuke:tools";
+        \\import { defineTool } from "yuke:internal/native/tools";
         \\defineTool("probe", { description: "Benchmark a tool call", parameters: { type: "object", properties: {} }, execute: async (_, signal) => signal.aborted ? "aborted" : "ok" });
         \\globalThis.bench = { start: () => 1, step: () => 1, verify: () => 1 };
     ;
 
     /// One plugin holds both points, as the agents plugin does: a replace on the request and a pass on the tool.
     const hook_source =
-        \\import { plugins } from "yuke:ext";
+        \\import { plugins } from "yuke:internal/ext";
         \\plugins.use({ name: "probe", apply(ctx) {
         \\  ctx.hook("request.build", (request) => ({ replace: { ...request, system: request.system + "\n\nDo not spawn a child unless the user asks." } }));
         \\  ctx.hook("tool.before", () => null);
@@ -489,7 +489,7 @@ test "transcript verification preserves row checks without a checksum" {
     try std.testing.expect(checksum != 0);
     try std.testing.expectEqual(checksum, try harness.host.evalInt("bench.verify()"));
     try harness.host.evalModule(
-        \\import { Transcript } from "yuke:transcript";
+        \\import { Transcript } from "yuke:internal/transcript";
         \\const rows = Transcript.prototype.rows;
         \\let calls = 0;
         \\Transcript.prototype.rows = function(...args) {
@@ -582,8 +582,8 @@ test "native part refresh validates the draft cursor across replacement and remo
     @memset(replacement, 'x');
     try session.draft.?.addPart(.{ .session_id = session.id, .message_id = 2, .part = .{ .text = .{ .id = 0, .text = replacement } } });
     try harness.host.evalModule(
-        \\import { client } from "yuke:client";
-        \\import { equal } from "yuke:test";
+        \\import { client } from "yuke:internal/client";
+        \\import { equal } from "yuke:internal/test";
         \\const fresh = client.sessionPart(globalThis.PROJECTION_SESSION, 2, 0, globalThis.previousPart);
         \\equal(fresh.text, "x".repeat(globalThis.STREAM_NATIVE_INITIAL_BYTES + 1));
         \\equal(globalThis.previousPart.text, globalThis.PROJECTION_TEXT);
@@ -591,8 +591,8 @@ test "native part refresh validates the draft cursor across replacement and remo
     session.draft.?.deinit();
     session.draft = null;
     try harness.host.evalModule(
-        \\import { client } from "yuke:client";
-        \\import { equal } from "yuke:test";
+        \\import { client } from "yuke:internal/client";
+        \\import { equal } from "yuke:internal/test";
         \\equal(client.sessionPart(globalThis.PROJECTION_SESSION, 2, 0, globalThis.previousPart), null);
     , "removal.js");
 }

@@ -1,13 +1,13 @@
-// yuke:agents-ui — the live child tree. The agents plugin opens it; it holds no policy.
-import { root } from "yuke:core";
-import { ui } from "yuke:ui";
-import { client, allChildren } from "yuke:client";
-import { focusedChat } from "yuke:chat";
-import { notice } from "yuke:notice";
-import { errorText } from "yuke:format";
+// The live child tree. The agents plugin opens it; it holds no policy.
+import { root } from "yuke:internal/core";
+import { ui } from "yuke:internal/ui";
+import { client, allChildren } from "yuke:internal/client";
+import { focusedChat } from "yuke:internal/chat";
+import { notice } from "yuke:internal/notice";
+import { errorText } from "yuke:internal/format";
 
 /** @import { InjectContext as Context } from "./types/ext.js" */
-/** @import { EngineEvent } from "yuke:engine-native" */
+/** @import { EngineEvent } from "yuke:internal/native/engine" */
 /** @typedef {{ item: Wire.SessionListItem, depth: number }} AgentRow */
 /** @param {unknown} error */
 function failed(error) { notice.show("agents · " + errorText(error)); }

@@ -1,5 +1,5 @@
 // The plugin runtime's own bookkeeping: scopes, advice, hooks, and the frontend seam. Plugin code never receives these.
-import type { CancellationSignal } from "yuke:cancellation-native";
+import type { CancellationSignal } from "yuke:internal/native/cancellation";
 import type { Context, Scope } from "../ext.js";
 import type { AdviceFunction, AdviceWhere, Disposer, HookHandler, InteractionOptions, InteractionRequest, Release } from "./ext.js";
 

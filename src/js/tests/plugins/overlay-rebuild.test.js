@@ -1,7 +1,7 @@
-import { check } from "yuke:test";
-import { root } from "yuke:core";
-import { plugins, services } from "yuke:ext";
-import { tuiPlugin } from "yuke:tui";
+import { check } from "yuke:internal/test";
+import { root } from "yuke:internal/core";
+import { plugins, services } from "yuke:internal/ext";
+import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 
 // One long-lived layer, claimed by a block that also waits on a second capability.

@@ -1,11 +1,11 @@
-// yuke:ui — the widget kit over yuke:core: List and Window to subclass, plus the pickers on `ui`.
-import { term } from "yuke:term";
-import { text, fill, root, claimView, style, slot, isWheel, contains } from "yuke:core";
-import { config, events } from "yuke:kernel";
-import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapPreview, nextGrapheme } from "yuke:text-input";
-import { strokeOf } from "yuke:keys";
-import { fuzzyRank } from "yuke:fzy";
-import { Pager } from "yuke:pager";
+// The widget kit over yuke:internal/core: List and Window to subclass, plus the pickers on `ui`.
+import { term } from "yuke:internal/native/term";
+import { text, fill, root, claimView, style, slot, isWheel, contains } from "yuke:internal/core";
+import { config, events } from "yuke:internal/kernel";
+import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapPreview, nextGrapheme } from "yuke:internal/text-input";
+import { strokeOf } from "yuke:internal/keys";
+import { fuzzyRank } from "yuke:internal/fzy";
+import { Pager } from "yuke:internal/pager";
 
 /** @import { HostMouseEvent as MouseEvent, Rect, StyleGroup } from "./types/core.js" */
 /** @import { BorderSet, ComposerOptions, ComposerSnapshot, ComposerSpan, Dimension, ItemKey, ListItem, ListKey, ListOptions, NavAction, PickerAction, PickOptions, Projection, PromptOptions, TextOptions, WindowContent, WindowOptions, WrapRow } from "./types/ui.js" */

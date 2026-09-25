@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { root, keymap } from "yuke:core";
-import { ui } from "yuke:ui";
+import { check } from "yuke:internal/test";
+import { root, keymap } from "yuke:internal/core";
+import { ui } from "yuke:internal/ui";
 const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });
 const { win, content } = ui.select(["a", "b", "c", "d", "e"], { format: (x) => ({ text: String(x) }) });
 root.pushOverlay(win);

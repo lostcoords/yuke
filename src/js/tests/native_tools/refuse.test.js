@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { defineTool } from "yuke:tools";
+import { check } from "yuke:internal/test";
+import { defineTool } from "yuke:internal/native/tools";
 const refused = (name, fn) => {
   try { fn(); check(name, false); } catch (e) { check(name, e instanceof TypeError); }
 };

@@ -1,4 +1,4 @@
-import { Document } from "yuke:md";
+import { Document } from "yuke:internal/md";
 
 /** @param {string} text @param {number} width */
 export function renderRows(text, width) {

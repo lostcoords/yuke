@@ -1,6 +1,6 @@
-import * as native from "yuke:http-native";
+import * as native from "yuke:internal/native/http";
 
-/** @import { FetchOptions, HttpHead, ReadOptions } from "yuke:http-native" */
+/** @import { FetchOptions, HttpHead, ReadOptions } from "yuke:internal/native/http" */
 
 class Headers {
   #values;

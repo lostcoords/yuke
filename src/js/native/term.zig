@@ -1,4 +1,4 @@
-//! The native `yuke:term` module: the frame, the cells, the measurements, and the quit and suspend the view tier draws through.
+//! The native `yuke:internal/native/term` module: the frame, the cells, the measurements, and the quit and suspend the view tier draws through.
 
 const std = @import("std");
 const quickjs = @import("quickjs");
@@ -29,7 +29,7 @@ pub const Counters = struct {
     fill_calls: u64 = 0,
 };
 
-/// State shared by the renderer and the `yuke:term` module.
+/// State shared by the renderer and the `yuke:internal/native/term` module.
 pub const Paint = struct {
     pub const Output = struct {
         render: *term_pkg.Render,
@@ -94,9 +94,9 @@ const clipboard_max = term_pkg.Render.clipboard_max;
 const tick_ms_min: u32 = 50;
 const tick_ms_max: u32 = 2000;
 
-/// Register `yuke:term` and its one `term` object, which the host also keeps as a root for size updates.
+/// Register `yuke:internal/native/term` and its one `term` object, which the host also keeps as a root for size updates.
 pub fn install(host: *Host) void {
-    module.installObject(host, "yuke:term", "term", &.{
+    module.installObject(host, "yuke:internal/native/term", "term", &.{
         .{ .name = "beginFrame", .arity = 0, .call = jsBeginFrame },
         .{ .name = "endFrame", .arity = 0, .call = jsEndFrame },
         .{ .name = "fill", .arity = 4, .call = jsFill },
@@ -122,7 +122,7 @@ fn addRoots(host: *Host, ctx: Context, term_obj: Value) void {
 
 fn rethrow(ctx: Context) Value {
     if (ctx.hasException()) return ctx.throw(ctx.getException());
-    return ctx.throwTypeError("yuke:term");
+    return ctx.throwTypeError("yuke:internal/native/term");
 }
 
 fn jsBeginFrame(ctx: Context, _: Value, _: []const Value) Value {
@@ -545,8 +545,8 @@ test "RGB styles reach all paint paths and preserve frame diffs" {
         defer support.destroyHost(host);
         paint.bind(host);
         try host.evalModule(
-            \\import { term } from 'yuke:term';
-            \\import { style, text, fill } from 'yuke:core';
+            \\import { term } from 'yuke:internal/native/term';
+            \\import { style, text, fill } from 'yuke:internal/core';
             \\style.palette.rgbFg = '#123456';
             \\style.palette.rgbBg = '#789abc';
             \\style.palette.rgbUl = '#def012';
@@ -606,12 +606,12 @@ test "RGB styles reach all paint paths and preserve frame diffs" {
     }
 }
 
-test "an extra yuke:term export name fails" {
+test "an extra yuke:internal/native/term export name fails" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try std.testing.expectError(
         error.JavaScriptFault,
-        host.evalModule("import { foo } from 'yuke:term';", "term.js"),
+        host.evalModule("import { foo } from 'yuke:internal/native/term';", "term.js"),
     );
 }
 
@@ -619,7 +619,7 @@ test "native wrap preserves UTF-16 rows and bounds preview work" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\const equal = (a, b) => JSON.stringify(Array.from(a)) === JSON.stringify(b);
         \\const cases = [
         \\  ["", 1, [0, 0, 0]],
@@ -645,7 +645,7 @@ test "native wrap preserves UTF-16 rows and bounds preview work" {
     ));
     host.paint.counters = .{};
     _ = try evalOk(host,
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\term.wrap("line\n".repeat(10000), 80, 3);
         \\globalThis.result = 1;
     );
@@ -660,7 +660,7 @@ test "measure and graphemes use cell width and UTF-16 offsets" {
 
     // Printable ASCII takes the byte-length path, so both ends of the range must measure as one.
     try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\let ascii = "";
         \\for (let c = 0x20; c <= 0x7e; c++) ascii += String.fromCharCode(c);
         \\globalThis.result = (
@@ -676,7 +676,7 @@ test "measure and graphemes use cell width and UTF-16 offsets" {
 
     // A control byte has no cell, so a byte count of these strings would report a width too wide.
     try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\globalThis.result = (
         \\  term.measure("\u001f") === 0 &&
         \\  term.measure("\u007f") === 0 &&
@@ -690,7 +690,7 @@ test "measure and graphemes use cell width and UTF-16 offsets" {
 
     // A wide character, an astral character, and a combining mark keep their own widths.
     try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\globalThis.result = (
         \\  term.measure("\u4e2d") === 2 &&
         \\  "\ud834\udd1e".length === 2 && term.measure("\ud834\udd1e") === 1
@@ -699,7 +699,7 @@ test "measure and graphemes use cell width and UTF-16 offsets" {
 
     // CRLF is one grapheme, so a byte count would measure it wrong; graphemes report the clusters.
     try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\const s = "a\u4e2de\u0301\ud834\udd1e";
         \\const gs = term.graphemes(s);
         \\let out = "";
@@ -721,7 +721,7 @@ test "setNeedsTick clamps and quit blocks a later arm" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try host.evalModule(
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\term.setNeedsTick(true, 10);
         \\term.setNeedsTick(false);
         \\term.quit();
@@ -737,7 +737,7 @@ test "beginFrame without a renderer throws" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try host.evalModule(
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\globalThis.term = term;
     , "term.js");
     try std.testing.expectError(error.JavaScriptFault, host.eval("term.beginFrame()", "bad.js"));
@@ -754,7 +754,7 @@ test "paint copies graphemes, skips negative coords, and diffs" {
     paint.bind(host);
 
     try host.evalModule(
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\term.beginFrame();
         \\term.fill(-1, 0, 1, 1);
         \\term.text(-1, 0, "Z");
@@ -771,7 +771,7 @@ test "paint copies graphemes, skips negative coords, and diffs" {
 
     paint.out.clearRetainingCapacity();
     try host.evalModule(
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\term.beginFrame();
         \\term.fill(0, 0, 8, 2, { fg: "white" });
         \\term.text(0, 0, "A中", { fg: "white", bold: true });
@@ -791,7 +791,7 @@ test "a failed endFrame keeps the frame dirty and retries" {
     host.paint.bindRender(host.ctx, &paint.render, &fail);
 
     try host.evalModule(
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\term.beginFrame();
         \\term.text(0, 0, "A");
         \\term.endFrame();
@@ -801,7 +801,7 @@ test "a failed endFrame keeps the frame dirty and retries" {
 
     host.paint.bindRender(host.ctx, &paint.render, &paint.out.writer);
     try host.evalModule(
-        \\import { term } from "yuke:term";
+        \\import { term } from "yuke:internal/native/term";
         \\term.endFrame();
     , "term.js");
     try std.testing.expectEqual(.idle, paint.render.frame);

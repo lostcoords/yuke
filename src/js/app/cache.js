@@ -1,12 +1,12 @@
-// yuke:cache — the `/cache` window: how much of this chat the provider served from its prompt cache.
-import { allChildren } from "yuke:client";
-import { showInfo } from "yuke:info-panel";
-import { chatEntry } from "yuke:chat";
-import { notice } from "yuke:notice";
-import { modelOf, tokenLabel } from "yuke:catalog";
-import { contextBar, money, sessionCost } from "yuke:context";
+// The `/cache` window: how much of this chat the provider served from its prompt cache.
+import { allChildren } from "yuke:internal/client";
+import { showInfo } from "yuke:internal/info-panel";
+import { chatEntry } from "yuke:internal/chat";
+import { notice } from "yuke:internal/notice";
+import { modelOf, tokenLabel } from "yuke:internal/catalog";
+import { contextBar, money, sessionCost } from "yuke:internal/context";
 
-/** @import { Context } from "yuke:ext" */
+/** @import { Context } from "yuke:internal/ext" */
 /** @typedef {{ name: string, total: Wire.TokenUsage, model: string }} Child */
 
 // The share of the input the provider read from its cache. A chat with no input reads nothing.

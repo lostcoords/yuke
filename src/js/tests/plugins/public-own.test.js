@@ -1,7 +1,7 @@
-import { check, equal } from "yuke:test";
+import { check, equal } from "yuke:internal/test";
 import { plugins } from "yuke";
-import { command } from "yuke:core";
-import { tuiPlugin } from "yuke:tui";
+import { command } from "yuke:internal/core";
+import { tuiPlugin } from "yuke:internal/tui";
 
 const definition = { name: "owned", description: "Read a note.", parameters: { type: "object", properties: {} }, execute: async () => "note" };
 let runs = 0;

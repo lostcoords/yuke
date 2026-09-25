@@ -1,10 +1,10 @@
-import { check, textParts } from "yuke:test";
-import { ChatView } from "yuke:chat-view";
-import { Text } from "yuke:ui";
-import { root } from "yuke:core";
-import { row, column, child, fixed, fit, grow } from "yuke:layout";
-import { Context, Scope } from "yuke:ext";
-import { tui } from "yuke:tui";
+import { check, textParts } from "yuke:internal/test";
+import { ChatView } from "yuke:internal/chat-view";
+import { Text } from "yuke:internal/ui";
+import { root } from "yuke:internal/core";
+import { row, column, child, fixed, fit, grow } from "yuke:internal/layout";
+import { Context, Scope } from "yuke:internal/ext";
+import { tui } from "yuke:internal/tui";
 let sessionId = null;
 const view = new ChatView({ sessionId: () => sessionId, partsOf: textParts(() => "history across sidebar") });
 const composer = view.composer, transcript = view.transcript, pager = transcript.pager;

@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { keymap, root, context, parseContext, View, Node } from "yuke:core";
+import { check } from "yuke:internal/test";
+import { keymap, root, context, parseContext, View, Node } from "yuke:internal/core";
 const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 
 // Plugins can unload in either order without loss or resurrection of another flag.

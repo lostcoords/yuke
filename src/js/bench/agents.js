@@ -1,10 +1,10 @@
-import { root, Node } from "yuke:core";
-import { events } from "yuke:kernel";
-import { plugins, advice } from "yuke:ext";
-import { tuiPlugin } from "yuke:tui";
-import { client } from "yuke:client";
-import { Chat } from "yuke:chat";
-import { openAgents } from "yuke:agents-ui";
+import { root, Node } from "yuke:internal/core";
+import { events } from "yuke:internal/kernel";
+import { plugins, advice } from "yuke:internal/ext";
+import { tuiPlugin } from "yuke:internal/tui";
+import { client } from "yuke:internal/client";
+import { Chat } from "yuke:internal/chat";
+import { openAgents } from "yuke:internal/agents-ui";
 
 /** @import { InjectContext } from "../app/types/ext.js" */
 /** @type {InjectContext} */

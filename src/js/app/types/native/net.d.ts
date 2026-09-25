@@ -1,5 +1,5 @@
-declare module "yuke:net-native" {
-  import type { CancellationSignal } from "yuke:cancellation-native";
+declare module "yuke:internal/native/net" {
+  import type { CancellationSignal } from "yuke:internal/native/cancellation";
 
   export interface Options {
     /** Cancellation or timeout closes the connection and interrupts its other operation. */

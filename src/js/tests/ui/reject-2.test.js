@@ -1,5 +1,5 @@
-import { equal } from "yuke:test";
-import { route } from "yuke:core";
+import { equal } from "yuke:internal/test";
+import { route } from "yuke:internal/core";
 globalThis.threw = 0;
 for (const bad of ["view ", "KEYMAP", "", null, 1]) {
   try { route.add(bad); } catch (e) {

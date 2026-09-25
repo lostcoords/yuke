@@ -1,4 +1,4 @@
-import { plugins } from "yuke:ext";
+import { plugins } from "yuke:internal/ext";
 const params = { type: "object", properties: {} };
 globalThis.drop = null;
 plugins.use({

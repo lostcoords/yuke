@@ -1,15 +1,15 @@
-// yuke:jobs-ui — background jobs in the TUI: a status count, the /jobs list, and a live output view.
-import { root } from "yuke:core";
-import { ui, Window, ScrollView } from "yuke:ui";
-import { list, get, stop, read, name, endLabel, shortCommand } from "yuke:jobs";
-import { focusedChat } from "yuke:chat";
-import { notice } from "yuke:notice";
-import { errorText } from "yuke:format";
-import { elapsedLabel } from "yuke:indicator";
+// Background jobs in the TUI: a status count, the /jobs list, and a live output view.
+import { root } from "yuke:internal/core";
+import { ui, Window, ScrollView } from "yuke:internal/ui";
+import { list, get, stop, read, name, endLabel, shortCommand } from "yuke:internal/jobs";
+import { focusedChat } from "yuke:internal/chat";
+import { notice } from "yuke:internal/notice";
+import { errorText } from "yuke:internal/format";
+import { elapsedLabel } from "yuke:internal/indicator";
 
-/** @import { Context as PluginContext } from "yuke:ext" */
+/** @import { Context as PluginContext } from "yuke:internal/ext" */
 /** @import { InjectContext as Context } from "./types/ext.js" */
-/** @import { Job } from "yuke:jobs-native" */
+/** @import { Job } from "yuke:internal/native/jobs" */
 /** @import { TranscriptRow } from "./types/pager.js" */
 
 /** @param {unknown} error */

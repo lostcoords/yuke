@@ -1,7 +1,7 @@
-import { term } from "yuke:term";
-import { style } from "yuke:core";
+import { term } from "yuke:internal/native/term";
+import { style } from "yuke:internal/core";
 
-/** @import { RgbColor, Style } from "yuke:term" */
+/** @import { RgbColor, Style } from "yuke:internal/native/term" */
 
 let width = 0, height = 0, colors = "ansi_raw";
 /** @type {Required<Pick<Style, "fg" | "bg" | "ul" | "underline">>} */

@@ -1,9 +1,9 @@
-// yuke:client — the in-process JavaScript seam over `yuke:engine-native`.
-import { native } from "yuke:engine-native";
-import { events } from "yuke:kernel";
-import { gateInput } from "yuke:ext";
+// The in-process JavaScript seam over `yuke:internal/native/engine`.
+import { native } from "yuke:internal/native/engine";
+import { events } from "yuke:internal/kernel";
+import { gateInput } from "yuke:internal/ext";
 
-/** @import { MessagePart, SessionOutline, ViewPart } from "yuke:engine-native" */
+/** @import { MessagePart, SessionOutline, ViewPart } from "yuke:internal/native/engine" */
 
 // This table maps a native event type to its core event name.
 /** @type {Record<string, string>} */

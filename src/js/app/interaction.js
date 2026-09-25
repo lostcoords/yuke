@@ -1,9 +1,9 @@
 // The shared interaction lifecycle owns each request until its answer or cancellation.
-import { events } from "yuke:kernel";
-import { native } from "yuke:interaction-native";
-import * as cancellation from "yuke:cancellation-native";
-/** @import { CancellationSignal } from "yuke:cancellation-native" */
-/** @import { Context } from "yuke:ext" */
+import { events } from "yuke:internal/kernel";
+import { native } from "yuke:internal/native/interaction";
+import * as cancellation from "yuke:internal/native/cancellation";
+/** @import { CancellationSignal } from "yuke:internal/native/cancellation" */
+/** @import { Context } from "yuke:internal/ext" */
 /** @import { Disposer, InteractionOptions, InteractionRequest, InteractionSurface } from "./types/ext.js" */
 /** @import { Answerer } from "./types/runtime.js" */
 

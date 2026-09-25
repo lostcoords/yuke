@@ -1,5 +1,5 @@
-// The `yuke:engine-native` surface: the JavaScript seam onto the one in-process engine.
-declare module "yuke:engine-native" {
+// The `yuke:internal/native/engine` surface: the JavaScript seam onto the one in-process engine.
+declare module "yuke:internal/native/engine" {
   /** One session's outline: the committed message ids and roles, plus the live draft. */
   export type SessionOutline = {
     messages: { id: number; type: "user" | "assistant" | "compaction"; source?: Wire.InputSource; skill_name?: string; error?: Wire.MessageError }[];

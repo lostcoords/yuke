@@ -1,5 +1,5 @@
 import { fetch } from "yuke";
-import { check, equal } from "yuke:test";
+import { check, equal } from "yuke:internal/test";
 
 globalThis.httpChunks = 0;
 

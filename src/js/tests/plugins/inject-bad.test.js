@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { plugins, services } from "yuke:ext";
+import { check } from "yuke:internal/test";
+import { plugins, services } from "yuke:internal/ext";
 
 let refused = 0;
 plugins.use({

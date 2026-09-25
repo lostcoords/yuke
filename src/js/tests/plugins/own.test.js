@@ -1,6 +1,6 @@
-import { check } from "yuke:test";
-import { plugins } from "yuke:ext";
-import { hasTool } from "yuke:tools";
+import { check } from "yuke:internal/test";
+import { plugins } from "yuke:internal/ext";
+import { hasTool } from "yuke:internal/native/tools";
 const params = { type: "object", properties: {} };
 
 plugins.use({

@@ -1,7 +1,7 @@
-import { textParts } from "yuke:test";
-import { term } from "yuke:term";
-import { Transcript } from "yuke:transcript";
-import { ChatView } from "yuke:chat-view";
+import { textParts } from "yuke:internal/test";
+import { term } from "yuke:internal/native/term";
+import { Transcript } from "yuke:internal/transcript";
+import { ChatView } from "yuke:internal/chat-view";
 const t = new Transcript({ partsOf: textParts(() => "**hi** there") });
 t.setOutline([{ id: "a1", type: "assistant" }], null);
 term.beginFrame();

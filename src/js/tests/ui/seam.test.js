@@ -1,8 +1,8 @@
-import { check, textParts } from "yuke:test";
-import { term } from "yuke:term";
-import { Transcript } from "yuke:transcript";
-import { Document } from "yuke:md";
-import { prevGrapheme, nextGrapheme } from "yuke:text-input";
+import { check, textParts } from "yuke:internal/test";
+import { term } from "yuke:internal/native/term";
+import { Transcript } from "yuke:internal/transcript";
+import { Document } from "yuke:internal/md";
+import { prevGrapheme, nextGrapheme } from "yuke:internal/text-input";
 
 const body = { a1: "alpha bravo charlie delta echo foxtrot golf hotel india" };
 const t = new Transcript({ partsOf: textParts((id) => body[id] || "") });

@@ -3,7 +3,7 @@ const std = @import("std");
 const Host = @import("../host.zig").Host;
 const loop = @import("../loop.zig");
 
-test "yuke:core clip and style.resolve" {
+test "yuke:internal/core clip and style.resolve" {
     try support.run("ui/core.test.js");
 }
 
@@ -15,14 +15,14 @@ test "skill messages fold by native identity and preserve their exact text" {
     try support.run("ui/skill-message.test.js");
 }
 
-test "yuke:core wrapOffsets keeps every byte and caretRowCol places the caret" {
+test "yuke:internal/core wrapOffsets keeps every byte and caretRowCol places the caret" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "ui/wrap.test.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.result"));
 }
 
-test "yuke:core RootView paints and only ctrl+q quits" {
+test "yuke:internal/core RootView paints and only ctrl+q quits" {
     var fixture = try support.PaintedHost.init(2, 8);
     defer fixture.deinit();
     const host = fixture.host;
@@ -42,19 +42,19 @@ test "yuke:core RootView paints and only ctrl+q quits" {
     try std.testing.expect(host.paint.quit_requested);
 }
 
-test "yuke:core ticks each layer at its own period under a faster pulse" {
+test "yuke:internal/core ticks each layer at its own period under a faster pulse" {
     try support.run("ui/tick-pace.test.js");
 }
 
-test "yuke:core config validates and TextInput inserts committed text" {
+test "yuke:internal/core config validates and TextInput inserts committed text" {
     try support.run("ui/cfg.test.js");
 }
 
-test "yuke:ui mouse config, wheel scroll, and pane routing under the pointer" {
+test "yuke:internal/ui mouse config, wheel scroll, and pane routing under the pointer" {
     try support.runPainted(10, 21, "ui/mouse.test.js");
 }
 
-test "yuke:ui copy writes clipboard data" {
+test "yuke:internal/ui copy writes clipboard data" {
     var fixture = try support.PaintedHost.init(10, 40);
     defer fixture.deinit();
     const host = fixture.host;
@@ -63,67 +63,67 @@ test "yuke:ui copy writes clipboard data" {
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "\x1b]52;c;aGk=\x1b\\") != null);
 }
 
-test "yuke:ui drag selection spans rows, copies, and clears on a width change" {
+test "yuke:internal/ui drag selection spans rows, copies, and clears on a width change" {
     try support.runPainted(12, 40, "ui/sel.test.js");
 }
 
-test "yuke:ui the transcript seam maps a position to source, screen, and scroll" {
+test "yuke:internal/ui the transcript seam maps a position to source, screen, and scroll" {
     try support.runPainted(8, 20, "ui/seam.test.js");
 }
 
-test "yuke:composer-vim moves, edits, and puts in normal mode" {
+test "yuke:internal/composer-vim moves, edits, and puts in normal mode" {
     try support.run("ui/cvim.test.js");
 }
 
-test "yuke:transcript-vim moves a cursor and gives the caret to the transcript" {
+test "yuke:internal/transcript-vim moves a cursor and gives the caret to the transcript" {
     try support.runPainted(20, 24, "ui/tvim.test.js");
 }
 
-test "yuke:ui tool parts render, collapse, copy, and toggle" {
+test "yuke:internal/ui tool parts render, collapse, copy, and toggle" {
     try support.runPainted(12, 40, "ui/ui-components.test.js");
 }
 
-test "yuke:ui action groups cross reasoning and full tool fields stay available" {
+test "yuke:internal/ui action groups cross reasoning and full tool fields stay available" {
     try support.run("ui/action-groups.test.js");
 }
 
-test "yuke:ui hidden tool deltas keep rows stable and details fresh" {
+test "yuke:internal/ui hidden tool deltas keep rows stable and details fresh" {
     try support.run("ui/hidden-deltas.test.js");
 }
 
-test "yuke:ui action plans stay aligned after eviction and outline changes" {
+test "yuke:internal/ui action plans stay aligned after eviction and outline changes" {
     try support.run("ui/action-plan-order.test.js");
 }
 
-test "yuke:ui reasoning auto-collapses when assistant text starts and J/K walks parts" {
+test "yuke:internal/ui reasoning auto-collapses when assistant text starts and J/K walks parts" {
     try support.runPainted(12, 40, "ui/reason.test.js");
 }
 
-test "yuke:md renders the GFM subset and caches finalized blocks" {
+test "yuke:internal/md renders the GFM subset and caches finalized blocks" {
     try support.run("ui/md.test.js");
 }
 
-test "yuke:md an appended stream parses like a fresh document" {
+test "yuke:internal/md an appended stream parses like a fresh document" {
     try support.run("ui/md-stream.test.js");
 }
 
-test "yuke:md maps a rendered row back to its markdown source" {
+test "yuke:internal/md maps a rendered row back to its markdown source" {
     try support.run("ui/mdsrc.test.js");
 }
 
-test "yuke:ui a selection maps back to the markdown source" {
+test "yuke:internal/ui a selection maps back to the markdown source" {
     try support.runPainted(12, 40, "ui/selsrc.test.js");
 }
 
-test "yuke:ui List itemHeight, fzy ranking, and Transcript rows" {
+test "yuke:internal/ui List itemHeight, fzy ranking, and Transcript rows" {
     try support.run("ui/ui-2.test.js");
 }
 
-test "yuke:ui Composer grows, pastes in one edit, and owns the vertical keys" {
+test "yuke:internal/ui Composer grows, pastes in one edit, and owns the vertical keys" {
     try support.run("ui/composer.test.js");
 }
 
-test "yuke:ui Transcript draws markdown segments through the pager" {
+test "yuke:internal/ui Transcript draws markdown segments through the pager" {
     var fixture = try support.PaintedHost.init(6, 24);
     defer fixture.deinit();
     const host = fixture.host;
@@ -134,11 +134,11 @@ test "yuke:ui Transcript draws markdown segments through the pager" {
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "─") != null);
 }
 
-test "yuke:ui Composer collapses a large paste and still submits the whole text" {
+test "yuke:internal/ui Composer collapses a large paste and still submits the whole text" {
     try support.run("ui/paste.test.js");
 }
 
-test "yuke:ui Composer labels an image span by position and submits content parts" {
+test "yuke:internal/ui Composer labels an image span by position and submits content parts" {
     try support.run("ui/image-span.test.js");
 }
 
@@ -162,7 +162,7 @@ test "the clipboard image attaches and its temporary file never outlives the put
     try support.eval(host, "ui/clipboard-result.test.js");
 }
 
-test "yuke:ui Composer draws a wrapped row whole and puts the caret on it" {
+test "yuke:internal/ui Composer draws a wrapped row whole and puts the caret on it" {
     var fixture = try support.PaintedHost.init(4, 7);
     defer fixture.deinit();
     const host = fixture.host;
@@ -351,14 +351,14 @@ test "the chat pane routes a drag that leaves the transcript and guards its pres
     try support.runPainted(20, 40, "ui/mouse-2.test.js");
 }
 
-test "yuke:ui transcript renders evicted history exactly" {
+test "yuke:internal/ui transcript renders evicted history exactly" {
     try support.runPainted(12, 32, "ui/transcript-eviction.test.js");
 }
 
-test "yuke:ui transcript keeps committed renders across a reload" {
+test "yuke:internal/ui transcript keeps committed renders across a reload" {
     try support.runPainted(12, 40, "ui/transcript-reload-reuse.test.js");
 }
 
-test "yuke:ui transcript retains the closed row prefix across text deltas" {
+test "yuke:internal/ui transcript retains the closed row prefix across text deltas" {
     try support.run("ui/transcript-row-prefix.test.js");
 }

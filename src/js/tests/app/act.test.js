@@ -1,10 +1,10 @@
-import { equal } from "yuke:test";
-import { command, root, status, keymap } from "yuke:core";
-import { plugins } from "yuke:ext";
-import "yuke:term";
-import { chat } from "yuke:defaults";
-import { chats, chatOf } from "yuke:chat";
-import { feedOf } from "yuke:sessions";
+import { equal } from "yuke:internal/test";
+import { command, root, status, keymap } from "yuke:internal/core";
+import { plugins } from "yuke:internal/ext";
+import "yuke:internal/native/term";
+import { chat } from "yuke:internal/defaults";
+import { chats, chatOf } from "yuke:internal/chat";
+import { feedOf } from "yuke:internal/sessions";
 const fail = [];
 // The shell loads the notice as a plugin, so its segment and listeners can be taken back out.
 if (!plugins.has("notice")) fail.push("notice-plugin");

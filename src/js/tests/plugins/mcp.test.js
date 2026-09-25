@@ -1,15 +1,15 @@
-import { lines } from "yuke:spawn";
-import { fs } from "yuke:fs";
-import { interaction, plugins } from "yuke:ext";
-import { mcp, toolName, decodeMessage, toolResult, mirroredParams } from "yuke:mcp";
-import { headerValue } from "yuke:mcp-transport";
-import { check, equal } from "yuke:test";
-import { sseParser } from "yuke:sse";
-import { client } from "yuke:client";
-import { fetch } from "yuke:http";
+import { lines } from "yuke:internal/spawn";
+import { fs } from "yuke:internal/native/fs";
+import { interaction, plugins } from "yuke:internal/ext";
+import { mcp, toolName, decodeMessage, toolResult, mirroredParams } from "yuke:internal/mcp";
+import { headerValue } from "yuke:internal/mcp-transport";
+import { check, equal } from "yuke:internal/test";
+import { sseParser } from "yuke:internal/sse";
+import { client } from "yuke:internal/client";
+import { fetch } from "yuke:internal/http";
 
-/** @import { ServerConfig } from "yuke:mcp-transport" */
-/** @import { SseEvent } from "yuke:sse" */
+/** @import { ServerConfig } from "yuke:internal/mcp-transport" */
+/** @import { SseEvent } from "yuke:internal/sse" */
 
 // The shell servers answer one JSON-RPC line per request. `sed` reads the id, the method, and the text argument.
 const READ = String.raw`while IFS= read -r line; do

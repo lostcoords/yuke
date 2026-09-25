@@ -1,5 +1,5 @@
-import { check } from "yuke:test";
-import { events } from "yuke:kernel";
+import { check } from "yuke:internal/test";
+import { events } from "yuke:internal/kernel";
 
 // A throwing listener must not vanish, and the other listeners still run.
 const seen = [];

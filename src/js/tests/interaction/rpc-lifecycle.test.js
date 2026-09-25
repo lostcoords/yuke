@@ -1,7 +1,7 @@
-import { equal } from "yuke:test";
-import { Context, Scope, plugins, scopeOf } from "yuke:ext";
-import { rpcInteractionPlugin } from "yuke:interaction";
-import { native } from "yuke:interaction-native";
+import { equal } from "yuke:internal/test";
+import { Context, Scope, plugins, scopeOf } from "yuke:internal/ext";
+import { rpcInteractionPlugin } from "yuke:internal/interaction";
+import { native } from "yuke:internal/native/interaction";
 
 const ctx = new Context(new Scope("rpc-owner"), "rpc-owner");
 const frontend = plugins.use(rpcInteractionPlugin);
