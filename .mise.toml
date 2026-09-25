@@ -3,6 +3,10 @@ zig = "0.16.0"
 node = "26.10.0"
 "npm:typescript" = "7.0.2"
 
+[tasks.install-local]
+description = "Build yuke and link it into the local user bin directory"
+run = "./tools/install-local.sh"
+
 [tasks.check-ts]
 description = "Type-check the app JavaScript, the generated contracts, and the plugin declarations"
 run = ["tsc -p src/js/app/tsconfig.json --noEmit", "tsc -p bench/tsconfig.json --noEmit", "tsc -p tools/protogen/tsconfig.json --noEmit", "tsc -p tools/typesgen/tsconfig.json", "tsc -p tools/typesgen/fixture/tsconfig.json"]
