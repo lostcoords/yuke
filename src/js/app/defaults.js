@@ -5,7 +5,6 @@ import { ui, NAV_KEYS } from "yuke:internal/ui";
 import { windowKeys } from "yuke:internal/keys";
 import { notice, noticePlugin } from "yuke:internal/notice";
 import { commandUi } from "yuke:internal/command-ui";
-import { explorerPlugin } from "yuke:internal/explorer";
 import { modelCatalog } from "yuke:internal/catalog";
 import { jobsUiPlugin } from "yuke:internal/jobs-ui";
 import { authPlugin } from "yuke:internal/auth";
@@ -146,7 +145,6 @@ plugins.use({
 
 plugins.use(noticePlugin);
 plugins.use(commandUi());
-plugins.use(explorerPlugin);
 plugins.use(modelCatalog({ entry: chatEntry }));
 plugins.use(authPlugin);
 plugins.use(jobsUiPlugin);

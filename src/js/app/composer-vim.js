@@ -1,6 +1,5 @@
 // Opt-in modal keys for the chat composer.
 import { events } from "yuke:internal/kernel";
-import { windowKeys } from "yuke:internal/keys";
 import { prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:internal/text-input";
 import { register } from "yuke:internal/vim";
 import { focusedChatView } from "yuke:internal/chat";
@@ -236,8 +235,6 @@ export const composerVim = {
 
       // A null answer leaves the composer its own glyph.
       ctx.on("composer.prompt", (c) => (normal.has(c) ? NORMAL_PROMPT : null));
-
-      ctx.tui.keymap(windowKeys("ctrl+w"));
 
       ctx.tui.status({ side: "right", order: 0, render: () => {
         const m = mode(chatComposer());

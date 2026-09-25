@@ -11,7 +11,6 @@ if (!plugins.has("notice")) fail.push("notice-plugin");
 if (!plugins.has("command-ui")) fail.push("command-ui-plugin");
 if (!plugins.has("catalog")) fail.push("catalog-plugin");
 if (!plugins.has("chat")) fail.push("chat-plugin");
-if (!plugins.has("explorer")) fail.push("explorer-plugin");
 if (!command.available("catalog:reload")) fail.push("catalog-reload-command");
 if (!command.available("suspend")) fail.push("suspend-command");
 {

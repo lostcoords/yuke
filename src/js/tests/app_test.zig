@@ -182,10 +182,6 @@ test "the catalog stores a full reply, keeps the models on unchanged, and retain
     try support.run("app/catload.test.js");
 }
 
-test "the explorer turns one directory listing into rows" {
-    try support.run("app/explore.test.js");
-}
-
 test "the catalog slice owns the model reading" {
     // The readings need the open session, which the shell owns, so the slice takes it as config.
     try support.run("app/catalog.test.js");
@@ -204,11 +200,6 @@ test "a split gives each chat pane its own session" {
 test "the context owns every overlay its plugin pushes" {
     // A modal that outlives its plugin consumes every key, so the scope must own the stack too.
     try support.run("app/ctxoverlay.test.js");
-}
-
-test "the explorer registers its command and takes it back on unload" {
-    // The picker walks the filesystem through the client, so only its command lifetime is tested here.
-    try support.run("app/explorer.test.js");
 }
 
 test "a chat retains only successful session pins" {

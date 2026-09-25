@@ -241,7 +241,7 @@ fn pageOf(arena: std.mem.Allocator, path: []const u8, page: os.DirPage) Page {
     };
 }
 
-/// One directory listing, as the explorer reads it.
+/// One page of a directory listing.
 const Page = struct {
     /// The canonical directory this page lists.
     path: []const u8,
