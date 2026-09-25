@@ -28,6 +28,8 @@ export { client } from "yuke:internal/client";
 /** @typedef {import("../types/ext.js").Release} Release */
 /** @typedef {import("../types/ext.js").HookPoint} HookPoint */
 /** @typedef {import("../types/ext.js").HookHandler} HookHandler */
+/** @typedef {import("../types/ext.js").Events} Events */
+/** @typedef {import("../types/ext.js").EventName} EventName */
 /** @typedef {import("yuke:internal/kernel").ConfigPatch} ConfigPatch */
 /** @typedef {import("yuke:internal/native/jobs").Job} Job */
 

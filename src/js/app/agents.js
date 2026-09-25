@@ -9,7 +9,6 @@ import { tokenLabel } from "yuke:internal/catalog";
 import { childState, openAgents } from "yuke:internal/agents-ui";
 
 /** @import { Context } from "yuke:internal/ext" */
-/** @import { EngineEvent } from "yuke:internal/native/engine" */
 /** @typedef {{ description?: string, model?: string, prompt?: string, tools?: string[] }} AgentRow */
 /** @typedef {{ default?: string, catalog: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} AgentsOptions */
 /** @typedef {{ default: string, rows: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} Catalog */
@@ -245,7 +244,7 @@ export function agents(options) {
                 }
                 return entry.view ? " · " + childLabel(entry.view) : "";
             }
-            ctx.on("session.changed", /** @param {Extract<EngineEvent, { type: "session" }>} ev */ (ev) => {
+            ctx.on("session.changed", (ev) => {
                 const entry = children.get(ev.session);
                 if (!entry) return;
                 if (ev.kind === "gone") { children.delete(ev.session); rebuild(entry); return; }

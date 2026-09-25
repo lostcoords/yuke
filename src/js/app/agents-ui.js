@@ -7,7 +7,6 @@ import { notice } from "yuke:internal/notice";
 import { errorText } from "yuke:internal/format";
 
 /** @import { InjectContext as Context } from "./types/ext.js" */
-/** @import { EngineEvent } from "yuke:internal/native/engine" */
 /** @typedef {{ item: Wire.SessionListItem, depth: number }} AgentRow */
 /** @param {unknown} error */
 function failed(error) { notice.show("agents · " + errorText(error)); }
@@ -90,8 +89,8 @@ export async function openAgents(ctx, sessionId) {
   });
   picker.content.list.selectKey(sessionId);
   // A new child lands in the index digest, which names no session; a listed child's state lands in its own digest.
-  const off = ctx.on("index.changed", /** @param {EngineEvent} ev */ (ev) => { if (ev.type === "index" && (ev.overflow || ev.facts.includes("session.summary_changed"))) refresh(); });
-  const offSession = ctx.on("session.changed", /** @param {Extract<EngineEvent, { type: "session" }>} ev */ (ev) => {
+  const off = ctx.on("index.changed", (ev) => { if (ev.overflow || ev.facts.includes("session.summary_changed")) refresh(); });
+  const offSession = ctx.on("session.changed", (ev) => {
     if (!items.some((row) => row.item.session.id === ev.session)) return;
     if (ev.kind === "gone" || ev.facts.includes("run.done") || ev.facts.includes("session.summary_changed")) refresh();
     else if (ev.facts.includes("session.activity_changed")) refresh(ev.session);

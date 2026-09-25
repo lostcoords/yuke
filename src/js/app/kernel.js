@@ -8,6 +8,7 @@ import { native } from "yuke:internal/native/engine";
 /** @typedef {(value: unknown) => true | string} ConfigValidator */
 /** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
+/** @import { Bus } from "./types/ext.js" */
 
 // Wrap a disposer so a second call does nothing.
 /** @param {() => void} fn @returns {() => void} */
@@ -218,7 +219,8 @@ export class Emitter {
   }
 }
 
-export const events = new Emitter(CORE_EVENTS);
+// The shared bus has the typed surface; the Emitter class stays untyped, so a private bus needs no event map.
+export const events = /** @type {Bus} */ (/** @type {unknown} */ (new Emitter(CORE_EVENTS)));
 
 // The native drains engine events on the owner. The digest coalesces, so a fact says that it happened and never how many times.
 native.setEventSink((ev) => {

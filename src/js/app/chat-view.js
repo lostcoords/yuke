@@ -120,7 +120,7 @@ export class ChatView {
     this.rect = bounds;
     const { w, h } = bounds;
     const composerRows = w > 0 && h > 0 ? Math.min(this.composer.height(w), Math.max(1, Math.floor(h / 2))) : 0;
-    this.strip = /** @type {StripRow[]} */ (events.bail("chat.strip", this) || []);
+    this.strip = events.bail("chat.strip", this) || [];
     const stripRows = Math.min(this.strip.length, Math.max(0, h - composerRows - 2));
     const defaultLayout = column([
       child("transcript", grow()),
@@ -129,7 +129,7 @@ export class ChatView {
       child("composer", fit(), { intrinsic: { w, h: composerRows } }),
     ]);
     const context = { bounds, empty: this.transcript._messages.length === 0 && !this.transcript._active, sessionId: this.sessionId(), composerRows, defaultLayout };
-    const provider = /** @type {PresentationProvider | null} */ (events.bail("chat.presentation", this, context));
+    const provider = events.bail("chat.presentation", this, context);
     let tree = defaultLayout;
     try {
       if (provider !== this.presentation?.provider) {
@@ -243,7 +243,7 @@ export class ChatView {
   // The rule row. A plugin puts a line on it, such as the working indicator, and the rule fills the rest.
   /** @param {number} x @param {number} y @param {number} w @returns {void} */
   _drawRule(x, y, w) {
-    const line = /** @type {StripRow | null} */ (events.bail("chat.rule", this));
+    const line = events.bail("chat.rule", this);
     const label = line ? clip(line.text, w) : "";
     const used = label ? term.measure(label) : 0;
     if (label) text(x, y, label, (line && line.group) || "YukeRule");
@@ -254,7 +254,7 @@ export class ChatView {
   /** @returns {{ x: number, y: number, visible: boolean } | null} */
   cursor() {
     if (this.presentationFocus) return this.presentationFocus.cursor?.() || null;
-    const supplied = /** @type {{ x: number, y: number, visible: boolean } | null} */ (events.bail("chat.cursor", this));
+    const supplied = events.bail("chat.cursor", this);
     if (supplied) return supplied;
     return this.focus === "composer" ? this.composer.cursor() : null;
   }

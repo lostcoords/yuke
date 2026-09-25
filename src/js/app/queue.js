@@ -7,7 +7,6 @@ import { notice } from "yuke:internal/notice";
 import { inputSourceLabel } from "yuke:internal/transcript";
 import { chatOf, focusedChat } from "yuke:internal/chat";
 import { errorText } from "yuke:internal/format";
-/** @import { ChatView } from "yuke:internal/chat-view" */
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { InjectContext as Ctx } from "./types/ext.js" */
@@ -126,12 +125,12 @@ export const queuePlugin = {
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       // The engine announces the activity on every queue change, so the count is the one trigger to read again.
-      ctx.on("activity.changed", /** @param {string} id @param {Wire.SessionActivity | null} a */ (id, a) => {
+      ctx.on("activity.changed", (id, a) => {
         if (!a) forget(id);
         else if (a.queued !== queueOf(id).length) refreshQueue(id);
       });
 
-      ctx.on("chat.strip", /** @param {ChatView} view */ (view) => {
+      ctx.on("chat.strip", (view) => {
         const c = chatOf(view);
         return c && c.sessionId ? stripRows(queueOf(c.sessionId)) : null;
       });

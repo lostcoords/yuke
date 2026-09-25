@@ -235,7 +235,7 @@ export const composerVim = {
       );
 
       // A null answer leaves the composer its own glyph.
-      ctx.on("composer.prompt", /** @param {ComposerType} c @returns {string | null} */ (c) => (normal.has(c) ? NORMAL_PROMPT : null));
+      ctx.on("composer.prompt", (c) => (normal.has(c) ? NORMAL_PROMPT : null));
 
       ctx.tui.keymap(windowKeys("ctrl+w"));
 

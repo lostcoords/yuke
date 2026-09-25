@@ -52,7 +52,7 @@ function step() {
   }
   if (phase === "engine_activity_changed") return 1;
   if (phase === "agents_open") return open().then(() => 1);
-  if (phase === "agents_structure") events.emit("index.changed", { type: "index", facts: ["session.summary_changed"] });
+  if (phase === "agents_structure") events.emit("index.changed", { type: "index", overflow: false, facts: ["session.summary_changed"] });
   else for (let i = 0; i < (phase === "agents_burst" ? 20 : 1); i++) {
     events.emit("session.changed", { type: "session", session: AGENTS_TARGET, kind: "quiet", facts: ["session.activity_changed"] });
   }

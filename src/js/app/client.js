@@ -5,14 +5,10 @@ import { gateInput } from "yuke:internal/ext";
 
 /** @import { MessagePart, SessionOutline, ViewPart } from "yuke:internal/native/engine" */
 
-// This table maps a native event type to its core event name.
-/** @type {Record<string, string>} */
-const ENGINE_TO_CORE_EVENT = { session: "session.changed", index: "index.changed" };
-
 // The kernel owns the sink, so the view tier reads the digest from the bus like everything else.
 events.on("engine.drained", (ev) => {
-  const name = ENGINE_TO_CORE_EVENT[ev.type];
-  if (name) events.emit(name, ev);
+  if (ev.type === "session") events.emit("session.changed", ev);
+  else events.emit("index.changed", ev);
 });
 
 // The native task answers JSON after the command and its hooks settle. Input passes the `input.before` gate first.

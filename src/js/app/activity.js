@@ -4,8 +4,6 @@ import { events } from "yuke:internal/kernel";
 import { client } from "yuke:internal/client";
 
 /** @import { Context } from "yuke:internal/ext" */
-/** @import { EngineEvent } from "yuke:internal/native/engine" */
-/** @typedef {Extract<EngineEvent, { type: "session" }>} NativeSessionEvent */
 
 // The last activity the engine reported for each session a pane holds open.
 /** @type {Map<string, Wire.SessionActivity>} */
@@ -50,7 +48,7 @@ export const activityPlugin = {
   name: "activity",
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
-    ctx.on("session.changed", /** @param {NativeSessionEvent} ev */ (ev) => {
+    ctx.on("session.changed", (ev) => {
       if (ev.kind === "gone") forget(ev.session);
       else if (ev.facts.indexOf("session.activity_changed") >= 0) refreshActivity(ev.session);
     });

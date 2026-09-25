@@ -16,8 +16,6 @@ import { errorText } from "yuke:internal/format";
 /** @import { PresentationContext } from "yuke:internal/chat-view" */
 /** @import { InjectContext } from "./types/ext.js" */
 /** @import { Context } from "yuke:internal/ext" */
-/** @import { EngineEvent } from "yuke:internal/native/engine" */
-/** @typedef {Extract<EngineEvent, { type: "session" }>} NativeSessionEvent */
 /** @typedef {Wire.CreateSession} CreateSessionDraft */
 /** @import { FeedItem } from "yuke:internal/sessions" */
 
@@ -405,12 +403,12 @@ export const chatPlugin = {
       // The composer owns its own attachments, so each pane answers for the model it sends to.
       ctx.on("composer.attached", () => { for (const c of chats) c.checkVision(); });
       // The feed reads the patch back later, so a pane on the patched session checks the new model directly.
-      ctx.on("model.changed", /** @param {{ model: Wire.ModelInfo, sessionId: string | null }} ev */ (ev) => {
+      ctx.on("model.changed", (ev) => {
         for (const c of chats) c.checkVision(ev.sessionId !== null && c.sessionId === ev.sessionId ? ev.model.selector : c.modelSelector());
       });
 
       // Two panes can show one session, so the event reaches every pane that names it.
-      ctx.on("session.changed", /** @param {NativeSessionEvent} ev */ (ev => {
+      ctx.on("session.changed", (ev => {
         // A quiet digest changes only state outside the transcript.
         if (!ev || ev.kind === "quiet") return;
         for (const c of chats) {

@@ -1,7 +1,11 @@
 import type { CancellationSignal } from "yuke:internal/native/cancellation";
+import type { EngineEvent } from "yuke:internal/native/engine";
+import type { Job } from "yuke:internal/native/jobs";
 import type { Context, Scope } from "../ext.js";
-import type { events } from "../kernel.js";
 import type { tui } from "../tui.js";
+import type { ChatRegion, ChatView, PresentationContext, PresentationProvider, StripRow } from "../chat-view.js";
+import type { Composer } from "../ui.js";
+import type { HostMouseEvent, ViewLike } from "./core.js";
 
 export type Disposer = () => void;
 export type AdviceFunction = (...args: any[]) => any;
@@ -15,8 +19,68 @@ export interface AdviceOptions {
   order?: number;
 }
 
-export type EventHandler = Parameters<typeof events.on>[1];
-export type EventOptions = Parameters<typeof events.on>[2];
+/** An engine drain that names facts; each fact event carries the whole drain. */
+export type EngineFactEvent = Exclude<EngineEvent, { type: "activity" }>;
+type EngineFacts = { [K in Exclude<Wire.BroadcastName, "notice" | "auth.login_finished">]: (ev: EngineFactEvent) => void };
+
+/**
+ * Every event on the bus, as its listener signature. A fact such as `x.changed` answers nothing; a point is asked
+ * with `bail`, and the newest listener that answers wins. A plugin names its own events `<plugin>:<name>`.
+ */
+export interface Events extends EngineFacts {
+  "ext.error"(error: unknown, owner: string): void;
+  "engine.drained"(ev: EngineFactEvent): void;
+  /** A notice and a login outcome name no session, so they arrive only in an index drain. */
+  "notice"(ev: Extract<EngineEvent, { type: "index" }>): void;
+  "auth.login_finished"(ev: Extract<EngineEvent, { type: "index" }>): void;
+  "engine.activity.changed"(): void;
+  "jobs.changed"(job: Job): void;
+  "interaction.changed"(): void;
+  /** A true answer holds the quit. */
+  "quit.request"(): boolean | null | undefined;
+  "ui.start"(ev: { type: "start" }): void;
+  "ui.closed"(ev: { type: "input_closed" }): void;
+  "ui.resize"(ev: Extract<HostEvent, { type: "resize" }>): void;
+  "ui.tick"(ev: Extract<HostEvent, { type: "tick" }>): void;
+  "key.press"(ev: Extract<HostEvent, { type: "key" }>): void;
+  "mouse.input"(ev: HostMouseEvent): void;
+  "paste.input"(ev: Extract<HostEvent, { type: "paste" }>): void;
+  "focus.changed"(ev: Extract<HostEvent, { type: "focus" }>): void;
+  "pane.focused"(view: ViewLike): void;
+  "pane.closed"(view: ViewLike): void;
+  "region.focused"(view: ChatView, region: ChatRegion): void;
+  "clipboard.copied"(copy: { what: string; text: string; bytes: number }): void;
+  "composer.changed"(composer: Composer): void;
+  "composer.attached"(composer: Composer): void;
+  "model.changed"(change: { model: Wire.ModelInfo; sessionId: string | null }): void;
+  "session.changed"(ev: Extract<EngineEvent, { type: "session" }>): void;
+  "index.changed"(ev: Extract<EngineEvent, { type: "index" }>): void;
+  "activity.changed"(sessionId: string, activity: Wire.SessionActivity | null): void;
+  "session.focused"(): void;
+  /** A true answer claims a left press in the chat pane. */
+  "chat.press"(view: ChatView, ev: HostMouseEvent): boolean | null | undefined;
+  "chat.strip"(view: ChatView): StripRow[] | null | undefined;
+  "chat.presentation"(view: ChatView, context: PresentationContext): PresentationProvider | null | undefined;
+  "chat.rule"(view: ChatView): StripRow | null | undefined;
+  "chat.cursor"(view: ChatView): { x: number; y: number; visible: boolean } | null | undefined;
+  "composer.prompt"(composer: Composer): string | null | undefined;
+  "composer-vim:mode"(composer: Composer, mode: "insert" | "normal"): void;
+  [name: `${string}:${string}`]: (...args: any[]) => any;
+}
+
+export type EventName = keyof Events & string;
+export interface EventOptions { prepend?: boolean }
+
+/** The shared event bus: `emit` tells every listener in registration order; `bail` asks the newest listener first and answers the first value that is not false or null. */
+export interface Bus {
+  on<K extends EventName>(name: K, fn: Events[K], opts?: EventOptions): Disposer;
+  once<K extends EventName>(name: K, fn: Events[K]): Disposer;
+  emit<K extends EventName>(name: K, ...args: Parameters<Events[K]>): void;
+  bail<K extends EventName>(name: K, ...args: Parameters<Events[K]>): Exclude<ReturnType<Events[K]>, false | null | undefined | void> | undefined;
+  /** Declare more names for the life of a tier; the disposer withdraws them. */
+  declare(names: string[]): Disposer;
+  onError: ((error: unknown, name: string) => void) | null;
+}
 /** A sync apply may return its cleanup; an async apply resolves to nothing. */
 export type PluginApply = (context: Context) => void | (() => void) | Promise<void>;
 

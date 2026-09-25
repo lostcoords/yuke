@@ -6,7 +6,7 @@ import { defineTool, removeTool } from "yuke:internal/native/tools";
 import { installDispatcher, installLifecycle, setPoints } from "yuke:internal/native/hooks";
 export { interaction } from "yuke:internal/interaction";
 
-/** @import { AdviceFunction, AdviceOptions, AdviceWhere, Disposer, EventHandler, EventOptions, HookAnswer, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, PluginHandle, Release, ToolDefinition } from "./types/ext.js" */
+/** @import { AdviceFunction, AdviceOptions, AdviceWhere, Disposer, EventName, EventOptions, Events, HookAnswer, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, PluginHandle, Release, ToolDefinition } from "./types/ext.js" */
 /** @import { AdviceEntry, AdviceInfo, AdviceRecord, HookDecision, HookEntry, PluginAsync, ReleaseEntry, ScopeEntry, ScopeLife } from "./types/runtime.js" */
 
 const NOOP = () => {};
@@ -422,7 +422,7 @@ export const services = {
       }
     }
     // Read the provider again, because a watcher can have replaced it since this change started.
-    events.emit("service:" + name, this.get(name));
+    events.emit(/** @type {`service:${string}`} */ ("service:" + name), this.get(name));
   },
 };
 
@@ -668,12 +668,12 @@ export class Context {
     return this.#scope.effect(fn);
   }
 
-  /** @param {string} name @param {EventHandler} fn @param {EventOptions} [opts] @returns {Disposer} */
+  /** @template {EventName} K @param {K} name @param {Events[K]} fn @param {EventOptions} [opts] @returns {Disposer} */
   on(name, fn, opts) {
     return this.#scope.effect(() => events.on(name, fn, opts));
   }
 
-  /** @param {string} name @param {EventHandler} fn @returns {Disposer} */
+  /** @template {EventName} K @param {K} name @param {Events[K]} fn @returns {Disposer} */
   once(name, fn) {
     return this.#scope.effect(() => events.once(name, fn));
   }

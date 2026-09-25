@@ -4,7 +4,7 @@ import { term } from "yuke:internal/native/term";
 import { callHook, config, events, once } from "yuke:internal/kernel";
 
 /** @import { Color, Style } from "yuke:internal/native/term" */
-/** @import { CommandAction, CommandEntry, CommandListing, CommandMeta, CommandPredicate, CommandRegistry, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
+/** @import { CommandAction, CommandEntry, CommandListing, CommandRegistry, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
 
 // True for a wheel button. The wheel scrolls a pane but never moves the focus.
 /** @param {string} button @returns {boolean} */
@@ -671,7 +671,7 @@ events.declare([
 ]);
 
 // This table maps a host event type to its core event name.
-const HOST_TO_CORE_EVENT = {
+const HOST_TO_CORE_EVENT = /** @type {const} */ ({
   start: "ui.start",
   input_closed: "ui.closed",
   resize: "ui.resize",
@@ -680,7 +680,7 @@ const HOST_TO_CORE_EVENT = {
   mouse: "mouse.input",
   paste: "paste.input",
   focus: "focus.changed",
-};
+});
 
 export class View {
   constructor() {
@@ -1258,7 +1258,8 @@ export class RootView {
   /** @param {RootEvent} ev @returns {void} */
   onEvent(ev) {
     const name = HOST_TO_CORE_EVENT[ev.type];
-    if (name) events.emit(name, ev);
+    // The table pairs each host type with its event, so the payload fits the name.
+    if (name) events.emit(name, /** @type {any} */ (ev));
     if (ev.type === "input_closed") {
       term.setNeedsTick(false);
       term.quit();

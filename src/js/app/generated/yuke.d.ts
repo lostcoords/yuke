@@ -88,6 +88,8 @@ export type InteractionOptions = $types_ext.InteractionOptions;
 export type Release = $types_ext.Release;
 export type HookPoint = $types_ext.HookPoint;
 export type HookHandler = $types_ext.HookHandler;
+export type Events = $types_ext.Events;
+export type EventName = $types_ext.EventName;
 export type ConfigPatch = $kernel.ConfigPatch;
 export type Job = $native_jobs.Job;
 }
@@ -280,10 +282,6 @@ export class ChatView {
 declare namespace $chat {
 import ChatView = $chat_view.ChatView;
 import Context = $ext.Context;
-import EngineEvent = $native_engine.EngineEvent;
-export type NativeSessionEvent = Extract<EngineEvent, {
-    type: "session";
-}>;
 export type CreateSessionDraft = Wire.CreateSession;
 import FeedItem = $sessions.FeedItem;
 /** @param {readonly Wire.ContentPart[]} content @returns {string | null} */
@@ -673,8 +671,9 @@ import AdviceFunction = $types_ext.AdviceFunction;
 import AdviceOptions = $types_ext.AdviceOptions;
 import AdviceWhere = $types_ext.AdviceWhere;
 import Disposer = $types_ext.Disposer;
-import EventHandler = $types_ext.EventHandler;
+import EventName = $types_ext.EventName;
 import EventOptions = $types_ext.EventOptions;
+import Events = $types_ext.Events;
 import HookHandler = $types_ext.HookHandler;
 import HookPoint = $types_ext.HookPoint;
 import InjectApply = $types_ext.InjectApply;
@@ -762,10 +761,10 @@ export class Context {
     own(release: Release): () => void | Promise<void>;
     /** @param {() => unknown} fn @returns {Disposer} */
     effect(fn: () => unknown): Disposer;
-    /** @param {string} name @param {EventHandler} fn @param {EventOptions} [opts] @returns {Disposer} */
-    on(name: string, fn: EventHandler, opts?: EventOptions): Disposer;
-    /** @param {string} name @param {EventHandler} fn @returns {Disposer} */
-    once(name: string, fn: EventHandler): Disposer;
+    /** @template {EventName} K @param {K} name @param {Events[K]} fn @param {EventOptions} [opts] @returns {Disposer} */
+    on<K extends EventName>(name: K, fn: Events[K], opts?: EventOptions): Disposer;
+    /** @template {EventName} K @param {K} name @param {Events[K]} fn @returns {Disposer} */
+    once<K extends EventName>(name: K, fn: Events[K]): Disposer;
     /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
     advise(obj: object, prop: string, where: AdviceWhere, fn: AdviceFunction, opts?: AdviceOptions | undefined): Disposer;
     /** @param {string} name @param {unknown} value @returns {Disposer} */
@@ -957,6 +956,7 @@ export type ConfigValidators = {
 export type ListenerMap = {
     [name: string]: Array<(...args: any[]) => unknown>;
 };
+import Bus = $types_ext.Bus;
 /** @param {() => void} fn @returns {() => void} */
 export function once(fn: () => void): () => void;
 /** @type {Config} */
@@ -991,7 +991,7 @@ export class Emitter {
     /** @param {string} name @param {...any} args @returns {unknown} */
     bail(name: string, ...args: any[]): unknown;
 }
-export const events: Emitter;
+export const events: Bus;
 }
 
 declare namespace $keys {
@@ -1524,9 +1524,6 @@ export type Cursor = {
     y: number;
     visible: boolean;
 };
-export type HostMouseEvent = Extract<HostEvent, {
-    type: "mouse";
-}>;
 export type WrapRow = {
     start: number;
     end: number;
@@ -2840,10 +2837,19 @@ export type RootEvent = { type: "start" } | { type: "input_closed" } | HostEvent
 
 declare namespace $types_ext {
 import CancellationSignal = $native_cancellation.CancellationSignal;
+import EngineEvent = $native_engine.EngineEvent;
+import Job = $native_jobs.Job;
 import Context = $ext.Context;
 import Scope = $ext.Scope;
-import events = $kernel.events;
 import tui = $tui.tui;
+import ChatRegion = $chat_view.ChatRegion;
+import ChatView = $chat_view.ChatView;
+import PresentationContext = $chat_view.PresentationContext;
+import PresentationProvider = $chat_view.PresentationProvider;
+import StripRow = $chat_view.StripRow;
+import Composer = $ui.Composer;
+import HostMouseEvent = $types_core.HostMouseEvent;
+import ViewLike = $types_core.ViewLike;
 
 export type Disposer = () => void;
 export type AdviceFunction = (...args: any[]) => any;
@@ -2857,8 +2863,68 @@ export interface AdviceOptions {
   order?: number;
 }
 
-export type EventHandler = Parameters<typeof events.on>[1];
-export type EventOptions = Parameters<typeof events.on>[2];
+/** An engine drain that names facts; each fact event carries the whole drain. */
+export type EngineFactEvent = Exclude<EngineEvent, { type: "activity" }>;
+type EngineFacts = { [K in Exclude<Wire.BroadcastName, "notice" | "auth.login_finished">]: (ev: EngineFactEvent) => void };
+
+/**
+ * Every event on the bus, as its listener signature. A fact such as `x.changed` answers nothing; a point is asked
+ * with `bail`, and the newest listener that answers wins. A plugin names its own events `<plugin>:<name>`.
+ */
+export interface Events extends EngineFacts {
+  "ext.error"(error: unknown, owner: string): void;
+  "engine.drained"(ev: EngineFactEvent): void;
+  /** A notice and a login outcome name no session, so they arrive only in an index drain. */
+  "notice"(ev: Extract<EngineEvent, { type: "index" }>): void;
+  "auth.login_finished"(ev: Extract<EngineEvent, { type: "index" }>): void;
+  "engine.activity.changed"(): void;
+  "jobs.changed"(job: Job): void;
+  "interaction.changed"(): void;
+  /** A true answer holds the quit. */
+  "quit.request"(): boolean | null | undefined;
+  "ui.start"(ev: { type: "start" }): void;
+  "ui.closed"(ev: { type: "input_closed" }): void;
+  "ui.resize"(ev: Extract<HostEvent, { type: "resize" }>): void;
+  "ui.tick"(ev: Extract<HostEvent, { type: "tick" }>): void;
+  "key.press"(ev: Extract<HostEvent, { type: "key" }>): void;
+  "mouse.input"(ev: HostMouseEvent): void;
+  "paste.input"(ev: Extract<HostEvent, { type: "paste" }>): void;
+  "focus.changed"(ev: Extract<HostEvent, { type: "focus" }>): void;
+  "pane.focused"(view: ViewLike): void;
+  "pane.closed"(view: ViewLike): void;
+  "region.focused"(view: ChatView, region: ChatRegion): void;
+  "clipboard.copied"(copy: { what: string; text: string; bytes: number }): void;
+  "composer.changed"(composer: Composer): void;
+  "composer.attached"(composer: Composer): void;
+  "model.changed"(change: { model: Wire.ModelInfo; sessionId: string | null }): void;
+  "session.changed"(ev: Extract<EngineEvent, { type: "session" }>): void;
+  "index.changed"(ev: Extract<EngineEvent, { type: "index" }>): void;
+  "activity.changed"(sessionId: string, activity: Wire.SessionActivity | null): void;
+  "session.focused"(): void;
+  /** A true answer claims a left press in the chat pane. */
+  "chat.press"(view: ChatView, ev: HostMouseEvent): boolean | null | undefined;
+  "chat.strip"(view: ChatView): StripRow[] | null | undefined;
+  "chat.presentation"(view: ChatView, context: PresentationContext): PresentationProvider | null | undefined;
+  "chat.rule"(view: ChatView): StripRow | null | undefined;
+  "chat.cursor"(view: ChatView): { x: number; y: number; visible: boolean } | null | undefined;
+  "composer.prompt"(composer: Composer): string | null | undefined;
+  "composer-vim:mode"(composer: Composer, mode: "insert" | "normal"): void;
+  [name: `${string}:${string}`]: (...args: any[]) => any;
+}
+
+export type EventName = keyof Events & string;
+export interface EventOptions { prepend?: boolean }
+
+/** The shared event bus: `emit` tells every listener in registration order; `bail` asks the newest listener first and answers the first value that is not false or null. */
+export interface Bus {
+  on<K extends EventName>(name: K, fn: Events[K], opts?: EventOptions): Disposer;
+  once<K extends EventName>(name: K, fn: Events[K]): Disposer;
+  emit<K extends EventName>(name: K, ...args: Parameters<Events[K]>): void;
+  bail<K extends EventName>(name: K, ...args: Parameters<Events[K]>): Exclude<ReturnType<Events[K]>, false | null | undefined | void> | undefined;
+  /** Declare more names for the life of a tier; the disposer withdraws them. */
+  declare(names: string[]): Disposer;
+  onError: ((error: unknown, name: string) => void) | null;
+}
 /** A sync apply may return its cleanup; an async apply resolves to nothing. */
 export type PluginApply = (context: Context) => void | (() => void) | Promise<void>;
 
