@@ -6,7 +6,7 @@ import { defineTool, removeTool } from "yuke:internal/native/tools";
 import { installDispatcher, installLifecycle, setPoints } from "yuke:internal/native/hooks";
 export { interaction } from "yuke:internal/interaction";
 
-/** @import { AdviceFunction, AdviceOptions, AdviceWhere, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, PluginHandle, Release, ToolDefinition } from "./types/ext.js" */
+/** @import { AdviceFunction, AdviceOptions, AdviceWhere, Disposer, EventHandler, EventOptions, HookAnswer, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, PluginHandle, Release, ToolDefinition } from "./types/ext.js" */
 /** @import { AdviceEntry, AdviceInfo, AdviceRecord, HookDecision, HookEntry, PluginAsync, ReleaseEntry, ScopeEntry, ScopeLife } from "./types/runtime.js" */
 
 const NOOP = () => {};
@@ -43,7 +43,7 @@ export class Scope {
   }
 
   // Run `fn` now. Collect the disposer it returns. The handle reverts this one effect, once.
-  /** @param {Effect} fn @returns {Disposer} */
+  /** @param {() => unknown} fn @returns {Disposer} */
   effect(fn) {
     if (!this.alive) throw new TypeError("effect on a disposed scope: " + this.name);
 
@@ -663,7 +663,7 @@ export class Context {
     return this.#scope.own(release);
   }
 
-  /** @param {Effect} fn @returns {Disposer} */
+  /** @param {() => unknown} fn @returns {Disposer} */
   effect(fn) {
     return this.#scope.effect(fn);
   }
@@ -739,7 +739,7 @@ const readyNow = Promise.resolve();
 
 /** @param {unknown} result */
 function checkApplyResult(result) {
-  if (result !== undefined) throw new TypeError("plugin apply must return void or Promise<void>");
+  if (result !== undefined) throw new TypeError("plugin apply must return void, a cleanup function, or Promise<void>");
 }
 
 /** @returns {Error} */
@@ -864,7 +864,10 @@ export const plugins = {
           state.startup = undefined;
         });
       } else {
-        checkApplyResult(result);
+        // A sync apply may return its cleanup, as an `inject` block does; a closed scope runs it at once.
+        if (typeof result !== "function") checkApplyResult(result);
+        else if (instance.scope.alive) instance.scope.effect(() => result);
+        else result();
         if (instance._phase !== "applying") {
           const ready = instance._state().ready = Promise.reject(startupCanceled());
           ready.catch(NOOP);

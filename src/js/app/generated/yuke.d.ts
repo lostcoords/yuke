@@ -59,6 +59,7 @@ export type Tui = $types_ext.Capabilities["tui"];
 declare module "yuke" {
 export import defineConfig = $kernel.defineConfig;
 export import config = $kernel.config;
+export import events = $kernel.events;
 export import plugins = $ext.plugins;
 export import fs = $native_fs.fs;
 export import env = $native_env.env;
@@ -672,7 +673,6 @@ import AdviceFunction = $types_ext.AdviceFunction;
 import AdviceOptions = $types_ext.AdviceOptions;
 import AdviceWhere = $types_ext.AdviceWhere;
 import Disposer = $types_ext.Disposer;
-import Effect = $types_ext.Effect;
 import EventHandler = $types_ext.EventHandler;
 import EventOptions = $types_ext.EventOptions;
 import HookHandler = $types_ext.HookHandler;
@@ -702,8 +702,8 @@ export class Scope {
     _state(): ScopeLife;
     /** @returns {boolean} */
     _quiet(): boolean;
-    /** @param {Effect} fn @returns {Disposer} */
-    effect(fn: Effect): Disposer;
+    /** @param {() => unknown} fn @returns {Disposer} */
+    effect(fn: () => unknown): Disposer;
     /** @param {Release} release @returns {() => void | Promise<void>} */
     own(release: Release): () => void | Promise<void>;
     get signal(): cancellation.CancellationSignal;
@@ -760,8 +760,8 @@ export class Context {
     get signal(): cancellation.CancellationSignal;
     /** @param {Release} release @returns {() => void | Promise<void>} */
     own(release: Release): () => void | Promise<void>;
-    /** @param {Effect} fn @returns {Disposer} */
-    effect(fn: Effect): Disposer;
+    /** @param {() => unknown} fn @returns {Disposer} */
+    effect(fn: () => unknown): Disposer;
     /** @param {string} name @param {EventHandler} fn @param {EventOptions} [opts] @returns {Disposer} */
     on(name: string, fn: EventHandler, opts?: EventOptions): Disposer;
     /** @param {string} name @param {EventHandler} fn @returns {Disposer} */
@@ -2846,7 +2846,6 @@ import events = $kernel.events;
 import tui = $tui.tui;
 
 export type Disposer = () => void;
-export type Effect = () => unknown;
 export type AdviceFunction = (...args: any[]) => any;
 // Advice follows the synchronous call, not promise settlement; a throw skips after and filterReturn.
 export type AdviceWhere = "before" | "after" | "around" | "filterArgs" | "filterReturn";
@@ -2860,7 +2859,8 @@ export interface AdviceOptions {
 
 export type EventHandler = Parameters<typeof events.on>[1];
 export type EventOptions = Parameters<typeof events.on>[2];
-export type PluginApply = (context: Context) => void | Promise<void>;
+/** A sync apply may return its cleanup; an async apply resolves to nothing. */
+export type PluginApply = (context: Context) => void | (() => void) | Promise<void>;
 
 export interface ToolContext {
   workspaceRoot: string;

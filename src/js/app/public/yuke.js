@@ -1,5 +1,5 @@
 // The public root has no UI dependency or default plugin activation. Every registration goes through a plugin context.
-export { defineConfig, config } from "yuke:internal/kernel";
+export { defineConfig, config, events } from "yuke:internal/kernel";
 export { plugins } from "yuke:internal/ext";
 export { fs } from "yuke:internal/native/fs";
 export { env } from "yuke:internal/native/env";

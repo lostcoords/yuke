@@ -1,13 +1,11 @@
 import { root, Node } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { plugins, advice } from "yuke:internal/ext";
-import { tuiPlugin } from "yuke:internal/tui";
 import { Chat } from "yuke:internal/chat";
 import { openAgents, childState } from "yuke:internal/agents-ui";
 const copy = value => JSON.parse(JSON.stringify(value));
 const settle = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const check = (ok, why) => { if (!ok) throw new Error(why); };
-plugins.use(tuiPlugin);
 plugins.use({ name: "refresh-test", apply(ctx) {
   ctx.inject(["tui"], ctx => { (async () => {
     const chat = new Chat();

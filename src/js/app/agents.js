@@ -2,7 +2,6 @@
 import { root } from "yuke:internal/core";
 import { client } from "yuke:internal/client";
 import { native } from "yuke:internal/native/engine";
-import { registerLabels } from "yuke:internal/transcript";
 import { chats, focusedChat } from "yuke:internal/chat";
 import { notice } from "yuke:internal/notice";
 import { errorText } from "yuke:internal/format";
@@ -254,17 +253,17 @@ export function agents(options) {
             });
             ctx.effect(() => () => children.clear());
 
-            ctx.effect(() => registerLabels({ tools: {
-                spawn_agent: { category: "agent", present: (o, _raw, part) => ({ verb: "Agent", subject: String(o.agent || catalog.default) + liveSuffix(part) }) },
-                send_agent_input: { category: "agent", present: (o) => ({ verb: "Send", subject: String(o.child || "") }) },
-                stop_agent: { category: "agent", present: (o) => ({ verb: "Stop", subject: String(o.child || "") }) },
-            }, sources: {
-                parent_instruction: () => "From the parent session",
-                child_report: reportLabel,
-                child_input_canceled: (source) => "Message from " + source.name + " · queued work canceled",
-            } }));
-
             ctx.inject(["tui"], (ctx) => {
+                ctx.tui.labels({ tools: {
+                    spawn_agent: { category: "agent", present: (o, _raw, part) => ({ verb: "Agent", subject: String(o.agent || catalog.default) + liveSuffix(part) }) },
+                    send_agent_input: { category: "agent", present: (o) => ({ verb: "Send", subject: String(o.child || "") }) },
+                    stop_agent: { category: "agent", present: (o) => ({ verb: "Stop", subject: String(o.child || "") }) },
+                }, sources: {
+                    parent_instruction: () => "From the parent session",
+                    child_report: reportLabel,
+                    child_input_canceled: (source) => "Message from " + source.name + " · queued work canceled",
+                } });
+
                 ctx.tui.command(() => focusedChat()?.sessionId != null, {
                     "agents:open": () => { const id = focusedChat()?.sessionId; if (id) openAgents(ctx, id).catch((error) => notice.show("agents · " + errorText(error))); },
                 }, { "agents:open": { title: "Agents", description: "open or stop child agents", slash: "agents" } });

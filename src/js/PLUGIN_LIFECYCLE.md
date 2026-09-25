@@ -1,8 +1,8 @@
 # Plugin lifecycle
 
 `plugins.use({ name, apply })` installs one plugin.
-`apply(ctx)` returns `void` or `Promise<void>`.
-It must not return a disposer.
+`apply(ctx)` returns `void`, a cleanup function, or `Promise<void>`.
+A sync apply may return its cleanup, as an `inject` block does. The cleanup joins the effects of the plugin when `apply` returns.
 A plugin has no `stop`; it releases each resource with `ctx.own`.
 
 `plugins.use()` returns a handle with `ready` and `dispose()`.

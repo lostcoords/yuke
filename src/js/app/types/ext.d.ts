@@ -4,7 +4,6 @@ import type { events } from "../kernel.js";
 import type { tui } from "../tui.js";
 
 export type Disposer = () => void;
-export type Effect = () => unknown;
 export type AdviceFunction = (...args: any[]) => any;
 // Advice follows the synchronous call, not promise settlement; a throw skips after and filterReturn.
 export type AdviceWhere = "before" | "after" | "around" | "filterArgs" | "filterReturn";
@@ -18,7 +17,8 @@ export interface AdviceOptions {
 
 export type EventHandler = Parameters<typeof events.on>[1];
 export type EventOptions = Parameters<typeof events.on>[2];
-export type PluginApply = (context: Context) => void | Promise<void>;
+/** A sync apply may return its cleanup; an async apply resolves to nothing. */
+export type PluginApply = (context: Context) => void | (() => void) | Promise<void>;
 
 export interface ToolContext {
   workspaceRoot: string;

@@ -67,3 +67,12 @@ import { tui } from "yuke:internal/tui";
   handle.dispose();
   check("context-sees-close", !ctx.alive);
 }
+
+// A returned cleanup is the newest effect of apply, so it reverts first; a dispose inside apply runs it at once.
+{
+  const log = [];
+  plugins.use({ name: "ret", apply(ctx) { ctx.effect(() => () => log.push("effect")); return () => log.push("cleanup"); } });
+  plugins.dispose("ret");
+  plugins.use({ name: "ret-closed", apply() { plugins.dispose("ret-closed"); return () => log.push("late"); } });
+  check("plugin-returned-cleanup", log.join() === "cleanup,effect,late");
+}
