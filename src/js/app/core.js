@@ -18,6 +18,12 @@ export const contains = (r, col, row) => col >= r.x && col < r.x + r.w && row >=
 // Bound a link chain, so a cycle falls back instead of looping for ever.
 const link_depth_max = 100;
 
+// References per registered group and the resolved styles stay inside this module.
+/** @type {Record<string, number>} */
+const styleRefs = Object.create(null);
+/** @type {Record<string, Style>} */
+let styleCache = Object.create(null);
+
 // The highlight groups are monochrome: emphasis is weight and inversion, `Normal` is `reset`, and `danger` is the only color.
 /** @type {StyleConfig} */
 export const style = {
@@ -42,9 +48,6 @@ export const style = {
     YukeHint: { fg: "fg", dim: true },
     YukeBar: { fg: "fg", dim: true },
   }),
-  /** @type {Record<string, number>} */
-  _refs: Object.create(null),
-  _cache: Object.create(null),
 
   // Register absent groups and return a disposer that drops each group after its last reference.
   /** @param {Record<string, StyleGroup>} groups @returns {() => void} */
@@ -52,14 +55,14 @@ export const style = {
     /** @type {string[]} */
     const held = [];
     for (const name in groups) {
-      const refs = this._refs[name];
+      const refs = styleRefs[name];
       if (!(name in this.groups)) {
         this.groups[name] = /** @type {StyleGroup} */ (groups[name]);
-        this._refs[name] = 1;
+        styleRefs[name] = 1;
         held.push(name);
       } else if (refs !== undefined) {
         // A group the map held before any `add`, such as a built-in, takes no reference.
-        this._refs[name] = refs + 1;
+        styleRefs[name] = refs + 1;
         held.push(name);
       }
     }
@@ -68,12 +71,12 @@ export const style = {
 
     return once(() => {
       for (const name of held) {
-        const refs = this._refs[name];
+        const refs = styleRefs[name];
         if (refs !== undefined && refs > 1) {
-          this._refs[name] = refs - 1;
+          styleRefs[name] = refs - 1;
           continue;
         }
-        delete this._refs[name];
+        delete styleRefs[name];
         delete this.groups[name];
       }
       this.invalidate();
@@ -81,7 +84,7 @@ export const style = {
   },
 
   resolve(name) {
-    const cached = this._cache[name];
+    const cached = styleCache[name];
     if (cached) return cached;
 
     /** @type {StyleGroup | undefined | null} */
@@ -103,11 +106,11 @@ export const style = {
     const fg = def && def.fg !== undefined ? def.fg : "fg";
     out.fg = resolveColor(this.palette, fg);
 
-    this._cache[name] = out;
+    styleCache[name] = out;
     return out;
   },
   invalidate() {
-    this._cache = Object.create(null);
+    styleCache = Object.create(null);
   },
 };
 
@@ -209,10 +212,11 @@ function evalPredicate(entry, args) {
   return res.length > 1 ? res.slice(1) : args;
 }
 
+/** @type {Record<string, Array<{ value: ContextFlag }>>} */
+const contextFlags = Object.create(null);
+
 // The active context: an ordered atom stack plus plugin flags, where a deeper atom beats a shallower or unscoped one.
 export const context = {
-  /** @type {Record<string, Array<{ value: ContextFlag }>>} */
-  _flags: Object.create(null),
 
   // Each registration owns one entry; removal preserves every other live provider.
   /** @param {Record<string, ContextFlag>} flags @returns {() => void} */
@@ -221,15 +225,15 @@ export const context = {
     const held = [];
     for (const name in flags) {
       const entry = { value: /** @type {ContextFlag} */ (flags[name]) };
-      const list = this._flags[name] || (this._flags[name] = []);
+      const list = contextFlags[name] || (contextFlags[name] = []);
       list.push(entry);
       held.push([name, entry]);
     }
     return once(() => {
       for (const [name, entry] of held) {
-        const list = /** @type {Array<{ value: ContextFlag }>} */ (this._flags[name]);
+        const list = /** @type {Array<{ value: ContextFlag }>} */ (contextFlags[name]);
         list.splice(list.indexOf(entry), 1);
-        if (list.length === 0) delete this._flags[name];
+        if (list.length === 0) delete contextFlags[name];
       }
     });
   },
@@ -237,7 +241,7 @@ export const context = {
   // The value of one flag. A throwing provider reads as absent, so it never breaks a key.
   /** @param {string} name @returns {string | undefined} */
   flag(name) {
-    const v = this._flags[name]?.at(-1)?.value;
+    const v = contextFlags[name]?.at(-1)?.value;
     if (typeof v !== "function") return v;
     try {
       const out = v();
@@ -420,6 +424,8 @@ function rankByContext(entries, copy = true) {
 // The share of a period a tick pulse can arrive early and still count, so timer jitter never skips a beat.
 const TICK_EARLY_SHARE = 0.75;
 
+let keymapSeq = 0;
+
 // New bindings run before old bindings. A space separates chord strokes.
 /** @type {KeymapRegistry} */
 export const keymap = {
@@ -427,8 +433,6 @@ export const keymap = {
   prefixes: Object.create(null),
   /** @type {Pending | null} */
   pending: null,
-
-  _seq: 0,
 
   // Register bindings under one context and return a disposer.
   /** @param {Record<string, KeyBinding | KeyBinding[]>} bindings @param {string} [ctx] @param {{ pending?: "chord" | "operator" }} [opts] @returns {() => void} */
@@ -443,12 +447,12 @@ export const keymap = {
       /** @type {KeyBinding[]} */
       const list = Array.isArray(value) ? value.slice() : [value];
       /** @type {KeyEntry[]} */
-      const fresh = list.map((fn) => ({ fn, context: expr, order: ++this._seq, pending: kind }));
+      const fresh = list.map((fn) => ({ fn, context: expr, order: ++keymapSeq, pending: kind }));
       const prev = this.map[key];
       this.map[key] = prev ? fresh.concat(prev) : fresh;
       for (const e of fresh) added.push([key, e]);
     }
-    this._rebuildPrefixes();
+    rebuildPrefixes();
     return once(() => {
       for (const [key, e] of added) {
         const cur = this.map[key];
@@ -457,7 +461,7 @@ export const keymap = {
         if (i >= 0) cur.splice(i, 1);
         if (cur.length === 0) delete this.map[key];
       }
-      this._rebuildPrefixes();
+      rebuildPrefixes();
     });
   },
 
@@ -489,25 +493,10 @@ export const keymap = {
     return { stroke: key, winner: list.length ? /** @type {{ binding: KeyBinding, context: string }} */ (list[0]) : null, shadowed: list.slice(1) };
   },
 
-  _rebuildPrefixes() {
-    this.prefixes = Object.create(null);
-    for (const key in this.map) {
-      const sp = key.indexOf(" ");
-      if (sp <= 0) continue;
-      const head = key.slice(0, sp);
-      const keys = this.prefixes[head] || (this.prefixes[head] = []);
-      keys.push(key);
-    }
-    const p = this.pending;
-    if (p && !this.prefixes[p.stroke]) {
-      this.pending = null;
-      root.syncTick();
-    }
-  },
 
   // Return how a sequence under `prefix` waits, or null when no active context matches.
   /** @param {string} prefix @returns {"chord" | "operator" | null} */
-  _armKind(prefix) {
+  armKind(prefix) {
     const keys = this.prefixes[prefix];
     if (!keys) return null;
     const depths = currentDepths();
@@ -545,7 +534,7 @@ export const keymap = {
     if (!p || p.kind !== "chord") return;
     if (Date.now() - p.at < config.keymap.chordMs) return;
     this.pending = null;
-    if (p.ev) this._perform(p.stroke, p.ev);
+    if (p.ev) performStroke(p.stroke, p.ev);
   },
 
   onKey(ev) {
@@ -555,58 +544,76 @@ export const keymap = {
       const p = /** @type {Pending} */ (this.pending);
       this.pending = null;
       const chord = p.stroke + " " + s;
-      if (this._perform(chord, ev)) return true;
-      if (this._perform(p.stroke + " " + stripCtrl(s), ev)) return true;
+      if (performStroke(chord, ev)) return true;
+      if (performStroke(p.stroke + " " + stripCtrl(s), ev)) return true;
       // The sequence did not resolve, so the second stroke runs on its own.
-      return this._perform(s, ev);
+      return performStroke(s, ev);
     }
-    const kind = this._armKind(s);
+    const kind = this.armKind(s);
     if (kind) {
       this.pending = { stroke: s, kind, at: Date.now(), ev };
       return true;
     }
-    return this._perform(s, ev);
+    return performStroke(s, ev);
   },
 
-  // Run the candidates in order until one claims the stroke.
-  /** @param {string} stroke @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
-  _perform(stroke, ev) {
-    for (const e of this.candidates(stroke)) {
-      if (typeof e.fn === "function") {
-        if (e.fn(ev) !== false) return true;
-      } else if (command.perform(e.fn, ev)) {
-        return true;
-      }
-    }
-    return false;
-  },
 };
+
+// Index each sequence under its first stroke, and drop a pending stroke that no sequence starts any more.
+function rebuildPrefixes() {
+  keymap.prefixes = Object.create(null);
+  for (const key in keymap.map) {
+    const sp = key.indexOf(" ");
+    if (sp <= 0) continue;
+    const head = key.slice(0, sp);
+    const keys = keymap.prefixes[head] || (keymap.prefixes[head] = []);
+    keys.push(key);
+  }
+  const p = keymap.pending;
+  if (p && !keymap.prefixes[p.stroke]) {
+    keymap.pending = null;
+    root.syncTick();
+  }
+}
+
+// Run the candidates in order until one claims the stroke.
+/** @param {string} stroke @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
+function performStroke(stroke, ev) {
+  for (const e of keymap.candidates(stroke)) {
+    if (typeof e.fn === "function") {
+      if (e.fn(ev) !== false) return true;
+    } else if (command.perform(e.fn, ev)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** @type {RouteEntry[]} */
+const routes = [];
+let routeSeq = 0;
 
 // A route chooses whether the keymap or the view reads a key first.
 export const route = {
-  /** @type {RouteEntry[]} */
-  _list: [],
-
-  _seq: 0,
 
   // Register one route under a context and return a disposer.
   /** @param {RouteWhere} where @param {string} [ctx] @returns {() => void} */
   add(where, ctx) {
     if (where !== "keymap" && where !== "view") throw new TypeError("route.add: where must be keymap or view");
     /** @type {RouteEntry} */
-    const entry = { where, context: ctx ? parseContext(ctx) : null, order: ++this._seq };
-    this._list.push(entry);
+    const entry = { where, context: ctx ? parseContext(ctx) : null, order: ++routeSeq };
+    routes.push(entry);
     return once(() => {
-      const i = this._list.indexOf(entry);
-      if (i >= 0) this._list.splice(i, 1);
+      const i = routes.indexOf(entry);
+      if (i >= 0) routes.splice(i, 1);
     });
   },
 
   // The route for the active context. A view reads first when no route matches.
   /** @returns {RouteWhere} */
   reader() {
-    if (this._list.length === 0) return "view";
-    const hit = rankByContext(this._list, false)[0];
+    if (routes.length === 0) return "view";
+    const hit = rankByContext(routes, false)[0];
     return hit ? hit.where : "view";
   },
 };
@@ -614,7 +621,7 @@ export const route = {
 // A widget asks for a value it does not own. The nearest class answers first, then the newest provider.
 export const slot = {
   /** @type {Map<object, Record<string, SlotEntry[]>>} */
-  _map: new Map(),
+  map: new Map(),
 
   // Register a provider for one named slot on a class and return a disposer.
   /** @param {Function} target @param {string} name @param {(obj: any, arg?: any) => unknown} fn @returns {() => void} */
@@ -622,11 +629,11 @@ export const slot = {
     if (typeof target !== "function" || !target.prototype) throw new TypeError("slot: target must be a class");
     if (typeof fn !== "function") throw new TypeError("slot: fn must be a function");
     const proto = target.prototype;
-    let names = this._map.get(proto);
+    let names = this.map.get(proto);
     if (!names) {
       /** @type {Record<string, SlotEntry[]>} */
       const fresh = Object.create(null);
-      this._map.set(proto, fresh);
+      this.map.set(proto, fresh);
       names = fresh;
     }
     /** @type {SlotEntry} */
@@ -634,13 +641,13 @@ export const slot = {
     // A change replaces the list, so `get` walks a list no provider can change under it.
     names[name] = [entry, ...(names[name] || [])];
     return once(() => {
-      const held = this._map.get(proto);
+      const held = this.map.get(proto);
       const cur = held ? held[name] : undefined;
       if (!held || !cur) return;
       const rest = cur.filter((e) => e !== entry);
       if (rest.length) held[name] = rest;
       else delete held[name];
-      if (Object.keys(held).length === 0) this._map.delete(proto);
+      if (Object.keys(held).length === 0) this.map.delete(proto);
     });
   },
 
@@ -651,7 +658,7 @@ export const slot = {
     let proto = Object.getPrototypeOf(obj);
     // A subclass reads the slot its base class declares.
     while (proto) {
-      const names = this._map.get(proto);
+      const names = this.map.get(proto);
       const list = names ? names[name] : undefined;
       if (list) {
         for (const e of list) {
@@ -884,10 +891,11 @@ function clampChildSize(size, total) {
   return Math.max(1, Math.min(size, total - 1));
 }
 
+/** @type {StatusEntry[]} */
+const statusSegments = [];
+
 // The status bar takes one row under the whole layout. A segment renders to a string or to nothing.
 export const status = {
-  /** @type {StatusEntry[]} */
-  _list: [],
 
   // Register a segment and return a disposer. `side` is "left" or "right"; `order` sorts a side.
   /** @param {StatusSegment} seg @returns {() => void} */
@@ -898,11 +906,11 @@ export const status = {
     const order = seg.order == null ? 0 : seg.order;
     if (!Number.isFinite(order)) throw new TypeError("status.add: order must be a finite number");
     const entry = { side, order, render: seg.render };
-    this._list.push(entry);
-    this._list.sort((a, b) => a.order - b.order);
+    statusSegments.push(entry);
+    statusSegments.sort((a, b) => a.order - b.order);
     return once(() => {
-      const i = this._list.indexOf(entry);
-      if (i >= 0) this._list.splice(i, 1);
+      const i = statusSegments.indexOf(entry);
+      if (i >= 0) statusSegments.splice(i, 1);
     });
   },
 
@@ -910,7 +918,7 @@ export const status = {
   /** @param {"left" | "right"} which @returns {string} */
   side(which) {
     const out = [];
-    for (const seg of this._list) {
+    for (const seg of statusSegments) {
       if (seg.side !== which) continue;
       // One bad provider must not take the frame with it.
       /** @type {string | null | undefined} */

@@ -57,7 +57,7 @@ d6();
 offErr();
 
 // The last disposer leaves no registration behind.
-check("no-residue", !slot._map.has(Base.prototype) && !slot._map.has(Sub.prototype));
+check("no-residue", !slot.map.has(Base.prototype) && !slot.map.has(Sub.prototype));
 
 let threw = 0;
 try { slot.add({}, "x", () => 1); } catch (e) { if (e instanceof TypeError) threw++; }

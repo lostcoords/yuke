@@ -92,12 +92,12 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   root.setRoot(Node.leaf(pane));
   root.focusView(pane);
   const off = keymap.add({ "f6 x": () => true }, "chat");
-  check("prefix-context-off", keymap._armKind("f6") === null);
+  check("prefix-context-off", keymap.armKind("f6") === null);
   root.onEvent({ type: "key", code: "f6", char: "", event: "press", text: "", mods: 0 });
   check("prefix-falls-through", seen.join(",") === "f6" && keymap.pending === null);
   off();
   const on = keymap.add({ "f6 x": () => true }, "bare");
-  check("prefix-context-on", keymap._armKind("f6") === "chord");
+  check("prefix-context-on", keymap.armKind("f6") === "chord");
   on();
   root.setRoot(null);
 }
