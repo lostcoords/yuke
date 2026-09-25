@@ -1,11 +1,10 @@
 import { check, textParts } from "yuke:internal/test";
 import { ChatView } from "yuke:internal/chat-view";
-import { Session } from "yuke:internal/chat";
+import { ChatSurface, Session } from "yuke:internal/chat";
 import { Text } from "yuke:internal/ui";
 import { root } from "yuke:internal/core";
 import { row, column, child, fixed, fit, grow } from "yuke:internal/layout";
 import { Context, Scope } from "yuke:internal/ext";
-import { tui } from "yuke:internal/tui";
 const session = Object.assign(new Session(), { partsOf: textParts(() => "history across sidebar") });
 const view = new ChatView(session);
 const composer = view.composer, transcript = view.transcript, pager = transcript.pager;
@@ -13,7 +12,7 @@ composer.onKey({ type: "paste", text: "draft\nline two\nline three\n" });
 const draft = composer.text, caret = composer.input.caret, spans = JSON.stringify(composer.spans);
 const scope = new Scope("test");
 let mounts = 0, layouts = 0, disposed = 0, contextSession;
-tui.bindTo(new Context(scope, "test")).presentation((chat, owner) => {
+new ChatSurface(new Context(scope, "test"), null).presentation((chat, owner) => {
   mounts++;
   owner.effect(() => () => disposed++);
   const logo = new Text({ text: "welcome 世界" });

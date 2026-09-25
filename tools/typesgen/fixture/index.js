@@ -15,8 +15,8 @@ const demo = {
     ctx.tools.define({ name: "t", description: "d", parameters: {}, execute: async (args, _signal, context) => [args, context.workspaceRoot] });
     ctx.inject(["tui"], (c) => {
       c.tui.command.add("demo:pick", { desc: "pick one", run: () => { c.tui.overlay(ui.pick({ items: ["a"] }).win); } });
-      c.tui.labels({ sources: { engine_interruption: (source) => "run " + source.run_id } });
     });
+    ctx.inject(["chat"], (c) => c.chat.labels({ sources: { engine_interruption: (source) => "run " + source.run_id } }));
   },
 };
 plugins.use(demo);
@@ -30,7 +30,7 @@ events.emit("demo:ping", "one");
 // @ts-expect-error The root is an option, not a positional argument.
 fs.readFile("x", "/tmp");
 // @ts-expect-error A label names an engine source type.
-plugins.use({ name: "x", apply(ctx) { ctx.inject(["tui"], (c) => c.tui.labels({ sources: { run_interrupted: () => "" } })); } });
+plugins.use({ name: "x", apply(ctx) { ctx.inject(["chat"], (c) => c.chat.labels({ sources: { run_interrupted: () => "" } })); } });
 // @ts-expect-error The host owns the event entry point.
 onEvent;
 // @ts-expect-error An internal namespace is not a global.

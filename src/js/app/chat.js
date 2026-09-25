@@ -6,16 +6,21 @@ import { ui, Text } from "yuke:internal/ui";
 import { column, child, fixed, grow } from "yuke:internal/layout";
 import { client } from "yuke:internal/client";
 import { notice } from "yuke:internal/notice";
-import { feedItem } from "yuke:internal/sessions";
+import { activityMark, feedItem, feedOf } from "yuke:internal/sessions";
 import { activityOf, refreshActivity } from "yuke:internal/activity";
 import { catalogOf, modelOf, reloadCatalog, chooseModel, defaultModel, providerState, providerStateLabel } from "yuke:internal/catalog";
 import { errorText } from "yuke:internal/format";
+import { ChatView } from "yuke:internal/chat-view";
+import { Context, scopeOf } from "yuke:internal/ext";
+import { registerLabels } from "yuke:internal/transcript";
+import { attachClipboard } from "yuke:internal/attach";
 
-/** @import { ChatView, PresentationContext } from "yuke:internal/chat-view" */
+/** @import { PresentationContext, PresentationProvider } from "yuke:internal/chat-view" */
+/** @import { LayoutNode } from "./types/layout.js" */
+/** @import { Disposer } from "./types/ext.js" */
 /** @import { Composer } from "yuke:internal/ui" */
 /** @import { MessagePart } from "yuke:internal/native/engine" */
 /** @import { InjectContext } from "./types/ext.js" */
-/** @import { Context } from "yuke:internal/ext" */
 /** @typedef {Wire.CreateSession} CreateSessionDraft */
 /** @import { FeedItem } from "yuke:internal/sessions" */
 
@@ -280,24 +285,12 @@ function notifyCurrent() {
   events.emit("chat.current.changed");
 }
 
-events.on("pane.focused", (view) => {
-  if (!isChat(view)) return;
-  current = view;
-  notifyCurrent();
-});
-
-// A closed current chat hands over to the focused chat, else to the first chat left in the tree.
-events.on("pane.closed", (view) => {
-  if (current && current !== view) return;
-  current = null;
-  const candidates = root.root_node ? [root.active, ...root.root_node.leaves().map((leaf) => (leaf.shape.type === "leaf" ? leaf.shape.view : null))] : [];
-  for (const candidate of candidates) {
-    if (!isChat(candidate)) continue;
-    current = candidate;
-    break;
-  }
-  notifyCurrent();
-});
+// The chat panes in the tree, focused pane first.
+/** @returns {ChatView[]} */
+function chatPanes() {
+  const views = root.root_node ? [root.active, ...root.root_node.leaves().map((leaf) => (leaf.shape.type === "leaf" ? leaf.shape.view : null))] : [];
+  return /** @type {ChatView[]} */ (views.filter(isChat));
+}
 
 // The current chat's entry with the live activity, or null with no open session.
 /** @returns {FeedItem | null} */
@@ -392,13 +385,169 @@ function pickReasoning(ctx, model, sessionId) {
   step.content.list.selectKey(model.default_reasoning || levels[0]);
 }
 
-// The chat's own listeners and the model command.
+// A session finder reads the sessions, fuzzy-searches them by title, then opens one in the current chat.
+/** @param {InjectContext} ctx @returns {void} */
+function openSessionFinder(ctx) {
+  const feed = feedOf();
+  feed.refresh().then(() => {
+    const rows = feed.rows().filter((row) => row.session.origin.type !== "child").sort((a, b) => (b.session.updated_at_ms || 0) - (a.session.updated_at_ms || 0));
+    if (rows.length === 0) {
+      notice.show("no sessions yet");
+      return;
+    }
+    const p = ui.pick({
+      title: "sessions",
+      footer: "type to filter · ↵ select · esc close",
+      border: "rounded",
+      width: max => Math.round(max * 0.6),
+      height: max => Math.round(max * 0.5),
+      items: rows,
+      key: r => r.id,
+      filterText: r => r.title,
+      // An open session reads its live activity; the rest shows what the list reported.
+      format: r => ({ text: r.title, right: activityMark(activityOf(r.id) || r.activity) }),
+      onAccept: r => {
+        if (current) openSession(current, r.id);
+      },
+    });
+    ctx.tui.overlay(p.win);
+  });
+}
+
+/** @typedef {(session: Session) => ChatView} ViewFactory */
+
+// The chat views of the running app: the newest factory makes new panes, and a change swaps the panes open now.
+class ChatViews {
+  constructor() {
+    /** @type {ViewFactory[]} */
+    this.factories = [(session) => new ChatView(session)];
+    /** @type {WeakMap<ChatView, ViewFactory>} */
+    this.made = new WeakMap();
+  }
+
+  /** @param {Session} session @returns {ChatView} */
+  create(session) {
+    const factory = /** @type {ViewFactory} */ (this.factories[this.factories.length - 1]);
+    const view = factory(session);
+    this.made.set(view, factory);
+    // A view on an open session shows its history at once, as a view that joins through `showSession` does.
+    session.reload([view]);
+    return view;
+  }
+
+  // Show every chat pane with the newest factory; a pane keeps its place, its focus, and its session.
+  refit() {
+    const top = this.factories[this.factories.length - 1];
+    for (const view of chatPanes()) {
+      if (this.made.get(view) !== top) root.replace(view, this.create(view.session));
+    }
+  }
+
+  /** @param {ViewFactory} factory @returns {Disposer} */
+  add(factory) {
+    this.factories.push(factory);
+    this.refit();
+    return () => {
+      const at = this.factories.indexOf(factory);
+      if (at < 1) return;
+      this.factories.splice(at, 1);
+      this.refit();
+    };
+  }
+}
+
+// One block's view of the chat: the chat features it registers belong to that block.
+export class ChatSurface {
+  /** @param {Context} ctx @param {ChatViews} views */
+  constructor(ctx, views) {
+    this._ctx = ctx;
+    this._views = views;
+  }
+
+  // A chat view for `session` from the newest factory. The shell asks this for every pane it opens.
+  /** @param {Session} [session] @returns {ChatView} */
+  create(session = new Session()) {
+    return this._views.create(session);
+  }
+
+  // Show chats with `factory`: new panes use it, and the panes open now switch to it and keep their sessions. The unload switches them back.
+  /** @param {ViewFactory} factory @returns {Disposer} */
+  view(factory) {
+    if (typeof factory !== "function") throw new TypeError("a chat view needs a factory");
+    return this._ctx.effect(() => this._views.add(factory));
+  }
+
+  // The newest registration wins; each mounted pane owns one child context.
+  /** @param {(view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null} create @returns {Disposer} */
+  presentation(create) {
+    if (typeof create !== "function") throw new TypeError("presentation needs a factory");
+    const ctx = this._ctx;
+    return ctx.effect(() => {
+      /** @type {Set<ChatView>} */
+      const mounted = new Set();
+      /** @type {PresentationProvider} */
+      const provider = {
+        mount(view) {
+          const scope = scopeOf(ctx).child("presentation");
+          try {
+            const layout = create(view, new Context(scope, ctx.id));
+            if (typeof layout !== "function") throw new TypeError("presentation factory must return a layout function");
+            if (!scope.alive) throw new TypeError("presentation scope closed during mount");
+            mounted.add(view);
+            return { layout, dispose() { mounted.delete(view); scope.dispose(); } };
+          } catch (error) {
+            scope.dispose();
+            throw error;
+          }
+        },
+      };
+      const offAnswer = events.on("chat.presentation", () => provider);
+      const offClose = events.on("pane.closed", (view) => {
+        if (view instanceof ChatView) view.clearPresentation(provider);
+      });
+      root.invalidate();
+      return () => {
+        offAnswer();
+        offClose();
+        for (const view of mounted) view.clearPresentation(provider);
+        root.invalidate();
+      };
+    });
+  }
+
+  // Name tool calls and message sources in the transcript; the newest registration wins.
+  /** @param {Parameters<typeof registerLabels>[0]} entries @returns {Disposer} */
+  labels(entries) {
+    return this._ctx.effect(() => registerLabels(entries));
+  }
+}
+
 export const chatPlugin = {
   name: "chat",
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      ctx.tui.presentation(() => {
+      const views = new ChatViews();
+      const chat = new ChatSurface(ctx, views);
+
+      // The current chat follows the focus; a focused pane that is not a chat leaves it in place.
+      ctx.on("pane.focused", (view) => {
+        if (!isChat(view)) return;
+        current = view;
+        notifyCurrent();
+      });
+      // A closed current chat hands over to the focused chat, else to the first chat left in the tree.
+      ctx.on("pane.closed", (view) => {
+        if (current && current !== view) return;
+        current = chatPanes()[0] ?? null;
+        notifyCurrent();
+      });
+      ctx.effect(() => () => {
+        current = null;
+        notifyCurrent();
+      });
+
+      chat.presentation(() => {
         const title = new Text({ text: "new chat", group: "YukeBrand" });
         const hint = new Text({ group: "YukeEmpty" });
         return (/** @type {PresentationContext} */ { empty, sessionId, defaultLayout }) => {
@@ -432,11 +581,36 @@ export const chatPlugin = {
       });
 
       // A closed pane leaves its session, and the last view releases the pin, or the engine never evicts it.
+      // A custom view may lack presentations, so the clear is optional.
       ctx.on("pane.closed", (view) => {
         if (!isChat(view)) return;
-        view.clearPresentation();
+        view.clearPresentation?.();
         view.session.leave(view);
       });
+
+      ctx.tui.command.add("session:interrupt", { when: () => current?.session.sessionId != null, desc: "stop the run", slash: true, run: () => current?.session.interrupt() });
+      ctx.tui.command.add("ui:sessions", { desc: "open a session", slash: true, run: () => openSessionFinder(ctx) });
+      ctx.tui.command.add("chat:new", {
+        desc: "leave the session and start empty",
+        slash: true,
+        run: () => {
+          if (!current) return;
+          showSession(current, new Session());
+          root.focusView(current);
+        },
+      });
+      ctx.tui.command.add("chat:paste-image", { desc: "attach the image on the clipboard", run: () => { if (current) attachClipboard(current.composer); } });
+      ctx.tui.command.add("debug:memory", {
+        run: () => {
+          const m = client.memoryUsage();
+          const mb = (/** @type {number} */ n) => (n / 1048576).toFixed(1) + "MB";
+          const k = (/** @type {number} */ n) => Math.round(n / 1000) + "k";
+          notice.show("js heap " + mb(m.heap) + " · str " + mb(m.strings) + "/" + k(m.stringCount) +
+            " · obj " + mb(m.objects) + "/" + k(m.objectCount) + " · prop " + mb(m.properties) + "/" + k(m.propertyCount) +
+            " · shape " + mb(m.shapes) + " · arr " + k(m.arrayCount));
+        },
+      });
+      ctx.tui.keymap.add({ "ctrl+n": "chat:new", "ctrl+v": "chat:paste-image", "ctrl+f": "ui:sessions", "ctrl+c": "session:interrupt" });
 
       ctx.tui.command.add("model:pick", { desc: "choose the model for the next chat", slash: "model", args: true, run: (/** @type {string | undefined} */ query) => openModelPicker(ctx, query) });
       ctx.tui.command.add("context:reload", {
@@ -467,6 +641,9 @@ export const chatPlugin = {
           });
         },
       });
-      });
-},
+
+      // Provided last, so an unload withdraws the service first and the pane listeners above still release the sessions.
+      ctx.provide("chat", { bindTo: (/** @type {Context} */ c) => new ChatSurface(c, views) });
+    });
+  },
 };

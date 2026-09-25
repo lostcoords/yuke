@@ -444,6 +444,9 @@ function injectInto(parentContext, names, apply) {
 
   /** @type {Scope | null} */
   let live = null;
+  // The providers the live block bound, so a watcher that reports no new provider builds nothing.
+  /** @type {unknown[]} */
+  let bound = [];
   let building = false;
   let stopped = false;
   let dirty = false;
@@ -463,17 +466,21 @@ function injectInto(parentContext, names, apply) {
       drop();
       return false;
     }
+    // A nested provide can report one change to two watchers of this block.
+    if (live && deps.every((n, i) => services.get(n) === bound[i])) return false;
 
     // The injection owns this child scope until its dependencies change.
     const child = parent.child("inject:" + deps.join("+"));
     try {
       const ctx = new Context(child, id);
       // Each build reads the live provider, and a later change builds the block again.
-      const bound = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (ctx));
+      const members = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (ctx));
+      const values = deps.map((n) => services.get(n));
       // A capability that registers effects answers `bindTo`, so the block it serves owns what it adds.
+      let i = 0;
       for (const n of deps) {
-        const value = /** @type {{ bindTo?: (ctx: Context) => unknown } | null | undefined} */ (services.get(n));
-        bound[n] = typeof value?.bindTo === "function" ? value.bindTo(ctx) : value;
+        const value = /** @type {{ bindTo?: (ctx: Context) => unknown } | null | undefined} */ (values[i++]);
+        members[n] = typeof value?.bindTo === "function" ? value.bindTo(ctx) : value;
       }
       child.effect(() => apply(/** @type {InjectContext<K>} */ (ctx)));
       // The block can drop its own dependency, so confirm the requirement before the block commits.
@@ -481,6 +488,7 @@ function injectInto(parentContext, names, apply) {
         // The old block leaves after the new one registered, so a shared resource passes over without a gap.
         drop();
         live = child;
+        bound = values;
       } else {
         child.dispose();
         drop();

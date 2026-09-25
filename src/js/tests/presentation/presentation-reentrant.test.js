@@ -1,20 +1,19 @@
 import { equal } from "yuke:internal/test";
-import { Session } from "yuke:internal/chat";
+import { ChatSurface, Session } from "yuke:internal/chat";
 import { ChatView } from "yuke:internal/chat-view";
 import { Text } from "yuke:internal/ui";
 import { row, child, fixed, grow } from "yuke:internal/layout";
 import { Context, Scope } from "yuke:internal/ext";
-import { tui } from "yuke:internal/tui";
 const view = new ChatView(new Session()), bounds = { x: 0, y: 0, w: 30, h: 10 };
 const mountScope = new Scope("mount");
-tui.bindTo(new Context(mountScope, "mount")).presentation(() => {
+new ChatSurface(new Context(mountScope, "mount"), null).presentation(() => {
   mountScope.dispose(); return state => state.defaultLayout;
 });
 view.layout(bounds);
 const mountClosed = view.presentation === null && view.presentationViews.length === 0;
 mountScope.dispose();
 const layoutScope = new Scope("layout");
-tui.bindTo(new Context(layoutScope, "layout")).presentation(() => state => {
+new ChatSurface(new Context(layoutScope, "layout"), null).presentation(() => state => {
   layoutScope.dispose();
   return row([child(null, grow(), { layout: state.defaultLayout }), child(new Text({ text: "stale" }), fixed(10))]);
 });

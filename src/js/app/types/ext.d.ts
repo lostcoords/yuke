@@ -3,6 +3,7 @@ import type { DrainFact, EngineEvent } from "yuke:internal/native/engine";
 import type { Job } from "yuke:internal/native/jobs";
 import type { Context, Scope } from "../ext.js";
 import type { tui } from "../tui.js";
+import type { ChatSurface } from "../chat.js";
 import type { ChatRegion, ChatView, PresentationContext, PresentationProvider, StripRow } from "../chat-view.js";
 import type { Composer } from "../ui.js";
 import type { HostMouseEvent, ViewLike } from "./core.js";
@@ -112,6 +113,7 @@ export interface ToolDefinition {
 
 export interface Capabilities {
   tui: ReturnType<typeof tui.bindTo>;
+  chat: ChatSurface;
   [name: string]: unknown;
 }
 

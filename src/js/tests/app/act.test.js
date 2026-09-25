@@ -2,9 +2,10 @@ import { equal } from "yuke:internal/test";
 import { command, root, status, keymap } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import "yuke:internal/native/term";
-import { chat } from "yuke:internal/defaults";
 import { sessions, currentChat } from "yuke:internal/chat";
 import { feedOf } from "yuke:internal/sessions";
+// The shell built the first chat pane at boot.
+const chat = currentChat();
 const fail = [];
 // The shell loads the notice as a plugin, so its segment and listeners can be taken back out.
 if (!plugins.has("notice")) fail.push("notice-plugin");
@@ -93,13 +94,13 @@ root.popOverlay();
 // The shell's own plugin owns the pending-key reading, so an unload takes it away.
 {
   root.focusView(chat);
-  // A test-owned prefix outlives the shell's bindings, so the pending stroke survives disposal.
+  // A test-owned prefix outlives the keys plugin, so the pending stroke survives disposal.
   const offPrefix = keymap.add({ "f9 x": () => true });
   const f9 = { type: "key", code: "f9", char: "", text: "", event: "press", mods: 0 };
   root.onEvent(f9);
   if (status.side("right").indexOf("f9") < 0) fail.push("showcmd-drawn");
   keymap.pending = null;
-  plugins.dispose("app-keys");
+  plugins.dispose("keys");
   root.onEvent(f9);
   if (keymap.pendingLabel() !== "f9") fail.push("showcmd-still-pending");
   if (status.side("right").indexOf("f9") >= 0) fail.push("showcmd-unloads");

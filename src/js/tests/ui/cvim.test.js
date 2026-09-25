@@ -2,11 +2,13 @@ import { check } from "yuke:internal/test";
 import { ChatView } from "yuke:internal/chat-view";
 import { root, Node, View, keymap } from "yuke:internal/core";
 import { plugins, services } from "yuke:internal/ext";
-import { Session } from "yuke:internal/chat";
+import { Session, chatPlugin } from "yuke:internal/chat";
 import { composerVim } from "yuke:internal/composer-vim";
 import { register } from "yuke:internal/vim";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
+// The chat plugin tracks the current chat, which the vim layers and the chat commands read.
+plugins.use(chatPlugin);
 
 const v = new ChatView(new Session());
 root.setRoot(Node.leaf(v));

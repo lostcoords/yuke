@@ -3,12 +3,13 @@ import { ChatView } from "yuke:internal/chat-view";
 import { events } from "yuke:internal/kernel";
 import { plugins } from "yuke:internal/ext";
 import { tuiPlugin } from "yuke:internal/tui";
-import { Session } from "yuke:internal/chat";
+import { Session, chatPlugin } from "yuke:internal/chat";
 import { client } from "yuke:internal/client";
 import { agents, childLabel } from "yuke:internal/agents";
 const settle = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const check = (ok, why) => { if (!ok) throw new Error(why); };
 plugins.use(tuiPlugin);
+plugins.use(chatPlugin);
 plugins.use(agents({ catalog: { explore: {} } }));
 (async () => {
   const parent = "01".repeat(16), childId = "02".repeat(16);

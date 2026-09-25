@@ -1,5 +1,6 @@
-import { openSessionFinder } from "yuke:internal/defaults";
-import { root } from "yuke:internal/core";
+import { root, command } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
+import { chatPlugin } from "yuke:internal/chat";
 globalThis.root = root;
-plugins.use({ name: "finder-test", apply(ctx) { ctx.inject(["tui"], (ctx) => { openSessionFinder(ctx); }); } });
+plugins.use(chatPlugin);
+command.perform("ui:sessions");

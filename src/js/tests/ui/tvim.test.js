@@ -3,11 +3,13 @@ import { ChatView } from "yuke:internal/chat-view";
 import { term } from "yuke:internal/native/term";
 import { root, Node, keymap, command } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
-import { Session } from "yuke:internal/chat";
+import { Session, chatPlugin } from "yuke:internal/chat";
 import { transcriptVim } from "yuke:internal/transcript-vim";
 import { register } from "yuke:internal/vim";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
+// The chat plugin tracks the current chat, which the vim layers and the chat commands read.
+plugins.use(chatPlugin);
 const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: "", event: "press", mods: 0 });
 
 // The shell is not loaded, so a yank must reach the clipboard through the core alone.

@@ -1,5 +1,5 @@
 import { check } from "yuke:internal/test";
-import { Session, openSession, showSession } from "yuke:internal/chat";
+import { Session, openSession, showSession, currentChat } from "yuke:internal/chat";
 import { root, command, status } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { client } from "yuke:internal/client";
@@ -9,7 +9,8 @@ import { elapsedLabel, phaseLabel, indicatorLine } from "yuke:internal/indicator
 import { stripRows, queuedText, queueOf } from "yuke:internal/queue";
 import { contextBar, sessionCost } from "yuke:internal/context";
 import { rowText } from "yuke:internal/pager";
-import { chat } from "yuke:internal/defaults";
+// The shell built the first chat pane at boot.
+const chat = currentChat();
 const key = (code, o = {}) => ({ type: "key", code, char: "", text: "", event: "press", mods: 0, ...o });
 const settle = async () => { for (let i = 0; i < 64; i++) await Promise.resolve(); };
 const usage = { input: 200, output: 30, reasoning: 5, cache_read: 0, cache_write: 0 };

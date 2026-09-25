@@ -3,10 +3,15 @@ import { ChatView } from "yuke:internal/chat-view";
 import { client } from "yuke";
 import { Context, Scope, scopeOf } from "yuke:internal/ext";
 import { currentChat } from "yuke:chat";
-import { currentChat as internalQuery, Session, openSession, showSession } from "yuke:internal/chat";
+import { currentChat as internalQuery, Session, openSession, showSession, chatPlugin } from "yuke:internal/chat";
+import { plugins } from "yuke:internal/ext";
+import { tuiPlugin } from "yuke:internal/tui";
 import { root, Node } from "yuke:internal/core";
 
 equal(currentChat, internalQuery);
+// The chat plugin tracks the current chat while the terminal exists.
+plugins.use(tuiPlugin);
+plugins.use(chatPlugin);
 const currentSessionId = () => currentChat()?.session.sessionId ?? null;
 client.sessionOpen = id => id !== "missing";
 client.sessionClose = () => {};
@@ -76,9 +81,12 @@ root.setRoot(null);
 equal(currentSessionId(), null);
 const beforeDispose = seen.length;
 scopeOf(observer).dispose();
-root.setRoot(Node.leaf(a));
+// The closed pane left its session, so a new pane opens it again.
+const c = new ChatView(new Session());
+openSession(c, "replacement");
+root.setRoot(Node.leaf(c));
 equal(currentSessionId(), "replacement");
 equal(seen.length, beforeDispose);
-a.session.leave(a);
+c.session.leave(c);
 equal(currentSessionId(), null);
 root.setRoot(null);

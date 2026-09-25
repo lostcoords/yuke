@@ -4,7 +4,7 @@ import { events } from "yuke:internal/kernel";
 import { plugins, advice } from "yuke:internal/ext";
 import { tuiPlugin } from "yuke:internal/tui";
 import { client } from "yuke:internal/client";
-import { Session } from "yuke:internal/chat";
+import { Session, chatPlugin } from "yuke:internal/chat";
 import { openAgents } from "yuke:internal/agents-ui";
 
 /** @import { InjectContext } from "../app/types/ext.js" */
@@ -20,6 +20,7 @@ let off;
 let activityChanges = 0;
 events.on("engine.activity.changed", () => { client.isBusy(); activityChanges++; });
 plugins.use(tuiPlugin);
+plugins.use(chatPlugin);
 plugins.use({ name: "agent-bench", apply(ctx) { ctx.inject(["tui"], ctx => { context = ctx; }); } });
 advice.advise(client, "sessionGet", "before", () => { gets++; });
 advice.advise(client, "sessionList", "before", () => { lists++; });

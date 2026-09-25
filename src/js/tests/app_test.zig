@@ -11,6 +11,10 @@ test "focused session identity follows pane and session lifetimes" {
     try support.run("app/focused-session.test.js");
 }
 
+test "a chat view factory swaps the open panes in place and the unload swaps them back" {
+    try support.run("app/chat-factory.test.js");
+}
+
 test "yuke:internal/client answers a closed session with no outline" {
     try support.run("app/c.test.js");
 }

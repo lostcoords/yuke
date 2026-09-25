@@ -1,13 +1,8 @@
 // The terminal capability. A block that declares `tui` registers its view effects here.
 import { command, keymap, route, context, status, style, root } from "yuke:internal/core";
-import { events } from "yuke:internal/kernel";
-import { ChatView } from "yuke:internal/chat-view";
-import { Context, scopeOf } from "yuke:internal/ext";
-import { registerLabels } from "yuke:internal/transcript";
 
-/** @import { PresentationContext, PresentationProvider } from "yuke:internal/chat-view" */
-/** @import { LayoutNode } from "./types/layout.js" */
 /** @import { Disposer } from "./types/ext.js" */
+/** @import { Context } from "yuke:internal/ext" */
 /** @import { ViewLike } from "./types/core.js" */
 /** @typedef {Parameters<typeof root.addTickable>[0]} Tickable */
 /** @typedef {Parameters<typeof root.pushOverlay>[0]} Overlay */
@@ -57,50 +52,6 @@ class Surface {
   get status() { return this._settle("status", owned(this._ctx, status)); }
   /** @returns {typeof style} */
   get style() { return this._settle("style", owned(this._ctx, style)); }
-
-  // The newest registration wins; each mounted pane owns one child context.
-  /** @param {(view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null} create @returns {Disposer} */
-  presentation(create) {
-    if (typeof create !== "function") throw new TypeError("presentation needs a factory");
-    const ctx = this._ctx;
-    return ctx.effect(() => {
-      /** @type {Set<ChatView>} */
-      const mounted = new Set();
-      /** @type {PresentationProvider} */
-      const provider = {
-        mount(view) {
-          const scope = scopeOf(ctx).child("presentation");
-          try {
-            const layout = create(view, new Context(scope, ctx.id));
-            if (typeof layout !== "function") throw new TypeError("presentation factory must return a layout function");
-            if (!scope.alive) throw new TypeError("presentation scope closed during mount");
-            mounted.add(view);
-            return { layout, dispose() { mounted.delete(view); scope.dispose(); } };
-          } catch (error) {
-            scope.dispose();
-            throw error;
-          }
-        },
-      };
-      const offAnswer = events.on("chat.presentation", () => provider);
-      const offClose = events.on("pane.closed", view => {
-        if (view instanceof ChatView) view.clearPresentation(provider);
-      });
-      root.invalidate();
-      return () => {
-        offAnswer();
-        offClose();
-        for (const view of mounted) view.clearPresentation(provider);
-        root.invalidate();
-      };
-    });
-  }
-
-  // Name tool calls and message sources in the transcript; the newest registration wins.
-  /** @param {Parameters<typeof registerLabels>[0]} entries @returns {Disposer} */
-  labels(entries) {
-    return this._ctx.effect(() => registerLabels(entries));
-  }
 
   // Show a layer this block owns. Any close runs `onClose` once: a pop by the layer itself, the disposer, or the unload.
   // A later owner of the same layer takes it over, so an earlier owner's unload leaves it on the stack.

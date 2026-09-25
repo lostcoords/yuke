@@ -36,7 +36,9 @@ const tool_fixture =
     \\import { plugins } from "yuke:internal/ext";
     \\import { agents } from "yuke:internal/agents";
     \\import { tuiPlugin } from "yuke:internal/tui";
+    \\import { chatPlugin } from "yuke:internal/chat";
     \\plugins.use(tuiPlugin);
+    \\plugins.use(chatPlugin);
     \\plugins.use(agents({ default: "small", maxRounds: 7, catalog: { small: { description: "Narrow research.", model: "p/family/model" }, review: { description: "Read-only review.", prompt: "Review only. Do not edit.", tools: ["read", "exec"] } } }));
     \\globalThis.child = { session: { id: "02".repeat(16), name: "small", root: "/work", model: "p/family/model", origin: { type: "child", site: { session_id: "01".repeat(16), message_id: 1, part_id: 0 } } }, activity: { state: { type: "idle" }, queued: 0 }, last_run: { type: "turn" } };
     \\client.sessionList = async (params) => { return { items: params.population.parent_id === "01".repeat(16) ? [child] : [], next_cursor: null, total: 1 }; };

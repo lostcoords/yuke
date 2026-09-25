@@ -252,8 +252,9 @@ export function agents(options) {
             });
             ctx.effect(() => () => children.clear());
 
-            ctx.inject(["tui"], (ctx) => {
-                ctx.tui.labels({ tools: {
+            // The labels name agent calls in the chat transcript, so they live as long as the chat service does.
+            ctx.inject(["chat"], (ctx) => {
+                ctx.chat.labels({ tools: {
                     spawn_agent: { category: "agent", present: (o, _raw, part) => ({ verb: "Agent", subject: String(o.agent || catalog.default) + liveSuffix(part) }) },
                     send_agent_input: { category: "agent", present: (o) => ({ verb: "Send", subject: String(o.child || "") }) },
                     stop_agent: { category: "agent", present: (o) => ({ verb: "Stop", subject: String(o.child || "") }) },
@@ -262,7 +263,9 @@ export function agents(options) {
                     child_report: reportLabel,
                     child_input_canceled: (source) => "Message from " + source.name + " · queued work canceled",
                 } });
+            });
 
+            ctx.inject(["tui"], (ctx) => {
                 ctx.tui.command.add("agents:open", {
                     when: () => currentChat()?.session.sessionId != null,
                     desc: "open or stop child agents",

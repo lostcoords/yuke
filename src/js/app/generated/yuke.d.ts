@@ -26,6 +26,7 @@ export import composerVim = $composer_vim.composerVim;
 export import transcriptVim = $transcript_vim.transcriptVim;
 export import agents = $agents.agents;
 export import mcp = $mcp.mcp;
+export import shell = $shell.shell;
 }
 
 declare module "yuke:ui" {
@@ -269,9 +270,13 @@ export class ChatView {
 
 declare namespace $chat {
 import ChatView = $chat_view.ChatView;
+import Context = $ext.Context;
+import registerLabels = $transcript.registerLabels;
+import PresentationContext = $chat_view.PresentationContext;
+import LayoutNode = $types_layout.LayoutNode;
+import Disposer = $types_ext.Disposer;
 import Composer = $ui.Composer;
 import MessagePart = $native_engine.MessagePart;
-import Context = $ext.Context;
 export type CreateSessionDraft = Wire.CreateSession;
 import FeedItem = $sessions.FeedItem;
 /** @param {readonly Wire.ContentPart[]} content @returns {string | null} */
@@ -323,6 +328,33 @@ export function openSession(view: ChatView, id: string): void;
 export function currentChat(): ChatView | null;
 /** @returns {FeedItem | null} */
 export function chatEntry(): FeedItem | null;
+export type ViewFactory = (session: Session) => ChatView;
+class ChatViews {
+    /** @type {ViewFactory[]} */
+    factories: ViewFactory[];
+    /** @type {WeakMap<ChatView, ViewFactory>} */
+    made: WeakMap<ChatView, ViewFactory>;
+    constructor();
+    /** @param {Session} session @returns {ChatView} */
+    create(session: Session): ChatView;
+    refit(): void;
+    /** @param {ViewFactory} factory @returns {Disposer} */
+    add(factory: ViewFactory): Disposer;
+}
+export class ChatSurface {
+    _ctx: Context;
+    _views: ChatViews;
+    /** @param {Context} ctx @param {ChatViews} views */
+    constructor(ctx: Context, views: ChatViews);
+    /** @param {Session} [session] @returns {ChatView} */
+    create(session?: Session): ChatView;
+    /** @param {ViewFactory} factory @returns {Disposer} */
+    view(factory: ViewFactory): Disposer;
+    /** @param {(view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null} create @returns {Disposer} */
+    presentation(create: (view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null): Disposer;
+    /** @param {Parameters<typeof registerLabels>[0]} entries @returns {Disposer} */
+    labels(entries: Parameters<typeof registerLabels>[0]): Disposer;
+}
 export const chatPlugin: {
     name: string;
     /** @param {Context} ctx @returns {void} */
@@ -620,6 +652,8 @@ export class RootView {
     }>): boolean;
     /** @param {"row" | "col"} kind @param {ViewLike} view @returns {Node | null} */
     split(kind: "row" | "col", view: ViewLike): Node | null;
+    /** @param {ViewLike} old @param {ViewLike} view @returns {boolean} */
+    replace(old: ViewLike, view: ViewLike): boolean;
     /** @param {ViewLike} [view] @returns {void} */
     close(view?: ViewLike): void;
     /** @param {"h" | "j" | "k" | "l"} d @returns {void} */
@@ -1386,6 +1420,15 @@ export const sessionsPlugin: {
 };
 }
 
+declare namespace $shell {
+import Context = $ext.Context;
+export const shell: {
+    name: string;
+    /** @param {Context} ctx @returns {void} */
+    apply(ctx: Context): void;
+};
+}
+
 declare namespace $spawn {
 import ProcessExit = $native_process.ProcessExit;
 export type SpawnOptions = {
@@ -1748,12 +1791,8 @@ import context = $core.context;
 import status = $core.status;
 import style = $core.style;
 import root = $core.root;
-import ChatView = $chat_view.ChatView;
-import Context = $ext.Context;
-import registerLabels = $transcript.registerLabels;
-import PresentationContext = $chat_view.PresentationContext;
-import LayoutNode = $types_layout.LayoutNode;
 import Disposer = $types_ext.Disposer;
+import Context = $ext.Context;
 import ViewLike = $types_core.ViewLike;
 export type Tickable = Parameters<typeof root.addTickable>[0];
 export type Overlay = Parameters<typeof root.pushOverlay>[0];
@@ -1776,10 +1815,6 @@ class Surface {
     get status(): typeof status;
     /** @returns {typeof style} */
     get style(): typeof style;
-    /** @param {(view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null} create @returns {Disposer} */
-    presentation(create: (view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null): Disposer;
-    /** @param {Parameters<typeof registerLabels>[0]} entries @returns {Disposer} */
-    labels(entries: Parameters<typeof registerLabels>[0]): Disposer;
     /** @param {Overlay} layer @param {() => void} [onClose] @returns {Disposer} */
     overlay(layer: Overlay, onClose?: () => void): Disposer;
     /** @param {"row" | "col"} kind @param {ViewLike} view @returns {Disposer} */
@@ -2814,6 +2849,7 @@ import Job = $native_jobs.Job;
 import Context = $ext.Context;
 import Scope = $ext.Scope;
 import tui = $tui.tui;
+import ChatSurface = $chat.ChatSurface;
 import ChatRegion = $chat_view.ChatRegion;
 import ChatView = $chat_view.ChatView;
 import PresentationContext = $chat_view.PresentationContext;
@@ -2929,6 +2965,7 @@ export interface ToolDefinition {
 
 export interface Capabilities {
   tui: ReturnType<typeof tui.bindTo>;
+  chat: ChatSurface;
   [name: string]: unknown;
 }
 

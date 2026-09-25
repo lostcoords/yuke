@@ -29,6 +29,13 @@ plugins.use({ name: "dupe", apply: (ctx) => { ctx.inject(["d", "d"], () => { see
 services.provide("d", 1);
 check("built-once", seen.length === 1);
 
+// A provider that provides another in its block reports one change to both watchers, so the block builds one time.
+const nested = [];
+plugins.use({ name: "base", apply: (ctx) => { ctx.inject(["n1"], (ctx) => { ctx.provide("n2", 1); }); } });
+plugins.use({ name: "both", apply: (ctx) => { ctx.inject(["n1", "n2"], () => { nested.push("built"); }); } });
+services.provide("n1", 1);
+check("nested-built-once", nested.length === 1);
+
 // A provider of undefined still holds the name.
 const offU = services.provide("u", undefined);
 check("undefined-counts", services.has("u") && services.get("u") === undefined);

@@ -4,10 +4,12 @@ import { term } from "yuke:internal/native/term";
 import { root, Node } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import { Transcript, inputSourceLabel } from "yuke:internal/transcript";
-import { Session } from "yuke:internal/chat";
+import { Session, chatPlugin } from "yuke:internal/chat";
 import { transcriptVim } from "yuke:internal/transcript-vim";
-import { tui, tuiPlugin } from "yuke:internal/tui";
+import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
+// The chat plugin tracks the current chat, which the vim layers and the chat commands read.
+plugins.use(chatPlugin);
 const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
 const rowsGroup = (rs, group) => rs.some((r) => (r.segments || []).some((sg) => sg.group === group) || r.group === group);
 const markerOf = (rs) => ((rs.find((r) => r.kind === "tool-header") || {}).marker || "").trimStart();
@@ -138,7 +140,7 @@ const unknownRows = unknown.rows(60, 0, 4);
 check("fallback-name", rowsHave(unknownRows, "mcp_thing") && rowsHave(unknownRows, "x.txt"));
 
 const presenterOwner = plugins.use({ name: "test-presenter", apply(ctx) {
-  tui.bindTo(ctx).labels({ tools: { exec: { category: "run", present: () => ({ verb: "$", subject: "custom" }) } }, sources: { engine_interruption: () => "first" } });
+  ctx.inject(["chat"], (ctx) => { ctx.chat.labels({ tools: { exec: { category: "run", present: () => ({ verb: "$", subject: "custom" }) } }, sources: { engine_interruption: () => "first" } }); });
 } });
 const over = new Transcript({ partsOf: (id) => parts[id] || [] });
 over.setOutline([{ id: "pres", type: "assistant" }], null);
@@ -148,7 +150,7 @@ check("override-source", over._sourceOf("pres").indexOf("$ custom") === 0);
 check("cached-presenter-changes", rowsHave(pres.rows(60, 0, 4), "custom"));
 
 const faultyOwner = plugins.use({ name: "test-faulty-presenter", apply(ctx) {
-  tui.bindTo(ctx).labels({ tools: { exec: { category: "run", present: () => { throw new Error("bad"); } } }, sources: { engine_interruption: () => "second" } });
+  ctx.inject(["chat"], (ctx) => { ctx.chat.labels({ tools: { exec: { category: "run", present: () => { throw new Error("bad"); } } }, sources: { engine_interruption: () => "second" } }); });
 } });
 presenterOwner.dispose();
 check("hidden-source-owner-leaves", inputSourceLabel({ type: "engine_interruption", run_id: 1, kind: "turn" }) === "second");
