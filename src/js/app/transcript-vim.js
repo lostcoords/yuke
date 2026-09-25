@@ -273,7 +273,7 @@ export const transcriptVim = {
   /** @param {Context} ctx */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      ctx.tui.command(null, {
+      ctx.tui.command.add(null, {
         "chat:focus-toggle": () => {
           const view = currentChat();
           if (!view) return;
@@ -281,13 +281,13 @@ export const transcriptVim = {
           root.invalidate();
         },
       });
-      ctx.tui.keymap({ tab: "chat:focus-toggle" }, "chat");
+      ctx.tui.keymap.add({ tab: "chat:focus-toggle" }, "chat");
 
       // Normal keys reach the keymap only where the transcript holds the region focus.
-      ctx.tui.route("keymap", TRANSCRIPT);
+      ctx.tui.route.add("keymap", TRANSCRIPT);
 
       // Visual mode is plugin state, so it rides a flag rather than an atom.
-      ctx.tui.context({
+      ctx.tui.context.add({
         transcript_visual: () => {
           const v = currentChat();
           const s = v ? panes.get(v) : undefined;
@@ -335,9 +335,9 @@ export const transcriptVim = {
           return settle(view, s, t);
         });
       }
-      ctx.tui.keymap(motions, TRANSCRIPT);
+      ctx.tui.keymap.add(motions, TRANSCRIPT);
 
-      ctx.tui.keymap(
+      ctx.tui.keymap.add(
         {
           enter: act((view, s, t) => {
             s.cursor = t.activate(/** @type {Position} */ (s.cursor)) ?? s.cursor;
@@ -366,7 +366,7 @@ export const transcriptVim = {
       );
 
       // `o` swaps the ends of a selection and `y` copies it, so both need visual mode.
-      ctx.tui.keymap(
+      ctx.tui.keymap.add(
         {
           o: act((view, s, t) => {
             const swap = s.anchor;
@@ -384,7 +384,7 @@ export const transcriptVim = {
         VISUAL,
       );
 
-      ctx.tui.keymap(
+      ctx.tui.keymap.add(
         {
           "g g": act((view, s, t) => (toEnd(t, s, false) ? settle(view, s, t) : false)),
           "g y": act((view, s, t) => {
@@ -396,7 +396,7 @@ export const transcriptVim = {
       );
 
       // Outside visual mode `yy` waits like an operator, so a pause never cancels it.
-      ctx.tui.keymap(
+      ctx.tui.keymap.add(
         {
           "y y": act((view, s, t) => {
             yank(t, s, false);

@@ -1,11 +1,11 @@
 import { check } from "yuke:internal/test";
-import { command, root } from "yuke:internal/core";
-import { plugins } from "yuke:internal/ext";
+import { command, root, Node } from "yuke:internal/core";
+import { plugins, scopeOf } from "yuke:internal/ext";
 import { tui } from "yuke:internal/tui";
 const layer = (n) => ({ name: n, rect: { x: 0, y: 0, w: 1, h: 1 }, layout() {}, draw() {} });
 
-const owner = { name: "ov", apply(ctx) { const t = tui.bindTo(ctx); t.command(null, { "ov:open": () => t.overlay(root.pushOverlay(layer("own"))) }); } };
-const other = { name: "other", apply(ctx) { const t = tui.bindTo(ctx); t.command(null, { "other:open": () => root.pushOverlay(layer("other")) }); } };
+const owner = { name: "ov", apply(ctx) { const t = tui.bindTo(ctx); t.command.add(null, { "ov:open": () => t.overlay(root.pushOverlay(layer("own"))) }); } };
+const other = { name: "other", apply(ctx) { const t = tui.bindTo(ctx); t.command.add(null, { "other:open": () => root.pushOverlay(layer("other")) }); } };
 const base = root.overlays.length;
 
 plugins.use(owner);
@@ -23,7 +23,7 @@ root.popOverlay();
 plugins.dispose("other");
 
 // One plugin's unload must leave another plugin's overlay alone, not every owned overlay.
-const second = { name: "ov2", apply(ctx) { const t = tui.bindTo(ctx); t.command(null, { "ov2:open": () => t.overlay(root.pushOverlay(layer("own2"))) }); } };
+const second = { name: "ov2", apply(ctx) { const t = tui.bindTo(ctx); t.command.add(null, { "ov2:open": () => t.overlay(root.pushOverlay(layer("own2"))) }); } };
 plugins.use(owner);
 plugins.use(second);
 command.perform("ov:open");
@@ -51,14 +51,47 @@ plugins.dispose("ov");
 check("closed-overlay-not-repopped", root.overlays.length === base + 1 && root.overlays[root.overlays.length - 1] === after);
 root.popOverlay(after);
 
-// The map keys on the layer, so a plugin that pushes one twice still owns the second push.
-const again = layer("again");
-plugins.use({ name: "re", apply(ctx) { const t = tui.bindTo(ctx); t.command(null, { "re:open": () => t.overlay(root.pushOverlay(again)) }); } });
-command.perform("re:open");
-root.popOverlay(again);
-root.pushOverlay(again);
-plugins.dispose("re");
-check("re-push-stays-owned", root.overlays.length === base);
+// A claim lasts until the layer closes by any path: the close runs `onClose` once, and a later push by someone else is theirs.
+{
+  const again = layer("again");
+  let reCloses = 0;
+  plugins.use({ name: "re", apply(ctx) { const t = tui.bindTo(ctx); t.command.add(null, { "re:open": () => t.overlay(root.pushOverlay(again), () => { reCloses++; }) }); } });
+  command.perform("re:open");
+  root.popOverlay(again);
+  check("self-close-runs-onclose", reCloses === 1);
+  root.pushOverlay(again);
+  plugins.dispose("re");
+  check("close-ends-the-claim", reCloses === 1 && root.overlays[root.overlays.length - 1] === again);
+  root.popOverlay(again);
+  check("unowned-pop-runs-nothing", reCloses === 1 && root.overlays.length === base);
+}
+
+// A closed layer leaves no entry behind, so a long-lived plugin that opens many layers holds none of the closed ones.
+{
+  let held = null;
+  plugins.use({ name: "many", apply(ctx) { held = ctx; } });
+  const t = tui.bindTo(held);
+  const before = scopeOf(held)._disposers.length;
+  for (let i = 0; i < 5; i++) {
+    const l = layer("many" + i);
+    t.overlay(root.pushOverlay(l));
+    root.popOverlay(l);
+  }
+  check("closed-layers-leave-no-entry", scopeOf(held)._disposers.length === before);
+  plugins.dispose("many");
+}
+
+// A pane a plugin splits off closes with the plugin.
+{
+  const main = layer("main");
+  root.setRoot(Node.leaf(main));
+  const side = layer("side");
+  plugins.use({ name: "splitter", apply(ctx) { tui.bindTo(ctx).split("row", side); } });
+  const shown = root.root_node.leaves().length === 2;
+  plugins.dispose("splitter");
+  check("unload-closes-split", shown && root.root_node.leaves().length === 1 && root.active === main);
+  root.setRoot(null);
+}
 
 // The claim shows a layer off the stack, and `onClose` runs once at the unload.
 let closes = 0;

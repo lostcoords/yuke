@@ -130,7 +130,7 @@ export function modelCatalog(cfg = {}) {
       // The engine is in this process, so the catalog is readable at once and needs no connect event.
       loadCatalog();
 
-      ctx.tui.command(null, {
+      ctx.tui.command.add(null, {
         "catalog:reload": () => client.catalogReload().then(
           (r) => { notice.show(r.changed ? "providers reloaded" : "providers unchanged"); return loadCatalog(); },
           (e) => notice.show("reload failed · " + errorText(e)),
@@ -139,7 +139,7 @@ export function modelCatalog(cfg = {}) {
         "catalog:reload": { title: "Reload providers", description: "read providers.json again", slash: "reload-providers" },
       });
 
-      ctx.tui.status({
+      ctx.tui.status.add({
         side: "right",
         order: 10,
         render: () => {

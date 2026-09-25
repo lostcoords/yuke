@@ -184,7 +184,7 @@ export const authPlugin = {
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      ctx.tui.command(null, {
+      ctx.tui.command.add(null, {
         "auth:login": (/** @type {string | undefined} */ query) => openLogin(ctx, query),
         "auth:logout": (/** @type {string | undefined} */ query) => openLogout(ctx, query),
       }, {

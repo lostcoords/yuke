@@ -189,8 +189,8 @@ export function commandUi(cfg = {}) {
         return p;
       };
 
-      ctx.tui.command(null, { "ui:palette": openPalette });
-      ctx.tui.keymap({ "ctrl+p": "ui:palette" });
+      ctx.tui.command.add(null, { "ui:palette": openPalette });
+      ctx.tui.keymap.add({ "ctrl+p": "ui:palette" });
     });
   },
   };

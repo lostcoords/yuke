@@ -152,8 +152,7 @@ export function openJobs(ctx) {
     border: "rounded", width: (max) => Math.round(max * 0.9), height: (max) => Math.round(max * 0.6),
     key: (job) => job.id,
     format: (job) => ({ marker: job.state === "running" ? "•" : "·", indent: 2, text: name(job) + "  " + shortCommand(job.command) + "  ", detail: (job.session_id ?? null) === (current ?? null) ? "this session" : "", right: jobState(job, Date.now()) }),
-    onAccept: (job) => { close(); openOutput(ctx, get(job.id) ?? job); },
-    onCancel: () => close(),
+    onAccept: (job) => openOutput(ctx, get(job.id) ?? job),
     keymap: {
       x: (_event, content) => { const job = content.list.selected(); if (job && job.state === "running") stop(job.id).catch(failed); },
       X: () => {
@@ -186,8 +185,8 @@ export const jobsUiPlugin = {
         else running.delete(job.id);
         root.invalidate();
       });
-      ctx.tui.status({ side: "right", order: 1, render: () => (running.size === 0 ? "" : "jobs " + running.size) });
-      ctx.tui.command(null, {
+      ctx.tui.status.add({ side: "right", order: 1, render: () => (running.size === 0 ? "" : "jobs " + running.size) });
+      ctx.tui.command.add(null, {
         "jobs:open": () => openJobs(ctx),
       }, { "jobs:open": { title: "Jobs", description: "see or stop background jobs", slash: "jobs" } });
     });

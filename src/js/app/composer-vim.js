@@ -195,22 +195,22 @@ export const composerVim = {
           c.input.caret = clamp(c.input.text, c.input.caret);
         } else normal.delete(c);
         events.emit("composer-vim:mode", c, next);
-        ctx.tui.invalidate();
+        ctx.tui.root.invalidate();
       };
       const inChat = () => chatComposer() != null;
 
-      ctx.tui.command(inChat, {
+      ctx.tui.command.add(inChat, {
         normal: () => setMode(chatComposer(), "normal"),
         insert: () => setMode(chatComposer(), "insert"),
       });
 
-      ctx.tui.keymap({ esc: "composer-vim:normal" });
+      ctx.tui.keymap.add({ esc: "composer-vim:normal" });
 
       // The plugin exposes the mode as a flag, so each binding gates on it.
-      ctx.tui.context({ composer_vim: () => mode(chatComposer()) || "" });
+      ctx.tui.context.add({ composer_vim: () => mode(chatComposer()) || "" });
 
       // Normal mode sends a key to the keymap, so no pane inside the chat reads it.
-      ctx.tui.route("keymap", NORMAL_MODE);
+      ctx.tui.route.add("keymap", NORMAL_MODE);
 
       /** @param {(c: ComposerType) => KeyResult} fn @returns {() => boolean} */
       const edit = (fn) => () => {
@@ -223,10 +223,10 @@ export const composerVim = {
       /** @type {Record<string, () => boolean>} */
       const keys = {};
       for (const k of NORMAL_KEYS) keys[k] = edit((c) => normalKey(c, k));
-      ctx.tui.keymap(keys, NORMAL_MODE);
+      ctx.tui.keymap.add(keys, NORMAL_MODE);
       // `gg` is a chord, while `dd` and `cc` are operators that never expire.
-      ctx.tui.keymap({ "g g": edit((c) => to(c, 0)) }, NORMAL_MODE);
-      ctx.tui.keymap(
+      ctx.tui.keymap.add({ "g g": edit((c) => to(c, 0)) }, NORMAL_MODE);
+      ctx.tui.keymap.add(
         { "d d": edit((c) => lineOp(c, "d")), "c c": edit((c) => lineOp(c, "c")) },
         NORMAL_MODE,
         { pending: "operator" },
@@ -235,7 +235,7 @@ export const composerVim = {
       // A null answer leaves the composer its own glyph.
       ctx.on("composer.prompt", (c) => (normal.has(c) ? NORMAL_PROMPT : null));
 
-      ctx.tui.status({ side: "right", order: 0, render: () => {
+      ctx.tui.status.add({ side: "right", order: 0, render: () => {
         const m = mode(chatComposer());
         return m ? m.toUpperCase() : "";
       } });

@@ -960,7 +960,7 @@ export function mcp(options = {}) {
       });
 
       ctx.inject(["tui"], (ctx) => {
-        ctx.tui.command(null, {
+        ctx.tui.command.add(null, {
           "mcp:show": () => showInfo(ctx, "mcp", plugin.rows()),
           "mcp:reset-trust": () => plugin.resetTrust(),
           "mcp:login": (/** @type {string | undefined} */ query) => {

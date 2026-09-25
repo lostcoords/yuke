@@ -139,7 +139,7 @@ export const queuePlugin = {
         const id = currentChat()?.session.sessionId;
         return id != null && queueOf(id).length > 0;
       };
-      ctx.tui.command(hasQueue, {
+      ctx.tui.command.add(hasQueue, {
         "queue:drop": () => {
           const id = currentChat()?.session.sessionId;
           if (id) openQueuePicker(ctx, id);

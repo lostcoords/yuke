@@ -588,6 +588,8 @@ export class RootView {
     activeLeaf: Node | null;
     /** @type {Overlay[]} */
     overlays: Overlay[];
+    /** @type {WeakMap<Overlay, () => void>} */
+    _closers: WeakMap<Overlay, () => void>;
     /** @type {Node[]} */
     _leafScratch: Node[];
     /** @type {TickableEntry[]} */
@@ -618,7 +620,8 @@ export class RootView {
     }>): boolean;
     /** @param {"row" | "col"} kind @param {ViewLike} view @returns {Node | null} */
     split(kind: "row" | "col", view: ViewLike): Node | null;
-    close(): void;
+    /** @param {ViewLike} [view] @returns {void} */
+    close(view?: ViewLike): void;
     /** @param {"h" | "j" | "k" | "l"} d @returns {void} */
     focusDir(d: "h" | "j" | "k" | "l"): void;
     /** @param {number} step @returns {void} */
@@ -636,8 +639,10 @@ export class RootView {
     get focused(): Overlay | null;
     /** @param {Overlay} layer @returns {Overlay} */
     pushOverlay(layer: Overlay): Overlay;
-    /** @param {Overlay | undefined} layer @returns {void} */
-    popOverlay(layer: Overlay | undefined): void;
+    /** @param {Overlay} layer @param {() => void} onClose @returns {void} */
+    closeWith(layer: Overlay, onClose: () => void): void;
+    /** @param {Overlay | undefined} layer @param {() => void} [only] @returns {void} */
+    popOverlay(layer: Overlay | undefined, only?: () => void): void;
     /** @returns {void} */
     invalidate(): void;
     /** @returns {void} */
@@ -1785,44 +1790,44 @@ import registerLabels = $transcript.registerLabels;
 import PresentationContext = $chat_view.PresentationContext;
 import LayoutNode = $types_layout.LayoutNode;
 import Disposer = $types_ext.Disposer;
-export type CommandPredicate = Parameters<typeof command.add>[0];
-export type CommandMap = Parameters<typeof command.add>[1];
-export type CommandMetaMap = NonNullable<Parameters<typeof command.add>[2]>;
-export type KeyBindings = Parameters<typeof keymap.add>[0];
-export type RouteWhere = Parameters<typeof route.add>[0];
+import ViewLike = $types_core.ViewLike;
 export type Tickable = Parameters<typeof root.addTickable>[0];
 export type Overlay = Parameters<typeof root.pushOverlay>[0];
-export type StatusSegment = Parameters<typeof status.add>[0];
-export type StyleGroups = Parameters<typeof style.add>[0];
-export type ContextFlags = Parameters<typeof context.add>[0];
-export type OverlayClaim = {
-    surface: object;
-    onClose: (() => void) | undefined;
-};
-/** @param {Context} ctx */
-function bindTo(ctx: Context): {
-    /** @param {CommandPredicate} predicate @param {CommandMap} map @param {CommandMetaMap} [meta] @returns {Disposer} */
-    command(predicate: CommandPredicate, map: CommandMap, meta?: CommandMetaMap): Disposer;
-    /** @param {KeyBindings} bindings @param {string} [at] @param {Parameters<typeof keymap.add>[2]} [opts] @returns {Disposer} */
-    keymap(bindings: KeyBindings, at?: string, opts?: Parameters<typeof keymap.add>[2]): Disposer;
-    /** @param {RouteWhere} where @param {string} [at] @returns {Disposer} */
-    route(where: RouteWhere, at?: string): Disposer;
+export type CommandMap = Parameters<typeof command.add>[1];
+class Surface {
+    _ctx: Context;
+    root: $core.RootView;
+    /** @param {Context} ctx */
+    constructor(ctx: Context);
+    /** @template T @param {string} name @param {T} value @returns {T} */
+    _settle<T>(name: string, value: T): T;
+    /** @template T @param {Record<string, T> | null | undefined} map @returns {Record<string, T>} */
+    _qualify<T>(map: Record<string, T> | null | undefined): Record<string, T>;
+    /** @returns {typeof command} */
+    get command(): typeof command;
+    /** @returns {typeof keymap} */
+    get keymap(): typeof keymap;
+    /** @returns {typeof route} */
+    get route(): typeof route;
+    /** @returns {typeof context} */
+    get context(): typeof context;
+    /** @returns {typeof status} */
+    get status(): typeof status;
+    /** @returns {typeof style} */
+    get style(): typeof style;
     /** @param {(view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null} create @returns {Disposer} */
     presentation(create: (view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null): Disposer;
     /** @param {Parameters<typeof registerLabels>[0]} entries @returns {Disposer} */
     labels(entries: Parameters<typeof registerLabels>[0]): Disposer;
-    /** @param {ContextFlags} flags @returns {Disposer} */
-    context(flags: ContextFlags): Disposer;
-    /** @param {StatusSegment} seg @returns {Disposer} */
-    status(seg: StatusSegment): Disposer;
-    /** @param {StyleGroups} groups @returns {Disposer} */
-    style(groups: StyleGroups): Disposer;
     /** @param {Overlay} layer @param {() => void} [onClose] @returns {Disposer} */
     overlay(layer: Overlay, onClose?: () => void): Disposer;
-    invalidate: () => void;
+    /** @param {"row" | "col"} kind @param {ViewLike} view @returns {Disposer} */
+    split(kind: "row" | "col", view: ViewLike): Disposer;
     /** @param {Tickable} tickable @returns {Disposer} */
     tickable(tickable: Tickable): Disposer;
-};
+}
+/** @param {Context} ctx @returns {Surface} */
+function bindTo(ctx: Context): Surface;
 export const tui: {
     bindTo: typeof bindTo;
 };

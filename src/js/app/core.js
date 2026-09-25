@@ -886,6 +886,8 @@ export class RootView {
     this.activeLeaf = null;
     /** @type {Overlay[]} */
     this.overlays = [];
+    /** @type {WeakMap<Overlay, () => void>} */
+    this._closers = new WeakMap(); // the close function of each layer; every pop runs it once
     /** @type {Node[]} */
     this._leafScratch = [];
     /** @type {TickableEntry[]} */
@@ -1001,8 +1003,10 @@ export class RootView {
     return add;
   }
 
-  close() {
-    const leaf = this.activeLeaf;
+  // Close the pane that shows `view`, or the focused pane. A view no longer in the tree closes nothing.
+  /** @param {ViewLike} [view] @returns {void} */
+  close(view) {
+    const leaf = view ? (this.root_node?.leaves().find((held) => leafView(held) === view) ?? null) : this.activeLeaf;
     const p = leaf && leaf.parent;
     if (!p) return;
     if (p.shape.type !== "split") throw new Error("a leaf parent must be a split");
@@ -1136,19 +1140,29 @@ export class RootView {
     return layer;
   }
 
-  /** @param {Overlay | undefined} layer @returns {void} */
-  popOverlay(layer) {
-    if (layer) {
-      const i = this.overlays.indexOf(layer);
-      if (i >= 0) {
-        this.overlays.splice(i, 1);
-        releaseView(layer, this);
-      }
-    } else {
-      const removed = this.overlays.pop();
-      if (removed) releaseView(removed, this);
+  // Run `onClose` once when `layer` leaves the stack, by any pop. A later call replaces it, so the newest owner answers.
+  /** @param {Overlay} layer @param {() => void} onClose @returns {void} */
+  closeWith(layer, onClose) {
+    this._closers.set(layer, onClose);
+  }
+
+  // Take `layer` off the stack, or the top layer, and run its close function. With `only`, pop only while `only` is that function.
+  /** @param {Overlay | undefined} layer @param {() => void} [only] @returns {void} */
+  popOverlay(layer, only) {
+    const target = layer ?? this.overlays[this.overlays.length - 1];
+    if (!target) return;
+    const closer = this._closers.get(target);
+    if (only && closer !== only) return;
+    const i = this.overlays.indexOf(target);
+    if (i >= 0) {
+      this.overlays.splice(i, 1);
+      releaseView(target, this);
     }
     this.invalidate();
+    // The close function leaves before it runs, so a pop inside it finds nothing to run again.
+    if (!closer) return;
+    this._closers.delete(target);
+    closer();
   }
 
   // Ask for a frame. The host paints once after the queue drains, so a burst costs one paint.

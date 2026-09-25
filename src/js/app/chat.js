@@ -438,7 +438,7 @@ export const chatPlugin = {
         view.session.leave(view);
       });
 
-      ctx.tui.command(null, {
+      ctx.tui.command.add(null, {
         "model:pick": (/** @type {string | undefined} */ query) => openModelPicker(ctx, query),
         "context:reload": () => {
           const id = current?.session.sessionId;

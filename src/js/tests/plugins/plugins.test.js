@@ -5,7 +5,7 @@ import { tui } from "yuke:internal/tui";
 
 // A plugin registers on use, reverts on dispose, and comes back on reload.
 {
-  const p = { name: "demo9", apply(ctx) { const t = tui.bindTo(ctx); t.command(null, { act: () => {} }); } };
+  const p = { name: "demo9", apply(ctx) { const t = tui.bindTo(ctx); t.command.add(null, { act: () => {} }); } };
   plugins.use(p);
   const present = !!command.map["demo9:act"];
   plugins.dispose("demo9");
@@ -30,7 +30,7 @@ import { tui } from "yuke:internal/tui";
 
 // A throwing apply reverts what it already registered and leaves no live plugin.
 {
-  const bad = { name: "bad", apply(ctx) { const t = tui.bindTo(ctx); t.command(null, { act: () => {} }); throw new Error("nope"); } };
+  const bad = { name: "bad", apply(ctx) { const t = tui.bindTo(ctx); t.command.add(null, { act: () => {} }); throw new Error("nope"); } };
   let threw = false;
   try { plugins.use(bad); } catch (e) { threw = true; }
   check("plugin-partial-revert", threw && !command.map["bad:act"] && !plugins.has("bad"));
@@ -39,7 +39,7 @@ import { tui } from "yuke:internal/tui";
 // A plugin is `{ name, apply }` and nothing else, so no shape can register under a guessed name.
 {
   const rejects = (p) => { try { plugins.use(p); return false; } catch (e) { return e instanceof TypeError; } };
-  const fn = (ctx) => { tui.bindTo(ctx).command(null, { act: () => {} }); };
+  const fn = (ctx) => { tui.bindTo(ctx).command.add(null, { act: () => {} }); };
   fn.pluginName = "sneaky";
   check("plugin-rejects-function", rejects(fn));
   // This one survives a misapplied call, so only the shape test can turn it away.

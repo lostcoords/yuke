@@ -82,16 +82,16 @@ plugins.use({
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       // Vim calls this showcmd: the keys typed so far, while a chord or an operator waits.
-      ctx.tui.status({ side: "right", order: -1, render: () => keymap.pendingLabel() });
+      ctx.tui.status.add({ side: "right", order: -1, render: () => keymap.pendingLabel() });
 
       // The interrupt command is available only with a session open.
-      ctx.tui.command(() => currentChat()?.session.sessionId != null, {
+      ctx.tui.command.add(() => currentChat()?.session.sessionId != null, {
         "session:interrupt": () => withChat(c => c.session.interrupt()),
       }, {
         "session:interrupt": { title: "Interrupt", description: "stop the run", slash: "interrupt" },
       });
 
-      ctx.tui.command(null, {
+      ctx.tui.command.add(null, {
         "ui:sessions": () => openSessionFinder(ctx),
         "focus:left": () => root.focusDir("h"),
         "focus:down": () => root.focusDir("j"),
@@ -132,9 +132,9 @@ plugins.use({
       /** @type {Record<string, () => boolean>} */
       const navKeys = { "g g": nav((t) => t.navEdge(-1)) };
       for (const stroke in NAV_KEYS) navKeys[stroke] = nav(/** @type {(t: NavTarget) => void} */ (NAV_KEYS[stroke]));
-      ctx.tui.keymap(navKeys);
+      ctx.tui.keymap.add(navKeys);
 
-      ctx.tui.keymap({
+      ctx.tui.keymap.add({
         "ctrl+n": "chat:new",
         "ctrl+v": "chat:paste-image",
         "ctrl+f": "ui:sessions",

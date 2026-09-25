@@ -93,7 +93,7 @@ export const cachePlugin = {
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      ctx.tui.command(null, {
+      ctx.tui.command.add(null, {
         "cache:show": async () => {
           const entry = chatEntry();
           // A chat with no session has read nothing, so the window would state zeros and explain none of them.

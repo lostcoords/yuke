@@ -106,9 +106,9 @@ export function contextUsage(cfg = {}) {
     const custom = typeof cfg.bar === "string" ? Array.from(cfg.bar) : null;
     const glyphs = custom && custom.length === 2 ? /** @type {[string, string]} */ ([custom[0], custom[1]]) : BAR_GLYPHS;
     ctx.inject(["tui"], (ctx) => {
-      ctx.tui.status({ side: "right", order: 20, render: () => contextLine(reading(), glyphs) });
+      ctx.tui.status.add({ side: "right", order: 20, render: () => contextLine(reading(), glyphs) });
 
-      ctx.tui.command(null, {
+      ctx.tui.command.add(null, {
         "context:show": async () => {
           const current = reading();
           const entry = chatEntry();

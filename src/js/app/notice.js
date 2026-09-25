@@ -49,7 +49,7 @@ export const noticePlugin = {
         if (latest) notice.show(latest.message);
       });
 
-      ctx.tui.status({ side: "left", order: 0, render: () => notice.text });
+      ctx.tui.status.add({ side: "left", order: 0, render: () => notice.text });
       });
 },
 };
