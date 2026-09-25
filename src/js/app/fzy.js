@@ -23,16 +23,14 @@ function isLower(c) {
   return c !== c.toUpperCase() && c === c.toLowerCase();
 }
 
-/** @param {string} c @returns {boolean} */
-function isWordChar(c) {
-  return /[\p{L}\p{N}]/u.test(c);
-}
+// QuickJS builds a new RegExp each time a literal runs, so the per-char test holds one.
+const WORD_CHAR = /[\p{L}\p{N}]/u;
 
 // The bonus for a char given the char before it. fzy rewards a boundary only for a word char.
 /** @param {string} prev @param {string} cur @returns {number} */
 function charBonus(prev, cur) {
   if (isLower(prev) && isUpper(cur)) return MATCH_CAPITAL;
-  if (!isWordChar(cur)) return 0;
+  if (!WORD_CHAR.test(cur)) return 0;
   if (prev === "/") return MATCH_SLASH;
   if (prev === "-" || prev === "_" || prev === " ") return MATCH_WORD;
   if (prev === ".") return MATCH_DOT;

@@ -44,7 +44,7 @@ export function inputSourceLabel(source) {
   if (!source) return "";
   // The table keys each label by its source type, so the label reads the source it names.
   const label = /** @type {((source: Wire.InputSource) => string) | undefined} */ (sources[source.type]);
-  return label ? label(source) : source.type.replace(/_/g, " ");
+  return label ? label(source) : source.type.replaceAll("_", " ");
 }
 
 // Rendered messages beyond this count leave the cache oldest first; the viewport and live anchors never leave.
@@ -379,9 +379,12 @@ function toolHeaderRow(part, expanded, width, label, tree) {
   };
 }
 
+// QuickJS builds a new RegExp each time a literal runs, so the per-row fold holds one.
+const SPACE_RUN = /\s+/g;
+
 /** @param {string} value @returns {string} */
 function compactField(value) {
-  return String(value || "").replace(/\s+/g, " ").trim();
+  return String(value || "").replace(SPACE_RUN, " ").trim();
 }
 
 // A collapsed tool row shows only these fields, so a delta that leaves them alone changes nothing on screen.
