@@ -2812,7 +2812,7 @@ export interface KeymapRegistry {
   prefixes: Record<string, string[]>;
   pending: Pending | null;
   add: (bindings: Record<string, KeyBinding | KeyBinding[]>, context?: string, options?: { pending?: "chord" | "operator" }) => () => void;
-  _rebuildPrefixes: () => void;
+  _indexPrefix: (key: string, present: boolean) => void;
   _armKind: (prefix: string) => "chord" | "operator" | null;
   owns: () => boolean;
   onKey: (event: Extract<HostEvent, { type: "key" }>) => boolean;

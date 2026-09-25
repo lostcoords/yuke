@@ -11,6 +11,29 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   check("keymap-dispose", hadPrefix && !keymap.map["ctrl+x g"] && !keymap.prefixes["ctrl+x"]);
 }
 
+// The prefix index follows every add and dispose: a sequence stays listed while any binding holds it, in map order.
+{
+  const index = () => JSON.stringify(Object.entries(keymap.prefixes));
+  const rebuilt = () => {
+    const out = Object.create(null);
+    for (const key in keymap.map) {
+      const sp = key.indexOf(" ");
+      if (sp > 0) (out[key.slice(0, sp)] ||= []).push(key);
+    }
+    return JSON.stringify(Object.entries(out));
+  };
+  const a = keymap.add({ "f7 a": () => true, "f7 b": () => true });
+  const b = keymap.add({ "f7  a": () => true, "f7 c": () => true, f7: () => true });
+  a();
+  const shared = keymap.prefixes["f7"].join(",") === "f7 a,f7 c" && index() === rebuilt();
+  const c = keymap.add({ "f7 b": () => true });
+  const reordered = keymap.prefixes["f7"].join(",") === "f7 a,f7 c,f7 b" && index() === rebuilt();
+  keymap.onKey({ type: "key", code: "f7", char: "", shifted: "", text: "", mods: 0 });
+  b();
+  c();
+  check("prefix-index", shared && reordered && !keymap.prefixes["f7"] && index() === rebuilt() && keymap.pending === null);
+}
+
 // A later binding wins, and a binding that declines falls through to the one below.
 {
   const ran = [];

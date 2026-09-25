@@ -449,18 +449,24 @@ export const keymap = {
       const fresh = list.map((fn) => ({ fn, context: expr, order: ++this._seq, pending: kind }));
       const prev = this.map[key];
       this.map[key] = prev ? fresh.concat(prev) : fresh;
+      if (!prev) this._indexPrefix(key, true);
       for (const e of fresh) added.push([key, e]);
     }
-    this._rebuildPrefixes();
     return once(() => {
       for (const [key, e] of added) {
         const cur = this.map[key];
         if (!cur) continue;
         const i = cur.indexOf(e);
         if (i >= 0) cur.splice(i, 1);
-        if (cur.length === 0) delete this.map[key];
+        if (cur.length > 0) continue;
+        delete this.map[key];
+        this._indexPrefix(key, false);
       }
-      this._rebuildPrefixes();
+      const p = this.pending;
+      if (p && !this.prefixes[p.stroke]) {
+        this.pending = null;
+        root.syncTick();
+      }
     });
   },
 
@@ -492,20 +498,20 @@ export const keymap = {
     return { stroke: key, winner: list.length ? /** @type {{ binding: KeyBinding, context: string }} */ (list[0]) : null, shadowed: list.slice(1) };
   },
 
-  _rebuildPrefixes() {
-    this.prefixes = Object.create(null);
-    for (const key in this.map) {
-      const sp = key.indexOf(" ");
-      if (sp <= 0) continue;
-      const head = key.slice(0, sp);
-      const keys = this.prefixes[head] || (this.prefixes[head] = []);
+  // Enter or drop a sequence under its first stroke. Each sequence in `map` is listed once, in the order `map` holds it.
+  /** @param {string} key @param {boolean} present @returns {void} */
+  _indexPrefix(key, present) {
+    const sp = key.indexOf(" ");
+    if (sp <= 0) return;
+    const head = key.slice(0, sp);
+    const keys = this.prefixes[head] || (this.prefixes[head] = []);
+    if (present) {
       keys.push(key);
+      return;
     }
-    const p = this.pending;
-    if (p && !this.prefixes[p.stroke]) {
-      this.pending = null;
-      root.syncTick();
-    }
+    // A sequence leaves `map` once, so its entry is still here.
+    keys.splice(keys.indexOf(key), 1);
+    if (keys.length === 0) delete this.prefixes[head];
   },
 
   // Return how a sequence under `prefix` waits, or null when no active context matches.
