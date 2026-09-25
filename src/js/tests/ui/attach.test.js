@@ -63,7 +63,7 @@ check("txt-stays-text", globalThis.plain.text === "/tmp/notes.txt" && globalThis
 // A large paste that is no path still collapses to its own label.
 globalThis.big = make();
 globalThis.big.onKey(paste("one\ntwo\nthree\nfour"));
-check("paste-still-collapses", globalThis.big.spans.length === 1 && globalThis.big._projection().text === "[Pasted text #1 +4 lines]");
+check("paste-still-collapses", globalThis.big.spans.length === 1 && globalThis.big.projection().text === "[Pasted text #1 +4 lines]");
 
 globalThis.refused = make();
 globalThis.refused.onKey(paste("/tmp/huge.png"));

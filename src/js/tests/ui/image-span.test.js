@@ -15,14 +15,14 @@ const make = (text, spans) => {
 
 // The label draws instead of the path, and the type comes from the mime.
 const two = make("look at /a.png and /b.png please", [{ start: 8, end: 14, blob: png }, { start: 19, end: 25, blob: jpg }]);
-check("labels", two._projection().text === "look at [PNG #1] and [JPEG #2] please");
+check("labels", two.projection().text === "look at [PNG #1] and [JPEG #2] please");
 
 // The number is derived from position, so a delete renumbers the rest.
 const del = make("/a.png /b.png", [{ start: 0, end: 6, blob: png }, { start: 7, end: 13, blob: jpg }]);
-check("two-labels", del._projection().text === "[PNG #1] [JPEG #2]");
+check("two-labels", del.projection().text === "[PNG #1] [JPEG #2]");
 del.input.caret = 6;
 del.onKey(key("backspace"));
-check("renumbered", del.spans.length === 1 && del._projection().text === " [JPEG #1]");
+check("renumbered", del.spans.length === 1 && del.projection().text === " [JPEG #1]");
 
 // Images at the end give one text part and the images after it.
 const tail = make("here /a.png /b.png", [{ start: 5, end: 11, blob: png }, { start: 12, end: 18, blob: jpg }]);
@@ -59,7 +59,7 @@ const snap = snapped.snapshot();
 snapped.text = "";
 check("wiped", snapped.spans.length === 0);
 snapped.restore(snap);
-check("restored", snapped.text === "look at /a.png" && snapped._projection().text === "look at [PNG #1]");
+check("restored", snapped.text === "look at /a.png" && snapped.projection().text === "look at [PNG #1]");
 
 // A restore lands above what the user typed since, and the live spans move past it.
 const since = make("/a.png", [{ start: 0, end: 6, blob: png }]);
@@ -68,7 +68,7 @@ since.text = "";
 since.text = "typed since";
 since.restore(held);
 check("restore-prepends", since.text === "/a.png\ntyped since");
-check("restore-label", since._projection().text === "[PNG #1]\ntyped since");
+check("restore-label", since.projection().text === "[PNG #1]\ntyped since");
 
 // A snapshot is a copy, so a later edit never reaches back into it.
 const copy = make("/a.png", [{ start: 0, end: 6, blob: png }]);

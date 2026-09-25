@@ -9,16 +9,16 @@ const v = new ChatView({});
 root.setRoot(Node.leaf(v));
 root.focusView(v);
 
-const own = v.composer._prompt();
+const own = v.composer.promptText();
 // The layer starts in normal mode, so the glyph changes as soon as it loads.
 const off = plugins.use(composerVim);
-check("normal-glyph", v.composer._prompt() === "▪ " && own !== "▪ ");
+check("normal-glyph", v.composer.promptText() === "▪ " && own !== "▪ ");
 setComposerMode(v.composer, "insert");
-check("insert-keeps-own", v.composer._prompt() === own);
+check("insert-keeps-own", v.composer.promptText() === own);
 setComposerMode(v.composer, "normal");
-check("normal-again", v.composer._prompt() === "▪ ");
+check("normal-again", v.composer.promptText() === "▪ ");
 
 // The unload removes the provider, so normal mode no longer changes the glyph.
 off.dispose();
 setComposerMode(v.composer, "normal");
-check("unload-restores", v.composer._prompt() === own);
+check("unload-restores", v.composer.promptText() === own);

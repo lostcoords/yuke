@@ -6,9 +6,9 @@ const rect = { x: 1, y: 1, w: 5, h: 2 };
 const measured = t.measure(5);
 t.layout({ ...rect, w: 6 });
 t.layout(rect);
-const visible = t._layoutCache;
+const visible = t.layoutCache;
 t.measure(5);
-const independent = visible === t._layoutCache;
+const independent = visible === t.layoutCache;
 globalThis.repeat = () => {
   t.setText("αβ gamma delta"); t.measure(5); t.layout(rect);
   term.beginFrame(); t.draw(true); t.draw(false); term.endFrame();

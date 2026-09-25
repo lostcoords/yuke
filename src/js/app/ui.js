@@ -129,17 +129,17 @@ export class List {
 
     this.drawCursor = opts.drawCursor !== false; // an unfocused list can hide its cursor
     /** @type {Rect | null} */
-    this._rect = null; // the last drawn rect, for the click hit test
+    this.drawnRect = null; // the last drawn rect, for the click hit test
     /** @type {ListKey | null} */
     this.selectedKey = null;
     this.scroll = 0; // first visible item index
-    this._page = PAGE_FALLBACK; // last visible item count, for page moves
+    this.page = PAGE_FALLBACK; // last visible item count, for page moves
     this.setItems(opts.items || []);
   }
 
   // Visible item count for a pixel height.
   /** @param {number} h @returns {number} */
-  _visible(h) {
+  #visible(h) {
     return Math.max(1, Math.floor(h / this.itemHeight));
   }
 
@@ -149,10 +149,10 @@ export class List {
     this.items = items || [];
     // A selection that left the list moves to the first selectable item, found without an index list.
     if (this.selectedIndex() < 0) {
-      const first = this._stepSelectable(-1, 1);
+      const first = this.#stepSelectable(-1, 1);
       this.selectedKey = first < 0 ? null : this.key(/** @type {T} */ (this.items[first]));
     }
-    this._clampScroll(this._page);
+    this.#clampScroll(this.page);
   }
 
   // Put the cursor on the item that `k` names. Return false when the list holds no such item.
@@ -185,20 +185,20 @@ export class List {
 
   /** @param {number} h @returns {void} */
   ensureVisible(h) {
-    const vis = this._visible(h);
-    this._page = vis;
-    this._scrollToVisible(vis);
+    const vis = this.#visible(h);
+    this.page = vis;
+    this.#scrollToVisible(vis);
   }
 
   /** @param {number} delta @returns {void} */
   navBy(delta) {
     const dir = delta < 0 ? -1 : 1;
     let index = this.selectedIndex();
-    if (index < 0) index = this._stepSelectable(-1, 1);
+    if (index < 0) index = this.#stepSelectable(-1, 1);
     if (index < 0) return;
     // Walk the items from the selection, so a move allocates no index list.
     for (let left = Math.abs(delta); left > 0; left--) {
-      const next = this._stepSelectable(index, dir);
+      const next = this.#stepSelectable(index, dir);
       if (next < 0) break;
       index = next;
     }
@@ -208,7 +208,7 @@ export class List {
   }
 
   /** @param {number} index @param {number} dir @returns {number} */
-  _stepSelectable(index, dir) {
+  #stepSelectable(index, dir) {
     for (let i = index + dir; i >= 0 && i < this.items.length; i += dir) {
       if (this.isSelectable(/** @type {T} */ (this.items[i]))) return i;
     }
@@ -221,36 +221,36 @@ export class List {
   }
 
   /** @param {number} vis @returns {void} */
-  _scrollToVisible(vis) {
+  #scrollToVisible(vis) {
     const i = this.selectedIndex();
     if (i >= 0 && vis > 0) {
       if (i < this.scroll) this.scroll = i;
       else if (i >= this.scroll + vis) this.scroll = i - vis + 1;
     }
-    this._clampScroll(vis);
+    this.#clampScroll(vis);
   }
 
   /** @param {number} vis @returns {void} */
-  _clampScroll(vis) {
+  #clampScroll(vis) {
     const max = Math.max(0, this.items.length - Math.max(1, vis));
     this.scroll = Math.min(Math.max(this.scroll, 0), max);
   }
 
   /** @param {number} dir @returns {void} */
   navPage(dir) {
-    this.navBy(dir * this._page);
+    this.navBy(dir * this.page);
   }
 
   // Forget the drawn rect when a container draws something else there, so a click cannot hit a row that left.
   /** @returns {void} */
   clearRect() {
-    this._rect = null;
+    this.drawnRect = null;
   }
 
   // A wheel step moves the cursor, because `draw` always scrolls the selection back into view.
   /** @param {MouseEvent} ev @returns {boolean} */
   onMouse(ev) {
-    const r = this._rect;
+    const r = this.drawnRect;
     if (!r || ev.event !== "press") return false;
     if (isWheel(ev.button)) {
       // `scrollLines` counts screen lines, so a tall row moves fewer items per step.
@@ -265,7 +265,7 @@ export class List {
     if (!contains(r, ev.col, ev.row)) return false;
     // `draw` paints `_visible(h)` rows, so a short pane leaves the last row of the rect empty.
     const off = Math.floor((ev.row - r.y) / this.itemHeight);
-    if (off >= this._visible(r.h)) return false;
+    if (off >= this.#visible(r.h)) return false;
     const i = this.scroll + off;
     if (i < 0 || i >= this.items.length) return false;
     const item = /** @type {T} */ (this.items[i]);
@@ -280,10 +280,10 @@ export class List {
   draw(rect) {
     const { x, y, w, h } = rect;
     if (w <= 0 || h <= 0) return this.clearRect();
-    this._rect = rect;
-    const vis = this._visible(h);
-    this._page = vis;
-    this._scrollToVisible(vis);
+    this.drawnRect = rect;
+    const vis = this.#visible(h);
+    this.page = vis;
+    this.#scrollToVisible(vis);
 
     for (let row = 0; row < vis; row++) {
       const i = this.scroll + row;
@@ -302,13 +302,13 @@ export class List {
       const lines = cell.lines || [cell];
       for (let ln = 0; ln < drawH && ln < lines.length; ln++) {
         const line = cell.lines ? normalizeCell(lines[ln]) : cell;
-        this._drawLine(x, sy + ln, w, line, isSel);
+        this.#drawLine(x, sy + ln, w, line, isSel);
       }
     }
   }
 
   /** @param {number} x @param {number} sy @param {number} w @param {ListItem} spec @param {boolean} isSel @returns {void} */
-  _drawLine(x, sy, w, spec, isSel) {
+  #drawLine(x, sy, w, spec, isSel) {
     let avail = w;
     if (spec.right) {
       const fullW = term.measure(spec.right);
@@ -347,10 +347,10 @@ export class Composer {
     this.input = new TextInput({
       // A plugin follows the text through the bus, so the slash menu needs no hook on each pane.
       onChange: () => {
-        this._invalidate();
+        this.#invalidate();
         events.emit("composer.changed", this);
       },
-      onEdit: (from, to, ins) => this._shiftSpans(from, to, ins),
+      onEdit: (from, to, ins) => this.#shiftSpans(from, to, ins),
     });
     this.prompt = opts.prompt != null ? opts.prompt : "› ";
     this.placeholder = opts.placeholder || "";
@@ -365,23 +365,23 @@ export class Composer {
     /** @type {ComposerSpan[]} */
     this.spans = [];
     /** @type {WrapRow[] | null} */
-    this._rows = null;
-    this._rowsW = -1;
+    this.rows = null;
+    this.rowsW = -1;
     /** @type {Projection | null} */
-    this._proj = null;
+    this.proj = null;
   }
 
   // Drop the projection and the row cache after an edit, so both rebuild once per edit.
   /** @returns {void} */
-  _invalidate() {
-    this._rows = null;
-    this._proj = null;
+  #invalidate() {
+    this.rows = null;
+    this.proj = null;
     this.goalCol = null;
   }
 
   // Move a span the edit did not touch. An edit inside a span drops the span and shows the paste.
   /** @param {number} from @param {number} to @param {number} ins @returns {void} */
-  _shiftSpans(from, to, ins) {
+  #shiftSpans(from, to, ins) {
     if (this.spans.length === 0) return;
     const delta = ins - (to - from);
     this.spans = this.spans.filter((sp) => {
@@ -393,17 +393,17 @@ export class Composer {
       }
       return false;
     });
-    this._invalidate();
+    this.#invalidate();
   }
 
   // The text as the screen shows it: each collapsed span becomes its label.
   /** @returns {Projection} */
-  _projection() {
-    if (this._proj) return this._proj;
+  projection() {
+    if (this.proj) return this.proj;
     const s = this.input.text;
     if (this.spans.length === 0) {
-      this._proj = { text: s, parts: [] };
-      return this._proj;
+      this.proj = { text: s, parts: [] };
+      return this.proj;
     }
     const spans = this.spans.filter((sp) => sp.end > sp.start && sp.end <= s.length).sort((a, b) => a.start - b.start);
     if (spans.length !== this.spans.length) this.spans = spans;
@@ -423,23 +423,23 @@ export class Composer {
       out += label;
       at = sp.end;
     }
-    this._proj = { text: out + s.slice(at), parts };
-    return this._proj;
+    this.proj = { text: out + s.slice(at), parts };
+    return this.proj;
   }
 
   // The caret never rests inside a span, so the map adds the delta of every label before it.
   /** @param {number} caret @returns {number} */
-  _toDisplay(caret) {
+  #toDisplay(caret) {
     let d = caret;
-    for (const p of this._projection().parts) if (caret >= p.span.end) d += p.delta;
+    for (const p of this.projection().parts) if (caret >= p.span.end) d += p.delta;
     return d;
   }
 
   // Map back, and push a caret that landed inside a label to its nearer edge.
   /** @param {number} disp @returns {number} */
-  _toText(disp) {
+  #toText(disp) {
     let t = disp;
-    for (const p of this._projection().parts) {
+    for (const p of this.projection().parts) {
       if (disp > p.start && disp < p.end) return disp - p.start < p.end - disp ? p.span.start : p.span.end;
       if (disp >= p.end) t -= p.delta;
     }
@@ -447,32 +447,32 @@ export class Composer {
   }
 
   /** @param {number} caret @returns {ComposerSpan | null} */
-  _spanEndingAt(caret) {
+  #spanEndingAt(caret) {
     return this.spans.find((sp) => sp.end === caret) || null;
   }
 
   /** @param {number} caret @returns {ComposerSpan | null} */
-  _spanStartingAt(caret) {
+  #spanStartingAt(caret) {
     return this.spans.find((sp) => sp.start === caret) || null;
   }
 
   /** @returns {string} */
-  _prompt() {
+  promptText() {
     const supplied = slot.get(this, "prompt");
     return typeof supplied === "string" ? supplied : this.prompt;
   }
 
   /** @param {number} w @returns {number} */
-  _textWidth(w) {
-    return Math.max(1, w - term.measure(this._prompt()));
+  #textWidth(w) {
+    return Math.max(1, w - term.measure(this.promptText()));
   }
 
   /** @param {number} width @returns {{ start: number, end: number, soft: boolean }[]} */
-  _rowsAt(width) {
-    if (this._rows && this._rowsW === width) return this._rows;
-    this._rowsW = width;
-    this._rows = wrapPreview(this._projection().text, width, 0).rows;
-    return this._rows;
+  #rowsAt(width) {
+    if (this.rows && this.rowsW === width) return this.rows;
+    this.rowsW = width;
+    this.rows = wrapPreview(this.projection().text, width, 0).rows;
+    return this.rows;
   }
 
   // The rows the text needs. The caller caps this against the space it has.
@@ -480,7 +480,7 @@ export class Composer {
   height(w) {
     if (w <= 0) return 0;
     if (this.input.text === "") return 1;
-    return Math.min(this.maxRows, this._rowsAt(this._textWidth(w)).length);
+    return Math.min(this.maxRows, this.#rowsAt(this.#textWidth(w)).length);
   }
 
   get name() {
@@ -508,7 +508,7 @@ export class Composer {
     const out = [];
     let at = 0;
     // The projection already dropped a stale span and sorted the rest, so this walk reads the same order the screen does.
-    for (const part of this._projection().parts) {
+    for (const part of this.projection().parts) {
       const sp = part.span;
       if (!("blob" in sp)) continue;
       pushText(out, s.slice(at, sp.start));
@@ -543,7 +543,7 @@ export class Composer {
     this.input.replace(0, 0, this.input.text === "" ? snap.text : snap.text + "\n");
     this.spans.push(...snap.spans.map((sp) => ({ ...sp })));
     this.input.caret = this.input.text.length;
-    this._invalidate();
+    this.#invalidate();
   }
 
   // Submit the content and not the projection, so a lost span can never send a label.
@@ -559,7 +559,7 @@ export class Composer {
 
   /** @param {HostEvent} ev @returns {boolean} */
   onKey(ev) {
-    if (ev.type === "paste") return this._paste(ev.text || "");
+    if (ev.type === "paste") return this.#paste(ev.text || "");
     const s = strokeOf(/** @type {Extract<HostEvent, { type: "key" }>} */ (ev));
     // The composer owns the vertical keys, so a wrapped line never scrolls the transcript.
     if (s === "up") return this.moveRow(-1);
@@ -577,14 +577,14 @@ export class Composer {
     }
     // A collapsed span deletes and steps as one unit. `ctrl+w` must not eat a word inside it.
     if (s === "backspace" || s === "ctrl+w" || s === "delete") {
-      const sp = s === "delete" ? this._spanStartingAt(this.input.caret) : this._spanEndingAt(this.input.caret);
+      const sp = s === "delete" ? this.#spanStartingAt(this.input.caret) : this.#spanEndingAt(this.input.caret);
       if (sp) {
         this.input.replace(sp.start, sp.end, "");
         return true;
       }
     }
     if (s === "left" || s === "right") {
-      const sp = s === "left" ? this._spanEndingAt(this.input.caret) : this._spanStartingAt(this.input.caret);
+      const sp = s === "left" ? this.#spanEndingAt(this.input.caret) : this.#spanStartingAt(this.input.caret);
       if (sp) {
         this.input.caret = s === "left" ? sp.start : sp.end;
         return true;
@@ -595,13 +595,13 @@ export class Composer {
 
   // Collapse a large paste to a label. The same paste beside its label expands it again.
   /** @param {string} t @returns {boolean} */
-  _paste(t) {
+  #paste(t) {
     if (t === "") return true;
-    const sides = [this._spanEndingAt(this.input.caret), this._spanStartingAt(this.input.caret)];
+    const sides = [this.#spanEndingAt(this.input.caret), this.#spanStartingAt(this.input.caret)];
     const near = sides.find((sp) => sp && this.input.text.slice(sp.start, sp.end) === t);
     if (near) {
       this.spans = this.spans.filter((sp) => sp !== near);
-      this._invalidate();
+      this.#invalidate();
       return true;
     }
     const from = this.input.caret;
@@ -610,7 +610,7 @@ export class Composer {
     if (this.onPaste && this.onPaste(t, from)) return true;
     if (t.length > COMPOSER_PASTE_CHARS || lineCount(t) >= COMPOSER_PASTE_LINES) {
       this.spans.push({ start: from, end: from + t.length });
-      this._invalidate();
+      this.#invalidate();
     }
     return true;
   }
@@ -621,21 +621,21 @@ export class Composer {
     const end = from + text.length;
     if (text === "" || this.input.text.slice(from, end) !== text) return false;
     this.spans.push({ start: from, end, blob });
-    this._invalidate();
+    this.#invalidate();
     return true;
   }
 
   // Move the caret one drawn row. The goal column survives a short row.
   /** @param {number} delta @returns {boolean} */
   moveRow(delta) {
-    const rows = this._rowsAt(this._textWidth(this.rect.w));
-    const proj = this._projection().text;
-    const here = caretRowCol(proj, rows, this._toDisplay(this.input.caret));
+    const rows = this.#rowsAt(this.#textWidth(this.rect.w));
+    const proj = this.projection().text;
+    const here = caretRowCol(proj, rows, this.#toDisplay(this.input.caret));
     const col = this.goalCol === null ? here.col : this.goalCol;
     const next = here.row + delta;
     if (next >= 0 && next < rows.length) {
       const row = /** @type {WrapRow} */ (rows[next]);
-      this.input.caret = this._toText(caretAtCol(proj, row, col));
+      this.input.caret = this.#toText(caretAtCol(proj, row, col));
       this.goalCol = col;
     }
     return true;
@@ -648,21 +648,21 @@ export class Composer {
     fill(x, y, w, h, "UIComposer");
     if (this.input.text === "") {
       this.scroll = 0;
-      text(x, y, clip(this._prompt() + this.placeholder, w), "UIDim");
+      text(x, y, clip(this.promptText() + this.placeholder, w), "UIDim");
       return;
     }
 
-    const tw = this._textWidth(w);
-    const rows = this._rowsAt(tw);
-    const proj = this._projection().text;
+    const tw = this.#textWidth(w);
+    const rows = this.#rowsAt(tw);
+    const proj = this.projection().text;
     // Scroll the smallest amount that keeps the caret row on the screen.
-    const { row: caretRow } = caretRowCol(proj, rows, this._toDisplay(this.input.caret));
+    const { row: caretRow } = caretRowCol(proj, rows, this.#toDisplay(this.input.caret));
     this.scroll = Math.min(this.scroll, Math.max(0, rows.length - h));
     if (caretRow < this.scroll) this.scroll = caretRow;
     else if (caretRow >= this.scroll + h) this.scroll = caretRow - h + 1;
     const pw = w - tw;
     // The prompt marks the first row only. A later row aligns under it.
-    if (this.scroll === 0) text(x, y, this._prompt(), "UIComposer");
+    if (this.scroll === 0) text(x, y, this.promptText(), "UIComposer");
     for (let i = 0; i < h && this.scroll + i < rows.length; i++) {
       const r = /** @type {WrapRow} */ (rows[this.scroll + i]);
       text(x + pw, y + i, clip(proj.slice(r.start, r.end), tw, false), "UIComposer");
@@ -673,9 +673,9 @@ export class Composer {
   cursor() {
     const { x, y, w, h } = this.rect;
     if (w <= 0 || h <= 0) return null;
-    const tw = this._textWidth(w);
-    const rows = this._rowsAt(tw);
-    const { row, col } = caretRowCol(this._projection().text, rows, this._toDisplay(this.input.caret));
+    const tw = this.#textWidth(w);
+    const rows = this.#rowsAt(tw);
+    const { row, col } = caretRowCol(this.projection().text, rows, this.#toDisplay(this.input.caret));
     const vy = row - this.scroll;
     if (vy < 0 || vy >= h) return { x, y, visible: false };
     // A space hangs past the right edge, so the caret column clamps to the last cell.
@@ -690,9 +690,9 @@ export class Text {
     this.text = opts.text || "";
     this.group = opts.group || "Normal";
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    this._measurement = { text: "", width: 0, size: { w: 0, h: 0 }, rows: /** @type {WrapRow[]} */ ([]), widths: /** @type {number[]} */ ([]) };
+    this.measurement = { text: "", width: 0, size: { w: 0, h: 0 }, rows: /** @type {WrapRow[]} */ ([]), widths: /** @type {number[]} */ ([]) };
     /** @type {{ text: string, width: number, height: number, rows: string[] }} */
-    this._layoutCache = { text: "", width: 0, height: 0, rows: [] };
+    this.layoutCache = { text: "", width: 0, height: 0, rows: [] };
   }
 
   /** @param {string} value @returns {void} */
@@ -706,26 +706,26 @@ export class Text {
   /** @param {number} width @returns {{ w: number, h: number }} */
   measure(width) {
     width = Math.max(0, Math.floor(width));
-    const cache = this._measurement;
+    const cache = this.measurement;
     if (cache.width === width && cache.text === this.text) return cache.size;
     const rows = width > 0 ? wrapPreview(this.text, width, 0).rows : [];
     const widths = rows.map((row) => term.measure(this.text.slice(row.start, row.end)));
     let w = 0;
     for (const rw of widths) w = Math.max(w, rw);
     const size = { w: Math.min(width, w), h: rows.length };
-    this._measurement = { text: this.text, width, size, rows, widths };
+    this.measurement = { text: this.text, width, size, rows, widths };
     return size;
   }
 
   /** @param {Rect} rect @returns {void} */
   layout(rect) {
     this.rect = rect;
-    const cache = this._layoutCache;
+    const cache = this.layoutCache;
     if (cache.text === this.text && cache.width === rect.w && cache.height === rect.h) return;
     // Reuse the measured rows at the same width. Measure the rows again when the width changes.
-    const m = this._measurement.text === this.text && this._measurement.width === rect.w ? this._measurement : null;
+    const m = this.measurement.text === this.text && this.measurement.width === rect.w ? this.measurement : null;
     const rows = rect.w > 0 && rect.h > 0 ? (m ? m.rows : wrapPreview(this.text, rect.w, 0).rows).slice(0, rect.h) : [];
-    this._layoutCache = { text: this.text, width: rect.w, height: rect.h, rows: rows.map((row, i) => {
+    this.layoutCache = { text: this.text, width: rect.w, height: rect.h, rows: rows.map((row, i) => {
       const line = this.text.slice(row.start, row.end);
       const lw = m ? /** @type {number} */ (m.widths[i]) : term.measure(line);
       return lw <= rect.w ? line : clip(line, rect.w, false, lw);
@@ -736,7 +736,7 @@ export class Text {
   draw(_focused = false) {
     const { x, y, w, h } = this.rect;
     if (w <= 0 || h <= 0) return;
-    const rows = this._layoutCache.rows;
+    const rows = this.layoutCache.rows;
     for (let i = 0; i < rows.length; i++) text(x, y + i, /** @type {string} */ (rows[i]), this.group);
   }
 }
@@ -808,7 +808,7 @@ export class Window {
   }
 
   /** @returns {BorderSet | null} */
-  _borderSet() {
+  #borderSet() {
     const b = this.border;
     if (b === "none" || b == null) return null;
     return typeof b === "object" ? b : borders[b] || borders.single;
@@ -816,17 +816,17 @@ export class Window {
 
   /** @param {number} width @returns {number} */
   contentWidth(width) {
-    return Math.max(0, width - (this._borderSet() ? 6 : 0));
+    return Math.max(0, width - (this.#borderSet() ? 6 : 0));
   }
 
   /** @param {number} rows @returns {number} */
   heightFor(rows) {
-    return rows + (this._borderSet() ? 4 : 0) + (this.opts.footer ? 1 : 0);
+    return rows + (this.#borderSet() ? 4 : 0) + (this.opts.footer ? 1 : 0);
   }
 
   // Resolve a cell count or a callback against a maximum available size.
   /** @param {Dimension | null | undefined} v @param {number} max @param {number} fallback @returns {number} */
-  _dim(v, max, fallback) {
+  #dim(v, max, fallback) {
     if (v == null) return fallback;
     const cells = typeof v === "function" ? v(max) : v;
     if (!Number.isSafeInteger(cells) || cells < 0) throw new TypeError("window dimension must be a non-negative integer");
@@ -839,14 +839,14 @@ export class Window {
     const Y = bounds.y;
     const W = bounds.w;
     const H = bounds.h;
-    const pad = this._borderSet() ? 2 : 0;
+    const pad = this.#borderSet() ? 2 : 0;
 
     const anchor = this.opts.anchor ? this.opts.anchor() : null;
     const available = anchor ? Math.max(0, Math.min(H, anchor.y - Y)) : H;
-    const w = Math.min(W, Math.max(pad + 1, this._dim(this.opts.width, anchor ? anchor.w : W, anchor ? anchor.w : Math.round(W * 0.6))));
+    const w = Math.min(W, Math.max(pad + 1, this.#dim(this.opts.width, anchor ? anchor.w : W, anchor ? anchor.w : Math.round(W * 0.6))));
     const contentHeight = this.opts.contentHeight;
-    const desired = this.opts.height != null ? this._dim(this.opts.height, available, 0)
-      : contentHeight != null ? this.heightFor(this._dim(contentHeight, Math.max(0, available - this.heightFor(0)), 0))
+    const desired = this.opts.height != null ? this.#dim(this.opts.height, available, 0)
+      : contentHeight != null ? this.heightFor(this.#dim(contentHeight, Math.max(0, available - this.heightFor(0)), 0))
       : Math.round(available * 0.6);
     const h = Math.min(available, Math.max(pad + 1, desired));
     const x = anchor ? Math.max(X, Math.min(anchor.x, X + W - w)) : X + Math.max(0, Math.floor((W - w) / 2));
@@ -863,11 +863,11 @@ export class Window {
     // A window with no room draws nothing, so a border never lands on the row above it.
     if (w <= 0 || h <= 0) return;
     fill(x, y, w, h, this.opts.panelGroup || "UIPanel");
-    const bs = this._borderSet();
-    if (bs) this._drawBorder(bs);
+    const bs = this.#borderSet();
+    if (bs) this.#drawBorder(bs);
     if (this.content) this.content.draw(_focused);
     const footerY = y + h - (bs ? 2 : 1);
-    if (footerY >= y + (bs ? 1 : 0)) this._drawLabel(this.opts.footer, this.opts.footer_pos, footerY, this.opts.footerGroup || "UIDim", this.inner.x, this.inner.w);
+    if (footerY >= y + (bs ? 1 : 0)) this.#drawLabel(this.opts.footer, this.opts.footer_pos, footerY, this.opts.footerGroup || "UIDim", this.inner.x, this.inner.w);
   }
 
   /** @returns {{ x: number, y: number, visible: boolean } | null} */
@@ -897,7 +897,7 @@ export class Window {
   }
 
   /** @param {BorderSet} bs @returns {void} */
-  _drawBorder(bs) {
+  #drawBorder(bs) {
     const { x, y, w, h } = this.rect;
     const g = this.opts.borderGroup || "UIBorder";
     const span = Math.max(0, w - 2);
@@ -907,12 +907,12 @@ export class Window {
       text(x, y + i, bs.l, g);
       text(x + w - 1, y + i, bs.r, g);
     }
-    this._drawLabel(this.opts.title, this.opts.title_pos, y, this.opts.titleGroup || "UITitle");
+    this.#drawLabel(this.opts.title, this.opts.title_pos, y, this.opts.titleGroup || "UITitle");
   }
 
   // The title uses the border edge; the footer uses the content columns.
   /** @param {string | (() => string) | undefined} label @param {"left" | "center" | "right" | undefined} pos @param {number} ry @param {string} group @param {number} [x] @param {number} [w] @returns {void} */
-  _drawLabel(label, pos, ry, group, x = this.rect.x + 2, w = Math.max(0, this.rect.w - 4)) {
+  #drawLabel(label, pos, ry, group, x = this.rect.x + 2, w = Math.max(0, this.rect.w - 4)) {
     if (!label) return;
     const s = typeof label === "function" ? label() : String(label);
     if (!s) return;
@@ -960,29 +960,29 @@ export class Picker {
     this.closeOnAccept = opts.closeOnAccept !== false;
     this.body = opts.body || "";
     /** @type {WrapRow[]} */
-    this._bodyRows = [];
-    this._bodyWidth = -1;
-    this._bodyText = "";
-    this._bodyScroll = 0;
+    this.bodyRows = [];
+    this.bodyWidth = -1;
+    this.bodyText = "";
+    this.bodyScroll = 0;
     /** @type {Rect} */
-    this._layoutRect = { x: 0, y: 0, w: 0, h: 0 };
+    this.layoutRect = { x: 0, y: 0, w: 0, h: 0 };
     this.refilter();
   }
 
   /** @param {number} width @returns {number} */
-  _bodyHeight(width) {
+  #bodyHeight(width) {
     width = Math.max(1, width);
-    if (this._bodyWidth !== width || this._bodyText !== this.body) {
-      this._bodyWidth = width;
-      this._bodyText = this.body;
-      this._bodyRows = this.body ? wrapPreview(this.body, width, 0).rows : [];
+    if (this.bodyWidth !== width || this.bodyText !== this.body) {
+      this.bodyWidth = width;
+      this.bodyText = this.body;
+      this.bodyRows = this.body ? wrapPreview(this.body, width, 0).rows : [];
     }
-    return this._bodyRows.length;
+    return this.bodyRows.length;
   }
 
   /** @param {Rect} r @returns {{ height: number, gap: number }} */
-  _bodyLayout(r) {
-    const rows = this._bodyHeight(r.w);
+  bodyLayout(r) {
+    const rows = this.#bodyHeight(r.w);
     const gap = rows > 0 && r.h >= 4 ? 1 : 0;
     return { height: Math.min(rows, Math.max(0, r.h - 2 - gap)), gap };
   }
@@ -990,7 +990,7 @@ export class Picker {
   /** @param {number} width @returns {number} */
   preferredHeight(width) {
     const contentWidth = Math.max(1, this.win ? this.win.contentWidth(width) : width);
-    const bodyRows = this._bodyHeight(contentWidth);
+    const bodyRows = this.#bodyHeight(contentWidth);
     const gap = bodyRows > 0 ? 1 : 0;
     const rows = bodyRows + gap + (this.filter ? 1 : 0) + this.list.items.length * this.list.itemHeight;
     return this.win ? this.win.heightFor(rows) : rows;
@@ -1036,21 +1036,21 @@ export class Picker {
 
   /** @param {Rect} rect @returns {void} */
   layout(rect) {
-    this._layoutRect = rect;
+    this.layoutRect = rect;
   }
 
   /** @param {boolean} [_focused] @returns {void} */
   draw(_focused = false) {
-    const { x, y, w, h } = this._layoutRect;
+    const { x, y, w, h } = this.layoutRect;
     if (w <= 0 || h <= 0) {
       this.list.clearRect();
       return;
     }
-    const layout = this._bodyLayout({ x, y, w, h });
+    const layout = this.bodyLayout({ x, y, w, h });
     const { height: bodyHeight, gap } = layout;
-    this._bodyScroll = Math.min(this._bodyScroll, Math.max(0, this._bodyRows.length - bodyHeight));
+    this.bodyScroll = Math.min(this.bodyScroll, Math.max(0, this.bodyRows.length - bodyHeight));
     for (let i = 0; i < bodyHeight; i++) {
-      const row = this._bodyRows[this._bodyScroll + i];
+      const row = this.bodyRows[this.bodyScroll + i];
       if (!row) break;
       text(x, y + i, this.body.slice(row.start, row.end), "UIBody");
     }
@@ -1074,12 +1074,12 @@ export class Picker {
     const win = this.win;
     if (win && win.modal === false && !contains(win.rect, ev.col, ev.row)) return false;
     if (this.body && ev.event === "press" && isWheel(ev.button) && win) {
-      const r = this._layoutRect;
-      const { height: bodyHeight } = this._bodyLayout(r);
+      const r = this.layoutRect;
+      const { height: bodyHeight } = this.bodyLayout(r);
       if (ev.row >= r.y && ev.row < r.y + bodyHeight) {
         const step = config.mouse.scrollLines * (ev.count || 1);
-        const max = Math.max(0, this._bodyRows.length - bodyHeight);
-        this._bodyScroll = Math.min(max, Math.max(0, this._bodyScroll + (ev.button === "wheel_down" ? step : -step)));
+        const max = Math.max(0, this.bodyRows.length - bodyHeight);
+        this.bodyScroll = Math.min(max, Math.max(0, this.bodyScroll + (ev.button === "wheel_down" ? step : -step)));
         root.invalidate();
         return true;
       }
@@ -1090,9 +1090,9 @@ export class Picker {
   /** @returns {{ x: number, y: number, visible: boolean } | null} */
   cursor() {
     if (!this.input) return null; // a menu edits no query, so it places no cursor
-    const { x, y, w, h } = this._layoutRect;
+    const { x, y, w, h } = this.layoutRect;
     if (w <= 0 || h <= 0) return null; // an empty interior places no cursor
-    const { height: bodyHeight, gap } = this._bodyLayout({ x, y, w, h });
+    const { height: bodyHeight, gap } = this.bodyLayout({ x, y, w, h });
     const rowY = y + bodyHeight + gap;
     const col = caretCol(w, PICKER_PROMPT, this.input.beforeCaret());
     return { x: Math.min(x + Math.max(0, col), x + Math.max(0, w - 1)), y: Math.min(rowY, y + Math.max(0, h - 1)), visible: true };
@@ -1156,10 +1156,10 @@ export class Picker {
     // A float leaves every other key to the view under it, so the composer keeps typing.
     if (this.win && this.win.modal === false) return false;
     if (this.body && this.win && (s === "page_up" || s === "page_down")) {
-      const { height } = this._bodyLayout(this._layoutRect);
-      const max = Math.max(0, this._bodyRows.length - height);
+      const { height } = this.bodyLayout(this.layoutRect);
+      const max = Math.max(0, this.bodyRows.length - height);
       if (height > 0 && max > 0) {
-        this._bodyScroll = Math.min(max, Math.max(0, this._bodyScroll + (s === "page_down" ? height : -height)));
+        this.bodyScroll = Math.min(max, Math.max(0, this.bodyScroll + (s === "page_down" ? height : -height)));
         root.invalidate();
         return true;
       }

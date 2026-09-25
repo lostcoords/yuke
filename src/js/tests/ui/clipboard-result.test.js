@@ -1,7 +1,7 @@
 import { check } from "yuke:test";
 
 // The later phase of `clipboard.test.js`, after the host pumped every read to its answer.
-check("attached", globalThis.good.spans.length === 1 && globalThis.good._projection().text === "[PNG #1]");
+check("attached", globalThis.good.spans.length === 1 && globalThis.good.projection().text === "[PNG #1]");
 check("span-covers-the-temp-path", globalThis.good.text === "/tmp/yuke-paste-aaa");
 check("temp-removed", globalThis.removed.indexOf("/tmp/yuke-paste-aaa") >= 0);
 

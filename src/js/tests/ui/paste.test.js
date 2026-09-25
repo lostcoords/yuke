@@ -12,7 +12,7 @@ c.rect = { x: 0, y: 0, w: 40, h: 6 };
 c.onKey(paste(big));
 check("text-whole", c.text === big);
 check("one-span", c.spans.length === 1);
-check("label", c._projection().text === "[Pasted text #1 +4 lines]");
+check("label", c.projection().text === "[Pasted text #1 +4 lines]");
 check("one-row", c.height(40) === 1);
 
 // A short paste stays plain text.
@@ -28,13 +28,13 @@ check("spans-cleared", c.spans.length === 0 && c.text === "");
 const line = new Composer();
 line.rect = { x: 0, y: 0, w: 40, h: 6 };
 line.onKey(paste("z".repeat(200)));
-check("chars-label", line._projection().text === "[Pasted text #1 +200 chars]");
+check("chars-label", line.projection().text === "[Pasted text #1 +200 chars]");
 
 // A newline at the end closes the last line, so a four-line paste is not five.
 const nl = new Composer();
 nl.rect = { x: 0, y: 0, w: 40, h: 6 };
 nl.onKey(paste("one\ntwo\nthree\nfour\n"));
-check("trailing-newline", nl._projection().text === "[Pasted text #1 +4 lines]");
+check("trailing-newline", nl.projection().text === "[Pasted text #1 +4 lines]");
 
 // Backspace at the end drops the whole block, and the number comes from the position, so a new paste takes #1 again.
 const del = new Composer();
@@ -43,14 +43,14 @@ del.onKey(paste(big));
 del.onKey(key("backspace"));
 check("atomic-delete", del.text === "" && del.spans.length === 0);
 del.onKey(paste(big));
-check("number-from-position", del._projection().text === "[Pasted text #1 +4 lines]");
+check("number-from-position", del.projection().text === "[Pasted text #1 +4 lines]");
 
 // A restored snapshot and a new paste never share a number.
 const snap = del.snapshot();
 del.input.setText("");
 del.onKey(paste(big));
 del.restore(snap);
-check("restore-renumbers", del._projection().text === "[Pasted text #1 +4 lines]\n[Pasted text #2 +4 lines]");
+check("restore-renumbers", del.projection().text === "[Pasted text #1 +4 lines]\n[Pasted text #2 +4 lines]");
 
 // The caret steps over a span instead of into it.
 const step = new Composer();

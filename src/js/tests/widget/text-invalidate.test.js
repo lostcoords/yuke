@@ -9,5 +9,5 @@ const same = !root.needsDraw && !root.layoutDirty;
 t.setText("世界");
 const changed = root.needsDraw && root.layoutDirty;
 t.layout({ x: 0, y: 0, w: 1, h: 2 });
-const clipped = t._layoutCache.rows.every(row => row === "");
+const clipped = t.layoutCache.rows.every(row => row === "");
 equal(same && changed && clipped ? "ok" : "text invalidation mismatch", "ok");
