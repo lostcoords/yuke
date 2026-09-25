@@ -8,12 +8,16 @@ pub const usage =
     \\       yuke -p [prompt] [--json] [--model <m>] [--reasoning <r>] [--session <id> | -c]
     \\       yuke login [provider]
     \\       yuke logout <provider>
+    \\       yuke types
 ;
 pub const login_usage =
     \\usage: yuke login [provider]
 ;
 pub const logout_usage =
     \\usage: yuke logout <provider>
+;
+pub const types_usage =
+    \\usage: yuke types
 ;
 
 /// One process runs one thing. `--rpc` selects the JSONL transport.
@@ -27,6 +31,8 @@ pub const Command = union(enum) {
     login: ?[]const u8,
     /// Drop the credential of one provider.
     logout: []const u8,
+    /// Write the plugin API declarations into the configuration directory.
+    types,
 };
 
 /// A print run uses this session. `new` opens a session in the working directory.
@@ -49,7 +55,7 @@ pub const Print = struct {
 };
 
 /// Name the grammar that rejected the argument. It selects the usage text.
-pub const Scope = enum { root, login, logout };
+pub const Scope = enum { root, login, logout, types };
 
 pub const Failure = enum {
     unknown_command,
@@ -87,10 +93,20 @@ pub fn parse(args: []const []const u8) Result {
     return switch (sub) {
         .login => parseName(.login, args[1..]),
         .logout => parseName(.logout, args[1..]),
+        .types => parseTypes(args[1..]),
     };
 }
 
-const Subcommand = enum { login, logout };
+const Subcommand = enum { login, logout, types };
+
+/// `types` takes no argument.
+fn parseTypes(args: []const []const u8) Result {
+    for (args) |arg| {
+        if (isHelp(arg)) return .{ .help = .types };
+        return fail(.types, if (isFlag(arg)) .unknown_flag else .extra_argument, arg);
+    }
+    return .{ .command = .types };
+}
 
 /// Parse `[provider]` for login, `<provider>` for logout. Neither takes a flag.
 fn parseName(scope: Scope, args: []const []const u8) Result {
@@ -104,7 +120,7 @@ fn parseName(scope: Scope, args: []const []const u8) Result {
     return switch (scope) {
         .login => .{ .command = .{ .login = name } },
         .logout => .{ .command = .{ .logout = name orelse return fail(.logout, .missing_argument, "logout") } },
-        .root => unreachable,
+        .root, .types => unreachable, // `parse` sends only login and logout here
     };
 }
 

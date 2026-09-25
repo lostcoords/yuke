@@ -8,6 +8,7 @@ const app = @import("app/app.zig");
 const tui_app = @import("js/driver.zig");
 const extensions_mod = @import("js/extensions.zig");
 const auth_cli = @import("app/auth_cli.zig");
+const types_cli = @import("app/types_cli.zig");
 const print_cli = @import("app/print_cli.zig");
 const paths = @import("paths.zig");
 const execution = @import("execution.zig");
@@ -147,6 +148,8 @@ fn run(init: std.process.Init) !u8 {
     // A null directory is not an error. The baked UI still runs without a config file.
     const config_dir = try paths.configDir(init.gpa, context.env);
     defer if (config_dir) |dir| init.gpa.free(dir);
+    // The declarations need only the configuration directory, so the store never opens.
+    if (command == .types) return try types_cli.run(io, config_dir);
     var cwd_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const cwd_len = try std.Io.Dir.cwd().realPath(io, &cwd_buf);
 
@@ -166,6 +169,7 @@ fn run(init: std.process.Init) !u8 {
         .login => |provider| return try auth_cli.login(init.gpa, io, application, provider),
         .logout => |provider| return try auth_cli.logout(init.gpa, io, application, provider),
         .rpc, .tui, .print => {},
+        .types => unreachable, // `types` returns before the store opens
     }
 
     var extensions: extensions_mod.Extensions = undefined;
@@ -178,7 +182,7 @@ fn run(init: std.process.Init) !u8 {
             .tui => tui_app.boot,
             .print => print_cli.boot,
             .rpc => rpc.boot,
-            .login, .logout => unreachable,
+            .login, .logout, .types => unreachable,
         },
         .config_dir = config_dir,
     });
@@ -188,7 +192,7 @@ fn run(init: std.process.Init) !u8 {
         .rpc => try rpc.runIo(&extensions),
         .tui => try tui_app.runIo(&extensions),
         .print => |opts| return print_cli.run(init.gpa, io, &extensions, cwd_buf[0..cwd_len], opts),
-        .login, .logout => unreachable, // The auth commands return before the host starts.
+        .login, .logout, .types => unreachable, // These commands return before the host starts.
     }
     return 0;
 }
@@ -205,6 +209,7 @@ fn usageFor(scope: cli.Scope) []const u8 {
         .root => cli.usage,
         .login => cli.login_usage,
         .logout => cli.logout_usage,
+        .types => cli.types_usage,
     };
 }
 
@@ -214,6 +219,7 @@ fn report(diagnostic: cli.Diagnostic) void {
         .root => "yuke",
         .login => "yuke login",
         .logout => "yuke logout",
+        .types => "yuke types",
     };
     switch (diagnostic.failure) {
         .unknown_command => std.log.err("{s}: unknown command '{s}'", .{ who, diagnostic.arg }),
