@@ -24,6 +24,8 @@ export interface StyleGroup {
 export interface StyleConfig {
   palette: Record<string, Color>;
   groups: Record<string, StyleGroup>;
+  _refs: Record<string, number>;
+  _cache: Record<string, Style>;
   add: (groups: Record<string, StyleGroup>) => () => void;
   resolve: (name: string) => Style;
   invalidate: () => void;
@@ -156,15 +158,18 @@ export interface KeymapRegistry {
   prefixes: Record<string, string[]>;
   pending: Pending | null;
   add: (bindings: Record<string, KeyBinding | KeyBinding[]>, context?: string, options?: { pending?: "chord" | "operator" }) => () => void;
-  armKind: (prefix: string) => "chord" | "operator" | null;
+  _rebuildPrefixes: () => void;
+  _armKind: (prefix: string) => "chord" | "operator" | null;
   owns: () => boolean;
   onKey: (event: Extract<HostEvent, { type: "key" }>) => boolean;
+  _seq: number;
   pendingLabel: () => string;
   needsTick: () => { periodMs: number } | null;
   tick: () => void;
   candidates: (stroke: string) => KeyEntry[];
   hints: () => Record<string, string>;
   describe: (stroke: string) => unknown;
+  _perform: (stroke: string, event: Extract<HostEvent, { type: "key" }>) => boolean;
 }
 
 export interface StatusSegment {

@@ -197,7 +197,6 @@ import PartOf = $types_transcript.PartOf;
 import PartsOf = $types_transcript.PartsOf;
 import PartTextPage = $types_transcript.PartTextPage;
 export class ChatView {
-    #private;
     rect: {
         x: number;
         y: number;
@@ -258,6 +257,9 @@ export class ChatView {
     layout(bounds: Rect): void;
     /** @param {PresentationProvider} [provider] */
     clearPresentation(provider?: PresentationProvider): void;
+    _releasePresentationViews(): void;
+    /** @param {LayoutNode} tree @param {Rect} bounds */
+    _placePresentation(tree: LayoutNode, bounds: Rect): void;
     /** @returns {{ periodMs: number } | null} */
     needsTick(): {
         periodMs: number;
@@ -265,6 +267,8 @@ export class ChatView {
     tick(): void;
     /** @param {boolean} [focused] @returns {void} */
     draw(focused?: boolean): void;
+    /** @param {number} x @param {number} y @param {number} w @returns {void} */
+    _drawRule(x: number, y: number, w: number): void;
     /** @returns {{ x: number, y: number, visible: boolean } | null} */
     cursor(): {
         x: number;
@@ -474,8 +478,10 @@ import NodeShape = $types_core.NodeShape;
 import Overlay = $types_core.Overlay;
 import Rect = $types_core.Rect;
 import RootEvent = $types_core.RootEvent;
+import RouteEntry = $types_core.RouteEntry;
 import RouteWhere = $types_core.RouteWhere;
 import SlotEntry = $types_core.SlotEntry;
+import StatusEntry = $types_core.StatusEntry;
 import StatusSegment = $types_core.StatusSegment;
 import StyleConfig = $types_core.StyleConfig;
 import Tickable = $types_core.Tickable;
@@ -494,6 +500,10 @@ export function text(x: number, y: number, s: string, group: string): void;
 /** @type {CommandRegistry} */
 export const command: CommandRegistry;
 export const context: {
+    /** @type {Record<string, Array<{ value: ContextFlag }>>} */
+    _flags: Record<string, Array<{
+        value: ContextFlag;
+    }>>;
     /** @param {Record<string, ContextFlag>} flags @returns {() => void} */
     add(flags: Record<string, ContextFlag>): () => void;
     /** @param {string} name @returns {string | undefined} */
@@ -506,6 +516,9 @@ export function parseContext(source: string): ContextExpr;
 /** @type {KeymapRegistry} */
 export const keymap: KeymapRegistry;
 export const route: {
+    /** @type {RouteEntry[]} */
+    _list: RouteEntry[];
+    _seq: number;
     /** @param {RouteWhere} where @param {string} [ctx] @returns {() => void} */
     add(where: RouteWhere, ctx?: string): () => void;
     /** @returns {RouteWhere} */
@@ -513,7 +526,7 @@ export const route: {
 };
 export const slot: {
     /** @type {Map<object, Record<string, SlotEntry[]>>} */
-    map: Map<object, Record<string, SlotEntry[]>>;
+    _map: Map<object, Record<string, SlotEntry[]>>;
     /** @param {Function} target @param {string} name @param {(obj: any, arg?: any) => unknown} fn @returns {() => void} */
     add(target: Function, name: string, fn: (obj: any, arg?: any) => unknown): () => void;
     /** @param {object | null} obj @param {string} name @param {any} [arg] @returns {any} */
@@ -578,6 +591,8 @@ export class Node {
     draw(activeLeaf: Node | null): void;
 }
 export const status: {
+    /** @type {StatusEntry[]} */
+    _list: StatusEntry[];
     /** @param {StatusSegment} seg @returns {() => void} */
     add(seg: StatusSegment): () => void;
     /** @param {"left" | "right"} which @returns {string} */
@@ -586,25 +601,34 @@ export const status: {
     draw(rect: Rect): void;
 };
 export class RootView {
-    #private;
     /** @type {Node | null} */
     root_node: Node | null;
     /** @type {Node | null} */
     activeLeaf: Node | null;
     /** @type {Overlay[]} */
     overlays: Overlay[];
+    /** @type {Node[]} */
+    _leafScratch: Node[];
     /** @type {TickableEntry[]} */
     tickables: TickableEntry[];
+    /** @type {WeakMap<object, number>} */
+    _tickedAt: WeakMap<object, number>;
+    /** @type {Node | null} */
+    _capture: Node | null;
     /** @type {boolean} */
-    needsDraw: boolean;
+    _needsDraw: boolean;
     /** @type {boolean} */
-    layoutDirty: boolean;
+    _layoutDirty: boolean;
+    /** @type {boolean} */
+    _started: boolean;
     constructor();
     get active(): ViewLike | null;
     /** @param {Node | null} node @returns {void} */
     setRoot(node: Node | null): void;
     /** @param {ViewLike | null} view @returns {void} */
     setActive(view: ViewLike | null): void;
+    /** @param {Node | null} leaf @returns {void} */
+    _setActiveLeaf(leaf: Node | null): void;
     /** @param {ViewLike | null} view @returns {boolean} */
     focusView(view: ViewLike | null): boolean;
     /** @param {Extract<HostEvent, { type: "mouse" }>} ev @returns {boolean} */
@@ -618,6 +642,8 @@ export class RootView {
     focusDir(d: "h" | "j" | "k" | "l"): void;
     /** @param {number} step @returns {void} */
     focusCycle(step: number): void;
+    /** @param {Tickable} tickable @returns {TickableEntry | undefined} */
+    _tickableEntry(tickable: Tickable): TickableEntry | undefined;
     /** @param {Tickable} tickable @returns {boolean} */
     hasTickable(tickable: Tickable): boolean;
     /** @param {Tickable} tickable @returns {Tickable} */
@@ -637,6 +663,8 @@ export class RootView {
     invalidatePaint(): void;
     /** @returns {void} */
     flush(): void;
+    /** @param {(layer: Overlay | Tickable, isTickable: boolean) => void} fn @returns {void} */
+    _forEachTickable(fn: (layer: Overlay | Tickable, isTickable: boolean) => void): void;
     /** @returns {void} */
     draw(): void;
     /** @returns {void} */
@@ -669,30 +697,44 @@ import PluginHandle = $types_ext.PluginHandle;
 import Release = $types_ext.Release;
 import ToolDefinition = $types_ext.ToolDefinition;
 import AdviceInfo = $types_runtime.AdviceInfo;
+import PluginAsync = $types_runtime.PluginAsync;
 import ScopeEntry = $types_runtime.ScopeEntry;
 import ScopeLife = $types_runtime.ScopeLife;
 export class Scope {
-    #private;
     name: string;
     alive: boolean;
     /** @type {ScopeEntry[]} */
-    disposers: ScopeEntry[];
+    _disposers: ScopeEntry[];
     /** @type {ScopeEntry | null} */
-    parentEntry: ScopeEntry | null;
+    _parentEntry: ScopeEntry | null;
     /** @type {ScopeLife | null} */
-    life: ScopeLife | null;
+    _life: ScopeLife | null;
     /** @param {string | undefined} name */
     constructor(name: string | undefined);
+    /** @returns {ScopeLife} */
+    _state(): ScopeLife;
+    /** @returns {boolean} */
+    _quiet(): boolean;
     /** @param {Effect} fn @returns {Disposer} */
     effect(fn: Effect): Disposer;
     /** @param {Release} release @returns {() => void | Promise<void>} */
     own(release: Release): () => void | Promise<void>;
     get signal(): cancellation.CancellationSignal;
-    silence(): void;
+    /** @param {Disposer | null} cleanup @returns {ScopeEntry} */
+    _addEntry(cleanup: Disposer | null): ScopeEntry;
+    /** @param {ScopeEntry} entry @returns {Disposer | null} */
+    _takeEntry(entry: ScopeEntry): Disposer | null;
     /** @param {string | undefined} name @returns {Scope} */
     child(name: string | undefined): Scope;
+    _cancel(): void;
     /** @returns {void | Promise<void>} */
     dispose(): void | Promise<void>;
+    /** @returns {Promise<void>} */
+    _later(): Promise<void>;
+    /** @returns {void | Promise<void>} */
+    _release(): void | Promise<void>;
+    /** @param {Release} fn @returns {Promise<void> | undefined} */
+    _attempt(fn: Release): Promise<void> | undefined;
 }
 export const advice: {
     /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
@@ -701,6 +743,12 @@ export const advice: {
     list(obj: object, prop?: string | undefined): AdviceInfo[];
 };
 export const services: {
+    /** @type {Record<string, Array<{ value: unknown }>>} */
+    _map: Record<string, Array<{
+        value: unknown;
+    }>>;
+    /** @type {Record<string, Set<() => void>>} */
+    _watchers: Record<string, Set<() => void>>;
     /** @param {string} name @param {unknown} value @returns {Disposer} */
     provide(name: string, value: unknown): Disposer;
     /** @param {string} name @returns {unknown} */
@@ -709,6 +757,8 @@ export const services: {
     has(name: string): boolean;
     /** @param {string} name @param {() => void} fn @returns {Disposer} */
     watch(name: string, fn: () => void): Disposer;
+    /** @param {string} name @returns {void} */
+    _changed(name: string): void;
 };
 /** @template {keyof Wire.Methods} M @param {M} method @param {Wire.Methods[M]["paramsType"][0]} params @returns {Promise<Wire.Methods[M]["paramsType"][0]>} */
 export function gateInput<M extends keyof Wire.Methods>(method: M, params: Wire.Methods[M]["paramsType"][0]): Promise<Wire.Methods[M]["paramsType"][0]>;
@@ -744,7 +794,36 @@ export class Context {
     /** @returns {InteractionSurface} */
     get interaction(): InteractionSurface;
 }
+class PluginInstance {
+    scope: Scope;
+    context: Context;
+    _name: string;
+    /** @type {"applying" | "active" | "closing" | "closed"} */
+    _phase: "applying" | "active" | "closing" | "closed";
+    /** @type {PluginAsync | undefined} */
+    _async: PluginAsync | undefined;
+    /** @param {string} name */
+    constructor(name: string);
+    get ready(): Promise<void>;
+    /** @returns {PluginAsync} */
+    _state(): PluginAsync;
+    /** @param {unknown} error */
+    report(error: unknown): void;
+    /** @returns {void | Promise<void>} */
+    dispose(): void | Promise<void>;
+    /** @returns {Promise<void>} */
+    _promise(): Promise<void>;
+    _force(): void;
+    _finish(): void;
+}
 export const plugins: {
+    /** @type {Record<string, PluginInstance>} */
+    _live: Record<string, PluginInstance>;
+    _closing: boolean;
+    /** @type {{ error: unknown } | undefined} */
+    _startupFailure: {
+        error: unknown;
+    } | undefined;
     /** @param {Plugin} plugin @returns {PluginHandle} */
     use(plugin: Plugin): PluginHandle;
     /** @param {string} name @returns {boolean} */
@@ -754,7 +833,7 @@ export const plugins: {
     /** @returns {string[]} */
     names(): string[];
     /** @returns {Promise<void>} */
-    cancelStartup(): Promise<void>;
+    _cancelStartup(): Promise<void>;
     /** @returns {void | Promise<void>} */
     ready(): void | Promise<void>;
 };
@@ -765,14 +844,16 @@ import FetchOptions = $native_http.FetchOptions;
 import HttpHead = $native_http.HttpHead;
 import ReadOptions = $native_http.ReadOptions;
 class Headers {
-    #private;
+    _values: Record<string, string>;
     /** @param {Record<string, string>} values */
     constructor(values: Record<string, string>);
     /** @param {string} name @returns {string | null} */
     get(name: string): string | null;
 }
 class Body {
-    #private;
+    _id: number;
+    _defaults: ReadOptions;
+    _done: boolean;
     /** @param {number} id @param {ReadOptions} defaults */
     constructor(id: number, defaults: ReadOptions);
     /** @param {ReadOptions} [options] @returns {Promise<string | null>} */
@@ -785,11 +866,12 @@ class Body {
     [Symbol.asyncIterator](): AsyncGenerator<string, void, undefined>;
 }
 class Response {
-    #private;
     status: number;
     ok: boolean;
     headers: Headers;
     body: Body;
+    /** @type {Promise<string> | undefined} */
+    _text: Promise<string> | undefined;
     /** @param {HttpHead} head @param {ReadOptions} defaults */
     constructor(head: HttpHead, defaults: ReadOptions);
     /** @returns {Promise<string>} */
@@ -897,13 +979,18 @@ export function defineConfig(partial: ConfigPatch): ConfigPatch;
 /** @param {object | null | undefined} obj @param {string} name @param {...unknown} args @returns {unknown} */
 export function callHook(obj: object | null | undefined, name: string, ...args: unknown[]): unknown;
 export class Emitter {
-    #private;
+    /** @type {ListenerMap} */
+    _hooks: ListenerMap;
+    /** @type {Set<string> | null} */
+    _names: Set<string> | null;
     /** @type {((error: unknown, name: string) => void) | null} */
     onError: ((error: unknown, name: string) => void) | null;
     /** @param {Set<string> | null} [names] */
     constructor(names?: Set<string> | null);
     /** @param {string[]} names @returns {() => void} */
     declare(names: string[]): () => void;
+    /** @param {string} name @returns {void} */
+    _check(name: string): void;
     /** @param {string} name @param {(...args: any[]) => unknown} fn @param {{ prepend?: boolean } | undefined} [opts] @returns {() => void} */
     on(name: string, fn: (...args: any[]) => unknown, opts?: {
         prepend?: boolean;
@@ -912,6 +999,8 @@ export class Emitter {
     once(name: string, fn: (...args: any[]) => unknown): () => void;
     /** @param {string} name @param {...any} args @returns {void} */
     emit(name: string, ...args: any[]): void;
+    /** @param {unknown} error @param {string} name @returns {void} */
+    _fault(error: unknown, name: string): void;
     /** @param {string} name @param {...any} args @returns {unknown} */
     bail(name: string, ...args: any[]): unknown;
 }
@@ -1185,16 +1274,17 @@ export function isLinear(seg: Segment): seg is LinearSegment;
 /** @param {unknown} text @returns {string} */
 export function normalizeSource(text: unknown): string;
 export class Document {
-    #private;
+    /** @type {string | null} */
+    _src: string | null;
     /** @type {Block[]} */
-    parsed: Block[];
+    _blocks: Block[];
     /** @type {Map<number, CacheEntry>} */
-    cache: Map<number, CacheEntry>;
+    _cache: Map<number, CacheEntry>;
     constructor();
     /** @param {string} text @returns {boolean} */
     setText(text: string): boolean;
     /** @param {string} text @returns {number} */
-    update(text: string): number;
+    _setText(text: string): number;
     /** @returns {string} */
     sourceText(): string;
     /** @param {number} width @param {number} [limit] @returns {Row[]} */
@@ -1202,7 +1292,7 @@ export class Document {
     /** @returns {BlockSummary[]} */
     blocks(): BlockSummary[];
     /** @param {Block} block @param {number} width @param {number} [limit] @returns {Row[]} */
-    blockRows(block: Block, width: number, limit?: number): Row[];
+    _blockRows(block: Block, width: number, limit?: number): Row[];
 }
 }
 
@@ -1221,17 +1311,24 @@ import Rect = $types_core.Rect;
 import RowSource = $types_pager.RowSource;
 import TranscriptRow = $types_pager.TranscriptRow;
 export class Pager {
-    #private;
     /** @type {RowSource} */
     source: RowSource;
     scroll: number;
     stuck: boolean;
+    _h: number;
+    _w: number;
+    /** @type {Rect | null} */
+    _rect: Rect | null;
     constructor();
     /** @returns {Rect | null} */
     rect(): Rect | null;
     clearRect(): void;
     /** @param {number} y @returns {number} */
     rowAtY(y: number): number;
+    /** @returns {number} */
+    _total(): number;
+    /** @returns {number} */
+    _maxScroll(): number;
     /** @returns {boolean} */
     atBottom(): boolean;
     toBottom(): void;
@@ -1244,6 +1341,7 @@ export class Pager {
     setSource(source: RowSource): void;
     /** @param {TranscriptRow[]} rows */
     setRows(rows: TranscriptRow[]): void;
+    _clamp(): void;
     /** @param {Rect} rect */
     draw(rect: Rect): void;
     /** @param {number} delta */
@@ -1266,7 +1364,26 @@ export function rowSourceSpan(row: TranscriptRow, from: number, to: number, base
 export function rowSourceAt(row: TranscriptRow, col: number, base?: number): number;
 }
 
+declare namespace $refresh {
+/** @template T */
+export class Refresh<T> {
+    read: () => Promise<unknown>;
+    finish: () => T;
+    /** @type {Promise<T> | null} */
+    flight: Promise<T> | null;
+    again: boolean;
+    /** @param {() => Promise<unknown>} read @param {() => T} finish */
+    constructor(read: () => Promise<unknown>, finish: () => T);
+    get loading(): boolean;
+    /** @returns {Promise<T>} */
+    run(): Promise<T>;
+    /** @returns {Promise<T>} */
+    start(): Promise<T>;
+}
+}
+
 declare namespace $sessions {
+import Refresh = $refresh.Refresh;
 import Context = $ext.Context;
 export type FeedActivity = Wire.SessionActivity | {
     state: {
@@ -1287,9 +1404,9 @@ export type SessionRow = {
     session: Wire.Session;
 };
 class SessionFeed {
-    #private;
     /** @type {Map<string, FeedItem>} */
     items: Map<string, FeedItem>;
+    _refresh: Refresh<void>;
     constructor();
     get loading(): boolean;
     /** @param {Wire.SessionListResult} listResult @returns {void} */
@@ -1444,9 +1561,11 @@ declare namespace $transcript {
 import Pager = $pager.Pager;
 import MouseEvent = $types_core.HostMouseEvent;
 import Rect = $types_core.Rect;
+import ItemKey = $types_pager.ItemKey;
 import TranscriptRow = $types_pager.TranscriptRow;
 import ActionPlan = $types_transcript.ActionPlan;
 import MessageDescriptor = $types_transcript.MessageDescriptor;
+import PartCache = $types_transcript.PartCache;
 import PartHit = $types_transcript.PartHit;
 import PartOf = $types_transcript.PartOf;
 import PartState = $types_transcript.PartState;
@@ -1454,9 +1573,12 @@ import Position = $types_transcript.Position;
 import Presenter = $types_transcript.Presenter;
 import RowCache = $types_transcript.RowCache;
 import Selection = $types_transcript.Selection;
+import SelectionAnchors = $types_transcript.SelectionAnchors;
+import SelectionRange = $types_transcript.SelectionRange;
 import ToolLabel = $types_transcript.ToolLabel;
 import TranscriptOptions = $types_transcript.TranscriptOptions;
 import SourceLabels = $types_transcript.SourceLabels;
+import MessagePart = $native_engine.MessagePart;
 export const ROLE_NONE = 0;
 export const ROLE_ACTION = 1;
 export const ROLE_TEXT = 2;
@@ -1477,38 +1599,37 @@ export const labels: {
     role(part: Wire.AssistantPart): number;
 };
 export class Transcript {
-    #private;
     partsOf: $types_transcript.PartsOf;
     partOf: PartOf | null;
     partTextPage: $types_transcript.PartTextPage | null;
     pager: Pager;
     /** @type {MessageDescriptor[]} */
-    committed: MessageDescriptor[];
+    _messages: MessageDescriptor[];
     /** @type {MessageDescriptor | null} */
-    draft: MessageDescriptor | null;
-    renderWidth: number;
-    labelRevision: number;
+    _active: MessageDescriptor | null;
+    _width: number;
+    _labelRevision: number;
     /** @type {Map<string, number>} */
-    positions: Map<string, number>;
+    _positions: Map<string, number>;
     /** @type {Map<string, number>} */
-    rowCounts: Map<string, number>;
-    rowPrefix: number[];
+    _counts: Map<string, number>;
+    _prefix: number[];
     /** @type {Set<string>} */
-    viewport: Set<string>;
+    _viewport: Set<string>;
     /** @type {Map<string, RowCache>} */
-    rowCache: Map<string, RowCache>;
+    _rows: Map<string, RowCache>;
     /** @type {Map<string, PartState>} */
-    partStates: Map<string, PartState>;
+    _parts: Map<string, PartState>;
     /** @type {ActionPlan | null} */
-    actionPlanCache: ActionPlan | null;
+    _actionPlanCache: ActionPlan | null;
     /** @type {Map<string, boolean>} */
-    expandOverrides: Map<string, boolean>;
+    _expand: Map<string, boolean>;
     /** @type {Selection | null} */
     selection: Selection | null;
-    dragging: boolean;
-    didDrag: boolean;
+    _dragging: boolean;
+    _didDrag: boolean;
     /** @type {Position | null} */
-    press: Position | null;
+    _press: Position | null;
     onSelect: ((text: string) => void) | null;
     /** @param {TranscriptOptions} [opts] */
     constructor(opts?: TranscriptOptions);
@@ -1524,24 +1645,58 @@ export class Transcript {
     hide(): void;
     /** @param {MessageDescriptor[]} messages @param {MessageDescriptor | null} active @returns {void} */
     setOutline(messages: MessageDescriptor[], active: MessageDescriptor | null): void;
+    /** @returns {void} */
+    _resetOrder(): void;
+    /** @param {string} key @returns {void} */
+    _evict(key: string): void;
+    /** @returns {void} */
+    _trimCaches(): void;
+    /** @param {number} id @returns {void} */
+    _markStale(id: number): void;
+    /** @param {number} last @returns {void} */
+    _indexRowsThrough(last: number): void;
+    /** @param {number} i @returns {number} */
+    _offset(i: number): number;
+    /** @param {number} row @returns {number} */
+    _messageAtRow(row: number): number;
     /** @param {number} id @param {number} [partId] @returns {void} */
     setActive(id: number, partId?: number): void;
     /** @param {number} id @param {number} partId @returns {void} */
     refreshRow(id: number, partId: number): void;
+    /** @param {number} id @param {number} [partId] @returns {{ groupingChanged: boolean, rowsChanged: boolean }} */
+    _refreshParts(id: number, partId?: number): {
+        groupingChanged: boolean;
+        rowsChanged: boolean;
+    };
+    /** @param {number} width @returns {void} */
+    _invalidate(width: number): void;
     /** @param {number} id @returns {string} */
-    sourceOf(id: number): string;
+    _sourceOf(id: number): string;
+    /** @returns {SelectionAnchors | null} */
+    _anchors(): SelectionAnchors | null;
+    /** @param {{ id: number, off: number, was: string, partId?: string }} a @returns {Position | null} */
+    _posAtAnchor(a: {
+        id: number;
+        off: number;
+        was: string;
+        partId?: string;
+    }): Position | null;
+    /** @param {SelectionAnchors | null} anchors @returns {void} */
+    _reanchor(anchors: SelectionAnchors | null): void;
     /** @param {number} id @returns {{ kind: string, at: number, end: number }[]} */
     blocksOf(id: number): {
         kind: string;
         at: number;
         end: number;
     }[];
+    /** @param {number} id @returns {TranscriptRow[]} */
+    _rowsFor(id: number): TranscriptRow[];
     /** @param {number} id @returns {number} */
     rowCountOf(id: number): number;
     /** @param {number} id @param {number} row @returns {string} */
     rowTextAt(id: number, row: number): string;
     /** @param {Position | null} pos @returns {number} */
-    globalRow(pos: Position | null): number;
+    _globalRow(pos: Position | null): number;
     /** @param {Position | null} pos @returns {number} */
     sourceAt(pos: Position | null): number;
     /** @param {number} id @param {number} offset @returns {Position | null} */
@@ -1554,9 +1709,31 @@ export class Transcript {
     /** @param {Position} pos @returns {void} */
     ensureVisible(pos: Position): void;
     /** @param {MessageDescriptor} m @param {number} width @param {number} index @returns {TranscriptRow[]} */
-    rowsOf(m: MessageDescriptor, width: number, index: number): TranscriptRow[];
+    _rowsOf(m: MessageDescriptor, width: number, index: number): TranscriptRow[];
+    /** @param {number} id @returns {readonly MessagePart[]} */
+    _allParts(id: number): readonly MessagePart[];
+    /** @param {number} id @returns {Wire.AssistantPart[]} */
+    _readParts(id: number): Wire.AssistantPart[];
+    /** @param {number} id */
+    _partState(id: number): PartState & {
+        list: Wire.AssistantPart[];
+    };
+    /** @returns {ActionPlan} */
+    _actionPlan(): ActionPlan;
+    /** @param {(message: MessageDescriptor) => readonly Wire.AssistantPart[]} readParts @param {((last: number) => void) | null} [ready] @returns {ActionPlan} */
+    _buildActionPlan(readParts: (message: MessageDescriptor) => readonly Wire.AssistantPart[], ready?: ((last: number) => void) | null): ActionPlan;
+    /** @param {ActionPlan | null} oldPlan @param {MessageDescriptor[]} [oldMessages] @returns {void} */
+    _refreshActionRows(oldPlan: ActionPlan | null, oldMessages?: MessageDescriptor[]): void;
+    /** @param {ItemKey} id @param {ItemKey} partId @returns {string} */
+    _expandKey(id: ItemKey, partId: ItemKey): string;
+    /** @param {number} id @param {number} partId @returns {boolean} */
+    _reasoningLive(id: number, partId: number): boolean;
+    /** @param {number} id @param {number} partId @param {Wire.AssistantPart | null | undefined} part @returns {boolean} */
+    _isExpanded(id: number, partId: number, part: Wire.AssistantPart | null | undefined): boolean;
     /** @param {number} id @param {number} partId @returns {void} */
     togglePart(id: number, partId: number): void;
+    /** @param {number} id @param {number} partId @param {Wire.AssistantPart} part @param {string} field @param {string} prefix @returns {string} */
+    _wholePartField(id: number, partId: number, part: Wire.AssistantPart, field: string, prefix: string): string;
     /** @param {number} id @param {number} partId @returns {boolean} */
     openTool(id: number, partId: number): boolean;
     /** @param {number} id @param {number} partId @returns {boolean} */
@@ -1567,14 +1744,35 @@ export class Transcript {
     activate(pos: Position): Position | null;
     /** @param {number} id @param {number} partId @returns {Position | null} */
     partHeader(id: number, partId: number): Position | null;
+    /** @param {MessageDescriptor} m @returns {Position[]} */
+    _partStopsOf(m: MessageDescriptor): Position[];
     /** @param {Position | null} pos @param {number} dir @returns {Position | null} */
     partStep(pos: Position | null, dir: number): Position | null;
+    /** @param {MessageDescriptor} m @param {number} width @param {number} messageIndex @returns {{ rows: TranscriptRow[], source: string, partBases: Map<string, number> }} */
+    _partRows(m: MessageDescriptor, width: number, messageIndex: number): {
+        rows: TranscriptRow[];
+        source: string;
+        partBases: Map<string, number>;
+    };
+    /** @param {number} id @param {Wire.AssistantPart} part @param {number} width @param {boolean} expanded @param {boolean} live @param {number} tree @param {PartCache | undefined} previous @returns {PartCache} */
+    _buildPart(id: number, part: Wire.AssistantPart, width: number, expanded: boolean, live: boolean, tree: number, previous: PartCache | undefined): PartCache;
+    /** @param {number} i @returns {MessageDescriptor | null} */
+    _at(i: number): MessageDescriptor | null;
     /** @param {number} id @returns {number} */
     messageIndex(id: number): number;
+    /** @returns {SelectionRange | null} */
+    _range(): SelectionRange | null;
+    /** @param {SelectionRange} range @param {number} i @param {number} k @param {number} len @returns {{ from: number, to: number } | null} */
+    _rowRange(range: SelectionRange, i: number, k: number, len: number): {
+        from: number;
+        to: number;
+    } | null;
     /** @param {boolean} [source] @returns {string} */
     selectedText(source?: boolean): string;
     /** @param {number} width @returns {number} */
     rowCount(width: number): number;
+    /** @param {number} width @param {number} top @param {number} height @param {boolean} absolute @returns {TranscriptRow[]} */
+    _rowsRange(width: number, top: number, height: number, absolute: boolean): TranscriptRow[];
     /** @param {number} width @param {number} top @param {number} height @returns {TranscriptRow[]} */
     rows(width: number, top: number, height: number): TranscriptRow[];
     /** @returns {MessageDescriptor[]} */
@@ -1661,9 +1859,11 @@ import TextInput = $text_input.TextInput;
 import Pager = $pager.Pager;
 import MouseEvent = $types_core.HostMouseEvent;
 import Rect = $types_core.Rect;
+import BorderSet = $types_ui.BorderSet;
 import ComposerOptions = $types_ui.ComposerOptions;
 import ComposerSnapshot = $types_ui.ComposerSnapshot;
 import ComposerSpan = $types_ui.ComposerSpan;
+import Dimension = $types_ui.Dimension;
 import ListItem = $types_ui.ListItem;
 import ListKey = $types_ui.ListKey;
 import ListOptions = $types_ui.ListOptions;
@@ -1697,7 +1897,6 @@ export class ScrollView {
 }
 /** @template T */
 export class List<T> {
-    #private;
     format: ((item: T, index: number) => string | ListItem) | ((it: T) => {
         text: string;
     });
@@ -1711,15 +1910,17 @@ export class List<T> {
     dimSelGroup: string;
     drawCursor: boolean;
     /** @type {Rect | null} */
-    drawnRect: Rect | null;
+    _rect: Rect | null;
     /** @type {ListKey | null} */
     selectedKey: ListKey | null;
     scroll: number;
-    page: number;
+    _page: number;
     /** @type {T[]} */
     items: T[];
     /** @param {ListOptions<T>} [opts] */
     constructor(opts?: ListOptions<T>);
+    /** @param {number} h @returns {number} */
+    _visible(h: number): number;
     /** @param {T[]} items @returns {void} */
     setItems(items: T[]): void;
     /** @param {ListKey | null | undefined} k @returns {boolean} */
@@ -1732,8 +1933,14 @@ export class List<T> {
     ensureVisible(h: number): void;
     /** @param {number} delta @returns {void} */
     navBy(delta: number): void;
+    /** @param {number} index @param {number} dir @returns {number} */
+    _stepSelectable(index: number, dir: number): number;
     /** @param {number} dir @returns {void} */
     navEdge(dir: number): void;
+    /** @param {number} vis @returns {void} */
+    _scrollToVisible(vis: number): void;
+    /** @param {number} vis @returns {void} */
+    _clampScroll(vis: number): void;
     /** @param {number} dir @returns {void} */
     navPage(dir: number): void;
     /** @returns {void} */
@@ -1742,9 +1949,10 @@ export class List<T> {
     onMouse(ev: MouseEvent): boolean;
     /** @param {Rect} rect @returns {void} */
     draw(rect: Rect): void;
+    /** @param {number} x @param {number} sy @param {number} w @param {ListItem} spec @param {boolean} isSel @returns {void} */
+    _drawLine(x: number, sy: number, w: number, spec: ListItem, isSel: boolean): void;
 }
 export class Composer {
-    #private;
     rect: {
         x: number;
         y: number;
@@ -1764,16 +1972,36 @@ export class Composer {
     /** @type {ComposerSpan[]} */
     spans: ComposerSpan[];
     /** @type {WrapRow[] | null} */
-    rows: WrapRow[] | null;
-    rowsW: number;
+    _rows: WrapRow[] | null;
+    _rowsW: number;
     /** @type {Projection | null} */
-    proj: Projection | null;
+    _proj: Projection | null;
     /** @param {ComposerOptions} [opts] */
     constructor(opts?: ComposerOptions);
+    /** @returns {void} */
+    _invalidate(): void;
+    /** @param {number} from @param {number} to @param {number} ins @returns {void} */
+    _shiftSpans(from: number, to: number, ins: number): void;
     /** @returns {Projection} */
-    projection(): Projection;
+    _projection(): Projection;
+    /** @param {number} caret @returns {number} */
+    _toDisplay(caret: number): number;
+    /** @param {number} disp @returns {number} */
+    _toText(disp: number): number;
+    /** @param {number} caret @returns {ComposerSpan | null} */
+    _spanEndingAt(caret: number): ComposerSpan | null;
+    /** @param {number} caret @returns {ComposerSpan | null} */
+    _spanStartingAt(caret: number): ComposerSpan | null;
     /** @returns {string} */
-    promptText(): string;
+    _prompt(): string;
+    /** @param {number} w @returns {number} */
+    _textWidth(w: number): number;
+    /** @param {number} width @returns {{ start: number, end: number, soft: boolean }[]} */
+    _rowsAt(width: number): {
+        start: number;
+        end: number;
+        soft: boolean;
+    }[];
     /** @param {number} w @returns {number} */
     height(w: number): number;
     get name(): string;
@@ -1793,6 +2021,8 @@ export class Composer {
     submit(): void;
     /** @param {HostEvent} ev @returns {boolean} */
     onKey(ev: HostEvent): boolean;
+    /** @param {string} t @returns {boolean} */
+    _paste(t: string): boolean;
     /** @param {number} from @param {string} text @param {Wire.MediaBlob} blob @returns {boolean} */
     attach(from: number, text: string, blob: Wire.MediaBlob): boolean;
     /** @param {number} delta @returns {boolean} */
@@ -1815,7 +2045,7 @@ export class Text {
         w: number;
         h: number;
     };
-    measurement: {
+    _measurement: {
         text: string;
         width: number;
         size: {
@@ -1826,7 +2056,7 @@ export class Text {
         widths: number[];
     };
     /** @type {{ text: string, width: number, height: number, rows: string[] }} */
-    layoutCache: {
+    _layoutCache: {
         text: string;
         width: number;
         height: number;
@@ -1879,7 +2109,6 @@ export const borders: {
     };
 };
 export class Window {
-    #private;
     opts: WindowOptions;
     modal: boolean;
     border: $types_ui.Border;
@@ -1900,10 +2129,14 @@ export class Window {
     constructor(opts?: WindowOptions);
     /** @returns {string} */
     get name(): string;
+    /** @returns {BorderSet | null} */
+    _borderSet(): BorderSet | null;
     /** @param {number} width @returns {number} */
     contentWidth(width: number): number;
     /** @param {number} rows @returns {number} */
     heightFor(rows: number): number;
+    /** @param {Dimension | null | undefined} v @param {number} max @param {number} fallback @returns {number} */
+    _dim(v: Dimension | null | undefined, max: number, fallback: number): number;
     /** @param {Rect} bounds @returns {void} */
     layout(bounds: Rect): void;
     /** @param {boolean} [_focused] @returns {void} */
@@ -1924,10 +2157,13 @@ export class Window {
     } | null;
     /** @returns {void} */
     tick(): void;
+    /** @param {BorderSet} bs @returns {void} */
+    _drawBorder(bs: BorderSet): void;
+    /** @param {string | (() => string) | undefined} label @param {"left" | "center" | "right" | undefined} pos @param {number} ry @param {string} group @param {number} [x] @param {number} [w] @returns {void} */
+    _drawLabel(label: string | (() => string) | undefined, pos: "left" | "center" | "right" | undefined, ry: number, group: string, x?: number, w?: number): void;
 }
 /** @template T */
 export class Picker<T> {
-    #private;
     opts: PickOptions<T>;
     /** @type {Window | null} */
     win: Window | null;
@@ -1946,16 +2182,18 @@ export class Picker<T> {
     closeOnAccept: boolean;
     body: string;
     /** @type {WrapRow[]} */
-    bodyRows: WrapRow[];
-    bodyWidth: number;
-    bodyText: string;
-    bodyScroll: number;
+    _bodyRows: WrapRow[];
+    _bodyWidth: number;
+    _bodyText: string;
+    _bodyScroll: number;
     /** @type {Rect} */
-    layoutRect: Rect;
+    _layoutRect: Rect;
     /** @param {PickOptions<T>} opts */
     constructor(opts: PickOptions<T>);
+    /** @param {number} width @returns {number} */
+    _bodyHeight(width: number): number;
     /** @param {Rect} r @returns {{ height: number, gap: number }} */
-    bodyLayout(r: Rect): {
+    _bodyLayout(r: Rect): {
         height: number;
         gap: number;
     };
@@ -2456,6 +2694,8 @@ export interface StyleGroup {
 export interface StyleConfig {
   palette: Record<string, Color>;
   groups: Record<string, StyleGroup>;
+  _refs: Record<string, number>;
+  _cache: Record<string, Style>;
   add: (groups: Record<string, StyleGroup>) => () => void;
   resolve: (name: string) => Style;
   invalidate: () => void;
@@ -2588,15 +2828,18 @@ export interface KeymapRegistry {
   prefixes: Record<string, string[]>;
   pending: Pending | null;
   add: (bindings: Record<string, KeyBinding | KeyBinding[]>, context?: string, options?: { pending?: "chord" | "operator" }) => () => void;
-  armKind: (prefix: string) => "chord" | "operator" | null;
+  _rebuildPrefixes: () => void;
+  _armKind: (prefix: string) => "chord" | "operator" | null;
   owns: () => boolean;
   onKey: (event: Extract<HostEvent, { type: "key" }>) => boolean;
+  _seq: number;
   pendingLabel: () => string;
   needsTick: () => { periodMs: number } | null;
   tick: () => void;
   candidates: (stroke: string) => KeyEntry[];
   hints: () => Record<string, string>;
   describe: (stroke: string) => unknown;
+  _perform: (stroke: string, event: Extract<HostEvent, { type: "key" }>) => boolean;
 }
 
 export interface StatusSegment {

@@ -3,45 +3,41 @@ import * as native from "yuke:internal/native/http";
 /** @import { FetchOptions, HttpHead, ReadOptions } from "yuke:internal/native/http" */
 
 class Headers {
-  #values;
   /** @param {Record<string, string>} values */
-  constructor(values) { this.#values = values; }
+  constructor(values) { this._values = values; }
 
   /** @param {string} name @returns {string | null} */
-  get(name) { return typeof name === "string" ? this.#values[name.toLowerCase()] ?? null : null; }
+  get(name) { return typeof name === "string" ? this._values[name.toLowerCase()] ?? null : null; }
 }
 
 // The body waits in the host. Each read pulls one chunk, so nothing queues on either side.
 class Body {
-  #id;
-  #defaults;
-  #done;
   /** @param {number} id @param {ReadOptions} defaults */
   constructor(id, defaults) {
-    this.#id = id;
-    this.#defaults = defaults;
+    this._id = id;
+    this._defaults = defaults;
     // The host frees a body at its end, so this handle remembers the end for later reads.
-    this.#done = id === 0;
+    this._done = id === 0;
   }
 
   /** @param {ReadOptions} [options] @returns {Promise<string | null>} */
   async read(options) {
-    if (this.#done) return null;
-    const chunk = await native.read(this.#id, { ...this.#defaults, ...options });
-    if (chunk === null) this.#done = true;
+    if (this._done) return null;
+    const chunk = await native.read(this._id, { ...this._defaults, ...options });
+    if (chunk === null) this._done = true;
     return chunk;
   }
 
   /** @param {ReadOptions} [options] @returns {Promise<string>} */
   async readAll(options) {
-    if (this.#done) return "";
-    const rest = await native.readAll(this.#id, { ...this.#defaults, ...options });
-    this.#done = true;
+    if (this._done) return "";
+    const rest = await native.readAll(this._id, { ...this._defaults, ...options });
+    this._done = true;
     return rest;
   }
 
   /** @returns {void} */
-  cancel() { if (!this.#done) native.close(this.#id); }
+  cancel() { if (!this._done) native.close(this._id); }
 
   /** @returns {AsyncGenerator<string, void, undefined>} */
   async *[Symbol.asyncIterator]() {
@@ -51,18 +47,18 @@ class Body {
 }
 
 class Response {
-  /** @type {Promise<string> | undefined} */
-  #text;
   /** @param {HttpHead} head @param {ReadOptions} defaults */
   constructor(head, defaults) {
     this.status = head.status;
     this.ok = head.status >= 200 && head.status < 300;
     this.headers = new Headers(head.headers);
     this.body = new Body(head.body, defaults);
+    /** @type {Promise<string> | undefined} */
+    this._text = undefined;
   }
 
   /** @returns {Promise<string>} */
-  text() { return this.#text ??= this.body.readAll(); }
+  text() { return this._text ??= this.body.readAll(); }
 
   /** @returns {Promise<any>} */
   async json() { return JSON.parse(await this.text()); }

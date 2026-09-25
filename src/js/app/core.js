@@ -18,12 +18,6 @@ export const contains = (r, col, row) => col >= r.x && col < r.x + r.w && row >=
 // Bound a link chain, so a cycle falls back instead of looping for ever.
 const link_depth_max = 100;
 
-// References per registered group and the resolved styles stay inside this module.
-/** @type {Record<string, number>} */
-const styleRefs = Object.create(null);
-/** @type {Record<string, Style>} */
-let styleCache = Object.create(null);
-
 // The highlight groups are monochrome: emphasis is weight and inversion, `Normal` is `reset`, and `danger` is the only color.
 /** @type {StyleConfig} */
 export const style = {
@@ -48,6 +42,9 @@ export const style = {
     YukeHint: { fg: "fg", dim: true },
     YukeBar: { fg: "fg", dim: true },
   }),
+  /** @type {Record<string, number>} */
+  _refs: Object.create(null),
+  _cache: Object.create(null),
 
   // Register absent groups and return a disposer that drops each group after its last reference.
   /** @param {Record<string, StyleGroup>} groups @returns {() => void} */
@@ -55,14 +52,14 @@ export const style = {
     /** @type {string[]} */
     const held = [];
     for (const name in groups) {
-      const refs = styleRefs[name];
+      const refs = this._refs[name];
       if (!(name in this.groups)) {
         this.groups[name] = /** @type {StyleGroup} */ (groups[name]);
-        styleRefs[name] = 1;
+        this._refs[name] = 1;
         held.push(name);
       } else if (refs !== undefined) {
         // A group the map held before any `add`, such as a built-in, takes no reference.
-        styleRefs[name] = refs + 1;
+        this._refs[name] = refs + 1;
         held.push(name);
       }
     }
@@ -71,12 +68,12 @@ export const style = {
 
     return once(() => {
       for (const name of held) {
-        const refs = styleRefs[name];
+        const refs = this._refs[name];
         if (refs !== undefined && refs > 1) {
-          styleRefs[name] = refs - 1;
+          this._refs[name] = refs - 1;
           continue;
         }
-        delete styleRefs[name];
+        delete this._refs[name];
         delete this.groups[name];
       }
       this.invalidate();
@@ -84,7 +81,7 @@ export const style = {
   },
 
   resolve(name) {
-    const cached = styleCache[name];
+    const cached = this._cache[name];
     if (cached) return cached;
 
     /** @type {StyleGroup | undefined | null} */
@@ -106,11 +103,11 @@ export const style = {
     const fg = def && def.fg !== undefined ? def.fg : "fg";
     out.fg = resolveColor(this.palette, fg);
 
-    styleCache[name] = out;
+    this._cache[name] = out;
     return out;
   },
   invalidate() {
-    styleCache = Object.create(null);
+    this._cache = Object.create(null);
   },
 };
 
@@ -212,11 +209,10 @@ function evalPredicate(entry, args) {
   return res.length > 1 ? res.slice(1) : args;
 }
 
-/** @type {Record<string, Array<{ value: ContextFlag }>>} */
-const contextFlags = Object.create(null);
-
 // The active context: an ordered atom stack plus plugin flags, where a deeper atom beats a shallower or unscoped one.
 export const context = {
+  /** @type {Record<string, Array<{ value: ContextFlag }>>} */
+  _flags: Object.create(null),
 
   // Each registration owns one entry; removal preserves every other live provider.
   /** @param {Record<string, ContextFlag>} flags @returns {() => void} */
@@ -225,15 +221,15 @@ export const context = {
     const held = [];
     for (const name in flags) {
       const entry = { value: /** @type {ContextFlag} */ (flags[name]) };
-      const list = contextFlags[name] || (contextFlags[name] = []);
+      const list = this._flags[name] || (this._flags[name] = []);
       list.push(entry);
       held.push([name, entry]);
     }
     return once(() => {
       for (const [name, entry] of held) {
-        const list = /** @type {Array<{ value: ContextFlag }>} */ (contextFlags[name]);
+        const list = /** @type {Array<{ value: ContextFlag }>} */ (this._flags[name]);
         list.splice(list.indexOf(entry), 1);
-        if (list.length === 0) delete contextFlags[name];
+        if (list.length === 0) delete this._flags[name];
       }
     });
   },
@@ -241,7 +237,7 @@ export const context = {
   // The value of one flag. A throwing provider reads as absent, so it never breaks a key.
   /** @param {string} name @returns {string | undefined} */
   flag(name) {
-    const v = contextFlags[name]?.at(-1)?.value;
+    const v = this._flags[name]?.at(-1)?.value;
     if (typeof v !== "function") return v;
     try {
       const out = v();
@@ -424,8 +420,6 @@ function rankByContext(entries, copy = true) {
 // The share of a period a tick pulse can arrive early and still count, so timer jitter never skips a beat.
 const TICK_EARLY_SHARE = 0.75;
 
-let keymapSeq = 0;
-
 // New bindings run before old bindings. A space separates chord strokes.
 /** @type {KeymapRegistry} */
 export const keymap = {
@@ -433,6 +427,8 @@ export const keymap = {
   prefixes: Object.create(null),
   /** @type {Pending | null} */
   pending: null,
+
+  _seq: 0,
 
   // Register bindings under one context and return a disposer.
   /** @param {Record<string, KeyBinding | KeyBinding[]>} bindings @param {string} [ctx] @param {{ pending?: "chord" | "operator" }} [opts] @returns {() => void} */
@@ -447,12 +443,12 @@ export const keymap = {
       /** @type {KeyBinding[]} */
       const list = Array.isArray(value) ? value.slice() : [value];
       /** @type {KeyEntry[]} */
-      const fresh = list.map((fn) => ({ fn, context: expr, order: ++keymapSeq, pending: kind }));
+      const fresh = list.map((fn) => ({ fn, context: expr, order: ++this._seq, pending: kind }));
       const prev = this.map[key];
       this.map[key] = prev ? fresh.concat(prev) : fresh;
       for (const e of fresh) added.push([key, e]);
     }
-    rebuildPrefixes();
+    this._rebuildPrefixes();
     return once(() => {
       for (const [key, e] of added) {
         const cur = this.map[key];
@@ -461,7 +457,7 @@ export const keymap = {
         if (i >= 0) cur.splice(i, 1);
         if (cur.length === 0) delete this.map[key];
       }
-      rebuildPrefixes();
+      this._rebuildPrefixes();
     });
   },
 
@@ -493,10 +489,25 @@ export const keymap = {
     return { stroke: key, winner: list.length ? /** @type {{ binding: KeyBinding, context: string }} */ (list[0]) : null, shadowed: list.slice(1) };
   },
 
+  _rebuildPrefixes() {
+    this.prefixes = Object.create(null);
+    for (const key in this.map) {
+      const sp = key.indexOf(" ");
+      if (sp <= 0) continue;
+      const head = key.slice(0, sp);
+      const keys = this.prefixes[head] || (this.prefixes[head] = []);
+      keys.push(key);
+    }
+    const p = this.pending;
+    if (p && !this.prefixes[p.stroke]) {
+      this.pending = null;
+      root.syncTick();
+    }
+  },
 
   // Return how a sequence under `prefix` waits, or null when no active context matches.
   /** @param {string} prefix @returns {"chord" | "operator" | null} */
-  armKind(prefix) {
+  _armKind(prefix) {
     const keys = this.prefixes[prefix];
     if (!keys) return null;
     const depths = currentDepths();
@@ -534,7 +545,7 @@ export const keymap = {
     if (!p || p.kind !== "chord") return;
     if (Date.now() - p.at < config.keymap.chordMs) return;
     this.pending = null;
-    if (p.ev) performStroke(p.stroke, p.ev);
+    if (p.ev) this._perform(p.stroke, p.ev);
   },
 
   onKey(ev) {
@@ -544,76 +555,58 @@ export const keymap = {
       const p = /** @type {Pending} */ (this.pending);
       this.pending = null;
       const chord = p.stroke + " " + s;
-      if (performStroke(chord, ev)) return true;
-      if (performStroke(p.stroke + " " + stripCtrl(s), ev)) return true;
+      if (this._perform(chord, ev)) return true;
+      if (this._perform(p.stroke + " " + stripCtrl(s), ev)) return true;
       // The sequence did not resolve, so the second stroke runs on its own.
-      return performStroke(s, ev);
+      return this._perform(s, ev);
     }
-    const kind = this.armKind(s);
+    const kind = this._armKind(s);
     if (kind) {
       this.pending = { stroke: s, kind, at: Date.now(), ev };
       return true;
     }
-    return performStroke(s, ev);
+    return this._perform(s, ev);
   },
 
-};
-
-// Index each sequence under its first stroke, and drop a pending stroke that no sequence starts any more.
-function rebuildPrefixes() {
-  keymap.prefixes = Object.create(null);
-  for (const key in keymap.map) {
-    const sp = key.indexOf(" ");
-    if (sp <= 0) continue;
-    const head = key.slice(0, sp);
-    const keys = keymap.prefixes[head] || (keymap.prefixes[head] = []);
-    keys.push(key);
-  }
-  const p = keymap.pending;
-  if (p && !keymap.prefixes[p.stroke]) {
-    keymap.pending = null;
-    root.syncTick();
-  }
-}
-
-// Run the candidates in order until one claims the stroke.
-/** @param {string} stroke @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
-function performStroke(stroke, ev) {
-  for (const e of keymap.candidates(stroke)) {
-    if (typeof e.fn === "function") {
-      if (e.fn(ev) !== false) return true;
-    } else if (command.perform(e.fn, ev)) {
-      return true;
+  // Run the candidates in order until one claims the stroke.
+  /** @param {string} stroke @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
+  _perform(stroke, ev) {
+    for (const e of this.candidates(stroke)) {
+      if (typeof e.fn === "function") {
+        if (e.fn(ev) !== false) return true;
+      } else if (command.perform(e.fn, ev)) {
+        return true;
+      }
     }
-  }
-  return false;
-}
-
-/** @type {RouteEntry[]} */
-const routes = [];
-let routeSeq = 0;
+    return false;
+  },
+};
 
 // A route chooses whether the keymap or the view reads a key first.
 export const route = {
+  /** @type {RouteEntry[]} */
+  _list: [],
+
+  _seq: 0,
 
   // Register one route under a context and return a disposer.
   /** @param {RouteWhere} where @param {string} [ctx] @returns {() => void} */
   add(where, ctx) {
     if (where !== "keymap" && where !== "view") throw new TypeError("route.add: where must be keymap or view");
     /** @type {RouteEntry} */
-    const entry = { where, context: ctx ? parseContext(ctx) : null, order: ++routeSeq };
-    routes.push(entry);
+    const entry = { where, context: ctx ? parseContext(ctx) : null, order: ++this._seq };
+    this._list.push(entry);
     return once(() => {
-      const i = routes.indexOf(entry);
-      if (i >= 0) routes.splice(i, 1);
+      const i = this._list.indexOf(entry);
+      if (i >= 0) this._list.splice(i, 1);
     });
   },
 
   // The route for the active context. A view reads first when no route matches.
   /** @returns {RouteWhere} */
   reader() {
-    if (routes.length === 0) return "view";
-    const hit = rankByContext(routes, false)[0];
+    if (this._list.length === 0) return "view";
+    const hit = rankByContext(this._list, false)[0];
     return hit ? hit.where : "view";
   },
 };
@@ -621,7 +614,7 @@ export const route = {
 // A widget asks for a value it does not own. The nearest class answers first, then the newest provider.
 export const slot = {
   /** @type {Map<object, Record<string, SlotEntry[]>>} */
-  map: new Map(),
+  _map: new Map(),
 
   // Register a provider for one named slot on a class and return a disposer.
   /** @param {Function} target @param {string} name @param {(obj: any, arg?: any) => unknown} fn @returns {() => void} */
@@ -629,11 +622,11 @@ export const slot = {
     if (typeof target !== "function" || !target.prototype) throw new TypeError("slot: target must be a class");
     if (typeof fn !== "function") throw new TypeError("slot: fn must be a function");
     const proto = target.prototype;
-    let names = this.map.get(proto);
+    let names = this._map.get(proto);
     if (!names) {
       /** @type {Record<string, SlotEntry[]>} */
       const fresh = Object.create(null);
-      this.map.set(proto, fresh);
+      this._map.set(proto, fresh);
       names = fresh;
     }
     /** @type {SlotEntry} */
@@ -641,13 +634,13 @@ export const slot = {
     // A change replaces the list, so `get` walks a list no provider can change under it.
     names[name] = [entry, ...(names[name] || [])];
     return once(() => {
-      const held = this.map.get(proto);
+      const held = this._map.get(proto);
       const cur = held ? held[name] : undefined;
       if (!held || !cur) return;
       const rest = cur.filter((e) => e !== entry);
       if (rest.length) held[name] = rest;
       else delete held[name];
-      if (Object.keys(held).length === 0) this.map.delete(proto);
+      if (Object.keys(held).length === 0) this._map.delete(proto);
     });
   },
 
@@ -658,7 +651,7 @@ export const slot = {
     let proto = Object.getPrototypeOf(obj);
     // A subclass reads the slot its base class declares.
     while (proto) {
-      const names = this.map.get(proto);
+      const names = this._map.get(proto);
       const list = names ? names[name] : undefined;
       if (list) {
         for (const e of list) {
@@ -891,11 +884,10 @@ function clampChildSize(size, total) {
   return Math.max(1, Math.min(size, total - 1));
 }
 
-/** @type {StatusEntry[]} */
-const statusSegments = [];
-
 // The status bar takes one row under the whole layout. A segment renders to a string or to nothing.
 export const status = {
+  /** @type {StatusEntry[]} */
+  _list: [],
 
   // Register a segment and return a disposer. `side` is "left" or "right"; `order` sorts a side.
   /** @param {StatusSegment} seg @returns {() => void} */
@@ -906,11 +898,11 @@ export const status = {
     const order = seg.order == null ? 0 : seg.order;
     if (!Number.isFinite(order)) throw new TypeError("status.add: order must be a finite number");
     const entry = { side, order, render: seg.render };
-    statusSegments.push(entry);
-    statusSegments.sort((a, b) => a.order - b.order);
+    this._list.push(entry);
+    this._list.sort((a, b) => a.order - b.order);
     return once(() => {
-      const i = statusSegments.indexOf(entry);
-      if (i >= 0) statusSegments.splice(i, 1);
+      const i = this._list.indexOf(entry);
+      if (i >= 0) this._list.splice(i, 1);
     });
   },
 
@@ -918,7 +910,7 @@ export const status = {
   /** @param {"left" | "right"} which @returns {string} */
   side(which) {
     const out = [];
-    for (const seg of statusSegments) {
+    for (const seg of this._list) {
       if (seg.side !== which) continue;
       // One bad provider must not take the frame with it.
       /** @type {string | null | undefined} */
@@ -948,14 +940,6 @@ export const status = {
 };
 
 export class RootView {
-  /** @type {Node[]} */
-  #leafScratch;
-  /** @type {WeakMap<object, number>} */
-  #tickedAt;
-  /** @type {Node | null} */
-  #capture;
-  /** @type {boolean} */
-  #started;
   constructor() {
     /** @type {Node | null} */
     this.root_node = null;
@@ -963,17 +947,21 @@ export class RootView {
     this.activeLeaf = null;
     /** @type {Overlay[]} */
     this.overlays = [];
-    this.#leafScratch = [];
+    /** @type {Node[]} */
+    this._leafScratch = [];
     /** @type {TickableEntry[]} */
     this.tickables = [];
     // The last tick each layer received. A pulse for the engine or a faster layer never runs a layer before its period.
-    this.#tickedAt = new WeakMap();
-    this.#capture = null; // the leaf that owns the drag, from press to release
+    /** @type {WeakMap<object, number>} */
+    this._tickedAt = new WeakMap();
+    /** @type {Node | null} */
+    this._capture = null; // the leaf that owns the drag, from press to release
     /** @type {boolean} */
-    this.needsDraw = false; // the host paints once after it drains the event queue
+    this._needsDraw = false; // the host paints once after it drains the event queue
     /** @type {boolean} */
-    this.layoutDirty = true;
-    this.#started = false;
+    this._layoutDirty = true;
+    /** @type {boolean} */
+    this._started = false;
   }
 
   get active() {
@@ -997,9 +985,9 @@ export class RootView {
     if (node) node.parent = null;
     this.root_node = node;
     this.activeLeaf = null;
-    this.#capture = null;
+    this._capture = null;
     // The first leaf takes the focus through the same path, so it runs `onFocus` like any other.
-    if (node) this.#setActiveLeaf(/** @type {Node} */ (leaves[0]));
+    if (node) this._setActiveLeaf(/** @type {Node} */ (leaves[0]));
     // A replaced tree drops its panes, so each owner hears it the way a close tells them.
     const kept = node ? node.leaves().map(leafView) : [];
     for (const v of gone) {
@@ -1017,7 +1005,7 @@ export class RootView {
 
   // Move the active leaf. A new leaf gets `onFocus`, so a pane can reset its caret.
   /** @param {Node | null} leaf @returns {void} */
-  #setActiveLeaf(leaf) {
+  _setActiveLeaf(leaf) {
     if (!leaf || leaf === this.activeLeaf) return;
     this.activeLeaf = leaf;
     // A listener reads the pane focus before the pane itself, which is the order advice gave it.
@@ -1033,7 +1021,7 @@ export class RootView {
     if (!view || !this.root_node) return false;
     for (const leaf of this.root_node.leaves()) {
       if (leafView(leaf) === view) {
-        this.#setActiveLeaf(leaf);
+        this._setActiveLeaf(leaf);
         return true;
       }
     }
@@ -1043,9 +1031,9 @@ export class RootView {
   // Send the event to the leaf under the pointer; a press focuses and captures it, so a drag that leaves it still lands.
   /** @param {Extract<HostEvent, { type: "mouse" }>} ev @returns {boolean} */
   routeMouse(ev) {
-    if (this.#capture && (ev.event === "drag" || ev.event === "release")) {
-      const held = this.#capture;
-      if (ev.event === "release") this.#capture = null;
+    if (this._capture && (ev.event === "drag" || ev.event === "release")) {
+      const held = this._capture;
+      if (ev.event === "release") this._capture = null;
       const live = this.root_node && this.root_node.leaves().indexOf(held) >= 0;
       return live ? !!callHook(leafView(held), "onMouse", ev) : false;
     }
@@ -1053,8 +1041,8 @@ export class RootView {
     if (!leaf) return false;
     if (ev.event === "press" && !isWheel(ev.button)) {
       // The leaf came from the live tree, so it needs no membership walk.
-      this.#setActiveLeaf(leaf);
-      if (ev.button === "left") this.#capture = leaf;
+      this._setActiveLeaf(leaf);
+      if (ev.button === "left") this._capture = leaf;
     }
     return !!callHook(leafView(leaf), "onMouse", ev);
   }
@@ -1069,7 +1057,7 @@ export class RootView {
     claimView(view, this);
     const add = Node.leaf(view);
     leaf.becomeSplit(kind, Node.leaf(leafView(leaf)), add);
-    this.#setActiveLeaf(add);
+    this._setActiveLeaf(add);
     this.invalidate();
     return add;
   }
@@ -1086,7 +1074,7 @@ export class RootView {
       p.shape.a.parent = p;
       p.shape.b.parent = p;
     }
-    this.#setActiveLeaf(/** @type {Node} */ (p.leaves()[0]));
+    this._setActiveLeaf(/** @type {Node} */ (p.leaves()[0]));
     // The tree drops the view here, so the owner learns that its pane left.
     const removed = leafView(leaf);
     releaseView(removed, this);
@@ -1115,7 +1103,7 @@ export class RootView {
         best = leaf;
       }
     }
-    if (best) this.#setActiveLeaf(best);
+    if (best) this._setActiveLeaf(best);
   }
 
   /** @param {number} step @returns {void} */
@@ -1125,11 +1113,11 @@ export class RootView {
     if (leaves.length === 0) return;
     let i = leaves.indexOf(/** @type {Node} */ (this.activeLeaf));
     if (i < 0) i = 0;
-    this.#setActiveLeaf(/** @type {Node} */ (leaves[(i + step + leaves.length) % leaves.length]));
+    this._setActiveLeaf(/** @type {Node} */ (leaves[(i + step + leaves.length) % leaves.length]));
   }
 
   /** @param {Tickable} tickable @returns {TickableEntry | undefined} */
-  #tickableEntry(tickable) {
+  _tickableEntry(tickable) {
     for (const e of this.tickables) if (e.tickable === tickable) return e;
     return undefined;
   }
@@ -1137,13 +1125,13 @@ export class RootView {
   // Report whether a tickable is registered, so a caller never reads the entry list itself.
   /** @param {Tickable} tickable @returns {boolean} */
   hasTickable(tickable) {
-    return this.#tickableEntry(tickable) !== undefined;
+    return this._tickableEntry(tickable) !== undefined;
   }
 
   // A second registration shares one entry, so one owner cannot stop a service another still holds.
   /** @param {Tickable} tickable @returns {Tickable} */
   addTickable(tickable) {
-    const held = this.#tickableEntry(tickable);
+    const held = this._tickableEntry(tickable);
     if (held) {
       held.refs += 1;
       return tickable;
@@ -1151,7 +1139,7 @@ export class RootView {
     /** @type {TickableEntry} */
     const entry = { tickable, refs: 1, started: false };
     this.tickables.push(entry);
-    if (this.#started) {
+    if (this._started) {
       // A hook that throws must not leave a service behind that the failed scope cannot revert.
       try {
         callHook(tickable, "onStart");
@@ -1169,7 +1157,7 @@ export class RootView {
   // Drop one registration. The last one removes the entry, and only a started service gets `onStop`.
   /** @param {Tickable} tickable @returns {void} */
   removeTickable(tickable) {
-    const entry = this.#tickableEntry(tickable);
+    const entry = this._tickableEntry(tickable);
     if (!entry) return;
     entry.refs -= 1;
     if (entry.refs > 0) return;
@@ -1227,28 +1215,28 @@ export class RootView {
   // Ask for a frame. The host paints once after the queue drains, so a burst costs one paint.
   /** @returns {void} */
   invalidate() {
-    this.needsDraw = true;
-    this.layoutDirty = true;
+    this._needsDraw = true;
+    this._layoutDirty = true;
   }
 
   /** @returns {void} */
   invalidatePaint() {
-    this.needsDraw = true;
+    this._needsDraw = true;
   }
 
   // Paint if anything asked for it. The host calls this after it drains the event queue.
   /** @returns {void} */
   flush() {
-    if (!this.needsDraw) return;
-    this.needsDraw = false;
+    if (!this._needsDraw) return;
+    this._needsDraw = false;
     this.draw();
   }
 
   /** @param {(layer: Overlay | Tickable, isTickable: boolean) => void} fn @returns {void} */
-  #forEachTickable(fn) {
+  _forEachTickable(fn) {
     if (this.root_node) {
       // One scratch list serves every draw. A nested pass takes a fresh list, and a throw still clears the scratch.
-      const scratch = this.#leafScratch;
+      const scratch = this._leafScratch;
       const leaves = this.root_node.leaves(scratch.length === 0 ? scratch : []);
       try {
         for (const leaf of leaves) fn(leafView(leaf), false);
@@ -1267,15 +1255,15 @@ export class RootView {
     // The bar owns the last row, so every pane rect below derives from the shorter height.
     const barY = term.height - 1;
     fill(0, 0, term.width, term.height, "Normal");
-    const needsLayout = this.layoutDirty;
-    this.layoutDirty = false;
+    const needsLayout = this._layoutDirty;
+    this._layoutDirty = false;
     if (needsLayout) {
       try {
         if (this.root_node) this.root_node.layout({ x: 0, y: 0, w: term.width, h: Math.max(0, barY) });
         const bounds = { x: 0, y: 0, w: term.width, h: term.height };
         for (const layer of this.overlays) callHook(layer, "layout", bounds);
       } catch (error) {
-        this.layoutDirty = true;
+        this._layoutDirty = true;
         throw error;
       }
     }
@@ -1296,7 +1284,7 @@ export class RootView {
   syncTick() {
     /** @type {number | null} */
     let period = null;
-    this.#forEachTickable((layer) => {
+    this._forEachTickable((layer) => {
       const t = /** @type {{ periodMs: number } | null} */ (callHook(layer, "needsTick"));
       if (!t) return;
       const ms = t.periodMs;
@@ -1311,15 +1299,15 @@ export class RootView {
   tickLayers() {
     const now = Date.now();
     let ticked = false;
-    this.#forEachTickable((layer, isTickable) => {
+    this._forEachTickable((layer, isTickable) => {
       const t = /** @type {{ periodMs: number } | null} */ (callHook(layer, "needsTick"));
       if (!t) return;
-      const last = this.#tickedAt.get(layer);
+      const last = this._tickedAt.get(layer);
       // A clock that steps back reads as elapsed, so a layer never waits for the clock to catch up.
       if (last !== undefined && now >= last && now - last < t.periodMs * TICK_EARLY_SHARE) return;
       // A service can remove itself inside `needsTick`, so a stale one must not still get `tick`.
       if (isTickable && !this.hasTickable(/** @type {Tickable} */ (layer))) return;
-      this.#tickedAt.set(layer, now);
+      this._tickedAt.set(layer, now);
       callHook(layer, "tick");
       ticked = true;
     });
@@ -1336,8 +1324,8 @@ export class RootView {
       return;
     }
     if (ev.type === "start" || ev.type === "resize") {
-      if (ev.type === "start" && !this.#started) {
-        this.#started = true;
+      if (ev.type === "start" && !this._started) {
+        this._started = true;
         for (const e of this.tickables.slice()) {
           // A hook can remove a later tickable, so start only what the pass still holds.
           if (e.started || !this.hasTickable(e.tickable)) continue;

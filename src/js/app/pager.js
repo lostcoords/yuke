@@ -7,55 +7,52 @@ import { isLinear } from "yuke:internal/md";
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
 /** @import { RowSource, Segment, TranscriptRow } from "./types/pager.js" */
 export class Pager {
-  #h;
-  #w;
-  /** @type {Rect | null} */
-  #rect;
   constructor() {
     /** @type {RowSource} */
     this.source = staticRowSource([]);
     this.scroll = 0;
     this.stuck = true;
-    this.#h = 0;
-    this.#w = 0;
-    this.#rect = null; // the last drawn rect, for the mouse hit test
+    this._h = 0;
+    this._w = 0;
+    /** @type {Rect | null} */
+    this._rect = null; // the last drawn rect, for the mouse hit test
   }
 
   /** @returns {Rect | null} */
   rect() {
-    return this.#rect;
+    return this._rect;
   }
 
   clearRect() {
-    this.#rect = null;
+    this._rect = null;
   }
 
   // The source row index under screen row `y`. Return -1 outside the drawn rows.
   /** @param {number} y @returns {number} */
   rowAtY(y) {
-    const r = this.#rect;
+    const r = this._rect;
     if (!r || y < r.y || y >= r.y + r.h) return -1;
     const i = this.scroll + (y - r.y);
-    return i < this.#total() ? i : -1;
+    return i < this._total() ? i : -1;
   }
 
   /** @returns {number} */
-  #total() {
-    return this.source.rowCount(this.#w);
+  _total() {
+    return this.source.rowCount(this._w);
   }
 
   /** @returns {number} */
-  #maxScroll() {
-    return Math.max(0, this.#total() - this.#h);
+  _maxScroll() {
+    return Math.max(0, this._total() - this._h);
   }
 
   /** @returns {boolean} */
   atBottom() {
-    return this.scroll >= this.#maxScroll();
+    return this.scroll >= this._maxScroll();
   }
 
   toBottom() {
-    this.scroll = this.#maxScroll();
+    this.scroll = this._maxScroll();
     this.stuck = true;
   }
 
@@ -66,7 +63,7 @@ export class Pager {
 
   /** @param {number} delta */
   scrollBy(delta) {
-    const max = this.#maxScroll();
+    const max = this._maxScroll();
     this.scroll = Math.min(Math.max(0, this.scroll + delta), max);
     this.stuck = this.scroll >= max;
   }
@@ -74,10 +71,10 @@ export class Pager {
   // Scroll the least that puts row `index` on the screen, and refresh `stuck` so an unfold cannot jump to the tail.
   /** @param {number} index */
   scrollIntoView(index) {
-    if (index < 0 || this.#h <= 0) return;
+    if (index < 0 || this._h <= 0) return;
     let next = this.scroll;
     if (index < next) next = index;
-    else if (index >= next + this.#h) next = index - this.#h + 1;
+    else if (index >= next + this._h) next = index - this._h + 1;
     this.scrollBy(next - this.scroll);
   }
 
@@ -89,12 +86,12 @@ export class Pager {
   /** @param {TranscriptRow[]} rows */
   setRows(rows) {
     this.setSource(staticRowSource(rows));
-    this.#clamp();
+    this._clamp();
   }
 
   // Keep the scroll offset in range as the row count changes. A scroll to the tail re-sticks.
-  #clamp() {
-    const max = this.#maxScroll();
+  _clamp() {
+    const max = this._maxScroll();
     this.scroll = this.stuck ? max : Math.min(Math.max(0, this.scroll), max);
     if (this.scroll >= max) this.stuck = true;
   }
@@ -102,10 +99,10 @@ export class Pager {
   /** @param {Rect} rect */
   draw(rect) {
     const { x, y, w, h } = rect;
-    this.#h = h;
-    this.#w = w;
-    this.#rect = rect;
-    this.#clamp();
+    this._h = h;
+    this._w = w;
+    this._rect = rect;
+    this._clamp();
 
     const rows = this.source.rows(w, this.scroll, h);
     for (let row = 0; row < h && row < rows.length; row++) {
@@ -128,7 +125,7 @@ export class Pager {
 
   /** @param {number} dir */
   navPage(dir) {
-    this.scrollBy(dir * Math.max(1, this.#h - 1));
+    this.scrollBy(dir * Math.max(1, this._h - 1));
   }
 
   /** @param {number} dir */
