@@ -37,13 +37,13 @@ import { Scope } from "yuke:ext";
 {
   const parent = new Scope("detach");
   const kid = parent.child("kid");
-  check("child-entry-held", parent._disposers.length === 1);
+  check("child-entry-held", parent.disposers.length === 1);
   kid.dispose();
-  check("child-entry-detached", parent._disposers.length === 0);
+  check("child-entry-detached", parent.disposers.length === 0);
   const off = parent.effect(() => () => {});
-  check("effect-entry-held", parent._disposers.length === 1);
+  check("effect-entry-held", parent.disposers.length === 1);
   off();
-  check("effect-entry-detached", parent._disposers.length === 0);
+  check("effect-entry-detached", parent.disposers.length === 0);
   parent.dispose();
 }
 
@@ -71,5 +71,5 @@ import { Scope } from "yuke:ext";
   scope.effect(() => () => { first(); scope.dispose(); order.push("last"); });
   scope.dispose();
   first();
-  check("scope-reentrant-drain", order.join(",") === "first,last" && scope._disposers.length === 0);
+  check("scope-reentrant-drain", order.join(",") === "first,last" && scope.disposers.length === 0);
 }

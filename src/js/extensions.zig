@@ -66,7 +66,7 @@ pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
     errdefer {
         const fault = host.fault_text;
         const fault_len = host.fault_text_len;
-        host.evalStartup("import { plugins } from \"yuke:ext\"; await plugins._cancelStartup();", "plugins-cancel.js") catch {};
+        host.evalStartup("import { plugins } from \"yuke:ext\"; await plugins.cancelStartup();", "plugins-cancel.js") catch {};
         host.fault_text = fault;
         host.fault_text_len = fault_len;
     }

@@ -17,26 +17,28 @@ export class Scope {
     this.name = name || "scope";
     this.alive = true;
     /** @type {ScopeEntry[]} */
-    this._disposers = []; // registration order; reverted in reverse
+    this.disposers = []; // registration order; reverted in reverse
+    // Plain fields, because a private field costs QuickJS more on each construction and a plugin never holds a scope.
     /** @type {ScopeEntry | null} */
-    this._parentEntry = null;
+    this.parentEntry = null;
+    // Made on first use, because each own field costs QuickJS a shape step on a hot constructor.
     /** @type {ScopeLife | null} */
-    this._life = null; // made on first use, because each own field costs QuickJS a shape step on a hot constructor
+    this.life = null;
   }
 
   /** @returns {ScopeLife} */
-  _state() {
-    return this._life ??= { awaiter: null, releases: null, signal: null, closed: undefined, settle: undefined, draining: null, quiet: false };
+  #state() {
+    return this.life ??= { awaiter: null, releases: null, signal: null, closed: undefined, settle: undefined, draining: null, quiet: false };
   }
 
   // Report whether this scope or a scope that awaits its close gave up waiting.
   /** @returns {boolean} */
-  _quiet() {
+  #quiet() {
     /** @type {Scope | null} */
     let scope = this;
     while (scope) {
-      if (scope._life?.quiet) return true;
-      scope = scope._life?.awaiter ?? null;
+      if (scope.life?.quiet) return true;
+      scope = scope.life?.awaiter ?? null;
     }
     return false;
   }
@@ -60,8 +62,11 @@ export class Scope {
       return NOOP;
     }
 
-    const entry = this._addEntry(/** @type {Disposer} */ (cleanup));
-    return () => entry.owner?._takeEntry(entry)?.();
+    const entry = this.#addEntry(/** @type {Disposer} */ (cleanup));
+    return () => {
+      const cleanup = entry.owner ? entry.owner.#takeEntry(entry) : null;
+      if (cleanup) cleanup();
+    };
   }
 
   // Hold `release` until this scope closes; a closed scope releases at once and throws.
@@ -69,12 +74,12 @@ export class Scope {
   own(release) {
     if (typeof release !== "function") throw new TypeError("a resource needs a release function");
     if (!this.alive) {
-      this._attempt(release);
+      this.#attempt(release);
       throw new TypeError("the resource owner is closed");
     }
     /** @type {ReleaseEntry} */
     const entry = { release };
-    const life = this._state();
+    const life = this.#state();
     const list = life.releases ??= [];
     list.push(entry);
     return () => {
@@ -83,13 +88,13 @@ export class Scope {
       entry.release = null;
       const at = list.indexOf(entry);
       if (at >= 0) list.splice(at, 1);
-      return this._attempt(fn);
+      return this.#attempt(fn);
     };
   }
 
   // The cancellation signal of this scope. A close cancels it before any effect reverts.
   get signal() {
-    const life = this._state();
+    const life = this.#state();
     if (!life.signal) {
       life.signal = cancellation.create();
       if (!this.alive) cancellation.cancel(life.signal);
@@ -98,22 +103,27 @@ export class Scope {
   }
 
   /** @param {Disposer | null} cleanup @returns {ScopeEntry} */
-  _addEntry(cleanup) {
+  #addEntry(cleanup) {
     /** @type {ScopeEntry} */
     const entry = { owner: this, cleanup, child: null };
-    this._disposers.push(entry);
+    this.disposers.push(entry);
     return entry;
   }
 
   // Every caller passes an entry this scope still owns.
   /** @param {ScopeEntry} entry @returns {Disposer | null} */
-  _takeEntry(entry) {
+  #takeEntry(entry) {
     entry.owner = null;
-    const at = this._disposers.indexOf(entry);
-    if (at >= 0) this._disposers.splice(at, 1);
+    const at = this.disposers.indexOf(entry);
+    if (at >= 0) this.disposers.splice(at, 1);
     const cleanup = entry.cleanup;
     entry.cleanup = null;
     return cleanup;
+  }
+
+  // Stop waiting on this close, so a late release fault stays silent.
+  silence() {
+    this.#state().quiet = true;
   }
 
   // A child scope is an effect on this scope, so one LIFO stack owns the whole tree.
@@ -122,38 +132,38 @@ export class Scope {
     if (!this.alive) throw new TypeError("effect on a disposed scope: " + this.name);
     const s = new Scope(name);
     // The close walks child entries by `child`, so a child entry holds no cleanup.
-    const parentEntry = this._addEntry(null);
+    const parentEntry = this.#addEntry(null);
     parentEntry.child = s;
-    s._parentEntry = parentEntry;
+    s.parentEntry = parentEntry;
     return s;
   }
 
   // Cancel the signal of this scope and of every child, so no effect reverts while its I/O still runs.
-  _cancel() {
-    const signal = this._life?.signal;
+  #cancel() {
+    const signal = this.life?.signal;
     if (signal) cancellation.cancel(signal);
-    for (const entry of this._disposers) if (entry.child) entry.child._cancel();
+    for (const entry of this.disposers) if (entry.child) entry.child.#cancel();
   }
 
   // Close newest first: cancel the signals, revert the effects, await the child closes, release, and drain the signal.
   /** @returns {void | Promise<void>} */
   dispose() {
     // A caller inside the close gets the promise the close settles; a finished close answers its own.
-    if (!this.alive) return this._life?.closed ?? (closing.has(this) ? this._later() : undefined);
+    if (!this.alive) return this.life?.closed ?? (closing.has(this) ? this.#later() : undefined);
     // The scope is dead before a cancel listener runs, so a listener cannot own a resource here.
     this.alive = false;
     closing.add(this);
-    this._cancel();
+    this.#cancel();
 
-    const parentEntry = this._parentEntry;
-    this._parentEntry = null;
+    const parentEntry = this.parentEntry;
+    this.parentEntry = null;
     const parent = parentEntry?.owner ?? null;
-    if (parent && parentEntry) parent._takeEntry(parentEntry);
+    if (parent && parentEntry) parent.#takeEntry(parentEntry);
 
     /** @type {Promise<void>[]} */
     const children = [];
-    while (this._disposers.length) {
-      const entry = /** @type {ScopeEntry} */ (this._disposers.pop());
+    while (this.disposers.length) {
+      const entry = /** @type {ScopeEntry} */ (this.disposers.pop());
       const cleanup = entry.cleanup;
       entry.owner = null;
       entry.cleanup = null;
@@ -161,7 +171,7 @@ export class Scope {
         const closed = entry.child.dispose();
         if (closed) {
           children.push(closed);
-          entry.child._state().awaiter = this;
+          entry.child.#state().awaiter = this;
         }
         continue;
       }
@@ -174,24 +184,24 @@ export class Scope {
     }
 
     // A child that left before this close added its drain here, so read the set after the effects.
-    const draining = this._life?.draining;
+    const draining = this.life?.draining;
     if (draining) children.push(...draining);
-    const released = children.length ? Promise.all(children).then(() => this._release()) : this._release();
-    const signal = this._life?.signal;
+    const released = children.length ? Promise.all(children).then(() => this.#release()) : this.#release();
+    const signal = this.life?.signal;
     closing.delete(this);
-    const later = this._life?.settle;
+    const later = this.life?.settle;
     if (!released && !signal) {
       later?.();
-      return this._life?.closed;
+      return this.life?.closed;
     }
     const closed = Promise.resolve(released).then(() => (signal ? cancellation.drain(signal) : undefined));
-    const life = this._state();
+    const life = this.#state();
     if (later) closed.then(later);
     else life.closed = closed;
     // A child that leaves on its own keeps its parent's close waiting until its releases end.
     if (parent) {
       life.awaiter = parent;
-      const set = parent._state().draining ??= new Set();
+      const set = parent.#state().draining ??= new Set();
       set.add(closed);
       closed.then(() => set.delete(closed));
     }
@@ -200,29 +210,29 @@ export class Scope {
 
   // The promise a caller inside the close receives; the close settles it when it ends.
   /** @returns {Promise<void>} */
-  _later() {
-    const life = this._state();
+  #later() {
+    const life = this.#state();
     return life.closed ??= new Promise((resolve) => { life.settle = resolve; });
   }
 
   // Run the held releases newest first; an async release holds the older ones until it settles.
   /** @returns {void | Promise<void>} */
-  _release() {
-    const list = this._life?.releases;
+  #release() {
+    const list = this.life?.releases;
     while (list?.length) {
       const entry = /** @type {ReleaseEntry} */ (list.pop());
       const fn = entry.release;
       entry.release = null;
-      const pending = fn ? this._attempt(fn) : undefined;
-      if (pending) return pending.then(() => this._release());
+      const pending = fn ? this.#attempt(fn) : undefined;
+      if (pending) return pending.then(() => this.#release());
     }
   }
 
   // Call one release, report its fault, and answer a Promise only for an async release.
   /** @param {Release} fn @returns {Promise<void> | undefined} */
-  _attempt(fn) {
+  #attempt(fn) {
     /** @param {unknown} error */
-    const report = (error) => { if (!this._quiet()) events.emit("ext.error", error, this.name); };
+    const report = (error) => { if (!this.#quiet()) events.emit("ext.error", error, this.name); };
     try {
       const result = fn();
       if (result != null && typeof /** @type {{ then?: unknown }} */ (result).then === "function") return Promise.resolve(result).then(NOOP, report);
@@ -353,77 +363,78 @@ export const advice = {
 };
 
 // --- services: one provider per name ---
-export const services = {
-  /** @type {Record<string, Array<{ value: unknown }>>} */
-  _map: Object.create(null),
-  /** @type {Record<string, Set<() => void>>} */
-  _watchers: Object.create(null),
+/** @type {Record<string, Array<{ value: unknown }>>} */
+const serviceMap = Object.create(null);
+/** @type {Record<string, Set<() => void>>} */
+const serviceWatchers = Object.create(null);
 
+export const services = {
   // Register `value` and return a disposer. A provider stacks, so a withdrawal reveals the one it hid.
   /** @param {string} name @param {unknown} value @returns {Disposer} */
   provide(name, value) {
     if (typeof name !== "string" || name === "") throw new TypeError("provide needs a capability name");
     if (RESERVED.has(name)) throw new TypeError("provide: `" + name + "` is a plugin context member");
-    const list = this._map[name] || (this._map[name] = []);
+    const list = serviceMap[name] || (serviceMap[name] = []);
     // The entry identifies the registration, so two providers of one value stay apart.
     const entry = { value };
     list.unshift(entry);
-    this._changed(name);
+    serviceChanged(name);
 
     return once(() => {
       const at = list.indexOf(entry);
       if (at < 0) return;
       list.splice(at, 1);
       // Drop the key only while it still holds this list, so a later provide keeps its own.
-      if (list.length === 0 && this._map[name] === list) delete this._map[name];
+      if (list.length === 0 && serviceMap[name] === list) delete serviceMap[name];
       // Only a withdrawal of the live provider changes what `get` answers.
-      if (at === 0) this._changed(name);
+      if (at === 0) serviceChanged(name);
     });
   },
 
   /** @param {string} name @returns {unknown} */
   get(name) {
-    const top = (this._map[name] || [])[0];
+    const top = (serviceMap[name] || [])[0];
     return top ? top.value : undefined;
   },
 
   // Report whether a provider holds `name`. A provider of `undefined` still counts as present.
   /** @param {string} name @returns {boolean} */
   has(name) {
-    const list = this._map[name];
+    const list = serviceMap[name];
     return list !== undefined && list.length > 0;
   },
 
   // Call `fn` after the live provider of `name` changes. `inject` builds and drops its block here.
   /** @param {string} name @param {() => void} fn @returns {Disposer} */
   watch(name, fn) {
-    const set = this._watchers[name] || (this._watchers[name] = new Set());
+    const set = serviceWatchers[name] || (serviceWatchers[name] = new Set());
     set.add(fn);
 
     return once(() => {
       set.delete(fn);
-      if (set.size === 0 && this._watchers[name] === set) delete this._watchers[name];
+      if (set.size === 0 && serviceWatchers[name] === set) delete serviceWatchers[name];
     });
   },
 
-  // Announce one change of the live provider. A watcher reacts first, so an observer reads a settled registry.
-  /** @param {string} name @returns {void} */
-  _changed(name) {
-    const set = this._watchers[name];
-    // A watcher can add or drop a watcher, so this loop reads a copy of the set.
-    if (set) {
-      for (const fn of Array.from(set)) {
-        try {
-          fn();
-        } catch (e) {
-          events.emit("ext.error", e, "service:" + name);
-        }
+};
+
+// Announce one change of the live provider. A watcher reacts first, so an observer reads a settled registry.
+/** @param {string} name @returns {void} */
+function serviceChanged(name) {
+  const set = serviceWatchers[name];
+  // A watcher can add or drop a watcher, so this loop reads a copy of the set.
+  if (set) {
+    for (const fn of Array.from(set)) {
+      try {
+        fn();
+      } catch (e) {
+        events.emit("ext.error", e, "service:" + name);
       }
     }
-    // Read the provider again, because a watcher can have replaced it since this change started.
-    events.emit("service:" + name, this.get(name));
-  },
-};
+  }
+  // Read the provider again, because a watcher can have replaced it since this change started.
+  events.emit("service:" + name, services.get(name));
+}
 
 // The passes one `inject` build takes before the runtime calls the dependency set unsettled.
 const inject_max_passes = 8;
@@ -755,106 +766,106 @@ class PluginInstance {
   constructor(name) {
     this.scope = new Scope(name);
     this.context = new Context(this.scope, name);
-    this._name = name;
+    this.name = name;
     /** @type {"applying" | "active" | "closing" | "closed"} */
-    this._phase = "applying";
+    this.phase = "applying";
     /** @type {PluginAsync | undefined} */
-    this._async = undefined; // made only for an async apply or an async close
+    this.asyncState = undefined; // made only for an async apply or an async close
   }
 
-  get ready() { return this._async?.ready ?? readyNow; }
+  get ready() { return this.asyncState?.ready ?? readyNow; }
 
   /** @returns {PluginAsync} */
-  _state() {
-    return this._async ??= {};
+  state() {
+    return this.asyncState ??= {};
   }
 
   /** @param {unknown} error */
-  report(error) { events.emit("ext.error", error, this._name); }
+  report(error) { events.emit("ext.error", error, this.name); }
 
   // Close the scope and free the name once the close and any startup settle, or once the deadline gives up.
   /** @returns {void | Promise<void>} */
   dispose() {
-    if (this._phase === "closed") return this._async?.closed;
-    if (this._phase === "closing") return this._promise();
-    const applying = this._phase === "applying";
-    this._phase = "closing";
-    this._async?.cancelReady?.(startupCanceled());
+    if (this.phase === "closed") return this.asyncState?.closed;
+    if (this.phase === "closing") return this.closedPromise();
+    const applying = this.phase === "applying";
+    this.phase = "closing";
+    this.asyncState?.cancelReady?.(startupCanceled());
     const closed = this.scope.dispose();
     // A reentrant dispose can run before apply returns its promise.
-    const startup = applying ? readyNow.then(() => this._async?.startup) : this._async?.startup;
+    const startup = applying ? readyNow.then(() => this.asyncState?.startup) : this.asyncState?.startup;
     if (!closed && !startup) {
-      this._finish();
-      return this._async?.closed;
+      this.finish();
+      return this.asyncState?.closed;
     }
-    this._state().timer = setTimeout(() => this._force(), closeTimeoutMs);
-    Promise.all([closed, startup?.catch(NOOP)]).then(() => this._finish());
-    return this._promise();
+    this.state().timer = setTimeout(() => this.force(), closeTimeoutMs);
+    Promise.all([closed, startup?.catch(NOOP)]).then(() => this.finish());
+    return this.closedPromise();
   }
 
   /** @returns {Promise<void>} */
-  _promise() {
-    const state = this._state();
+  closedPromise() {
+    const state = this.state();
     return state.closed ??= new Promise((resolve) => { state.settle = resolve; });
   }
 
   // Give up on a close past its deadline, so a late release fault stays silent and the name is free.
-  _force() {
-    if (this._phase !== "closing") return;
+  force() {
+    if (this.phase !== "closing") return;
     this.report(new Error("plugin close timed out"));
-    this.scope._state().quiet = true;
-    this._finish();
+    this.scope.silence();
+    this.finish();
   }
 
-  _finish() {
-    if (this._phase === "closed") return;
-    this._phase = "closed";
-    const state = this._async;
+  finish() {
+    if (this.phase === "closed") return;
+    this.phase = "closed";
+    const state = this.asyncState;
     if (state) {
       if (state.timer !== undefined) clearTimeout(state.timer);
       state.startup = undefined;
       state.cancelReady = undefined;
     }
-    if (plugins._live[this._name] === this) delete plugins._live[this._name];
+    if (livePlugins[this.name] === this) delete livePlugins[this.name];
     state?.settle?.();
   }
 }
 
-export const plugins = {
-  /** @type {Record<string, PluginInstance>} */
-  _live: Object.create(null),
-  _closing: false,
-  /** @type {{ error: unknown } | undefined} */
-  _startupFailure: undefined,
+/** @type {Record<string, PluginInstance>} */
+const livePlugins = Object.create(null);
+let registryClosing = false;
+/** @type {{ error: unknown } | undefined} */
+let startupFailure;
 
+export const plugins = {
   /** @param {Plugin} plugin @returns {PluginHandle} */
   use(plugin) {
     // A plugin comes from user code, so its shape is checked here.
     if (plugin === null || typeof plugin !== "object" || typeof plugin.apply !== "function" || typeof plugin.name !== "string" || plugin.name === "")
       throw new TypeError("invalid plugin: expected { name, apply }");
-    if (this._closing) throw new TypeError("the plugin registry is closed");
+    if (registryClosing) throw new TypeError("the plugin registry is closed");
     const name = plugin.name;
-    if (this._live[name]) throw new TypeError("plugin `" + name + "` is already in use");
+    if (livePlugins[name]) throw new TypeError("plugin `" + name + "` is already in use");
     const instance = new PluginInstance(name);
-    this._live[name] = instance;
+    livePlugins[name] = instance;
     try {
       const result = plugin.apply(instance.context);
       if (result != null && typeof /** @type {{ then?: unknown }} */ (result).then === "function") {
         /** @type {(error: unknown) => void} */
         let rejectReady = NOOP;
         let resolveReady = NOOP;
-        const state = instance._state();
+        const state = instance.state();
         state.ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
         state.ready.catch(NOOP);
         state.cancelReady = rejectReady;
-        if (instance._phase !== "applying") rejectReady(startupCanceled());
+        if (instance.phase !== "applying") rejectReady(startupCanceled());
         state.startup = Promise.resolve(result).then((value) => {
           checkApplyResult(value);
           resolveReady();
         }).catch((error) => {
           rejectReady(error);
-          if (instance._phase === "active") {
-            this._startupFailure ??= { error };
+          if (instance.phase === "active") {
+            startupFailure ??= { error };
             instance.report(error);
             instance.dispose();
           }
@@ -864,45 +875,45 @@ export const plugins = {
         });
       } else {
         checkApplyResult(result);
-        if (instance._phase !== "applying") {
-          const ready = instance._state().ready = Promise.reject(startupCanceled());
+        if (instance.phase !== "applying") {
+          const ready = instance.state().ready = Promise.reject(startupCanceled());
           ready.catch(NOOP);
         }
       }
     } catch (error) {
-      if (instance._phase === "applying") instance._phase = "active";
+      if (instance.phase === "applying") instance.phase = "active";
       instance.dispose();
       throw error;
     }
-    if (instance._phase === "applying") instance._phase = "active";
+    if (instance.phase === "applying") instance.phase = "active";
     // The handle closes this instance only, so an old handle cannot close a replacement. `ready` is fixed once `use` returns.
     return { ready: instance.ready, dispose: () => instance.dispose() };
   },
 
   /** @param {string} name @returns {boolean} */
-  has(name) { return this._live[name] !== undefined; },
+  has(name) { return livePlugins[name] !== undefined; },
 
   /** @param {string} name @returns {void | Promise<void>} */
-  dispose(name) { return this._live[name]?.dispose(); },
+  dispose(name) { return livePlugins[name]?.dispose(); },
 
   /** @returns {string[]} */
-  names() { return Object.keys(this._live); },
+  names() { return Object.keys(livePlugins); },
 
   /** @returns {Promise<void>} */
-  _cancelStartup() {
-    return Promise.all(Object.values(this._live).filter((entry) => entry._async?.startup || entry._phase === "closing").map((entry) => entry.dispose())).then(NOOP);
+  cancelStartup() {
+    return Promise.all(Object.values(livePlugins).filter((entry) => entry.asyncState?.startup || entry.phase === "closing").map((entry) => entry.dispose())).then(NOOP);
   },
 
   // Report a startup failure once, even after the failed plugin exits.
   /** @returns {void | Promise<void>} */
   ready() {
-    const failure = this._startupFailure;
-    this._startupFailure = undefined;
+    const failure = startupFailure;
+    startupFailure = undefined;
     if (failure) return Promise.reject(failure.error);
-    const pending = Object.values(this._live).filter((entry) => entry._async?.startup && entry._phase === "active");
+    const pending = Object.values(livePlugins).filter((entry) => entry.asyncState?.startup && entry.phase === "active");
     if (!pending.length) return;
     return Promise.all(pending.map((entry) => entry.ready)).then(() => this.ready(), (error) => {
-      this._startupFailure = undefined;
+      startupFailure = undefined;
       throw error;
     });
   },
@@ -910,13 +921,13 @@ export const plugins = {
 
 // Close every plugin newest first under one deadline; a forced pass gives up on the closes that still wait.
 const closeTimeoutMs = installLifecycle((force) => {
-  plugins._closing = true;
-  const entries = Object.values(plugins._live).reverse();
+  registryClosing = true;
+  const entries = Object.values(livePlugins).reverse();
   /** @type {Promise<void>[]} */
   const pending = [];
   for (const entry of entries) {
     const closed = entry.dispose();
-    if (force) entry._force();
+    if (force) entry.force();
     else if (closed) pending.push(closed);
   }
   return pending.length ? Promise.all(pending).then(NOOP) : undefined;

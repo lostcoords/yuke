@@ -68,7 +68,7 @@ equal(unavailable.name, "InteractionUnavailable");
 equal(changes.length, before);
 
 // Synchronous completion and open failure leave no request or scope effect.
-const effects = scopeOf(b)._disposers.length;
+const effects = scopeOf(b).disposers.length;
 for (const fail of [false, true]) {
   const remove = interaction.install({ ...answerer, open(request, ctx, options, resolve) {
     if (fail) throw new Error("open failed");
@@ -79,7 +79,7 @@ for (const fail of [false, true]) {
   try { equal(await b.interaction.confirm("Immediate"), true); } catch (e) { error = e; }
   equal(error?.message, fail ? "open failed" : undefined);
   equal(b.interaction.pending, 0);
-  equal(scopeOf(b)._disposers.length, effects);
+  equal(scopeOf(b).disposers.length, effects);
   remove();
 }
 equal(changes.length, before);
@@ -146,6 +146,6 @@ let setupError;
 try { await invalidOpen.interaction.confirm("Invalid open"); } catch (error) { setupError = error; }
 equal(setupError.message, "setup failed after answer");
 equal(invalidOpen.interaction.pending, 0);
-equal(scopeOf(invalidOpen)._disposers.length, 0);
+equal(scopeOf(invalidOpen).disposers.length, 0);
 removeInvalid();
 scopeOf(invalidOpen).dispose();
