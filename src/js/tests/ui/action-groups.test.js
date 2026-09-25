@@ -18,7 +18,7 @@ check("single-group", rows.filter((r) => r.kind === "action-group-header" && row
 check("tree", tools.map((r) => r.marker).join(",") === "  ├─,  ├─,  └─,  └─");
 check("tree-alignment", !!groupHeader && groupHeader.indent === 2 && tools.every((r) => r.marker.startsWith("  ") && r.indent === 5));
 check("reasoning-action", rows.some((r) => r.kind === "reasoning-header" && r.marker === "  ├─" && rowText(r) === "thought · continued analysis"));
-const aRows = t.rows(60, t._globalRow({ id: "a", row: 0, col: 0 }), t.rowCountOf("a"));
+const aRows = t.rows(60, t.globalRow({ id: "a", row: 0, col: 0 }), t.rowCountOf("a"));
 check("joined-messages", aRows.length > 0 && rowText(aRows[aRows.length - 1]) !== "");
 check("text-breaks", tools.length === 4 && tools[3].marker === "  └─" && rows.some((r) => rowText(r).indexOf("visible answer") >= 0));
 

@@ -8,7 +8,7 @@ t.setOutline([], { id: 1, type: "assistant" });
 const rows = () => t.rows(80, 0, t.rowCount(80));
 const text = () => rows().map((r) => r.text || (r.segments || []).map((s) => s.text).join("")).join("\n");
 rows();
-const source = t._sourceOf(1);
+const source = t.sourceOf(1);
 t.select(t.posAtSource(1, 0), t.posAtSource(1, source.length));
 const initial = JSON.stringify(rows());
 part.state.output = "fresh hidden output";

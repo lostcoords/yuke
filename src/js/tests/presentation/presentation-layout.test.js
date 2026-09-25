@@ -38,7 +38,7 @@ check("sidebar", composer.rect.w === 41 && composer.rect.y >= 16);
 check("context", contextSession === "session-a");
 const mouse = (event, col) => ({ type: "mouse", event, button: "left", col, row: 0, mods: 0, count: 1 });
 view.onMouse(mouse("press", 2)); view.onMouse(mouse("drag", 45)); view.onMouse(mouse("release", 45));
-check("transcript-capture-crosses-sidebar", transcript.selectedText() === "history across sidebar" && !transcript._dragging);
+check("transcript-capture-crosses-sidebar", transcript.selectedText() === "history across sidebar" && !transcript.dragging);
 check("identity", composer === view.composer && transcript === view.transcript && pager === transcript.pager && mounts === 1);
 check("draft", composer.text === draft && composer.input.caret === caret && JSON.stringify(composer.spans) === spans);
 globalThis.finish = () => {

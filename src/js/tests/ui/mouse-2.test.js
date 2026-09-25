@@ -12,11 +12,11 @@ const r = v.transcript.pager.rect();
 const mouse = (row, event, button) => v.onMouse({ type: "mouse", col: r.x + 2, row, button: button || "left", event, mods: 0 });
 
 mouse(r.y, "press");
-check("press-starts-drag", v.transcript._dragging === true);
+check("press-starts-drag", v.transcript.dragging === true);
 mouse(v.composer.rect.y, "drag");
-check("drag-outside-still-drags", v.transcript._dragging === true);
+check("drag-outside-still-drags", v.transcript.dragging === true);
 mouse(v.composer.rect.y, "release");
-check("release-outside-ends-drag", v.transcript._dragging === false);
+check("release-outside-ends-drag", v.transcript.dragging === false);
 
 // A non-left button never reaches the press slot.
 let calls = 0;

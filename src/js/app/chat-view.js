@@ -125,7 +125,7 @@ export class ChatView {
       child("rule", fixed(h > composerRows && w > 0 ? 1 : 0)),
       child("composer", fit(), { intrinsic: { w, h: composerRows } }),
     ]);
-    const context = { bounds, empty: this.transcript._messages.length === 0 && !this.transcript._active, sessionId: this.sessionId(), composerRows, defaultLayout };
+    const context = { bounds, empty: this.transcript.committed.length === 0 && !this.transcript.draft, sessionId: this.sessionId(), composerRows, defaultLayout };
     const provider = /** @type {PresentationProvider | null} */ (slot.get(this, "presentation", context));
     let tree = defaultLayout;
     try {

@@ -33,12 +33,12 @@ check("done-path", rowsHave(done, "a.zig"));
 check("done-state", !rowsHave(done, "done") && !rowsHave(done, "12ms"));
 check("done-collapsed", markerOf(done) === "└─" && !rowsHave(done, "alpha"));
 
-const runStart = t._globalRow({ id: "run", row: 0, col: 0 });
+const runStart = t.globalRow({ id: "run", row: 0, col: 0 });
 const run = t.rows(40, runStart, 6);
 check("run-name", rowsHave(run, "Run") && rowsHave(run, "zig build test"));
 check("run-expanded", markerOf(run) === "└─" && rowsHave(run, "compiling"));
 
-const errStart = t._globalRow({ id: "err", row: 0, col: 0 });
+const errStart = t.globalRow({ id: "err", row: 0, col: 0 });
 const err = t.rows(40, errStart, 6);
 check("err-expanded", rowsHave(err, "no match") && rowsGroup(err, "TxToolError"));
 
@@ -65,7 +65,7 @@ term.beginFrame(); mix.draw({ x: 0, y: 0, w: 40, h: 8 }); term.endFrame();
 const mixRows = mix.rows(40, 0, 8);
 check("mix-text", rowsHave(mixRows, "hi") && rowsHave(mixRows, "there"));
 check("mix-tool", rowsHave(mixRows, "Read") && rowsHave(mixRows, "c.zig"));
-const srcEnd = mix._sourceOf("mix").length;
+const srcEnd = mix.sourceOf("mix").length;
 mix.select(mix.posAtSource("mix", 0), mix.posAtSource("mix", srcEnd));
 const src = mix.selectedText(true);
 check("mix-source-md", src.indexOf("hi") >= 0 && src.indexOf("there") >= 0);
@@ -143,7 +143,7 @@ const over = new Transcript({ partsOf: (id) => parts[id] || [] });
 over.setOutline([{ id: "pres", type: "assistant" }], null);
 const overRows = over.rows(60, 0, 4);
 check("override-row", rowsHave(overRows, "$") && rowsHave(overRows, "custom"));
-check("override-source", over._sourceOf("pres").indexOf("$ custom") === 0);
+check("override-source", over.sourceOf("pres").indexOf("$ custom") === 0);
 check("cached-presenter-changes", rowsHave(pres.rows(60, 0, 4), "custom"));
 
 const faultyOwner = plugins.use({ name: "test-faulty-presenter", apply(ctx) {

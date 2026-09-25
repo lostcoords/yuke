@@ -24,8 +24,8 @@ const reference = (w) => messages.flatMap((m) => {
   return one.rows(w, 0, one.rowCount(w));
 });
 let builds = 0;
-const rowsOf = t._rowsOf;
-t._rowsOf = function(m, w, i) { const c = this._rows.get(String(m.id)); if (!c || c.w !== w) builds++; return rowsOf.call(this, m, w, i); };
+const rowsOf = t.rowsOf;
+t.rowsOf = function(m, w, i) { const c = this.rowCache.get(String(m.id)); if (!c || c.w !== w) builds++; return rowsOf.call(this, m, w, i); };
 
 for (const id in folds) t.togglePart(id, folds[id]);
 const wide = reference(32);
@@ -56,11 +56,11 @@ check("selection-after-resize", t.selectedText(true) === source);
 // A fold on an evicted message changes the count and shows at its own location.
 t.clearSelection();
 t.rows(18, narrow.length - 8, 8);
-check("middle-evicted", !t._rows.has("m20"));
+check("middle-evicted", !t.rowCache.has("m20"));
 const before = t.rowCount(18);
 t.togglePart("m20", 1);
 check("fold-count", t.rowCount(18) > before);
-check("fold-marker", t.rows(18, t._globalRow({ id: "m20", row: 0, col: 0 }), 4).some((r) => r.kind === "reasoning-body"));
+check("fold-marker", t.rows(18, t.globalRow({ id: "m20", row: 0, col: 0 }), 4).some((r) => r.kind === "reasoning-body"));
 
 // The viewport stays cached whole, and a part motion reads only its neighbours.
 t.rows(18, 0, 8);

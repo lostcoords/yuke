@@ -311,7 +311,7 @@ function verify(withChecksum = true) {
 }
 
 function verifyNativeStream() {
-  const source = transcript._sourceOf(NATIVE_STREAM_MESSAGE_ID);
+  const source = transcript.sourceOf(NATIVE_STREAM_MESSAGE_ID);
   let appended = "";
   for (let i = 0; i < iteration; i++) appended += nativeDeltas[i % nativeDeltas.length] || "";
   if (source !== nativeInitialText + appended) throw new Error("native stream source changed");
@@ -324,7 +324,7 @@ function verifyNativeStream() {
 }
 
 function verifyStreamSuffix() {
-  const source = transcript._sourceOf(activeId);
+  const source = transcript.sourceOf(activeId);
   const active = /** @type {Extract<Wire.AssistantPart, { type: "text" }>} */ (live[0]);
   const expectedOffset = active.text.length + 1;
   if (expectedOffset !== streamSuffixOffset + streamPrefix.length + 1)
@@ -343,7 +343,7 @@ function verifyPreview() {
     throw new Error("preview report content changed");
   const reportFooter = reportRows[9];
   if (!reportFooter || rowText(reportFooter).indexOf("click the header") < 0) throw new Error("preview report footer missing");
-  const reportSource = transcript._sourceOf(PREVIEW_REPORT_ID);
+  const reportSource = transcript.sourceOf(PREVIEW_REPORT_ID);
   const reportBodyRow = reportRows[1];
   const reportBody = reportBodyRow?.segments?.find((segment) => segment.src != null);
   if (!reportBody || reportSource.slice(reportBody.src, reportBody.srcEnd) !== reportBody.text)
@@ -360,7 +360,7 @@ function verifyPreview() {
   if (!plain) throw new Error("preview plain tool content changed");
   const viewed = toolRows.find((row) => row.kind === "tool-body" && row.segments?.some((segment) => segment.text.indexOf("view-first") >= 0));
   if (!viewed) throw new Error("preview structured view content changed");
-  const toolSource = transcript._sourceOf(PREVIEW_ASSISTANT_ID);
+  const toolSource = transcript.sourceOf(PREVIEW_ASSISTANT_ID);
   const toolBody = plain?.segments?.find((segment) => segment.text.indexOf("plain-0-line-0") >= 0);
   if (!toolBody || toolSource.slice(toolBody.src, toolBody.srcEnd) !== toolBody.text)
     throw new Error("preview tool source span changed");
@@ -376,7 +376,7 @@ function verifyPreview() {
   if (!firstReasoning || !ellipsisReasoning || !lastReasoning
     || rowText(firstReasoning).indexOf("reason-first") < 0 || rowText(ellipsisReasoning) !== "…" || rowText(lastReasoning).indexOf("reason-last") < 0)
     throw new Error("preview reasoning content changed");
-  const reasoningSource = transcript._sourceOf(PREVIEW_ASSISTANT_ID);
+  const reasoningSource = transcript.sourceOf(PREVIEW_ASSISTANT_ID);
   const first = firstReasoning?.segments?.find((segment) => segment.src != null);
   const last = lastReasoning?.segments?.find((segment) => segment.src != null);
   if (!first || !last || reasoningSource.slice(first.src, first.srcEnd) !== first.text || reasoningSource.slice(last.src, last.srcEnd) !== last.text)

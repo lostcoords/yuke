@@ -10,12 +10,12 @@ const make = () => {
 const t = make();
 const rows = (view, width) => view.rows(width, 0, view.rowCount(width));
 rows(t, 24);
-const prefix = t._parts.get("1").rows.get("0").rows[0];
+const prefix = t.partStates.get("1").rows.get("0").rows[0];
 for (const delta of [" extended", "\r", "\n\r\nNext", "\n===", "\n\n| a | b |\n|---|---|\n| 1 | 2 |", "\n\nEnd"]) {
   source += delta;
   t.setActive(1, 0);
   check("append-output", JSON.stringify(rows(t, 24)) === JSON.stringify(rows(make(), 24)));
-  check("prefix-identity", t._parts.get("1").rows.get("0").rows[0] === prefix);
+  check("prefix-identity", t.partStates.get("1").rows.get("0").rows[0] === prefix);
 }
 for (const width of [9, 32, 24]) check("resize-output", JSON.stringify(rows(t, width)) === JSON.stringify(rows(make(), width)));
 for (source of ["replacement\n\ntext", "", "new text"]) {

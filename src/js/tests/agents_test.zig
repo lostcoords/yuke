@@ -138,7 +138,7 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
         \\  const view = new Transcript({ partsOf: () => [{ type: "tool", id: 0, name, arguments: JSON.stringify(args), state: { type: "pending" } }] });
         \\  view.setOutline([{ id: 1, type: "assistant" }], null);
         \\  view.rows(80, 0, 4);
-        \\  return view._sourceOf(1);
+        \\  return view.sourceOf(1);
         \\};
         \\globalThis.presented = toolSource("spawn_agent", { agent: "review" }).startsWith("Agent review") && toolSource("spawn_agent", {}).startsWith("Agent small") && toolSource("send_agent_input", { child: "abc" }).startsWith("Send abc") ? 1 : 0;
     , "present.js");
