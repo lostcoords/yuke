@@ -887,46 +887,47 @@ export function normalizeSource(text) {
 }
 
 export class Document {
+  /** @type {string | null} */
+  #src;
   constructor() {
-    /** @type {string | null} */
-    this._src = null;
+    this.#src = null;
     /** @type {Block[]} */
-    this._blocks = [];
+    this.parsed = [];
     /** @type {Map<number, CacheEntry>} */
-    this._cache = new Map();
+    this.cache = new Map();
   }
 
   // Return true when the source changed. An append keeps every block but the last two, because only the tail can change.
   /** @param {string} text @returns {boolean} */
   setText(text) {
-    return this._setText(text) !== -1;
+    return this.update(text) !== -1;
   }
 
   // Return the retained block count, or -1 when the source is unchanged.
   /** @param {string} text @returns {number} */
-  _setText(text) {
+  update(text) {
     text = normalizeSource(text);
-    if (text === this._src) return -1;
-    const append = this._src != null && text.startsWith(this._src);
-    const keep = append ? Math.max(0, this._blocks.length - 2) : 0;
-    const from = keep > 0 ? /** @type {Block} */ (this._blocks[keep]).at : 0;
+    if (text === this.#src) return -1;
+    const append = this.#src != null && text.startsWith(this.#src);
+    const keep = append ? Math.max(0, this.parsed.length - 2) : 0;
+    const from = keep > 0 ? /** @type {Block} */ (this.parsed[keep]).at : 0;
     const tail = segment(text, from);
     // The retained prefix keeps its cache; only the replaced tail can lose a block.
-    if (!append) this._cache.clear();
-    else for (let i = keep; i < this._blocks.length; i++) {
-      const at = /** @type {Block} */ (this._blocks[i]).at;
-      if (!tail.some((block) => block.at === at && !block.open)) this._cache.delete(at);
+    if (!append) this.cache.clear();
+    else for (let i = keep; i < this.parsed.length; i++) {
+      const at = /** @type {Block} */ (this.parsed[i]).at;
+      if (!tail.some((block) => block.at === at && !block.open)) this.cache.delete(at);
     }
-    this._src = text;
-    this._blocks.length = keep;
-    for (const block of tail) this._blocks.push(block);
+    this.#src = text;
+    this.parsed.length = keep;
+    for (const block of tail) this.parsed.push(block);
     return keep;
   }
 
   // The normalized markdown. A segment offset indexes into this text, never into the raw input.
   /** @returns {string} */
   sourceText() {
-    return this._src == null ? "" : this._src;
+    return this.#src == null ? "" : this.#src;
   }
 
   /** @param {number} width @param {number} [limit] @returns {Row[]} */
@@ -935,12 +936,12 @@ export class Document {
     if (limit === 0) return [];
     const out = /** @type {Row[]} */ ([]);
     let first = true;
-    for (const block of this._blocks) {
+    for (const block of this.parsed) {
       if (out.length >= limit) break;
       if (!first) out.push(plainRow(""));
       first = false;
       if (out.length >= limit) break;
-      for (const r of this._blockRows(block, width, limit - out.length)) {
+      for (const r of this.blockRows(block, width, limit - out.length)) {
         if (out.length >= limit) break;
         out.push(r);
       }
@@ -951,19 +952,19 @@ export class Document {
   // The blocks in document order, for a caller that moves by markdown structure.
   /** @returns {BlockSummary[]} */
   blocks() {
-    return this._blocks.map((b) => ({ kind: b.kind, at: b.at, end: b.end }));
+    return this.parsed.map((b) => ({ kind: b.kind, at: b.at, end: b.end }));
   }
 
   // The cache keys on the block offset, because a segment holds absolute offsets; `raw` catches a change under one offset.
   /** @param {Block} block @param {number} width @param {number} [limit] @returns {Row[]} */
-  _blockRows(block, width, limit = Infinity) {
+  blockRows(block, width, limit = Infinity) {
     if (block.open) return renderBlock(block, width, limit);
-    let entry = this._cache.get(block.at);
+    let entry = this.cache.get(block.at);
     if (limit !== Infinity && entry && entry.raw === block.raw && entry.width === width) return entry.rows.slice(0, limit);
     if (limit !== Infinity) return renderBlock(block, width, limit);
     if (!entry || entry.raw !== block.raw || entry.width !== width) {
       entry = { raw: block.raw, width, rows: renderBlock(block, width) };
-      this._cache.set(block.at, entry);
+      this.cache.set(block.at, entry);
     }
     return entry.rows;
   }

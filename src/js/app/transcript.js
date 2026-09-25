@@ -1491,16 +1491,16 @@ export class Transcript {
     if (part.type === "text") {
       const text = previous?.text || { doc: new Document(), width: contentW, ends: [] };
       const { doc, ends } = text;
-      const keep = doc._setText(part.text);
+      const keep = doc.update(part.text);
       if (text.width !== contentW) ends.length = 0;
       else if (keep >= 0) ends.length = Math.min(keep, ends.length);
       text.width = contentW;
       const rows = previous?.text === text ? previous.rows : [];
       rows.length = ends.at(-1) || 0;
-      for (let i = ends.length; i < doc._blocks.length; i++) {
+      for (let i = ends.length; i < doc.parsed.length; i++) {
         if (i) rows.push({ segments: [{ text: "", group: "MdText" }], indent: TX_GUTTER, key: id, partId: part.id, kind: "text" });
-        const block = /** @type {Block} */ (doc._blocks[i]);
-        for (const r of doc._blockRows(block, contentW)) rows.push({ segments: r.segments, indent: TX_GUTTER, key: id, partId: part.id, kind: "text" });
+        const block = /** @type {Block} */ (doc.parsed[i]);
+        for (const r of doc.blockRows(block, contentW)) rows.push({ segments: r.segments, indent: TX_GUTTER, key: id, partId: part.id, kind: "text" });
         ends.push(rows.length);
       }
       return { w: width, expanded, live, shape: tree, rows, source: doc.sourceText(), text };
