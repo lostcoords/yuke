@@ -10,17 +10,18 @@ import { client } from "yuke:client";
 
 // One engine, one feed. The feed keeps no copy of the store, so an index change makes it read `session.list` again.
 class SessionFeed {
+  #refresh;
   constructor() {
     /** @type {Map<string, FeedItem>} */
     this.items = new Map();
-    this._refresh = new Refresh(
+    this.#refresh = new Refresh(
       () => client.sessionList().then((r) => this.seed(r)),
       () => root.invalidate(),
     );
   }
 
   get loading() {
-    return this._refresh.loading;
+    return this.#refresh.loading;
   }
 
   /** @param {Wire.SessionListResult} listResult @returns {void} */
@@ -33,7 +34,7 @@ class SessionFeed {
   // Read the list again. A burst shares one read and one follow-up catches changes during it.
   /** @returns {Promise<void>} */
   refresh() {
-    return this._refresh.run();
+    return this.#refresh.run();
   }
 
   /** @returns {void} */
