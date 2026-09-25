@@ -119,12 +119,14 @@ export function callHook(obj, name, ...args) {
 }
 
 export class Emitter {
+  /** @type {ListenerMap} */
+  #hooks;
+  /** @type {Set<string> | null} */
+  #names;
   /** @param {Set<string> | null} [names] */
   constructor(names) {
-    /** @type {ListenerMap} */
-    this._hooks = Object.create(null);
-    /** @type {Set<string> | null} */
-    this._names = names || null;
+    this.#hooks = Object.create(null);
+    this.#names = names || null;
     /** @type {((error: unknown, name: string) => void) | null} */
     this.onError = null;
   }
@@ -132,7 +134,7 @@ export class Emitter {
   // Declare more names for the life of a tier, and answer a disposer that withdraws them.
   /** @param {string[]} names @returns {() => void} */
   declare(names) {
-    const table = this._names;
+    const table = this.#names;
     if (!table) return () => {};
     const added = names.filter((n) => !table.has(n));
     for (const n of added) table.add(n);
@@ -144,8 +146,8 @@ export class Emitter {
 
   // Reject a name a closed bus does not declare, so a typo fails at the call and not in silence.
   /** @param {string} name @returns {void} */
-  _check(name) {
-    if (!this._names || this._names.has(name)) return;
+  #check(name) {
+    if (!this.#names || this.#names.has(name)) return;
     // An `owner:event` name belongs to its owner, so the core set never declares it.
     if (isNamespaced(name)) return;
     throw new TypeError("unknown event: " + name);
@@ -153,8 +155,8 @@ export class Emitter {
 
   /** @param {string} name @param {(...args: any[]) => unknown} fn @param {{ prepend?: boolean } | undefined} [opts] @returns {() => void} */
   on(name, fn, opts) {
-    this._check(name);
-    const list = this._hooks[name] || (this._hooks[name] = []);
+    this.#check(name);
+    const list = this.#hooks[name] || (this.#hooks[name] = []);
     if (opts && opts.prepend) list.unshift(fn);
     else list.push(fn);
     return () => {
@@ -174,21 +176,21 @@ export class Emitter {
 
   /** @param {string} name @param {...any} args @returns {void} */
   emit(name, ...args) {
-    this._check(name);
-    const list = this._hooks[name];
+    this.#check(name);
+    const list = this.#hooks[name];
     if (!list) return;
     for (const fn of list.slice()) {
       try {
         fn(...args);
       } catch (e) {
-        this._fault(e, name);
+        this.#fault(e, name);
       }
     }
   }
 
   // Report one listener fault. If `onError` throws, the remaining listeners still run.
   /** @param {unknown} error @param {string} name @returns {void} */
-  _fault(error, name) {
+  #fault(error, name) {
     try {
       callHook(this, "onError", error, name);
     } catch (_ignored) {}
@@ -196,8 +198,8 @@ export class Emitter {
 
   /** @param {string} name @param {...any} args @returns {unknown} */
   bail(name, ...args) {
-    this._check(name);
-    const list = this._hooks[name];
+    this.#check(name);
+    const list = this.#hooks[name];
     if (!list) return undefined;
     for (const fn of list.slice()) {
       let r;
@@ -205,7 +207,7 @@ export class Emitter {
       try {
         r = fn(...args);
       } catch (e) {
-        this._fault(e, name);
+        this.#fault(e, name);
         continue;
       }
       if (r != null && r !== false) return r;
