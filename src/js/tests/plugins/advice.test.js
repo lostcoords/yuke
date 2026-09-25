@@ -78,7 +78,8 @@ import { tui } from "yuke:internal/tui";
   const obj = { f() { return 1; } };
   ctx.advise(obj, "f", "filterReturn", (r) => r + 1, { name: "inc" });
   const owned = advice.list(obj, "f")[0];
-  t.command.add(null, { bare: () => {}, "other:kept": () => {} });
+  t.command.add("bare", { run: () => {} });
+  t.command.add("other:kept", { run: () => {} });
   t.keymap.add({ "ctrl+y": "p7:bare" });
   ctx.provide("svc7", 42);
   const ok = owned.owner === "p7" && obj.f() === 2 &&

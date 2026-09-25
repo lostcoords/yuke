@@ -11,17 +11,16 @@ const sent = [];
 const msg = (text) => [{ type: "text", text }];
 chat.session.startChat = (input) => { sent.push(input.content[0].text); return true; };
 let ran = null;
-const off = command.add(null, { "test:echo": (arg) => { ran = arg === undefined ? "" : arg; } },
-  { "test:echo": { title: "Echo", description: "d", slash: "echo", args: true } });
+const off = command.add("test:echo", { desc: "d", slash: "echo", args: true, run: (arg) => { ran = arg === undefined ? "" : arg; } });
 const rowsOf = () => root.overlays[0].content.list.items;
 
 chat.composer.text = "/";
 check("opens", root.overlays.length === 1 && root.overlays[0].modal === false);
 check("composer-keeps-focus", root.focused === chat);
 check("lists-slash-entries", rowsOf().length > 3 && rowsOf().every((e) => e.slash));
-const offAgents = command.add(null, { "test:agents": () => {}, "test:models": () => {} }, {
-  "test:agents": { title: "Agents", slash: "agents" }, "test:models": { title: "Agent models", slash: "agent-models" },
-});
+const offAgentsOnly = command.add("test:agents", { desc: "agents", slash: "agents", run: () => {} });
+const offModels = command.add("test:models", { desc: "agent models", slash: "agent-models", run: () => {} });
+const offAgents = () => { offAgentsOnly(); offModels(); };
 chat.composer.text = "/a";
 root.overlays[0].content.list.selectKey("test:models");
 chat.composer.text = "/agent";
@@ -94,7 +93,7 @@ check("chord-beats-float", chat.composer.text === "/ech" && keymap.pendingLabel(
 chat.focusRegion("composer");
 chat.composer.text = "";
 // A command that left the registry while its row showed runs nothing and keeps the draft.
-const gone = command.add(null, { "test:gone": () => {} }, { "test:gone": { title: "Gone", description: "d", slash: "gone" } });
+const gone = command.add("test:gone", { desc: "d", slash: "gone", run: () => {} });
 chat.composer.text = "/gone";
 check("gone-listed", root.overlays.length === 1);
 gone();

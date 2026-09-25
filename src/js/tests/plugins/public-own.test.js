@@ -8,7 +8,7 @@ let runs = 0;
 const owner = plugins.use({ name: "public-owner", apply(ctx) {
   ctx.tools.define(definition);
   ctx.inject(["tui"], (ctx) => {
-    ctx.tui.command.add(null, { note: () => { runs++; } });
+    ctx.tui.command.add("note", { run: () => { runs++; } });
   });
 } });
 // The name is taken while its owner lives, and free again once the owner is gone.

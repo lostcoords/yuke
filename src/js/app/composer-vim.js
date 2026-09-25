@@ -199,10 +199,8 @@ export const composerVim = {
       };
       const inChat = () => chatComposer() != null;
 
-      ctx.tui.command.add(inChat, {
-        normal: () => setMode(chatComposer(), "normal"),
-        insert: () => setMode(chatComposer(), "insert"),
-      });
+      ctx.tui.command.add("normal", { when: inChat, run: () => setMode(chatComposer(), "normal") });
+      ctx.tui.command.add("insert", { when: inChat, run: () => setMode(chatComposer(), "insert") });
 
       ctx.tui.keymap.add({ esc: "composer-vim:normal" });
 

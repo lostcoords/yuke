@@ -85,29 +85,29 @@ plugins.use({
       ctx.tui.status.add({ side: "right", order: -1, render: () => keymap.pendingLabel() });
 
       // The interrupt command is available only with a session open.
-      ctx.tui.command.add(() => currentChat()?.session.sessionId != null, {
-        "session:interrupt": () => withChat(c => c.session.interrupt()),
-      }, {
-        "session:interrupt": { title: "Interrupt", description: "stop the run", slash: "interrupt" },
-      });
-
-      ctx.tui.command.add(null, {
-        "ui:sessions": () => openSessionFinder(ctx),
-        "focus:left": () => root.focusDir("h"),
-        "focus:down": () => root.focusDir("j"),
-        "focus:up": () => root.focusDir("k"),
-        "focus:right": () => root.focusDir("l"),
-        "focus:next": () => root.focusCycle(1),
-        "focus:prev": () => root.focusCycle(-1),
-        "window:split-right": () => splitChat("row"),
-        "window:split-down": () => splitChat("col"),
-        "window:close": () => root.close(),
-        "chat:new": () => withChat(c => {
+      ctx.tui.command.add("session:interrupt", { when: () => currentChat()?.session.sessionId != null, desc: "stop the run", slash: true, run: () => withChat(c => c.session.interrupt()) });
+      ctx.tui.command.add("ui:sessions", { desc: "open a session", slash: true, run: () => openSessionFinder(ctx) });
+      ctx.tui.command.add("chat:new", {
+        desc: "leave the session and start empty",
+        slash: true,
+        run: () => withChat(c => {
           showSession(c, new Session());
           root.focusView(c);
         }),
-        "chat:paste-image": () => withChat(c => { attachClipboard(c.composer); }),
-        "debug:memory": () => {
+      });
+      ctx.tui.command.add("chat:paste-image", { desc: "attach the image on the clipboard", run: () => withChat(c => { attachClipboard(c.composer); }) });
+      // Window commands are keymap targets, so they carry no description and never list.
+      ctx.tui.command.add("focus:left", { run: () => root.focusDir("h") });
+      ctx.tui.command.add("focus:down", { run: () => root.focusDir("j") });
+      ctx.tui.command.add("focus:up", { run: () => root.focusDir("k") });
+      ctx.tui.command.add("focus:right", { run: () => root.focusDir("l") });
+      ctx.tui.command.add("focus:next", { run: () => root.focusCycle(1) });
+      ctx.tui.command.add("focus:prev", { run: () => root.focusCycle(-1) });
+      ctx.tui.command.add("window:split-right", { run: () => splitChat("row") });
+      ctx.tui.command.add("window:split-down", { run: () => splitChat("col") });
+      ctx.tui.command.add("window:close", { run: () => root.close() });
+      ctx.tui.command.add("debug:memory", {
+        run: () => {
           const m = client.memoryUsage();
           const mb = (/** @type {number} */ n) => (n / 1048576).toFixed(1) + "MB";
           const k = (/** @type {number} */ n) => Math.round(n / 1000) + "k";
@@ -115,10 +115,6 @@ plugins.use({
             " · obj " + mb(m.objects) + "/" + k(m.objectCount) + " · prop " + mb(m.properties) + "/" + k(m.propertyCount) +
             " · shape " + mb(m.shapes) + " · arr " + k(m.arrayCount));
         },
-      }, {
-        "ui:sessions": { title: "Sessions", description: "open a session", slash: "sessions" },
-        "chat:new": { title: "New chat", description: "leave the session and start empty", slash: "new" },
-        "chat:paste-image": { title: "Paste image", description: "attach the image on the clipboard" },
       });
 
       // The nav keys drive whichever widget the focused layer offers, so any pane scrolls the same way.

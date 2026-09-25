@@ -960,26 +960,29 @@ export function mcp(options = {}) {
       });
 
       ctx.inject(["tui"], (ctx) => {
-        ctx.tui.command.add(null, {
-          "mcp:show": () => showInfo(ctx, "mcp", plugin.rows()),
-          "mcp:reset-trust": () => plugin.resetTrust(),
-          "mcp:login": (/** @type {string | undefined} */ query) => {
+        ctx.tui.command.add("mcp:show", { desc: "show the MCP servers and their tools", slash: "mcp", run: () => showInfo(ctx, "mcp", plugin.rows()) });
+        ctx.tui.command.add("mcp:reset-trust", { desc: "forget this workspace’s MCP server decisions", slash: "mcp-reset-trust", run: () => plugin.resetTrust() });
+        ctx.tui.command.add("mcp:login", {
+          desc: "sign in to an MCP server over OAuth",
+          slash: "mcp-login",
+          args: true,
+          run: (/** @type {string | undefined} */ query) => {
             // Without a name, the first server that waits for a sign-in is the one.
             const name = query?.trim() || servers.find((server) => server.state === "needs auth")?.name;
             if (!name) { notice.show("no MCP server needs a sign-in"); return; }
             notice.show("MCP " + name + ": sign in in the browser");
             plugin.login(name).then(() => notice.show("MCP " + name + ": signed in"), (error) => notice.show("MCP " + name + ": " + errorText(error)));
           },
-          "mcp:logout": (/** @type {string | undefined} */ query) => {
+        });
+        ctx.tui.command.add("mcp:logout", {
+          desc: "forget the sign-in of an MCP server",
+          slash: "mcp-logout",
+          args: true,
+          run: (/** @type {string | undefined} */ query) => {
             const name = query?.trim();
             if (!name) { notice.show("name the MCP server to sign out of"); return; }
             plugin.logout(name).then(() => notice.show("MCP " + name + ": signed out"), (error) => notice.show("MCP " + name + ": " + errorText(error)));
           },
-        }, {
-          "mcp:show": { title: "MCP", description: "show the MCP servers and their tools", slash: "mcp" },
-          "mcp:reset-trust": { title: "Reset MCP trust", description: "forget this workspace’s MCP server decisions", slash: "mcp-reset-trust" },
-          "mcp:login": { title: "MCP sign-in", description: "sign in to an MCP server over OAuth", slash: "mcp-login", args: true },
-          "mcp:logout": { title: "MCP sign-out", description: "forget the sign-in of an MCP server", slash: "mcp-logout", args: true },
         });
       });
     },

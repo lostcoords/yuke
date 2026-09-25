@@ -273,8 +273,8 @@ export const transcriptVim = {
   /** @param {Context} ctx */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      ctx.tui.command.add(null, {
-        "chat:focus-toggle": () => {
+      ctx.tui.command.add("chat:focus-toggle", {
+        run: () => {
           const view = currentChat();
           if (!view) return;
           view.focusRegion(view.focus === "transcript" ? "composer" : "transcript");

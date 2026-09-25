@@ -93,8 +93,10 @@ export const cachePlugin = {
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      ctx.tui.command.add(null, {
-        "cache:show": async () => {
+      ctx.tui.command.add("cache:show", {
+        desc: "show what the provider served from its prompt cache",
+        slash: "cache",
+        run: async () => {
           const entry = chatEntry();
           // A chat with no session has read nothing, so the window would state zeros and explain none of them.
           if (!entry) return notice.show("no session yet");
@@ -104,8 +106,6 @@ export const cachePlugin = {
             .catch(() => null);
           showInfo(ctx, "cache", cacheRows(entry.session, children));
         },
-      }, {
-        "cache:show": { title: "Cache", description: "show what the provider served from its prompt cache", slash: "cache" },
       });
     });
   },

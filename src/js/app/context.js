@@ -108,15 +108,15 @@ export function contextUsage(cfg = {}) {
     ctx.inject(["tui"], (ctx) => {
       ctx.tui.status.add({ side: "right", order: 20, render: () => contextLine(reading(), glyphs) });
 
-      ctx.tui.command.add(null, {
-        "context:show": async () => {
+      ctx.tui.command.add("context:show", {
+        desc: "show the context and usage of this chat",
+        slash: "context",
+        run: async () => {
           const current = reading();
           const entry = chatEntry();
           const item = entry ? await client.sessionGet(entry.session.id) : null;
           showInfo(ctx, "context", contextRows(current, item?.instruction_sources || [], item?.skills || []));
         },
-      }, {
-        "context:show": { title: "Context", description: "show the context and usage of this chat", slash: "context" },
       });
     });
   },

@@ -186,9 +186,7 @@ export const jobsUiPlugin = {
         root.invalidate();
       });
       ctx.tui.status.add({ side: "right", order: 1, render: () => (running.size === 0 ? "" : "jobs " + running.size) });
-      ctx.tui.command.add(null, {
-        "jobs:open": () => openJobs(ctx),
-      }, { "jobs:open": { title: "Jobs", description: "see or stop background jobs", slash: "jobs" } });
+      ctx.tui.command.add("jobs:open", { desc: "see or stop background jobs", slash: "jobs", run: () => openJobs(ctx) });
     });
   },
 };

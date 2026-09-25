@@ -4,8 +4,8 @@ import { plugins, scopeOf } from "yuke:internal/ext";
 import { tui } from "yuke:internal/tui";
 const layer = (n) => ({ name: n, rect: { x: 0, y: 0, w: 1, h: 1 }, layout() {}, draw() {} });
 
-const owner = { name: "ov", apply(ctx) { const t = tui.bindTo(ctx); t.command.add(null, { "ov:open": () => t.overlay(root.pushOverlay(layer("own"))) }); } };
-const other = { name: "other", apply(ctx) { const t = tui.bindTo(ctx); t.command.add(null, { "other:open": () => root.pushOverlay(layer("other")) }); } };
+const owner = { name: "ov", apply(ctx) { const t = tui.bindTo(ctx); t.command.add("ov:open", { run: () => t.overlay(root.pushOverlay(layer("own"))) }); } };
+const other = { name: "other", apply(ctx) { const t = tui.bindTo(ctx); t.command.add("other:open", { run: () => root.pushOverlay(layer("other")) }); } };
 const base = root.overlays.length;
 
 plugins.use(owner);
@@ -23,7 +23,7 @@ root.popOverlay();
 plugins.dispose("other");
 
 // One plugin's unload must leave another plugin's overlay alone, not every owned overlay.
-const second = { name: "ov2", apply(ctx) { const t = tui.bindTo(ctx); t.command.add(null, { "ov2:open": () => t.overlay(root.pushOverlay(layer("own2"))) }); } };
+const second = { name: "ov2", apply(ctx) { const t = tui.bindTo(ctx); t.command.add("ov2:open", { run: () => t.overlay(root.pushOverlay(layer("own2"))) }); } };
 plugins.use(owner);
 plugins.use(second);
 command.perform("ov:open");
@@ -55,7 +55,7 @@ root.popOverlay(after);
 {
   const again = layer("again");
   let reCloses = 0;
-  plugins.use({ name: "re", apply(ctx) { const t = tui.bindTo(ctx); t.command.add(null, { "re:open": () => t.overlay(root.pushOverlay(again), () => { reCloses++; }) }); } });
+  plugins.use({ name: "re", apply(ctx) { const t = tui.bindTo(ctx); t.command.add("re:open", { run: () => t.overlay(root.pushOverlay(again), () => { reCloses++; }) }); } });
   command.perform("re:open");
   root.popOverlay(again);
   check("self-close-runs-onclose", reCloses === 1);

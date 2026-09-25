@@ -22,7 +22,7 @@ function entries() {
 
 /** @param {Entry} e @returns {string} */
 function wordOf(e) {
-  return e.slash ? "/" + e.slash : e.title;
+  return e.slash ? "/" + e.slash : e.name;
 }
 
 // The name column: the widest word plus two cells, so every description starts on one column.
@@ -35,7 +35,7 @@ function columnOf(all) {
 
 /** @param {Entry} e @param {number} col @returns {ListItem} */
 function formatRow(e, col) {
-  return { text: wordOf(e).padEnd(col), detail: e.description + (e.hint ? " · " + e.hint : "") };
+  return { text: wordOf(e).padEnd(col), detail: e.desc + (e.hint ? " · " + e.hint : "") };
 }
 
 // Parse the slash word and the rest of a composer text; null for a message or a path such as `/tmp/x`.
@@ -181,7 +181,7 @@ export function commandUi(cfg = {}) {
           maxRows: rows,
           items: all,
           key: (e) => e.name,
-          filterText: cfg.filterText || ((e) => wordOf(e) + " " + e.title),
+          filterText: cfg.filterText || ((e) => wordOf(e) + " " + e.desc),
           format: (e) => format(e, col),
           onAccept: (e) => run(e, ""),
         });
@@ -189,7 +189,7 @@ export function commandUi(cfg = {}) {
         return p;
       };
 
-      ctx.tui.command.add(null, { "ui:palette": openPalette });
+      ctx.tui.command.add("ui:palette", { run: openPalette });
       ctx.tui.keymap.add({ "ctrl+p": "ui:palette" });
     });
   },

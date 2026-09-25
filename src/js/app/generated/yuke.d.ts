@@ -1793,7 +1793,6 @@ import Disposer = $types_ext.Disposer;
 import ViewLike = $types_core.ViewLike;
 export type Tickable = Parameters<typeof root.addTickable>[0];
 export type Overlay = Parameters<typeof root.pushOverlay>[0];
-export type CommandMap = Parameters<typeof command.add>[1];
 class Surface {
     _ctx: Context;
     root: $core.RootView;
@@ -1801,8 +1800,6 @@ class Surface {
     constructor(ctx: Context);
     /** @template T @param {string} name @param {T} value @returns {T} */
     _settle<T>(name: string, value: T): T;
-    /** @template T @param {Record<string, T> | null | undefined} map @returns {Record<string, T>} */
-    _qualify<T>(map: Record<string, T> | null | undefined): Record<string, T>;
     /** @returns {typeof command} */
     get command(): typeof command;
     /** @returns {typeof keymap} */
@@ -2734,23 +2731,28 @@ export type NodeShape =
 export type CommandAction = (...args: any[]) => unknown;
 export type CommandPredicate = (...args: any[]) => boolean | [boolean, ...any[]];
 
-export interface CommandMeta {
-  title: string;
-  description: string;
-  slash?: string | null;
+/** One command. `desc` lists it in the palette; `slash: true` answers `/<name after the owner prefix>`, and a string names another word. */
+export interface CommandSpec {
+  run: CommandAction;
+  /** The command runs, and lists, only while this answers true. */
+  when?: CommandPredicate | null;
+  desc?: string;
+  slash?: boolean | string;
+  /** The slash word takes the rest of the line as its argument. */
   args?: boolean;
 }
 
 export interface CommandEntry {
-  predicate: CommandPredicate | null;
-  perform: CommandAction;
-  meta: CommandMeta | null;
+  when: CommandPredicate | null;
+  run: CommandAction;
+  desc: string | null;
+  slash: string | null;
+  args: boolean;
 }
 
 export interface CommandListing {
   name: string;
-  title: string;
-  description: string;
+  desc: string;
   slash: string | null;
   args: boolean;
 }
@@ -2759,7 +2761,7 @@ export type CommandMap = Record<string, CommandEntry[]>;
 
 export interface CommandRegistry {
   map: CommandMap;
-  add: (predicate: CommandPredicate | null, map: Record<string, CommandAction>, meta?: Record<string, CommandMeta>) => () => void;
+  add: (name: string, spec: CommandSpec) => () => void;
   perform: (name: string, ...args: any[]) => boolean;
   available: (name: string) => boolean;
   list: () => CommandListing[];

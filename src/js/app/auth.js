@@ -184,13 +184,8 @@ export const authPlugin = {
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      ctx.tui.command.add(null, {
-        "auth:login": (/** @type {string | undefined} */ query) => openLogin(ctx, query),
-        "auth:logout": (/** @type {string | undefined} */ query) => openLogout(ctx, query),
-      }, {
-        "auth:login": { title: "Login", description: "sign in to a provider", slash: "login", args: true },
-        "auth:logout": { title: "Logout", description: "forget a provider credential", slash: "logout", args: true },
-      });
+      ctx.tui.command.add("auth:login", { desc: "sign in to a provider", slash: true, args: true, run: (/** @type {string | undefined} */ query) => openLogin(ctx, query) });
+      ctx.tui.command.add("auth:logout", { desc: "forget a provider credential", slash: true, args: true, run: (/** @type {string | undefined} */ query) => openLogout(ctx, query) });
     });
   },
 };

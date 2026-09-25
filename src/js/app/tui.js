@@ -11,15 +11,14 @@ import { registerLabels } from "yuke:internal/transcript";
 /** @import { ViewLike } from "./types/core.js" */
 /** @typedef {Parameters<typeof root.addTickable>[0]} Tickable */
 /** @typedef {Parameters<typeof root.pushOverlay>[0]} Overlay */
-/** @typedef {Parameters<typeof command.add>[1]} CommandMap */
 
 const NOOP = () => {};
 
 // A registry as one block sees it: the shared registry, with an `add` the block owns. Reads and advice reach the shared object.
-/** @template {{ add(...args: any[]): Disposer }} R @param {Context} ctx @param {R} registry @param {(args: Parameters<R["add"]>) => Parameters<R["add"]>} [prepare] @returns {R} */
-function owned(ctx, registry, prepare) {
+/** @template {{ add(...args: any[]): Disposer }} R @param {Context} ctx @param {R} registry @returns {R} */
+function owned(ctx, registry) {
   const bound = /** @type {R} */ (Object.create(registry));
-  bound.add = /** @type {R["add"]} */ ((/** @type {Parameters<R["add"]>} */ ...args) => ctx.effect(() => registry.add(...(prepare ? prepare(args) : args))));
+  bound.add = /** @type {R["add"]} */ ((/** @type {Parameters<R["add"]>} */ ...args) => ctx.effect(() => registry.add(...args)));
   return bound;
 }
 
@@ -40,19 +39,13 @@ class Surface {
     return value;
   }
 
-  // A bare name becomes "<id>:<name>". A name that already holds a ":" stays as the author wrote it.
-  /** @template T @param {Record<string, T> | null | undefined} map @returns {Record<string, T>} */
-  _qualify(map) {
-    /** @type {Record<string, T>} */
-    const scoped = Object.create(null);
-    for (const name in map || {}) scoped[name.indexOf(":") >= 0 ? name : this._ctx.id + ":" + name] = /** @type {T} */ ((/** @type {Record<string, T>} */ (map))[name]);
-    return scoped;
-  }
-
-  // `meta` names the user actions in the map. A command without metadata stays a keymap target and never lists.
+  // A bare name becomes "<id>:<name>"; a name that already holds a ":" stays as the author wrote it.
   /** @returns {typeof command} */
   get command() {
-    return this._settle("command", owned(this._ctx, command, ([predicate, map, meta]) => /** @type {Parameters<typeof command.add>} */ ([predicate, /** @type {CommandMap} */ (this._qualify(map)), meta && this._qualify(meta)])));
+    const ctx = this._ctx;
+    const bound = /** @type {typeof command} */ (Object.create(command));
+    bound.add = (name, spec) => ctx.effect(() => command.add(name.indexOf(":") >= 0 ? name : ctx.id + ":" + name, spec));
+    return this._settle("command", bound);
   }
   /** @returns {typeof keymap} */
   get keymap() { return this._settle("keymap", owned(this._ctx, keymap)); }

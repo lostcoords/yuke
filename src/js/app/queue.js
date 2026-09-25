@@ -139,21 +139,26 @@ export const queuePlugin = {
         const id = currentChat()?.session.sessionId;
         return id != null && queueOf(id).length > 0;
       };
-      ctx.tui.command.add(hasQueue, {
-        "queue:drop": () => {
+      ctx.tui.command.add("queue:drop", {
+        when: hasQueue,
+        desc: "drop one queued message",
+        slash: "queue",
+        run: () => {
           const id = currentChat()?.session.sessionId;
           if (id) openQueuePicker(ctx, id);
         },
-        "queue:clear": () => {
+      });
+      ctx.tui.command.add("queue:clear", {
+        when: hasQueue,
+        desc: "drop queued work; preserve engine reports",
+        slash: "clear-queue",
+        run: () => {
           const id = currentChat()?.session.sessionId;
           if (!id) return;
           clearWorkQueue(id).then((result) => {
             notice.show("queue · removed " + result.removed + " · failed " + result.failed + " · protected " + result.protected);
           }, (error) => notice.show("cannot clear queue · " + errorText(error)));
         },
-      }, {
-        "queue:drop": { title: "Queue", description: "drop one queued message", slash: "queue" },
-        "queue:clear": { title: "Clear queue", description: "drop queued work; preserve engine reports", slash: "clear-queue" },
       });
 
       ctx.effect(() => () => {

@@ -263,9 +263,12 @@ export function agents(options) {
                     child_input_canceled: (source) => "Message from " + source.name + " · queued work canceled",
                 } });
 
-                ctx.tui.command.add(() => currentChat()?.session.sessionId != null, {
-                    "agents:open": () => { const id = currentChat()?.session.sessionId; if (id) openAgents(ctx, id).catch((error) => notice.show("agents · " + errorText(error))); },
-                }, { "agents:open": { title: "Agents", description: "open or stop child agents", slash: "agents" } });
+                ctx.tui.command.add("agents:open", {
+                    when: () => currentChat()?.session.sessionId != null,
+                    desc: "open or stop child agents",
+                    slash: "agents",
+                    run: () => { const id = currentChat()?.session.sessionId; if (id) openAgents(ctx, id).catch((error) => notice.show("agents · " + errorText(error))); },
+                });
             });
         },
     };

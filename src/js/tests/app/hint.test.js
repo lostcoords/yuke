@@ -6,11 +6,8 @@ import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 plugins.use(commandUi());
 
-const meta = { title: "t", description: "d" };
-const offCmd = command.add(null, {
-  "test:plain": () => {}, "test:hidden": () => {},
-  "test:shadowed": () => {}, "test:winner": () => {},
-}, { "test:plain": meta, "test:hidden": meta, "test:shadowed": meta, "test:winner": meta });
+const offCmds = ["test:plain", "test:hidden", "test:shadowed", "test:winner"].map((name) => command.add(name, { desc: "d", run: () => {} }));
+const offCmd = () => { for (const off of offCmds) off(); };
 const offA = keymap.add({ "ctrl+alt+a": "test:plain" });
 // No pane provides this atom, so the stroke never reaches the command.
 const offB = keymap.add({ "ctrl+alt+b": "test:hidden" }, "no_such_pane");

@@ -438,9 +438,11 @@ export const chatPlugin = {
         view.session.leave(view);
       });
 
-      ctx.tui.command.add(null, {
-        "model:pick": (/** @type {string | undefined} */ query) => openModelPicker(ctx, query),
-        "context:reload": () => {
+      ctx.tui.command.add("model:pick", { desc: "choose the model for the next chat", slash: "model", args: true, run: (/** @type {string | undefined} */ query) => openModelPicker(ctx, query) });
+      ctx.tui.command.add("context:reload", {
+        desc: "rescan AGENTS.md and skills for this chat",
+        slash: true,
+        run: () => {
           const id = current?.session.sessionId;
           if (!id) return notice.show("no open chat");
           client.sessionReloadContext(id).then((r) => {
@@ -450,7 +452,11 @@ export const chatPlugin = {
             notice.show("Context reload failed: " + errorText(e));
           });
         },
-        "context:compact": () => {
+      });
+      ctx.tui.command.add("context:compact", {
+        desc: "summarize the earlier history of this chat",
+        slash: true,
+        run: () => {
           const id = current?.session.sessionId;
           if (!id) return notice.show("no open chat");
           client.sessionCompact(id).then((r) => {
@@ -460,10 +466,6 @@ export const chatPlugin = {
             notice.show("Compaction failed: " + errorText(e));
           });
         },
-      }, {
-        "model:pick": { title: "Model", description: "choose the model for the next chat", slash: "model", args: true },
-        "context:reload": { title: "Reload context", description: "rescan AGENTS.md and skills for this chat", slash: "reload" },
-        "context:compact": { title: "Compact context", description: "summarize the earlier history of this chat", slash: "compact" },
       });
       });
 },

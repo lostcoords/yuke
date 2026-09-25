@@ -5,8 +5,8 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 // A later registration shadows an earlier one; its dispose uncovers what it hid.
 {
   const seen = [];
-  const offA = command.add(null, { "test:shadow": () => seen.push("a") });
-  const offB = command.add(null, { "test:shadow": () => seen.push("b") });
+  const offA = command.add("test:shadow", { run: () => seen.push("a") });
+  const offB = command.add("test:shadow", { run: () => seen.push("b") });
   command.perform("test:shadow");
   offB();
   command.perform("test:shadow");
@@ -19,8 +19,8 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 {
   const seen = [];
   let allow = false;
-  const offA = command.add(null, { "test:gate": () => seen.push("base") });
-  const offB = command.add(() => allow, { "test:gate": () => seen.push("top") });
+  const offA = command.add("test:gate", { run: () => seen.push("base") });
+  const offB = command.add("test:gate", { when: () => allow, run: () => seen.push("top") });
   const r1 = command.perform("test:gate");
   allow = true;
   const r2 = command.perform("test:gate");
@@ -34,9 +34,9 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 
 // A disposer runs once; a second call leaves a later registration of the same name alone.
 {
-  const offA = command.add(null, { "test:twice": () => {} });
+  const offA = command.add("test:twice", { run: () => {} });
   offA();
-  const offB = command.add(null, { "test:twice": () => {} });
+  const offB = command.add("test:twice", { run: () => {} });
   offA();
   check("command-dispose-twice", command.map["test:twice"].length === 1);
   offB();
@@ -46,10 +46,10 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 {
   const got = [];
   const off = [
-    command.add(() => true, { "test:g1": (...a) => got.push("g1:" + a.length) }),
-    command.add(() => [true], { "test:g2": (...a) => got.push("g2:" + a.length) }),
-    command.add(() => [true, "x"], { "test:g3": (...a) => got.push("g3:" + a[0]) }),
-    command.add(() => [false], { "test:g4": () => got.push("g4") }),
+    command.add("test:g1", { when: () => true, run: (...a) => got.push("g1:" + a.length) }),
+    command.add("test:g2", { when: () => [true], run: (...a) => got.push("g2:" + a.length) }),
+    command.add("test:g3", { when: () => [true, "x"], run: (...a) => got.push("g3:" + a[0]) }),
+    command.add("test:g4", { when: () => [false], run: () => got.push("g4") }),
   ];
   command.perform("test:g1", 1);
   command.perform("test:g2", 1);
@@ -61,9 +61,22 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 
 // A throwing gate lists as available, and the throw still escapes perform.
 {
-  const off = command.add(() => { throw new Error("gate"); }, { "test:boom": () => {} });
+  const off = command.add("test:boom", { when: () => { throw new Error("gate"); }, run: () => {} });
   const listed = command.available("test:boom");
   const threw = throws(() => command.perform("test:boom"));
   check("command-gate-throw", listed && threw);
   off();
+}
+
+// `slash: true` answers the name after the owner prefix, a string names another word, and a command needs a run function.
+{
+  const offs = [
+    command.add("test:hello", { desc: "d", slash: true, run: () => {} }),
+    command.add("test:named", { desc: "d", slash: "other", run: () => {} }),
+  ];
+  const slashOf = (name) => command.list().find((c) => c.name === name)?.slash;
+  let threw = false;
+  try { command.add("test:norun", /** @type {any} */ ({ desc: "d" })); } catch (e) { threw = e instanceof TypeError; }
+  check("slash-derivation", slashOf("test:hello") === "hello" && slashOf("test:named") === "other" && threw && !command.map["test:norun"]);
+  for (const off of offs) off();
 }

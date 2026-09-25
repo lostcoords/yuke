@@ -4,7 +4,7 @@ import { term } from "yuke:internal/native/term";
 import { callHook, config, events, once } from "yuke:internal/kernel";
 
 /** @import { Color, Style } from "yuke:internal/native/term" */
-/** @import { CommandAction, CommandEntry, CommandListing, CommandRegistry, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
+/** @import { CommandAction, CommandEntry, CommandListing, CommandRegistry, CommandSpec, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
 
 // True for a wheel button. The wheel scrolls a pane but never moves the focus.
 /** @param {string} button @returns {boolean} */
@@ -132,26 +132,27 @@ export function text(x, y, s, group) {
 export const command = {
   map: Object.create(null),
 
-  // Register a batch under one predicate; a later registration shadows an earlier one. `meta` marks a user action.
-  add(predicate, map, meta) {
-    if (predicate != null && typeof predicate !== "function") throw new TypeError("a command predicate must be a function or null");
-    /** @type {Array<[string, CommandEntry]>} */
-    const added = [];
-    for (const name in map) {
-      const entry = { predicate, perform: /** @type {CommandAction} */ (map[name]), meta: (meta && meta[name]) || null };
-      const list = this.map[name] || (this.map[name] = []);
-      list.unshift(entry);
-      added.push([name, entry]);
-    }
-    return once(() => {
-      for (const [name, entry] of added) {
-        const list = this.map[name];
-        if (!list) continue;
-        const i = list.indexOf(entry);
-        if (i >= 0) list.splice(i, 1);
-        if (list.length === 0) delete this.map[name];
-      }
-    });
+  // Register one command; a later registration of the name shadows an earlier one. `desc` lists it as a user action.
+  /** @param {string} name @param {CommandSpec} spec @returns {() => void} */
+  add(name, spec) {
+    // A command comes from plugin code, so its shape is checked here.
+    if (typeof name !== "string" || name === "") throw new TypeError("a command needs a name");
+    if (typeof spec?.run !== "function") throw new TypeError("command " + name + " needs a run function");
+    if (spec.when != null && typeof spec.when !== "function") throw new TypeError("command " + name + ": `when` must be a function");
+    // `slash: true` takes the name after the owner prefix, so "session:interrupt" answers "/interrupt".
+    const slash = spec.slash === true ? name.slice(name.lastIndexOf(":") + 1) : spec.slash || null;
+    /** @type {CommandEntry} */
+    const entry = { when: spec.when ?? null, run: spec.run, desc: spec.desc ?? null, slash, args: spec.args === true };
+    const list = this.map[name] || (this.map[name] = []);
+    list.unshift(entry);
+    // The removal finds the entry by identity, so a second call finds nothing and does nothing.
+    return () => {
+      const held = this.map[name];
+      if (!held) return;
+      const i = held.indexOf(entry);
+      if (i >= 0) held.splice(i, 1);
+      if (held.length === 0) delete this.map[name];
+    };
   },
 
   // A rejected predicate lets the next entry run.
@@ -159,7 +160,7 @@ export const command = {
     for (const entry of this.map[name] || []) {
       const call = evalPredicate(entry, args);
       if (call === null) continue;
-      entry.perform(...call);
+      entry.run(...call);
       return true;
     }
     return false;
@@ -176,12 +177,14 @@ export const command = {
     const out = [];
     for (const name in this.map) {
       const list = /** @type {CommandEntry[]} */ (this.map[name]);
-      // The newest metadata wins, so a plain shadow keeps the listing under it.
-      const meta = list.find((entry) => entry.meta)?.meta;
-      if (meta && isAvailable(list)) out.push({ name, title: meta.title, description: meta.description, slash: meta.slash || null, args: !!meta.args });
+      // The newest description wins, so a plain shadow keeps the listing under it.
+      const listed = list.find((entry) => entry.desc);
+      if (listed && isAvailable(list)) out.push({ name, desc: /** @type {string} */ (listed.desc), slash: listed.slash, args: listed.args });
     }
-    // Code-unit order: localeCompare NFC-normalizes and traps in ReleaseSafe QuickJS.
-    return out.sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
+    // The palette shows the slash word, or the name, so the list sorts by that word in code-unit order: localeCompare traps in ReleaseSafe QuickJS.
+    /** @param {CommandListing} c */
+    const word = (c) => (c.slash ? "/" + c.slash : c.name);
+    return out.sort((a, b) => (word(a) < word(b) ? -1 : word(a) > word(b) ? 1 : 0));
   },
 };
 
@@ -202,8 +205,8 @@ function isAvailable(list) {
 // Evaluate one predicate and return the arguments to run with, or null when it rejects.
 /** @param {CommandEntry} entry @param {any[]} args @returns {any[] | null} */
 function evalPredicate(entry, args) {
-  if (!entry.predicate) return args;
-  const res = entry.predicate(...args);
+  if (!entry.when) return args;
+  const res = entry.when(...args);
   if (!Array.isArray(res)) return res ? args : null;
   if (!res[0]) return null;
   return res.length > 1 ? res.slice(1) : args;
@@ -1342,10 +1345,8 @@ export function quit() {
 }
 
 // A bare key never quits. A stray key in a modal layer must not end the session.
-command.add(null, { quit, suspend: () => term.suspend() }, {
-  quit: { title: "Quit", description: "leave yuke", slash: "quit" },
-  suspend: { title: "Suspend", description: "stop yuke so the shell can run fg", slash: "suspend" },
-});
+command.add("quit", { run: quit, desc: "leave yuke", slash: true });
+command.add("suspend", { run: () => term.suspend(), desc: "stop yuke so the shell can run fg", slash: true });
 
 root.addTickable(keymap);
 
