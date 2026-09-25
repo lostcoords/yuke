@@ -79,6 +79,21 @@ for (const name of list(`${app}/types`)) {
 }
 chunks.push({ text: readFileSync(`${app}/generated/proto.d.ts`, "utf8").trimEnd() + "\n" });
 
+// TypeScript merges an augmentation only into an interface, so a plugin can add to these through `declare module "yuke"`.
+// `yuke` declares each one as an interface over its base, and its home namespace reads the merged interface back.
+const open = ["Events"];
+const root = chunks.find((chunk) => chunk.text.startsWith('declare module "yuke" {'));
+if (!root) throw new Error("no yuke module");
+for (const name of open) {
+  const alias = new RegExp(`^export type ${name} = (\\$\\w+)\\.${name};$`, "m").exec(root.text);
+  if (!alias) throw new Error(`yuke does not export ${name}`);
+  const home = chunks.find((chunk) => chunk.space === alias[1]);
+  const own = new RegExp(`^export interface ${name}\\b`, "m");
+  if (!home || !own.test(home.text)) throw new Error(`${alias[1]} does not declare interface ${name}`);
+  root.text = root.text.replace(alias[0], `export interface ${name} extends ${alias[1]}.${name}Base {}`);
+  home.text = home.text.replace(own, `export type ${name} = import("yuke").${name};\nexport interface ${name}Base`);
+}
+
 // tsc emits every file the entries import at runtime; only the ones their types name belong in the API.
 const bodies = new Map<string, string>();
 for (const chunk of chunks) if (chunk.space !== undefined) bodies.set(chunk.space, chunk.text);

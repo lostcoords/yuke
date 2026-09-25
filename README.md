@@ -37,6 +37,19 @@ A client can call it before other methods to check compatibility. The server has
 
 Run `yuke types` again after an upgrade. For another profile, set its name: `YUKE_APPNAME=work yuke types`.
 
+A plugin names its own events `<plugin>:<name>`. To type one, add a `.d.ts` file next to `index.js`:
+
+```ts
+declare module "yuke" {
+  interface Events {
+    "herdr:state"(state: "idle" | "working" | "blocked"): void;
+  }
+}
+export {};
+```
+
+Then `ctx.on("herdr:state", …)` and `events.emit("herdr:state", …)` check their arguments. An event without a declaration takes any arguments.
+
 ## Agent configuration
 
 Child agents come from the `agents` plugin. Install it in the profile's `index.js`:

@@ -88,7 +88,7 @@ export type InteractionOptions = $types_ext.InteractionOptions;
 export type Release = $types_ext.Release;
 export type HookPoint = $types_ext.HookPoint;
 export type HookHandler = $types_ext.HookHandler;
-export type Events = $types_ext.Events;
+export interface Events extends $types_ext.EventsBase {}
 export type EventName = $types_ext.EventName;
 export type ConfigPatch = $kernel.ConfigPatch;
 export type Job = $native_jobs.Job;
@@ -2871,7 +2871,8 @@ type EngineFacts = { [K in Exclude<Wire.BroadcastName, "notice" | "auth.login_fi
  * Every event on the bus, as its listener signature. A fact such as `x.changed` answers nothing; a point is asked
  * with `bail`, and the newest listener that answers wins. A plugin names its own events `<plugin>:<name>`.
  */
-export interface Events extends EngineFacts {
+export type Events = import("yuke").Events;
+export interface EventsBase extends EngineFacts {
   "ext.error"(error: unknown, owner: string): void;
   "engine.drained"(ev: EngineFactEvent): void;
   /** A notice and a login outcome name no session, so they arrive only in an index drain. */
