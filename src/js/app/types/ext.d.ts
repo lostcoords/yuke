@@ -16,28 +16,6 @@ export interface AdviceOptions {
   order?: number;
 }
 
-export interface AdviceRecord {
-  original: AdviceFunction;
-  descriptor: PropertyDescriptor | undefined;
-  list: AdviceEntry[];
-}
-
-export interface AdviceEntry {
-  owner: string;
-  name: string;
-  where: AdviceWhere;
-  fn: AdviceFunction;
-  order: number;
-}
-
-export interface AdviceInfo {
-  prop: string;
-  owner: string;
-  name: string;
-  where: AdviceWhere;
-  order: number;
-}
-
 export type EventHandler = Parameters<typeof events.on>[1];
 export type EventOptions = Parameters<typeof events.on>[2];
 export type PluginApply = (context: Context) => void | Promise<void>;
@@ -173,52 +151,8 @@ export type HookAnswer<P extends HookPoint = HookPoint> = { block: string; repla
 
 export type HookHandler<P extends HookPoint = HookPoint> = (payload: HookPayloads[P]) => HookAnswer<P> | null | undefined | void | Promise<HookAnswer<P> | null | undefined | void>;
 
-/** The chain stores every point's handlers in one shape, so the entry erases the point. */
-export interface HookEntry {
-  owner: string;
-  fn: HookHandler<any>;
-}
-
-export type HookDecision = { type: "block"; reason: string } | { type: "replace"; value: any };
-
 /** A resource release; the close awaits a returned Promise before the next older release. */
 export type Release = () => unknown;
-
-export interface ReleaseEntry {
-  release: Release | null;
-}
-
-/** The state a scope makes on first use: releases, a signal, and an async close. */
-export interface ScopeLife {
-  /** The scope that awaits this close, so a quiet owner silences a late child fault. */
-  awaiter: Scope | null;
-  releases: ReleaseEntry[] | null;
-  signal: CancellationSignal | null;
-  closed: Promise<void> | undefined;
-  /** Settles the promise a caller inside the close received. */
-  settle: (() => void) | undefined;
-  /** The closes of children that left the scope while their releases still run. */
-  draining: Set<Promise<void>> | null;
-  /** Set when an owner gives up waiting, so a late release fault stays silent. */
-  quiet: boolean;
-}
-
-/** The state a plugin makes only for an async apply or an async close. */
-export interface PluginAsync {
-  ready?: Promise<void>;
-  startup?: Promise<void> | undefined;
-  cancelReady?: ((error: Error) => void) | undefined;
-  closed?: Promise<void>;
-  settle?: () => void;
-  timer?: number;
-}
-
-export interface ScopeEntry {
-  owner: Scope | null;
-  cleanup: Disposer | null;
-  /** The child scope this entry closes, so the parent can await its releases. */
-  child: Scope | null;
-}
 
 export interface InteractionOptions {
   signal?: CancellationSignal;
@@ -250,10 +184,3 @@ export type InteractionRequest = Exclude<Wire.InteractionRequest, { type: "selec
     outcome: Promise<Wire.AuthLoginOutcome>;
   };
 
-export type Answerer = {
-  notify(owner: string, message: string, level: "info" | "warn" | "error"): void;
-} & ({
-  interactive: true;
-  open(request: InteractionRequest, context: Context, options: InteractionOptions | undefined,
-    resolve: (value: unknown) => void, reject: (error: unknown) => void): Disposer;
-} | { interactive: false });

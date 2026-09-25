@@ -4,7 +4,8 @@ import { native } from "yuke:interaction-native";
 import * as cancellation from "yuke:cancellation-native";
 /** @import { CancellationSignal } from "yuke:cancellation-native" */
 /** @import { Context } from "yuke:ext" */
-/** @import { Answerer, Disposer, InteractionOptions, InteractionRequest, InteractionSurface } from "./types/ext.js" */
+/** @import { Disposer, InteractionOptions, InteractionRequest, InteractionSurface } from "./types/ext.js" */
+/** @import { Answerer } from "./types/runtime.js" */
 
 const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
 let nextId = 1;

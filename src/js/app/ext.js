@@ -6,7 +6,8 @@ import { defineTool, removeTool } from "yuke:tools";
 import { installDispatcher, installLifecycle, setPoints } from "yuke:hooks";
 export { interaction } from "yuke:interaction";
 
-/** @import { AdviceEntry, AdviceFunction, AdviceInfo, AdviceOptions, AdviceRecord, AdviceWhere, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookDecision, HookEntry, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, PluginAsync, PluginHandle, Release, ReleaseEntry, ScopeEntry, ScopeLife, ToolDefinition } from "./types/ext.js" */
+/** @import { AdviceFunction, AdviceOptions, AdviceWhere, Disposer, Effect, EventHandler, EventOptions, HookAnswer, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, PluginHandle, Release, ToolDefinition } from "./types/ext.js" */
+/** @import { AdviceEntry, AdviceInfo, AdviceRecord, HookDecision, HookEntry, PluginAsync, ReleaseEntry, ScopeEntry, ScopeLife } from "./types/runtime.js" */
 
 const NOOP = () => {};
 

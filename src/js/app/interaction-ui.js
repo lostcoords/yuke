@@ -6,7 +6,8 @@ import { Prompt, Window, ui } from "yuke:ui";
 import { interaction, watchCancellation } from "yuke:interaction";
 import { notice } from "yuke:notice";
 /** @import { Context } from "yuke:ext" */
-/** @import { Answerer, InjectContext } from "./types/ext.js" */
+/** @import { InjectContext } from "./types/ext.js" */
+/** @import { Answerer } from "./types/runtime.js" */
 
 /** @param {InjectContext} frontend @returns {Answerer} */
 function createAnswerer(frontend) {
