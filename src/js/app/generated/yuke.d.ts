@@ -1164,12 +1164,56 @@ export type Limits = {
 };
 export type ServerState = "pending" | "untrusted" | "connecting" | "connected" | "needs auth" | "failed" | "disabled" | "stopped";
 export type Waiting = {
-    resolve: (value: any) => void;
+    resolve: (value: unknown) => void;
     reject: (error: Error) => void;
     done: () => void;
     bytes: number;
     cancelable: boolean;
     progress?: (value: number, report: Record<string, unknown>) => void;
+};
+export type Incoming = {
+    jsonrpc: "2.0";
+    id?: string | number | null;
+    method: string;
+    params?: Record<string, unknown>;
+};
+export type Reply = {
+    jsonrpc: "2.0";
+    id: string | number | null;
+    result?: Record<string, unknown>;
+    error?: {
+        code: number;
+        message: string;
+        data?: unknown;
+    };
+};
+export type Message = Incoming | Reply;
+export type Content = {
+    type: "text";
+    text: string;
+} | {
+    type: "image" | "audio";
+    data: string;
+    mimeType: string;
+} | {
+    type: "resource_link";
+    uri: string;
+    name: string;
+} | {
+    type: "resource";
+    resource: {
+        uri: string;
+        text?: string;
+        blob?: string;
+        mimeType?: string;
+    };
+};
+export type ServerTool = {
+    name: string;
+    description?: string;
+    title?: string;
+    inputSchema: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
 };
 export type Mirrored = {
     name: string;
@@ -1177,10 +1221,10 @@ export type Mirrored = {
 };
 /** @param {string} server @param {string} tool @returns {string} */
 export function toolName(server: string, tool: string): string;
-/** @param {string} line @returns {any} */
-export function decodeMessage(line: string): any;
-/** @param {any} result @param {boolean} [modern] @returns {{ text: string, images: readonly string[] }} */
-export function toolResult(result: any, modern?: boolean): {
+/** @param {string} line @returns {Message} */
+export function decodeMessage(line: string): Message;
+/** @param {unknown} result @param {boolean} [modern] @returns {{ text: string, images: readonly string[] }} */
+export function toolResult(result: unknown, modern?: boolean): {
     text: string;
     images: readonly string[];
 };
