@@ -76,3 +76,17 @@ import { tui } from "yuke:internal/tui";
   plugins.use({ name: "ret-closed", apply() { plugins.dispose("ret-closed"); return () => log.push("late"); } });
   check("plugin-returned-cleanup", log.join() === "cleanup,effect,late");
 }
+
+// A child plugin is a resource of its parent: the parent's close closes it and frees its name; a use after the close closes it at once.
+{
+  const log = [];
+  const child = { name: "kid", apply(ctx) { ctx.effect(() => () => log.push("kid")); } };
+  /** @type {import("yuke").Context | null} */
+  let held = null;
+  plugins.use({ name: "parent", apply(ctx) { held = ctx; ctx.use(child); ctx.effect(() => () => log.push("parent")); } });
+  const live = plugins.has("kid");
+  plugins.dispose("parent");
+  let threw = false;
+  try { held.use({ name: "late", apply(ctx) { ctx.effect(() => () => log.push("late")); } }); } catch (e) { threw = e instanceof TypeError; }
+  check("plugin-use-owns-child", live && log.join() === "parent,kid,late" && threw && !plugins.has("kid") && !plugins.has("late"));
+}

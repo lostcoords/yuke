@@ -716,6 +716,14 @@ export class Context {
     return tools;
   }
 
+  // Start a plugin this plugin owns. Its close runs as a release of this plugin, and a use after the close closes it at once.
+  /** @param {Plugin} plugin @returns {PluginHandle} */
+  use(plugin) {
+    const handle = plugins.use(plugin);
+    this.#scope.own(handle.dispose);
+    return handle;
+  }
+
   // Run `apply` only while every named capability exists, in a child scope a withdrawal reverts.
   /** @template {string} K @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
   inject(names, apply) {

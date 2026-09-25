@@ -775,6 +775,8 @@ export class Context {
         /** @param {ToolDefinition} definition @returns {Disposer} */
         define(definition: ToolDefinition): Disposer;
     };
+    /** @param {Plugin} plugin @returns {PluginHandle} */
+    use(plugin: Plugin): PluginHandle;
     /** @template {string} K @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
     inject<K extends string>(names: K[], apply: InjectApply<K>): Disposer;
     /** @returns {InteractionSurface} */
