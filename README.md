@@ -29,34 +29,42 @@ A client can call it before other methods to check compatibility. The server has
 
 ## Agent configuration
 
-Use `/agents` to see the main conversation and all descendant agents, switch sessions, or stop agent work.
-Use `/agent-models` to choose the small and medium models from your providers.
-Small handles narrow research and simple edits. Medium handles broader work and review.
-
-Set agent limits in the profile's `index.js`:
+Child agents come from the `agents` plugin. Install it in the profile's `index.js`:
 
 ```js
-import { defineConfig } from "yuke";
+import { plugins } from "yuke";
+import { agents } from "yuke/plugins";
 
-export default defineConfig({
-  agents: {
-    maxDepth: 2,
-    maxConcurrent: 8,
-    maxRounds: 50,
+plugins.use(agents({
+  catalog: {
+    research: { description: "Narrow research and simple edits.", tools: ["read", "exec"] },
+    review: { description: "Broader work and review." },
   },
-});
+  default: "research",
+  maxDepth: 2,
+  maxConcurrent: 8,
+  maxRounds: 50,
+}));
 ```
+
+Each catalog key names one kind of child. A key is lowercase, and `root` is reserved.
+A row can set `description`, `model`, `prompt`, and `tools`.
+A row without `model` runs on the model of its parent session.
+`tools` limits the child to a subset of `read`, `write`, `edit`, `exec`, and `skill`.
+`default` names the row a spawn uses when it names none. A catalog with one row needs no `default`.
+
+Use `/agents` to see the main conversation and all descendant agents, switch sessions, or stop agent work.
 
 The root has depth zero. `maxDepth` defaults to `1`, which permits direct children.
 A value of `2` also permits grandchildren. `maxRounds` caps each child run; a capped run reports partial output.
 All three limits require positive 32-bit integers.
 At the depth limit, spawn tools are absent and native child creation fails.
-Custom tools can set `spawnsAgents: true` to use the same tool policy.
 
-`maxConcurrent` applies to active descendants across the whole tree. It excludes the root.
+`maxConcurrent` defaults to `8`. It applies to active descendants across the whole tree and excludes the root.
 A child keeps its slot until native cleanup ends. Excess work enters the durable queue.
 If an agent has no independent work, it can return its result to free a slot.
 An agent report starts a follow-up after its owner becomes idle and capacity is available.
+Disposing the plugin restores the previous limits.
 
 A lower depth limit prevents new spawns. Existing sessions, queued work, and reports remain valid.
 Names are local to each parent. Use a child name or session ID to address a child.
