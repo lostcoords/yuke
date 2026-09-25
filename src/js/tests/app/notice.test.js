@@ -48,12 +48,12 @@ term.copy = (x) => x.length;
 
 // Showing and clearing must each ask for a repaint, or the message never reaches the screen.
 notice.clear();
-root._needsDraw = false;
+root.needsDraw = false;
 notice.show("repaint me");
-check("show-repaints", root._needsDraw === true);
-root._needsDraw = false;
+check("show-repaints", root.needsDraw === true);
+root.needsDraw = false;
 notice.clear();
-check("clear-repaints", root._needsDraw === true);
+check("clear-repaints", root.needsDraw === true);
 
 globalThis.checkEngineNotice = () => {
   check("reports-engine-notice", notice.text === "terminal write failed");

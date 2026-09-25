@@ -15,10 +15,10 @@ check("slow-keeps-period", slow === 4);
 now -= 33;
 root.flush();
 root.onEvent({ type: "tick" });
-check("nothing-due", fast === 15 && slow === 4 && !root._needsDraw);
+check("nothing-due", fast === 15 && slow === 4 && !root.needsDraw);
 // A clock that steps back reads as elapsed.
 now -= 100000;
 root.onEvent({ type: "tick" });
-check("clock-back-ticks", fast === 16 && slow === 5 && root._needsDraw);
+check("clock-back-ticks", fast === 16 && slow === 5 && root.needsDraw);
 root.removeTickable(a);
 root.removeTickable(b);

@@ -940,6 +940,14 @@ export const status = {
 };
 
 export class RootView {
+  /** @type {Node[]} */
+  #leafScratch;
+  /** @type {WeakMap<object, number>} */
+  #tickedAt;
+  /** @type {Node | null} */
+  #capture;
+  /** @type {boolean} */
+  #started;
   constructor() {
     /** @type {Node | null} */
     this.root_node = null;
@@ -947,21 +955,17 @@ export class RootView {
     this.activeLeaf = null;
     /** @type {Overlay[]} */
     this.overlays = [];
-    /** @type {Node[]} */
-    this._leafScratch = [];
+    this.#leafScratch = [];
     /** @type {TickableEntry[]} */
     this.tickables = [];
     // The last tick each layer received. A pulse for the engine or a faster layer never runs a layer before its period.
-    /** @type {WeakMap<object, number>} */
-    this._tickedAt = new WeakMap();
-    /** @type {Node | null} */
-    this._capture = null; // the leaf that owns the drag, from press to release
+    this.#tickedAt = new WeakMap();
+    this.#capture = null; // the leaf that owns the drag, from press to release
     /** @type {boolean} */
-    this._needsDraw = false; // the host paints once after it drains the event queue
+    this.needsDraw = false; // the host paints once after it drains the event queue
     /** @type {boolean} */
-    this._layoutDirty = true;
-    /** @type {boolean} */
-    this._started = false;
+    this.layoutDirty = true;
+    this.#started = false;
   }
 
   get active() {
@@ -985,9 +989,9 @@ export class RootView {
     if (node) node.parent = null;
     this.root_node = node;
     this.activeLeaf = null;
-    this._capture = null;
+    this.#capture = null;
     // The first leaf takes the focus through the same path, so it runs `onFocus` like any other.
-    if (node) this._setActiveLeaf(/** @type {Node} */ (leaves[0]));
+    if (node) this.#setActiveLeaf(/** @type {Node} */ (leaves[0]));
     // A replaced tree drops its panes, so each owner hears it the way a close tells them.
     const kept = node ? node.leaves().map(leafView) : [];
     for (const v of gone) {
@@ -1005,7 +1009,7 @@ export class RootView {
 
   // Move the active leaf. A new leaf gets `onFocus`, so a pane can reset its caret.
   /** @param {Node | null} leaf @returns {void} */
-  _setActiveLeaf(leaf) {
+  #setActiveLeaf(leaf) {
     if (!leaf || leaf === this.activeLeaf) return;
     this.activeLeaf = leaf;
     // A listener reads the pane focus before the pane itself, which is the order advice gave it.
@@ -1021,7 +1025,7 @@ export class RootView {
     if (!view || !this.root_node) return false;
     for (const leaf of this.root_node.leaves()) {
       if (leafView(leaf) === view) {
-        this._setActiveLeaf(leaf);
+        this.#setActiveLeaf(leaf);
         return true;
       }
     }
@@ -1031,9 +1035,9 @@ export class RootView {
   // Send the event to the leaf under the pointer; a press focuses and captures it, so a drag that leaves it still lands.
   /** @param {Extract<HostEvent, { type: "mouse" }>} ev @returns {boolean} */
   routeMouse(ev) {
-    if (this._capture && (ev.event === "drag" || ev.event === "release")) {
-      const held = this._capture;
-      if (ev.event === "release") this._capture = null;
+    if (this.#capture && (ev.event === "drag" || ev.event === "release")) {
+      const held = this.#capture;
+      if (ev.event === "release") this.#capture = null;
       const live = this.root_node && this.root_node.leaves().indexOf(held) >= 0;
       return live ? !!callHook(leafView(held), "onMouse", ev) : false;
     }
@@ -1041,8 +1045,8 @@ export class RootView {
     if (!leaf) return false;
     if (ev.event === "press" && !isWheel(ev.button)) {
       // The leaf came from the live tree, so it needs no membership walk.
-      this._setActiveLeaf(leaf);
-      if (ev.button === "left") this._capture = leaf;
+      this.#setActiveLeaf(leaf);
+      if (ev.button === "left") this.#capture = leaf;
     }
     return !!callHook(leafView(leaf), "onMouse", ev);
   }
@@ -1057,7 +1061,7 @@ export class RootView {
     claimView(view, this);
     const add = Node.leaf(view);
     leaf.becomeSplit(kind, Node.leaf(leafView(leaf)), add);
-    this._setActiveLeaf(add);
+    this.#setActiveLeaf(add);
     this.invalidate();
     return add;
   }
@@ -1074,7 +1078,7 @@ export class RootView {
       p.shape.a.parent = p;
       p.shape.b.parent = p;
     }
-    this._setActiveLeaf(/** @type {Node} */ (p.leaves()[0]));
+    this.#setActiveLeaf(/** @type {Node} */ (p.leaves()[0]));
     // The tree drops the view here, so the owner learns that its pane left.
     const removed = leafView(leaf);
     releaseView(removed, this);
@@ -1103,7 +1107,7 @@ export class RootView {
         best = leaf;
       }
     }
-    if (best) this._setActiveLeaf(best);
+    if (best) this.#setActiveLeaf(best);
   }
 
   /** @param {number} step @returns {void} */
@@ -1113,11 +1117,11 @@ export class RootView {
     if (leaves.length === 0) return;
     let i = leaves.indexOf(/** @type {Node} */ (this.activeLeaf));
     if (i < 0) i = 0;
-    this._setActiveLeaf(/** @type {Node} */ (leaves[(i + step + leaves.length) % leaves.length]));
+    this.#setActiveLeaf(/** @type {Node} */ (leaves[(i + step + leaves.length) % leaves.length]));
   }
 
   /** @param {Tickable} tickable @returns {TickableEntry | undefined} */
-  _tickableEntry(tickable) {
+  #tickableEntry(tickable) {
     for (const e of this.tickables) if (e.tickable === tickable) return e;
     return undefined;
   }
@@ -1125,13 +1129,13 @@ export class RootView {
   // Report whether a tickable is registered, so a caller never reads the entry list itself.
   /** @param {Tickable} tickable @returns {boolean} */
   hasTickable(tickable) {
-    return this._tickableEntry(tickable) !== undefined;
+    return this.#tickableEntry(tickable) !== undefined;
   }
 
   // A second registration shares one entry, so one owner cannot stop a service another still holds.
   /** @param {Tickable} tickable @returns {Tickable} */
   addTickable(tickable) {
-    const held = this._tickableEntry(tickable);
+    const held = this.#tickableEntry(tickable);
     if (held) {
       held.refs += 1;
       return tickable;
@@ -1139,7 +1143,7 @@ export class RootView {
     /** @type {TickableEntry} */
     const entry = { tickable, refs: 1, started: false };
     this.tickables.push(entry);
-    if (this._started) {
+    if (this.#started) {
       // A hook that throws must not leave a service behind that the failed scope cannot revert.
       try {
         callHook(tickable, "onStart");
@@ -1157,7 +1161,7 @@ export class RootView {
   // Drop one registration. The last one removes the entry, and only a started service gets `onStop`.
   /** @param {Tickable} tickable @returns {void} */
   removeTickable(tickable) {
-    const entry = this._tickableEntry(tickable);
+    const entry = this.#tickableEntry(tickable);
     if (!entry) return;
     entry.refs -= 1;
     if (entry.refs > 0) return;
@@ -1215,28 +1219,28 @@ export class RootView {
   // Ask for a frame. The host paints once after the queue drains, so a burst costs one paint.
   /** @returns {void} */
   invalidate() {
-    this._needsDraw = true;
-    this._layoutDirty = true;
+    this.needsDraw = true;
+    this.layoutDirty = true;
   }
 
   /** @returns {void} */
   invalidatePaint() {
-    this._needsDraw = true;
+    this.needsDraw = true;
   }
 
   // Paint if anything asked for it. The host calls this after it drains the event queue.
   /** @returns {void} */
   flush() {
-    if (!this._needsDraw) return;
-    this._needsDraw = false;
+    if (!this.needsDraw) return;
+    this.needsDraw = false;
     this.draw();
   }
 
   /** @param {(layer: Overlay | Tickable, isTickable: boolean) => void} fn @returns {void} */
-  _forEachTickable(fn) {
+  #forEachTickable(fn) {
     if (this.root_node) {
       // One scratch list serves every draw. A nested pass takes a fresh list, and a throw still clears the scratch.
-      const scratch = this._leafScratch;
+      const scratch = this.#leafScratch;
       const leaves = this.root_node.leaves(scratch.length === 0 ? scratch : []);
       try {
         for (const leaf of leaves) fn(leafView(leaf), false);
@@ -1255,15 +1259,15 @@ export class RootView {
     // The bar owns the last row, so every pane rect below derives from the shorter height.
     const barY = term.height - 1;
     fill(0, 0, term.width, term.height, "Normal");
-    const needsLayout = this._layoutDirty;
-    this._layoutDirty = false;
+    const needsLayout = this.layoutDirty;
+    this.layoutDirty = false;
     if (needsLayout) {
       try {
         if (this.root_node) this.root_node.layout({ x: 0, y: 0, w: term.width, h: Math.max(0, barY) });
         const bounds = { x: 0, y: 0, w: term.width, h: term.height };
         for (const layer of this.overlays) callHook(layer, "layout", bounds);
       } catch (error) {
-        this._layoutDirty = true;
+        this.layoutDirty = true;
         throw error;
       }
     }
@@ -1284,7 +1288,7 @@ export class RootView {
   syncTick() {
     /** @type {number | null} */
     let period = null;
-    this._forEachTickable((layer) => {
+    this.#forEachTickable((layer) => {
       const t = /** @type {{ periodMs: number } | null} */ (callHook(layer, "needsTick"));
       if (!t) return;
       const ms = t.periodMs;
@@ -1299,15 +1303,15 @@ export class RootView {
   tickLayers() {
     const now = Date.now();
     let ticked = false;
-    this._forEachTickable((layer, isTickable) => {
+    this.#forEachTickable((layer, isTickable) => {
       const t = /** @type {{ periodMs: number } | null} */ (callHook(layer, "needsTick"));
       if (!t) return;
-      const last = this._tickedAt.get(layer);
+      const last = this.#tickedAt.get(layer);
       // A clock that steps back reads as elapsed, so a layer never waits for the clock to catch up.
       if (last !== undefined && now >= last && now - last < t.periodMs * TICK_EARLY_SHARE) return;
       // A service can remove itself inside `needsTick`, so a stale one must not still get `tick`.
       if (isTickable && !this.hasTickable(/** @type {Tickable} */ (layer))) return;
-      this._tickedAt.set(layer, now);
+      this.#tickedAt.set(layer, now);
       callHook(layer, "tick");
       ticked = true;
     });
@@ -1324,8 +1328,8 @@ export class RootView {
       return;
     }
     if (ev.type === "start" || ev.type === "resize") {
-      if (ev.type === "start" && !this._started) {
-        this._started = true;
+      if (ev.type === "start" && !this.#started) {
+        this.#started = true;
         for (const e of this.tickables.slice()) {
           // A hook can remove a later tickable, so start only what the pass still holds.
           if (e.started || !this.hasTickable(e.tickable)) continue;

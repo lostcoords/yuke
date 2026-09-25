@@ -24,7 +24,7 @@ check("sends-since-rev", sent.length === 2 && sent[0] === null && sent[1] === "r
 
 // A rejected list leaves the catalog as it was, clears the flag, and still repaints.
 client.catalogList = () => Promise.reject(new Error("offline"));
-root._needsDraw = false;
+root.needsDraw = false;
 equal(await loadCatalog(), c);
 check("refusal-keeps-models", c.models.length === 1 && c.rev === "r1" && c.loading === false);
-check("refusal-repaints", root._needsDraw);
+check("refusal-repaints", root.needsDraw);

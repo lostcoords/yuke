@@ -13,10 +13,10 @@ plugins.use(modelCatalog({ entry: () => open }));
 check("empty-without-session", status.side("right") === "");
 // A choice tells the user and asks for a repaint, or the new model never reaches the screen.
 plugins.use(noticePlugin);
-root._needsDraw = false;
+root.needsDraw = false;
 chooseModel({ selector: "m-1", name: "m-1" }, "high");
 check("choice-notifies", notice.text === "model · m-1 · high");
-check("choice-repaints", root._needsDraw === true);
+check("choice-repaints", root.needsDraw === true);
 check("default-model-shows", status.side("right").indexOf("m-1") >= 0);
 
 // An open session names its own model instead of the default.
