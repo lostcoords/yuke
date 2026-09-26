@@ -1278,7 +1278,6 @@ declare namespace $session {
 import Refresh = $refresh.Refresh;
 import Composer = $ui.Composer;
 import Transcript = $transcript.Transcript;
-import MessagePart = $native_engine.MessagePart;
 import ViewLike = $types_core.ViewLike;
 import Context = $ext.Context;
 export type CreateSessionDraft = Wire.CreateSession;
@@ -1316,20 +1315,11 @@ export class Session {
     sessionId: string | null;
     creating: boolean;
     gen: number;
-    /** @type {Set<SessionPane>} */
-    views: Set<SessionPane>;
+    /** @type {SessionPane[]} */
+    views: SessionPane[];
     /** @type {Wire.SessionActivity | null} */
     activity: Wire.SessionActivity | null;
     constructor();
-    /** @param {number} id @returns {readonly MessagePart[]} */
-    partsOf(id: number): readonly MessagePart[];
-    /** @param {number} id @param {number} partId @param {MessagePart} [previous] @returns {MessagePart | null} */
-    partOf(id: number, partId: number, previous?: MessagePart): MessagePart | null;
-    /** @param {number} id @param {number} partId @param {string} field @param {number} [offset] @param {number} [limit] @returns {{ text: string, next: number | null }} */
-    partTextPage(id: number, partId: number, field: string, offset?: number, limit?: number): {
-        text: string;
-        next: number | null;
-    };
     /** @param {string} id @returns {boolean} */
     open(id: string): boolean;
     /** @param {string} id */
@@ -1343,8 +1333,8 @@ export class Session {
     refreshActivity(): void;
     forgetActivity(): void;
     interrupt(): void;
-    /** @param {Iterable<SessionPane>} [views] */
-    reload(views?: Iterable<SessionPane>): void;
+    /** @param {readonly SessionPane[]} [views] */
+    reload(views?: readonly SessionPane[]): void;
     /** @param {number} id @param {number} [partId] */
     active(id: number, partId?: number): void;
     /** @param {Wire.Input} input @param {Composer} composer @returns {boolean} */

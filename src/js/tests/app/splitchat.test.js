@@ -35,7 +35,7 @@ check("gone-hits-one-pane", a.session.sessionId === null && b.session.sessionId 
 
 // Two panes on one session share it: one session, one pin, and an event updates both views.
 showSession(a, b.session);
-check("panes-share-a-session", a.session === b.session && b.session.views.size === 2);
+check("panes-share-a-session", a.session === b.session && b.session.views.length === 2);
 let seen = 0;
 const ra = a.transcript.setActive.bind(a.transcript);
 const rb = b.transcript.setActive.bind(b.transcript);
@@ -50,7 +50,7 @@ b.transcript.setActive = rb;
 const shared = a.session;
 root.focusView(b);
 root.close();
-check("close-keeps-a-shown-session", sessions.has(shared) && shared.views.size === 1 && shared.views.has(a));
+check("close-keeps-a-shown-session", sessions.has(shared) && shared.views.length === 1 && shared.views.includes(a));
 check("close-leaves-the-other", currentPane() === a);
 
 // An open of a session another view shows shares it, so the engine pins it once; the view already there keeps its selection.
@@ -60,7 +60,7 @@ client.sessionOutline = () => ({ messages: [{ id: "u2", type: "user" }], active:
 const joiner = new ChatView(new Session());
 openSession(joiner, "s2");
 client.sessionOutline = outline;
-check("open-shares-a-shown-session", joiner.session === shared && shared.views.size === 2);
+check("open-shares-a-shown-session", joiner.session === shared && shared.views.length === 2);
 check("join-keeps-the-other-selection", a.transcript.selection !== null);
 shared.leave(joiner);
 

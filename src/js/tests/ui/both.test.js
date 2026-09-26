@@ -18,7 +18,8 @@ const body = { a1: "alpha bravo charlie\nsecond line here\nthird line xx" };
 
 const run = (order) => {
   // The view reads its parts through its session, so the test's session serves them.
-  const v = new ChatView(Object.assign(new Session(), { partsOf: textParts((id) => body[id] || "") }));
+  const v = new ChatView(new Session());
+  v.transcript.partsOf = textParts((id) => body[id] || "");
   v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
   root.setRoot(Node.leaf(v));
   root.focusView(v);

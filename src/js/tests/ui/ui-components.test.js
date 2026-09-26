@@ -84,7 +84,9 @@ check("diff-path", rowsHave(diffRows, "d.zig"));
 check("diff-del", rowsHave(diffRows, "-old") && rowsGroup(diffRows, "TxToolDel"));
 check("diff-add", rowsHave(diffRows, "+new") && rowsGroup(diffRows, "TxToolAdd"));
 
-const v = new ChatView(Object.assign(new Session(), { partsOf: (id) => parts[id] || [] }));
+const v = new ChatView(new Session());
+
+v.transcript.partsOf = (id) => parts[id] || [];
 v.transcript.setOutline([{ id: "done", type: "assistant" }], null);
 root.setRoot(Node.leaf(v));
 v.rect = { x: 0, y: 0, w: 40, h: 12 }; v.layout(v.rect);

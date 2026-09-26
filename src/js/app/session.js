@@ -12,7 +12,6 @@ import { errorText } from "yuke:internal/format";
 
 /** @import { Composer } from "yuke:internal/ui" */
 /** @import { Transcript } from "yuke:internal/transcript" */
-/** @import { MessagePart } from "yuke:internal/native/engine" */
 /** @import { ViewLike } from "./types/core.js" */
 /** @import { InjectContext } from "./types/ext.js" */
 /** @import { Context } from "yuke:internal/ext" */
@@ -49,28 +48,14 @@ export class Session {
     this.sessionId = null;
     this.creating = false;
     this.gen = 0;
-    // Every pane that shows this session. A pane joins by adding itself and leaves through `leave`.
-    /** @type {Set<SessionPane>} */
-    this.views = new Set();
+    // Every pane that shows this session. A pane joins by pushing itself once and leaves through `leave`.
+    // An array, so a stream delta walks it by index and allocates no iterator.
+    /** @type {SessionPane[]} */
+    this.views = [];
     // The live activity while the session holds its pin, read back after each activity fact.
     /** @type {Wire.SessionActivity | null} */
     this.activity = null;
     sessions.add(this);
-  }
-
-  /** @param {number} id @returns {readonly MessagePart[]} */
-  partsOf(id) {
-    return this.sessionId ? client.sessionParts(this.sessionId, id) : [];
-  }
-
-  /** @param {number} id @param {number} partId @param {MessagePart} [previous] @returns {MessagePart | null} */
-  partOf(id, partId, previous) {
-    return this.sessionId ? client.sessionPart(this.sessionId, id, partId, previous) : null;
-  }
-
-  /** @param {number} id @param {number} partId @param {string} field @param {number} [offset] @param {number} [limit] @returns {{ text: string, next: number | null }} */
-  partTextPage(id, partId, field, offset, limit) {
-    return this.sessionId ? client.partTextPage(this.sessionId, id, partId, field, offset, limit) : { text: "", next: null };
   }
 
   // Pin `id` and show it in every view. The engine counts pins, so one open owes exactly one release. False when the engine refuses.
@@ -181,7 +166,7 @@ export class Session {
   }
 
   // Re-pull the outline into `views` on a structural change; a closed session must not empty them.
-  /** @param {Iterable<SessionPane>} [views] */
+  /** @param {readonly SessionPane[]} [views] */
   reload(views = this.views) {
     if (!this.sessionId) return;
     const o = client.sessionOutline(this.sessionId);
@@ -193,7 +178,8 @@ export class Session {
   // A draft delta: re-wrap only the streaming message `id`, or only its part `partId` when the digest names one.
   /** @param {number} id @param {number} [partId] */
   active(id, partId) {
-    for (const view of this.views) view.transcript.setActive(id, partId);
+    const views = this.views;
+    for (let i = 0; i < views.length; i++) /** @type {SessionPane} */ (views[i]).transcript.setActive(id, partId);
     root.invalidate();
   }
 
@@ -249,8 +235,9 @@ export class Session {
   // A view stops showing this session. The last view releases the pin and takes the session out of the registry.
   /** @param {SessionPane} view */
   leave(view) {
-    this.views.delete(view);
-    if (this.views.size !== 0) return;
+    const at = this.views.indexOf(view);
+    if (at >= 0) this.views.splice(at, 1);
+    if (this.views.length !== 0) return;
     this.gen++;
     this.creating = false;
     this.release();
@@ -376,7 +363,7 @@ export function showSession(view, session) {
   if (view.session === session) return;
   view.session.leave(view);
   view.session = session;
-  session.views.add(view);
+  session.views.push(view);
   // Message ids repeat across sessions, so the old render must go before the new outline lands.
   // Only the joining view loads it, so a view already on the session keeps its selection.
   view.transcript.setOutline([], null);

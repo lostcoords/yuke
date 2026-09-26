@@ -19,7 +19,8 @@ const body = { a1: "alpha **bravo** charlie delta" };
 let copied = null;
 term.copy = (x) => { copied = x; return x.length; };
 // The view reads its parts through its session, so the test's session serves them.
-const v = new ChatView(Object.assign(new Session(), { partsOf: textParts((id) => body[id] || "") }));
+const v = new ChatView(new Session());
+v.transcript.partsOf = textParts((id) => body[id] || "");
 v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
 root.setRoot(Node.leaf(v));
 v.rect = { x: 0, y: 0, w: 24, h: 18 }; v.layout(v.rect);

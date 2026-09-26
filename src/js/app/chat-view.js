@@ -5,6 +5,7 @@ import { config, events } from "yuke:internal/kernel";
 import { clip } from "yuke:internal/text-input";
 import { Composer, Text } from "yuke:internal/ui";
 import { Transcript } from "yuke:internal/transcript";
+import { client } from "yuke:internal/client";
 import { pasteAttaches } from "yuke:internal/attach";
 
 /** @typedef {"composer" | "transcript"} ChatRegion */
@@ -28,11 +29,21 @@ export class ChatView {
   constructor(session) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
     this.session = session;
-    session.views.add(this);
+    session.views.push(this);
+    // The transcript reads parts straight from the engine for the session the view shows now; a draft has none.
     this.transcript = new Transcript({
-      partsOf: (id) => this.session.partsOf(id),
-      partOf: (id, partId, previous) => this.session.partOf(id, partId, previous),
-      partTextPage: (id, partId, field, offset, limit) => this.session.partTextPage(id, partId, field, offset, limit),
+      partsOf: (id) => {
+        const sid = this.session.sessionId;
+        return sid ? client.sessionParts(sid, id) : [];
+      },
+      partOf: (id, partId, previous) => {
+        const sid = this.session.sessionId;
+        return sid ? client.sessionPart(sid, id, partId, previous) : null;
+      },
+      partTextPage: (id, partId, field, offset, limit) => {
+        const sid = this.session.sessionId;
+        return sid ? client.partTextPage(sid, id, partId, field, offset, limit) : { text: "", next: null };
+      },
       onSelect: copySelection,
     });
     this.composer = new Composer({ placeholder: "Message…", onSubmit: (content) => this.session.send(content, this.composer) });
