@@ -352,6 +352,8 @@ class SessionFeed {
     /** @type {Map<string, FeedItem>} */
     items: Map<string, FeedItem>;
     rev: number;
+    changes: number;
+    asked: number;
     _refresh: Refresh<void>;
     constructor();
     get loading(): boolean;

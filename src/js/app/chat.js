@@ -265,13 +265,17 @@ export class Session {
 /** @type {Set<Session>} */
 export const sessions = new Set();
 
-// The session list the finder and the default model read. It keeps no copy of the store, so an index change reads `session.list` again.
+// The session list the finder and the default model read. It keeps no copy of the store: a summary change marks it stale,
+// and the next reader starts one `session.list` read, so nothing reads while nobody looks.
 class SessionFeed {
   constructor() {
     /** @type {Map<string, FeedItem>} */
     this.items = new Map();
     // The list only changes on a read, so a reader caches against this count and not against every frame.
     this.rev = 0;
+    // The changes seen, and the change count the last requested read covers. The list starts one change behind.
+    this.changes = 1;
+    this.asked = 0;
     this._refresh = new Refresh(
       () => client.sessionList().then((r) => this.seed(r)),
       () => root.invalidate(),
@@ -292,6 +296,7 @@ class SessionFeed {
   // Read the list again. A burst shares one read and one follow-up catches changes during it.
   /** @returns {Promise<void>} */
   refresh() {
+    this.asked = this.changes;
     return this._refresh.run();
   }
 
@@ -317,6 +322,8 @@ export function feedOf() {
 // The listed entry for one session, or null.
 /** @param {string} sessionId @returns {FeedItem | null} */
 export function feedItem(sessionId) {
+  // A status draw reads this each frame, so the staleness check stays inline.
+  if (feed.asked !== feed.changes) feed.refresh();
   return feed.items.get(sessionId) || null;
 }
 
@@ -326,6 +333,7 @@ let newestLocal = { rev: -1, session: null };
 // The newest session that names a model, cached so a status draw costs no scan.
 /** @returns {Wire.Session | null} */
 export function newestLocalModelSession() {
+  if (feed.asked !== feed.changes) feed.refresh();
   if (newestLocal.rev === feed.rev) return newestLocal.session;
   /** @type {Wire.Session | null} */
   let best = null;
@@ -719,10 +727,10 @@ export const chatPlugin = {
         }
       });
 
-      // The engine is in this process, so the list is readable at once. An index change reads it again.
-      feed.refresh();
-      ctx.on("index.changed", () => {
-        feed.refresh();
+      // A summary fact reaches the index because its payload names no session id; an overflow drops facts.
+      // Either one makes the list stale. A catalog, notice, or login fact leaves it alone.
+      ctx.on("index.changed", (ev) => {
+        if (ev.overflow || ev.facts.indexOf("session.summary_changed") >= 0) feed.changes++;
       });
 
       // The model the current chat sends to, on the right of the status bar.
