@@ -7,6 +7,7 @@ declare module "yuke:chat" {
 export import ChatView = $chat_view.ChatView;
 export import Transcript = $transcript.Transcript;
 export import labels = $transcript.labels;
+export import registerLabels = $transcript.registerLabels;
 export import ROLE_NONE = $transcript.ROLE_NONE;
 export import ROLE_ACTION = $transcript.ROLE_ACTION;
 export import ROLE_TEXT = $transcript.ROLE_TEXT;

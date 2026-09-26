@@ -156,7 +156,7 @@ function refreshLabels() {
   root.invalidate();
 }
 
-// `ctx.tui.labels` owns each registration; the newest one wins, and its disposer removes only its own layer.
+// `ctx.chat.labels` owns each registration; the newest one wins, and its disposer removes only its own layer.
 /** @param {LabelRegistration} entries @returns {() => void} */
 export function registerLabels(entries) {
   const entry = { tools: { ...entries.tools }, sources: { ...entries.sources } };
