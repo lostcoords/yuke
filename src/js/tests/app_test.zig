@@ -213,6 +213,10 @@ test "a user chat plugin gets the session commands and composer-vim on its own p
     try support.run("app/custom-chat.test.js");
 }
 
+test "a closed pane moves the focus only when it held the focus" {
+    try support.run("app/close-focus.test.js");
+}
+
 test "a chat retains only successful session pins" {
     try support.run("app/pins.test.js");
 }

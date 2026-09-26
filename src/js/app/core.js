@@ -1022,7 +1022,9 @@ export class RootView {
       p.shape.a.parent = p;
       p.shape.b.parent = p;
     }
-    this._setActiveLeaf(/** @type {Node} */ (p.leaves()[0]));
+    // Only a closed focused pane moves the focus. A focused leaf sibling now lives in `p`, so the focus follows it there.
+    if (this.activeLeaf === leaf) this._setActiveLeaf(/** @type {Node} */ (p.leaves()[0]));
+    else if (this.activeLeaf === sib) this.activeLeaf = p;
     // The tree drops the view here, so the owner learns that its pane left.
     const removed = leafView(leaf);
     releaseView(removed, this);
