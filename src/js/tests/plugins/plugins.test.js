@@ -1,6 +1,6 @@
 import { check } from "yuke:internal/test";
 import { command } from "yuke:internal/core";
-import { plugins } from "yuke:internal/ext";
+import { scopeOf, plugins } from "yuke:internal/ext";
 import { tui } from "yuke:internal/tui";
 
 // A plugin registers on use, reverts on dispose, and comes back on reload.
@@ -89,4 +89,21 @@ import { tui } from "yuke:internal/tui";
   let threw = false;
   try { held.use({ name: "late", apply(ctx) { ctx.effect(() => () => log.push("late")); } }); } catch (e) { threw = e instanceof TypeError; }
   check("plugin-use-owns-child", live && log.join() === "parent,kid,late" && threw && !plugins.has("kid") && !plugins.has("late"));
+}
+
+// A child that closes by any path leaves its parent, so a parent that starts and stops a child holds nothing per cycle.
+{
+  /** @type {import("yuke").Context | null} */
+  let held = null;
+  plugins.use({ name: "holder", apply(ctx) { held = ctx; } });
+  const child = { name: "cycled", apply() {} };
+  const owned = () => scopeOf(/** @type {any} */ (held))._life?.releases?.length ?? 0;
+  for (let i = 0; i < 3; i++) held.use(child).dispose();
+  const afterHandle = owned();
+  for (let i = 0; i < 3; i++) { held.use(child); plugins.dispose("cycled"); }
+  const afterRegistry = owned();
+  held.use(child);
+  const running = owned();
+  plugins.dispose("holder");
+  check("closed-child-leaves-parent", afterHandle === 0 && afterRegistry === 0 && running === 1 && !plugins.has("cycled"));
 }

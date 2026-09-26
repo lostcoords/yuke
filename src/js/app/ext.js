@@ -721,12 +721,12 @@ export class Context {
     return tools;
   }
 
-  // Start a plugin this plugin owns. Its close runs as a release of this plugin, and a use after the close closes it at once.
+  // Start a plugin this plugin owns. Its close runs as a release of this plugin; a child that closes first drops that release.
   /** @param {Plugin} plugin @returns {PluginHandle} */
   use(plugin) {
-    const handle = plugins.use(plugin);
-    this.#scope.own(handle.dispose);
-    return handle;
+    const instance = startPlugin(plugin);
+    if (instance._phase !== "closed") instance._state().owner = this.#scope.own(() => instance.dispose());
+    return { ready: instance.ready, dispose: () => instance.dispose() };
   }
 
   // Run `apply` only while every named capability exists, in a child scope a withdrawal reverts.
@@ -830,8 +830,64 @@ class PluginInstance {
       state.cancelReady = undefined;
     }
     if (plugins._live[this._name] === this) delete plugins._live[this._name];
+    state?.owner?.();
     state?.settle?.();
   }
+}
+
+// Apply `plugin` under its name for `plugins.use` and `ctx.use`.
+/** @param {Plugin} plugin @returns {PluginInstance} */
+function startPlugin(plugin) {
+  // A plugin comes from user code, so its shape is checked here.
+  if (plugin === null || typeof plugin !== "object" || typeof plugin.apply !== "function" || typeof plugin.name !== "string" || plugin.name === "")
+    throw new TypeError("invalid plugin: expected { name, apply }");
+  if (plugins._closing) throw new TypeError("the plugin registry is closed");
+  const name = plugin.name;
+  if (plugins._live[name]) throw new TypeError("plugin `" + name + "` is already in use");
+  const instance = new PluginInstance(name);
+  plugins._live[name] = instance;
+  try {
+    const result = plugin.apply(instance.context);
+    if (result != null && typeof /** @type {{ then?: unknown }} */ (result).then === "function") {
+      /** @type {(error: unknown) => void} */
+      let rejectReady = NOOP;
+      let resolveReady = NOOP;
+      const state = instance._state();
+      state.ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+      state.ready.catch(NOOP);
+      state.cancelReady = rejectReady;
+      if (instance._phase !== "applying") rejectReady(startupCanceled());
+      state.startup = Promise.resolve(result).then((value) => {
+        checkApplyResult(value);
+        resolveReady();
+      }).catch((error) => {
+        rejectReady(error);
+        if (instance._phase === "active") {
+          plugins._startupFailure ??= { error };
+          instance.report(error);
+          instance.dispose();
+        }
+      }).then(() => {
+        state.cancelReady = undefined;
+        state.startup = undefined;
+      });
+    } else {
+      // A sync apply may return its cleanup, as an `inject` block does; a closed scope runs it at once.
+      if (typeof result !== "function") checkApplyResult(result);
+      else if (instance.scope.alive) instance.scope.effect(() => result);
+      else result();
+      if (instance._phase !== "applying") {
+        const ready = instance._state().ready = Promise.reject(startupCanceled());
+        ready.catch(NOOP);
+      }
+    }
+  } catch (error) {
+    if (instance._phase === "applying") instance._phase = "active";
+    instance.dispose();
+    throw error;
+  }
+  if (instance._phase === "applying") instance._phase = "active";
+  return instance;
 }
 
 export const plugins = {
@@ -843,55 +899,7 @@ export const plugins = {
 
   /** @param {Plugin} plugin @returns {PluginHandle} */
   use(plugin) {
-    // A plugin comes from user code, so its shape is checked here.
-    if (plugin === null || typeof plugin !== "object" || typeof plugin.apply !== "function" || typeof plugin.name !== "string" || plugin.name === "")
-      throw new TypeError("invalid plugin: expected { name, apply }");
-    if (this._closing) throw new TypeError("the plugin registry is closed");
-    const name = plugin.name;
-    if (this._live[name]) throw new TypeError("plugin `" + name + "` is already in use");
-    const instance = new PluginInstance(name);
-    this._live[name] = instance;
-    try {
-      const result = plugin.apply(instance.context);
-      if (result != null && typeof /** @type {{ then?: unknown }} */ (result).then === "function") {
-        /** @type {(error: unknown) => void} */
-        let rejectReady = NOOP;
-        let resolveReady = NOOP;
-        const state = instance._state();
-        state.ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
-        state.ready.catch(NOOP);
-        state.cancelReady = rejectReady;
-        if (instance._phase !== "applying") rejectReady(startupCanceled());
-        state.startup = Promise.resolve(result).then((value) => {
-          checkApplyResult(value);
-          resolveReady();
-        }).catch((error) => {
-          rejectReady(error);
-          if (instance._phase === "active") {
-            this._startupFailure ??= { error };
-            instance.report(error);
-            instance.dispose();
-          }
-        }).then(() => {
-          state.cancelReady = undefined;
-          state.startup = undefined;
-        });
-      } else {
-        // A sync apply may return its cleanup, as an `inject` block does; a closed scope runs it at once.
-        if (typeof result !== "function") checkApplyResult(result);
-        else if (instance.scope.alive) instance.scope.effect(() => result);
-        else result();
-        if (instance._phase !== "applying") {
-          const ready = instance._state().ready = Promise.reject(startupCanceled());
-          ready.catch(NOOP);
-        }
-      }
-    } catch (error) {
-      if (instance._phase === "applying") instance._phase = "active";
-      instance.dispose();
-      throw error;
-    }
-    if (instance._phase === "applying") instance._phase = "active";
+    const instance = startPlugin(plugin);
     // The handle closes this instance only, so an old handle cannot close a replacement. `ready` is fixed once `use` returns.
     return { ready: instance.ready, dispose: () => instance.dispose() };
   },
