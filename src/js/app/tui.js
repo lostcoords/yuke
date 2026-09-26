@@ -91,13 +91,8 @@ class Surface {
   }
 }
 
-/** @param {Context} ctx @returns {Surface} */
-function bindTo(ctx) {
-  return new Surface(ctx);
-}
-
 // `inject` calls `bindTo`, so each block gets a surface whose effects that block owns.
-export const tui = { bindTo };
+export const tui = { bindTo: (/** @type {Context} */ ctx) => new Surface(ctx) };
 
 // The shell registers this plugin, and every block that declares `tui` then activates.
 export const tuiPlugin = {

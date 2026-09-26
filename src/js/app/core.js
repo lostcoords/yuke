@@ -522,8 +522,10 @@ export const keymap = {
       keys.push(key);
       return;
     }
-    // A sequence leaves `map` once, so its entry is still here.
-    keys.splice(keys.indexOf(key), 1);
+    const at = keys.indexOf(key);
+    // A sequence enters the index when it enters `map` and leaves `map` once, so it is still listed here.
+    if (at < 0) throw new Error("keymap: the chord index lost " + key);
+    keys.splice(at, 1);
     if (keys.length === 0) delete this.prefixes[head];
   },
 
@@ -677,7 +679,7 @@ events.declare([
   "ui.resized",
   "ui.ticked",
   "key.pressed",
-  "mouse.input",
+  "mouse.received",
   "paste.received",
   "focus.changed",
   "pane.focused",
@@ -693,7 +695,7 @@ const HOST_TO_CORE_EVENT = /** @type {const} */ ({
   resize: "ui.resized",
   tick: "ui.ticked",
   key: "key.pressed",
-  mouse: "mouse.input",
+  mouse: "mouse.received",
   paste: "paste.received",
   focus: "focus.changed",
 });
@@ -955,11 +957,6 @@ export class RootView {
       events.emit("pane.closed", v);
     }
     this.invalidate();
-  }
-
-  /** @param {ViewLike | null} view @returns {void} */
-  setActive(view) {
-    this.setRoot(view == null ? null : Node.leaf(view));
   }
 
   // Move the active leaf. A new leaf gets `onFocus`, so a pane can reset its caret.

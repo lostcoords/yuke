@@ -887,13 +887,13 @@ test "an event asks for a frame and the flush paints it once" {
 
     try host.evalModule(
         \\import { term } from "yuke:internal/native/term";
-        \\import { root, View } from "yuke:internal/core";
+        \\import { root, Node, View } from "yuke:internal/core";
         \\globalThis.paints = 0;
         \\class Counter extends View {
         \\  draw() { globalThis.paints++; term.text(0, 0, "x"); }
         \\  onKey() { return true; }
         \\}
-        \\root.setActive(new Counter());
+        \\root.setRoot(Node.leaf(new Counter()));
     , "boot.js");
     // An event batch applies three keys and paints once.
     for (0..3) |_| try loop.step(host, .{ .key_press = .{ .codepoint = 'a' } });

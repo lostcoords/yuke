@@ -2,7 +2,7 @@ import { equal } from "yuke:internal/test";
 import { events } from "yuke:internal/kernel";
 import "yuke:internal/client";
 const throws = (fn) => { try { fn(); return false; } catch { return true; } };
-const view = ["ui.started", "key.pressed", "mouse.input"];
+const view = ["ui.started", "key.pressed", "mouse.received"];
 const accepted = view.filter((n) => !throws(() => events.on(n, () => {})));
 // The neutral name stays, and an owner:event name stays free.
 const neutral = !throws(() => events.on("ext.failed", () => {}));

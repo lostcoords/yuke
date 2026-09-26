@@ -750,11 +750,6 @@ const RESERVED = new Set([...Object.getOwnPropertyNames(Context.prototype), "id"
 // --- plugin registry --- A plugin is `{ name, apply }`; the name keys the registry and prefixes every command, so it is required.
 const readyNow = Promise.resolve();
 
-/** @param {unknown} result */
-function checkApplyResult(result) {
-  if (result !== undefined) throw new TypeError("plugin apply must return void, a cleanup function, or Promise<void>");
-}
-
 /** @returns {Error} */
 function startupCanceled() {
   const error = new Error("plugin startup was canceled");
@@ -858,7 +853,7 @@ function startPlugin(plugin) {
       state.cancelReady = rejectReady;
       if (instance._phase !== "applying") rejectReady(startupCanceled());
       state.startup = Promise.resolve(result).then((value) => {
-        checkApplyResult(value);
+        if (value !== undefined) throw new TypeError("an async plugin apply must resolve to nothing; register cleanup with ctx.own");
         resolveReady();
       }).catch((error) => {
         rejectReady(error);
@@ -873,9 +868,10 @@ function startPlugin(plugin) {
       });
     } else {
       // A sync apply may return its cleanup, as an `inject` block does; a closed scope runs it at once.
-      if (typeof result !== "function") checkApplyResult(result);
-      else if (instance.scope.alive) instance.scope.effect(() => result);
-      else result();
+      if (typeof result === "function") {
+        if (instance.scope.alive) instance.scope.effect(() => result);
+        else result();
+      } else if (result !== undefined) throw new TypeError("plugin apply must return nothing, a cleanup function, or a promise");
       if (instance._phase !== "applying") {
         const ready = instance._state().ready = Promise.reject(startupCanceled());
         ready.catch(NOOP);

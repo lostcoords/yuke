@@ -19,7 +19,7 @@ import { shell } from "yuke:internal/shell";
 /** @import { Context } from "yuke:internal/ext" */
 
 // The default keys: scrolling for whatever has the focus, the keys typed so far, and quit and suspend.
-export const keysPlugin = {
+const keysPlugin = {
   name: "keys",
   /** @param {Context} ctx */
   apply(ctx) {

@@ -6,7 +6,8 @@ import { agentsLabel, elapsedLabel } from "yuke:internal/format";
 /** @import { Context } from "yuke:internal/ext" */
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const PERIOD_MS = 100;
+// The spinner steps every 100 ms. The frame loop asks for the period each frame, so one object answers every time.
+const TICK = { periodMs: 100 };
 
 // The frame counter advances on each tick, so every pane spins in step.
 let frame = 0;
@@ -79,7 +80,7 @@ export const indicatorPlugin = {
       });
       // The frame loop runs only while a pane or a child run works, so an idle screen costs no wakeups.
       ctx.tui.tickable({
-        needsTick: () => (anyWorking() ? { periodMs: PERIOD_MS } : null),
+        needsTick: () => (anyWorking() ? TICK : null),
         tick: () => {
           frame++;
         },

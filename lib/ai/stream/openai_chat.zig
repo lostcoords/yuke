@@ -122,11 +122,12 @@ pub const Reducer = struct {
             else => unreachable, // onDelta passes only text or reasoning.
         };
         const index = channel.* orelse try self.startBlock(kind, null, out);
+        std.debug.assert(self.blocks.items[index].kind == kind); // a channel names only blocks of its own kind
         channel.* = index;
         try out.append(self.gpa, switch (kind) {
             .text => .{ .text_delta = .{ .block = @intCast(index), .text = text } },
             .reasoning => .{ .reasoning_delta = .{ .block = @intCast(index), .text = text } },
-            else => unreachable,
+            else => unreachable, // the channel switch above admitted only text or reasoning.
         });
     }
 

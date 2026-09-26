@@ -44,7 +44,7 @@ export interface Events extends EngineFacts {
   "ui.resized"(ev: Extract<HostEvent, { type: "resize" }>): void;
   "ui.ticked"(ev: Extract<HostEvent, { type: "tick" }>): void;
   "key.pressed"(ev: Extract<HostEvent, { type: "key" }>): void;
-  "mouse.input"(ev: HostMouseEvent): void;
+  "mouse.received"(ev: HostMouseEvent): void;
   "paste.received"(ev: Extract<HostEvent, { type: "paste" }>): void;
   "focus.changed"(ev: Extract<HostEvent, { type: "focus" }>): void;
   "pane.focused"(view: ViewLike): void;
@@ -70,6 +70,7 @@ export interface Events extends EngineFacts {
 }
 
 export type EventName = keyof Events & string;
+/** `prepend` puts the listener first: `emit` tells it first, and `bail` asks it last. */
 export interface EventOptions { prepend?: boolean }
 
 /** The shared event bus: `emit` tells every listener in registration order; `bail` asks the newest listener first and answers the first value that is not false or null. */

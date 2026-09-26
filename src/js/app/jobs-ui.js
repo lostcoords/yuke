@@ -29,6 +29,9 @@ function summary(jobs) {
 const OUTPUT_BYTES = 256 * 1024;
 const OUTPUT_LINES = 5000;
 const LINE_CHARS = 4096;
+// The frame loop asks for a period each frame, so one object answers each: a live log reads twice a second, the list's clock once.
+const HALF_SECOND = { periodMs: 500 };
+const ONE_SECOND = { periodMs: 1000 };
 
 // A live view of one job log: each tick reads the bytes after the last read, and the pager follows the tail.
 export class JobOutput extends ScrollView {
@@ -111,7 +114,7 @@ export class JobOutput extends ScrollView {
   }
 
   /** @returns {{ periodMs: number } | null} */
-  needsTick() { return this.job.state === "running" ? { periodMs: 500 } : null; }
+  needsTick() { return this.job.state === "running" ? HALF_SECOND : null; }
 
   tick() { this.read().catch(failed); }
 
@@ -168,7 +171,7 @@ export function openJobs(ctx) {
   });
   // A running job shows its age, so the frame loop repaints the list each second while one runs, and not at all otherwise.
   const offTick = ctx.tui.tickable({
-    needsTick: () => (items.some((j) => j.state === "running") ? { periodMs: 1000 } : null),
+    needsTick: () => (items.some((j) => j.state === "running") ? ONE_SECOND : null),
     tick: () => root.invalidate(),
   });
   const close = ctx.tui.overlay(picker.win, () => { offTick(); offChanged(); });

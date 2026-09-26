@@ -1,4 +1,4 @@
-import { View, root } from "yuke:internal/core";
+import { View, root, Node } from "yuke:internal/core";
 class Ok extends View { draw() {} }
 const reject = (fn, want) => {
   try { fn(); } catch (e) {
@@ -8,9 +8,9 @@ const reject = (fn, want) => {
 globalThis.threw = 0;
 const view = "a view needs layout and draw methods";
 const layer = "pushOverlay needs layout and draw methods";
-for (const bad of [{}, { draw: 1 }]) reject(() => root.setActive(bad), view);
-root.setActive(new Ok());
+for (const bad of [{}, { draw: 1 }]) reject(() => root.setRoot(Node.leaf(bad)), view);
+root.setRoot(Node.leaf(new Ok()));
 reject(() => root.split("row", {}), view);
 for (const bad of [null, {}, { draw: true }]) reject(() => root.pushOverlay(bad), layer);
-root.setActive(null);
+root.setRoot(null);
 globalThis.cleared = root.active === null ? 1 : 0;

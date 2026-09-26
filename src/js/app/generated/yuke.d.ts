@@ -545,8 +545,6 @@ export class RootView {
     get active(): ViewLike | null;
     /** @param {Node | null} node @returns {void} */
     setRoot(node: Node | null): void;
-    /** @param {ViewLike | null} view @returns {void} */
-    setActive(view: ViewLike | null): void;
     /** @param {Node | null} leaf @returns {void} */
     _setActiveLeaf(leaf: Node | null): void;
     /** @param {ViewLike | null} view @returns {boolean} */
@@ -1748,10 +1746,8 @@ class Surface {
     /** @param {Tickable} tickable @returns {Disposer} */
     tickable(tickable: Tickable): Disposer;
 }
-/** @param {Context} ctx @returns {Surface} */
-function bindTo(ctx: Context): Surface;
 export const tui: {
-    bindTo: typeof bindTo;
+    bindTo: (/** @type {Context} */ ctx: Context) => Surface;
 };
 export const tuiPlugin: {
     name: string;
@@ -2820,7 +2816,7 @@ export interface EventsBase extends EngineFacts {
   "ui.resized"(ev: Extract<HostEvent, { type: "resize" }>): void;
   "ui.ticked"(ev: Extract<HostEvent, { type: "tick" }>): void;
   "key.pressed"(ev: Extract<HostEvent, { type: "key" }>): void;
-  "mouse.input"(ev: HostMouseEvent): void;
+  "mouse.received"(ev: HostMouseEvent): void;
   "paste.received"(ev: Extract<HostEvent, { type: "paste" }>): void;
   "focus.changed"(ev: Extract<HostEvent, { type: "focus" }>): void;
   "pane.focused"(view: ViewLike): void;
@@ -2846,6 +2842,7 @@ export interface EventsBase extends EngineFacts {
 }
 
 export type EventName = keyof Events & string;
+/** `prepend` puts the listener first: `emit` tells it first, and `bail` asks it last. */
 export interface EventOptions { prepend?: boolean }
 
 /** The shared event bus: `emit` tells every listener in registration order; `bail` asks the newest listener first and answers the first value that is not false or null. */

@@ -13,14 +13,17 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 
 // The prefix index follows every add and dispose: a sequence stays listed while any binding holds it, in map order.
 {
-  const index = () => JSON.stringify(Object.entries(keymap.prefixes));
+  // Each head lists its sequences in the order `map` holds them; the order of the heads is no invariant, so both sides sort them.
+  /** @param {Record<string, string[]>} heads */
+  const sorted = (heads) => JSON.stringify(Object.entries(heads).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  const index = () => sorted(keymap.prefixes);
   const rebuilt = () => {
     const out = Object.create(null);
     for (const key in keymap.map) {
       const sp = key.indexOf(" ");
       if (sp > 0) (out[key.slice(0, sp)] ||= []).push(key);
     }
-    return JSON.stringify(Object.entries(out));
+    return sorted(out);
   };
   const a = keymap.add({ "f7 a": () => true, "f7 b": () => true });
   const b = keymap.add({ "f7  a": () => true, "f7 c": () => true, f7: () => true });
