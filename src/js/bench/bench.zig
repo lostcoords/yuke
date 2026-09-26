@@ -73,8 +73,10 @@ pub const Phase = enum {
     interaction_reused,
     interaction_fresh,
     fuzzy_rank,
+    chat_stream,
+    chat_frame,
 
-    const Group = enum { transcript, colors, advice, agents, process, tools, hooks, plugins, net, http, utf8, interaction, mcp, fuzzy };
+    const Group = enum { transcript, colors, advice, agents, process, tools, hooks, plugins, net, http, utf8, interaction, mcp, fuzzy, chat };
 
     fn group(self: Phase) Group {
         return switch (self) {
@@ -84,6 +86,7 @@ pub const Phase = enum {
             .mcp_result_reused, .mcp_result_fresh => .mcp,
             .utf8_reused, .utf8_fresh => .utf8,
             .fuzzy_rank => .fuzzy,
+            .chat_stream, .chat_frame => .chat,
             .interaction_reused, .interaction_fresh => .interaction,
             .tool_call => .tools,
             .hook_request_build, .hook_tool_before => .hooks,
@@ -172,6 +175,7 @@ pub const Harness = struct {
             .mcp => @embedFile("mcp.js"),
             .utf8 => @embedFile("utf8.js"),
             .fuzzy => @embedFile("fuzzy.js"),
+            .chat => @embedFile("chat.js"),
             .agents => @embedFile("agents.js"),
             .colors => @embedFile("colors.js"),
             .advice => @embedFile("advice.js"),
@@ -225,9 +229,10 @@ pub const Harness = struct {
             self.phase = phase;
             return;
         }
-        if (phase == .projection or phase == .stream_native or phase == .stream_tool or phase == .stream_part)
+        if (phase == .projection or phase == .stream_native or phase == .stream_tool or phase == .stream_part or phase.group() == .chat)
             self.projection = try Projection.create(self.host, self.host.io, scale, switch (phase) {
-                .stream_native => .text,
+                .stream_native, .chat_stream => .text,
+                .chat_frame => .part,
                 .stream_tool => .tool,
                 .stream_part => .part,
                 else => .none,
@@ -249,6 +254,8 @@ pub const Harness = struct {
         if (phase == .tool_call) try self.toolOnce();
         if (phase.group() == .hooks) try self.hookOnce(phase);
         if (phase.group() == .plugins) _ = try self.call(self.step_fn, &.{});
+        // The default plugins start reads at boot and on the first frame, so the phase starts after they settle.
+        if (phase.group() == .chat) try self.settle();
         if (phase.group() == .net) try self.drainClosedSockets();
         self.host.runtime.runGC();
         self.output.clearRetainingCapacity();
@@ -369,7 +376,7 @@ pub const Harness = struct {
                 }
                 try self.host.pump();
             }
-            if (phase == .stream_native) {
+            if (phase == .stream_native or phase == .chat_stream) {
                 try (self.projection orelse unreachable).appendNative(self.native_step);
                 self.native_step += 1;
             }
@@ -423,7 +430,7 @@ pub const Harness = struct {
         };
     }
 
-    fn settleAgents(self: *Harness) !void {
+    fn settle(self: *Harness) !void {
         try self.host.pumpUntil(.fromNow(self.host.io, .{ .raw = .fromSeconds(30), .clock = .awake }), self.host, struct {
             fn settled(host: *Host) bool {
                 return host.ops.live.items.len == 0 and !host.hasPending();
@@ -446,7 +453,7 @@ pub const Harness = struct {
             const pending: Host.PendingPromise = .{ .ctx = ctx, .promise = result };
             if (!pending.settled()) try self.host.pumpUntil(.fromNow(self.host.io, .{ .raw = .fromSeconds(30), .clock = .awake }), pending, Host.PendingPromise.settled);
         }
-        if (self.phase_group == .agents) try self.settleAgents();
+        if (self.phase_group == .agents) try self.settle();
         if (ctx.isObject(result)) {
             if (ctx.promiseState(result) == .Rejected) return error.BenchmarkRejected;
             if (ctx.promiseState(result) == .Fulfilled) {
@@ -472,7 +479,7 @@ test "benchmark scenarios preserve the transcript across updates and cache evict
         defer harness.destroy();
         harness.advice_batch_size = 32;
         // Scale 9 holds 18 messages, above the 16-message row cache, so eviction runs.
-        try harness.start(phase, if (phase == .stream_native) 1 else 9);
+        try harness.start(phase, if (phase == .stream_native or phase == .chat_stream) 1 else 9);
         // The initial native text exceeds one page, so the client must complete it before the first update.
         if (phase == .stream_native) try std.testing.expect(harness.sourceBytes().? > paging.max_page_bytes);
         for (0..6) |_| _ = try harness.step();
