@@ -87,10 +87,13 @@ export async function openAgents(ctx, sessionId) {
     },
   });
   picker.content.list.selectKey(sessionId);
-  // A new child lands in the index digest, which names no session; a listed child's state lands in its own digest.
-  const off = ctx.on("index.changed", (ev) => { if (ev.overflow || ev.facts.includes("session.summary_changed")) refresh(); });
+  // Each session's state lands in its own digest. A summary of an unlisted session can be a new child, so it reads the tree.
+  const off = ctx.on("index.changed", (ev) => { if (ev.overflow) refresh(); });
   const offSession = ctx.on("session.changed", (ev) => {
-    if (!items.some((row) => row.item.session.id === ev.session)) return;
+    if (!items.some((row) => row.item.session.id === ev.session)) {
+      if (ev.facts.includes("session.summary_changed")) refresh();
+      return;
+    }
     if (ev.kind === "gone" || ev.facts.includes("run.done") || ev.facts.includes("session.summary_changed")) refresh();
     else if (ev.facts.includes("session.activity_changed")) refresh(ev.session);
   });

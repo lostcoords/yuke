@@ -1359,6 +1359,8 @@ class SessionFeed {
     seed(listResult: Wire.SessionListResult): void;
     /** @returns {Promise<void>} */
     refresh(): Promise<void>;
+    /** @param {string} id @returns {void} */
+    refreshItem(id: string): void;
     /** @returns {SessionRow[]} */
     rows(): SessionRow[];
 }

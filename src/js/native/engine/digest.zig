@@ -255,9 +255,10 @@ const Change = struct {
     }
 };
 
-/// Read the session an event belongs to. An index event names no session.
+/// Read the session an event belongs to. A summary names its session inside the summary; an index event names none.
 fn sessionOf(note: proto.rpc.Notification) ?SessionId {
     return switch (note.params) {
+        .session_summary_changed_data => |data| data.session.id,
         inline else => |payload| if (@hasField(@TypeOf(payload), "session_id")) payload.session_id else null,
     };
 }
@@ -430,6 +431,30 @@ test "the activity never reloads the transcript, and a part event outranks it" {
     } } });
     try testing.expectEqualStrings("active", state.kind());
     try testing.expectEqual(@as(?proto.ids.PartId, 1), state.view.message.part);
+}
+
+test "a summary change reaches its own session as a quiet fact" {
+    const sid = SessionId.bytes([_]u8{9} ** 16);
+    const note: proto.rpc.Notification = .{ .method = .@"session.summary_changed", .params = .{ .session_summary_changed_data = .{
+        .revision = 1,
+        .session = .{
+            .id = sid,
+            .root = "/w",
+            .model = "",
+            .reasoning = "",
+            .config_rev = 0,
+            .title = "t",
+            .message_count = 0,
+            .usage_total = .zero,
+            .created_at_ms = 0,
+            .updated_at_ms = 0,
+            .origin = .{ .root = .{} },
+        },
+    } } };
+    try testing.expectEqual(sid, sessionOf(note).?);
+    const change: Change = .of(note);
+    try testing.expectEqualStrings("quiet", change.kind());
+    try testing.expect(change.facts.contains(.@"session.summary_changed"));
 }
 
 test "two parts widen to their message, and two messages widen to a reload" {

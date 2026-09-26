@@ -19,9 +19,9 @@ check("commands-registered", command.available("model:pick"));
 
 // A "gone" event for the open pair closes the session; one for another pair does not.
 chat.session.sessionId = "s1";
-events.emit("session.changed", { type: "session", session: "other", kind: "gone" });
+events.emit("session.changed", { type: "session", session: "other", kind: "gone", facts: [] });
 check("ignores-other-pair", chat.session.sessionId === "s1");
-events.emit("session.changed", { type: "session", session: "s1", kind: "gone" });
+events.emit("session.changed", { type: "session", session: "s1", kind: "gone", facts: [] });
 check("closes-open-pair", chat.session.sessionId === null);
 
 // The "active" and reload branches move the transcript, not just the session id.
@@ -29,18 +29,18 @@ chat.session.sessionId = "s1";
 let actives = [];
 const realActive = chat.transcript.setActive.bind(chat.transcript);
 chat.transcript.setActive = (id) => { actives.push(id); return realActive(id); };
-events.emit("session.changed", { type: "session", session: "s1", kind: "active", id: 7 });
+events.emit("session.changed", { type: "session", session: "s1", kind: "active", id: 7, facts: [] });
 check("active-moves-transcript", actives.join(",") === "7");
-events.emit("session.changed", { type: "session", session: "s1", kind: "delta" });
+events.emit("session.changed", { type: "session", session: "s1", kind: "delta", facts: [] });
 check("other-kinds-reload", actives.join(",") === "7");
 
 // A quiet digest moves nothing the transcript draws, so neither branch runs.
 let reloads = 0;
 const realReload = chat.session.reload.bind(chat.session);
 chat.session.reload = () => { reloads++; return realReload(); };
-events.emit("session.changed", { type: "session", session: "s1", kind: "reload" });
+events.emit("session.changed", { type: "session", session: "s1", kind: "reload", facts: [] });
 check("reload-kind-reloads", reloads === 1);
-events.emit("session.changed", { type: "session", session: "s1", kind: "quiet" });
+events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: [] });
 check("quiet-draws-nothing", reloads === 1 && actives.join(",") === "7");
 chat.session.reload = realReload;
 chat.transcript.setActive = realActive;
@@ -56,6 +56,6 @@ check("chat-unload-drops-commands", !command.available("chat:new") && command.av
 plugins.dispose("sessions");
 check("unload-drops-commands", !command.available("model:pick"));
 chat.session.sessionId = "s2";
-events.emit("session.changed", { type: "session", session: "s2", kind: "gone" });
+events.emit("session.changed", { type: "session", session: "s2", kind: "gone", facts: [] });
 check("unload-stops-listening", chat.session.sessionId === "s2");
 chat.session.sessionId = null;

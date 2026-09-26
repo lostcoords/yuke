@@ -250,8 +250,8 @@ export class Session {
 /** @type {Set<Session>} */
 export const sessions = new Set();
 
-// The session list the finder and the default model read. It keeps no copy of the store: a summary change marks it stale,
-// and the next reader starts one `session.list` read, so nothing reads while nobody looks.
+// The session list the finder and the default model read. The first reader starts one `session.list` read, so nothing reads
+// while nobody looks. After that a summary change reads its one entry, and only an overflow marks the whole list stale.
 class SessionFeed {
   constructor() {
     /** @type {Map<string, FeedItem>} */
@@ -283,6 +283,22 @@ class SessionFeed {
   refresh() {
     this.asked = this.changes;
     return this._refresh.run();
+  }
+
+  // Read one entry after its summary changed. `session.get` answers inline, so reads of one entry settle in order.
+  // A stale list waits for its next reader, and a list read in flight may predate the change, so it reads again.
+  /** @param {string} id @returns {void} */
+  refreshItem(id) {
+    if (this.asked !== this.changes) return;
+    if (this._refresh.loading) {
+      this.refresh();
+      return;
+    }
+    client.sessionGet(id).then((item) => {
+      this.items.set(id, item);
+      this.rev++;
+      root.invalidate();
+    }).catch(() => {});
   }
 
   /** @returns {SessionRow[]} */
@@ -568,6 +584,10 @@ export const sessionsPlugin = {
       // Views on one session share it, so the event reaches that session once and it updates every view.
       // The digest names the activity fact and the session reads the projection, so a burst costs one read per frame.
       ctx.on("session.changed", (ev) => {
+        // A removed session leaves the list now; a summary change reads its one entry.
+        if (ev.kind === "gone") {
+          if (feed.items.delete(ev.session)) feed.rev++;
+        } else if (ev.facts.indexOf("session.summary_changed") >= 0) feed.refreshItem(ev.session);
         for (const session of sessions) {
           if (session.sessionId !== ev.session) continue;
           if (ev.kind === "gone") {
@@ -581,10 +601,11 @@ export const sessionsPlugin = {
         }
       });
 
-      // A summary fact reaches the index because its payload names no session id; an overflow drops facts.
-      // Either one makes the list stale. A catalog, notice, or login fact leaves it alone.
+      // An overflow drops facts, so the whole list is stale and the next frame's reader reads it again.
       ctx.on("index.changed", (ev) => {
-        if (ev.overflow || ev.facts.indexOf("session.summary_changed") >= 0) feed.changes++;
+        if (!ev.overflow) return;
+        feed.changes++;
+        root.invalidate();
       });
 
       // The model the current session sends to, on the right of the status bar.

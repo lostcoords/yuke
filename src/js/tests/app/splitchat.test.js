@@ -30,7 +30,7 @@ b.transcript.setOutline([{ id: "u2", type: "user" }, { id: "a2", type: "assistan
 check("separate-transcripts", a.transcript.messages().length === 1 && b.transcript.messages().length === 2);
 
 // A "gone" event reaches only the pane that names the pair.
-events.emit("session.changed", { type: "session", session: "s1", kind: "gone" });
+events.emit("session.changed", { type: "session", session: "s1", kind: "gone", facts: [] });
 check("gone-hits-one-pane", a.session.sessionId === null && b.session.sessionId === "s2");
 
 // Two panes on one session share it: one session, one pin, and an event updates both views.
@@ -41,7 +41,7 @@ const ra = a.transcript.setActive.bind(a.transcript);
 const rb = b.transcript.setActive.bind(b.transcript);
 a.transcript.setActive = (id) => { seen++; return ra(id); };
 b.transcript.setActive = (id) => { seen++; return rb(id); };
-events.emit("session.changed", { type: "session", session: "s2", kind: "active", id: 3 });
+events.emit("session.changed", { type: "session", session: "s2", kind: "active", id: 3, facts: [] });
 check("both-panes-follow", seen === 2);
 a.transcript.setActive = ra;
 b.transcript.setActive = rb;

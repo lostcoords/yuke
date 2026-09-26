@@ -19,6 +19,7 @@ let phase = "", count = 0, gets = 0, lists = 0, updates = 0, steps = 0;
 /** @type {(() => void) | undefined} */
 let off;
 let activityChanges = 0;
+const NEW_CHILD = "f".repeat(32);
 events.on("engine.activity.changed", () => { client.isBusy(); activityChanges++; });
 plugins.use(tuiPlugin);
 plugins.use(sessionsPlugin);
@@ -56,7 +57,8 @@ function step() {
   }
   if (phase === "engine_activity_changed") return 1;
   if (phase === "agents_open") return open().then(() => 1);
-  if (phase === "agents_structure") events.emit("index.changed", { type: "index", overflow: false, facts: ["session.summary_changed"] });
+  // A new child names itself in its first summary, so the picker hears of a session it has not listed.
+  if (phase === "agents_structure") events.emit("session.changed", { type: "session", session: NEW_CHILD, kind: "quiet", facts: ["session.summary_changed"] });
   else for (let i = 0; i < (phase === "agents_burst" ? 20 : 1); i++) {
     events.emit("session.changed", { type: "session", session: AGENTS_TARGET, kind: "quiet", facts: ["session.activity_changed"] });
   }
