@@ -258,17 +258,13 @@ class SessionFeed {
     this.items = new Map();
     // The list only changes on a read, so a reader caches against this count and not against every frame.
     this.rev = 0;
-    // The changes seen, and the change count the last requested read covers. The list starts one change behind.
-    this.changes = 1;
-    this.asked = 0;
+    // The list may miss a change, so its next reader reads it again. It starts unread.
+    this.stale = true;
     this._refresh = new Refresh(
-      () => client.sessionList().then((r) => this.seed(r)),
-      () => root.invalidate(),
+      () => client.sessionList().then((r) => this.seed(r), () => { this.stale = true; }),
+      // A refused read redraws nothing, or the redraw would read again while the engine refuses.
+      () => { if (!this.stale) root.invalidate(); },
     );
-  }
-
-  get loading() {
-    return this._refresh.loading;
   }
 
   /** @param {Wire.SessionListResult} listResult @returns {void} */
@@ -281,7 +277,7 @@ class SessionFeed {
   // Read the list again. A burst shares one read and one follow-up catches changes during it.
   /** @returns {Promise<void>} */
   refresh() {
-    this.asked = this.changes;
+    this.stale = false;
     return this._refresh.run();
   }
 
@@ -289,7 +285,7 @@ class SessionFeed {
   // A stale list waits for its next reader, and a list read in flight may predate the change, so it reads again.
   /** @param {string} id @returns {void} */
   refreshItem(id) {
-    if (this.asked !== this.changes) return;
+    if (this.stale) return;
     if (this._refresh.loading) {
       this.refresh();
       return;
@@ -315,49 +311,39 @@ class SessionFeed {
 
 const feed = new SessionFeed();
 
-/** @returns {SessionFeed} */
-export function feedOf() {
-  return feed;
-}
-
 // The listed entry for one session, or null.
 /** @param {string} sessionId @returns {FeedItem | null} */
-export function feedItem(sessionId) {
+function feedItem(sessionId) {
   // A status draw reads this each frame, so the staleness check stays inline.
-  if (feed.asked !== feed.changes) feed.refresh();
+  if (feed.stale) feed.refresh();
   return feed.items.get(sessionId) || null;
-}
-
-/** @type {{ rev: number, session: Wire.Session | null }} */
-let newestLocal = { rev: -1, session: null };
-
-// The newest session that names a model, cached so a status draw costs no scan.
-/** @returns {Wire.Session | null} */
-export function newestLocalModelSession() {
-  if (feed.asked !== feed.changes) feed.refresh();
-  if (newestLocal.rev === feed.rev) return newestLocal.session;
-  /** @type {Wire.Session | null} */
-  let best = null;
-  for (const it of feed.items.values()) {
-    const s = it.session;
-    if (!s.model) continue;
-    if (!best || (s.updated_at_ms || 0) > (best.updated_at_ms || 0)) best = s;
-  }
-  newestLocal = { rev: feed.rev, session: best };
-  return best;
 }
 
 // The model a new session starts with. A named session moves to the same choice.
 /** @type {ModelDefaults} */
 const modelDefaults = { model: null, reasoning: "" };
 
-// Without a choice this run, the newest session names the model and reasoning, so a restart keeps working.
+// The model of the newest session that names one, for the list revision it was read from.
+/** @type {{ rev: number, defaults: ModelDefaults | null }} */
+let newestLocal = { rev: -1, defaults: null };
+
+// Without a choice this run, the newest session that names a model gives the model and reasoning, so a restart keeps working.
+// A status draw reads this each frame, so the answer is cached against the list revision and a frame costs no scan.
 /** @returns {ModelDefaults} */
 export function defaultModel() {
+  if (feed.stale) feed.refresh();
   if (modelDefaults.model) return modelDefaults;
-  const s = newestLocalModelSession();
-  if (s && s.model) return { model: s.model, reasoning: s.reasoning };
-  return modelDefaults;
+  if (newestLocal.rev !== feed.rev) {
+    /** @type {Wire.Session | null} */
+    let best = null;
+    for (const it of feed.items.values()) {
+      const s = it.session;
+      if (!s.model) continue;
+      if (!best || (s.updated_at_ms || 0) > (best.updated_at_ms || 0)) best = s;
+    }
+    newestLocal = { rev: feed.rev, defaults: best ? { model: best.model, reasoning: best.reasoning } : null };
+  }
+  return newestLocal.defaults || modelDefaults;
 }
 
 // The session that holds `id`, or null. Views on one id share one session.
@@ -601,10 +587,12 @@ export const sessionsPlugin = {
         }
       });
 
+      // The list missed every change while this block was away, so its next reader reads it again.
+      feed.stale = true;
       // An overflow drops facts, so the whole list is stale and the next frame's reader reads it again.
       ctx.on("index.changed", (ev) => {
         if (!ev.overflow) return;
-        feed.changes++;
+        feed.stale = true;
         root.invalidate();
       });
 

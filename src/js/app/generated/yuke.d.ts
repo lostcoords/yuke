@@ -1256,26 +1256,7 @@ export function rowSourceSpan(row: TranscriptRow, from: number, to: number, base
 export function rowSourceAt(row: TranscriptRow, col: number, base?: number): number;
 }
 
-declare namespace $refresh {
-/** @template T */
-export class Refresh<T> {
-    read: () => Promise<unknown>;
-    finish: () => T;
-    /** @type {Promise<T> | null} */
-    flight: Promise<T> | null;
-    again: boolean;
-    /** @param {() => Promise<unknown>} read @param {() => T} finish */
-    constructor(read: () => Promise<unknown>, finish: () => T);
-    get loading(): boolean;
-    /** @returns {Promise<T>} */
-    run(): Promise<T>;
-    /** @returns {Promise<T>} */
-    start(): Promise<T>;
-}
-}
-
 declare namespace $session {
-import Refresh = $refresh.Refresh;
 import Composer = $ui.Composer;
 import Transcript = $transcript.Transcript;
 import ViewLike = $types_core.ViewLike;
@@ -1346,30 +1327,6 @@ export class Session {
 }
 /** @type {Set<Session>} */
 export const sessions: Set<Session>;
-class SessionFeed {
-    /** @type {Map<string, FeedItem>} */
-    items: Map<string, FeedItem>;
-    rev: number;
-    changes: number;
-    asked: number;
-    _refresh: Refresh<void>;
-    constructor();
-    get loading(): boolean;
-    /** @param {Wire.SessionListResult} listResult @returns {void} */
-    seed(listResult: Wire.SessionListResult): void;
-    /** @returns {Promise<void>} */
-    refresh(): Promise<void>;
-    /** @param {string} id @returns {void} */
-    refreshItem(id: string): void;
-    /** @returns {SessionRow[]} */
-    rows(): SessionRow[];
-}
-/** @returns {SessionFeed} */
-export function feedOf(): SessionFeed;
-/** @param {string} sessionId @returns {FeedItem | null} */
-export function feedItem(sessionId: string): FeedItem | null;
-/** @returns {Wire.Session | null} */
-export function newestLocalModelSession(): Wire.Session | null;
 /** @returns {ModelDefaults} */
 export function defaultModel(): ModelDefaults;
 /** @param {SessionPane} view @param {Session} session @returns {void} */

@@ -1,8 +1,8 @@
-import { equal } from "yuke:internal/test";
+import { equal, listSessions } from "yuke:internal/test";
 import { command, root, status, keymap } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import "yuke:internal/native/term";
-import { sessions, currentPane, feedOf } from "yuke:internal/session";
+import { sessions, currentPane } from "yuke:internal/session";
 // The shell built the first chat pane at boot.
 const chat = currentPane();
 const fail = [];
@@ -59,9 +59,8 @@ root.popOverlay();
 
 // The catalog readings must come through the shell's own wiring, not a test's own callbacks.
 {
-  const feed = feedOf();
-  feed.seed({ items: [{ session: { id: "probe", model: "wired-model", message_count: 3, updated_at_ms: 1 },
-    activity: { state: { type: "idle" }, queued: 0, context_usage: { input: 2500 }, pending_compaction: null } }] });
+  await listSessions([{ session: { id: "probe", model: "wired-model", message_count: 3, updated_at_ms: 1 },
+    activity: { state: { type: "idle" }, queued: 0, context_usage: { input: 2500 }, pending_compaction: null } }]);
   chat.session.sessionId = "probe";
   const right = status.side("right");
   if (right.indexOf("wired-model") < 0) fail.push("catalog-entry-wired");
@@ -70,7 +69,7 @@ root.popOverlay();
   // Closing the session clears the reading, so the status does not name a gone session.
   chat.session.sessionGone();
   chat.session.sessionId = null;
-  feed.seed({ items: [] });
+  await listSessions([]);
   if (status.side("right").indexOf("wired-model") >= 0) fail.push("catalog-entry-clears");
 }
 

@@ -1,8 +1,8 @@
-import { check } from "yuke:internal/test";
+import { check, listSessions } from "yuke:internal/test";
 import { root } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { client } from "yuke:internal/client";
-import { currentEntry, openSession, currentPane, feedOf } from "yuke:internal/session";
+import { currentEntry, openSession, currentPane } from "yuke:internal/session";
 // The shell built the first chat pane at boot.
 const chat = currentPane();
 const idle = { state: { type: "idle" }, queued: 0, context_usage: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, pending_compaction: null };
@@ -13,7 +13,7 @@ client.sessionOpen = () => true;
 client.sessionActivity = () => { reads++; return answer; };
 const cancels = [];
 client.sessionCancelRun = (id, clear) => { cancels.push([id, clear]); return Promise.resolve({ cleared_inputs: [] }); };
-feedOf().seed({ items: [{ session: { id: "s1", model: "m", updated_at_ms: 1 }, activity: idle }] });
+await listSessions([{ session: { id: "s1", model: "m", updated_at_ms: 1 }, activity: idle }]);
 const seen = [];
 events.on("activity.changed", (id, a) => seen.push(id + ":" + (a ? a.state.type : "null")));
 root.focusView(chat);

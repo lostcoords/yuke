@@ -27,3 +27,15 @@ export function textParts(textOf) {
     return text ? [{ type: "text", id: 0, text }] : [];
   };
 }
+
+// Answer the session list with `items` and let the session layer read it, as an overflow makes it do. The sessions plugin must run.
+/** @param {unknown[]} items @returns {Promise<void>} */
+export async function listSessions(items) {
+  const { client } = await import("yuke:internal/client");
+  const { events } = await import("yuke:internal/kernel");
+  const { defaultModel } = await import("yuke:internal/session");
+  client.sessionList = async () => /** @type {any} */ ({ items });
+  events.emit("index.changed", { type: "index", overflow: true, facts: [] });
+  defaultModel();
+  for (let i = 0; i < 8; i++) await Promise.resolve();
+}

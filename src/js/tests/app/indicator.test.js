@@ -1,5 +1,5 @@
-import { check } from "yuke:internal/test";
-import { Session, openSession, showSession, currentPane, feedOf } from "yuke:internal/session";
+import { check, listSessions } from "yuke:internal/test";
+import { Session, openSession, showSession, currentPane } from "yuke:internal/session";
 import { root, command, status } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { client } from "yuke:internal/client";
@@ -32,7 +32,7 @@ client.sessionCancelInput = (id, input) => { dropped.push(input); return Promise
 client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r1", providers: [],
   models: [{ id: "m", provider: "p", selector: "p/m", name: "m", context_window: 1000, reasoning_levels: [], default_reasoning: "", cost: { input: 10, output: 50 } }] });
 await loadCatalog();
-feedOf().seed({ items: [{ session: { id: "s1", model: "p/m", message_count: 19, updated_at_ms: 1, usage_total: { input: 1000000, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 } }, activity: idle }] });
+await listSessions([{ session: { id: "s1", model: "p/m", message_count: 19, updated_at_ms: 1, usage_total: { input: 1000000, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 } }, activity: idle }]);
 root.focusView(chat);
 openSession(chat, "s1");
 await settle();

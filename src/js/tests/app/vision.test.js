@@ -1,9 +1,9 @@
-import { check } from "yuke:internal/test";
+import { check, listSessions } from "yuke:internal/test";
 import { events } from "yuke:internal/kernel";
 import { notice } from "yuke:internal/notice";
 import { catalogOf } from "yuke:internal/catalog";
 import { client } from "yuke:internal/client";
-import { currentPane, feedOf } from "yuke:internal/session";
+import { currentPane } from "yuke:internal/session";
 // The shell built the first chat pane at boot.
 const chat = currentPane();
 const png = { hash: "a".repeat(64), mime: "image/png", bytes: 2048 };
@@ -51,7 +51,7 @@ check("removed-images-are-quiet", notice.text.indexOf("reads no images") < 0);
 
 // An open session checks the model the patch sets, because the feed still names the old model.
 client.sessionPatch = async () => ({});
-feedOf().items.set("s1", { session: { id: "s1", model: "p/seeing" }, activity: null });
+await listSessions([{ session: { id: "s1", model: "p/seeing" }, activity: null }]);
 chat.session.sessionId = "s1";
 chat.composer.text = "/a.png";
 attach();
@@ -59,5 +59,5 @@ notice.clear();
 chat.session.setModel(blind, "");
 check("open-session-warns", notice.text === "Blind reads no images");
 chat.session.sessionId = null;
-feedOf().items.delete("s1");
+await listSessions([]);
 clear();

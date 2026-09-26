@@ -1,23 +1,27 @@
-import { check } from "yuke:internal/test";
-import { feedOf, newestLocalModelSession } from "yuke:internal/session";
+import { check, listSessions } from "yuke:internal/test";
+import { plugins } from "yuke:internal/ext";
+import { tuiPlugin } from "yuke:internal/tui";
+import { defaultModel, sessionsPlugin } from "yuke:internal/session";
 
-const feed = feedOf();
-const mk = (id, model, at) => ({ session: { id, model, reasoning: "", updated_at_ms: at }, activity: null });
-
-// The model status segment reads this on every frame, so it must be cached and correct.
-feed.seed({ items: [] });
-check("no-feed-no-model", newestLocalModelSession() === null);
-feed.seed({ items: [mk("a", "old-model", 100), mk("b", "", 900), mk("c", "new-model", 500)] });
-// "b" is newest but names no model, so the newest session that names one wins.
-check("newest-with-model", (newestLocalModelSession() || {}).id === "c");
-
-// The cache must stop the scan, not merely return the same answer.
+plugins.use(tuiPlugin);
+plugins.use(sessionsPlugin);
+// Each entry counts the reads of its session, so a scan shows as a count.
 let scans = 0;
-const realValues = feed.items.values.bind(feed.items);
-feed.items.values = () => { scans++; return realValues(); };
-newestLocalModelSession();
-check("cache-avoids-scan", scans === 0);
-feed.seed({ items: [mk("d", "later-model", 1000)] });
-check("recomputes-after-change", (newestLocalModelSession() || {}).id === "d");
-check("rescans-after-change", scans === 1);
-feed.items.values = realValues;
+/** @param {string} id @param {string} model @param {number} at */
+const mk = (id, model, at) => {
+  const session = { id, model, reasoning: "r-" + id, updated_at_ms: at };
+  return { get session() { scans++; return session; }, activity: null };
+};
+
+await listSessions([]);
+check("no-list-no-model", defaultModel().model === null);
+await listSessions([mk("a", "old-model", 100), mk("b", "", 900), mk("c", "new-model", 500)]);
+// "b" is newest but names no model, so the newest session that names one wins, with its reasoning.
+const d = defaultModel();
+check("newest-with-model", d.model === "new-model" && d.reasoning === "r-c");
+
+// The status bar reads this on every frame, so an unchanged list costs no scan and no new answer.
+scans = 0;
+check("cache-avoids-scan", defaultModel() === d && scans === 0);
+await listSessions([mk("d", "later-model", 1000)]);
+check("recomputes-after-change", defaultModel().model === "later-model");
