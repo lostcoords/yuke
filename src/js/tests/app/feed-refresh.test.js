@@ -1,6 +1,6 @@
 import { check } from "yuke:internal/test";
 import { client } from "yuke:internal/client";
-import { feedOf } from "yuke:internal/chat";
+import { feedOf } from "yuke:internal/session";
 
 const feed = feedOf();
 feed.seed({ items: [{ session: { id: "old" }, activity: null }] });
@@ -16,8 +16,10 @@ check("refusal-retains-state", !feed.loading && feed.items.has("new"));
 const { events } = await import("yuke:internal/kernel");
 const { plugins } = await import("yuke:internal/ext");
 const { tuiPlugin } = await import("yuke:internal/tui");
-const { chatPlugin, feedItem } = await import("yuke:internal/chat");
+const { chatPlugin } = await import("yuke:internal/chat");
+const { sessionsPlugin, feedItem } = await import("yuke:internal/session");
 plugins.use(tuiPlugin);
+plugins.use(sessionsPlugin);
 plugins.use(chatPlugin);
 const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 let reads = 0;

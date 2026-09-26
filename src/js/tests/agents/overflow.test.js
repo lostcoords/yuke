@@ -1,7 +1,7 @@
 import { root, Node } from "yuke:internal/core";
 import { ChatView } from "yuke:internal/chat-view";
 import { plugins } from "yuke:internal/ext";
-import { Session } from "yuke:internal/chat";
+import { Session } from "yuke:internal/session";
 import { openAgents } from "yuke:internal/agents-ui";
 plugins.use({ name: "overflow-test", apply(ctx) {
   ctx.inject(["tui"], ctx => { (async () => {

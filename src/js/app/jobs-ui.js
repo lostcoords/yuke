@@ -2,7 +2,7 @@
 import { root } from "yuke:internal/core";
 import { ui, Window, ScrollView } from "yuke:internal/ui";
 import { list, get, stop, read, name, endLabel, shortCommand } from "yuke:internal/jobs";
-import { currentChat } from "yuke:internal/chat";
+import { currentPane } from "yuke:internal/session";
 import { notice } from "yuke:internal/notice";
 import { elapsedLabel, errorText } from "yuke:internal/format";
 
@@ -144,7 +144,7 @@ export function openOutput(ctx, job) {
 // The list shows every job of this process, newest first, and marks the jobs of the focused session.
 /** @param {Context} ctx */
 export function openJobs(ctx) {
-  const current = currentChat()?.session.sessionId;
+  const current = currentPane()?.session.sessionId;
   let items = list();
   const picker = ui.select(items, {
     title: summary(items), footer: "↵ output · x stop · X stop all · esc close",

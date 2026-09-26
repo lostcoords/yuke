@@ -4,11 +4,13 @@ import { term } from "yuke:internal/native/term";
 import { root, Node } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import { Transcript, inputSourceLabel } from "yuke:internal/transcript";
-import { Session, chatPlugin } from "yuke:internal/chat";
+import { chatPlugin } from "yuke:internal/chat";
+import { Session, sessionsPlugin } from "yuke:internal/session";
 import { transcriptVim } from "yuke:internal/transcript-vim";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 // The chat plugin tracks the current chat, which the vim layers and the chat commands read.
+plugins.use(sessionsPlugin);
 plugins.use(chatPlugin);
 const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
 const rowsGroup = (rs, group) => rs.some((r) => (r.segments || []).some((sg) => sg.group === group) || r.group === group);

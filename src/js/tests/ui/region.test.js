@@ -1,5 +1,5 @@
 import { check } from "yuke:internal/test";
-import { Session } from "yuke:internal/chat";
+import { Session } from "yuke:internal/session";
 import { root, Node, context } from "yuke:internal/core";
 import { ChatView } from "yuke:internal/chat-view";
 const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });

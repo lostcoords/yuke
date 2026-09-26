@@ -4,13 +4,15 @@ import { plugins } from "yuke:internal/ext";
 import { notice, noticePlugin } from "yuke:internal/notice";
 import { catalogOf, contextWindowOf } from "yuke:internal/catalog";
 import { tokenLabel } from "yuke:internal/format";
-import { chatPlugin, currentChat, feedOf } from "yuke:internal/chat";
+import { chatPlugin } from "yuke:internal/chat";
+import { currentPane, feedOf, sessionsPlugin } from "yuke:internal/session";
 import { shell } from "yuke:internal/shell";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
+plugins.use(sessionsPlugin);
 plugins.use(chatPlugin);
 plugins.use(shell);
-const chat = currentChat();
+const chat = currentPane();
 
 // With no session and no choice the status shows no model.
 check("empty-without-session", status.side("right") === "");
@@ -35,6 +37,6 @@ check("known-window", contextWindowOf("session-model") === 10000 && contextWindo
 catalogOf().models = [];
 check("token-label", tokenLabel(999) === "999" && tokenLabel(2500) === "2.5k" && tokenLabel(20000) === "20k");
 
-// An unload takes the reading away.
-plugins.dispose("chat");
+// The session layer owns the reading, so its unload takes the reading away.
+plugins.dispose("sessions");
 check("unload-drops-reading", status.side("right") === "");

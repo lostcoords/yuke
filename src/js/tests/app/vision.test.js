@@ -3,9 +3,9 @@ import { events } from "yuke:internal/kernel";
 import { notice } from "yuke:internal/notice";
 import { catalogOf } from "yuke:internal/catalog";
 import { client } from "yuke:internal/client";
-import { currentChat, feedOf } from "yuke:internal/chat";
+import { currentPane, feedOf } from "yuke:internal/session";
 // The shell built the first chat pane at boot.
-const chat = currentChat();
+const chat = currentPane();
 const png = { hash: "a".repeat(64), mime: "image/png", bytes: 2048 };
 const blind = { id: "m1", provider: "p", selector: "p/blind", name: "Blind", reasoning_levels: [], default_reasoning: "", supports_vision: false, cost: {} };
 const seeing = { id: "m2", provider: "p", selector: "p/seeing", name: "Seeing", reasoning_levels: [], default_reasoning: "", supports_vision: true, cost: {} };

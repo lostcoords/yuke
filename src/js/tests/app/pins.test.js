@@ -1,6 +1,6 @@
 import { check } from "yuke:internal/test";
 import { ChatView } from "yuke:internal/chat-view";
-import { Session, openSession } from "yuke:internal/chat";
+import { Session, openSession } from "yuke:internal/session";
 import { client } from "yuke:internal/client";
 import { notice } from "yuke:internal/notice";
 const opened = [], closed = [];

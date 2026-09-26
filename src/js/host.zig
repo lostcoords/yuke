@@ -828,7 +828,7 @@ test "user files can import public entries but cannot import cached internal mod
         \\import { fs, plugins } from "yuke";
         \\import { Composer } from "yuke:ui";
         \\import { composerVim, transcriptVim, agents } from "yuke:plugins";
-        \\import { Session } from "yuke:chat";
+        \\import { Session } from "yuke:session";
         \\globalThis.publicOK = typeof fs.readFile === "function"
         \\  && typeof Composer === "function" && typeof Session === "function"
         \\  && typeof agents === "function" && typeof composerVim.apply === "function"

@@ -2,9 +2,9 @@ import { check } from "yuke:internal/test";
 import { root } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { client } from "yuke:internal/client";
-import { chatEntry, openSession, currentChat, feedOf } from "yuke:internal/chat";
+import { currentEntry, openSession, currentPane, feedOf } from "yuke:internal/session";
 // The shell built the first chat pane at boot.
-const chat = currentChat();
+const chat = currentPane();
 const idle = { state: { type: "idle" }, queued: 0, context_usage: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, pending_compaction: null };
 const streaming = { ...idle, state: { type: "streaming", run_id: 1, started_at_ms: 5 }, queued: 2 };
 let reads = 0;
@@ -19,17 +19,17 @@ events.on("activity.changed", (id, a) => seen.push(id + ":" + (a ? a.state.type 
 root.focusView(chat);
 openSession(chat, "s1");
 check("open-reads", reads === 1 && chat.session.activity === streaming && chat.session.activity.queued === 2);
-check("entry-overlays", chatEntry().activity === streaming && chatEntry().session.model === "m");
+check("entry-overlays", currentEntry().activity === streaming && currentEntry().session.model === "m");
 // A quiet digest without the fact costs no read; one with the fact reads once.
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["run.started"] });
 check("no-fact-no-read", reads === 1);
 answer = idle;
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
-check("fact-reads", reads === 2 && chat.session.activity === idle && chatEntry().activity === idle);
+check("fact-reads", reads === 2 && chat.session.activity === idle && currentEntry().activity === idle);
 // A null read means the engine let the session go, and a gone session forgets its activity.
 answer = null;
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
-check("null-forgets", chat.session.activity === null && chatEntry().activity === idle);
+check("null-forgets", chat.session.activity === null && currentEntry().activity === idle);
 answer = streaming;
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
 events.emit("session.changed", { type: "session", session: "s1", kind: "gone", facts: ["session.removed"] });

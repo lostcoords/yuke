@@ -1,7 +1,7 @@
 // The `/cache` window: how much of this chat the provider served from its prompt cache.
 import { allChildren } from "yuke:internal/client";
 import { showInfo } from "yuke:internal/info-panel";
-import { chatEntry } from "yuke:internal/chat";
+import { currentEntry } from "yuke:internal/session";
 import { notice } from "yuke:internal/notice";
 import { modelOf, sessionCost } from "yuke:internal/catalog";
 import { contextBar, money, tokenLabel } from "yuke:internal/format";
@@ -97,7 +97,7 @@ export const cachePlugin = {
         desc: "show what the provider served from its prompt cache",
         slash: "cache",
         run: async () => {
-          const entry = chatEntry();
+          const entry = currentEntry();
           // A chat with no session has read nothing, so the window would state zeros and explain none of them.
           if (!entry) return notice.show("no session yet");
           // A null list says the read failed, so the window states that rather than claim no agent ran.

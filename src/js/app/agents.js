@@ -2,7 +2,7 @@
 import { root } from "yuke:internal/core";
 import { client } from "yuke:internal/client";
 import { native } from "yuke:internal/native/engine";
-import { sessions, currentChat } from "yuke:internal/chat";
+import { sessions, currentPane } from "yuke:internal/session";
 import { notice } from "yuke:internal/notice";
 import { errorText, tokenLabel } from "yuke:internal/format";
 import { childState, openAgents } from "yuke:internal/agents-ui";
@@ -266,10 +266,10 @@ export function agents(options) {
 
             ctx.inject(["tui"], (ctx) => {
                 ctx.tui.command.add("agents:open", {
-                    when: () => currentChat()?.session.sessionId != null,
+                    when: () => currentPane()?.session.sessionId != null,
                     desc: "open or stop child agents",
                     slash: "agents",
-                    run: () => { const id = currentChat()?.session.sessionId; if (id) openAgents(ctx, id).catch((error) => notice.show("agents · " + errorText(error))); },
+                    run: () => { const id = currentPane()?.session.sessionId; if (id) openAgents(ctx, id).catch((error) => notice.show("agents · " + errorText(error))); },
                 });
             });
         },

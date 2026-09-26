@@ -32,7 +32,7 @@ A client can call it before other methods to check compatibility. The server has
 
 `yuke types` writes the plugin API declarations into the profile's configuration directory, next to `index.js`:
 
-- `yuke.d.ts` and `yuke-modules.d.ts` declare `yuke`, `yuke:ui`, `yuke:chat`, and `yuke:plugins`.
+- `yuke.d.ts` and `yuke-modules.d.ts` declare `yuke`, `yuke:ui`, `yuke:chat`, `yuke:session`, and `yuke:plugins`.
 - `jsconfig.json` makes the editor check `index.js` against them. The command writes it only when none exists.
 
 Run `yuke types` again after an upgrade. For another profile, set its name: `YUKE_APPNAME=work yuke types`.

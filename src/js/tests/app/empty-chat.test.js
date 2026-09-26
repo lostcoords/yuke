@@ -3,10 +3,12 @@ import { root } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import { tuiPlugin } from "yuke:internal/tui";
 import { chatPlugin } from "yuke:internal/chat";
+import { sessionsPlugin } from "yuke:internal/session";
 import { shell } from "yuke:internal/shell";
 /** @import { ChatView } from "yuke:internal/chat-view" */
 
 plugins.use(tuiPlugin);
+plugins.use(sessionsPlugin);
 plugins.use(chatPlugin);
 plugins.use(shell);
 const view = /** @type {ChatView} */ (root.active);

@@ -3,12 +3,14 @@ import { ChatView } from "yuke:internal/chat-view";
 import { term } from "yuke:internal/native/term";
 import { root, Node, keymap, command } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
-import { Session, chatPlugin } from "yuke:internal/chat";
+import { chatPlugin } from "yuke:internal/chat";
+import { Session, sessionsPlugin } from "yuke:internal/session";
 import { transcriptVim } from "yuke:internal/transcript-vim";
 import { register } from "yuke:internal/vim";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 // The chat plugin tracks the current chat, which the vim layers and the chat commands read.
+plugins.use(sessionsPlugin);
 plugins.use(chatPlugin);
 const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: "", event: "press", mods: 0 });
 

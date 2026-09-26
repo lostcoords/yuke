@@ -2,9 +2,9 @@ import { equal } from "yuke:internal/test";
 import { command, root, status, keymap } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import "yuke:internal/native/term";
-import { sessions, currentChat, feedOf } from "yuke:internal/chat";
+import { sessions, currentPane, feedOf } from "yuke:internal/session";
 // The shell built the first chat pane at boot.
-const chat = currentChat();
+const chat = currentPane();
 const fail = [];
 // The shell loads the notice as a plugin, so its segment and listeners can be taken back out.
 if (!plugins.has("notice")) fail.push("notice-plugin");
@@ -80,7 +80,7 @@ root.popOverlay();
   const before = sessions.size;
   command.perform("window:split-right");
   if (sessions.size !== before + 1) fail.push("split-makes-a-chat");
-  if (currentChat() !== root.active) fail.push("split-focuses-the-new-chat");
+  if (currentPane() !== root.active) fail.push("split-focuses-the-new-chat");
   command.perform("window:close");
   if (sessions.size !== before) fail.push("close-releases-the-chat");
   const saved = root.root_node;

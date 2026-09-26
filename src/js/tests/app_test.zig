@@ -205,6 +205,10 @@ test "the context owns every overlay its plugin pushes" {
     try support.run("app/ctxoverlay.test.js");
 }
 
+test "a pane that is no chat pane gets the current session, the stream, and the pin release" {
+    try support.run("app/session-pane.test.js");
+}
+
 test "a chat retains only successful session pins" {
     try support.run("app/pins.test.js");
 }

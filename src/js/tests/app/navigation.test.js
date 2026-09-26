@@ -1,4 +1,4 @@
-import { Session, showSession } from "yuke:internal/chat";
+import { Session, showSession } from "yuke:internal/session";
 import { ChatView } from "yuke:internal/chat-view";
 import { client } from "yuke:internal/client";
 globalThis.closes = 0;

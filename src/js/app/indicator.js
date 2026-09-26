@@ -1,5 +1,5 @@
 // The working line on the rule above the composer: a spinner, the phase, the elapsed time, and the child runs.
-import { sessions } from "yuke:internal/chat";
+import { sessions } from "yuke:internal/session";
 import { client } from "yuke:internal/client";
 import { agentsLabel, elapsedLabel } from "yuke:internal/format";
 

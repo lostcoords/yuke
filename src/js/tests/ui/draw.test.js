@@ -1,5 +1,5 @@
 import { textParts } from "yuke:internal/test";
-import { Session } from "yuke:internal/chat";
+import { Session } from "yuke:internal/session";
 import { term } from "yuke:internal/native/term";
 import { Transcript } from "yuke:internal/transcript";
 import { ChatView } from "yuke:internal/chat-view";

@@ -3,7 +3,8 @@ import { ChatView } from "yuke:internal/chat-view";
 import { command, root, Node } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { plugins } from "yuke:internal/ext";
-import { chatEntry, chatPlugin, Session } from "yuke:internal/chat";
+import { chatPlugin } from "yuke:internal/chat";
+import { currentEntry, Session, sessionsPlugin } from "yuke:internal/session";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
 // The pane must sit in the tree, because a session command acts on the focused chat.
@@ -12,6 +13,7 @@ root.setRoot(Node.leaf(chat));
 root.focusView(chat);
 
 check("commands-absent-before", !command.available("model:pick"));
+plugins.use(sessionsPlugin);
 plugins.use(chatPlugin);
 check("commands-registered", command.available("model:pick"));
 
@@ -46,10 +48,12 @@ chat.transcript.setActive = realActive;
 chat.session.sessionId = null;
 
 // With no session the entry lookup answers null rather than reaching into a feed.
-check("no-entry-without-session", chatEntry() === null);
+check("no-entry-without-session", currentEntry() === null);
 
-// An unload takes the commands and the listeners with it.
+// Each unload takes its own commands and listeners with it: the chat owns the pane commands, the session layer the rest.
 plugins.dispose("chat");
+check("chat-unload-drops-commands", !command.available("chat:new") && command.available("model:pick"));
+plugins.dispose("sessions");
 check("unload-drops-commands", !command.available("model:pick"));
 chat.session.sessionId = "s2";
 events.emit("session.changed", { type: "session", session: "s2", kind: "gone" });

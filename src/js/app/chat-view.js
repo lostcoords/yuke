@@ -9,7 +9,7 @@ import { pasteAttaches } from "yuke:internal/attach";
 
 /** @typedef {"composer" | "transcript"} ChatRegion */
 /** @typedef {{ text: string, group?: string }} StripRow */
-/** @import { Session } from "yuke:internal/chat" */
+/** @import { Session } from "yuke:internal/session" */
 /** @import { HostMouseEvent as MouseEvent, NavTarget, Rect } from "./types/core.js" */
 
 // A chat pane asks these points; the newest listener that answers wins, so a plugin can supply a value it does not own.

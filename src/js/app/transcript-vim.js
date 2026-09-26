@@ -3,16 +3,23 @@ import { term } from "yuke:internal/native/term";
 import { root, copy } from "yuke:internal/core";
 import { caretAtCol, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:internal/text-input";
 import { register } from "yuke:internal/vim";
-import { currentChat } from "yuke:internal/chat";
+import { currentPane } from "yuke:internal/session";
+import { ChatView } from "yuke:internal/chat-view";
 
 /** @import { Context } from "yuke:internal/ext" */
-/** @import { ChatView } from "yuke:internal/chat-view" */
 /** @typedef {ChatView["transcript"]} Transcript */
 /** @typedef {{ id: number, row: number, col: number }} Position */
 /** @typedef {{ cursor: Position | null, src: number, anchor: Position | null, visual: boolean, goal: number | null }} VimState */
 /** @typedef {{ x: number, y: number, visible: boolean }} Cursor */
 /** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
 /** @typedef {{ kind: string, at: number, end: number }} Block */
+
+// The current pane when it is a chat pane; this module reads its regions and its transcript.
+/** @returns {ChatView | null} */
+function chatPane() {
+  const pane = currentPane();
+  return pane instanceof ChatView ? pane : null;
+}
 
 // The pane owns the region focus, so every binding sits on the atom the pane reports.
 const TRANSCRIPT = "transcript";
@@ -275,7 +282,7 @@ export const transcriptVim = {
     ctx.inject(["tui"], (ctx) => {
       ctx.tui.command.add("chat:focus-toggle", {
         run: () => {
-          const view = currentChat();
+          const view = chatPane();
           if (!view) return;
           view.focusRegion(view.focus === "transcript" ? "composer" : "transcript");
           root.invalidate();
@@ -289,7 +296,7 @@ export const transcriptVim = {
       // Visual mode is plugin state, so it rides a flag rather than an atom.
       ctx.tui.context.add({
         transcript_visual: () => {
-          const v = currentChat();
+          const v = chatPane();
           const s = v ? panes.get(v) : undefined;
           return s && s.visual ? "on" : "";
         },
@@ -307,7 +314,7 @@ export const transcriptVim = {
       /** @param {(view: ChatView, s: VimState, t: Transcript) => boolean} fn @returns {() => boolean} */
       const act = (fn) => () => {
         // The binding context already limits this to a focused transcript in the active pane.
-        const view = currentChat();
+        const view = chatPane();
         if (!view) return false;
         const s = stateOf(view);
         const t = view.transcript;
@@ -433,7 +440,7 @@ export const transcriptVim = {
       });
 
       return () => {
-        const view = currentChat();
+        const view = chatPane();
         if (view) {
           panes.delete(view);
           view.transcript.clearSelection();

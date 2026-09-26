@@ -1,5 +1,5 @@
 import { check, textParts } from "yuke:internal/test";
-import { Session } from "yuke:internal/chat";
+import { Session } from "yuke:internal/session";
 import { root, Node } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { term } from "yuke:internal/native/term";

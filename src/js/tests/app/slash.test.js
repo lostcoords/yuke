@@ -2,9 +2,9 @@ import { check } from "yuke:internal/test";
 import { ChatView } from "yuke:internal/chat-view";
 import { command, root, keymap } from "yuke:internal/core";
 import { ui } from "yuke:internal/ui";
-import { Session, currentChat } from "yuke:internal/chat";
+import { Session, currentPane } from "yuke:internal/session";
 // The shell built the first chat pane at boot.
-const chat = currentChat();
+const chat = currentPane();
 const key = (code, o = {}) => ({ type: "key", code, char: "", text: "", event: "press", mods: 0, ...o });
 root.focusView(chat);
 chat.focus = "composer";

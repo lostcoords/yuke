@@ -1,5 +1,5 @@
 import { check } from "yuke:internal/test";
-import { feedOf, newestLocalModelSession } from "yuke:internal/chat";
+import { feedOf, newestLocalModelSession } from "yuke:internal/session";
 
 const feed = feedOf();
 const mk = (id, model, at) => ({ session: { id, model, reasoning: "", updated_at_ms: at }, activity: null });

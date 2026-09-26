@@ -1,7 +1,7 @@
 // The context reading on the status bar and the `/context` breakdown window.
 import { client } from "yuke:internal/client";
 import { showInfo } from "yuke:internal/info-panel";
-import { chatEntry, defaultModel } from "yuke:internal/chat";
+import { currentEntry, defaultModel } from "yuke:internal/session";
 import { modelOf, contextWindowOf, sessionCost } from "yuke:internal/catalog";
 import { BAR_CELLS, BAR_GLYPHS, contextBar, money, tokenLabel } from "yuke:internal/format";
 
@@ -15,7 +15,7 @@ const NO_TOKENS = { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_writ
 // The numbers the status line and the window read. With no session they describe the next chat.
 /** @returns {Reading} */
 function reading() {
-  const e = chatEntry();
+  const e = currentEntry();
   if (!e) return { model: defaultModel().model || "", count: 0, usage: NO_TOKENS, total: NO_TOKENS, queued: 0, compaction: false };
   const a = e.activity;
   return {
@@ -88,7 +88,7 @@ export function contextUsage(cfg = {}) {
         slash: "context",
         run: async () => {
           const current = reading();
-          const entry = chatEntry();
+          const entry = currentEntry();
           const item = entry ? await client.sessionGet(entry.session.id) : null;
           showInfo(ctx, "context", contextRows(current, item?.instruction_sources || [], item?.skills || []));
         },

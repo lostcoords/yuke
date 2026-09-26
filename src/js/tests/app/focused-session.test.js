@@ -2,17 +2,19 @@ import { check, equal } from "yuke:internal/test";
 import { ChatView } from "yuke:internal/chat-view";
 import { client } from "yuke";
 import { Context, Scope, scopeOf } from "yuke:internal/ext";
-import { currentChat } from "yuke:chat";
-import { currentChat as internalQuery, Session, openSession, showSession, chatPlugin } from "yuke:internal/chat";
+import { currentPane } from "yuke:session";
+import { chatPlugin } from "yuke:internal/chat";
+import { currentPane as internalQuery, Session, openSession, showSession, sessionsPlugin } from "yuke:internal/session";
 import { plugins } from "yuke:internal/ext";
 import { tuiPlugin } from "yuke:internal/tui";
 import { root, Node } from "yuke:internal/core";
 
-equal(currentChat, internalQuery);
+equal(currentPane, internalQuery);
 // The chat plugin tracks the current chat while the terminal exists.
 plugins.use(tuiPlugin);
+plugins.use(sessionsPlugin);
 plugins.use(chatPlugin);
-const currentSessionId = () => currentChat()?.session.sessionId ?? null;
+const currentSessionId = () => currentPane()?.session.sessionId ?? null;
 client.sessionOpen = id => id !== "missing";
 client.sessionClose = () => {};
 client.sessionActivity = () => null;
@@ -21,7 +23,7 @@ client.sessionCheckContext = async () => ({});
 
 const observer = new Context(new Scope("focus-test"), "focus-test");
 const seen = [];
-observer.on("chat.current.changed", (...args) => {
+observer.on("session.current.changed", (...args) => {
   equal(args.length, 0);
   seen.push(currentSessionId());
 });
@@ -51,7 +53,7 @@ equal(seen.length, 3);
 const other = { name: "other", layout() {}, draw() {} };
 root.split("v", other);
 equal(root.active, other);
-check("a non-chat pane keeps the current chat", currentChat() === b);
+check("a non-chat pane keeps the current chat", currentPane() === b);
 equal(seen.length, 3);
 root.close();
 equal(currentSessionId(), "c");
@@ -70,7 +72,7 @@ b.session.leave(b);
 equal(seen.length, beforeClose);
 
 // A listener can replace the session after the first open has completed.
-const stop = observer.on("chat.current.changed", () => {
+const stop = observer.on("session.current.changed", () => {
   if (currentSessionId() === "replace") openSession(a, "replacement");
 });
 openSession(a, "replace");

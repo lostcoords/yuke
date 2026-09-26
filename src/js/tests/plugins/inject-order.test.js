@@ -2,7 +2,8 @@ import { check } from "yuke:internal/test";
 import { root } from "yuke:internal/core";
 import { plugins, services } from "yuke:internal/ext";
 import { tui, tuiPlugin } from "yuke:internal/tui";
-import { chatPlugin, currentChat } from "yuke:internal/chat";
+import { chatPlugin } from "yuke:internal/chat";
+import { currentPane, sessionsPlugin } from "yuke:internal/session";
 import { shell } from "yuke:internal/shell";
 
 // The old block leaves before the new one starts, so a plugin the old block started is free for the new block.
@@ -15,8 +16,9 @@ check("child-restarts", starts === 2 && plugins.names().includes("inner"));
 
 // A new terminal provider rebuilds the chat and the shell; the current chat is the new pane.
 plugins.use(tuiPlugin);
+plugins.use(sessionsPlugin);
 plugins.use(chatPlugin);
 plugins.use(shell);
-check("chat-current", currentChat() !== null && currentChat() === root.active);
+check("chat-current", currentPane() !== null && currentPane() === root.active);
 services.provide("tui", { bindTo: tui.bindTo });
-check("chat-current-after-rebuild", currentChat() !== null && currentChat() === root.active);
+check("chat-current-after-rebuild", currentPane() !== null && currentPane() === root.active);
