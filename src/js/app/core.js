@@ -1008,25 +1008,6 @@ export class RootView {
     return add;
   }
 
-  // Show `view` in the pane that shows `old`. The pane keeps its place and its focus; `old` leaves as a closed pane does.
-  /** @param {ViewLike} old @param {ViewLike} view @returns {boolean} */
-  replace(old, view) {
-    const leaf = this.root_node?.leaves().find((held) => leafView(held) === old);
-    if (!leaf) return false;
-    requireView(view, "a view needs layout and draw methods");
-    if (this.overlays.indexOf(view) >= 0) throw new TypeError("a root cannot mount a view twice");
-    claimView(view, this);
-    leaf.shape = { type: "leaf", view };
-    releaseView(old, this);
-    if (leaf === this.activeLeaf) {
-      events.emit("pane.focused", view);
-      callHook(view, "onFocus");
-    }
-    events.emit("pane.closed", old);
-    this.invalidate();
-    return true;
-  }
-
   // Close the pane that shows `view`, or the focused pane. A view no longer in the tree closes nothing.
   /** @param {ViewLike} [view] @returns {void} */
   close(view) {

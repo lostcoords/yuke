@@ -1,25 +1,19 @@
-// Own the chat layout, composer, and presentation views.
+// Own the chat layout, composer, and empty-chat hint.
 import { term } from "yuke:internal/native/term";
-import { text, root, claimView, releaseView, contains, copy } from "yuke:internal/core";
+import { text, claimView, contains, copy } from "yuke:internal/core";
 import { config, events } from "yuke:internal/kernel";
 import { clip } from "yuke:internal/text-input";
-import { Composer } from "yuke:internal/ui";
+import { Composer, Text } from "yuke:internal/ui";
 import { Transcript } from "yuke:internal/transcript";
-import { column, child, fixed, fit, grow, solve } from "yuke:internal/layout";
 import { pasteAttaches } from "yuke:internal/attach";
 
 /** @typedef {"composer" | "transcript"} ChatRegion */
 /** @typedef {{ text: string, group?: string }} StripRow */
 /** @import { Session } from "yuke:internal/chat" */
-/** @import { HostMouseEvent as MouseEvent, NavTarget, Rect, ViewLike as PresentationView } from "./types/core.js" */
-/** @import { LayoutNode, LayoutResult } from "./types/layout.js" */
-/** @typedef {{ bounds: Rect, empty: boolean, sessionId: string | null, composerRows: number, defaultLayout: LayoutNode }} PresentationContext */
-/** @typedef {{ layout: (context: PresentationContext) => LayoutNode | null, dispose: () => void }} PresentationInstance */
-/** @typedef {{ mount: (view: ChatView) => PresentationInstance }} PresentationProvider */
-/** @import { PartOf, PartsOf, PartTextPage } from "./types/transcript.js" */
+/** @import { HostMouseEvent as MouseEvent, NavTarget, Rect } from "./types/core.js" */
 
 // A chat pane asks these points; the newest listener that answers wins, so a plugin can supply a value it does not own.
-events.declare(["chat.press", "chat.strip", "chat.presentation", "chat.rule", "chat.cursor"]);
+events.declare(["chat.press", "chat.strip", "chat.rule", "chat.cursor"]);
 
 // A drag that ends copies the selection when the config asks; one function serves every view.
 /** @param {string} text @returns {void} */
@@ -45,17 +39,16 @@ export class ChatView {
     // A pasted image path attaches here instead of staying text; every other paste keeps its old behavior.
     this.composer.onPaste = (text, from) => pasteAttaches(this.composer, text, from);
     claimView(this.composer, this);
-    /** @type {{ provider: PresentationProvider, instance: PresentationInstance } | null} */
-    this.presentation = null;
-    /** @type {PresentationView[]} */
-    this.presentationViews = [];
-    /** @type {PresentationView | null} */
-    this.presentationFocus = null;
-    /** @type {PresentationView | null} */
-    this.presentationCapture = null;
+    // An empty draft shows these in the transcript region until its first message.
+    this.title = new Text({ text: "new chat", group: "YukeBrand" });
+    this.hint = new Text({ group: "YukeEmpty" });
+    // Each layout writes these rects in place, so a frame allocates none.
     this.transcriptRect = { x: 0, y: 0, w: 0, h: 0 };
     this.stripRect = { x: 0, y: 0, w: 0, h: 0 };
     this.ruleRect = { x: 0, y: 0, w: 0, h: 0 };
+    this.composerRect = { x: 0, y: 0, w: 0, h: 0 };
+    this.titleRect = { x: 0, y: 0, w: 0, h: 0 };
+    this.hintRect = { x: 0, y: 0, w: 0, h: 0 };
     /** @type {StripRow[]} */
     this.strip = [];
     // This field names the region that reads the keyboard. The mouse routes by rect instead.
@@ -70,7 +63,7 @@ export class ChatView {
   // The focused region names the deeper atom, so a binding can own one region alone.
   /** @returns {string[]} */
   contexts() {
-    return this.presentationFocus ? ["chat", "presentation", ...(this.presentationFocus.contexts?.() || [])] : ["chat", this.focus];
+    return ["chat", this.focus];
   }
 
   // A pane focus returns the keyboard to the composer.
@@ -81,7 +74,6 @@ export class ChatView {
   /** @param {ChatRegion} name */
   focusRegion(name) {
     if (name !== "composer" && name !== "transcript") throw new TypeError("focusRegion: unknown region " + name);
-    this.presentationFocus = null;
     if (this.focus === name) return;
     this.focus = name;
     events.emit("region.focused", this, name);
@@ -89,7 +81,6 @@ export class ChatView {
 
   /** @param {HostEvent} ev @returns {boolean} */
   onKey(ev) {
-    if (this.presentationFocus) return this.presentationFocus.onKey?.(ev) || false;
     // A focused transcript reads nothing here, because a nav binding scrolls it through the keymap.
     if (this.focus === "transcript") return false;
     return this.composer.onKey(ev);
@@ -98,31 +89,13 @@ export class ChatView {
   // The widget a nav binding drives here. The transcript scrolls even while the composer types.
   /** @returns {NavTarget | null} */
   navTarget() {
-    if (this.presentationFocus) return this.presentationFocus.navTarget?.() || null;
     return this.transcript.pager;
   }
 
   // Route by sub-rect, so a wheel step over the composer never moves the transcript; only a press hits this test.
   /** @param {MouseEvent} ev @returns {boolean} */
   onMouse(ev) {
-    if (this.presentationCapture && (ev.event === "drag" || ev.event === "release")) {
-      const held = this.presentationCapture;
-      if (ev.event === "release") this.presentationCapture = null;
-      return held.onMouse?.(ev) || false;
-    }
     if (ev.event === "drag" || ev.event === "release") return this.transcript.onMouse(ev);
-    for (const view of this.presentationViews) {
-      const r = view.rect;
-      if (!contains(r, ev.col, ev.row)) continue;
-      if (ev.event === "press" && ev.button === "left" && view.onMouse) {
-        this.presentationFocus = view;
-        this.presentationCapture = view;
-        view.onFocus?.();
-        root.invalidatePaint();
-      }
-      return view.onMouse?.(ev) || false;
-    }
-    if (ev.event === "press" && ev.button === "left") this.presentationFocus = null;
     const r = this.transcript.pager.rect();
     const inside = r && contains(r, ev.col, ev.row);
     const taken = inside ? this.transcript.onMouse(ev) : false;
@@ -131,115 +104,37 @@ export class ChatView {
     return events.bail("chat.press", this, ev) === true || taken;
   }
 
+  // Stack the transcript, the strip, the rule, and the composer; the transcript takes the rows the others leave.
   /** @param {Rect} bounds @returns {void} */
   layout(bounds) {
     this.rect = bounds;
-    const { w, h } = bounds;
+    const { x, y, w, h } = bounds;
     const composerRows = w > 0 && h > 0 ? Math.min(this.composer.height(w), Math.max(1, Math.floor(h / 2))) : 0;
     this.strip = events.bail("chat.strip", this) || [];
     const stripRows = Math.min(this.strip.length, Math.max(0, h - composerRows - 2));
-    const defaultLayout = column([
-      child("transcript", grow()),
-      child("strip", fixed(stripRows)),
-      child("rule", fixed(h > composerRows && w > 0 ? 1 : 0)),
-      child("composer", fit(), { intrinsic: { w, h: composerRows } }),
-    ]);
-    const context = { bounds, empty: this.transcript._messages.length === 0 && !this.transcript._active, sessionId: this.session.sessionId, composerRows, defaultLayout };
-    const provider = events.bail("chat.presentation", this, context);
-    let tree = defaultLayout;
-    try {
-      if (provider !== this.presentation?.provider) {
-        this.clearPresentation();
-        if (provider) this.presentation = { provider, instance: provider.mount(this) };
-      }
-      const active = this.presentation;
-      if (active) tree = active.instance.layout(context) || defaultLayout;
-      if (active !== this.presentation) tree = defaultLayout;
-      const placed = this.presentation;
-      this._placePresentation(tree, bounds);
-      if (placed !== this.presentation) {
-        this._releasePresentationViews();
-        this._placePresentation(defaultLayout, bounds);
-      }
-    } catch (error) {
-      this.clearPresentation();
-      events.emit("ext.failed", error, "presentation");
-      this._placePresentation(defaultLayout, bounds);
+    const ruleRows = h > composerRows && w > 0 ? 1 : 0;
+    const transcriptRows = h - composerRows - stripRows - ruleRows;
+    // The composer is at most half the pane and the strip leaves two rows, so the three fit.
+    if (transcriptRows < 0) throw new Error("chat rows exceed the pane");
+    setRect(this.stripRect, x, y + transcriptRows, w, stripRows);
+    setRect(this.ruleRect, x, y + transcriptRows + stripRows, w, ruleRows);
+    setRect(this.composerRect, x, y + transcriptRows + stripRows + ruleRows, w, composerRows);
+    this.composer.layout(this.composerRect);
+    // An empty draft shows the hint where the transcript goes; the model line reads the model its first input takes.
+    if (this.transcript._messages.length === 0 && !this.transcript._active && !this.session.sessionId) {
+      const model = this.session.modelSelector();
+      this.hint.setText((model ? "model · " + model : "no model yet") + "\ntype a message to start the session");
+      setRect(this.titleRect, x + 2, y, Math.max(0, w - 2), Math.min(1, transcriptRows));
+      setRect(this.hintRect, x + 2, y + this.titleRect.h, Math.max(0, w - 2), transcriptRows - this.titleRect.h);
+      this.title.layout(this.titleRect);
+      this.hint.layout(this.hintRect);
+      setRect(this.transcriptRect, x, y, 0, 0);
+    } else {
+      setRect(this.titleRect, x, y, 0, 0);
+      setRect(this.hintRect, x, y, 0, 0);
+      setRect(this.transcriptRect, x, y, w, transcriptRows);
     }
     if (this.transcriptRect.w === 0 || this.transcriptRect.h === 0) this.transcript.hide();
-  }
-
-  /** @param {PresentationProvider} [provider] */
-  clearPresentation(provider) {
-    if (provider && provider !== this.presentation?.provider) return;
-    const held = this.presentation;
-    this.presentation = null;
-    this._releasePresentationViews();
-    held?.instance.dispose();
-  }
-
-  _releasePresentationViews() {
-    for (const view of this.presentationViews) releaseView(view, this);
-    this.presentationViews = [];
-    this.presentationFocus = null;
-    this.presentationCapture = null;
-  }
-
-  /** @param {LayoutNode} tree @param {Rect} bounds */
-  _placePresentation(tree, bounds) {
-    const result = solve(tree, bounds);
-    /** @type {Map<string | PresentationView, Rect>} */
-    const placements = new Map();
-    /** @param {LayoutResult} item */
-    const visit = item => {
-      if (item.children.length) { for (const sub of item.children) visit(sub); return; }
-      const value = /** @type {string | PresentationView | null} */ (item.value);
-      if (value === null) return;
-      if (placements.has(value)) throw new TypeError("presentation repeats a view or region");
-      if (typeof value === "string") {
-        if (!["transcript", "strip", "rule", "composer"].includes(value)) throw new TypeError("unknown chat region: " + value);
-      } else {
-        if (!value || typeof value.layout !== "function" || typeof value.draw !== "function") throw new TypeError("presentation child needs layout and draw");
-        if (value === this || value === this.composer) throw new TypeError("use the composer region in a presentation");
-      }
-      placements.set(value, item.rect);
-    };
-    for (const item of result.children) visit(item);
-    if (!placements.has("composer")) throw new TypeError("presentation needs one composer region");
-    const empty = { x: bounds.x, y: bounds.y, w: 0, h: 0 };
-    this.transcriptRect = placements.get("transcript") || empty;
-    this.stripRect = placements.get("strip") || empty;
-    this.ruleRect = placements.get("rule") || empty;
-    this.composer.layout(/** @type {Rect} */ (placements.get("composer")));
-    /** @param {PresentationView} view @returns {boolean} */
-    const visible = view => {
-      const rect = placements.get(view);
-      return !!rect && rect.w > 0 && rect.h > 0;
-    };
-    for (const view of this.presentationViews) releaseView(view, this);
-    if (this.presentationFocus && !visible(this.presentationFocus)) this.presentationFocus = null;
-    if (this.presentationCapture && !visible(this.presentationCapture)) this.presentationCapture = null;
-    this.presentationViews = [];
-    for (const [view, rect] of placements) {
-      if (typeof view === "string") continue;
-      claimView(view, this);
-      this.presentationViews.push(view);
-      view.layout(rect);
-    }
-  }
-
-  /** @returns {{ periodMs: number } | null} */
-  needsTick() {
-    let period = Infinity;
-    for (const view of this.presentationViews) {
-      const tick = view.needsTick?.();
-      if (tick) period = Math.min(period, tick.periodMs);
-    }
-    return period < Infinity ? { periodMs: period } : null;
-  }
-
-  tick() {
-    for (const view of this.presentationViews) if (view.needsTick?.()) view.tick?.();
   }
 
   /** @param {boolean} [focused] @returns {void} */
@@ -247,13 +142,14 @@ export class ChatView {
     if (this.rect.w <= 0 || this.rect.h <= 0) return;
     const transcript = this.transcriptRect;
     if (transcript.w > 0 && transcript.h > 0) this.transcript.draw(transcript);
+    if (this.titleRect.h > 0) this.title.draw();
+    if (this.hintRect.h > 0) this.hint.draw();
     for (let i = 0; i < Math.min(this.strip.length, this.stripRect.h); i++) {
       const row = /** @type {StripRow} */ (this.strip[i]);
       text(this.stripRect.x, this.stripRect.y + i, clip(row.text, this.stripRect.w), row.group || "UIDim");
     }
     if (this.ruleRect.h > 0) this._drawRule(this.ruleRect.x, this.ruleRect.y, this.ruleRect.w);
-    this.composer.draw(focused && !this.presentationFocus);
-    for (const view of this.presentationViews) if (view.rect.w > 0 && view.rect.h > 0) view.draw(focused && view === this.presentationFocus);
+    this.composer.draw(focused);
   }
 
   // The rule row. A plugin puts a line on it, such as the working indicator, and the rule fills the rest.
@@ -269,9 +165,16 @@ export class ChatView {
   // The caret belongs to the focused region, so a transcript with no cursor provider shows none.
   /** @returns {{ x: number, y: number, visible: boolean } | null} */
   cursor() {
-    if (this.presentationFocus) return this.presentationFocus.cursor?.() || null;
     const supplied = events.bail("chat.cursor", this);
     if (supplied) return supplied;
     return this.focus === "composer" ? this.composer.cursor() : null;
   }
+}
+
+/** @param {Rect} rect @param {number} x @param {number} y @param {number} w @param {number} h @returns {void} */
+function setRect(rect, x, y, w, h) {
+  rect.x = x;
+  rect.y = y;
+  rect.w = w;
+  rect.h = h;
 }

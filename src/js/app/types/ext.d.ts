@@ -4,7 +4,7 @@ import type { Job } from "yuke:internal/native/jobs";
 import type { Context, Scope } from "../ext.js";
 import type { tui } from "../tui.js";
 import type { ChatSurface } from "../chat.js";
-import type { ChatRegion, ChatView, PresentationContext, PresentationProvider, StripRow } from "../chat-view.js";
+import type { ChatRegion, ChatView, StripRow } from "../chat-view.js";
 import type { Composer } from "../ui.js";
 import type { HostMouseEvent, ViewLike } from "./core.js";
 
@@ -62,7 +62,6 @@ export interface Events extends EngineFacts {
   /** A true answer claims a left press in the chat pane. */
   "chat.press"(view: ChatView, ev: HostMouseEvent): boolean | null | undefined;
   "chat.strip"(view: ChatView): StripRow[] | null | undefined;
-  "chat.presentation"(view: ChatView, context: PresentationContext): PresentationProvider | null | undefined;
   "chat.rule"(view: ChatView): StripRow | null | undefined;
   "chat.cursor"(view: ChatView): { x: number; y: number; visible: boolean } | null | undefined;
   "composer.prompt"(composer: Composer): string | null | undefined;

@@ -5,7 +5,6 @@ test {
     _ = @import("js/bench/bench.zig");
     _ = @import("js/tests/layout_test.zig");
     _ = @import("js/tests/widget_test.zig");
-    _ = @import("js/tests/presentation_test.zig");
     _ = @import("js/tests/md_preview_test.zig");
     _ = @import("js/tests/stream_test.zig");
     _ = @import("js/tests/preview_test.zig");

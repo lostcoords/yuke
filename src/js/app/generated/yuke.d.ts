@@ -18,7 +18,6 @@ export import ROLE_ACTION = $transcript.ROLE_ACTION;
 export import ROLE_TEXT = $transcript.ROLE_TEXT;
 export import attachPath = $attach.attachPath;
 export import attachClipboard = $attach.attachClipboard;
-export type PresentationContext = $chat_view.PresentationContext;
 }
 
 declare module "yuke:plugins" {
@@ -160,6 +159,7 @@ export function pasteAttaches(composer: Composer, text: string, from: number): b
 
 declare namespace $chat_view {
 import Composer = $ui.Composer;
+import Text = $ui.Text;
 import Transcript = $transcript.Transcript;
 export type ChatRegion = "composer" | "transcript";
 export type StripRow = {
@@ -170,22 +170,6 @@ import Session = $chat.Session;
 import MouseEvent = $types_core.HostMouseEvent;
 import NavTarget = $types_core.NavTarget;
 import Rect = $types_core.Rect;
-import PresentationView = $types_core.ViewLike;
-import LayoutNode = $types_layout.LayoutNode;
-export type PresentationContext = {
-    bounds: Rect;
-    empty: boolean;
-    sessionId: string | null;
-    composerRows: number;
-    defaultLayout: LayoutNode;
-};
-export type PresentationInstance = {
-    layout: (context: PresentationContext) => LayoutNode | null;
-    dispose: () => void;
-};
-export type PresentationProvider = {
-    mount: (view: ChatView) => PresentationInstance;
-};
 export class ChatView {
     rect: {
         x: number;
@@ -196,17 +180,8 @@ export class ChatView {
     session: Session;
     transcript: Transcript;
     composer: Composer;
-    /** @type {{ provider: PresentationProvider, instance: PresentationInstance } | null} */
-    presentation: {
-        provider: PresentationProvider;
-        instance: PresentationInstance;
-    } | null;
-    /** @type {PresentationView[]} */
-    presentationViews: PresentationView[];
-    /** @type {PresentationView | null} */
-    presentationFocus: PresentationView | null;
-    /** @type {PresentationView | null} */
-    presentationCapture: PresentationView | null;
+    title: Text;
+    hint: Text;
     transcriptRect: {
         x: number;
         y: number;
@@ -220,6 +195,24 @@ export class ChatView {
         h: number;
     };
     ruleRect: {
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+    };
+    composerRect: {
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+    };
+    titleRect: {
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+    };
+    hintRect: {
         x: number;
         y: number;
         w: number;
@@ -245,16 +238,6 @@ export class ChatView {
     onMouse(ev: MouseEvent): boolean;
     /** @param {Rect} bounds @returns {void} */
     layout(bounds: Rect): void;
-    /** @param {PresentationProvider} [provider] */
-    clearPresentation(provider?: PresentationProvider): void;
-    _releasePresentationViews(): void;
-    /** @param {LayoutNode} tree @param {Rect} bounds */
-    _placePresentation(tree: LayoutNode, bounds: Rect): void;
-    /** @returns {{ periodMs: number } | null} */
-    needsTick(): {
-        periodMs: number;
-    } | null;
-    tick(): void;
     /** @param {boolean} [focused] @returns {void} */
     draw(focused?: boolean): void;
     /** @param {number} x @param {number} y @param {number} w @returns {void} */
@@ -271,13 +254,11 @@ export class ChatView {
 declare namespace $chat {
 import Refresh = $refresh.Refresh;
 import ChatView = $chat_view.ChatView;
-import Context = $ext.Context;
 import registerLabels = $transcript.registerLabels;
-import PresentationContext = $chat_view.PresentationContext;
-import LayoutNode = $types_layout.LayoutNode;
 import Disposer = $types_ext.Disposer;
 import Composer = $ui.Composer;
 import MessagePart = $native_engine.MessagePart;
+import Context = $ext.Context;
 export type CreateSessionDraft = Wire.CreateSession;
 export type FeedActivity = Wire.SessionActivity | {
     state: {
@@ -380,30 +361,12 @@ export function openSession(view: ChatView, id: string): void;
 export function currentChat(): ChatView | null;
 /** @returns {FeedItem | null} */
 export function chatEntry(): FeedItem | null;
-export type ViewFactory = (session: Session) => ChatView;
-class ChatViews {
-    /** @type {ViewFactory[]} */
-    factories: ViewFactory[];
-    /** @type {WeakMap<ChatView, ViewFactory>} */
-    made: WeakMap<ChatView, ViewFactory>;
-    constructor();
-    /** @param {Session} session @returns {ChatView} */
-    create(session: Session): ChatView;
-    refit(): void;
-    /** @param {ViewFactory} factory @returns {Disposer} */
-    add(factory: ViewFactory): Disposer;
-}
 export class ChatSurface {
     _ctx: Context;
-    _views: ChatViews;
-    /** @param {Context} ctx @param {ChatViews} views */
-    constructor(ctx: Context, views: ChatViews);
+    /** @param {Context} ctx */
+    constructor(ctx: Context);
     /** @param {Session} [session] @returns {ChatView} */
     create(session?: Session): ChatView;
-    /** @param {ViewFactory} factory @returns {Disposer} */
-    view(factory: ViewFactory): Disposer;
-    /** @param {(view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null} create @returns {Disposer} */
-    presentation(create: (view: ChatView, owner: Context) => (context: PresentationContext) => LayoutNode | null): Disposer;
     /** @param {Parameters<typeof registerLabels>[0]} entries @returns {Disposer} */
     labels(entries: Parameters<typeof registerLabels>[0]): Disposer;
 }
@@ -704,8 +667,6 @@ export class RootView {
     }>): boolean;
     /** @param {"row" | "col"} kind @param {ViewLike} view @returns {Node | null} */
     split(kind: "row" | "col", view: ViewLike): Node | null;
-    /** @param {ViewLike} old @param {ViewLike} view @returns {boolean} */
-    replace(old: ViewLike, view: ViewLike): boolean;
     /** @param {ViewLike} [view] @returns {void} */
     close(view?: ViewLike): void;
     /** @param {"h" | "j" | "k" | "l"} d @returns {void} */
@@ -2855,8 +2816,6 @@ import tui = $tui.tui;
 import ChatSurface = $chat.ChatSurface;
 import ChatRegion = $chat_view.ChatRegion;
 import ChatView = $chat_view.ChatView;
-import PresentationContext = $chat_view.PresentationContext;
-import PresentationProvider = $chat_view.PresentationProvider;
 import StripRow = $chat_view.StripRow;
 import Composer = $ui.Composer;
 import HostMouseEvent = $types_core.HostMouseEvent;
@@ -2917,7 +2876,6 @@ export interface EventsBase extends EngineFacts {
   /** A true answer claims a left press in the chat pane. */
   "chat.press"(view: ChatView, ev: HostMouseEvent): boolean | null | undefined;
   "chat.strip"(view: ChatView): StripRow[] | null | undefined;
-  "chat.presentation"(view: ChatView, context: PresentationContext): PresentationProvider | null | undefined;
   "chat.rule"(view: ChatView): StripRow | null | undefined;
   "chat.cursor"(view: ChatView): { x: number; y: number; visible: boolean } | null | undefined;
   "composer.prompt"(composer: Composer): string | null | undefined;
