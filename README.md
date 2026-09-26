@@ -50,6 +50,52 @@ export {};
 
 Then `ctx.on("herdr:state", …)` and `events.emit("herdr:state", …)` check their arguments. An event without a declaration takes any arguments.
 
+## Change the chat
+
+The `sessions` plugin owns the engine sessions: pins, input, activity, the session list, the default model, and the session commands.
+The `chat` plugin owns only the chat pane. The shell asks the `chat` service for each new pane.
+The bundled features read the parts of a pane, not the `chat` plugin:
+
+- The queue, jobs, agents, context, cache, and the indicator read `currentSession()` from `yuke:session`.
+- composer-vim reads the composer of the focused pane.
+- transcript-vim and the slash menu read the focused pane when it is a `ChatView`, because the composer and transcript regions are `ChatView` parts.
+
+Use the smallest level that does the job:
+
+1. Advice. Change one method of `ChatView` or `Session` with `ctx.advise`.
+2. Events. Answer `chat.rule`, `chat.strip`, `chat.cursor`, or `chat.press`. Name tool calls with `ctx.chat.labels`.
+3. Your own pane. Replace the `chat` service. It provides `create(session)` and `labels(entries)`.
+   A pane holds a `Session`, a `Transcript`, and a `Composer`, and it adds itself to `session.views`.
+   The bundled `chat` plugin also owns `chat:new`, `chat:paste-image`, and the vision warning. A replacement brings its own.
+4. Your own window layout. Replace the `shell` plugin.
+
+This `index.js` replaces the chat pane with one that keeps a margin:
+
+```js
+import { plugins } from "yuke";
+import { Session } from "yuke:session";
+import { ChatView, registerLabels } from "yuke:chat";
+
+class RoomyChat extends ChatView {
+  layout(bounds) {
+    super.layout({ ...bounds, x: bounds.x + 2, w: Math.max(0, bounds.w - 4) });
+  }
+}
+
+plugins.dispose("chat");
+plugins.use({
+  name: "roomy-chat",
+  apply(ctx) {
+    ctx.provide("chat", {
+      bindTo: (block) => ({
+        create: (session = new Session()) => new RoomyChat(session),
+        labels: (entries) => block.effect(() => registerLabels(entries)),
+      }),
+    });
+  },
+});
+```
+
 ## Agent configuration
 
 Child agents come from the `agents` plugin. Install it in the profile's `index.js`:
