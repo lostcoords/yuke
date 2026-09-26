@@ -1,10 +1,10 @@
-// Opt-in modal keys for the chat composer.
+// Opt-in modal keys for the composer of the focused pane.
 import { events } from "yuke:internal/kernel";
 import { prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:internal/text-input";
 import { register } from "yuke:internal/vim";
-import { currentPane } from "yuke:internal/session";
+import { root } from "yuke:internal/core";
+import { Composer } from "yuke:internal/ui";
 
-/** @import { ChatView } from "yuke:internal/chat-view" */
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { Composer as ComposerType } from "yuke:internal/ui" */
 /** @typedef {"insert" | "normal"} ComposerMode */
@@ -47,9 +47,11 @@ function firstWord(text, caret) {
   return i;
 }
 
+// The composer of the focused pane, whatever the pane is. A plugin view is untyped here, so the class decides.
 /** @returns {ComposerType | null} */
-function chatComposer() {
-  return currentPane()?.composer ?? null;
+function focusedComposer() {
+  const composer = /** @type {{ composer?: unknown } | null} */ (root.active)?.composer;
+  return composer instanceof Composer ? composer : null;
 }
 
 /** @param {ComposerType} c @returns {true} */
@@ -197,22 +199,22 @@ export const composerVim = {
         events.emit("composer-vim:mode", c, next);
         ctx.tui.root.invalidate();
       };
-      const inChat = () => chatComposer() != null;
+      const inChat = () => focusedComposer() != null;
 
-      ctx.tui.command.add("normal", { when: inChat, run: () => setMode(chatComposer(), "normal") });
-      ctx.tui.command.add("insert", { when: inChat, run: () => setMode(chatComposer(), "insert") });
+      ctx.tui.command.add("normal", { when: inChat, run: () => setMode(focusedComposer(), "normal") });
+      ctx.tui.command.add("insert", { when: inChat, run: () => setMode(focusedComposer(), "insert") });
 
       ctx.tui.keymap.add({ esc: "composer-vim:normal" });
 
       // The plugin exposes the mode as a flag, so each binding gates on it.
-      ctx.tui.context.add({ composer_vim: () => mode(chatComposer()) || "" });
+      ctx.tui.context.add({ composer_vim: () => mode(focusedComposer()) || "" });
 
       // Normal mode sends a key to the keymap, so no pane inside the chat reads it.
       ctx.tui.route.add("keymap", NORMAL_MODE);
 
       /** @param {(c: ComposerType) => KeyResult} fn @returns {() => boolean} */
       const edit = (fn) => () => {
-        const c = chatComposer();
+        const c = focusedComposer();
         if (!c) return false;
         const done = fn(c);
         if (done === "insert") setMode(c, "insert");
@@ -234,7 +236,7 @@ export const composerVim = {
       ctx.on("composer.prompt", (c) => (normal.has(c) ? NORMAL_PROMPT : null));
 
       ctx.tui.status.add({ side: "right", order: 0, render: () => {
-        const m = mode(chatComposer());
+        const m = mode(focusedComposer());
         return m ? m.toUpperCase() : "";
       } });
 
@@ -242,7 +244,7 @@ export const composerVim = {
       const service = { mode, setMode };
       ctx.provide("composer-vim", service);
 
-      setMode(chatComposer(), "normal");
+      setMode(focusedComposer(), "normal");
     });
   },
 };

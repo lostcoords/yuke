@@ -2,7 +2,7 @@
 import { command, keymap, root } from "yuke:internal/core";
 import { ui } from "yuke:internal/ui";
 import { fuzzyRank } from "yuke:internal/fzy";
-import { Session, currentPane, soleText } from "yuke:internal/session";
+import { Session, soleText } from "yuke:internal/session";
 import { ChatView } from "yuke:internal/chat-view";
 
 /** @import { Context } from "yuke:internal/ext" */
@@ -14,11 +14,10 @@ import { ChatView } from "yuke:internal/chat-view";
 /** @typedef {{ rows?: number, border?: Border, format?: (entry: Entry, column: number) => string | ListItem, filterText?: (entry: Entry) => string, keymap?: FloatKeymap }} CommandUiConfig */
 /** @typedef {{ word: string, rest: string, complete: boolean }} SlashLine */
 
-// The current pane when it is a chat pane; this module reads its regions and its composer.
+// The focused pane when it is a chat pane: the composer and transcript regions this module reads exist only there.
 /** @returns {ChatView | null} */
-function chatPane() {
-  const pane = currentPane();
-  return pane instanceof ChatView ? pane : null;
+function focusedChat() {
+  return root.active instanceof ChatView ? root.active : null;
 }
 
 /** @returns {Entry[]} */
@@ -143,7 +142,7 @@ export function commandUi(cfg = {}) {
 
       // Follow the focused composer: open, refilter, or close the menu to match its text.
       const sync = () => {
-        const chat = chatPane();
+        const chat = focusedChat();
         // `root.focused` is the composer's view only with no modal above it, so a float never opens under a dialog.
         const typing = chat && root.focused === chat && chat.focus === "composer";
         const line = typing ? parseSlash(chat.composer.text) : null;
@@ -179,7 +178,7 @@ export function commandUi(cfg = {}) {
       const openPalette = () => {
         const all = entries();
         const col = columnOf(all);
-        const chat = chatPane();
+        const chat = focusedChat();
         const p = ui.pick({
           name: "commands",
           border,

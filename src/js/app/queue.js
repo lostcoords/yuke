@@ -5,7 +5,7 @@ import { ui } from "yuke:internal/ui";
 import { client } from "yuke:internal/client";
 import { notice } from "yuke:internal/notice";
 import { inputSourceLabel } from "yuke:internal/transcript";
-import { currentPane } from "yuke:internal/session";
+import { currentSession } from "yuke:internal/session";
 import { errorText } from "yuke:internal/format";
 
 /** @import { Context } from "yuke:internal/ext" */
@@ -136,7 +136,7 @@ export const queuePlugin = {
       });
 
       const hasQueue = () => {
-        const id = currentPane()?.session.sessionId;
+        const id = currentSession()?.sessionId;
         return id != null && queueOf(id).length > 0;
       };
       ctx.tui.command.add("queue:drop", {
@@ -144,7 +144,7 @@ export const queuePlugin = {
         desc: "drop one queued message",
         slash: "queue",
         run: () => {
-          const id = currentPane()?.session.sessionId;
+          const id = currentSession()?.sessionId;
           if (id) openQueuePicker(ctx, id);
         },
       });
@@ -153,7 +153,7 @@ export const queuePlugin = {
         desc: "drop queued work; preserve engine reports",
         slash: "clear-queue",
         run: () => {
-          const id = currentPane()?.session.sessionId;
+          const id = currentSession()?.sessionId;
           if (!id) return;
           clearWorkQueue(id).then((result) => {
             notice.show("queue · removed " + result.removed + " · failed " + result.failed + " · protected " + result.protected);

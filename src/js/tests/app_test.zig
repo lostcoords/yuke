@@ -209,6 +209,10 @@ test "a pane that is no chat pane gets the current session, the stream, and the 
     try support.run("app/session-pane.test.js");
 }
 
+test "a user chat plugin gets the session commands and composer-vim on its own pane" {
+    try support.run("app/custom-chat.test.js");
+}
+
 test "a chat retains only successful session pins" {
     try support.run("app/pins.test.js");
 }
