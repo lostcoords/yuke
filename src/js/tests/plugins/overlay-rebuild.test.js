@@ -17,7 +17,7 @@ plugins.use({
 });
 check("claimed", builds === 1 && root.overlays.indexOf(layer) >= 0);
 
-// A change of the second capability rebuilds the block; the layer must pass across.
+// A change of the second capability rebuilds the block; the old block closes the layer and the new block shows it again.
 services.provide("gate", 2);
 check("rebuilt", builds === 2);
 check("layer-kept", root.overlays.indexOf(layer) >= 0);

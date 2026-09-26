@@ -8,10 +8,7 @@ export const shell = {
   name: "shell",
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
-    // A new provider builds the next tree before the old block leaves, so only the newest block clears the root.
-    let mounted = 0;
     ctx.inject(["tui", "chat"], (ctx) => {
-      const build = ++mounted;
       root.setRoot(Node.leaf(ctx.chat.create()));
 
       // A split shows a new chat; a tree with no focused pane keeps no orphan session.
@@ -34,7 +31,7 @@ export const shell = {
       ctx.tui.keymap.add(windowKeys("ctrl+k"));
 
       // The unload closes every pane, and each chat view releases its session.
-      return () => { if (build === mounted) root.setRoot(null); };
+      return () => root.setRoot(null);
     });
   },
 };

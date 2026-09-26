@@ -54,7 +54,6 @@ class Surface {
   get style() { return this._settle("style", owned(this._ctx, style)); }
 
   // Show a layer this block owns. Any close runs `onClose` once: a pop by the layer itself, the disposer, or the unload.
-  // A later owner of the same layer takes it over, so an earlier owner's unload leaves it on the stack.
   /** @param {Overlay} layer @param {() => void} [onClose] @returns {Disposer} */
   overlay(layer, onClose) {
     // A dead scope reverts nothing, so a late layer never shows and never outlives its block.
@@ -72,7 +71,7 @@ class Surface {
       onClose?.();
     };
     root.closeWith(layer, claim);
-    off = this._ctx.effect(() => () => root.popOverlay(layer, claim));
+    off = this._ctx.effect(() => () => root.popOverlay(layer));
     return off;
   }
 

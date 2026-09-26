@@ -19,14 +19,14 @@ check("absent", !services.has("cap"));
 const off1 = services.provide("cap", "T1");
 check("activated", log.join(",") === "apply,in:T1");
 
-// A second provider hides the first, so the block reads the new value; the new block builds before the old one leaves, so a shared resource passes across.
+// A second provider hides the first, so the block reads the new value; the old block leaves before the new one starts.
 const off2 = services.provide("cap", "T2");
-check("restacked", log.join(",") === "apply,in:T1,in:T2,out");
+check("restacked", log.join(",") === "apply,in:T1,out,in:T2");
 
 // The withdrawal of the live provider reveals the one below it.
 off2();
-check("revealed", log.join(",") === "apply,in:T1,in:T2,out,in:T1,out");
+check("revealed", log.join(",") === "apply,in:T1,out,in:T2,out,in:T1");
 
 off1();
-check("withdrawn", log.join(",") === "apply,in:T1,in:T2,out,in:T1,out,out");
+check("withdrawn", log.join(",") === "apply,in:T1,out,in:T2,out,in:T1,out");
 check("gone", !services.has("cap"));

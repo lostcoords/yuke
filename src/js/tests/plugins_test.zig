@@ -142,6 +142,10 @@ test "a headless bus refuses a name only the view tier emits" {
     try support.run("plugins/headless-bus.test.js");
 }
 
+test "a rebuild frees the plugins and the current chat of the old block" {
+    try support.run("plugins/inject-order.test.js");
+}
+
 test "an overlay survives a rebuild of the block that claimed it" {
     try support.run("plugins/overlay-rebuild.test.js");
 }

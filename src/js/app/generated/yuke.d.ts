@@ -727,8 +727,8 @@ export class RootView {
     pushOverlay(layer: Overlay): Overlay;
     /** @param {Overlay} layer @param {() => void} onClose @returns {void} */
     closeWith(layer: Overlay, onClose: () => void): void;
-    /** @param {Overlay | undefined} layer @param {() => void} [only] @returns {void} */
-    popOverlay(layer: Overlay | undefined, only?: () => void): void;
+    /** @param {Overlay} [layer] @returns {void} */
+    popOverlay(layer?: Overlay): void;
     /** @returns {void} */
     invalidate(): void;
     /** @returns {void} */

@@ -1170,13 +1170,12 @@ export class RootView {
     this._closers.set(layer, onClose);
   }
 
-  // Take `layer` off the stack, or the top layer, and run its close function. With `only`, pop only while `only` is that function.
-  /** @param {Overlay | undefined} layer @param {() => void} [only] @returns {void} */
-  popOverlay(layer, only) {
+  // Take `layer` off the stack, or the top layer, and run its close function.
+  /** @param {Overlay} [layer] @returns {void} */
+  popOverlay(layer) {
     const target = layer ?? this.overlays[this.overlays.length - 1];
     if (!target) return;
     const closer = this._closers.get(target);
-    if (only && closer !== only) return;
     const i = this.overlays.indexOf(target);
     if (i >= 0) {
       this.overlays.splice(i, 1);

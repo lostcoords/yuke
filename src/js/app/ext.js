@@ -468,6 +468,10 @@ function injectInto(parentContext, names, apply) {
     }
     // A nested provide can report one change to two watchers of this block.
     if (live && deps.every((n, i) => services.get(n) === bound[i])) return false;
+    // The old block leaves before the new one starts, so the two never hold a resource at the same time.
+    drop();
+    // The old cleanup can withdraw a dependency.
+    if (!satisfied()) return false;
 
     // The injection owns this child scope until its dependencies change.
     const child = parent.child("inject:" + deps.join("+"));
@@ -485,18 +489,12 @@ function injectInto(parentContext, names, apply) {
       child.effect(() => apply(/** @type {InjectContext<K>} */ (ctx)));
       // The block can drop its own dependency, so confirm the requirement before the block commits.
       if (satisfied() && !stopped && parent.alive && child.alive) {
-        // The old block leaves after the new one registered, so a shared resource passes over without a gap.
-        drop();
         live = child;
         bound = values;
-      } else {
-        child.dispose();
-        drop();
-      }
+      } else child.dispose();
       return true;
     } catch (e) {
       child.dispose();
-      drop();
       // A throwing block keeps its plugin alive, so the runtime reports the fault and stays inactive.
       events.emit("ext.failed", e, id);
       return false;
