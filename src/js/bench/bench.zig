@@ -72,8 +72,9 @@ pub const Phase = enum {
     plugin_async,
     interaction_reused,
     interaction_fresh,
+    fuzzy_rank,
 
-    const Group = enum { transcript, colors, advice, agents, process, tools, hooks, plugins, net, http, utf8, interaction, mcp };
+    const Group = enum { transcript, colors, advice, agents, process, tools, hooks, plugins, net, http, utf8, interaction, mcp, fuzzy };
 
     fn group(self: Phase) Group {
         return switch (self) {
@@ -82,6 +83,7 @@ pub const Phase = enum {
             .http_reused, .http_fresh, .http_close => .http,
             .mcp_result_reused, .mcp_result_fresh => .mcp,
             .utf8_reused, .utf8_fresh => .utf8,
+            .fuzzy_rank => .fuzzy,
             .interaction_reused, .interaction_fresh => .interaction,
             .tool_call => .tools,
             .hook_request_build, .hook_tool_before => .hooks,
@@ -169,6 +171,7 @@ pub const Harness = struct {
             .net => @embedFile("net.js"),
             .mcp => @embedFile("mcp.js"),
             .utf8 => @embedFile("utf8.js"),
+            .fuzzy => @embedFile("fuzzy.js"),
             .agents => @embedFile("agents.js"),
             .colors => @embedFile("colors.js"),
             .advice => @embedFile("advice.js"),

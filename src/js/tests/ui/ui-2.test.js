@@ -21,6 +21,10 @@ check("boundary-first", ranked[0] === "foo_bar");
 const dog = fuzzyRank(["cat", "dog"], "og", String);
 check("subsequence", dog.length === 1 && dog[0] === "dog");
 check("over-long-cap", fuzzyMatch("a".repeat(1025), "a") === -Infinity);
+// The score rows are shared, so a short text after a long one reads none of the long one's cells.
+const short = fuzzyMatch("x_ab", "ab");
+fuzzyMatch("ab".repeat(300) + "_ab", "ab");
+check("rows-reused", fuzzyMatch("x_ab", "ab") === short);
 
 // A user turn is a tinted band with a gutter marker; an assistant turn renders markdown.
 const texts = { u1: "hello world", a1: "**bold** text" };
