@@ -4,8 +4,7 @@ import { client } from "yuke:internal/client";
 import { native } from "yuke:internal/native/engine";
 import { sessions, currentChat } from "yuke:internal/chat";
 import { notice } from "yuke:internal/notice";
-import { errorText } from "yuke:internal/format";
-import { tokenLabel } from "yuke:internal/catalog";
+import { errorText, tokenLabel } from "yuke:internal/format";
 import { childState, openAgents } from "yuke:internal/agents-ui";
 
 /** @import { Context } from "yuke:internal/ext" */

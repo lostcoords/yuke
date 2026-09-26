@@ -269,6 +269,7 @@ export class ChatView {
 }
 
 declare namespace $chat {
+import Refresh = $refresh.Refresh;
 import ChatView = $chat_view.ChatView;
 import Context = $ext.Context;
 import registerLabels = $transcript.registerLabels;
@@ -278,7 +279,28 @@ import Disposer = $types_ext.Disposer;
 import Composer = $ui.Composer;
 import MessagePart = $native_engine.MessagePart;
 export type CreateSessionDraft = Wire.CreateSession;
-import FeedItem = $sessions.FeedItem;
+export type FeedActivity = Wire.SessionActivity | {
+    state: {
+        type: "idle";
+    };
+    queued: number;
+    context_usage: Wire.TokenUsage;
+    pending_compaction: null;
+};
+export type FeedItem = {
+    session: Wire.Session;
+    activity: FeedActivity;
+};
+export type SessionRow = {
+    id: string;
+    title: string;
+    activity: FeedActivity;
+    session: Wire.Session;
+};
+export type ModelDefaults = {
+    model: string | null;
+    reasoning: string;
+};
 /** @param {readonly Wire.ContentPart[]} content @returns {string | null} */
 export function soleText(content: readonly Wire.ContentPart[]): string | null;
 export class Session {
@@ -288,6 +310,8 @@ export class Session {
     gen: number;
     /** @type {Set<ChatView>} */
     views: Set<ChatView>;
+    /** @type {Wire.SessionActivity | null} */
+    activity: Wire.SessionActivity | null;
     constructor();
     /** @param {number} id @returns {readonly MessagePart[]} */
     partsOf(id: number): readonly MessagePart[];
@@ -306,6 +330,10 @@ export class Session {
     send(content: readonly Wire.ContentPart[], composer: Composer): boolean;
     /** @returns {string} */
     modelSelector(): string;
+    /** @param {Wire.ModelInfo} model @param {string} reasoning @returns {void} */
+    setModel(model: Wire.ModelInfo, reasoning: string): void;
+    refreshActivity(): void;
+    forgetActivity(): void;
     interrupt(): void;
     /** @param {Iterable<ChatView>} [views] */
     reload(views?: Iterable<ChatView>): void;
@@ -320,6 +348,28 @@ export class Session {
 }
 /** @type {Set<Session>} */
 export const sessions: Set<Session>;
+class SessionFeed {
+    /** @type {Map<string, FeedItem>} */
+    items: Map<string, FeedItem>;
+    rev: number;
+    _refresh: Refresh<void>;
+    constructor();
+    get loading(): boolean;
+    /** @param {Wire.SessionListResult} listResult @returns {void} */
+    seed(listResult: Wire.SessionListResult): void;
+    /** @returns {Promise<void>} */
+    refresh(): Promise<void>;
+    /** @returns {SessionRow[]} */
+    rows(): SessionRow[];
+}
+/** @returns {SessionFeed} */
+export function feedOf(): SessionFeed;
+/** @param {string} sessionId @returns {FeedItem | null} */
+export function feedItem(sessionId: string): FeedItem | null;
+/** @returns {Wire.Session | null} */
+export function newestLocalModelSession(): Wire.Session | null;
+/** @returns {ModelDefaults} */
+export function defaultModel(): ModelDefaults;
 /** @param {ChatView} view @param {Session} session @returns {void} */
 export function showSession(view: ChatView, session: Session): void;
 /** @param {ChatView} view @param {string} id @returns {void} */
@@ -1369,55 +1419,6 @@ export class Refresh<T> {
     /** @returns {Promise<T>} */
     start(): Promise<T>;
 }
-}
-
-declare namespace $sessions {
-import Refresh = $refresh.Refresh;
-import Context = $ext.Context;
-export type FeedActivity = Wire.SessionActivity | {
-    state: {
-        type: "idle";
-    };
-    queued: number;
-    context_usage: Wire.TokenUsage;
-    pending_compaction: null;
-};
-export type FeedItem = {
-    session: Wire.Session;
-    activity: FeedActivity;
-};
-export type SessionRow = {
-    id: string;
-    title: string;
-    activity: FeedActivity;
-    session: Wire.Session;
-};
-class SessionFeed {
-    /** @type {Map<string, FeedItem>} */
-    items: Map<string, FeedItem>;
-    _refresh: Refresh<void>;
-    constructor();
-    get loading(): boolean;
-    /** @param {Wire.SessionListResult} listResult @returns {void} */
-    seed(listResult: Wire.SessionListResult): void;
-    /** @returns {Promise<void>} */
-    refresh(): Promise<void>;
-    /** @returns {SessionRow[]} */
-    rows(): SessionRow[];
-}
-/** @returns {Wire.Session | null} */
-export function newestLocalModelSession(): Wire.Session | null;
-/** @param {string} sessionId @returns {FeedItem | null} */
-export function feedItem(sessionId: string): FeedItem | null;
-/** @returns {SessionFeed} */
-export function feedOf(): SessionFeed;
-/** @param {FeedActivity} activity @returns {string} */
-export function activityMark(activity: FeedActivity): string;
-export const sessionsPlugin: {
-    name: string;
-    /** @param {Context} ctx @returns {void} */
-    apply(ctx: Context): void;
-};
 }
 
 declare namespace $shell {

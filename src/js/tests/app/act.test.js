@@ -2,8 +2,7 @@ import { equal } from "yuke:internal/test";
 import { command, root, status, keymap } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import "yuke:internal/native/term";
-import { sessions, currentChat } from "yuke:internal/chat";
-import { feedOf } from "yuke:internal/sessions";
+import { sessions, currentChat, feedOf } from "yuke:internal/chat";
 // The shell built the first chat pane at boot.
 const chat = currentChat();
 const fail = [];

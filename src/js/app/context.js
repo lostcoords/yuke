@@ -1,17 +1,14 @@
 // The context reading on the status bar and the `/context` breakdown window.
 import { client } from "yuke:internal/client";
 import { showInfo } from "yuke:internal/info-panel";
-import { chatEntry } from "yuke:internal/chat";
-import { modelOf, contextWindowOf, defaultModel, tokenLabel } from "yuke:internal/catalog";
+import { chatEntry, defaultModel } from "yuke:internal/chat";
+import { modelOf, contextWindowOf, sessionCost } from "yuke:internal/catalog";
+import { BAR_CELLS, BAR_GLYPHS, contextBar, money, tokenLabel } from "yuke:internal/format";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @typedef {{ model: string, count: number, usage: Wire.TokenUsage, total: Wire.TokenUsage, queued: number, compaction: boolean }} Reading */
 /** @typedef {{ bar?: string }} ContextConfig */
 
-const BAR_CELLS = 6;
-// The full and the empty glyph. Block Elements by default, because the terminal draws them and a font glyph can bleed.
-/** @type {readonly [string, string]} */
-const BAR_GLYPHS = ["█", "░"];
 /** @type {Wire.TokenUsage} */
 const NO_TOKENS = { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 };
 
@@ -31,14 +28,6 @@ function reading() {
   };
 }
 
-// A bar of `cells` glyphs in proportion. `glyphs` holds the full glyph, then the empty one.
-/** @param {number} used @param {number} window @param {number} [cells] @param {string | readonly [string, string]} [glyphs] @returns {string} */
-export function contextBar(used, window, cells = BAR_CELLS, glyphs = BAR_GLYPHS) {
-  const full = window > 0 ? Math.round(Math.min(1, used / window) * cells) : 0;
-  const pair = typeof glyphs === "string" ? Array.from(glyphs) : glyphs;
-  return "[" + String(pair[0]).repeat(full) + String(pair[1]).repeat(cells - full) + "]";
-}
-
 // The status words: the bar and the share of the window, or a token count for a model with no known window.
 /** @param {Reading} r @param {readonly [string, string]} [glyphs] @returns {string} */
 function contextLine(r, glyphs = BAR_GLYPHS) {
@@ -51,20 +40,6 @@ function contextLine(r, glyphs = BAR_GLYPHS) {
 /** @param {number} n @returns {string} */
 function thousands(n) {
   return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
-// The cost of the tokens at the catalog prices in dollars per million. An unpriced kind costs nothing.
-/** @param {Wire.TokenUsage} total @param {Wire.ModelCost} cost @returns {number} */
-export function sessionCost(total, cost) {
-  const per = (/** @type {number} */ n, /** @type {number | undefined} */ price) => (n / 1e6) * (price || 0);
-  // The input total holds both cache subsets, so only the remainder pays the full input price.
-  const fresh = Math.max(0, total.input - total.cache_read - total.cache_write);
-  return per(fresh, cost.input) + per(total.output, cost.output) + per(total.cache_read, cost.cache_read) + per(total.cache_write, cost.cache_write);
-}
-
-/** @param {number} n @returns {string} */
-export function money(n) {
-  return "$" + n.toFixed(n < 1 ? 3 : 2);
 }
 
 // Build the label and value rows of the breakdown window. The cost row needs the model in the catalog.

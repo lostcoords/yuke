@@ -1,7 +1,7 @@
 // The working line on the rule above the composer: a spinner, the phase, the elapsed time, and the child runs.
 import { sessions } from "yuke:internal/chat";
 import { client } from "yuke:internal/client";
-import { activityOf, agentsLabel, isWorking } from "yuke:internal/activity";
+import { agentsLabel, elapsedLabel } from "yuke:internal/format";
 
 /** @import { Context } from "yuke:internal/ext" */
 
@@ -18,13 +18,9 @@ const starts = new Map();
 // The moment the child count last rose from zero, so the aggregate reads how long the agents have worked.
 let agentsSince = 0;
 
-/** @param {number} ms @returns {string} */
-export function elapsedLabel(ms) {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return s + "s";
-  const m = Math.floor(s / 60);
-  const rest = s % 60;
-  return m + "m" + (rest < 10 ? "0" : "") + rest + "s";
+/** @param {Wire.SessionActivity | null} activity @returns {boolean} */
+function isWorking(activity) {
+  return activity != null && activity.state.type !== "idle";
 }
 
 // The words for one working state. `now` is the wall clock in milliseconds, the clock the engine stamps.
@@ -66,7 +62,7 @@ export function indicatorLine(sessionId, activity, now, childRuns = 0) {
 /** @returns {boolean} */
 function anyWorking() {
   if (client.load().childRuns > 0) return true;
-  for (const session of sessions) if (session.sessionId && isWorking(activityOf(session.sessionId))) return true;
+  for (const session of sessions) if (isWorking(session.activity)) return true;
   return false;
 }
 
@@ -78,7 +74,7 @@ export const indicatorPlugin = {
       ctx.on("chat.rule", (view) => {
         const id = view.session.sessionId;
         if (!id) return null;
-        const line = indicatorLine(id, activityOf(id), Date.now(), client.load().childRuns);
+        const line = indicatorLine(id, view.session.activity, Date.now(), client.load().childRuns);
         return line ? { text: line, group: "YukeStatus" } : null;
       });
       // The frame loop runs only while a pane or a child run works, so an idle screen costs no wakeups.

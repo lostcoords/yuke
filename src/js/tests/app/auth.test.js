@@ -5,8 +5,7 @@ import { command, root } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { client } from "yuke:internal/client";
 import { notice } from "yuke:internal/notice";
-import { defaultModel } from "yuke:internal/catalog";
-import { currentChat } from "yuke:internal/chat";
+import { currentChat, defaultModel } from "yuke:internal/chat";
 // The shell built the first chat pane at boot.
 const chat = currentChat();
 globalThis.authTest = (async () => {

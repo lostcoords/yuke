@@ -4,8 +4,7 @@ import { ui, Window, ScrollView } from "yuke:internal/ui";
 import { list, get, stop, read, name, endLabel, shortCommand } from "yuke:internal/jobs";
 import { currentChat } from "yuke:internal/chat";
 import { notice } from "yuke:internal/notice";
-import { errorText } from "yuke:internal/format";
-import { elapsedLabel } from "yuke:internal/indicator";
+import { elapsedLabel, errorText } from "yuke:internal/format";
 
 /** @import { Context as PluginContext } from "yuke:internal/ext" */
 /** @import { InjectContext as Context } from "./types/ext.js" */

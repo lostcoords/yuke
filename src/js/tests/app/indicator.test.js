@@ -1,13 +1,12 @@
 import { check } from "yuke:internal/test";
-import { Session, openSession, showSession, currentChat } from "yuke:internal/chat";
+import { Session, openSession, showSession, currentChat, feedOf } from "yuke:internal/chat";
 import { root, command, status } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { client } from "yuke:internal/client";
-import { feedOf } from "yuke:internal/sessions";
-import { loadCatalog } from "yuke:internal/catalog";
-import { elapsedLabel, phaseLabel, indicatorLine } from "yuke:internal/indicator";
+import { loadCatalog, sessionCost } from "yuke:internal/catalog";
+import { phaseLabel, indicatorLine } from "yuke:internal/indicator";
+import { elapsedLabel, contextBar } from "yuke:internal/format";
 import { stripRows, queuedText, queueOf } from "yuke:internal/queue";
-import { contextBar, sessionCost } from "yuke:internal/context";
 import { rowText } from "yuke:internal/pager";
 // The shell built the first chat pane at boot.
 const chat = currentChat();

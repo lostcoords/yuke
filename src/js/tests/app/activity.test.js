@@ -1,11 +1,8 @@
 import { check } from "yuke:internal/test";
 import { root } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
-import { plugins } from "yuke:internal/ext";
 import { client } from "yuke:internal/client";
-import { feedOf } from "yuke:internal/sessions";
-import { activityOf, isWorking } from "yuke:internal/activity";
-import { chatEntry, Session, openSession, currentChat } from "yuke:internal/chat";
+import { chatEntry, openSession, currentChat, feedOf } from "yuke:internal/chat";
 // The shell built the first chat pane at boot.
 const chat = currentChat();
 const idle = { state: { type: "idle" }, queued: 0, context_usage: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, pending_compaction: null };
@@ -21,25 +18,24 @@ const seen = [];
 events.on("activity.changed", (id, a) => seen.push(id + ":" + (a ? a.state.type : "null")));
 root.focusView(chat);
 openSession(chat, "s1");
-check("open-reads", reads === 1 && isWorking(activityOf("s1")) && activityOf("s1").queued === 2);
+check("open-reads", reads === 1 && chat.session.activity === streaming && chat.session.activity.queued === 2);
 check("entry-overlays", chatEntry().activity === streaming && chatEntry().session.model === "m");
 // A quiet digest without the fact costs no read; one with the fact reads once.
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["run.started"] });
 check("no-fact-no-read", reads === 1);
 answer = idle;
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
-check("fact-reads", reads === 2 && !isWorking(activityOf("s1")) && chatEntry().activity === idle);
-// A null read means the pane let the session go, and a gone session forgets its entry.
+check("fact-reads", reads === 2 && chat.session.activity === idle && chatEntry().activity === idle);
+// A null read means the engine let the session go, and a gone session forgets its activity.
 answer = null;
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
-check("null-forgets", activityOf("s1") === null && chatEntry().activity === idle);
+check("null-forgets", chat.session.activity === null && chatEntry().activity === idle);
 answer = streaming;
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
 events.emit("session.changed", { type: "session", session: "s1", kind: "gone", facts: ["session.removed"] });
-check("gone-forgets", activityOf("s1") === null);
+check("gone-forgets", chat.session.activity === null && chat.session.sessionId === null);
 check("events", seen.join(",") === "s1:streaming,s1:idle,s1:null,s1:streaming,s1:null");
 // An interrupt stops the run and never clears the queue.
 chat.session.sessionId = "s1";
 chat.session.interrupt();
 check("interrupt-keeps-queue", cancels.length === 1 && cancels[0][0] === "s1" && cancels[0][1] === undefined);
-plugins.dispose("activity");

@@ -9,7 +9,7 @@ import { Pager } from "yuke:internal/pager";
 
 /** @import { HostMouseEvent as MouseEvent, Rect, StyleGroup } from "./types/core.js" */
 // The composer asks this point for its prompt glyph; the newest listener that answers wins.
-events.declare(["composer.prompt"]);
+events.declare(["composer.prompt", "composer.changed"]);
 /** @import { BorderSet, ComposerOptions, ComposerSnapshot, ComposerSpan, Dimension, ItemKey, ListItem, ListKey, ListOptions, NavAction, PickerAction, PickOptions, Projection, PromptOptions, TextOptions, WindowContent, WindowOptions, WrapRow } from "./types/ui.js" */
 
 // The kit adds only an absent highlight group, so a theme that set one first keeps it and a re-import does not re-seed.

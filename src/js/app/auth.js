@@ -1,12 +1,8 @@
-// /login and /logout: the provider list, the device-code dialog, and the API key prompt.
-import { copy, text } from "yuke:internal/core";
-import { clip } from "yuke:internal/text-input";
-import { strokeOf } from "yuke:internal/keys";
+// /login and /logout: the provider list and the API key prompt.
 import { ui } from "yuke:internal/ui";
 import { client } from "yuke:internal/client";
 import { notice } from "yuke:internal/notice";
 import { errorText } from "yuke:internal/format";
-import { openUrl } from "yuke:internal/browser";
 import { loadCatalog, providerStateLabel, reloadCatalog } from "yuke:internal/catalog";
 
 /** @import { Context } from "yuke:internal/ext" */
@@ -39,46 +35,6 @@ function pickProvider(ctx, title, verb, rows, right, onAccept) {
     onAccept,
   });
   ctx.tui.overlay(picked.win);
-}
-
-// The device-code step: the URL to open and the code to enter. The engine polls; this window only waits.
-export class DeviceDialog {
-  /** @param {Wire.AuthLoginResult} start */
-  constructor(start) {
-    this.start = start;
-    /** @type {(() => void) | null} */
-    this.onCancel = null;
-    /** @type {{ x: number, y: number, w: number, h: number }} */
-    this.rect = { x: 0, y: 0, w: 0, h: 0 };
-  }
-
-  /** @param {{ x: number, y: number, w: number, h: number }} rect @returns {void} */
-  layout(rect) {
-    this.rect = rect;
-  }
-
-  /** @param {boolean} [_focused] @returns {void} */
-  draw(_focused = false) {
-    const { x, y, w, h } = this.rect;
-    if (w <= 0 || h <= 0) return;
-    text(x, y, clip("open  ", w), "UIDim");
-    if (w > 6) text(x + 6, y, clip(this.start.verification_url, w - 6), "UIQuery");
-    if (this.rect.h <= 1) return;
-    text(x, y + 1, clip("code  ", w), "UIDim");
-    if (w > 6) text(x + 6, y + 1, clip(this.start.user_code, w - 6), "UITitle");
-    if (this.rect.h <= 2) return;
-    text(x, y + 2, clip("waiting for the provider…", w), "UIDim");
-  }
-
-  /** @param {HostEvent} event @returns {boolean} */
-  onKey(event) {
-    if (event.type !== "key") return true;
-    const s = strokeOf(event);
-    if (s === "esc" && this.onCancel) this.onCancel();
-    else if (s === "c") copy(this.start.user_code, "code");
-    else if (s === "o") openUrl(this.start.verification_url);
-    return true;
-  }
 }
 
 /** @param {ProviderRow} p @param {Wire.AuthLoginOutcome} outcome @returns {void} */

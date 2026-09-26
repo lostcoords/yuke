@@ -186,9 +186,8 @@ test "the catalog stores a full reply, keeps the models on unchanged, and retain
     try support.run("app/catload.test.js");
 }
 
-test "the catalog slice owns the model reading" {
-    // The readings need the open session, which the shell owns, so the slice takes it as config.
-    try support.run("app/catalog.test.js");
+test "the chat shows the model it sends to, and a choice moves the default" {
+    try support.run("app/model.test.js");
 }
 
 test "the chat slice owns its listeners and its transcript commands" {

@@ -1,10 +1,5 @@
 import { check } from "yuke:internal/test";
-import "yuke:internal/core";
-import { plugins } from "yuke:internal/ext";
-import { sessionsPlugin, feedOf, newestLocalModelSession } from "yuke:internal/sessions";
-import { tuiPlugin } from "yuke:internal/tui";
-plugins.use(tuiPlugin);
-plugins.use(sessionsPlugin, {});
+import { feedOf, newestLocalModelSession } from "yuke:internal/chat";
 
 const feed = feedOf();
 const mk = (id, model, at) => ({ session: { id, model, reasoning: "", updated_at_ms: at }, activity: null });

@@ -1,6 +1,6 @@
 import { check } from "yuke:internal/test";
 import { client } from "yuke:internal/client";
-import { feedOf } from "yuke:internal/sessions";
+import { feedOf } from "yuke:internal/chat";
 
 const feed = feedOf();
 feed.seed({ items: [{ session: { id: "old" }, activity: null }] });

@@ -1,17 +1,12 @@
-// The model catalog, and the model a new chat starts with.
+// The model catalog: the providers, their models, and the model prices.
 import { Refresh } from "yuke:internal/refresh";
 import { root } from "yuke:internal/core";
-import { events } from "yuke:internal/kernel";
 import { client } from "yuke:internal/client";
 import { notice } from "yuke:internal/notice";
-import { newestLocalModelSession } from "yuke:internal/sessions";
 import { errorText } from "yuke:internal/format";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @typedef {{ rev: Wire.CatalogRev | null, providers: readonly Wire.ProviderInfo[], models: readonly Wire.ModelInfo[] }} CatalogState */
-/** @typedef {{ model: string | null, reasoning: string }} ModelDefaults */
-/** @typedef {{ session: Wire.Session, activity: { context_usage?: Wire.TokenUsage } | null }} StatusEntry */
-/** @typedef {{ entry?: () => StatusEntry | null }} CatalogConfig */
 
 /** @type {CatalogState} */
 const catalog = {
@@ -77,55 +72,21 @@ export function contextWindowOf(modelId) {
   return m && m.context_window ? m.context_window : 0;
 }
 
-// The model a new chat starts with. A named session moves to the same choice.
-/** @type {ModelDefaults} */
-const chatDefaults = { model: null, reasoning: "" };
-
-/** @param {Wire.ModelInfo} model @param {string} reasoning @param {string | null} [sessionId] @returns {void} */
-export function chooseModel(model, reasoning, sessionId = null) {
-  const previous = { ...chatDefaults };
-  chatDefaults.model = model.selector;
-  chatDefaults.reasoning = reasoning;
-  notice.show("model · " + model.name + (reasoning ? " · " + reasoning : ""));
-  // A pane that holds an attachment may have something to say about the model it now sends to.
-  events.emit("model.changed", { model, sessionId });
-  root.invalidate();
-  if (!sessionId) return;
-  // A run in flight keeps the settings it started with, so the move lands on the next turn.
-  client.sessionPatch(sessionId, { model: model.selector, reasoning }).then(() => root.invalidate()).catch((e) => {
-    // The engine refused, so the default must not keep a choice the engine rejected.
-    Object.assign(chatDefaults, previous);
-    notice.show("model · " + errorText(e));
-    root.invalidate();
-  });
+// The cost of the tokens at the catalog prices in dollars per million. An unpriced kind costs nothing.
+/** @param {Wire.TokenUsage} total @param {Wire.ModelCost} cost @returns {number} */
+export function sessionCost(total, cost) {
+  const per = (/** @type {number} */ n, /** @type {number | undefined} */ price) => (n / 1e6) * (price || 0);
+  // The input total holds both cache subsets, so only the remainder pays the full input price.
+  const fresh = Math.max(0, total.input - total.cache_read - total.cache_write);
+  return per(fresh, cost.input) + per(total.output, cost.output) + per(total.cache_read, cost.cache_read) + per(total.cache_write, cost.cache_write);
 }
 
-// Without a choice this run, the newest session names the model and reasoning, so a restart keeps working.
-/** @returns {ModelDefaults} */
-export function defaultModel() {
-  if (chatDefaults.model) return chatDefaults;
-  const s = newestLocalModelSession();
-  if (s && s.model) return { model: s.model, reasoning: s.reasoning };
-  return chatDefaults;
-}
-
-// Round a token count to a short label. The catalog is not in the TUI, so this is not a percentage.
-/** @param {number} n @returns {string} */
-export function tokenLabel(n) {
-  if (n < 1000) return String(n);
-  return (n / 1000).toFixed(n < 10000 ? 1 : 0) + "k";
-}
-
-// The model reading on the right of the status bar. `yuke:internal/context` shows the usage beside it.
-/** @param {CatalogConfig} [cfg] */
-export function modelCatalog(cfg = {}) {
-  return {
+// The catalog registration: the first read and the reload command. The chat shows the model it sends to.
+export const catalogPlugin = {
   name: "catalog",
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      const entry = cfg.entry || (() => null);
-
       // The engine is in this process, so the catalog is readable at once and needs no connect event.
       loadCatalog();
 
@@ -137,17 +98,6 @@ export function modelCatalog(cfg = {}) {
           (e) => notice.show("reload failed · " + errorText(e)),
         ),
       });
-
-      ctx.tui.status.add({
-        side: "right",
-        order: 10,
-        render: () => {
-          const e = entry();
-          if (e && e.session.model) return e.session.model;
-          return defaultModel().model || "";
-        },
-      });
-      });
-},
-  };
-}
+    });
+  },
+};

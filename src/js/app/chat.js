@@ -1,4 +1,4 @@
-// The chat pane, the session it drives, and the pickers that read its transcript.
+// The chat: the sessions and their list, the model a chat sends to, the chat panes, and the pickers that read them.
 import { root, command } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { term } from "yuke:internal/native/term";
@@ -6,9 +6,8 @@ import { ui, Text } from "yuke:internal/ui";
 import { column, child, fixed, grow } from "yuke:internal/layout";
 import { client } from "yuke:internal/client";
 import { notice } from "yuke:internal/notice";
-import { activityMark, feedItem, feedOf } from "yuke:internal/sessions";
-import { activityOf, refreshActivity } from "yuke:internal/activity";
-import { catalogOf, modelOf, reloadCatalog, chooseModel, defaultModel, providerState, providerStateLabel } from "yuke:internal/catalog";
+import { Refresh } from "yuke:internal/refresh";
+import { catalogOf, modelOf, reloadCatalog, providerState, providerStateLabel } from "yuke:internal/catalog";
 import { errorText } from "yuke:internal/format";
 import { ChatView } from "yuke:internal/chat-view";
 import { Context, scopeOf } from "yuke:internal/ext";
@@ -22,7 +21,13 @@ import { attachClipboard } from "yuke:internal/attach";
 /** @import { MessagePart } from "yuke:internal/native/engine" */
 /** @import { InjectContext } from "./types/ext.js" */
 /** @typedef {Wire.CreateSession} CreateSessionDraft */
-/** @import { FeedItem } from "yuke:internal/sessions" */
+/** @typedef {Wire.SessionActivity | { state: { type: "idle" }, queued: number, context_usage: Wire.TokenUsage, pending_compaction: null }} FeedActivity */
+/** @typedef {{ session: Wire.Session, activity: FeedActivity }} FeedItem */
+/** @typedef {{ id: string, title: string, activity: FeedActivity, session: Wire.Session }} SessionRow */
+/** @typedef {{ model: string | null, reasoning: string }} ModelDefaults */
+
+// This module emits these names, so it declares them.
+events.declare(["chat.current.changed", "model.changed", "activity.changed"]);
 
 // `/skill:<name> [arguments]`: the name ends at the first whitespace character, and the trimmed rest is the arguments text.
 /** @param {string} text @returns {{ name: string, args: string } | null} */
@@ -49,6 +54,9 @@ export class Session {
     this.gen = 0;
     /** @type {Set<ChatView>} */
     this.views = new Set();
+    // The live activity while the session holds its pin, read back after each activity fact.
+    /** @type {Wire.SessionActivity | null} */
+    this.activity = null;
     sessions.add(this);
   }
 
@@ -84,7 +92,7 @@ export class Session {
     }
     this.release();
     this.sessionId = id;
-    refreshActivity(id);
+    this.refreshActivity();
     // Message ids repeat across sessions, so the old render must go before the new outline lands.
     for (const view of this.views) view.transcript.setOutline([], null);
     this.reload();
@@ -128,6 +136,44 @@ export class Session {
   modelSelector() {
     const item = this.sessionId ? feedItem(this.sessionId) : null;
     return (item && item.session.model) || defaultModel().model || "";
+  }
+
+  // Send the next input to `model`, and make it the default a new chat takes.
+  /** @param {Wire.ModelInfo} model @param {string} reasoning @returns {void} */
+  setModel(model, reasoning) {
+    const previous = { ...chatDefaults };
+    chatDefaults.model = model.selector;
+    chatDefaults.reasoning = reasoning;
+    notice.show("model · " + model.name + (reasoning ? " · " + reasoning : ""));
+    const sessionId = this.sessionId;
+    // A pane that holds an attachment may have something to say about the model it now sends to.
+    events.emit("model.changed", { model, sessionId });
+    root.invalidate();
+    if (!sessionId) return;
+    // A run in flight keeps the settings it started with, so the move lands on the next turn.
+    client.sessionPatch(sessionId, { model: model.selector, reasoning }).then(() => root.invalidate()).catch((e) => {
+      // The engine refused, so the default must not keep a choice the engine rejected.
+      Object.assign(chatDefaults, previous);
+      notice.show("model · " + errorText(e));
+      root.invalidate();
+    });
+  }
+
+  // Read the activity again. The pin makes it readable, so a read while the session holds none finds nothing.
+  refreshActivity() {
+    const id = this.sessionId;
+    if (!id) return;
+    this.activity = client.sessionActivity(id);
+    events.emit("activity.changed", id, this.activity);
+    root.invalidate();
+  }
+
+  // The session is about to stop holding its id, so the activity leaves with it.
+  forgetActivity() {
+    if (!this.sessionId || this.activity === null) return;
+    this.activity = null;
+    events.emit("activity.changed", this.sessionId, null);
+    root.invalidate();
   }
 
   // Stop the run and keep the queue, so an interrupt never drops a message the user already typed.
@@ -188,6 +234,7 @@ export class Session {
 
   // The engine lost the session. Clear its views back to the placeholder.
   sessionGone() {
+    this.forgetActivity();
     this.sessionId = null;
     for (const view of this.views) view.transcript.setOutline([], null);
     root.invalidate();
@@ -197,10 +244,8 @@ export class Session {
   // Drop the pin. The engine counts pins, so an unrelated open of the same id elsewhere keeps it.
   release() {
     if (!this.sessionId) return;
-    const id = this.sessionId;
-    client.sessionClose(id);
-    // The read keeps the activity while the runtime works and drops it after an eviction.
-    refreshActivity(id);
+    client.sessionClose(this.sessionId);
+    this.forgetActivity();
   }
 
   // A view stops showing this session. The last view releases the pin and takes the session out of the registry.
@@ -219,6 +264,99 @@ export class Session {
 // Every live session, drafts too, so an event reaches each session it names once, however many views show it.
 /** @type {Set<Session>} */
 export const sessions = new Set();
+
+// The session list the finder and the default model read. It keeps no copy of the store, so an index change reads `session.list` again.
+class SessionFeed {
+  constructor() {
+    /** @type {Map<string, FeedItem>} */
+    this.items = new Map();
+    // The list only changes on a read, so a reader caches against this count and not against every frame.
+    this.rev = 0;
+    this._refresh = new Refresh(
+      () => client.sessionList().then((r) => this.seed(r)),
+      () => root.invalidate(),
+    );
+  }
+
+  get loading() {
+    return this._refresh.loading;
+  }
+
+  /** @param {Wire.SessionListResult} listResult @returns {void} */
+  seed(listResult) {
+    this.rev++;
+    this.items.clear();
+    for (const it of listResult.items) this.items.set(it.session.id, it);
+  }
+
+  // Read the list again. A burst shares one read and one follow-up catches changes during it.
+  /** @returns {Promise<void>} */
+  refresh() {
+    return this._refresh.run();
+  }
+
+  /** @returns {SessionRow[]} */
+  rows() {
+    /** @type {SessionRow[]} */
+    const out = [];
+    for (const it of this.items.values()) {
+      const title = it.session.title.trim();
+      out.push({ id: it.session.id, title: title !== "" ? title : "untitled", activity: it.activity, session: it.session });
+    }
+    return out;
+  }
+}
+
+const feed = new SessionFeed();
+
+/** @returns {SessionFeed} */
+export function feedOf() {
+  return feed;
+}
+
+// The listed entry for one session, or null.
+/** @param {string} sessionId @returns {FeedItem | null} */
+export function feedItem(sessionId) {
+  return feed.items.get(sessionId) || null;
+}
+
+/** @type {{ rev: number, session: Wire.Session | null }} */
+let newestLocal = { rev: -1, session: null };
+
+// The newest session that names a model, cached so a status draw costs no scan.
+/** @returns {Wire.Session | null} */
+export function newestLocalModelSession() {
+  if (newestLocal.rev === feed.rev) return newestLocal.session;
+  /** @type {Wire.Session | null} */
+  let best = null;
+  for (const it of feed.items.values()) {
+    const s = it.session;
+    if (!s.model) continue;
+    if (!best || (s.updated_at_ms || 0) > (best.updated_at_ms || 0)) best = s;
+  }
+  newestLocal = { rev: feed.rev, session: best };
+  return best;
+}
+
+// The model a new chat starts with. A named session moves to the same choice.
+/** @type {ModelDefaults} */
+const chatDefaults = { model: null, reasoning: "" };
+
+// Without a choice this run, the newest session names the model and reasoning, so a restart keeps working.
+/** @returns {ModelDefaults} */
+export function defaultModel() {
+  if (chatDefaults.model) return chatDefaults;
+  const s = newestLocalModelSession();
+  if (s && s.model) return { model: s.model, reasoning: s.reasoning };
+  return chatDefaults;
+}
+
+// The session that holds `id`, or null. Views on one id share one session.
+/** @param {string} id @returns {Session | null} */
+function sessionOf(id) {
+  for (const held of sessions) if (held.sessionId === id) return held;
+  return null;
+}
 
 // A chat pane is a view that shows a session. A custom view joins by holding one.
 /** @param {unknown} view @returns {view is ChatView} */
@@ -244,9 +382,8 @@ export function showSession(view, session) {
 // Open session `id` in `view`. A view on the same id already holds it, so the two share one session and one pin.
 /** @param {ChatView} view @param {string} id @returns {void} */
 export function openSession(view, id) {
-  for (const held of sessions) {
-    if (held.sessionId === id) return showSession(view, held);
-  }
+  const held = sessionOf(id);
+  if (held) return showSession(view, held);
   const session = new Session();
   if (session.open(id)) showSession(view, session);
   else sessions.delete(session);
@@ -273,7 +410,6 @@ export function currentChat() {
   return current;
 }
 
-events.declare(["chat.current.changed"]);
 /** @type {string | null} */
 let announced = null;
 
@@ -299,7 +435,7 @@ export function chatEntry() {
   if (!id) return null;
   const item = feedItem(id);
   if (!item) return null;
-  const activity = activityOf(id);
+  const activity = current?.session.activity;
   return activity ? { session: item.session, activity } : item;
 }
 
@@ -317,7 +453,7 @@ function openModelPicker(ctx, query) {
     if (query) {
       const m = models.find((x) => x.selector === query || x.id === query || x.name === query);
       if (m) {
-        if (modelAvailable(m)) chooseModel(m, m.default_reasoning || m.reasoning_levels[0] || "", chat.session.sessionId);
+        if (modelAvailable(m)) chat.session.setModel(m, m.default_reasoning || m.reasoning_levels[0] || "");
       }
       else notice.show("no model named " + query);
       return;
@@ -339,7 +475,7 @@ function openModelPicker(ctx, query) {
         return label ? { text: m.name, right: m.provider + " · " + label, group: "UIDim" } : { text: m.name, right: m.provider };
       },
       onAccept: m => {
-        if (modelAvailable(m)) pickReasoning(ctx, m, chat.session.sessionId);
+        if (modelAvailable(m)) pickReasoning(ctx, m, chat.session);
       },
     });
     ctx.tui.overlay(p.win);
@@ -360,11 +496,11 @@ function modelAvailable(model) {
 }
 
 // A model with at most one level needs no second step, so the pick ends there.
-/** @param {InjectContext} ctx @param {Wire.ModelInfo} model @param {string | null} sessionId @returns {void} */
-function pickReasoning(ctx, model, sessionId) {
+/** @param {InjectContext} ctx @param {Wire.ModelInfo} model @param {Session} session @returns {void} */
+function pickReasoning(ctx, model, session) {
   const levels = model.reasoning_levels;
   if (levels.length < 2) {
-    chooseModel(model, model.default_reasoning || levels[0] || "", sessionId);
+    session.setModel(model, model.default_reasoning || levels[0] || "");
     return;
   }
   const chat = current;
@@ -379,7 +515,7 @@ function pickReasoning(ctx, model, sessionId) {
     key: l => l.id,
     filterText: l => l.id,
     format: l => ({ text: l.id }),
-    onAccept: l => chooseModel(model, l.id, sessionId),
+    onAccept: l => session.setModel(model, l.id),
   });
   ctx.tui.overlay(step.win);
   step.content.list.selectKey(model.default_reasoning || levels[0]);
@@ -388,7 +524,6 @@ function pickReasoning(ctx, model, sessionId) {
 // A session finder reads the sessions, fuzzy-searches them by title, then opens one in the current chat.
 /** @param {InjectContext} ctx @returns {void} */
 function openSessionFinder(ctx) {
-  const feed = feedOf();
   feed.refresh().then(() => {
     const rows = feed.rows().filter((row) => row.session.origin.type !== "child").sort((a, b) => (b.session.updated_at_ms || 0) - (a.session.updated_at_ms || 0));
     if (rows.length === 0) {
@@ -404,8 +539,8 @@ function openSessionFinder(ctx) {
       items: rows,
       key: r => r.id,
       filterText: r => r.title,
-      // An open session reads its live activity; the rest shows what the list reported.
-      format: r => ({ text: r.title, right: activityMark(activityOf(r.id) || r.activity) }),
+      // An open session reads its live activity; the rest shows what the list reported. A working session shows "●".
+      format: r => ({ text: r.title, right: (sessionOf(r.id)?.activity || r.activity).state.type === "idle" ? "" : "●" }),
       onAccept: r => {
         if (current) openSession(current, r.id);
       },
@@ -569,15 +704,36 @@ export const chatPlugin = {
       });
 
       // Views on one session share it, so the event reaches that session once and it updates every view.
+      // The digest names the activity fact and the session reads the projection, so a burst costs one read per frame.
       ctx.on("session.changed", (ev) => {
-        // A quiet digest changes only state outside the transcript.
-        if (ev.kind === "quiet") return;
         for (const session of sessions) {
           if (session.sessionId !== ev.session) continue;
-          if (ev.kind === "gone") session.sessionGone();
-          else if (ev.kind === "active") session.active(/** @type {number} */ (ev.id), ev.part);
-          else session.reload();
+          if (ev.kind === "gone") {
+            session.sessionGone();
+            continue;
+          }
+          // A quiet digest changes only state outside the transcript.
+          if (ev.kind === "active") session.active(/** @type {number} */ (ev.id), ev.part);
+          else if (ev.kind !== "quiet") session.reload();
+          if (ev.facts.indexOf("session.activity_changed") >= 0) session.refreshActivity();
         }
+      });
+
+      // The engine is in this process, so the list is readable at once. An index change reads it again.
+      feed.refresh();
+      ctx.on("index.changed", () => {
+        feed.refresh();
+      });
+
+      // The model the current chat sends to, on the right of the status bar.
+      ctx.tui.status.add({
+        side: "right",
+        order: 10,
+        render: () => {
+          const e = chatEntry();
+          if (e && e.session.model) return e.session.model;
+          return defaultModel().model || "";
+        },
       });
 
       // A closed pane leaves its session, and the last view releases the pin, or the engine never evicts it.

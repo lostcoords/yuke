@@ -671,10 +671,6 @@ events.declare([
   "pane.closed",
   "region.focused",
   "clipboard.copied",
-  "composer.changed",
-  "composer.attached",
-  "model.changed",
-  "activity.changed",
 ]);
 
 // This table maps a host event type to its core event name.

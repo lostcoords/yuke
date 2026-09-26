@@ -3,8 +3,8 @@ import { allChildren } from "yuke:internal/client";
 import { showInfo } from "yuke:internal/info-panel";
 import { chatEntry } from "yuke:internal/chat";
 import { notice } from "yuke:internal/notice";
-import { modelOf, tokenLabel } from "yuke:internal/catalog";
-import { contextBar, money, sessionCost } from "yuke:internal/context";
+import { modelOf, sessionCost } from "yuke:internal/catalog";
+import { contextBar, money, tokenLabel } from "yuke:internal/format";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @typedef {{ name: string, total: Wire.TokenUsage, model: string }} Child */

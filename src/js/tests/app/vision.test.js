@@ -1,10 +1,9 @@
 import { check } from "yuke:internal/test";
 import { events } from "yuke:internal/kernel";
 import { notice } from "yuke:internal/notice";
-import { catalogOf, chooseModel } from "yuke:internal/catalog";
+import { catalogOf } from "yuke:internal/catalog";
 import { client } from "yuke:internal/client";
-import { feedOf } from "yuke:internal/sessions";
-import { currentChat } from "yuke:internal/chat";
+import { currentChat, feedOf } from "yuke:internal/chat";
 // The shell built the first chat pane at boot.
 const chat = currentChat();
 const png = { hash: "a".repeat(64), mime: "image/png", bytes: 2048 };
@@ -18,7 +17,7 @@ const clear = () => { chat.composer.spans = []; chat.composer.text = ""; notice.
 
 // With no attachment the model choice says nothing about images.
 clear();
-chooseModel(blind, "");
+chat.session.setModel(blind, "");
 check("no-images-no-warning", notice.text.indexOf("reads no images") < 0);
 
 // An attachment under a model that reads none warns, and it names the model.
@@ -30,24 +29,24 @@ check("attach-warns", notice.text === "Blind reads no images");
 
 // The same composer under a model that reads images says nothing.
 notice.clear();
-chooseModel(seeing, "");
+chat.session.setModel(seeing, "");
 check("seeing-is-quiet", notice.text.indexOf("reads no images") < 0);
 
 // A catalog entry that says nothing about vision never raises a warning.
 notice.clear();
-chooseModel(quiet, "");
+chat.session.setModel(quiet, "");
 check("unknown-is-quiet", notice.text.indexOf("reads no images") < 0);
 
 // Moving back to a model that reads none warns again, because the attachment is still there.
 notice.clear();
-chooseModel(blind, "");
+chat.session.setModel(blind, "");
 check("switch-warns", notice.text === "Blind reads no images");
 
 // Remove the attachment and the same switch says nothing.
 chat.composer.spans = [];
 notice.clear();
-chooseModel(seeing, "");
-chooseModel(blind, "");
+chat.session.setModel(seeing, "");
+chat.session.setModel(blind, "");
 check("removed-images-are-quiet", notice.text.indexOf("reads no images") < 0);
 
 // An open session checks the model the patch sets, because the feed still names the old model.
@@ -57,7 +56,7 @@ chat.session.sessionId = "s1";
 chat.composer.text = "/a.png";
 attach();
 notice.clear();
-chooseModel(blind, "", "s1");
+chat.session.setModel(blind, "");
 check("open-session-warns", notice.text === "Blind reads no images");
 chat.session.sessionId = null;
 feedOf().items.delete("s1");

@@ -9,6 +9,9 @@ import { errorText } from "yuke:internal/format";
 
 /** @import { Composer } from "yuke:internal/ui" */
 
+// This module emits the name, so it declares it.
+events.declare(["composer.attached"]);
+
 // The engine sniffs the magic bytes, so this list decides one thing only: whether a paste is an attach at all.
 const IMAGE_EXT = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
 
