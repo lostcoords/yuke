@@ -27,8 +27,10 @@ check("normal-again", v.composer._prompt() === "▪ ");
 // The unload drops every mode, so a pane without focus also returns to insert on the next load.
 const side = new ChatView(new Session());
 vim.setMode(side.composer, "normal");
+root._needsDraw = false;
 off.dispose();
-check("unload-restores", v.composer._prompt() === own);
+// An unload can come from a timer, so it asks for the frame that draws the restored glyph and status.
+check("unload-restores", v.composer._prompt() === own && root._needsDraw);
 const again = plugins.use(composerVim);
 check("reload-forgets", services.get("composer-vim").mode(side.composer) === "insert");
 again.dispose();

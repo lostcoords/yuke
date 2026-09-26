@@ -240,6 +240,9 @@ export const composerVim = {
         return m ? m.toUpperCase() : "";
       } });
 
+      // An unload ends every mode and can come from a timer, so it asks for the frame that draws the prompts and the status.
+      ctx.effect(() => () => ctx.tui.root.invalidate());
+
       /** @type {ComposerVim} */
       const service = { mode, setMode };
       ctx.provide("composer-vim", service);

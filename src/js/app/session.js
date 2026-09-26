@@ -562,9 +562,11 @@ export const sessionsPlugin = {
         }
         if (isSessionPane(view)) view.session.leave(view);
       });
+      // Nothing reads the activity once this block leaves, so a stale "working" must not keep the indicator ticking.
       ctx.effect(() => () => {
         current = null;
         notifyCurrent();
+        for (const session of sessions) session.forgetActivity();
       });
 
       // Views on one session share it, so the event reaches that session once and it updates every view.

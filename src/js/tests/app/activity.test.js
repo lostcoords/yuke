@@ -2,6 +2,7 @@ import { check, listSessions } from "yuke:internal/test";
 import { root } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { client } from "yuke:internal/client";
+import { plugins } from "yuke:internal/ext";
 import { currentEntry, openSession, currentPane } from "yuke:internal/session";
 // The shell built the first chat pane at boot.
 const chat = currentPane();
@@ -39,3 +40,8 @@ check("events", seen.join(",") === "s1:streaming,s1:idle,s1:null,s1:streaming,s1
 chat.session.sessionId = "s1";
 chat.session.interrupt();
 check("interrupt-keeps-queue", cancels.length === 1 && cancels[0][0] === "s1" && cancels[0][1] === undefined);
+// Nothing reads the activity once the session layer unloads, so it forgets every live activity and nothing reads as working.
+events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
+const working = chat.session.activity === streaming;
+plugins.dispose("sessions");
+check("unload-forgets-activity", working && chat.session.activity === null && seen[seen.length - 1] === "s1:null");
