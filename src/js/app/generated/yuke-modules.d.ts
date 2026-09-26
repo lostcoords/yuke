@@ -3,5 +3,6 @@
 
 declare module "yuke:chat" { export {}; }
 declare module "yuke:plugins" { export {}; }
+declare module "yuke:session" { export {}; }
 declare module "yuke:ui" { export {}; }
 declare module "yuke" { export {}; }

@@ -1,4 +1,4 @@
-// Bundle the plugin API into two declaration files: `yuke-modules.d.ts` names the four public modules, and `yuke.d.ts` fills them.
+// Bundle the plugin API into two declaration files: `yuke-modules.d.ts` names the public modules, and `yuke.d.ts` fills them.
 // `yuke.d.ts` is a module, so its internal modules are private namespaces that plugin code cannot import.
 // usage: node tools/typesgen/main.ts <tsc-declaration-dir> <output-dir>
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";

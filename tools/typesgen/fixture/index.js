@@ -2,6 +2,7 @@
 import { defineConfig, plugins, fs, exec, events } from "yuke";
 import { ui } from "yuke:ui";
 import { labels } from "yuke:chat";
+import { currentSession } from "yuke:session";
 import { agents } from "yuke:plugins";
 // @ts-expect-error Internal modules stay private; the loader rejects them too.
 import { scopeOf } from "yuke:internal/ext";
@@ -25,6 +26,7 @@ fs.readFile("x", { workspaceRoot: "/tmp" }).then((text) => text.toUpperCase());
 exec("true", { workspaceRoot: "/tmp" }).then((result) => result.code);
 new Promise((resolve) => setTimeout(resolve, 1));
 labels.role;
+currentSession()?.sessionId;
 // @ts-expect-error A merged event checks its arguments.
 events.emit("demo:ping", "one");
 // @ts-expect-error The root is an option, not a positional argument.

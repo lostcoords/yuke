@@ -22,6 +22,16 @@ export import mcp = $mcp.mcp;
 export import shell = $shell.shell;
 }
 
+declare module "yuke:session" {
+export import Session = $session.Session;
+export import sessions = $session.sessions;
+export import currentPane = $session.currentPane;
+export import currentSession = $session.currentSession;
+export import currentEntry = $session.currentEntry;
+export import showSession = $session.showSession;
+export import openSession = $session.openSession;
+}
+
 declare module "yuke:ui" {
 export import View = $core.View;
 export import text = $core.text;
