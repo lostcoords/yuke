@@ -78,5 +78,7 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   let threw = false;
   try { command.add("test:norun", /** @type {any} */ ({ desc: "d" })); } catch (e) { threw = e instanceof TypeError; }
   check("slash-derivation", slashOf("test:hello") === "hello" && slashOf("test:named") === "other" && threw && !command.map["test:norun"]);
+  // Only a listed command reaches the slash menu, so a slash word without `desc` is refused rather than never answered.
+  check("slash-needs-desc", throws(() => command.add("test:hidden", /** @type {any} */ ({ slash: true, run: () => {} }))) && !command.map["test:hidden"]);
   for (const off of offs) off();
 }

@@ -7,16 +7,19 @@ plugins.use(tuiPlugin);
 plugins.use(commandUi());
 
 // The palette shows the slash word, or the name, so the list sorts by that word and a prefix sorts before a longer word.
+// A bare name sorts by its first character against "/", and a name that starts with "/" sorts among the slash words.
 const offs = [
   command.add("test:shown", { desc: "the last one", slash: "opencode-responses", run: () => {} }),
   command.add("test:plumbing", { run: () => {} }),
   command.add("test:first", { desc: "the first one", slash: "minimax", run: () => {} }),
   command.add("test:prefix", { desc: "the middle one", slash: "opencode", run: () => {} }),
+  command.add("test:bare", { desc: "no slash word", run: () => {} }),
+  command.add("/test-odd", { desc: "a name like a slash word", run: () => {} }),
 ];
 const off = () => { for (const o of offs) o(); };
 const listed = command.list().map((c) => c.name);
 check("list-skips-plumbing", listed.indexOf("test:plumbing") < 0);
-equal(listed.filter(name => name.startsWith("test:")).join(","), "test:first,test:prefix,test:shown");
+equal(listed.filter(name => name.startsWith("test:") || name === "/test-odd").join(","), "test:first,test:prefix,test:shown,/test-odd,test:bare");
 
 command.perform("ui:palette");
 const p = root.overlays[root.overlays.length - 1].content;

@@ -139,6 +139,8 @@ export const command = {
     if (typeof name !== "string" || name === "") throw new TypeError("a command needs a name");
     if (typeof spec?.run !== "function") throw new TypeError("command " + name + " needs a run function");
     if (spec.when != null && typeof spec.when !== "function") throw new TypeError("command " + name + ": `when` must be a function");
+    // The slash menu lists only described commands, so a slash word without `desc` would never answer.
+    if (spec.slash && !spec.desc) throw new TypeError("command " + name + ": a slash word needs `desc`");
     // `slash: true` takes the name after the owner prefix, so "session:interrupt" answers "/interrupt".
     const slash = spec.slash === true ? name.slice(name.lastIndexOf(":") + 1) : spec.slash || null;
     /** @type {CommandEntry} */
@@ -171,7 +173,7 @@ export const command = {
     return isAvailable(this.map[name]);
   },
 
-  // List the available commands with metadata in title order. A keymap target has none, so no palette lists it.
+  // List the available commands that have a description, in palette order. A keymap target has none, so no palette lists it.
   list() {
     /** @type {CommandListing[]} */
     const out = [];
@@ -181,12 +183,23 @@ export const command = {
       const listed = list.find((entry) => entry.desc);
       if (listed && isAvailable(list)) out.push({ name, desc: /** @type {string} */ (listed.desc), slash: listed.slash, args: listed.args });
     }
-    // The palette shows the slash word, or the name, so the list sorts by that word in code-unit order: localeCompare traps in ReleaseSafe QuickJS.
-    /** @param {CommandListing} c */
-    const word = (c) => (c.slash ? "/" + c.slash : c.name);
-    return out.sort((a, b) => (word(a) < word(b) ? -1 : word(a) > word(b) ? 1 : 0));
+    return out.sort(byWord);
   },
 };
+
+// Sort by the word the palette shows, "/" + slash or the name, in code-unit order without building it: localeCompare traps in QuickJS.
+/** @param {CommandListing} a @param {CommandListing} b @returns {number} */
+function byWord(a, b) {
+  let x = a.slash ?? a.name, y = b.slash ?? b.name;
+  if ((a.slash === null) !== (b.slash === null)) {
+    // Against "/" + slash, a bare name's first character decides; a name that starts with "/" compares its rest.
+    const c = (a.slash === null ? x : y).charCodeAt(0);
+    if (c !== 47) return (c > 47) === (a.slash !== null) ? -1 : 1;
+    if (a.slash === null) x = x.slice(1); else y = y.slice(1);
+  }
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
 
 // Report whether an entry would run, without the allocation a selection needs.
 /** @param {CommandEntry[] | undefined} list @returns {boolean} */
