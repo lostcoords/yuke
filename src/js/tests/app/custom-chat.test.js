@@ -25,7 +25,7 @@ class Plain {
     this.session = session;
     this.transcript = new Transcript({});
     this.composer = new Composer({});
-    session.views.push(this);
+    session.join(this);
   }
   layout() {}
   draw() {}

@@ -48,14 +48,13 @@ export class Session {
     this.sessionId = null;
     this.creating = false;
     this.gen = 0;
-    // Every pane that shows this session. A pane joins by pushing itself once and leaves through `leave`.
+    // Every pane that shows this session. A pane enters through `join` and leaves through `leave`.
     // An array, so a stream delta walks it by index and allocates no iterator.
     /** @type {SessionPane[]} */
     this.views = [];
     // The live activity while the session holds its pin, read back after each activity fact.
     /** @type {Wire.SessionActivity | null} */
     this.activity = null;
-    sessions.add(this);
   }
 
   // Pin `id` and show it in every view. The engine counts pins, so one open owes exactly one release. False when the engine refuses.
@@ -233,23 +232,33 @@ export class Session {
     this.forgetActivity();
   }
 
-  // A view stops showing this session. The last view releases the pin and takes the session out of the registry.
+  // A view starts to show this session. The first view puts the session in `sessions`, so a session nobody shows is never there.
+  /** @param {SessionPane} view */
+  join(view) {
+    if (this.views.indexOf(view) >= 0) throw new Error("session: a view joins once");
+    if (this.views.length === 0) sessions.push(this);
+    this.views.push(view);
+  }
+
+  // A view stops showing this session. The last view releases the pin and takes the session out of `sessions`.
   /** @param {SessionPane} view */
   leave(view) {
     const at = this.views.indexOf(view);
-    if (at >= 0) this.views.splice(at, 1);
+    if (at < 0) throw new Error("session: a view leaves only after it joins");
+    this.views.splice(at, 1);
     if (this.views.length !== 0) return;
     this.gen++;
     this.creating = false;
     this.release();
     this.sessionId = null;
-    sessions.delete(this);
+    sessions.splice(sessions.indexOf(this), 1);
   }
 }
 
-// Every live session, drafts too, so an event reaches each session it names once, however many views show it.
-/** @type {Set<Session>} */
-export const sessions = new Set();
+// Every session that a view shows, drafts too, so an event reaches each session it names once, however many views show it.
+// An array, so a stream delta and a frame walk it by index and allocate no iterator.
+/** @type {Session[]} */
+export const sessions = [];
 
 // The session list the finder and the default model read. The first reader starts one `session.list` read, so nothing reads
 // while nobody looks. After that a summary change reads its one entry, and only an overflow marks the whole list stale.
@@ -350,7 +359,10 @@ export function defaultModel() {
 // The session that holds `id`, or null. Views on one id share one session.
 /** @param {string} id @returns {Session | null} */
 function sessionOf(id) {
-  for (const held of sessions) if (held.sessionId === id) return held;
+  for (let i = 0; i < sessions.length; i++) {
+    const held = /** @type {Session} */ (sessions[i]);
+    if (held.sessionId === id) return held;
+  }
   return null;
 }
 
@@ -366,7 +378,7 @@ export function showSession(view, session) {
   if (view.session === session) return;
   view.session.leave(view);
   view.session = session;
-  session.views.push(view);
+  session.join(view);
   // Message ids repeat across sessions, so the old render must go before the new outline lands.
   // Only the joining view loads it, so a view already on the session keeps its selection.
   view.transcript.setOutline([], null);
@@ -382,7 +394,6 @@ export function openSession(view, id) {
   if (held) return showSession(view, held);
   const session = new Session();
   if (session.open(id)) showSession(view, session);
-  else sessions.delete(session);
 }
 
 // The current pane: the pane that holds a session and had focus last, while it stays in the tree. Session commands,
@@ -577,7 +588,8 @@ export const sessionsPlugin = {
         if (ev.kind === "gone") {
           if (feed.items.delete(ev.session)) feed.rev++;
         } else if (ev.facts.indexOf("session.summary_changed") >= 0) feed.refreshItem(ev.session);
-        for (const session of sessions) {
+        for (let i = 0; i < sessions.length; i++) {
+          const session = /** @type {Session} */ (sessions[i]);
           if (session.sessionId !== ev.session) continue;
           if (ev.kind === "gone") {
             session.sessionGone();

@@ -20,7 +20,7 @@ check("first-is-focused", currentPane() === a);
 const b = new ChatView(new Session());
 root.split("row", b);
 check("split-focuses-new", root.active === b && currentPane() === b);
-check("each-pane-has-its-own-session", a.session !== b.session && sessions.has(a.session) && sessions.has(b.session));
+check("each-pane-has-its-own-session", a.session !== b.session && sessions.includes(a.session) && sessions.includes(b.session));
 
 // Each pane holds its own session, so one pane cannot move the other.
 a.session.sessionId = "s1";
@@ -50,7 +50,7 @@ b.transcript.setActive = rb;
 const shared = a.session;
 root.focusView(b);
 root.close();
-check("close-keeps-a-shown-session", sessions.has(shared) && shared.views.length === 1 && shared.views.includes(a));
+check("close-keeps-a-shown-session", sessions.includes(shared) && shared.views.length === 1 && shared.views.includes(a));
 check("close-leaves-the-other", currentPane() === a);
 
 // An open of a session another view shows shares it, so the engine pins it once; the view already there keeps its selection.
@@ -69,25 +69,25 @@ const c1 = new ChatView(new Session());
 const c2 = new ChatView(new Session());
 c1.session.sessionId = "s9";
 root.setRoot(Node.leaf(c1));
-check("setRoot-drops-the-pane-it-replaced", !sessions.has(shared));
-const held = sessions.size;
+check("setRoot-drops-the-pane-it-replaced", !sessions.includes(shared));
+const held = sessions.length;
 root.setRoot(Node.leaf(c2));
-check("setRoot-drops-the-old-pane", sessions.size === held - 1 && !sessions.has(c1.session));
-check("setRoot-keeps-the-new-pane", sessions.has(c2.session));
+check("setRoot-drops-the-old-pane", sessions.length === held - 1 && !sessions.includes(c1.session));
+check("setRoot-keeps-the-new-pane", sessions.includes(c2.session));
 
 // A pane that survives the swap must not be released, so only the dropped views go.
 const stay = new ChatView(new Session());
 const drop = new ChatView(new Session());
 root.setRoot(Node.branch("row", Node.leaf(stay), Node.leaf(drop), 0.5));
 root.setRoot(Node.leaf(stay));
-check("setRoot-releases-only-the-dropped", sessions.has(stay.session) && !sessions.has(drop.session));
+check("setRoot-releases-only-the-dropped", sessions.includes(stay.session) && !sessions.includes(drop.session));
 
 // A split with no active leaf must not leave its new chat in the registry.
 root.setRoot(null);
-const orphans = sessions.size;
+const orphans = sessions.length;
 const tried = new ChatView(new Session());
 if (!root.split("row", tried)) tried.session.leave(tried);
-check("failed-split-keeps-no-orphan", sessions.size === orphans);
+check("failed-split-keeps-no-orphan", sessions.length === orphans);
 
 // A focused pane that is not a chat leaves the current chat in place, as a sidebar leaves the previous window.
 const keep = new ChatView(new Session());

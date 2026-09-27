@@ -68,8 +68,6 @@ const beforeClose = seen.length;
 root.close();
 equal(currentSessionId(), "background");
 equal(seen.length, beforeClose);
-b.session.leave(b);
-equal(seen.length, beforeClose);
 
 // A listener can replace the session after the first open has completed.
 const stop = observer.on("session.current.changed", () => {
@@ -89,6 +87,6 @@ openSession(c, "replacement");
 root.setRoot(Node.leaf(c));
 equal(currentSessionId(), "replacement");
 equal(seen.length, beforeDispose);
-c.session.leave(c);
-equal(currentSessionId(), null);
+// The close leaves the session, and the last view drops its id.
 root.setRoot(null);
+equal(currentSessionId(), null);

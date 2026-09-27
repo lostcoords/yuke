@@ -4,6 +4,7 @@ import { client } from "yuke:internal/client";
 import { agentsLabel, elapsedLabel } from "yuke:internal/format";
 
 /** @import { Context } from "yuke:internal/ext" */
+/** @import { Session } from "yuke:internal/session" */
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 // The spinner steps every 100 ms. The frame loop asks for the period each frame, so one object answers every time.
@@ -63,7 +64,8 @@ export function indicatorLine(sessionId, activity, now, childRuns = 0) {
 /** @returns {boolean} */
 function anyWorking() {
   if (client.load().childRuns > 0) return true;
-  for (const session of sessions) if (isWorking(session.activity)) return true;
+  // The frame loop asks this every frame, so the walk is by index and allocates no iterator.
+  for (let i = 0; i < sessions.length; i++) if (isWorking(/** @type {Session} */ (sessions[i]).activity)) return true;
   return false;
 }
 

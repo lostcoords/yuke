@@ -16,9 +16,11 @@ plugins.use(tuiPlugin);
 plugins.use(sessionsPlugin);
 
 // A pane that is no chat pane: a transcript alone. It holds a session, so the session layer serves it.
+// A session that no view shows is not listed, so no event or frame walks it.
+check("unshown-session-unlisted", !sessions.includes(new Session()));
 const session = new Session();
 const pane = { name: "reader", rect: { x: 0, y: 0, w: 0, h: 0 }, session, transcript: new Transcript({}), layout() {}, draw() {} };
-session.views.push(pane);
+session.join(pane);
 root.setRoot(Node.leaf(pane));
 check("focus-makes-current", currentPane() === pane && currentSession() === session);
 
@@ -30,4 +32,4 @@ check("stream-reaches-pane", actives === 1);
 
 // The close takes the pane out of the tree, so the session loses its last view and releases the pin.
 root.setRoot(null);
-check("close-releases-pin", closed.join(",") === "s1" && currentPane() === null && !sessions.has(pane.session));
+check("close-releases-pin", closed.join(",") === "s1" && currentPane() === null && !sessions.includes(pane.session));

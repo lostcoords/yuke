@@ -76,17 +76,17 @@ root.popOverlay();
 
 // The split command builds a real chat pane, and a tree with no leaf keeps no orphan.
 {
-  const before = sessions.size;
+  const before = sessions.length;
   command.perform("window:split-right");
-  if (sessions.size !== before + 1) fail.push("split-makes-a-chat");
+  if (sessions.length !== before + 1) fail.push("split-makes-a-chat");
   if (currentPane() !== root.active) fail.push("split-focuses-the-new-chat");
   command.perform("window:close");
-  if (sessions.size !== before) fail.push("close-releases-the-chat");
+  if (sessions.length !== before) fail.push("close-releases-the-chat");
   const saved = root.root_node;
   root.setRoot(null);
-  const empty = sessions.size;
+  const empty = sessions.length;
   command.perform("window:split-right");
-  if (sessions.size !== empty) fail.push("failed-split-keeps-no-orphan");
+  if (sessions.length !== empty) fail.push("failed-split-keeps-no-orphan");
   root.setRoot(saved);
 }
 // The shell's own plugin owns the pending-key reading, so an unload takes it away.

@@ -29,7 +29,7 @@ export class ChatView {
   constructor(session) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
     this.session = session;
-    session.views.push(this);
+    session.join(this);
     // The transcript reads parts straight from the engine for the session the view shows now; a draft has none.
     this.transcript = new Transcript({
       partsOf: (id) => {

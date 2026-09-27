@@ -254,6 +254,8 @@ export class ChatView {
         visible: boolean;
     } | null;
 }
+/** @returns {ChatView | null} */
+export function focusedChat(): ChatView | null;
 }
 
 declare namespace $chat {
@@ -1332,10 +1334,12 @@ export class Session {
     sessionGone(): void;
     release(): void;
     /** @param {SessionPane} view */
+    join(view: SessionPane): void;
+    /** @param {SessionPane} view */
     leave(view: SessionPane): void;
 }
-/** @type {Set<Session>} */
-export const sessions: Set<Session>;
+/** @type {Session[]} */
+export const sessions: Session[];
 /** @returns {ModelDefaults} */
 export function defaultModel(): ModelDefaults;
 /** @param {SessionPane} view @param {Session} session @returns {void} */
@@ -1448,8 +1452,8 @@ export function caretCol(w: number, prompt: string, before: string): number;
 }
 
 declare namespace $transcript_vim {
-import ChatView = $chat_view.ChatView;
 import Context = $ext.Context;
+import ChatView = $chat_view.ChatView;
 export type Transcript = ChatView["transcript"];
 export type Position = {
     id: number;

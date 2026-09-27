@@ -65,7 +65,7 @@ Use the smallest level that does the job:
 1. Advice. Change one method of `ChatView` or `Session` with `ctx.advise`.
 2. Events. Answer `chat.rule`, `chat.strip`, `chat.cursor`, or `chat.press`. Name tool calls with `ctx.chat.labels`.
 3. Your own pane. Replace the `chat` service. It provides `create(session)` and `labels(entries)`.
-   A pane holds a `Session`, a `Transcript`, and a `Composer`, and it adds itself to `session.views`.
+   A pane holds a `Session`, a `Transcript`, and a `Composer`. It calls `session.join(this)` once, and the session layer calls `leave` when the pane closes.
    The bundled `chat` plugin also owns `chat:new`, `chat:paste-image`, and the vision warning. A replacement brings its own.
 4. Your own window layout. Replace the `shell` plugin.
 
