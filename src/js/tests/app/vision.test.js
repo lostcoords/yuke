@@ -63,6 +63,8 @@ chat.composer.text = "/a.png";
 attach();
 notice.clear();
 chat.session.setModel(blind, "");
+// An open session takes the model when the engine accepts the patch, so the warning follows the answer.
+for (let i = 0; i < 4; i++) await Promise.resolve();
 check("open-session-warns", notice.text === "Blind reads no images");
 chat.session.sessionId = null;
 await listSessions([]);

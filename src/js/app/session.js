@@ -122,21 +122,22 @@ export class Session {
   }
 
   // Send the next input to `model`, and make it the default a new chat takes.
+  // An open session takes the choice only when the engine accepts the patch, so a refused choice changes nothing.
   /** @param {Wire.ModelInfo} model @param {string} reasoning @returns {void} */
   setModel(model, reasoning) {
-    const previous = { ...modelDefaults };
-    modelDefaults.model = model.selector;
-    modelDefaults.reasoning = reasoning;
     notice.show("model · " + model.name + (reasoning ? " · " + reasoning : ""));
     const sessionId = this.sessionId;
-    // A pane that holds an attachment may have something to say about the model it now sends to.
-    events.emit("model.changed", { model, sessionId });
+    const choose = () => {
+      modelDefaults.model = model.selector;
+      modelDefaults.reasoning = reasoning;
+      // A pane that holds an attachment may have something to say about the model it now sends to.
+      events.emit("model.changed", { model, sessionId });
+      root.invalidate();
+    };
+    if (!sessionId) return choose();
     root.invalidate();
-    if (!sessionId) return;
     // A run in flight keeps the settings it started with, so the move lands on the next turn.
-    client.sessionPatch(sessionId, { model: model.selector, reasoning }).then(() => root.invalidate()).catch((e) => {
-      // The engine refused, so the default must not keep a choice the engine rejected.
-      Object.assign(modelDefaults, previous);
+    client.sessionPatch(sessionId, { model: model.selector, reasoning }).then(choose, (e) => {
       notice.show("model · " + errorText(e));
       root.invalidate();
     });

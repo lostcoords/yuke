@@ -5,7 +5,8 @@ import { notice, noticePlugin } from "yuke:internal/notice";
 import { catalogOf, contextWindowOf } from "yuke:internal/catalog";
 import { tokenLabel } from "yuke:internal/format";
 import { chatPlugin } from "yuke:internal/chat";
-import { currentPane, sessionsPlugin } from "yuke:internal/session";
+import { client } from "yuke:internal/client";
+import { currentPane, defaultModel, sessionsPlugin } from "yuke:internal/session";
 import { shell } from "yuke:internal/shell";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
@@ -28,6 +29,19 @@ check("default-model-shows", status.side("right").indexOf("m-1") >= 0);
 await listSessions([{ session: { id: "s", model: "session-model" }, activity: null }]);
 chat.session.sessionId = "s";
 check("session-model-wins", status.side("right").indexOf("session-model") >= 0);
+
+// A refused patch never changes the default, so it cannot undo a later choice the engine accepted.
+/** @type {(error: Error) => void} */
+let refuse = () => {};
+client.sessionPatch = (_id, patch) => patch.model === "m-a" ? new Promise((_, reject) => { refuse = reject; }) : Promise.resolve({});
+chat.session.setModel({ selector: "m-a", name: "m-a" }, "");
+chat.session.setModel({ selector: "m-b", name: "m-b" }, "");
+for (let i = 0; i < 4; i++) await Promise.resolve();
+check("accepted-choice", defaultModel().model === "m-b");
+refuse(new Error("refused"));
+for (let i = 0; i < 4; i++) await Promise.resolve();
+check("refusal-shown", notice.text === "model · refused");
+check("refused-patch-keeps-later-choice", defaultModel().model === "m-b");
 chat.session.sessionId = null;
 await listSessions([]);
 
