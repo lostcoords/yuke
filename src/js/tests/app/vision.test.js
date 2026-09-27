@@ -4,6 +4,7 @@ import { notice } from "yuke:internal/notice";
 import { catalogOf } from "yuke:internal/catalog";
 import { client } from "yuke:internal/client";
 import { currentPane } from "yuke:internal/session";
+import { Composer } from "yuke:internal/ui";
 // The shell built the first chat pane at boot.
 const chat = currentPane();
 const png = { hash: "a".repeat(64), mime: "image/png", bytes: 2048 };
@@ -26,6 +27,11 @@ chat.composer.text = "/a.png";
 attach();
 events.emit("composer.attached", chat.composer);
 check("attach-warns", notice.text === "Blind reads no images");
+
+// An attachment in another pane says nothing about the images this pane holds.
+notice.clear();
+events.emit("composer.attached", new Composer({}));
+check("other-attach-is-quiet", notice.text === "");
 
 // The same composer under a model that reads images says nothing.
 notice.clear();

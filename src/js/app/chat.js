@@ -50,8 +50,8 @@ export const chatPlugin = {
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
-      // The composer owns its own attachments, so each pane answers for the model it sends to.
-      ctx.on("composer.attached", () => { for (const session of sessions) for (const view of session.views) if (view instanceof ChatView) checkVision(view); });
+      // Only the pane whose composer took the attachment warns; another pane's images did not change.
+      ctx.on("composer.attached", (composer) => { for (const session of sessions) for (const view of session.views) if (view instanceof ChatView && view.composer === composer) checkVision(view); });
       // The feed reads the patch back later, so a pane on the patched session checks the new model directly.
       ctx.on("model.changed", (ev) => {
         for (const session of sessions) {
