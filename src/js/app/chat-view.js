@@ -1,6 +1,6 @@
 // Own the chat layout, composer, and empty-chat hint.
 import { term } from "yuke:internal/native/term";
-import { text, claimView, contains, copy } from "yuke:internal/core";
+import { root, text, claimView, contains, copy } from "yuke:internal/core";
 import { config, events } from "yuke:internal/kernel";
 import { clip } from "yuke:internal/text-input";
 import { Composer, Text } from "yuke:internal/ui";
@@ -180,6 +180,12 @@ export class ChatView {
     if (supplied) return supplied;
     return this.focus === "composer" ? this.composer.cursor() : null;
   }
+}
+
+// The focused pane when it is a chat pane: the composer and transcript regions exist only there.
+/** @returns {ChatView | null} */
+export function focusedChat() {
+  return root.active instanceof ChatView ? root.active : null;
 }
 
 /** @param {Rect} rect @param {number} x @param {number} y @param {number} w @param {number} h @returns {void} */

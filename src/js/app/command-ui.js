@@ -3,9 +3,10 @@ import { command, keymap, root } from "yuke:internal/core";
 import { ui } from "yuke:internal/ui";
 import { fuzzyRank } from "yuke:internal/fzy";
 import { Session, soleText } from "yuke:internal/session";
-import { ChatView } from "yuke:internal/chat-view";
+import { focusedChat } from "yuke:internal/chat-view";
 
 /** @import { Context } from "yuke:internal/ext" */
+/** @import { ChatView } from "yuke:internal/chat-view" */
 /** @import { Composer, Picker, Window } from "yuke:internal/ui" */
 /** @import { CommandListing } from "./types/core.js" */
 /** @import { Border, ListItem, PickOptions } from "./types/ui.js" */
@@ -13,12 +14,6 @@ import { ChatView } from "yuke:internal/chat-view";
 /** @typedef {PickOptions<Entry>["keymap"]} FloatKeymap */
 /** @typedef {{ rows?: number, border?: Border, format?: (entry: Entry, column: number) => string | ListItem, filterText?: (entry: Entry) => string, keymap?: FloatKeymap }} CommandUiConfig */
 /** @typedef {{ word: string, rest: string, complete: boolean }} SlashLine */
-
-// The focused pane when it is a chat pane: the composer and transcript regions this module reads exist only there.
-/** @returns {ChatView | null} */
-function focusedChat() {
-  return root.active instanceof ChatView ? root.active : null;
-}
 
 /** @returns {Entry[]} */
 function entries() {

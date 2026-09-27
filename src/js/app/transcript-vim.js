@@ -3,21 +3,16 @@ import { term } from "yuke:internal/native/term";
 import { root, copy } from "yuke:internal/core";
 import { caretAtCol, prevGrapheme, nextGrapheme, nextWordStart, prevWordStart, nextWordEnd } from "yuke:internal/text-input";
 import { register } from "yuke:internal/vim";
-import { ChatView } from "yuke:internal/chat-view";
+import { focusedChat } from "yuke:internal/chat-view";
 
 /** @import { Context } from "yuke:internal/ext" */
+/** @import { ChatView } from "yuke:internal/chat-view" */
 /** @typedef {ChatView["transcript"]} Transcript */
 /** @typedef {{ id: number, row: number, col: number }} Position */
 /** @typedef {{ cursor: Position | null, src: number, anchor: Position | null, visual: boolean, goal: number | null }} VimState */
 /** @typedef {{ x: number, y: number, visible: boolean }} Cursor */
 /** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
 /** @typedef {{ kind: string, at: number, end: number }} Block */
-
-// The focused pane when it is a chat pane: the composer and transcript regions this module reads exist only there.
-/** @returns {ChatView | null} */
-function focusedChat() {
-  return root.active instanceof ChatView ? root.active : null;
-}
 
 // The pane owns the region focus, so every binding sits on the atom the pane reports.
 const TRANSCRIPT = "transcript";
