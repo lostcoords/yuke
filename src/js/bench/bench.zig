@@ -594,15 +594,15 @@ test "native part refresh validates the draft cursor across replacement and remo
     try harness.host.evalModule(
         \\import { client } from "yuke:internal/client";
         \\import { equal } from "yuke:internal/test";
-        \\const fresh = client.sessionPart(globalThis.PROJECTION_SESSION, 2, 0, globalThis.previousPart);
-        \\equal(fresh.text, "x".repeat(globalThis.STREAM_NATIVE_INITIAL_BYTES + 1));
-        \\equal(globalThis.previousPart.text, globalThis.PROJECTION_TEXT);
+        \\const fresh = client.sessionPart(globalThis.PROJECTION_SESSION, 2, 0, globalThis.previousCursor);
+        \\equal(fresh.tail, false);
+        \\equal(fresh.part.text, "x".repeat(globalThis.STREAM_NATIVE_INITIAL_BYTES + 1));
     , "replacement.js");
     session.draft.?.deinit();
     session.draft = null;
     try harness.host.evalModule(
         \\import { client } from "yuke:internal/client";
         \\import { equal } from "yuke:internal/test";
-        \\equal(client.sessionPart(globalThis.PROJECTION_SESSION, 2, 0, globalThis.previousPart), null);
+        \\equal(client.sessionPart(globalThis.PROJECTION_SESSION, 2, 0, globalThis.previousCursor), null);
     , "removal.js");
 }

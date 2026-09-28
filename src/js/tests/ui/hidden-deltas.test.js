@@ -3,7 +3,7 @@ import { root } from "yuke:internal/core";
 import { Transcript } from "yuke:internal/transcript";
 let part = { type: "tool", id: 7, name: "exec", arguments: "{}", state: { type: "completed", duration_ms: 1, output: "old" } };
 const copy = (p) => JSON.parse(JSON.stringify(p));
-const t = new Transcript({ partsOf: () => [copy(part)], partOf: () => copy(part) });
+const t = new Transcript({ partsOf: () => [copy(part)], partOf: () => ({ part: copy(part) }) });
 t.setOutline([], { id: 1, type: "assistant" });
 const rows = () => t.rows(80, 0, t.rowCount(80));
 const text = () => rows().map((r) => r.text || (r.segments || []).map((s) => s.text).join("")).join("\n");

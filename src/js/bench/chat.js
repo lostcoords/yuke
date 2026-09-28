@@ -37,7 +37,7 @@ function start(name) {
   chat.transcript.pager.toBottom();
   root.flush();
   if (phase === "chat_stream") {
-    const part = client.sessionPart(globalThis.PROJECTION_SESSION, DRAFT_ID, PART_ID);
+    const part = client.sessionPart(globalThis.PROJECTION_SESSION, DRAFT_ID, PART_ID)?.part;
     if (!part || part.type !== "text") throw new Error("chat stream part missing");
     initial = part.text;
   }

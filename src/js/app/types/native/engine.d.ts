@@ -27,6 +27,12 @@ declare module "yuke:internal/native/engine" {
   /** One part of a message. A user content part has no wire id, so its position is the id. */
   export type MessagePart = Wire.AssistantPart | (Wire.ContentPart & { id: number });
 
+  /** The end of a held text: the engine text generation and its UTF-8 length. A read after it returns only the new text. */
+  export type TextCursor = { generation: number; bytes: number };
+
+  /** One read of a part. With `tail`, `part.text` is only the text after the cursor of the read, and the holder appends it. `cursor` is the end of the whole text, for the next read. */
+  export type PartRead = { part: MessagePart; cursor?: TextCursor | null; tail?: boolean };
+
   /** One part as the read surface returns it: the wire part plus every value the projection cut. */
   export type ViewPart = MessagePart & { cut?: readonly ViewCut[]; text_generation?: number; text_bytes?: number; text_offset?: number };
 

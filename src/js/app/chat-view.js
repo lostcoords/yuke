@@ -36,9 +36,9 @@ export class ChatView {
         const sid = this.session.sessionId;
         return sid ? client.sessionParts(sid, id) : [];
       },
-      partOf: (id, partId, previous) => {
+      partOf: (id, partId, cursor) => {
         const sid = this.session.sessionId;
-        return sid ? client.sessionPart(sid, id, partId, previous) : null;
+        return sid ? client.sessionPart(sid, id, partId, cursor) : null;
       },
       partTextPage: (id, partId, field, offset, limit) => {
         const sid = this.session.sessionId;

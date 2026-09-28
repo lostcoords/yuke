@@ -23,7 +23,10 @@ check("joined-messages", aRows.length > 0 && rowText(aRows[aRows.length - 1]) !=
 check("text-breaks", tools.length === 4 && tools[3].marker === "  └─" && rows.some((r) => rowText(r).indexOf("visible answer") >= 0));
 
 const liveParts = { first: [tool(10, "before")], next: [{ type: "reasoning", id: 11, text: "working" }] };
-const live = new Transcript({ partsOf: (id) => liveParts[id] || [], partOf: (id, partId) => (liveParts[id] || []).find((part) => part.id === partId) || null });
+const live = new Transcript({ partsOf: (id) => liveParts[id] || [], partOf: (id, partId) => {
+  const part = (liveParts[id] || []).find((p) => p.id === partId);
+  return part ? { part } : null;
+} });
 live.setOutline([{ id: "first", type: "assistant" }], { id: "next", type: "assistant" });
 check("reasoning-counts", live.rows(60, 0, live.rowCount(60)).some((r) => r.kind === "action-group-header" && rowText(r) === "2 actions"));
 liveParts.next.push(tool(12, "after"));

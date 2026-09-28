@@ -3,7 +3,7 @@ import { Transcript } from "yuke:internal/transcript";
 let source = "# Prefix\n\nstable 世界 é 👩‍💻\n\n```txt\nbody\n```\n\nTail";
 const part = () => ({ type: "text", id: 0, text: source });
 const make = () => {
-  const t = new Transcript({ partsOf: () => [part()], partOf: part });
+  const t = new Transcript({ partsOf: () => [part()], partOf: () => ({ part: part() }) });
   t.setOutline([], { id: 1, type: "assistant" });
   return t;
 };

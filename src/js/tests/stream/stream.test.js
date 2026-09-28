@@ -7,7 +7,10 @@ const parts = [
 ];
 const t = new Transcript({
   partsOf: () => parts,
-  partOf: (_id, partId) => parts.find((part) => part.id === partId) || null,
+  partOf: (_id, partId) => {
+    const part = parts.find((p) => p.id === partId);
+    return part ? { part } : null;
+  },
 });
 t.setOutline([], { id: "m", type: "assistant" });
 const allRows = () => t.rows(80, 0, t.rowCount(80));
@@ -47,7 +50,10 @@ check("block-source-shift", afterBlocks[0].at === 0 && afterBlocks[0].end === 13
 const replacementParts = [{ type: "text", id: 1, text: "stable prefix" }, { type: "text", id: 2, text: "replace me" }];
 const replacement = new Transcript({
   partsOf: () => replacementParts,
-  partOf: (_id, partId) => replacementParts.find((part) => part.id === partId) || null,
+  partOf: (_id, partId) => {
+    const part = replacementParts.find((p) => p.id === partId);
+    return part ? { part } : null;
+  },
 });
 replacement.setOutline([], { id: "replacement", type: "assistant" });
 replacement.rows(80, 0, replacement.rowCount(80));

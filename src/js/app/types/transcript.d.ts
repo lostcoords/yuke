@@ -1,6 +1,6 @@
 import type { Document } from "../md.js";
 import type { TranscriptRow } from "./pager.js";
-import type { MessagePart } from "yuke:internal/native/engine";
+import type { MessagePart, PartRead, TextCursor } from "yuke:internal/native/engine";
 
 export interface MessageDescriptor {
   id: number;
@@ -53,7 +53,8 @@ export interface PartCache {
   shape: number;
   rows: TranscriptRow[];
   source: string;
-  text: { doc: Document; width: number; ends: number[] } | null;
+  /** `part` is the part object `doc` holds the text of; `kept` counts the leading rows the last build left in place. */
+  text: { doc: Document; part: Wire.AssistantPart | null; width: number; ends: number[]; kept: number } | null;
 }
 
 export interface PartState {
@@ -62,7 +63,7 @@ export interface PartState {
 }
 
 export type PartsOf = (id: number) => readonly MessagePart[];
-export type PartOf = (id: number, partId: number, previous?: MessagePart) => MessagePart | null;
+export type PartOf = (id: number, partId: number, cursor?: TextCursor) => PartRead | null;
 export type PartTextPage = (id: number, partId: number, field: string, offset?: number, limit?: number) => { text: string; next: number | null };
 
 export interface TranscriptOptions {

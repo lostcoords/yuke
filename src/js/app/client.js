@@ -3,7 +3,7 @@ import { native } from "yuke:internal/native/engine";
 import { events } from "yuke:internal/kernel";
 import { gateInput } from "yuke:internal/ext";
 
-/** @import { MessagePart, SessionOutline, ViewPart } from "yuke:internal/native/engine" */
+/** @import { MessagePart, PartRead, SessionOutline, TextCursor, ViewCut, ViewPart } from "yuke:internal/native/engine" */
 
 // This module emits the drain per kind in every frontend, so it declares the names and a headless bus accepts them.
 events.declare(["session.changed", "index.changed"]);
@@ -111,9 +111,6 @@ function blobPutData(data) {
   return request("blob.put", { data });
 }
 
-/** @type {WeakMap<MessagePart, { partId: number, type: "text" | "reasoning", text: string, generation: number, bytes: number }>} */
-const textCursors = new WeakMap();
-
 // The parts of one message. A cut field every row reads is completed here, and a large body stays paged.
 /** @param {string} sessionId @param {number} messageId @returns {MessagePart[]} */
 function sessionParts(sessionId, messageId) {
@@ -121,41 +118,29 @@ function sessionParts(sessionId, messageId) {
   return parts.map((p) => wholePart(sessionId, messageId, p));
 }
 
-// One part of a message, or null when it is gone. A delta re-reads one part, never the whole message.
-/** @param {string} sessionId @param {number} messageId @param {number} partId @param {MessagePart} [previous] @returns {MessagePart | null} */
-function sessionPart(sessionId, messageId, partId, previous) {
-  const held = previous && textCursors.get(previous);
-  const cursor = held && held.partId === partId
-    && previous.id === partId && previous.type === held.type
-    && previous.text === held.text ? held : undefined;
-  const parts = /** @type {ViewPart[]} */ (JSON.parse(native.sessionPart(sessionId, messageId, partId, cursor?.generation, cursor?.bytes)));
-  let part = parts[0];
-  if (!part) return null;
-  if (part.text_offset && cursor && (part.type === "text" || part.type === "reasoning")) part = { ...part, text: cursor.text + part.text };
-  return wholePart(sessionId, messageId, part);
+// One part of a message, or null when it is gone. With the cursor of a held text, the read carries only the new text.
+/** @param {string} sessionId @param {number} messageId @param {number} partId @param {TextCursor} [cursor] @returns {PartRead | null} */
+function sessionPart(sessionId, messageId, partId, cursor) {
+  const p = /** @type {ViewPart | undefined} */ (JSON.parse(native.sessionPart(sessionId, messageId, partId, cursor?.generation, cursor?.bytes))[0]);
+  if (!p) return null;
+  const next = p.text_generation === undefined || p.text_bytes === undefined ? null : { generation: p.text_generation, bytes: p.text_bytes };
+  const tail = !!p.text_offset;
+  return { part: wholePart(sessionId, messageId, p), cursor: next, tail };
 }
 
 /** @param {string} sessionId @param {number} messageId @param {ViewPart} p @returns {ViewPart} */
 function wholePart(sessionId, messageId, p) {
-  const generation = p.text_generation;
-  const bytes = p.text_bytes;
   delete p.text_generation;
   delete p.text_bytes;
   delete p.text_offset;
   // Complete the text or tool arguments; the tool body and views stay paged.
   const field = p.type === "tool" ? "arguments" : "text";
-  if (p.cut) {
-    const cut = p.cut.find((c) => c.field === field && c.next != null);
-    if (cut) {
-      const tail = partTextFrom(sessionId, messageId, p.id, field, /** @type {number} */ (cut.next));
-      const remaining = p.cut.filter((c) => c !== cut);
-      if (p.type === "tool") p = { ...p, arguments: p.arguments + tail, cut: remaining };
-      else if (p.type === "text" || p.type === "reasoning") p = { ...p, text: p.text + tail, cut: remaining };
-    }
-  }
-  if (generation !== undefined && bytes !== undefined && (p.type === "text" || p.type === "reasoning")) {
-    textCursors.set(p, { partId: p.id, type: p.type, text: p.text, generation, bytes });
-  }
+  const cut = p.cut && p.cut.find((c) => c.field === field && c.next != null);
+  if (!cut) return p;
+  const tail = partTextFrom(sessionId, messageId, p.id, field, /** @type {number} */ (cut.next));
+  const remaining = /** @type {readonly ViewCut[]} */ (p.cut).filter((c) => c !== cut);
+  if (p.type === "tool") return { ...p, arguments: p.arguments + tail, cut: remaining };
+  if (p.type === "text" || p.type === "reasoning") return { ...p, text: p.text + tail, cut: remaining };
   return p;
 }
 

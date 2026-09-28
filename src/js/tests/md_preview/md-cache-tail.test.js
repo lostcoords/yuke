@@ -12,9 +12,10 @@ const code = doc._cache.get(codeAt);
 check("closed-caches-exist", !!prefix && !!code);
 for (const delta of [" extended", "\r", "\n\r\nNext", "\n===", "\n\n| a | b |\n|---|---|\n| 1 | 2 |", "\n\nEnd"]) {
   source += delta;
-  doc.setText(source);
+  doc.append(delta, source);
   const fresh = new Document();
   fresh.setText(source);
+  check("append-source", doc.sourceText() === fresh.sourceText());
   check("snapshot", JSON.stringify(heldRows) === heldJson);
   check("append-rows", JSON.stringify(doc.rows(24)) === JSON.stringify(fresh.rows(24)));
   check("append-blocks", JSON.stringify(doc.blocks()) === JSON.stringify(fresh.blocks()));

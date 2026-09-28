@@ -90,14 +90,13 @@ function srcAt(runs, i, end) {
   return end ? o + 1 : o;
 }
 
-// Split the text from the line start `from` into blocks with absolute `at`/`end` offsets. A stream re-reads only its tail.
-/** @param {string} text @param {number} [from] @returns {Block[]} */
-function segment(text, from = 0) {
-  if (from > 0 && text[from - 1] !== "\n") throw new Error("segment restart is not a line start");
-  const lines = /** @type {StringList} */ ((from > 0 ? text.slice(from) : text).split("\n"));
+// Split `text`, the source from the line start `base`, into blocks with absolute `at`/`end` offsets. A stream re-reads only its tail.
+/** @param {string} text @param {number} [base] @returns {Block[]} */
+function segment(text, base = 0) {
+  const lines = /** @type {StringList} */ (text.split("\n"));
   const starts = /** @type {NumberList} */ (new Array(lines.length + 1));
   {
-    let off = from;
+    let off = base;
     for (let k = 0; k < lines.length; k++) {
       starts[k] = off;
       const sourceLine = /** @type {string} */ (lines[k]);
@@ -113,7 +112,7 @@ function segment(text, from = 0) {
     b.at = /** @type {number} */ (starts[first]);
     b.end = /** @type {number} */ (starts[last]) - 1;
     // `starts` holds absolute offsets and each line but the last ends in "\n", so the source slice is the joined lines.
-    b.raw = text.slice(b.at, b.end);
+    b.raw = text.slice(b.at - base, b.end - base);
     blocks.push(b);
   };
 
@@ -890,6 +889,12 @@ export class Document {
   constructor() {
     /** @type {string | null} */
     this._src = null;
+    // The end of the source, from where the last parse started, so an append never slices the whole source.
+    this._tail = "";
+    // The raw input ended in "\r", so a "\n" that starts the next fragment belongs to that line break.
+    this._cr = false;
+    // The raw input has no "\r", so the source is that input itself and the caller's text is held once.
+    this._raw = true;
     /** @type {Block[]} */
     this._blocks = [];
     /** @type {Map<number, CacheEntry>} */
@@ -905,21 +910,49 @@ export class Document {
   // Return the retained block count, or -1 when the source is unchanged.
   /** @param {string} text @returns {number} */
   _setText(text) {
-    text = normalizeSource(text);
+    this._cr = text.endsWith("\r");
+    this._raw = !text.includes("\r");
+    if (!this._raw) text = normalizeSource(text);
     if (text === this._src) return -1;
-    const append = this._src != null && text.startsWith(this._src);
-    const keep = append ? Math.max(0, this._blocks.length - 2) : 0;
-    const from = keep > 0 ? /** @type {Block} */ (this._blocks[keep]).at : 0;
-    const tail = segment(text, from);
-    // The retained prefix keeps its cache; only the replaced tail can lose a block.
-    if (!append) this._cache.clear();
-    else for (let i = keep; i < this._blocks.length; i++) {
-      const at = /** @type {Block} */ (this._blocks[i]).at;
-      if (!tail.some((block) => block.at === at && !block.open)) this._cache.delete(at);
+    if (this._src == null || !text.startsWith(this._src)) {
+      this._cache.clear();
+      this._blocks.length = 0;
     }
     this._src = text;
+    return this._parse(text);
+  }
+
+  // Add `fragment` at the end of the source. `text` is the whole raw input after it. Only the last two blocks parse again.
+  // Return the retained block count.
+  /** @param {string} fragment @param {string} text @returns {number} */
+  append(fragment, text) {
+    const raw = this._cr && fragment[0] === "\n" ? fragment.slice(1) : fragment;
+    if (fragment) this._cr = raw.endsWith("\r");
+    if (!raw) return this._blocks.length;
+    this._raw = this._raw && !raw.includes("\r");
+    const add = this._raw ? raw : normalizeSource(raw);
+    this._src = this._raw ? text : (this._src ?? "") + add;
+    return this._parse(this._tail + add);
+  }
+
+  // Parse again from the second-to-last block. `text` is the end of `_src`, which already holds it.
+  /** @param {string} text @returns {number} */
+  _parse(text) {
+    const src = /** @type {string} */ (this._src);
+    const at = src.length - text.length;
+    const keep = Math.max(0, this._blocks.length - 2);
+    const from = keep > 0 ? /** @type {Block} */ (this._blocks[keep]).at : 0;
+    // A tail that parsed to fewer than two blocks restarts before `at`, so only then the whole source is sliced.
+    const tail = from >= at ? text.slice(from - at) : src.slice(from);
+    const blocks = segment(tail, from);
+    // The retained prefix keeps its cache; only the replaced tail can lose a block.
+    for (let i = keep; i < this._blocks.length; i++) {
+      const block = /** @type {Block} */ (this._blocks[i]);
+      if (!blocks.some((b) => b.at === block.at && !b.open)) this._cache.delete(block.at);
+    }
     this._blocks.length = keep;
-    for (const block of tail) this._blocks.push(block);
+    for (const block of blocks) this._blocks.push(block);
+    this._tail = tail;
     return keep;
   }
 

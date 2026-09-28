@@ -10,7 +10,7 @@ import { byteLabel } from "yuke:internal/format";
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
 /** @import { ItemKey, Segment, TranscriptRow } from "./types/pager.js" */
 /** @import { ActionEntry, ActionPlan, MessageDescriptor, PartCache, PartHit, PartOf, PartState, Position, Presenter, RowCache, Selection, SelectionAnchors, SelectionRange, ToolLabel, TranscriptOptions, SourceLabels } from "./types/transcript.js" */
-/** @import { MessagePart } from "yuke:internal/native/engine" */
+/** @import { MessagePart, PartRead, TextCursor } from "yuke:internal/native/engine" */
 /** @import { Block } from "./types/md.js" */
 
 // Left gutter for a transcript row marker; the body indents past it.
@@ -703,6 +703,8 @@ export class Transcript {
     this._rows = new Map(); // Oldest render first; each text-only render owns its Markdown document.
     /** @type {Map<string, PartState>} */
     this._parts = new Map(); // id -> the part list and one render per part, for the partsOf path
+    /** @type {WeakMap<Wire.AssistantPart, TextCursor>} */
+    this._cursors = new WeakMap(); // held part -> the end of its text, so a list read again holds no cursor
     /** @type {ActionPlan | null} */
     this._actionPlanCache = null;
     /** @type {Map<string, boolean>} */
@@ -904,20 +906,37 @@ export class Transcript {
     const state = this._parts.get(String(id));
     if (!state || !state.list) return { groupingChanged: true, rowsChanged: true };
     const at = partId == null ? -1 : state.list.findIndex((part) => sameId(part.id, partId));
-    let fresh = null;
+    /** @type {PartRead | null} */
+    let read = null;
     // A failing reader keeps the held part, so one bad read never drops the list.
-    if (at >= 0 && this.partOf) try { fresh = this.partOf(id, /** @type {number} */ (partId), state.list[at]); } catch (_) {}
-    if (fresh && (fresh.type === "text" || fresh.type === "tool" || fresh.type === "reasoning")) {
+    if (at >= 0 && this.partOf) try { read = this.partOf(id, /** @type {number} */ (partId), this._cursors.get(/** @type {Wire.AssistantPart} */ (state.list[at]))); } catch (_) {}
+    let fresh = read && read.part;
+    if (read && fresh && (fresh.type === "text" || fresh.type === "tool" || fresh.type === "reasoning")) {
       const before = /** @type {Wire.AssistantPart} */ (state.list[at]);
-      state.list[at] = fresh;
       const c = state.rows.get(String(partId));
+      // A tail read carries only the new text, so the document of the held text takes it now and no build reads the whole text.
+      // Any other read can change the text under the same object, so the next build sets the whole text.
+      const text = c && c.text;
+      if (read.tail && fresh.type !== "tool") {
+        const grown = { ...fresh, text: /** @type {{ text: string }} */ (before).text + fresh.text };
+        if (text && text.part === before) {
+          text.ends.length = Math.min(text.doc.append(fresh.text, grown.text), text.ends.length);
+          text.part = grown;
+        }
+        fresh = grown;
+      } else if (text) text.part = null;
+      state.list[at] = fresh;
+      if (read.cursor) this._cursors.set(fresh, read.cursor);
       const groupingChanged = labels.role(before) !== labels.role(fresh);
       const rowsChanged = !c || c.expanded || !toolHeaderSame(before, fresh);
       if (c && rowsChanged) stale(c);
       return { groupingChanged, rowsChanged };
     }
     state.list = null;
-    for (const c of state.rows.values()) stale(c);
+    for (const c of state.rows.values()) {
+      stale(c);
+      if (c.text) c.text.part = null;
+    }
     return { groupingChanged: true, rowsChanged: true };
   }
 
@@ -1126,6 +1145,8 @@ export class Transcript {
       this._rows.set(key, c);
       return c.rows;
     }
+    // The stale render leaves first, so a fault cannot keep rows a build half wrote.
+    if (c) this._rows.delete(key);
     // A viewport read trims once after the range; an individual read trims before its new entry exists.
     if (!this._viewport.has(key)) this._trimCaches();
 
@@ -1153,7 +1174,7 @@ export class Transcript {
       source = textOfParts(this._allParts(m.id));
       rows = messageRows(m.id, source, width, "compaction");
     } else {
-      const built = this._partRows(m, width, index);
+      const built = this._partRows(m, width, index, c && c.rows);
       rows = built.rows;
       source = built.source;
       partBases = built.partBases;
@@ -1164,7 +1185,6 @@ export class Transcript {
       source = source.length ? source + "\n" + error : error;
       rows = rows.concat(messageRows(m.id, error, width, "error", base));
     }
-    this._rows.delete(key);
     this._rows.set(key, { w: width, rows, source, partBases });
     this._counts.set(key, rows.length);
     return rows;
@@ -1449,13 +1469,17 @@ export class Transcript {
   }
 
   // Each part renders once per width, fold, and live state, so a delta rebuilds only the changed part.
-  /** @param {MessageDescriptor} m @param {number} width @param {number} messageIndex @returns {{ rows: TranscriptRow[], source: string, partBases: Map<string, number> }} */
-  _partRows(m, width, messageIndex) {
+  // `old` is the stale render's rows, which the caller already removed from the cache, so this build writes them in place.
+  /** @param {MessageDescriptor} m @param {number} width @param {number} messageIndex @param {TranscriptRow[] | undefined} old @returns {{ rows: TranscriptRow[], source: string, partBases: Map<string, number> }} */
+  _partRows(m, width, messageIndex, old) {
     const state = this._partState(m.id);
     const plan = this._actionPlan();
     const start = plan.starts[messageIndex] || 0;
     const seen = new Set();
-    const rows = /** @type {TranscriptRow[]} */ ([]);
+    // The old rows stay in place up to the first row a build changed.
+    const rows = old || [];
+    let reuse = !!old;
+    let n = 0;
     const partBases = new Map();
     let source = "";
     const list = state.list;
@@ -1463,10 +1487,7 @@ export class Transcript {
       const part = /** @type {Wire.AssistantPart} */ (list[index]);
       if (emptyPart(part)) continue;
       const tree = plan.trees[start + index] || 0;
-      if (tree && actionFirst(tree)) {
-        const count = actionCount(tree);
-        rows.push({ text: count + (count === 1 ? " action" : " actions"), group: "TxToolMeta", indent: TX_GUTTER, kind: "action-group-header", key: m.id });
-      }
+      const head = tree !== 0 && actionFirst(tree);
       if (source) source += "\n";
       const base = source.length;
       const key = String(part.id);
@@ -1474,15 +1495,37 @@ export class Transcript {
       const expanded = part.type === "text" || this._isExpanded(m.id, part.id, part);
       const live = part.type === "reasoning" && this._reasoningLive(m.id, part.id);
       let c = state.rows.get(key);
+      let built = false;
       if (!c || c.w !== width || c.expanded !== expanded || c.live !== live || c.shape !== tree) {
         c = this._buildPart(m.id, part, width, expanded, live, tree, c);
         state.rows.set(key, c);
+        built = true;
       }
       partBases.set(key, base);
       source += c.source;
-      for (const r of c.rows) rows.push(r);
+      const at = n + (head ? 1 : 0);
+      // A row belongs to one part build, so an old row at `at` that is this part's first row places the part where it was.
+      // A rebuilt part keeps only the rows its text kept, and writes its group header again.
+      if (reuse && (!c.rows.length || rows[at] !== c.rows[0] || built && head)) {
+        rows.length = n;
+        reuse = false;
+      }
+      if (!reuse && head) {
+        const count = actionCount(tree);
+        rows.push({ text: count + (count === 1 ? " action" : " actions"), group: "TxToolMeta", indent: TX_GUTTER, kind: "action-group-header", key: m.id });
+      }
+      const own = c.rows;
+      const end = own.length;
+      const from = !reuse ? 0 : !built ? end : c.text ? c.text.kept : 0;
+      if (from < end) {
+        if (reuse) rows.length = at + from;
+        reuse = false;
+        for (let k = from; k < end; k++) rows.push(/** @type {TranscriptRow} */ (own[k]));
+      }
+      n = at + end;
     }
     for (const key of state.rows.keys()) if (!seen.has(key)) state.rows.delete(key);
+    if (reuse) rows.length = n;
     if (!plan.joinAfter[messageIndex]) rows.push({ text: "", key: m.id });
     return { rows, source, partBases };
   }
@@ -1492,14 +1535,17 @@ export class Transcript {
   _buildPart(id, part, width, expanded, live, tree, previous) {
     const contentW = Math.max(1, width - (tree ? ACTION_INDENT : TX_GUTTER));
     if (part.type === "text") {
-      const text = previous?.text || { doc: new Document(), width: contentW, ends: [] };
+      const text = previous?.text || { doc: new Document(), part: null, width: contentW, ends: [], kept: 0 };
       const { doc, ends } = text;
-      const keep = doc._setText(part.text);
+      // A tail read already appended to the document, so only a new part object sets the whole text.
+      const keep = text.part === part ? -1 : doc._setText(part.text);
+      text.part = part;
       if (text.width !== contentW) ends.length = 0;
       else if (keep >= 0) ends.length = Math.min(keep, ends.length);
       text.width = contentW;
       const rows = previous?.text === text ? previous.rows : [];
       rows.length = ends.at(-1) || 0;
+      text.kept = rows.length;
       for (let i = ends.length; i < doc._blocks.length; i++) {
         if (i) rows.push({ segments: [{ text: "", group: "MdText" }], indent: TX_GUTTER, key: id, partId: part.id, kind: "text" });
         const block = /** @type {Block} */ (doc._blocks[i]);

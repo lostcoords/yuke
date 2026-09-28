@@ -282,7 +282,9 @@ export const chatPlugin: {
 
 declare namespace $client {
 import MessagePart = $native_engine.MessagePart;
+import PartRead = $native_engine.PartRead;
 import SessionOutline = $native_engine.SessionOutline;
+import TextCursor = $native_engine.TextCursor;
 /** @template {keyof Wire.Methods} M @param {M} method @param {Wire.Methods[M]["paramsType"]} args @returns {Promise<Wire.Methods[M]["returnType"]>} */
 function request<M extends keyof Wire.Methods>(method: M, ...args: Wire.Methods[M]["paramsType"]): Promise<Wire.Methods[M]["returnType"]>;
 /** @param {Wire.SessionListParams} [params] @returns {Promise<Wire.SessionListResult>} */
@@ -309,8 +311,8 @@ function blobPut(path: string): Promise<Wire.MediaBlob>;
 function blobPutData(data: string): Promise<Wire.MediaBlob>;
 /** @param {string} sessionId @param {number} messageId @returns {MessagePart[]} */
 function sessionParts(sessionId: string, messageId: number): MessagePart[];
-/** @param {string} sessionId @param {number} messageId @param {number} partId @param {MessagePart} [previous] @returns {MessagePart | null} */
-function sessionPart(sessionId: string, messageId: number, partId: number, previous?: MessagePart): MessagePart | null;
+/** @param {string} sessionId @param {number} messageId @param {number} partId @param {TextCursor} [cursor] @returns {PartRead | null} */
+function sessionPart(sessionId: string, messageId: number, partId: number, cursor?: TextCursor): PartRead | null;
 /** @param {string} sessionId @param {number} messageId @param {number} partId @param {string} field @param {number} [offset] @param {number} [limit] @returns {{ text: string, next: number | null }} */
 function partTextPage(sessionId: string, messageId: number, partId: number, field: string, offset?: number, limit?: number): {
     text: string;
@@ -1179,6 +1181,9 @@ export function normalizeSource(text: unknown): string;
 export class Document {
     /** @type {string | null} */
     _src: string | null;
+    _tail: string;
+    _cr: boolean;
+    _raw: boolean;
     /** @type {Block[]} */
     _blocks: Block[];
     /** @type {Map<number, CacheEntry>} */
@@ -1188,6 +1193,10 @@ export class Document {
     setText(text: string): boolean;
     /** @param {string} text @returns {number} */
     _setText(text: string): number;
+    /** @param {string} fragment @param {string} text @returns {number} */
+    append(fragment: string, text: string): number;
+    /** @param {string} text @returns {number} */
+    _parse(text: string): number;
     /** @returns {string} */
     sourceText(): string;
     /** @param {number} width @param {number} [limit] @returns {Row[]} */
@@ -1511,6 +1520,7 @@ import ToolLabel = $types_transcript.ToolLabel;
 import TranscriptOptions = $types_transcript.TranscriptOptions;
 import SourceLabels = $types_transcript.SourceLabels;
 import MessagePart = $native_engine.MessagePart;
+import TextCursor = $native_engine.TextCursor;
 export const ROLE_NONE = 0;
 export const ROLE_ACTION = 1;
 export const ROLE_TEXT = 2;
@@ -1552,6 +1562,8 @@ export class Transcript {
     _rows: Map<string, RowCache>;
     /** @type {Map<string, PartState>} */
     _parts: Map<string, PartState>;
+    /** @type {WeakMap<Wire.AssistantPart, TextCursor>} */
+    _cursors: WeakMap<Wire.AssistantPart, TextCursor>;
     /** @type {ActionPlan | null} */
     _actionPlanCache: ActionPlan | null;
     /** @type {Map<string, boolean>} */
@@ -1680,8 +1692,8 @@ export class Transcript {
     _partStopsOf(m: MessageDescriptor): Position[];
     /** @param {Position | null} pos @param {number} dir @returns {Position | null} */
     partStep(pos: Position | null, dir: number): Position | null;
-    /** @param {MessageDescriptor} m @param {number} width @param {number} messageIndex @returns {{ rows: TranscriptRow[], source: string, partBases: Map<string, number> }} */
-    _partRows(m: MessageDescriptor, width: number, messageIndex: number): {
+    /** @param {MessageDescriptor} m @param {number} width @param {number} messageIndex @param {TranscriptRow[] | undefined} old @returns {{ rows: TranscriptRow[], source: string, partBases: Map<string, number> }} */
+    _partRows(m: MessageDescriptor, width: number, messageIndex: number, old: TranscriptRow[] | undefined): {
         rows: TranscriptRow[];
         source: string;
         partBases: Map<string, number>;
@@ -2254,6 +2266,12 @@ declare namespace $native_engine {
 
   /** One part of a message. A user content part has no wire id, so its position is the id. */
   export type MessagePart = Wire.AssistantPart | (Wire.ContentPart & { id: number });
+
+  /** The end of a held text: the engine text generation and its UTF-8 length. A read after it returns only the new text. */
+  export type TextCursor = { generation: number; bytes: number };
+
+  /** One read of a part. With `tail`, `part.text` is only the text after the cursor of the read, and the holder appends it. `cursor` is the end of the whole text, for the next read. */
+  export type PartRead = { part: MessagePart; cursor?: TextCursor | null; tail?: boolean };
 
   /** One part as the read surface returns it: the wire part plus every value the projection cut. */
   export type ViewPart = MessagePart & { cut?: readonly ViewCut[]; text_generation?: number; text_bytes?: number; text_offset?: number };
@@ -3373,6 +3391,8 @@ declare namespace $types_transcript {
 import Document = $md.Document;
 import TranscriptRow = $types_pager.TranscriptRow;
 import MessagePart = $native_engine.MessagePart;
+import PartRead = $native_engine.PartRead;
+import TextCursor = $native_engine.TextCursor;
 
 export interface MessageDescriptor {
   id: number;
@@ -3425,7 +3445,8 @@ export interface PartCache {
   shape: number;
   rows: TranscriptRow[];
   source: string;
-  text: { doc: Document; width: number; ends: number[] } | null;
+  /** `part` is the part object `doc` holds the text of; `kept` counts the leading rows the last build left in place. */
+  text: { doc: Document; part: Wire.AssistantPart | null; width: number; ends: number[]; kept: number } | null;
 }
 
 export interface PartState {
@@ -3434,7 +3455,7 @@ export interface PartState {
 }
 
 export type PartsOf = (id: number) => readonly MessagePart[];
-export type PartOf = (id: number, partId: number, previous?: MessagePart) => MessagePart | null;
+export type PartOf = (id: number, partId: number, cursor?: TextCursor) => PartRead | null;
 export type PartTextPage = (id: number, partId: number, field: string, offset?: number, limit?: number) => { text: string; next: number | null };
 
 export interface TranscriptOptions {

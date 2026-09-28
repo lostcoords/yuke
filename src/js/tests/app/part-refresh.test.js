@@ -4,25 +4,23 @@ import { equal } from "yuke:internal/test";
 
 const sid = globalThis.PROJECTION_SESSION;
 const source = globalThis.PROJECTION_TEXT;
-const previous = client.sessionPart(sid, 2, 0);
-globalThis.previousPart = previous;
-const held = { type: "text", id: 0, text: "x".repeat(source.length) };
-const fresh = client.sessionPart(sid, 2, 0, held);
-equal(fresh.text, source);
-equal(fresh.id, 0);
-equal(fresh.type, "text");
-equal("text_generation" in fresh, false);
-equal(held.text, "x".repeat(source.length));
-equal(client.sessionPart(sid, 1, 0, previous).text, source);
+const whole = client.sessionPart(sid, 2, 0);
+globalThis.previousCursor = whole.cursor;
+equal(whole.part.text, source);
+equal(whole.part.id, 0);
+equal(whole.part.type, "text");
+equal(whole.tail, false);
+equal("text_generation" in whole.part, false);
+// The cursor of a held text reads only the new text, and a stale cursor reads the whole text again.
+const same = client.sessionPart(sid, 2, 0, whole.cursor);
+equal(same.tail, true);
+equal(same.part.text, "");
+equal(same.cursor.bytes, whole.cursor.bytes);
+const stale = client.sessionPart(sid, 2, 0, { generation: whole.cursor.generation + 1, bytes: whole.cursor.bytes });
+equal(stale.tail, false);
+equal(stale.part.text, source);
+equal(client.sessionPart(sid, 1, 0, whole.cursor).part.text, source);
 const initial = JSON.parse(native.sessionPart(sid, 2, 0))[0];
-const same = JSON.parse(native.sessionPart(sid, 2, 0, initial.text_generation, initial.text_bytes))[0];
-equal(same.text_offset, initial.text_bytes);
-equal(same.text, "");
-equal(client.sessionPart(sid, 2, 0, previous).text, source);
-equal(client.sessionPart(sid, 2, 0, { ...previous }).text, source);
-const modified = client.sessionPart(sid, 2, 0);
-modified.text = "x".repeat(source.length);
-equal(client.sessionPart(sid, 2, 0, modified).text, source);
 // The offset follows UTF-8 bytes, and the next page offset stays relative to the whole field.
 const prefix = "A paragraph 世界 é 👩‍💻.\n\n";
 const partial = JSON.parse(native.sessionPart(sid, 2, 0, initial.text_generation, 37))[0];
@@ -49,13 +47,12 @@ for (const part of client.sessionParts(sid, 2)) {
   equal("text_offset" in part, false);
 }
 
-const reasoning = client.sessionPart(sid, 2, 1, { type: "reasoning", id: 1, text: "why ", signature: "" });
+const reasoning = client.sessionPart(sid, 2, 1).part;
 equal(reasoning.type, "reasoning");
 equal(reasoning.text, "why 世界");
 equal("text_generation" in reasoning, false);
-const tool = client.sessionPart(sid, 2, 2, previous);
-equal(tool.type, "tool");
-equal(tool.arguments, "{}");
-equal("text_generation" in tool, false);
-
-equal(client.sessionPart(sid, 2, 1, reasoning).text, "why 世界");
+const tool = client.sessionPart(sid, 2, 2, whole.cursor);
+equal(tool.part.type, "tool");
+equal(tool.part.arguments, "{}");
+equal(tool.cursor, null);
+equal("text_generation" in tool.part, false);
