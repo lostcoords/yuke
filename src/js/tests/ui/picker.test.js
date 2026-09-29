@@ -2,7 +2,8 @@ import { check } from "yuke:internal/test";
 import { root, keymap } from "yuke:internal/core";
 import { ui } from "yuke:internal/ui";
 const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });
-const { win, content } = ui.select(["a", "b", "c", "d", "e"], { format: (x) => ({ text: String(x) }) });
+// The boundary checks below press outside this picker, so it ignores an outside press instead of closing.
+const { win, content } = ui.select(["a", "b", "c", "d", "e"], { format: (x) => ({ text: String(x) }), outsidePress: "ignore" });
 root.pushOverlay(win);
 const press = (code, char) => root.onEvent(key(code, char));
 const sel = () => content.list.selected();

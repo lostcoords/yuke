@@ -96,13 +96,15 @@ function createAnswerer(frontend) {
         }
         case "input": {
           const prompt = new Prompt({ placeholder: request.placeholder || "", mask: request.secret || false, settle: resolve });
-          win = new Window({ title, footer: "↵ submit · esc cancel", border: "rounded", width: max => Math.round(max * 0.6), contentHeight: 1, content: prompt });
+          // A stray click must not throw away the typed text.
+          win = new Window({ title, footer: "↵ submit · esc cancel", border: "rounded", outsidePress: "ignore", width: max => Math.round(max * 0.6), contentHeight: 1, content: prompt });
           break;
         }
         case "device_login": {
           const device = new DeviceDialog(request.start);
           device.onCancel = cancel;
-          win = new Window({ title, footer: "c copy code · o open browser · esc cancel", border: "rounded", width: max => Math.round(max * 0.7), contentHeight: 3, content: device });
+          // The click that focuses the terminal after the browser must not cancel the login.
+          win = new Window({ title, footer: "c copy code · o open browser · esc cancel", border: "rounded", outsidePress: "ignore", width: max => Math.round(max * 0.7), contentHeight: 3, content: device });
           request.outcome.then(resolve, reject);
           break;
         }

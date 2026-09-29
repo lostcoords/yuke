@@ -86,6 +86,8 @@ export interface CommandSpec {
   slash?: boolean | string;
   /** The slash word takes the rest of the line as its argument. */
   args?: boolean;
+  /** A key bound to the command runs it even while a modal dialog is open. */
+  aboveModal?: boolean;
 }
 
 export interface CommandEntry {
@@ -94,6 +96,7 @@ export interface CommandEntry {
   desc: string | null;
   slash: string | null;
   args: boolean;
+  aboveModal: boolean;
 }
 
 export interface CommandListing {
@@ -109,6 +112,8 @@ export interface CommandRegistry {
   map: CommandMap;
   add: (name: string, spec: CommandSpec) => () => void;
   perform: (name: string, ...args: any[]) => boolean;
+  /** Run the entry that `perform` would run, only when that entry is marked `aboveModal`. */
+  performAboveModal: (name: string, ...args: any[]) => boolean;
   available: (name: string) => boolean;
   list: () => CommandListing[];
 }
@@ -159,6 +164,8 @@ export interface KeymapRegistry {
   prefixes: Record<string, string[]>;
   pending: Pending | null;
   add: (bindings: Record<string, KeyBinding | KeyBinding[]>, context?: string, options?: { pending?: "chord" | "operator" }) => () => void;
+  /** Run the stroke above an open modal when its winning binding names an `aboveModal` command. */
+  performAboveModal: (ev: Extract<HostEvent, { type: "key" }>) => boolean;
   _indexPrefix: (key: string, present: boolean) => void;
   _armKind: (prefix: string) => "chord" | "operator" | null;
   owns: () => boolean;

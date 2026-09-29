@@ -144,7 +144,7 @@ export const command = {
     // `slash: true` takes the name after the owner prefix, so "session:interrupt" answers "/interrupt".
     const slash = spec.slash === true ? name.slice(name.lastIndexOf(":") + 1) : spec.slash || null;
     /** @type {CommandEntry} */
-    const entry = { when: spec.when ?? null, run: spec.run, desc: spec.desc ?? null, slash, args: spec.args === true };
+    const entry = { when: spec.when ?? null, run: spec.run, desc: spec.desc ?? null, slash, args: spec.args === true, aboveModal: spec.aboveModal === true };
     const list = this.map[name] || (this.map[name] = []);
     list.unshift(entry);
     // The removal finds the entry by identity, so a second call finds nothing and does nothing.
@@ -162,6 +162,19 @@ export const command = {
     for (const entry of this.map[name] || []) {
       const call = evalPredicate(entry, args);
       if (call === null) continue;
+      entry.run(...call);
+      return true;
+    }
+    return false;
+  },
+
+  // Run the entry that `perform` would run, but only when that entry is marked `aboveModal`.
+  /** @param {string} name @param {...any} args @returns {boolean} */
+  performAboveModal(name, ...args) {
+    for (const entry of this.map[name] || []) {
+      const call = evalPredicate(entry, args);
+      if (call === null) continue;
+      if (!entry.aboveModal) return false;
       entry.run(...call);
       return true;
     }
@@ -590,6 +603,16 @@ export const keymap = {
       return true;
     }
     return this._perform(s, ev);
+  },
+
+  // Run the stroke above an open modal when its winning binding names an `aboveModal` command. A sequence never starts here.
+  /** @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
+  performAboveModal(ev) {
+    const s = strokeOf(ev);
+    // Most strokes in a dialog are typed text with no binding, so they return before any lookup allocates.
+    if (!s || !this.map[s]) return false;
+    const winner = this.candidates(s)[0];
+    return winner !== undefined && typeof winner.fn === "string" && command.performAboveModal(winner.fn, ev);
   },
 
   // Run the candidates in order until one claims the stroke.
@@ -1157,6 +1180,8 @@ export class RootView {
     if (this.root_node && this.root_node.leaves().some((leaf) => leafView(leaf) === layer)) throw new TypeError("a root cannot mount a view twice");
     claimView(layer, this);
     this.overlays.push(layer);
+    // A modal takes the keys, so a sequence that started below it can never finish.
+    if (layer.modal !== false) keymap.pending = null;
     this.invalidate();
     return layer;
   }
@@ -1340,7 +1365,9 @@ export class RootView {
       if (ev.type === "key" && ev.event === "release") return;
       // A paste completes no sequence, so it ends the wait rather than leaving it armed.
       if (ev.type === "paste" && keymap.owns()) keymap.pending = null;
-      if (!consumedByOverlay("onKey")) {
+      // A command such as quit runs before an open dialog takes its key.
+      const aboveModal = ev.type === "key" && this.overlays.length !== 0 && this.focused !== this.active && !keymap.owns() && keymap.performAboveModal(ev);
+      if (!aboveModal && !consumedByOverlay("onKey")) {
         // The keymap reads a key first while it waits for a sequence, or where a route skips the view.
         const keymapFirst = keymap.owns() || route.reader() === "keymap";
         const viewTakes = !keymapFirst && callHook(this.active, "onKey", ev);
@@ -1355,6 +1382,9 @@ export class RootView {
 
 export const root = new RootView();
 
+/** A synthetic esc key press. Every dialog cancels when it receives esc. */
+export const ESC_PRESS = /** @type {Readonly<Extract<HostEvent, { type: "key" }>>} */ (Object.freeze({ type: "key", code: "esc", char: "", shifted: "", baseLayout: "", text: "", event: "press", mods: 0 }));
+
 // A guard claims the ask while work runs, so the key, the palette, the slash word, and user code follow one rule.
 export function quit() {
   if (events.bail("quit.request")) return;
@@ -1362,8 +1392,10 @@ export function quit() {
 }
 
 // A bare key never quits. A stray key in a modal layer must not end the session.
-command.add("quit", { run: quit, desc: "leave yuke", slash: true });
-command.add("suspend", { run: () => term.suspend(), desc: "stop yuke so the shell can run fg", slash: true });
+command.add("quit", { run: quit, desc: "leave yuke", slash: true, aboveModal: true });
+command.add("suspend", { run: () => term.suspend(), desc: "stop yuke so the shell can run fg", slash: true, aboveModal: true });
+// The command sends esc to the focused dialog, and the dialog runs its own cancel. The `overlay` context binds it only while a dialog is open.
+command.add("modal:cancel", { run: () => { if (root.focused !== root.active) callHook(root.focused, "onKey", ESC_PRESS); }, aboveModal: true });
 
 root.addTickable(keymap);
 

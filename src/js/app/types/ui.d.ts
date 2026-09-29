@@ -108,6 +108,8 @@ export interface WindowOptions {
   anchor?: (() => Rect) | null;
   /** Place the window in `bounds`. The layout keeps it inside. It replaces the center and the anchor placement. */
   place?: ((bounds: Rect, w: number, h: number) => { x: number; y: number }) | null;
+  /** A press outside a modal window cancels it, as esc does. `"ignore"` keeps a window that holds typed text or a running task. */
+  outsidePress?: "cancel" | "ignore";
   /** The blank cells between the border and the content. The default is `{ x: 2, y: 1 }`. */
   padding?: { x: number; y: number };
   panelGroup?: string;

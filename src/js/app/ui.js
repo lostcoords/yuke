@@ -1,6 +1,6 @@
 // The widget kit over yuke:internal/core: List and Window to subclass, plus the pickers on `ui`.
 import { term } from "yuke:internal/native/term";
-import { text, fill, root, claimView, style, isWheel, contains } from "yuke:internal/core";
+import { text, fill, root, claimView, style, isWheel, contains, ESC_PRESS } from "yuke:internal/core";
 import { config, events } from "yuke:internal/kernel";
 import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapPreview, nextGrapheme } from "yuke:internal/text-input";
 import { strokeOf } from "yuke:internal/keys";
@@ -928,6 +928,11 @@ export class Window {
 
   /** @param {MouseEvent} ev @returns {boolean} */
   onMouse(ev) {
+    // A press outside a modal window sends esc to the window. The window consumes the press, so the pane below never gets it.
+    if (this.modal && ev.event === "press" && !isWheel(ev.button) && !contains(this.rect, ev.col, ev.row)) {
+      if (this.opts.outsidePress !== "ignore") this.onKey(ESC_PRESS);
+      return true;
+    }
     if (ev.event === "press" && !contains(this.inner, ev.col, ev.row)) return false;
     return this.content && this.content.onMouse ? this.content.onMouse(ev) : false;
   }

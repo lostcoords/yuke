@@ -611,6 +611,10 @@ export class RootView {
     onEvent(ev: RootEvent): void;
 }
 export const root: RootView;
+/** A synthetic esc key press. Every dialog cancels when it receives esc. */
+export const ESC_PRESS: Readonly<Extract<HostEvent, {
+    type: "key";
+}>>;
 export function quit(): void;
 }
 
@@ -1834,6 +1838,7 @@ export class ScrollView {
     /** @param {MouseEvent} event @returns {boolean} */
     onMouse(event: MouseEvent): boolean;
 }
+/** A scrollable body that builds its rows from its width. It builds them again after a width change or a `refresh`. */
 export class RowsView extends ScrollView {
     rowsFor: (width: number) => TranscriptRow[];
     width: number;
@@ -2725,6 +2730,8 @@ export interface CommandSpec {
   slash?: boolean | string;
   /** The slash word takes the rest of the line as its argument. */
   args?: boolean;
+  /** A key bound to the command runs it even while a modal dialog is open. */
+  aboveModal?: boolean;
 }
 
 export interface CommandEntry {
@@ -2733,6 +2740,7 @@ export interface CommandEntry {
   desc: string | null;
   slash: string | null;
   args: boolean;
+  aboveModal: boolean;
 }
 
 export interface CommandListing {
@@ -2748,6 +2756,8 @@ export interface CommandRegistry {
   map: CommandMap;
   add: (name: string, spec: CommandSpec) => () => void;
   perform: (name: string, ...args: any[]) => boolean;
+  /** Run the entry that `perform` would run, only when that entry is marked `aboveModal`. */
+  performAboveModal: (name: string, ...args: any[]) => boolean;
   available: (name: string) => boolean;
   list: () => CommandListing[];
 }
@@ -2798,6 +2808,8 @@ export interface KeymapRegistry {
   prefixes: Record<string, string[]>;
   pending: Pending | null;
   add: (bindings: Record<string, KeyBinding | KeyBinding[]>, context?: string, options?: { pending?: "chord" | "operator" }) => () => void;
+  /** Run the stroke above an open modal when its winning binding names an `aboveModal` command. */
+  performAboveModal: (ev: Extract<HostEvent, { type: "key" }>) => boolean;
   _indexPrefix: (key: string, present: boolean) => void;
   _armKind: (prefix: string) => "chord" | "operator" | null;
   owns: () => boolean;
@@ -3646,6 +3658,8 @@ export interface WindowOptions {
   anchor?: (() => Rect) | null;
   /** Place the window in `bounds`. The layout keeps it inside. It replaces the center and the anchor placement. */
   place?: ((bounds: Rect, w: number, h: number) => { x: number; y: number }) | null;
+  /** A press outside a modal window cancels it, as esc does. `"ignore"` keeps a window that holds typed text or a running task. */
+  outsidePress?: "cancel" | "ignore";
   /** The blank cells between the border and the content. The default is `{ x: 2, y: 1 }`. */
   padding?: { x: number; y: number };
   panelGroup?: string;

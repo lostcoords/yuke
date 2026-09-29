@@ -40,6 +40,8 @@ const keysPlugin = {
       for (const stroke in NAV_KEYS) navKeys[stroke] = nav(/** @type {(t: NavTarget) => void} */ (NAV_KEYS[stroke]));
       ctx.tui.keymap.add(navKeys);
       ctx.tui.keymap.add({ "ctrl+q": "quit", "ctrl+z": "suspend" });
+      // In a dialog, ctrl+c cancels the dialog. It never interrupts the run behind the dialog.
+      ctx.tui.keymap.add({ "ctrl+c": "modal:cancel" }, "overlay");
     });
   },
 };

@@ -37,6 +37,8 @@ test "yuke:internal/defaults boots the shell, seeds the session feed, and wires 
     try std.testing.expect(std.mem.indexOf(u8, paint.out.written(), "new chat") != null);
 
     // the command registry and the vim toggle are wired.
+    // Quit and suspend pass above a dialog, and ctrl+c and an outside press cancel it. The act test unloads the keys after.
+    try support.eval(host, "app/modal-keys.test.js");
     try support.eval(host, "app/act.test.js");
 }
 
