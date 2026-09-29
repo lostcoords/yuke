@@ -183,7 +183,7 @@ test "one tool leaves without moving the others" {
     try std.testing.expectEqualStrings("zulu", host.tools.entries.items[2].decl.name);
 }
 
-test "a listener fault reaches the shared error bus" {
+test "a listener fault becomes an error notification" {
     try support.run("plugins/bus-fault.test.js");
 }
 
@@ -191,7 +191,8 @@ const KernelLoader = struct {
     inner: *loader_mod.Loader,
 
     pub fn onNormalize(self: *@This(), ctx: quickjs.Context, base: []const u8, name: []const u8) ?[:0]u8 {
-        for ([_][]const u8{ "yuke:internal/kernel", "yuke:internal/native/engine", "yuke:internal/test" }) |allowed| {
+        // `format` imports nothing, so the kernel can use it and stay free of the terminal tier.
+        for ([_][]const u8{ "yuke:internal/kernel", "yuke:internal/native/engine", "yuke:internal/format", "yuke:internal/test" }) |allowed| {
             if (std.mem.eql(u8, name, allowed)) return self.inner.onNormalize(ctx, base, name);
         }
         _ = ctx.throwReferenceError("the kernel imported a module outside its boundary");

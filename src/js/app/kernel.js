@@ -1,5 +1,6 @@
 // The frontend-neutral runtime: process configuration and the event bus. A headless frontend loads it, so it never imports `yuke:internal/native/term`.
 import { native } from "yuke:internal/native/engine";
+import { errorText } from "yuke:internal/format";
 
 /** @typedef {{ copyOnSelect: boolean, scrollLines: number }} MouseConfig */
 /** @typedef {{ chordMs: number }} KeymapConfig */
@@ -8,7 +9,7 @@ import { native } from "yuke:internal/native/engine";
 /** @typedef {(value: unknown) => true | string} ConfigValidator */
 /** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
-/** @import { Bus } from "./types/ext.js" */
+/** @import { Bus, Notification } from "./types/ext.js" */
 
 // Wrap a disposer so a second call does nothing.
 /** @param {() => void} fn @returns {() => void} */
@@ -102,7 +103,7 @@ function applyConfigPatch(section, fields, src, label) {
 }
 
 // The kernel declares only the events that neutral code emits. Each tier declares its own names.
-const CORE_EVENTS = new Set(["ext.failed", "engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", "quit.request", ...native.factNames()]);
+const CORE_EVENTS = new Set(["notify.posted","engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", "quit.request", ...native.factNames()]);
 
 // True for an `owner:event` name. A plugin owns such a name, so no declaration can enumerate it.
 /** @param {string} name @returns {boolean} */
@@ -230,7 +231,65 @@ native.setEventSink((ev) => {
   events.emit("engine.drained", ev);
 });
 
-// Report a listener fault where every other fault goes, and never re-enter on the report itself.
-events.onError = (error, name) => {
-  if (name !== "ext.failed") events.emit("ext.failed", error, name);
-};
+// The history keeps the newest notifications in memory until the process exits.
+const NOTIFY_HISTORY = 100;
+// Limits on the message, the stack, and the source keep each history entry bounded.
+const NOTIFY_TEXT_MAX = 1024;
+
+// A cut never splits a surrogate pair, so a capped text stays well-formed.
+/** @param {string} text @returns {string} */
+function capText(text) {
+  if (text.length <= NOTIFY_TEXT_MAX) return text;
+  let end = NOTIFY_TEXT_MAX - 1;
+  const unit = text.charCodeAt(end - 1);
+  if (unit >= 0xd800 && unit <= 0xdbff) end--;
+  return text.slice(0, end) + "…";
+}
+
+/** The notifications of this process, oldest first. A repeat of the newest entry increases its count. */
+/** @type {Notification[]} */
+export const notifications = [];
+
+// True while `notify.posted` runs. A notification from a listener then only enters the history, so a listener never recurses.
+let posting = false;
+
+/** Add one notification. `source` names the plugin or the application part that sent it. A frontend displays the entry. */
+/** @param {Wire.NoticeLevel} level @param {string} message @param {string} source @param {string} [stack] @returns {void} */
+export function notify(level, message, source, stack = "") {
+  const text = capText(message);
+  const from = capText(source);
+  const trace = capText(stack);
+  const last = notifications[notifications.length - 1];
+  /** @type {Notification} */
+  let entry;
+  if (last && last.level === level && last.source === from && last.message === text && last.stack === trace) {
+    entry = last;
+    entry.count++;
+  } else {
+    entry = { level, source: from, message: text, stack: trace, count: 1 };
+    notifications.push(entry);
+    if (notifications.length > NOTIFY_HISTORY) notifications.shift();
+  }
+  if (posting) return;
+  posting = true;
+  try {
+    events.emit("notify.posted", entry);
+  } finally {
+    posting = false;
+  }
+}
+
+/** Report a thrown value as an error notification. The report never throws, because a value can fail every read. */
+/** @param {unknown} error @param {string} source @returns {void} */
+export function fault(error, source) {
+  let message = "a thrown value that has no readable text";
+  let stack = "";
+  try {
+    message = errorText(error);
+    if (error instanceof Error && typeof error.stack === "string") stack = error.stack;
+  } catch {}
+  notify("error", message, source, stack);
+}
+
+// A listener fault enters the history like every other fault.
+events.onError = fault;

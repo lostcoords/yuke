@@ -63,7 +63,7 @@ globalThis.closeDone = false;
   {
     let fail = (/** @type {Error} */ _error) => {};
     const faults = [];
-    const off = events.on("ext.failed", (error, owner) => faults.push(owner + ":" + error.message));
+    const off = events.on("notify.posted", (n) => faults.push(n.source + ":" + n.message));
     const withdraw = services.provide("late-child", 1);
     const handle = plugins.use({ name: "late-child", apply(ctx) {
       ctx.inject(["late-child"], (block) => { block.own(() => new Promise((_resolve, reject) => { fail = reject; })); });

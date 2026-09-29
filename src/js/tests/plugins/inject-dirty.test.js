@@ -14,7 +14,7 @@ check("registry-agrees", services.get("x") === "new");
 
 // A block that never settles reports one fault and stops, so the build cannot spin.
 const faults = [];
-events.on("ext.failed", (e, who) => faults.push(String(who)));
+events.on("notify.posted", (n) => faults.push(n.source));
 let n = 0;
 services.provide("y", 0);
 plugins.use({ name: "churn", apply: (ctx) => { ctx.inject(["y"], () => { services.provide("y", ++n); }); } });

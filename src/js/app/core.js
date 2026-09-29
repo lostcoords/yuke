@@ -1,7 +1,7 @@
 import { clip } from "yuke:internal/text-input";
 import { normalizeSeq, stripCtrl, strokeOf } from "yuke:internal/keys";
 import { term } from "yuke:internal/native/term";
-import { callHook, config, events, once } from "yuke:internal/kernel";
+import { callHook, config, events, fault, once } from "yuke:internal/kernel";
 
 /** @import { Color, Style } from "yuke:internal/native/term" */
 /** @import { CommandAction, CommandEntry, CommandListing, CommandRegistry, CommandSpec, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
@@ -877,7 +877,7 @@ export const status = {
       try {
         t = seg.render();
       } catch (e) {
-        events.emit("ext.failed", e, "status");
+        fault(e, "status");
       }
       if (t) out.push(String(t));
     }

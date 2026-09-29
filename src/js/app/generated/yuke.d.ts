@@ -744,8 +744,6 @@ class PluginInstance {
     get ready(): Promise<void>;
     /** @returns {PluginAsync} */
     _state(): PluginAsync;
-    /** @param {unknown} error */
-    report(error: unknown): void;
     /** @returns {void | Promise<void>} */
     dispose(): void | Promise<void>;
     /** @returns {Promise<void>} */
@@ -876,6 +874,7 @@ export type ListenerMap = {
     [name: string]: Array<(...args: any[]) => unknown>;
 };
 import Bus = $types_ext.Bus;
+import Notification = $types_ext.Notification;
 /** @param {() => void} fn @returns {() => void} */
 export function once(fn: () => void): () => void;
 /** @type {Config} */
@@ -910,6 +909,15 @@ export class Emitter {
     bail(name: string, ...args: any[]): unknown;
 }
 export const events: Bus;
+/** The notifications of this process, oldest first. A repeat of the newest entry increases its count. */
+/** @type {Notification[]} */
+export const notifications: Notification[];
+/** Add one notification. `source` names the plugin or the application part that sent it. A frontend displays the entry. */
+/** @param {Wire.NoticeLevel} level @param {string} message @param {string} source @param {string} [stack] @returns {void} */
+export function notify(level: Wire.NoticeLevel, message: string, source: string, stack?: string): void;
+/** Report a thrown value as an error notification. The report never throws, because a value can fail every read. */
+/** @param {unknown} error @param {string} source @returns {void} */
+export function fault(error: unknown, source: string): void;
 }
 
 declare namespace $keys {
@@ -2813,6 +2821,18 @@ import HostMouseEvent = $types_core.HostMouseEvent;
 import ViewLike = $types_core.ViewLike;
 
 export type Disposer = () => void;
+
+/** One notification in the history. */
+export interface Notification {
+  level: Wire.NoticeLevel;
+  /** The plugin or the application part that sent the notification. */
+  source: string;
+  message: string;
+  /** The stack of a fault, or an empty string. */
+  stack: string;
+  /** The number of times this entry arrived in a row. */
+  count: number;
+}
 export type AdviceFunction = (...args: any[]) => any;
 // Advice follows the synchronous call, not promise settlement; a throw skips after and filterReturn.
 export type AdviceWhere = "before" | "after" | "around" | "filterArgs" | "filterReturn";
@@ -2834,7 +2854,8 @@ type EngineFacts = { [K in Exclude<DrainFact, "notice" | "auth.login_finished">]
  */
 export type Events = import("yuke").Events;
 export interface EventsBase extends EngineFacts {
-  "ext.failed"(error: unknown, owner: string): void;
+  /** The process added a notification, or increased the count of the newest one. The history owns the entry. */
+  "notify.posted"(entry: Readonly<Notification>): void;
   "engine.drained"(ev: EngineFactEvent): void;
   /** A notice and a login outcome name no session, so they arrive only in an index drain. */
   "notice"(ev: Extract<EngineEvent, { type: "index" }>): void;

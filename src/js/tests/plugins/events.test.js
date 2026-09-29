@@ -7,7 +7,7 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 // A throwing teardown reports on the bus and never stops the rest.
 {
   const seen = [];
-  const off = events.on("ext.failed", (e, name) => seen.push(name));
+  const off = events.on("notify.posted", (n) => seen.push(n.source));
   const s = new Scope("t3");
   s.effect(() => () => { throw new Error("boom"); });
   s.effect(() => () => seen.push("after"));
@@ -84,7 +84,7 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   check("bus-bail-typo", throws(() => events.bail("ui.tik")));
   const core = ["ui.started", "ui.closed", "ui.resized", "ui.ticked", "key.pressed", "mouse.received",
     "paste.received", "focus.changed", "clipboard.copied",
-    "ext.failed"];
+    "notify.posted"];
   const bad = core.filter((n) => throws(() => events.on(n, () => {})()));
   check("bus-core-declared:" + bad.join("|"), bad.length === 0);
 }

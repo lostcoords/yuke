@@ -4,7 +4,7 @@ import { events } from "yuke:internal/kernel";
 import { services } from "yuke:internal/ext";
 
 const faults = [];
-const unwatch = events.on("ext.failed", (error, name) => faults.push(name + ":" + error.message));
+const unwatch = events.on("notify.posted", (n) => faults.push(n.source + ":" + n.message));
 globalThis.startDone = false;
 (async () => {
   let resume;

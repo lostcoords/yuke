@@ -1,7 +1,7 @@
 import { events } from "yuke:internal/kernel";
 import { plugins } from "yuke:internal/ext";
 globalThis.faults = [];
-events.on("ext.failed", (e, owner) => globalThis.faults.push(String(owner) + ":" + e.message));
+events.on("notify.posted", (n) => globalThis.faults.push(n.source + ":" + n.message));
 plugins.use({ name: "getter", apply(ctx) {
   ctx.hook("input.before", () => ({ get block() { throw new Error("getter"); } }));
 } });

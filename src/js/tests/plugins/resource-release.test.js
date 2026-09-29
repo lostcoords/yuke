@@ -3,7 +3,7 @@ import { plugins } from "yuke";
 import { events } from "yuke:internal/kernel";
 
 const faults = [];
-const off = events.on("ext.failed", (error, name) => { if (name === "release") faults.push(error.message); });
+const off = events.on("notify.posted", (n) => { if (n.source === "release") faults.push(n.message); });
 const order = [];
 let nested;
 let once;

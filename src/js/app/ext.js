@@ -1,6 +1,6 @@
 // The plugin runtime: a Scope owns effects and releases, a Context registers, and `advice` wraps methods.
 import * as cancellation from "yuke:internal/native/cancellation";
-import { events, once } from "yuke:internal/kernel";
+import { events, fault, notify, once } from "yuke:internal/kernel";
 import { bindInteraction } from "yuke:internal/interaction";
 import { defineTool, removeTool } from "yuke:internal/native/tools";
 import { installDispatcher, installLifecycle, setPoints } from "yuke:internal/native/hooks";
@@ -168,8 +168,8 @@ export class Scope {
       try {
         if (cleanup) cleanup();
       } catch (e) {
-        // A silent teardown failure hides a plugin bug, so report it on the shared bus.
-        events.emit("ext.failed", e, this.name);
+        // A silent teardown failure hides a plugin bug, so report it as a notification.
+        fault(e, this.name);
       }
     }
 
@@ -222,7 +222,7 @@ export class Scope {
   /** @param {Release} fn @returns {Promise<void> | undefined} */
   _attempt(fn) {
     /** @param {unknown} error */
-    const report = (error) => { if (!this._quiet()) events.emit("ext.failed", error, this.name); };
+    const report = (error) => { if (!this._quiet()) fault(error, this.name); };
     try {
       const result = fn();
       if (result != null && typeof /** @type {{ then?: unknown }} */ (result).then === "function") return Promise.resolve(result).then(NOOP, report);
@@ -416,7 +416,7 @@ export const services = {
         try {
           fn();
         } catch (e) {
-          events.emit("ext.failed", e, "service:" + name);
+          fault(e, "service:" + name);
         }
       }
     }
@@ -496,7 +496,7 @@ function injectInto(parentContext, names, apply) {
     } catch (e) {
       child.dispose();
       // A throwing block keeps its plugin alive, so the runtime reports the fault and stays inactive.
-      events.emit("ext.failed", e, id);
+      fault(e, id);
       return false;
     }
   };
@@ -519,7 +519,7 @@ function injectInto(parentContext, names, apply) {
         passes += 1;
       } while (dirty && passes < inject_max_passes && !stopped && parent.alive);
       // A block that changes its own dependency every pass never settles, so report it once.
-      if (dirty) events.emit("ext.failed", new Error("inject: `" + deps.join("+") + "` does not settle"), id);
+      if (dirty) notify("error", "inject: `" + deps.join("+") + "` does not settle", id);
     } finally {
       building = false;
       dirty = false;
@@ -592,7 +592,7 @@ async function dispatch(point, payload) {
       }
     } catch (e) {
       // A throwing handler is a plugin bug. The point fails closed, so a broken policy never lets an action through.
-      events.emit("ext.failed", e, entry.owner);
+      fault(e, entry.owner);
       return { type: "block", reason: "the " + entry.owner + " plugin failed at " + point };
     }
   }
@@ -778,9 +778,6 @@ class PluginInstance {
     return this._async ??= {};
   }
 
-  /** @param {unknown} error */
-  report(error) { events.emit("ext.failed", error, this._name); }
-
   // Close the scope and free the name once the close and any startup settle, or once the deadline gives up.
   /** @returns {void | Promise<void>} */
   dispose() {
@@ -810,7 +807,7 @@ class PluginInstance {
   // Give up on a close past its deadline, so a late release fault stays silent and the name is free.
   _force() {
     if (this._phase !== "closing") return;
-    this.report(new Error("plugin close timed out"));
+    notify("error", "plugin close timed out", this._name);
     this.scope._state().quiet = true;
     this._finish();
   }
@@ -859,7 +856,7 @@ function startPlugin(plugin) {
         rejectReady(error);
         if (instance._phase === "active") {
           plugins._startupFailure ??= { error };
-          instance.report(error);
+          fault(error, instance._name);
           instance.dispose();
         }
       }).then(() => {

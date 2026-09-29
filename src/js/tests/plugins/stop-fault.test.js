@@ -4,7 +4,7 @@ import { events } from "yuke:internal/kernel";
 
 let disposed = 0;
 const faults = [];
-const unwatch = events.on("ext.failed", (error, owner) => faults.push(owner + ":" + error.message));
+const unwatch = events.on("notify.posted", (n) => faults.push(n.source + ":" + n.message));
 for (const async of [false, true]) {
   plugins.use({
     name: "fault-" + async,

@@ -9,6 +9,18 @@ import type { Composer } from "../ui.js";
 import type { HostMouseEvent, ViewLike } from "./core.js";
 
 export type Disposer = () => void;
+
+/** One notification in the history. */
+export interface Notification {
+  level: Wire.NoticeLevel;
+  /** The plugin or the application part that sent the notification. */
+  source: string;
+  message: string;
+  /** The stack of a fault, or an empty string. */
+  stack: string;
+  /** The number of times this entry arrived in a row. */
+  count: number;
+}
 export type AdviceFunction = (...args: any[]) => any;
 // Advice follows the synchronous call, not promise settlement; a throw skips after and filterReturn.
 export type AdviceWhere = "before" | "after" | "around" | "filterArgs" | "filterReturn";
@@ -29,7 +41,8 @@ type EngineFacts = { [K in Exclude<DrainFact, "notice" | "auth.login_finished">]
  * with `bail`, and the newest listener that answers wins. A plugin names its own events `<plugin>:<name>`.
  */
 export interface Events extends EngineFacts {
-  "ext.failed"(error: unknown, owner: string): void;
+  /** The process added a notification, or increased the count of the newest one. The history owns the entry. */
+  "notify.posted"(entry: Readonly<Notification>): void;
   "engine.drained"(ev: EngineFactEvent): void;
   /** A notice and a login outcome name no session, so they arrive only in an index drain. */
   "notice"(ev: Extract<EngineEvent, { type: "index" }>): void;
