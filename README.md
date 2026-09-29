@@ -33,14 +33,15 @@ A client can call it before other methods to check compatibility. The server has
 
 ## Plugin types
 
-The installer links the plugin API declarations into the profile's configuration directory, next to `index.js`:
+The installer links the plugin API declarations and the editor options into the profile's configuration directory, next to `index.js`:
 
 - `yuke.d.ts` and `yuke-modules.d.ts` declare `yuke`, `yuke:ui`, `yuke:chat`, `yuke:session`, and `yuke:plugins`.
   Each one is a link to the installed copy in `~/.local/lib/yuke/types`. An upgrade updates them.
-- `jsconfig.json` makes the editor check `index.js` against them. The installer writes it only when none exists.
+- `yuke.jsconfig.json` is a link to `~/.local/lib/yuke/jsconfig.json`, the options the editor checks plugins with. An upgrade updates it.
+- `jsconfig.json` is yours. When none exists, the installer writes `{ "extends": "./yuke.jsconfig.json" }`. Add your own options there.
 
 The installer links the profile that `XDG_CONFIG_HOME` and `YUKE_APPNAME` name. For another profile, run the installer again with its name.
-The links hold a path on this machine, so a profile in git ignores them: add `yuke.d.ts` and `yuke-modules.d.ts` to its `.gitignore`.
+The links hold a path on this machine, so a profile in git ignores them: add `yuke.d.ts`, `yuke-modules.d.ts`, and `yuke.jsconfig.json` to its `.gitignore`.
 Do not edit them. The next install replaces them. To add types, write your own `.d.ts` file next to `index.js`, as the next section shows.
 
 ## Check a profile
