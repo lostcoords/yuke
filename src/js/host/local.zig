@@ -236,10 +236,8 @@ fn utf8Floor(bytes: []const u8) ?usize {
     return null;
 }
 
-const ExpandError = @typeInfo(@typeInfo(@TypeOf(paths.expandHome)).@"fn".return_type.?).error_union.error_set;
-
 /// Every native error the local host can raise. `mapError` covers this set, not `anyerror`.
-const FsError = ExpandError || std.mem.Allocator.Error || std.Io.File.OpenError;
+const FsError = paths.ExpandError || std.Io.File.OpenError;
 const NativeError = FsError || std.Io.Dir.ReadFileAllocError || std.Io.Dir.StatFileError ||
     std.Io.Dir.OpenError || std.Io.Dir.CreateFileAtomicError || std.Io.File.Writer.Error ||
     std.Io.File.SetPermissionsError || std.Io.Dir.RenameError || std.Io.Dir.DeleteFileError ||

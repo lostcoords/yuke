@@ -10,6 +10,7 @@ const poller = @import("../../net/poller.zig");
 const App = @import("../../app/app.zig").App;
 const login_runtime = @import("login_runtime.zig");
 const CredentialLock = @import("credential_lock.zig");
+const util = @import("../../util.zig");
 
 const oauth = provider.oauth;
 const xai = provider.oauth_xai;
@@ -46,7 +47,7 @@ fn drive(runtime: *App, slot: *login_runtime.LoginSlot, seam: oauth.Http) !proto
     defer runtime.gpa.free(body);
 
     // The clock counts the request time too, so a slow provider cannot outlast the deadline.
-    const began_ms = runtime.nowMillis();
+    const began_ms = util.nowMillis(runtime.io);
     var pace: poller.Poller = .init(0, slot.start.interval_ms, max_lifetime_ms);
     if (try slot.cancel.holdFor(runtime.io, pace.firstWaitMs())) return .{ .canceled = .{} };
 
@@ -55,10 +56,10 @@ fn drive(runtime: *App, slot: *login_runtime.LoginSlot, seam: oauth.Http) !proto
         defer arena.deinit();
 
         // One poll per turn, because an xAI poll that returns tokens spends the device code.
-        const elapsed_ms = runtime.nowMillis() -| began_ms;
+        const elapsed_ms = util.nowMillis(runtime.io) -| began_ms;
         if (elapsed_ms >= max_lifetime_ms) return .{ .failed = .{ .message = "the login expired before approval" } };
 
-        const result: ?oauth.Poll = pollFlow(arena.allocator(), slot, seam, runtime.nowMillis(), body) catch |err| switch (err) {
+        const result: ?oauth.Poll = pollFlow(arena.allocator(), slot, seam, util.nowMillis(runtime.io), body) catch |err| switch (err) {
             oauth.Error.PreFlight, oauth.Error.Transient => null,
             else => return .{ .failed = .{ .message = "the provider refused the login" } },
         };
@@ -74,7 +75,7 @@ fn drive(runtime: *App, slot: *login_runtime.LoginSlot, seam: oauth.Http) !proto
             .slow_down => .{ .slow_down = null },
         } else .unavailable;
 
-        switch (pace.step(reply, runtime.nowMillis() -| began_ms)) {
+        switch (pace.step(reply, util.nowMillis(runtime.io) -| began_ms)) {
             .failed => |failure| return .{ .failed = .{ .message = switch (failure) {
                 .expired => "the login expired before approval",
                 .offline => "the provider stayed unreachable",
@@ -157,8 +158,8 @@ pub fn refreshOnce(runtime: *App, margin_ms: u64) !bool {
     const old = due.grant.refresh_token.?;
 
     const tokens = (switch (due.flow) {
-        .xai => xai.refresh(arena, seam, old, runtime.nowMillis(), body),
-        .codex => codex.refresh(arena, seam, old, runtime.nowMillis(), body),
+        .xai => xai.refresh(arena, seam, old, util.nowMillis(runtime.io), body),
+        .codex => codex.refresh(arena, seam, old, util.nowMillis(runtime.io), body),
     }) catch |err| switch (err) {
         // The request never left or the call spends no token, so the caller may repeat it.
         oauth.Error.PreFlight, oauth.Error.Transient => return err,
@@ -213,7 +214,7 @@ const Due = struct {
 
 fn dueGrant(runtime: *App, arena: std.mem.Allocator, margin_ms: u64) !?Due {
     const loaded = runtime.store.local orelse return null;
-    const now_ms = runtime.nowMillis();
+    const now_ms = util.nowMillis(runtime.io);
     for (loaded.providers) |p| {
         const auth = p.auth orelse continue;
         if (auth != .oauth) continue;

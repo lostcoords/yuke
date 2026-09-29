@@ -37,8 +37,8 @@ pub const App = struct {
     scheduler: scheduler_mod.Scheduler = undefined,
     maintenance: std.Io.Group = .init,
 
-    /// Open the store, load the configuration, and start the maintenance task.
-    pub fn open(gpa: std.mem.Allocator, io: std.Io, context: execution.Context) !*App {
+    /// Open the store, load the configuration, and start the maintenance task. `config_dir` is borrowed. A null directory means no config file.
+    pub fn open(gpa: std.mem.Allocator, io: std.Io, context: execution.Context, config_dir: ?[]const u8) !*App {
         const self = try gpa.create(App);
         errdefer gpa.destroy(self);
 
@@ -68,7 +68,7 @@ pub const App = struct {
         errdefer self.deinitState();
 
         // The app owns this path, because an invalid file fails startup and `auth.set_api_key` rewrites it.
-        self.store.path = try configFilePath(gpa, context.env, "providers.json");
+        self.store.path = if (config_dir) |dir| try std.Io.Dir.path.join(gpa, &.{ dir, "providers.json" }) else null;
         if (self.store.path != null) {
             // The lock is machine state, so it lives beside the store and never in a dotfiles config tree.
             self.store.lock_path = try std.Io.Dir.path.join(gpa, &.{ data_dir, paths.providers_lock_file });
@@ -106,16 +106,6 @@ pub const App = struct {
         };
         self.engine.sinks.emit(note);
     }
-    /// Return wall-clock milliseconds since the Unix epoch.
-    pub fn nowMillis(self: *const App) u64 {
-        return util.nowMillis(self.io);
-    }
-
-    /// Mint a fresh UUIDv7 for a session, workspace, or event.
-    pub fn newId(self: *const App) [16]u8 {
-        return util.newId(self.io);
-    }
-
     /// Close the app and release its allocation.
     pub fn close(self: *App) void {
         const gpa = self.gpa;
@@ -144,13 +134,6 @@ pub const App = struct {
     }
 };
 
-/// Join a file name under the config directory, or null when none exists. The caller owns it.
-fn configFilePath(gpa: std.mem.Allocator, env: *const std.process.Environ.Map, name: []const u8) !?[]u8 {
-    const base = try paths.configDir(gpa, env) orelse return null;
-    defer gpa.free(base);
-    return try std.Io.Dir.path.join(gpa, &.{ base, name });
-}
-
 /// Resolve and create the data directory, or null when no path exists. The caller owns it.
 fn resolveDataDir(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) !?[]u8 {
     const base = try paths.dataDir(gpa, env) orelse return null;
@@ -171,7 +154,6 @@ pub fn ensureDataDir(io: std.Io, dir: []const u8) !void {
 /// The test dependencies. An empty environment allocates nothing, so no test frees it.
 const app_fixture = @import("fixture.zig");
 const build_info = @import("build_info");
-const util = @import("../util.zig");
 const zio = @import("zio");
 var test_env: std.process.Environ.Map = .init(std.testing.allocator);
 var test_transport = ai.testing.CannedTransport{ .bytes = ai.testing.canned_reply };
@@ -183,7 +165,7 @@ test "no base for the store stops startup, and an absolute XDG base opens it wit
     // No home directory and no XDG base, which is the container case the plan names.
     var bare: std.process.Environ.Map = .init(testing.allocator);
     defer bare.deinit();
-    try testing.expectError(error.NoStateDirectory, App.open(testing.allocator, rt.io(), execution.testContext(&bare)));
+    try testing.expectError(error.NoStateDirectory, App.open(testing.allocator, rt.io(), execution.testContext(&bare), null));
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -192,7 +174,7 @@ test "no base for the store stops startup, and an absolute XDG base opens it wit
     var xdg: std.process.Environ.Map = .init(testing.allocator);
     defer xdg.deinit();
     try xdg.put("XDG_DATA_HOME", root);
-    const opened = try App.open(testing.allocator, rt.io(), execution.testContext(&xdg));
+    const opened = try App.open(testing.allocator, rt.io(), execution.testContext(&xdg), null);
     opened.close();
 }
 

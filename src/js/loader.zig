@@ -123,6 +123,22 @@ fn dupJs(ctx: quickjs.Context, s: []const u8) ?[:0]u8 {
     return std.mem.span(ptr);
 }
 
+test "a module file over the size limit does not load" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "fits.js", .data = "12345678" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "big.js", .data = "123456789" });
+    var root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(std.testing.io, &root_buf)];
+    var loader: Loader = .{ .gpa = std.testing.allocator, .io = std.testing.io, .baked = &.{}, .max_file_bytes = 8 };
+
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const fits = loader.readModule(try std.fmt.bufPrint(&path_buf, "{s}/fits.js", .{root})).?;
+    defer std.testing.allocator.free(fits);
+    try std.testing.expectEqualStrings("12345678", fits);
+    try std.testing.expect(loader.readModule(try std.fmt.bufPrint(&path_buf, "{s}/big.js", .{root})) == null);
+}
+
 test "resolve keeps yuke names and rejects a relative name with no base" {
     const gpa = std.testing.allocator;
     const a = try resolve(gpa, "", "yuke:internal/core");

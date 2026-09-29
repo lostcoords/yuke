@@ -10,6 +10,7 @@ test {
     _ = @import("js/tests/preview_test.zig");
     _ = @import("js/tests/agents_test.zig");
     _ = @import("js/host.zig");
+    _ = @import("js/loader.zig");
     _ = @import("js/extensions.zig");
     _ = @import("app/rpc.zig");
     _ = @import("app/rpc_js_test.zig");

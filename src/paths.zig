@@ -107,11 +107,6 @@ fn homeExpansion(alloc: std.mem.Allocator, env: *const Map, path: []const u8) Ex
     return try std.Io.Dir.path.join(alloc, &.{ home, rest });
 }
 
-/// Expand a leading `~` or copy the path into caller-owned memory.
-pub fn expandHome(alloc: std.mem.Allocator, env: *const Map, path: []const u8) ExpandError![]u8 {
-    return (try homeExpansion(alloc, env, path)) orelse try alloc.dupe(u8, path);
-}
-
 /// Anchor a tool path: expand an initial `~`, then resolve it against `root`. There is no confinement.
 pub fn anchorAt(alloc: std.mem.Allocator, env: *const Map, root: []const u8, path: []const u8) ExpandError![]const u8 {
     const owned = try homeExpansion(alloc, env, path);
@@ -213,23 +208,6 @@ test "configDir falls back to dot-config" {
     try testing.expectEqualStrings("/home/u/.config/yuke", got);
 }
 
-test "expandHome substitutes a leading tilde" {
-    var env = try testEnv(&.{.{ "HOME", "/home/u" }});
-    defer env.deinit();
-
-    const a = try expandHome(testing.allocator, &env, "~/x");
-    defer testing.allocator.free(a);
-    try testing.expectEqualStrings("/home/u/x", a);
-
-    const b = try expandHome(testing.allocator, &env, "/abs");
-    defer testing.allocator.free(b);
-    try testing.expectEqualStrings("/abs", b);
-
-    const c = try expandHome(testing.allocator, &env, "~");
-    defer testing.allocator.free(c);
-    try testing.expectEqualStrings("/home/u", c);
-}
-
 test "canonicalizeWorkspace folds equivalent forms to one root" {
     var env = try testEnv(&.{.{ "HOME", "/home/u" }});
     defer env.deinit();
@@ -261,21 +239,21 @@ test "a tilde without an absolute home fails instead of resolving somewhere else
     const homeless = [_][]const u8{ "", "relative/home" };
     var absent = try testEnv(&.{});
     defer absent.deinit();
-    try testing.expectError(error.HomeUnavailable, expandHome(a, &absent, "~"));
-    try testing.expectError(error.HomeUnavailable, expandHome(a, &absent, "~/x"));
+    try testing.expectError(error.HomeUnavailable, anchorAt(a, &absent, "/work", "~"));
+    try testing.expectError(error.HomeUnavailable, anchorAt(a, &absent, "/work", "~/x"));
     for (homeless) |value| {
         var env = try testEnv(&.{.{ home_env, value }});
         defer env.deinit();
-        try testing.expectError(error.HomeUnavailable, expandHome(a, &env, "~"));
-        try testing.expectError(error.HomeUnavailable, expandHome(a, &env, "~/x"));
+        try testing.expectError(error.HomeUnavailable, anchorAt(a, &env, "/work", "~"));
         try testing.expectError(error.HomeUnavailable, anchorAt(a, &env, "/work", "~/x"));
     }
 
     // A path that needs no home directory still resolves, and `~alice` is not home expansion here.
-    for ([_][]const u8{ "rel/x", "/abs/x", "~alice/x" }) |path| {
-        const got = try expandHome(a, &absent, path);
+    const plain = [_][2][]const u8{ .{ "rel/x", "/work/rel/x" }, .{ "/abs/x", "/abs/x" }, .{ "~alice/x", "/work/~alice/x" } };
+    for (plain) |case| {
+        const got = try anchorAt(a, &absent, "/work", case[0]);
         defer a.free(got);
-        try testing.expectEqualStrings(path, got);
+        try testing.expectEqualStrings(case[1], got);
     }
 }
 

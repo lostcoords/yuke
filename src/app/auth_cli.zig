@@ -189,12 +189,6 @@ fn keyLogin(io: std.Io, runtime: *App, arena: std.mem.Allocator, w: *std.Io.Writ
 /// The terminal mode to put back. Windows keeps its echo, so it has nothing to restore.
 const SavedMode = if (builtin.os.tag == .windows) void else std.posix.termios;
 
-/// Turn the echo off and answer the mode to restore, or null where the echo stays.
-fn echoOff(stdin: std.Io.File) !?SavedMode {
-    if (builtin.os.tag == .windows) return null;
-    return try std.posix.tcgetattr(stdin.handle);
-}
-
 fn echoRestore(stdin: std.Io.File, saved: SavedMode) void {
     if (builtin.os.tag == .windows) return;
     std.posix.tcsetattr(stdin.handle, .NOW, saved) catch |err| std.log.warn("cannot restore the terminal echo: {t}", .{err});
@@ -202,7 +196,8 @@ fn echoRestore(stdin: std.Io.File, saved: SavedMode) void {
 
 /// Read one line. On a terminal the echo stays off while the key comes in, and the old mode returns after.
 fn readSecret(io: std.Io, arena: std.mem.Allocator, stdin: std.Io.File, tty: bool) ![]u8 {
-    const saved: ?SavedMode = if (tty) try echoOff(stdin) else null;
+    // On POSIX, the saved mode exists before the terminal mode changes.
+    const saved: ?SavedMode = if (builtin.os.tag == .windows or !tty) null else try std.posix.tcgetattr(stdin.handle);
     // The restore is in place before the mode changes, so a failed change still puts the old mode back.
     defer if (saved) |mode| echoRestore(stdin, mode);
     if (saved) |mode| {

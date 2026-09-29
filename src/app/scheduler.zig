@@ -3,6 +3,7 @@
 const std = @import("std");
 const App = @import("app.zig").App;
 const login_task = @import("../provider/oauth/login_task.zig");
+const util = @import("../util.zig");
 
 const Timestamp = std.Io.Clock.Timestamp;
 const Duration = std.Io.Clock.Duration;
@@ -98,7 +99,7 @@ pub const Scheduler = struct {
             return;
         }
         // A lapsed grant reports no lead, so the job waits instead of rotating a dead token again.
-        const lead_ms = if (login_task.soonestExpiry(self.runtime)) |at| leadMillis(at, self.runtime.nowMillis()) else null;
+        const lead_ms = if (login_task.soonestExpiry(self.runtime)) |at| leadMillis(at, util.nowMillis(self.runtime.io)) else null;
         self.grants.due = .fromNow(io, millis(lead_ms orelse grants_idle_ms));
     }
 };

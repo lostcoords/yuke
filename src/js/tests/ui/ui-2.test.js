@@ -1,7 +1,7 @@
 import { check, textParts } from "yuke:internal/test";
 import { List } from "yuke:internal/ui";
 import { Transcript } from "yuke:internal/transcript";
-import { fuzzyMatch, fuzzyRank } from "yuke:internal/fzy";
+import { fuzzyRank } from "yuke:internal/fzy";
 
 // A two-line list shows floor(h / itemHeight) items and scrolls in item units.
 const l = new List({ items: [0, 1, 2, 3, 4, 5], itemHeight: 2 });
@@ -14,17 +14,19 @@ l.ensureVisible(6);
 check("scroll-top", l.scroll === 0 && l.selectedIndex() === 0);
 
 // fzy requires a subsequence and prefers a word boundary.
-check("nomatch", fuzzyMatch("abc", "xyz") === null);
-check("empty", fuzzyMatch("abc", "") === 0);
 const ranked = fuzzyRank(["afboo", "foo_bar", "random"], "fb", String);
 check("boundary-first", ranked[0] === "foo_bar");
 const dog = fuzzyRank(["cat", "dog"], "og", String);
 check("subsequence", dog.length === 1 && dog[0] === "dog");
-check("over-long-cap", fuzzyMatch("a".repeat(1025), "a") === -Infinity);
+// A text over the length cap still matches, but it ranks last.
+const long = "a".repeat(1025);
+const capped = fuzzyRank([long, "ba"], "a", String);
+check("over-long-cap", capped.length === 2 && capped[1] === long);
 // The score rows are shared, so a short text after a long one reads none of the long one's cells.
-const short = fuzzyMatch("x_ab", "ab");
-fuzzyMatch("ab".repeat(300) + "_ab", "ab");
-check("rows-reused", fuzzyMatch("x_ab", "ab") === short);
+const shorts = ["x_ab", "xab", "ax_b", "zzab"];
+const before = fuzzyRank(shorts, "ab", String).join(",");
+fuzzyRank(["ab".repeat(300) + "_ab"], "ab", String);
+check("rows-reused", fuzzyRank(shorts, "ab", String).join(",") === before);
 
 // A user turn is a tinted band with a gutter marker; an assistant turn renders markdown.
 const texts = { u1: "hello world", a1: "**bold** text" };

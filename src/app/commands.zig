@@ -11,6 +11,7 @@ const provider_oauth = @import("../provider/provider.zig").oauth;
 const login_runtime = @import("../provider/oauth/login_runtime.zig");
 const login_task = @import("../provider/oauth/login_task.zig");
 const net_http = @import("../net/http.zig");
+const util = @import("../util.zig");
 
 /// Handle catalog.list: return every configured provider and its models, or nothing when the client already holds this revision; a signed-out user with a local key still picks a model.
 pub fn catalogList(runtime: *App, _: std.mem.Allocator, params: proto.catalog.CatalogListParams) !proto.catalog.CatalogListResult {
@@ -59,7 +60,7 @@ pub fn authLogin(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Aut
     const owned_id = slot_arena.allocator().dupe(u8, params.provider_id) catch unreachable;
 
     // Reserve before the network call because `start` yields and a second request could pass the check; the registry owns the arena from here, so one `remove` frees everything.
-    const login_id: proto.ids.LoginId = .bytes(runtime.newId() ++ runtime.newId());
+    const login_id: proto.ids.LoginId = .bytes(util.newId(runtime.io) ++ util.newId(runtime.io));
     const slot = runtime.logins.reserve(login_id, slot_arena, owned_id, flow) catch unreachable; // Only an allocation fails here.
     errdefer runtime.logins.remove(login_id);
 

@@ -136,13 +136,6 @@ function score(text, query) {
   return /** @type {number} */ (M[n - 1]);
 }
 
-// Score `query` against `text`; null when `query` is not a subsequence. Higher is better.
-/** @param {string} text @param {string} query @returns {number | null} */
-export function fuzzyMatch(text, query) {
-  if (query === "") return 0;
-  return score(text, foldQuery(query));
-}
-
 // Rank `items` by fuzzy score and drop non-matches; ties break by shorter text, then lexicographically.
 /** @template T @param {T[]} items @param {string} query @param {(item: T) => string} textOf @returns {T[]} */
 export function fuzzyRank(items, query, textOf) {

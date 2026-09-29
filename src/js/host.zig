@@ -59,7 +59,6 @@ pub const default_baked = blk: {
 pub const Options = struct {
     /// The shared deadline for plugin stop timers and the native shutdown guard.
     plugin_stop_timeout_ms: i32 = 1000,
-    max_file_bytes: usize = loader_mod.default_max_file_bytes,
     /// The directory the process runs in. A new session takes it as the workspace root.
     cwd: []const u8,
     /// The startup answers: the effective environment and the one command shell.
@@ -152,7 +151,7 @@ pub const Host = struct {
             .gpa = gpa,
             .io = io,
             .baked = &default_baked,
-            .max_file_bytes = opts.max_file_bytes,
+            .max_file_bytes = loader_mod.default_max_file_bytes,
         };
         const eng = engine_module.Engine.create(gpa, ctx, io, &self.wake) catch unreachable;
 
@@ -975,29 +974,6 @@ test "a file outside the entry directory loads" {
     const src = try std.fmt.bufPrintZ(&src_buf, "import {{ n }} from '{s}'; globalThis.result = n;", .{shared});
     try host.evalModule(src, entry);
     try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.result"));
-}
-
-test "an oversize module file does not load" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{
-        .sub_path = "big.js",
-        .data = "export const n = 1;\n",
-    });
-    var root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const root_len = try tmp.dir.realPath(std.testing.io, &root_buf);
-    const root = root_buf[0..root_len];
-
-    var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
-    defer _ = pool.deinit();
-    const host = Host.createWith(pool.allocator(), std.testing.io, .{ .max_file_bytes = 8, .cwd = "", .execution = support.hostOptions("").execution });
-    defer host.destroy();
-    var entry_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const entry = try std.fmt.bufPrintZ(&entry_buf, "{s}/index.js", .{root});
-    try std.testing.expectError(
-        error.JavaScriptFault,
-        host.evalModule("import { n } from './big.js';", entry),
-    );
 }
 
 test "every baked module reads back from its bytecode under its own name" {
