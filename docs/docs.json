@@ -1,0 +1,11 @@
+{
+  "navigation": [
+    { "title": "Customize yuke", "path": "index.md" },
+    { "title": "Profile", "path": "profile.md" },
+    { "title": "Plugins", "path": "plugins.md" },
+    { "title": "UI", "path": "ui.md" },
+    { "title": "Engine", "path": "engine.md" },
+    { "title": "Types", "path": "types.md" },
+    { "title": "News", "path": "news.md" }
+  ]
+}

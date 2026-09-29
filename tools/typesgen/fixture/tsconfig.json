@@ -1,4 +1,4 @@
 {
   "extends": "../../../src/app/plugin-jsconfig.json",
-  "files": ["index.js", "events.d.ts", "capabilities.d.ts", "../../../src/js/app/generated/yuke.d.ts", "../../../src/js/app/generated/yuke-modules.d.ts"]
+  "files": ["index.js", "../../../docs/examples/plugin.js", "../../../docs/examples/roomy-chat.js", "events.d.ts", "capabilities.d.ts", "../../../src/js/app/generated/yuke.d.ts", "../../../src/js/app/generated/yuke-modules.d.ts"]
 }

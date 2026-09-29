@@ -169,6 +169,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = app_imports,
     });
+    // The skill lives outside src/, so a test reads it through this path.
+    const test_paths = b.addOptions();
+    test_paths.addOptionPath("yuke_skill", b.path(".agents/skills/yuke/SKILL.md"));
+    tests.addImport("test_paths", test_paths.createModule());
     // One compile serves every shard; each shard is a process that runs every n-th test.
     const src_tests = b.addTest(.{
         .name = "src",
@@ -246,6 +250,9 @@ pub fn build(b: *std.Build) void {
     b.installFile("src/js/app/generated/yuke.d.ts", "lib/yuke/types/yuke.d.ts");
     b.installFile("src/js/app/generated/yuke-modules.d.ts", "lib/yuke/types/yuke-modules.d.ts");
     b.installFile("src/app/plugin-jsconfig.json", "lib/yuke/jsconfig.json");
+    // The installer links this skill into ~/.agents/skills, and the skill points to these docs.
+    b.installDirectory(.{ .source_dir = b.path(".agents/skills/yuke"), .install_dir = .lib, .install_subdir = "yuke/skills/yuke" });
+    b.installDirectory(.{ .source_dir = b.path("docs"), .install_dir = .lib, .install_subdir = "yuke/docs" });
 
     const run_exe = b.addRunArtifact(exe);
     if (b.args) |args| run_exe.addArgs(args);

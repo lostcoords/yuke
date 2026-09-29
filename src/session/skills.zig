@@ -496,6 +496,19 @@ const Roots = struct {
 
 const skills_load = load;
 
+// The installer links .agents/skills/yuke into ~/.agents/skills, so its frontmatter must pass this loader.
+test "the bundled yuke skill loads with no skipped entry" {
+    var r: Roots = undefined;
+    try r.init();
+    defer r.deinit();
+    const text = try std.Io.Dir.cwd().readFileAlloc(testing.io, @import("test_paths").yuke_skill, r.arena.allocator(), .limited(max_file_bytes));
+    try r.skill("home", "yuke", text);
+    const catalog = try r.load();
+    try testing.expectEqual(@as(usize, 0), catalog.skipped.len);
+    try testing.expectEqual(@as(usize, 1), catalog.entries.len);
+    try testing.expectEqualStrings("yuke", catalog.entries[0].name);
+}
+
 test "the catalog sorts names, prefers the workspace, and reports skipped files" {
     var r: Roots = undefined;
     try r.init();
