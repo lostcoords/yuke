@@ -107,8 +107,10 @@ jobs:
                [ "${{ steps.nightly.outputs.draft }}" = "false" ]; then
             echo "nightly already points at ${NIGHTLY_SHA}"
             echo "skip=true" >> "${GITHUB_OUTPUT}"
+          # A draft means an earlier run stopped before publish, so only a published nightly may skip.
           elif [ "${{ steps.changes.outputs.build }}" = "false" ] &&
-               [ "${{ steps.changes.outputs.workflow }}" = "false" ]; then
+               [ "${{ steps.changes.outputs.workflow }}" = "false" ] &&
+               [ "${{ steps.nightly.outputs.draft }}" = "false" ]; then
             echo "only inert files changed since the last nightly"
             echo "skip=true" >> "${GITHUB_OUTPUT}"
           else
