@@ -28,7 +28,7 @@ Put all TUI code in `ctx.inject(["tui"], (c) => { ... })`. The block runs only w
 
 ### Contexts
 
-A context is an expression over atoms: `chat`, `composer`, `transcript`, `overlay`, and your own flags. Operators: `!`, `&&`, `||`, `==`, `!=`, `()`.
+A context is an expression over atoms: `chat`, `composer`, `transcript`, and `overlay`. Test your own flag with `==` or `!=`: a bare flag name never matches. Operators: `!`, `&&`, `||`, `==`, `!=`, `()`.
 
 ```js
 c.tui.keymap.add({ "ctrl+t": "example:toggle" }, "chat && !overlay");
@@ -58,7 +58,7 @@ Do not bind these unless the user asks you to replace one.
 | `ctrl+v` | `chat:paste-image` |
 | `ctrl+q`, `ctrl+z` | `quit`, `suspend` |
 | `ctrl+k` then `h j k l w v s c` or an arrow | window focus, split, and close |
-| `j` `k`, arrows, `ctrl+d` `ctrl+u`, page keys, `home` `end`, `g g` | scroll; the composer takes plain letters first |
+| `j` `k`, arrows, `ctrl+d` `ctrl+u`, page keys, `home` `end`, `g g`, `G` | scroll; the composer takes plain letters first |
 
 ## Status bar
 

@@ -16,7 +16,7 @@ Register in the synchronous part of `apply`. yuke does not wait for an async `ap
 
 ## Startup order
 
-yuke starts the bundled plugins, then the `prompt` plugin, then `index.js`, then the built-in tools. So `index.js` can dispose or replace a bundled plugin, the `tui` capability exists when `index.js` runs, and a tool that `index.js` defines replaces a built-in tool with the same name.
+In the TUI and in `yuke check`, yuke starts the bundled plugins, then the `prompt` plugin, then `index.js`, then the built-in tools. So `index.js` can dispose or replace a bundled plugin, the `tui` capability exists when `index.js` runs, and a tool that `index.js` defines replaces a built-in tool with the same name. `yuke -p` and `yuke --rpc` start no bundled plugin and no `tui`.
 
 ## Events
 

@@ -5,6 +5,7 @@ yuke loads one JavaScript profile at startup. The profile adds commands, keys, t
 | Page | Read it to |
 |---|---|
 | [Profile](profile.md) | find the profile, learn which files to edit, and check a change |
+| [Providers](providers.md) | sign in, store API keys, and add a provider or a local server in `providers.json` |
 | [Plugins](plugins.md) | write a plugin: lifecycle, events, capabilities, advice, and bundled plugins |
 | [UI](ui.md) | add commands, keys, status bar items, styles, and dialogs |
 | [Engine](engine.md) | add model tools and hooks, set the config and the prompt, and add subagents and MCP servers |
