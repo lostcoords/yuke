@@ -61,6 +61,11 @@ Time noise ~20%: 5+ runs each side, alternate, lowest quartile. Alloc count and 
 - Do not add a type that only wraps one field with no new meaning.
 - If you use logic once, put it at the call site.
 
+## Plugin API
+
+- Put a `/** */` summary on each public JS export: what it is, what null means, why it throws. `mise run types` fails without one.
+- A change to the public JS API also updates `docs/*.md`, `docs/news.md`, and `.agents/skills/yuke/SKILL.md` in the same commit. Keep `docs/examples` passing `mise run check-ts`.
+
 ## Tests
 
 - Do not add a test that restates a type, a constant, or removed logic.
