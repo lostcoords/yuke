@@ -10,6 +10,7 @@ pub const usage =
     \\       yuke login [provider]
     \\       yuke logout <provider>
     \\       yuke types
+    \\       yuke check
 ;
 pub const login_usage =
     \\usage: yuke login [provider]
@@ -19,6 +20,9 @@ pub const logout_usage =
 ;
 pub const types_usage =
     \\usage: yuke types
+;
+pub const check_usage =
+    \\usage: yuke check
 ;
 
 /// One process runs one thing. `--rpc` selects the JSONL transport.
@@ -34,6 +38,8 @@ pub const Command = union(enum) {
     logout: []const u8,
     /// Write the plugin API declarations into the configuration directory.
     types,
+    /// Load the profile with no terminal, report every warning and error, and fail on an error.
+    check,
 };
 
 /// A print run uses this session. `new` opens a session in the working directory.
@@ -59,7 +65,7 @@ pub const Print = struct {
 };
 
 /// Name the grammar that rejected the argument. It selects the usage text.
-pub const Scope = enum { root, login, logout, types };
+pub const Scope = enum { root, login, logout, types, check };
 
 pub const Failure = enum {
     unknown_command,
@@ -101,19 +107,20 @@ pub fn parse(args: []const []const u8) Result {
     return switch (sub) {
         .login => parseName(.login, args[1..]),
         .logout => parseName(.logout, args[1..]),
-        .types => parseTypes(args[1..]),
+        .types => parseBare(.types, .types, args[1..]),
+        .check => parseBare(.check, .check, args[1..]),
     };
 }
 
-const Subcommand = enum { login, logout, types };
+const Subcommand = enum { login, logout, types, check };
 
-/// `types` takes no argument.
-fn parseTypes(args: []const []const u8) Result {
+/// `types` and `check` take no argument.
+fn parseBare(scope: Scope, command: Command, args: []const []const u8) Result {
     for (args) |arg| {
-        if (isHelp(arg)) return .{ .help = .types };
-        return fail(.types, if (isFlag(arg)) .unknown_flag else .extra_argument, arg);
+        if (isHelp(arg)) return .{ .help = scope };
+        return fail(scope, if (isFlag(arg)) .unknown_flag else .extra_argument, arg);
     }
-    return .{ .command = .types };
+    return .{ .command = command };
 }
 
 /// Parse `[provider]` for login, `<provider>` for logout. Neither takes a flag.
@@ -128,7 +135,7 @@ fn parseName(scope: Scope, args: []const []const u8) Result {
     return switch (scope) {
         .login => .{ .command = .{ .login = name } },
         .logout => .{ .command = .{ .logout = name orelse return fail(.logout, .missing_argument, "logout") } },
-        .root, .types => unreachable, // `parse` sends only login and logout here
+        .root, .types, .check => unreachable, // `parse` sends only login and logout here
     };
 }
 

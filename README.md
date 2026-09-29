@@ -40,6 +40,16 @@ A client can call it before other methods to check compatibility. The server has
 
 Run `yuke types` again after an upgrade. For another profile, set its name: `YUKE_APPNAME=work yuke types`.
 
+## Check a profile
+
+`yuke check` loads the profile as the TUI does, without a terminal, and prints each warning and error to stderr.
+A plugin block that needs the TUI runs too, so the check finds an error that `--rpc` and `-p` never reach.
+A plugin question gets a denial, as in `-p`. The check waits up to 2 seconds for an async plugin startup.
+The command exits with 1 when an error occurs, and with 0 when no error occurs.
+The check is not read-only: it runs your plugins and opens the session store.
+
+## Event types
+
 A plugin names its own events `<plugin>:<name>`. To type one, add a `.d.ts` file next to `index.js`:
 
 ```ts

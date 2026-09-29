@@ -27,6 +27,7 @@ test {
     _ = @import("app/commands.zig");
     _ = @import("app/auth_cli.zig");
     _ = @import("app/types_cli.zig");
+    _ = @import("app/check_cli.zig");
     _ = @import("app/call.zig");
     _ = @import("engine/sink.zig");
     _ = @import("session/session.zig");

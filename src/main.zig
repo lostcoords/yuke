@@ -9,6 +9,7 @@ const tui_app = @import("js/driver.zig");
 const extensions_mod = @import("js/extensions.zig");
 const auth_cli = @import("app/auth_cli.zig");
 const types_cli = @import("app/types_cli.zig");
+const check_cli = @import("app/check_cli.zig");
 const print_cli = @import("app/print_cli.zig");
 const paths = @import("paths.zig");
 const execution = @import("execution.zig");
@@ -19,6 +20,8 @@ pub const std_options: std.Options = .{ .logFn = logFn };
 
 /// The TUI owns the screen, so a log line must never reach stderr; `tui_log_mutex` guards the file, because a log can come from any task. Every TUI log step runs on `std.Options.debug_io`, as `logFn` must.
 var tui_mode: std.atomic.Value(bool) = .init(false);
+/// `yuke check` prints only warnings and errors, so an info line never mixes with its report.
+var quiet_info: std.atomic.Value(bool) = .init(false);
 var tui_log_mutex: std.Io.Mutex = .init;
 var tui_log: ?std.Io.File = null;
 
@@ -29,6 +32,7 @@ fn logFn(
     comptime format: []const u8,
     args: anytype,
 ) void {
+    if (level == .info and quiet_info.load(.acquire)) return;
     if (!tui_mode.load(.acquire)) return std.log.defaultLog(level, scope, format, args);
     tui_log_mutex.lockUncancelable(std.Options.debug_io);
     defer tui_log_mutex.unlock(std.Options.debug_io);
@@ -150,6 +154,7 @@ fn run(init: std.process.Init) !u8 {
     };
 
     const tui = command == .tui;
+    if (command == .check) quiet_info.store(true, .release);
     if (tui) startTuiLog(init.gpa, context.env);
     defer if (tui) stopTuiLog();
 
@@ -176,7 +181,7 @@ fn run(init: std.process.Init) !u8 {
     switch (command) {
         .login => |provider| return try auth_cli.login(init.gpa, io, application, provider),
         .logout => |provider| return try auth_cli.logout(init.gpa, io, application, provider),
-        .rpc, .tui, .print => {},
+        .rpc, .tui, .print, .check => {},
         .types => unreachable, // `types` returns before the store opens
     }
 
@@ -188,6 +193,7 @@ fn run(init: std.process.Init) !u8 {
         },
         .boot = switch (command) {
             .tui => tui_app.boot,
+            .check => check_cli.boot,
             .print => print_cli.boot,
             .rpc => rpc.boot,
             .login, .logout, .types => unreachable,
@@ -200,6 +206,7 @@ fn run(init: std.process.Init) !u8 {
         .rpc => try rpc.runIo(&extensions),
         .tui => try tui_app.runIo(&extensions),
         .print => |opts| return print_cli.run(init.gpa, io, &extensions, cwd_buf[0..cwd_len], opts),
+        .check => return try check_cli.run(io, &extensions),
         .login, .logout, .types => unreachable, // These commands return before the host starts.
     }
     return 0;
@@ -218,6 +225,7 @@ fn usageFor(scope: cli.Scope) []const u8 {
         .login => cli.login_usage,
         .logout => cli.logout_usage,
         .types => cli.types_usage,
+        .check => cli.check_usage,
     };
 }
 
@@ -228,6 +236,7 @@ fn report(diagnostic: cli.Diagnostic) void {
         .login => "yuke login",
         .logout => "yuke logout",
         .types => "yuke types",
+        .check => "yuke check",
     };
     switch (diagnostic.failure) {
         .unknown_command => std.log.err("{s}: unknown command '{s}'", .{ who, diagnostic.arg }),
