@@ -199,10 +199,10 @@ export const composerVim = {
         events.emit("composer-vim:mode", c, next);
         ctx.tui.root.invalidate();
       };
-      const inChat = () => focusedComposer() != null;
+      const composerFocused = () => focusedComposer() != null;
 
-      ctx.tui.command.add("normal", { when: inChat, run: () => setMode(focusedComposer(), "normal") });
-      ctx.tui.command.add("insert", { when: inChat, run: () => setMode(focusedComposer(), "insert") });
+      ctx.tui.command.add("normal", { when: composerFocused, run: () => setMode(focusedComposer(), "normal") });
+      ctx.tui.command.add("insert", { when: composerFocused, run: () => setMode(focusedComposer(), "insert") });
 
       ctx.tui.keymap.add({ esc: "composer-vim:normal" });
 

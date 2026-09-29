@@ -1,6 +1,5 @@
 // The chat pane plugin: the chat service the shell asks for panes, the chat pane commands, and the vision warning.
 import { root } from "yuke:internal/core";
-import { client } from "yuke:internal/client";
 import { modelOf } from "yuke:internal/catalog";
 import { ChatView } from "yuke:internal/chat-view";
 import { registerLabels } from "yuke:internal/transcript";
@@ -70,16 +69,6 @@ export const chatPlugin = {
         },
       });
       ctx.tui.command.add("chat:paste-image", { desc: "attach the image on the clipboard", run: () => { const composer = currentPane()?.composer; if (composer) attachClipboard(composer); } });
-      ctx.tui.command.add("debug:memory", {
-        run: () => {
-          const m = client.memoryUsage();
-          const mb = (/** @type {number} */ n) => (n / 1048576).toFixed(1) + "MB";
-          const k = (/** @type {number} */ n) => Math.round(n / 1000) + "k";
-          notify("info", "js heap " + mb(m.heap) + " · str " + mb(m.strings) + "/" + k(m.stringCount) +
-            " · obj " + mb(m.objects) + "/" + k(m.objectCount) + " · prop " + mb(m.properties) + "/" + k(m.propertyCount) +
-            " · shape " + mb(m.shapes) + " · arr " + k(m.arrayCount), "debug");
-        },
-      });
       ctx.tui.keymap.add({ "ctrl+n": "chat:new", "ctrl+v": "chat:paste-image" });
 
       // Provided last, so an unload withdraws the service first and the shell closes the panes while the block still runs.

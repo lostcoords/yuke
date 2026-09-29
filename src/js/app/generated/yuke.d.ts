@@ -1189,6 +1189,9 @@ export class Transcript {
     comparePos(a: Position, b: Position): number;
     /** @returns {void} */
     hide(): void;
+    /** True when the transcript holds no committed message and no streaming draft. */
+    /** @returns {boolean} */
+    isEmpty(): boolean;
     /** @param {MessageDescriptor[]} messages @param {MessageDescriptor | null} active @returns {void} */
     setOutline(messages: MessageDescriptor[], active: MessageDescriptor | null): void;
     /** @returns {void} */

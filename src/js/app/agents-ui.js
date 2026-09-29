@@ -70,17 +70,17 @@ export async function agentRows(sessionId) {
 /** @param {Context} ctx @param {string} sessionId */
 export async function openAgents(ctx, sessionId) {
   let alive = true;
-  const chat = currentPane();
+  const pane = currentPane();
   let items = await agentRows(sessionId);
   const mainId = items[0].item.session.id;
   const childItems = () => items.filter((row) => row.item.session.origin.type === "child").map((row) => row.item);
-  if (!ctx.alive || chat !== currentPane() || chat?.session.sessionId !== sessionId) return;
+  if (!ctx.alive || pane !== currentPane() || pane?.session.sessionId !== sessionId) return;
   const picker = ui.pick({
     title: agentSummary(childItems()), footer: "↵ open · x stop · X stop all agents · esc close",
     border: "rounded", width: max => Math.round(max * 0.9), height: max => Math.round(max * 0.6), filter: false,
     items, key: (row) => row.item.session.id,
     format: (row) => ({ marker: row.item.session.id === sessionId ? "◆" : row.item.session.origin.type !== "child" ? "·" : row.item.activity.state.type === "idle" ? "·" : "●", indent: 2 + row.depth * 2, text: (row.item.session.name ?? (row.item.session.id === mainId ? "Main conversation" : row.item.session.id)) + (row.item.session.id === sessionId ? " (current)" : ""), detail: row.item.session.model, right: row.item.session.id === mainId ? "main" : childState(row.item) }),
-    onAccept: (row) => { if (chat && chat === currentPane() && chat.session.sessionId === sessionId) openSession(chat, row.item.session.id); },
+    onAccept: (row) => { if (pane && pane === currentPane() && pane.session.sessionId === sessionId) openSession(pane, row.item.session.id); },
     keymap: {
       x: (_event, content) => { const row = content.list.selected(); if (row && row.item.session.origin.type === "child") run(() => client.sessionCancelRun(row.item.session.id, true)); },
       X: () => run(async () => { const result = await Promise.allSettled(childItems().map((child) => client.sessionCancelRun(child.session.id, true))); const refused = result.filter((r) => r.status === "rejected").length; notify(refused > 0 ? "error" : "info", "stopped " + (result.length - refused) + " · failed " + refused, "agents"); }),

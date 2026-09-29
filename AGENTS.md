@@ -18,7 +18,7 @@ Look up APIs on the internet and in this tree. Do not guess.
 - Use `std.debug.assert` for invariants. Types check structure. Asserts check logic and state.
 - Show own and borrow in the type and the name.
 - Keep function signatures small. Push control up. Push data down.
-- Do not leave a known defect.
+- Do not leave a known defect. Do not add code for a failure without evidence: a test, a log, a report, or a measurement.
 - You can omit a feature. Do not ship a wrong feature.
 - Prefer not to add a dependency, but you can discuss with the user.
 

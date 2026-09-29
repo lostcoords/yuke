@@ -744,6 +744,12 @@ export class Transcript {
     this.clearSelection();
   }
 
+  /** True when the transcript holds no committed message and no streaming draft. */
+  /** @returns {boolean} */
+  isEmpty() {
+    return this._messages.length === 0 && this._active === null;
+  }
+
   // A committed message never changes under its id, so its render survives; the draft goes because a commit folds its reasoning.
   /** @param {MessageDescriptor[]} messages @param {MessageDescriptor | null} active @returns {void} */
   setOutline(messages, active) {

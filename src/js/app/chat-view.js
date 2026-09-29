@@ -132,7 +132,7 @@ export class ChatView {
     setRect(this.composerRect, x, y + transcriptRows + stripRows + ruleRows, w, composerRows);
     this.composer.layout(this.composerRect);
     // An empty draft shows the hint where the transcript goes; the model line reads the model its first input takes.
-    if (this.transcript._messages.length === 0 && !this.transcript._active && !this.session.sessionId) {
+    if (this.transcript.isEmpty() && !this.session.sessionId) {
       const model = this.session.modelSelector();
       this.hint.setText((model ? "model · " + model : "no model yet") + "\ntype a message to start the session");
       setRect(this.titleRect, x + 2, y, Math.max(0, w - 2), Math.min(1, transcriptRows));
