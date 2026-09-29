@@ -9,7 +9,6 @@ pub const usage =
     \\       yuke -p <prompt> [--json] [--model <m>] [--reasoning <r>] [--session <id> | -c]
     \\       yuke login [provider]
     \\       yuke logout <provider>
-    \\       yuke types
     \\       yuke check
 ;
 pub const login_usage =
@@ -17,9 +16,6 @@ pub const login_usage =
 ;
 pub const logout_usage =
     \\usage: yuke logout <provider>
-;
-pub const types_usage =
-    \\usage: yuke types
 ;
 pub const check_usage =
     \\usage: yuke check
@@ -36,8 +32,6 @@ pub const Command = union(enum) {
     login: ?[]const u8,
     /// Drop the credential of one provider.
     logout: []const u8,
-    /// Write the plugin API declarations into the configuration directory.
-    types,
     /// Load the profile with no terminal, report every warning and error, and fail on an error.
     check,
 };
@@ -65,7 +59,7 @@ pub const Print = struct {
 };
 
 /// Name the grammar that rejected the argument. It selects the usage text.
-pub const Scope = enum { root, login, logout, types, check };
+pub const Scope = enum { root, login, logout, check };
 
 pub const Failure = enum {
     unknown_command,
@@ -107,20 +101,19 @@ pub fn parse(args: []const []const u8) Result {
     return switch (sub) {
         .login => parseName(.login, args[1..]),
         .logout => parseName(.logout, args[1..]),
-        .types => parseBare(.types, .types, args[1..]),
-        .check => parseBare(.check, .check, args[1..]),
+        .check => parseCheck(args[1..]),
     };
 }
 
-const Subcommand = enum { login, logout, types, check };
+const Subcommand = enum { login, logout, check };
 
-/// `types` and `check` take no argument.
-fn parseBare(scope: Scope, command: Command, args: []const []const u8) Result {
+/// `check` takes no argument.
+fn parseCheck(args: []const []const u8) Result {
     for (args) |arg| {
-        if (isHelp(arg)) return .{ .help = scope };
-        return fail(scope, if (isFlag(arg)) .unknown_flag else .extra_argument, arg);
+        if (isHelp(arg)) return .{ .help = .check };
+        return fail(.check, if (isFlag(arg)) .unknown_flag else .extra_argument, arg);
     }
-    return .{ .command = command };
+    return .{ .command = .check };
 }
 
 /// Parse `[provider]` for login, `<provider>` for logout. Neither takes a flag.
@@ -135,7 +128,7 @@ fn parseName(scope: Scope, args: []const []const u8) Result {
     return switch (scope) {
         .login => .{ .command = .{ .login = name } },
         .logout => .{ .command = .{ .logout = name orelse return fail(.logout, .missing_argument, "logout") } },
-        .root, .types, .check => unreachable, // `parse` sends only login and logout here
+        .root, .check => unreachable, // `parse` sends only login and logout here
     };
 }
 

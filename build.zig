@@ -242,6 +242,10 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.installArtifact(exe);
+    // The installer links a profile to these files, so an editor checks index.js against this release.
+    b.installFile("src/js/app/generated/yuke.d.ts", "lib/yuke/types/yuke.d.ts");
+    b.installFile("src/js/app/generated/yuke-modules.d.ts", "lib/yuke/types/yuke-modules.d.ts");
+    b.installFile("src/app/plugin-jsconfig.json", "lib/yuke/jsconfig.json");
 
     const run_exe = b.addRunArtifact(exe);
     if (b.args) |args| run_exe.addArgs(args);

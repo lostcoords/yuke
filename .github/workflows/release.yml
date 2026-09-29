@@ -72,7 +72,8 @@ jobs:
               -Doptimize=ReleaseFast \
               -Dstrip=true \
               --prefix "build/${target}"
-            tar -czf "dist/yuke-${target}.tar.gz" -C "build/${target}/bin" yuke
+            # The archive holds bin/yuke and lib/yuke. The installer puts lib/yuke in ~/.local/lib.
+            tar -czf "dist/yuke-${target}.tar.gz" -C "build/${target}" bin/yuke lib/yuke
             echo "::endgroup::"
           done
           # No `./` prefix: the install script compares the bare asset name.
