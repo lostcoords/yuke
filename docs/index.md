@@ -9,6 +9,5 @@ yuke loads one JavaScript profile at startup. The profile adds commands, keys, t
 | [UI](ui.md) | add commands, keys, status bar items, styles, and dialogs |
 | [Engine](engine.md) | add model tools and hooks, set the config and the prompt, and add subagents and MCP servers |
 | [Types](types.md) | type your own events and capabilities, and check the profile in an editor |
-| [News](news.md) | read the plugin API changes of each release |
 
 The examples in `examples/` are complete files. CI type-checks each one against `yuke.d.ts`.
