@@ -47,4 +47,5 @@ test {
     _ = @import("js/host/process.zig");
     _ = @import("app/app.zig");
     _ = @import("engine/context.zig");
+    _ = @import("engine/request_config.zig");
 }

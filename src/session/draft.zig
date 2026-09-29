@@ -384,8 +384,12 @@ test "contiguous deltas extend a text part, with or without initial bytes" {
 test "reasoning owns its signature; redacted owns its data" {
     var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
-    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 0, .text = "why", .signature = "sig" } } });
-    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .redacted_reasoning = .{ .id = 1, .data = "opaque" } } });
+    var signature = [_]u8{ 's', 'i', 'g' };
+    var data = [_]u8{ 'o', 'p', 'a', 'q', 'u', 'e' };
+    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 0, .text = "why", .signature = &signature } } });
+    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .redacted_reasoning = .{ .id = 1, .data = &data } } });
+    @memset(&signature, 'x');
+    @memset(&data, 'x');
     try d.applyPartDelta(delta(0, 3, "not"));
     try testing.expectEqualStrings("whynot", d.parts.items[0].reasoning.text.items);
     try testing.expectEqualStrings("sig", d.parts.items[0].reasoning.signature);
@@ -438,11 +442,15 @@ test "completed tool state with a diff view clones the whole tree" {
     defer d.deinit();
     try d.addPart(addTool(0, .{ .running = .{ .started_at_ms = 1 } }));
 
-    const hunk: view.DiffHunk = .{ .old_start = 1, .old_lines = 1, .new_start = 1, .new_lines = 2, .lines = &.{ "-a", "+a", "+b" } };
-    const file: view.DiffFile = .{ .path = "x.zig", .hunks = &.{hunk} };
+    var path_bytes = [_]u8{ 'x', '.', 'z', 'i', 'g' };
+    var added_line = [_]u8{ '+', 'b' };
+    const hunk: view.DiffHunk = .{ .old_start = 1, .old_lines = 1, .new_start = 1, .new_lines = 2, .lines = &.{ "-a", "+a", &added_line } };
+    const file: view.DiffFile = .{ .path = &path_bytes, .hunks = &.{hunk} };
     const views = [_]view.View{.{ .diff = .{ .files = &.{file} } }};
     const state: tool.ToolState = .{ .completed = .{ .output = "ok", .view = &views, .duration_ms = 3 } };
     try d.applyToolState(toolStateChange(0, state));
+    @memset(&path_bytes, 'x');
+    @memset(&added_line, 'x');
 
     const cloned = d.parts.items[0].tool.state.completed;
     try testing.expectEqualStrings("x.zig", cloned.view.?[0].diff.files[0].path);

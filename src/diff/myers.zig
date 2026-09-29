@@ -196,12 +196,8 @@ fn joins(run: Edit, step: Step, offset: u32) bool {
 
 const testing = std.testing;
 
-fn scriptOf(arena: std.mem.Allocator, old: []const u32, new: []const u32) ![]const Edit {
-    return script(arena, old, new, 1000);
-}
-
-fn expectScript(arena: std.mem.Allocator, old: []const u32, new: []const u32) !void {
-    const edits = try scriptOf(arena, old, new);
+fn expectScript(arena: std.mem.Allocator, old: []const u32, new: []const u32, max_edits: u32) ![]const Edit {
+    const edits = try script(arena, old, new, max_edits);
     var rebuilt: std.ArrayList(u32) = .empty;
     var old_at: u32 = 0;
     var new_at: u32 = 0;
@@ -229,23 +225,13 @@ fn expectScript(arena: std.mem.Allocator, old: []const u32, new: []const u32) !v
     try testing.expectEqual(@as(u32, @intCast(old.len)), old_at); // The script consumes the old text.
     try testing.expectEqual(@as(u32, @intCast(new.len)), new_at); // The script produces the new text.
     try testing.expectEqualSlices(u32, new, rebuilt.items);
-}
-
-test "an equal text gives one keep run" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const edits = try scriptOf(a, &.{ 1, 2, 3 }, &.{ 1, 2, 3 });
-    try testing.expectEqual(@as(usize, 1), edits.len);
-    try testing.expectEqual(Op.keep, edits[0].op);
-    try testing.expectEqual(@as(u32, 3), edits[0].len);
+    return edits;
 }
 
 test "two empty texts give no run" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    try testing.expectEqual(@as(usize, 0), (try scriptOf(arena.allocator(), &.{}, &.{})).len);
+    try testing.expectEqual(@as(usize, 0), (try script(arena.allocator(), &.{}, &.{}, 0)).len);
 }
 
 test "an empty old text gives one insert run" {
@@ -253,7 +239,7 @@ test "an empty old text gives one insert run" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    const edits = try scriptOf(a, &.{}, &.{ 7, 8 });
+    const edits = try script(a, &.{}, &.{ 7, 8 }, 0);
     try testing.expectEqual(@as(usize, 1), edits.len);
     try testing.expectEqual(Op.insert, edits[0].op);
     try testing.expectEqual(@as(u32, 2), edits[0].len);
@@ -265,27 +251,10 @@ test "an empty new text gives one delete run" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    const edits = try scriptOf(a, &.{ 7, 8 }, &.{});
+    const edits = try script(a, &.{ 7, 8 }, &.{}, 0);
     try testing.expectEqual(@as(usize, 1), edits.len);
     try testing.expectEqual(Op.delete, edits[0].op);
     try testing.expectEqual(@as(u32, 2), edits[0].len);
-}
-
-test "one changed line in the middle keeps both sides" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const old = [_]u32{ 1, 2, 3, 4, 5 };
-    const new = [_]u32{ 1, 2, 9, 4, 5 };
-    try expectScript(a, &old, &new);
-
-    const edits = try scriptOf(a, &old, &new);
-    try testing.expectEqual(@as(usize, 4), edits.len);
-    try testing.expectEqual(Op.keep, edits[0].op);
-    try testing.expectEqual(@as(u32, 2), edits[0].len);
-    try testing.expectEqual(Op.keep, edits[3].op);
-    try testing.expectEqual(@as(u32, 2), edits[3].len);
 }
 
 test "the classic Myers example rebuilds the new text" {
@@ -294,37 +263,28 @@ test "the classic Myers example rebuilds the new text" {
     // ABCABBA -> CBABAC, the example of the Myers paper.
     const old = [_]u32{ 'A', 'B', 'C', 'A', 'B', 'B', 'A' };
     const new = [_]u32{ 'C', 'B', 'A', 'B', 'A', 'C' };
-    try expectScript(arena.allocator(), &old, &new);
-}
-
-test "a full rewrite rebuilds the new text" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    try expectScript(arena.allocator(), &.{ 1, 2, 3 }, &.{ 4, 5, 6 });
+    _ = try expectScript(arena.allocator(), &old, &new, 1000);
 }
 
 test "an insert at the start and at the end rebuilds the new text" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try expectScript(a, &.{ 1, 2 }, &.{ 0, 1, 2 });
-    try expectScript(a, &.{ 1, 2 }, &.{ 1, 2, 3 });
-    try expectScript(a, &.{ 1, 2 }, &.{ 0, 1, 2, 3 });
+    _ = try expectScript(a, &.{ 1, 2 }, &.{ 0, 1, 2 }, 1000);
+    _ = try expectScript(a, &.{ 1, 2 }, &.{ 1, 2, 3 }, 1000);
+    _ = try expectScript(a, &.{ 1, 2 }, &.{ 0, 1, 2, 3 }, 1000);
 }
 
 test "repeated lines rebuild the new text" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try expectScript(a, &.{ 1, 1, 1, 1 }, &.{ 1, 1 });
-    try expectScript(a, &.{ 1, 1 }, &.{ 1, 1, 1, 1 });
-    try expectScript(a, &.{ 1, 2, 1, 2, 1 }, &.{ 2, 1, 2 });
+    _ = try expectScript(a, &.{ 1, 1, 1, 1 }, &.{ 1, 1 }, 1000);
+    _ = try expectScript(a, &.{ 1, 1 }, &.{ 1, 1, 1, 1 }, 1000);
+    _ = try expectScript(a, &.{ 1, 2, 1, 2, 1 }, &.{ 2, 1, 2 }, 1000);
 }
 
 test "many random pairs rebuild the new text" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     var prng = std.Random.DefaultPrng.init(0x5eed);
     const rand = prng.random();
     var trial: usize = 0;
@@ -337,19 +297,8 @@ test "many random pairs rebuild the new text" {
         const new = try a.alloc(u32, rand.uintLessThan(usize, 40));
         for (old) |*v| v.* = rand.uintLessThan(u32, 6); // a small alphabet forces repeated lines
         for (new) |*v| v.* = rand.uintLessThan(u32, 6);
-        try expectScript(a, old, new);
+        _ = try expectScript(a, old, new, 1000);
     }
-}
-
-test "script fails above the edit cap" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const old = [_]u32{ 1, 2, 3, 4 };
-    const new = [_]u32{ 5, 6, 7, 8 };
-    try testing.expectError(error.TooDifferent, script(a, &old, &new, 2));
-    _ = try script(a, &old, &new, 8); // the same pair fits under a large enough cap
 }
 
 test "a large equal text costs one run and no search" {
@@ -362,6 +311,7 @@ test "a large equal text costs one run and no search" {
     // The prefix trim removes everything, so a tiny cap still works.
     const edits = try script(a, big, big, 1);
     try testing.expectEqual(@as(usize, 1), edits.len);
+    try testing.expectEqual(Op.keep, edits[0].op);
     try testing.expectEqual(@as(u32, 20_000), edits[0].len);
 }
 
@@ -376,30 +326,27 @@ test "a small change between a long prefix and a long suffix needs one edit pair
     new[5_000] = 999_999;
 
     // The trim removes both sides, so a cap of two edits is enough.
-    const edits = try script(a, old, new, 2);
-    try expectScript(a, old, new);
+    const edits = try expectScript(a, old, new, 2);
     try testing.expectEqual(@as(usize, 4), edits.len);
+    try testing.expectEqual(Op.keep, edits[0].op);
+    try testing.expectEqual(@as(u32, 5000), edits[0].len);
+    try testing.expectEqual(Op.keep, edits[3].op);
+    try testing.expectEqual(@as(u32, 4999), edits[3].len);
 }
 
 test "the edit cap accepts the exact depth and refuses one less" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    // One replaced line costs one delete plus one insert.
-    const old = [_]u32{ 1, 2, 3 };
-    const new = [_]u32{ 1, 9, 3 };
-    _ = try script(a, &old, &new, 2);
-    try testing.expectError(error.TooDifferent, script(a, &old, &new, 1));
-}
-
-test "an empty side needs no search depth" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    // The fast path uses no trace, so a zero cap still returns one run.
-    const edits = try script(a, &.{}, &.{ 1, 2, 3 }, 0);
-    try testing.expectEqual(@as(usize, 1), edits.len);
-    try testing.expectEqual(@as(u32, 3), edits[0].len);
+    const Case = struct { old: []const u32, new: []const u32, depth: u32, refused: []const u32 };
+    for ([_]Case{
+        .{ .old = &.{ 1, 2, 3 }, .new = &.{ 1, 9, 3 }, .depth = 2, .refused = &.{1} },
+        .{ .old = &.{ 1, 2, 3 }, .new = &.{ 4, 5, 6 }, .depth = 6, .refused = &.{5} },
+        .{ .old = &.{ 1, 2, 3, 4 }, .new = &.{ 5, 6, 7, 8 }, .depth = 8, .refused = &.{ 2, 7 } },
+    }) |case| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        _ = try expectScript(a, case.old, case.new, case.depth);
+        for (case.refused) |depth| {
+            try testing.expectError(error.TooDifferent, script(a, case.old, case.new, depth));
+        }
+    }
 }

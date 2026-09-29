@@ -16,17 +16,6 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   check("dispose-isolate", seen.join(",") === "after,t3");
 }
 
-// emit runs every listener and isolates a throwing one.
-{
-  const em = new Emitter(new Set(["x"]));
-  em.onError = () => {};
-  let hits = 0;
-  em.on("x", () => { hits++; throw new Error("boom"); });
-  em.on("x", () => { hits++; });
-  em.emit("x");
-  check("emit-isolate", hits === 2);
-}
-
 // bail asks the newest listener first and stops at the first answer; null passes on, and a listener that leaves keeps the next one.
 {
   const em = new Emitter(new Set(["k"]));
@@ -89,11 +78,13 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   check("bus-core-declared:" + bad.join("|"), bad.length === 0);
 }
 
-// A host event reaches the core name it maps to, and one throwing listener spares the rest.
+// A host event reaches its core name, and a listener fault reports without stopping delivery.
 {
   const seen = [];
+  const faults = [];
   const offs = [
-    events.on("key.pressed", () => { throw new Error("listener"); }),
+    events.on("notify.posted", (n) => faults.push([n.source, n.message])),
+    events.on("key.pressed", () => { seen.push("throwing-key"); throw new Error("listener"); }),
     events.on("key.pressed", () => seen.push("key")),
     events.on("mouse.received", () => seen.push("mouse")),
     events.on("ui.ticked", () => seen.push("tick")),
@@ -109,6 +100,7 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   root.onEvent({ type: "paste", text: "p" });
   root.onEvent({ type: "focus", focused: true });
   root.onEvent({ type: "tick" });
-  check("root-event-names", JSON.stringify(seen) === JSON.stringify(["start", "resize", "key", "mouse", "paste", "focus", "tick"]));
+  check("root-event-names", JSON.stringify(seen) === JSON.stringify(["start", "resize", "throwing-key", "key", "mouse", "paste", "focus", "tick"]));
+  check("root-listener-fault", JSON.stringify(faults) === JSON.stringify([["key.pressed", "listener"]]));
   for (const f of offs) f();
 }

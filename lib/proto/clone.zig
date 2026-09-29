@@ -61,7 +61,6 @@ fn hasPointers(comptime T: type) bool {
     };
 }
 
-const message = @import("message.zig");
 const tool = @import("tool.zig");
 const view = @import("view.zig");
 const testing = std.testing;
@@ -83,26 +82,27 @@ test "dupe compiles for every registry type" {
     inline for (registry.numeric_enums) |e| _ = &Instantiate(e.ty).run;
 }
 
-test "dupe copies a nested string and breaks aliasing" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var src = [_]u8{ 'h', 'i' };
-    const part: message.TextPart = .{ .id = 1, .text = &src };
-    const dst = try dupe(arena.allocator(), part);
-    try testing.expectEqualStrings("hi", dst.text);
-    try testing.expect(dst.text.ptr != part.text.ptr);
-}
-
 test "dupe deep-copies a tool-state view tree" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
+    var src = [_]u8{ 'h', 'i' };
     const hunk: view.DiffHunk = .{ .old_start = 1, .old_lines = 1, .new_start = 1, .new_lines = 2, .lines = &.{ "-a", "+b" } };
     const file: view.DiffFile = .{ .path = "x.zig", .hunks = &.{hunk} };
     const views = [_]view.View{.{ .diff = .{ .files = &.{file} } }};
-    const state: tool.ToolState = .{ .completed = .{ .output = "ok", .view = &views, .duration_ms = 3 } };
+    const state: tool.ToolState = .{ .completed = .{ .output = &src, .view = &views, .duration_ms = 3 } };
 
     const dst = try dupe(arena.allocator(), state);
-    try testing.expectEqualStrings("x.zig", dst.completed.view.?[0].diff.files[0].path);
-    try testing.expectEqualStrings("+b", dst.completed.view.?[0].diff.files[0].hunks[0].lines[1]);
+    const cloned_files = dst.completed.view.?[0].diff.files;
+    const cloned_hunks = cloned_files[0].hunks;
+    try testing.expectEqualStrings("x.zig", cloned_files[0].path);
+    try testing.expectEqualStrings("+b", cloned_hunks[0].lines[1]);
+    try testing.expect(dst.completed.view.?.ptr != state.completed.view.?.ptr);
+    try testing.expect(cloned_files.ptr != views[0].diff.files.ptr);
+    try testing.expect(cloned_files[0].path.ptr != file.path.ptr);
+    try testing.expect(cloned_hunks.ptr != file.hunks.ptr);
+    try testing.expect(cloned_hunks[0].lines.ptr != hunk.lines.ptr);
+    try testing.expect(cloned_hunks[0].lines[1].ptr != hunk.lines[1].ptr);
     try testing.expect(dst.completed.output.ptr != state.completed.output.ptr);
+    src[0] = 'x';
+    try testing.expectEqualStrings("hi", dst.completed.output);
 }

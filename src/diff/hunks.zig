@@ -141,49 +141,12 @@ fn expand(arena: std.mem.Allocator, edits: []const Edit) error{OutOfMemory}![]co
 
 const testing = std.testing;
 
-const Fixture = struct {
-    arena: std.heap.ArenaAllocator,
-
-    fn init() Fixture {
-        return .{ .arena = std.heap.ArenaAllocator.init(testing.allocator) };
-    }
-    fn deinit(self: *Fixture) void {
-        self.arena.deinit();
-    }
-};
-
-/// Build the hunks of two texts. It runs the whole path, so a test states real text.
-fn hunksOf(arena: std.mem.Allocator, old: []const []const u8, new: []const []const u8, context: u32) ![]const Hunk {
-    const old_text = try join(arena, old);
-    const new_text = try join(arena, new);
-    return diff.compare(arena, old_text, new_text, .{ .context = context });
-}
-
-/// Join the test lines into one text. Each line gets a line feed.
-fn join(arena: std.mem.Allocator, list: []const []const u8) ![]const u8 {
-    var out: std.ArrayList(u8) = .empty;
-    for (list) |line| {
-        try out.appendSlice(arena, line);
-        try out.append(arena, '\n');
-    }
-    return out.items;
-}
-
-test "an equal text gives no hunk" {
-    var f = Fixture.init();
-    defer f.deinit();
-    const lines = [_][]const u8{ "a", "b", "c" };
-    try testing.expectEqual(@as(usize, 0), (try hunksOf(f.arena.allocator(), &lines, &lines, 3)).len);
-}
-
 test "one changed line gives one hunk with context on both sides" {
-    var f = Fixture.init();
-    defer f.deinit();
-    const old = [_][]const u8{ "a", "b", "c", "d", "e" };
-    const new = [_][]const u8{ "a", "b", "X", "d", "e" };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
 
     // The change is at line 3. One context line on each side gives the range 2..4, so `@@ -2,3 +2,3 @@`.
-    const hunks = try hunksOf(f.arena.allocator(), &old, &new, 1);
+    const hunks = try diff.compare(arena.allocator(), "a\nb\nc\nd\ne\n", "a\nb\nX\nd\ne\n", .{ .context = 1 });
     try testing.expectEqual(@as(usize, 1), hunks.len);
     const h = hunks[0];
     try testing.expectEqual(@as(u32, 2), h.old_start);
@@ -202,24 +165,11 @@ test "one changed line gives one hunk with context on both sides" {
     try testing.expectEqualStrings("d", h.lines[3].text);
 }
 
-test "a change at the first line clamps the context" {
-    var f = Fixture.init();
-    defer f.deinit();
-    const old = [_][]const u8{ "a", "b", "c" };
-    const new = [_][]const u8{ "X", "b", "c" };
-
-    const hunks = try hunksOf(f.arena.allocator(), &old, &new, 3);
-    try testing.expectEqual(@as(usize, 1), hunks.len);
-    try testing.expectEqual(@as(u32, 1), hunks[0].old_start);
-    try testing.expectEqual(@as(u32, 1), hunks[0].new_start);
-}
-
 test "a new file gives one hunk with an empty old side" {
-    var f = Fixture.init();
-    defer f.deinit();
-    const new = [_][]const u8{ "a", "b" };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
 
-    const hunks = try hunksOf(f.arena.allocator(), &.{}, &new, 3);
+    const hunks = try diff.compare(arena.allocator(), "", "a\nb\n", .{});
     try testing.expectEqual(@as(usize, 1), hunks.len);
     try testing.expectEqual(@as(u32, 0), hunks[0].old_start);
     try testing.expectEqual(@as(u32, 0), hunks[0].old_lines);
@@ -228,11 +178,10 @@ test "a new file gives one hunk with an empty old side" {
 }
 
 test "a deleted file gives one hunk with an empty new side" {
-    var f = Fixture.init();
-    defer f.deinit();
-    const old = [_][]const u8{ "a", "b" };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
 
-    const hunks = try hunksOf(f.arena.allocator(), &old, &.{}, 3);
+    const hunks = try diff.compare(arena.allocator(), "a\nb\n", "", .{});
     try testing.expectEqual(@as(usize, 1), hunks.len);
     try testing.expectEqual(@as(u32, 1), hunks[0].old_start);
     try testing.expectEqual(@as(u32, 2), hunks[0].old_lines);
@@ -241,12 +190,10 @@ test "a deleted file gives one hunk with an empty new side" {
 }
 
 test "a context of zero shows the changed lines only" {
-    var f = Fixture.init();
-    defer f.deinit();
-    const old = [_][]const u8{ "a", "b", "c" };
-    const new = [_][]const u8{ "a", "X", "c" };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
 
-    const hunks = try hunksOf(f.arena.allocator(), &old, &new, 0);
+    const hunks = try diff.compare(arena.allocator(), "a\nb\nc\n", "a\nX\nc\n", .{ .context = 0 });
     try testing.expectEqual(@as(usize, 1), hunks.len);
     try testing.expectEqual(@as(usize, 2), hunks[0].lines.len);
     try testing.expectEqual(Op.delete, hunks[0].lines[0].op);
@@ -254,55 +201,46 @@ test "a context of zero shows the changed lines only" {
 }
 
 test "a gap of two times the context joins and one more splits" {
-    var f = Fixture.init();
-    defer f.deinit();
-    const a = f.arena.allocator();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const old = "0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n";
 
-    // Two changes with exactly 2 * context unchanged lines between them stay in one hunk.
-    const old = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11" };
+    // Four unchanged lines between the changes equal 2 * context, so the hunks join.
+    const joined = "0\n1\nX\n3\n4\n5\n6\nY\n8\n9\n10\n11\n";
+    try testing.expectEqual(@as(usize, 1), (try diff.compare(a, old, joined, .{ .context = 2 })).len);
 
-    var joined = old;
-    joined[2] = "X";
-    joined[7] = "Y"; // four unchanged lines between, and 2 * context is four
-    try testing.expectEqual(@as(usize, 1), (try hunksOf(a, &old, &joined, 2)).len);
-
-    var split = old;
-    split[2] = "X";
-    split[8] = "Y"; // five unchanged lines between, so the hunks split
-    try testing.expectEqual(@as(usize, 2), (try hunksOf(a, &old, &split, 2)).len);
+    // Five unchanged lines exceed 2 * context, so the hunks split.
+    const split = "0\n1\nX\n3\n4\n5\n6\n7\nY\n9\n10\n11\n";
+    try testing.expectEqual(@as(usize, 2), (try diff.compare(a, old, split, .{ .context = 2 })).len);
 }
 
 test "a change on the last line clamps the trailing context" {
-    var f = Fixture.init();
-    defer f.deinit();
-    const old = [_][]const u8{ "a", "b", "c" };
-    const new = [_][]const u8{ "a", "b", "X" };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
 
-    const hunks = try hunksOf(f.arena.allocator(), &old, &new, 10);
+    const hunks = try diff.compare(arena.allocator(), "a\nb\nc\n", "a\nb\nX\n", .{ .context = 10 });
     try testing.expectEqual(@as(usize, 1), hunks.len);
     try testing.expectEqual(@as(u32, 1), hunks[0].old_start);
     try testing.expectEqual(@as(u32, 3), hunks[0].old_lines);
 }
 
 test "one window reaches the first and the last record" {
-    var f = Fixture.init();
-    defer f.deinit();
-    const old = [_][]const u8{ "a", "b", "c", "d" };
-    const new = [_][]const u8{ "X", "b", "c", "Y" };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
 
-    const hunks = try hunksOf(f.arena.allocator(), &old, &new, 10);
+    const hunks = try diff.compare(arena.allocator(), "a\nb\nc\nd\n", "X\nb\nc\nY\n", .{ .context = 10 });
     try testing.expectEqual(@as(usize, 1), hunks.len);
     try testing.expectEqual(@as(u32, 1), hunks[0].old_start);
+    try testing.expectEqual(@as(u32, 1), hunks[0].new_start);
     try testing.expectEqual(@as(u32, 4), hunks[0].old_lines);
     try testing.expectEqual(@as(u32, 4), hunks[0].new_lines);
 }
 
 test "a very large context does not overflow the merge limit" {
-    var f = Fixture.init();
-    defer f.deinit();
-    const old = [_][]const u8{ "a", "b", "c" };
-    const new = [_][]const u8{ "X", "b", "Y" };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
 
-    const hunks = try hunksOf(f.arena.allocator(), &old, &new, @as(u32, 1) << 31);
+    const hunks = try diff.compare(arena.allocator(), "a\nb\nc\n", "X\nb\nY\n", .{ .context = @as(u32, 1) << 31 });
     try testing.expectEqual(@as(usize, 1), hunks.len);
 }

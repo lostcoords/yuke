@@ -70,18 +70,32 @@ pub fn outcome(arena: std.mem.Allocator, err: anyerror, info: *const ai.transpor
 
 const testing = std.testing;
 
-test "every transport class reports a network or timeout code" {
-    // A retryable connection fault must never reach the client as a generic provider failure.
-    for ([_]anyerror{
-        ai.transport.HttpError.ConnectFailed,
-        ai.transport.HttpError.ConnectionLost,
-        ai.transport.HttpError.DnsFailed,
-        error.IncompleteStream,
-        ai.transport.HttpError.IdleTimeout,
-    }) |err| {
-        const detail = classify(err);
-        try testing.expectEqual(Class.transport, detail.class);
-        try testing.expect(detail.code == .network or detail.code == .timeout);
+test "provider and engine failures keep their exact wire classification" {
+    const Case = struct {
+        err: anyerror,
+        class: Class,
+        code: proto.enums.RunErrorCode,
+        message: ?[]const u8 = null,
+    };
+    for ([_]Case{
+        .{ .err = ai.transport.HttpError.ConnectFailed, .class = .transport, .code = .network },
+        .{ .err = ai.transport.HttpError.ConnectionLost, .class = .transport, .code = .network },
+        .{ .err = ai.transport.HttpError.DnsFailed, .class = .transport, .code = .network },
+        .{ .err = error.IncompleteStream, .class = .transport, .code = .network },
+        .{ .err = ai.transport.HttpError.IdleTimeout, .class = .transport, .code = .timeout },
+        .{ .err = error.UnsupportedReasoning, .class = .permanent, .code = .unsupported_reasoning },
+        .{ .err = error.TurnTooLarge, .class = .permanent, .code = .context_overflow },
+        .{ .err = error.UnknownModel, .class = .permanent, .code = .unknown_model },
+        .{ .err = error.RequestTooLarge, .class = .permanent, .code = .context_overflow, .message = "the request exceeds the library size limit" },
+        .{ .err = error.HookBlocked, .class = .permanent, .code = .runtime },
+        .{ .err = error.UnresolvedBlob, .class = .permanent, .code = .runtime },
+        .{ .err = error.PromptTooLarge, .class = .permanent, .code = .runtime, .message = "the system prompt exceeds the protocol string limit" },
+    }) |case| {
+        errdefer std.debug.print("failure input: {s}\n", .{@errorName(case.err)});
+        const detail = classify(case.err);
+        try testing.expectEqual(case.class, detail.class);
+        try testing.expectEqual(case.code, detail.code);
+        if (case.message) |message| try testing.expectEqualStrings(message, detail.message);
     }
 }
 
@@ -105,36 +119,4 @@ test "an error event inside a 200 stream reports its class and its detail line" 
     const bare = outcome(arena.allocator(), ai.transport.HttpError.ProviderFailed, &.{});
     try testing.expectEqual(proto.enums.RunErrorCode.provider, bare.code);
     try testing.expectEqual(@as(?[]const u8, null), bare.detail);
-}
-
-test "an engine error keeps its own code, which the library cannot name" {
-    try testing.expectEqual(proto.enums.RunErrorCode.unsupported_reasoning, classify(error.UnsupportedReasoning).code);
-    try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, classify(error.TurnTooLarge).code);
-    try testing.expectEqual(proto.enums.RunErrorCode.unknown_model, classify(error.UnknownModel).code);
-}
-
-test "the library request bound reports context overflow" {
-    const detail = classify(error.RequestTooLarge);
-    try testing.expectEqual(Class.permanent, detail.class);
-    try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, detail.code);
-    try testing.expectEqualStrings("the request exceeds the library size limit", detail.message);
-}
-
-test "an extension that stops a request reports a runtime failure" {
-    const detail = classify(error.HookBlocked);
-    try testing.expectEqual(Class.permanent, detail.class);
-    try testing.expectEqual(proto.enums.RunErrorCode.runtime, detail.code);
-}
-
-test "a blob the store cannot resolve after admission reports a runtime failure, not a provider one" {
-    const detail = classify(error.UnresolvedBlob);
-    try testing.expectEqual(Class.permanent, detail.class);
-    try testing.expectEqual(proto.enums.RunErrorCode.runtime, detail.code);
-}
-
-test "an oversized prompt reports a permanent runtime failure" {
-    const detail = classify(error.PromptTooLarge);
-    try testing.expectEqual(Class.permanent, detail.class);
-    try testing.expectEqual(proto.enums.RunErrorCode.runtime, detail.code);
-    try testing.expectEqualStrings("the system prompt exceeds the protocol string limit", detail.message);
 }

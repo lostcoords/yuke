@@ -64,17 +64,17 @@ fn failed(err: anyerror, number: u8) Attempt {
     return .{ .err = err, .number = number, .budget_left = 8 };
 }
 
-test "a temporary provider answer repeats with a computed delay" {
+test "a temporary provider answer repeats with a capped computed delay" {
     try testing.expectEqual(@as(?u64, 500), decide(default, failed(http.Error.RateLimited, 1), 0.0));
     try testing.expectEqual(@as(?u64, 1000), decide(default, failed(http.Error.ServerError, 2), 0.0));
     // The jitter removes at most a quarter, so a full draw leaves 750 of 1000.
     try testing.expectEqual(@as(?u64, 750), decide(default, failed(http.Error.ServerError, 2), 0.999));
-}
 
-test "the computed delay stops at the cap" {
-    // Attempt 8 would ask for 64000 ms without the cap.
-    try testing.expectEqual(@as(u64, 8000), backoff(default, 8, 0.0));
-    try testing.expectEqual(@as(u64, 8000), backoff(default, 40, 0.0));
+    // The attempt limit permits both calls, so only the computed delay cap bounds them.
+    const policy: Policy = .{ .max_attempts = 41 };
+    for ([_]u8{ 8, 40 }) |number| {
+        try testing.expectEqual(@as(?u64, 8000), decide(policy, failed(http.Error.ServerError, number), 0.0));
+    }
 }
 
 test "a published event stops the retry even when the server allows one" {

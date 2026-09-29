@@ -9,7 +9,8 @@ events.on("myplugin:go", () => seen.push("second"));
 events.emit("myplugin:go");
 check("reported", seen.indexOf("myplugin:go:boom") >= 0);
 check("others-ran", seen.indexOf("second") >= 0);
-check("stack-kept", notifications[notifications.length - 1].stack !== "");
+const stack = notifications[notifications.length - 1].stack;
+check("stack-kept", typeof stack === "string" && stack.length > 0);
 
 // A repeat of the newest entry increases its count. The same message with another stack is a new entry.
 notify("info", "same", "t");

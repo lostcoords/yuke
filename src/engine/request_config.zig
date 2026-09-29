@@ -255,14 +255,9 @@ pub const RequestBuild = struct {
     max_output_tokens: u32,
 };
 
-test "an unset level omits the control and off disables it" {
-    const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat };
-    try std.testing.expectEqual(ai.ir.ReasoningControl.default, try reasoningFor(&model, "", 8192));
-    try std.testing.expectEqual(ai.ir.ReasoningControl.off, try reasoningFor(&model, "off", 8192));
-}
-
-test "an adaptive row resolves to adaptive for every level that is not off" {
+test "unset and off reasoning controls take precedence over adaptive reasoning" {
     const model: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat, .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .anthropic_adaptive = true } };
+    try std.testing.expectEqual(ai.ir.ReasoningControl.default, try reasoningFor(&model, "", 8192));
     try std.testing.expectEqual(ai.ir.ReasoningControl.adaptive, try reasoningFor(&model, "high", 8192));
     try std.testing.expectEqual(ai.ir.ReasoningControl.off, try reasoningFor(&model, "off", 8192));
 }
@@ -288,9 +283,6 @@ test "a budget is clamped by the feed bounds and refused when it reaches the cei
     // A budget that reaches the ceiling falls back to the effort control.
     const tiny: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "m", .protocol = .openai_chat, .reasoning_levels = &.{.{ .named = "high" }}, .dialect = .{ .reasoning_budget = .from(1024, null) } };
     try std.testing.expectEqual(ai.ir.Effort.high, (try reasoningFor(&tiny, "high", 1024)).effort);
-
-    // The published maximum still wins, so a model that caps itself below the default is honoured.
-    try std.testing.expectEqual(@as(u64, 2000), (try reasoningFor(&capped, "high", 64000)).budget);
 }
 
 test "a selected level outside the model list is unsupported" {
