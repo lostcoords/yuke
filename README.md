@@ -9,7 +9,10 @@ Unleash you harness.
 ```sh
 mise install
 git config core.hooksPath .githooks
+mise run install
 ```
+
+`mise run install` builds an optimized Yuke, installs it at `~/.local/bin/yuke`, and refreshes the plugin types.
 
 ## Commands
 
