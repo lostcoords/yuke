@@ -14,6 +14,6 @@ declare module "yuke:internal/native/diff" {
     hunks: DiffHunk[];
   }
 
-  /** Compares two texts. `path` only labels the result. An equal pair, a side above the size cap, and a change too large to describe all answer no hunk. */
+  /** Compares two texts as unified hunks for display. `path` only labels the result. An equal pair, a side above 1 MiB, and a change too large to describe all answer no hunk. */
   export function diff(path: string, before: string, after: string): Promise<DiffFile>;
 }

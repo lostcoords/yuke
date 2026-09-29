@@ -17,13 +17,17 @@ function owned(ctx, registry) {
   return bound;
 }
 
-// One block's view of the terminal: the shared objects, with registrations the block owns, so its disposal reverts every one.
 // The methods live on the class, so a block builds one small object and each registry only on first use.
+/**
+ * The terminal capability as one block sees it: `c.tui` inside `ctx.inject(["tui"], (c) => ...)`.
+ * Each `add`, `overlay`, `split`, and `tickable` call belongs to the block. When the block stops, each one goes away.
+ * The block stops when its plugin unloads or when the `tui` provider changes.
+ */
 class Surface {
   /** @param {Context} ctx */
   constructor(ctx) {
     this._ctx = ctx;
-    // The shared root: the pane tree, focus, and repaint requests.
+    /** The shared root view: the pane tree, the overlays, the focus, and the repaint requests. A change through it does not belong to the block. */
     this.root = root;
   }
 
@@ -34,27 +38,55 @@ class Surface {
     return value;
   }
 
-  // A bare name becomes "<id>:<name>"; a name that already holds a ":" stays as the author wrote it.
-  /** @returns {typeof command} */
+  /**
+   * The command registry. `add` registers the command for this block. A name without ":" becomes "<plugin id>:<name>".
+   * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+   * @returns {typeof command}
+   */
   get command() {
     const ctx = this._ctx;
     const bound = /** @type {typeof command} */ (Object.create(command));
     bound.add = (name, spec) => ctx.effect(() => command.add(name.indexOf(":") >= 0 ? name : ctx.id + ":" + name, spec));
     return this._settle("command", bound);
   }
-  /** @returns {typeof keymap} */
+  /**
+   * The key binding registry. `add` registers for this block and returns a disposer.
+   * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+   * @returns {typeof keymap}
+   */
   get keymap() { return this._settle("keymap", owned(this._ctx, keymap)); }
-  /** @returns {typeof route} */
+  /**
+   * The key route registry. `add` registers for this block and returns a disposer.
+   * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+   * @returns {typeof route}
+   */
   get route() { return this._settle("route", owned(this._ctx, route)); }
-  /** @returns {typeof context} */
+  /**
+   * The context flag registry. `add` registers for this block and returns a disposer.
+   * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+   * @returns {typeof context}
+   */
   get context() { return this._settle("context", owned(this._ctx, context)); }
-  /** @returns {typeof status} */
+  /**
+   * The status bar segment registry. `add` registers for this block and returns a disposer.
+   * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+   * @returns {typeof status}
+   */
   get status() { return this._settle("status", owned(this._ctx, status)); }
-  /** @returns {typeof style} */
+  /**
+   * The highlight group registry. `add` registers for this block and returns a disposer.
+   * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+   * @returns {typeof style}
+   */
   get style() { return this._settle("style", owned(this._ctx, style)); }
 
-  // Show a layer this block owns. Any close runs `onClose` once: a pop by the layer itself, the disposer, or the unload.
-  /** @param {Overlay} layer @param {() => void} [onClose] @returns {Disposer} */
+  /**
+   * Show `layer` above the panes until it closes. The disposer, a pop of the layer, or the block stop closes it.
+   * Any close runs `onClose` once. After the block stops, the layer does not show and `onClose` runs at once.
+   * @param {Overlay} layer - a view such as the `win` from `ui.pick`. A layer that already shows stays in its place.
+   * @param {() => void} [onClose]
+   * @returns {Disposer}
+   */
   overlay(layer, onClose) {
     // A dead scope reverts nothing, so a late layer never shows and never outlives its block.
     if (!this._ctx.alive) {
@@ -75,14 +107,23 @@ class Surface {
     return off;
   }
 
-  // Split the focused pane and show `view` in the new one. The unload closes that pane; no focused pane splits nothing.
-  /** @param {"row" | "col"} kind @param {ViewLike} view @returns {Disposer} */
+  /**
+   * Split the focused pane and show `view` in the new pane, which gets the focus. The disposer or the block stop closes that pane.
+   * With no focused pane, nothing splits. It throws a TypeError when `view` has no `layout` and `draw` or already shows.
+   * @param {"row" | "col"} kind - "row" puts the new pane on the right, and "col" puts it below.
+   * @param {ViewLike} view
+   * @returns {Disposer}
+   */
   split(kind, view) {
     return this._ctx.effect(() => (root.split(kind, view) ? () => root.close(view) : undefined));
   }
 
-  // A tickable joins the frame loop and receives `onStart`, `onStop`, `needsTick`, and `tick`.
-  /** @param {Tickable} tickable @returns {Disposer} */
+  /**
+   * Add `tickable` to the frame loop until the disposer runs or the block stops.
+   * The loop calls its `onStart`, `onStop`, `needsTick`, and `tick` hooks. Two adds of one object share one entry.
+   * @param {Tickable} tickable
+   * @returns {Disposer}
+   */
   tickable(tickable) {
     return this._ctx.effect(() => {
       root.addTickable(tickable);
@@ -91,10 +132,10 @@ class Surface {
   }
 }
 
-// `inject` calls `bindTo`, so each block gets a surface whose effects that block owns.
+/** The `tui` capability. `ctx.inject(["tui"], ...)` calls `bindTo`, so each block gets its own `Surface`. */
 export const tui = { bindTo: (/** @type {Context} */ ctx) => new Surface(ctx) };
 
-// The shell registers this plugin, and every block that declares `tui` then activates.
+/** The plugin that provides the `tui` capability. The shell registers it, and then each block that declares `tui` starts. */
 export const tuiPlugin = {
   name: "tui",
   /** @param {Context} ctx */

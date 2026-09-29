@@ -39,8 +39,11 @@ async function putImage(path) {
   });
 }
 
-// Copy the image into the blob store and hang it on the composer at `from`, over the text the caller inserted.
-/** @param {Composer} composer @param {string} text @param {number} from @returns {Promise<boolean>} */
+/**
+ * Copy the image at path `text` into the blob store, and attach it to `composer` over the `text` that the caller inserted at offset `from`.
+ * Emits `composer.attached` on success. Resolves to false when the path names no file or names a directory, or when the store refuses the image; a refusal shows an error notification.
+ * @param {Composer} composer @param {string} text @param {number} from @returns {Promise<boolean>}
+ */
 export async function attachPath(composer, text, from) {
   // The gate decides "attach or text", so a path that names no file falls back without a word.
   const stat = await fs.stat(cleanPath(text)).catch(() => null);
@@ -49,8 +52,11 @@ export async function attachPath(composer, text, from) {
   return blob !== null && attached(composer, from, text, blob);
 }
 
-// Ctrl+V: insert nothing until the blob exists, because no user text depends on the answer.
-/** @param {Composer} composer @returns {Promise<boolean>} */
+/**
+ * Attach the clipboard image to `composer` at the caret. Nothing goes into the composer until the blob store holds the image.
+ * Emits `composer.attached` on success. Resolves to false and shows a notification when the clipboard holds no image or the store refuses it.
+ * @param {Composer} composer @returns {Promise<boolean>}
+ */
 export async function attachClipboard(composer) {
   const read = await clipboard.readImage();
   if (!("path" in read)) {

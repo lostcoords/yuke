@@ -8,8 +8,14 @@ import { Transcript } from "yuke:internal/transcript";
 import { client } from "yuke:internal/client";
 import { pasteAttaches } from "yuke:internal/attach";
 
-/** @typedef {"composer" | "transcript"} ChatRegion */
-/** @typedef {{ text: string, group?: string }} StripRow */
+/**
+ * A region of the chat pane that can take the keyboard.
+ * @typedef {"composer" | "transcript"} ChatRegion
+ */
+/**
+ * One line of text that a `chat.strip` or `chat.rule` listener answers. `group` names its highlight group; each place has its own default.
+ * @typedef {{ text: string, group?: string }} StripRow
+ */
 /** @import { Session } from "yuke:internal/session" */
 /** @import { HostMouseEvent as MouseEvent, NavTarget, Rect } from "./types/core.js" */
 
@@ -22,15 +28,21 @@ function copySelection(text) {
   if (config.mouse.copyOnSelect) copy(text, "selection");
 }
 
-// The chat pane: a transcript above a composer in one leaf. Draw, layout, and mouse routing.
+/**
+ * The chat pane: a transcript above a composer in one leaf. Plugins extend it through events, and the newest listener that answers wins:
+ * `chat.press` claims a left press, `chat.strip` adds rows under the transcript, `chat.rule` puts a line on the rule, and `chat.cursor` places the caret.
+ */
 export class ChatView {
-  // The view reads and sends through `session`; `showSession` moves it to another one.
-  /** @param {Session} session */
+  /**
+   * The pane joins `session` at once, so it appears in `session.views`.
+   * @param {Session} session
+   */
   constructor(session) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
+    /** The session that this pane reads and sends through. To move the pane to another session, use `showSession` or `openSession`. */
     this.session = session;
     session.join(this);
-    // The transcript reads parts straight from the engine for the session the view shows now; a draft has none.
+    /** The messages of the shown session. It reads parts straight from the engine for the current `session`; a draft has none. */
     this.transcript = new Transcript({
       partsOf: (id) => {
         const sid = this.session.sessionId;
@@ -46,6 +58,7 @@ export class ChatView {
       },
       onSelect: copySelection,
     });
+    /** The input box. A submit sends its content through `session.send`, and a pasted image path becomes an attachment. */
     this.composer = new Composer({ placeholder: "Message…", onSubmit: (content) => this.session.send(content, this.composer) });
     // A pasted image path attaches here instead of staying text; every other paste keeps its old behavior.
     this.composer.onPaste = (text, from) => pasteAttaches(this.composer, text, from);
@@ -60,29 +73,40 @@ export class ChatView {
     this.composerRect = { x: 0, y: 0, w: 0, h: 0 };
     this.titleRect = { x: 0, y: 0, w: 0, h: 0 };
     this.hintRect = { x: 0, y: 0, w: 0, h: 0 };
-    /** @type {StripRow[]} */
+    /**
+     * The rows that `chat.strip` answered at the last layout.
+     * @type {StripRow[]}
+     */
     this.strip = [];
-    // This field names the region that reads the keyboard. The mouse routes by rect instead.
-    /** @type {ChatRegion} */
+    /**
+     * The region that reads the keyboard. The mouse routes by rect instead. To change it, use `focusRegion`.
+     * @type {ChatRegion}
+     */
     this.focus = "composer";
   }
 
+  /** Always "chat". */
   get name() {
     return "chat";
   }
 
-  // The focused region names the deeper atom, so a binding can own one region alone.
-  /** @returns {string[]} */
+  /**
+   * The keymap contexts of this pane: "chat", then the focused region. So a binding can own one region alone.
+   * @returns {string[]}
+   */
   contexts() {
     return ["chat", this.focus];
   }
 
-  // A pane focus returns the keyboard to the composer.
+  /** A pane focus gives the keyboard back to the composer. */
   onFocus() {
     this.focusRegion("composer");
   }
 
-  /** @param {ChatRegion} name */
+  /**
+   * Give the keyboard to region `name`, and emit `region.focused` when the region changes. Throws a TypeError for an unknown region.
+   * @param {ChatRegion} name
+   */
   focusRegion(name) {
     if (name !== "composer" && name !== "transcript") throw new TypeError("focusRegion: unknown region " + name);
     if (this.focus === name) return;
@@ -90,21 +114,29 @@ export class ChatView {
     events.emit("region.focused", this, name);
   }
 
-  /** @param {HostEvent} ev @returns {boolean} */
+  /**
+   * Send a key to the composer. It returns false while the transcript has focus, because keymap bindings move the transcript.
+   * @param {HostEvent} ev @returns {boolean}
+   */
   onKey(ev) {
     // A focused transcript reads nothing here, because a nav binding scrolls it through the keymap.
     if (this.focus === "transcript") return false;
     return this.composer.onKey(ev);
   }
 
-  // The widget a nav binding drives here. The transcript scrolls even while the composer types.
-  /** @returns {NavTarget | null} */
+  /**
+   * The widget that a nav binding drives here: the transcript pager. The transcript scrolls even while the composer has focus.
+   * @returns {NavTarget | null}
+   */
   navTarget() {
     return this.transcript.pager;
   }
 
-  // Route by sub-rect, so a wheel step over the composer never moves the transcript; only a press hits this test.
-  /** @param {MouseEvent} ev @returns {boolean} */
+  /**
+   * Route a mouse event by sub-rect, so a wheel step over the composer never moves the transcript. A drag or a release always goes to the transcript.
+   * After the transcript reads a left press, a `chat.press` listener can claim it.
+   * @param {MouseEvent} ev @returns {boolean}
+   */
   onMouse(ev) {
     if (ev.event === "drag" || ev.event === "release") return this.transcript.onMouse(ev);
     const r = this.transcript.pager.rect();
@@ -115,8 +147,11 @@ export class ChatView {
     return events.bail("chat.press", this, ev) === true || taken;
   }
 
-  // Stack the transcript, the strip, the rule, and the composer; the transcript takes the rows the others leave.
-  /** @param {Rect} bounds @returns {void} */
+  /**
+   * Stack the transcript, the strip, the rule, and the composer; the transcript takes the rows the others leave. The composer takes at most half the pane.
+   * Each layout asks `chat.strip` for the strip rows. An empty draft shows its title and hint in the transcript region.
+   * @param {Rect} bounds @returns {void}
+   */
   layout(bounds) {
     this.rect = bounds;
     const { x, y, w, h } = bounds;
@@ -148,7 +183,10 @@ export class ChatView {
     if (this.transcriptRect.w === 0 || this.transcriptRect.h === 0) this.transcript.hide();
   }
 
-  /** @param {boolean} [focused] @returns {void} */
+  /**
+   * Draw the pane into the rects of the last layout.
+   * @param {boolean} [focused] @returns {void}
+   */
   draw(focused = false) {
     if (this.rect.w <= 0 || this.rect.h <= 0) return;
     const transcript = this.transcriptRect;
@@ -163,8 +201,10 @@ export class ChatView {
     this.composer.draw(focused);
   }
 
-  // The rule row. A plugin puts a line on it, such as the working indicator, and the rule fills the rest.
-  /** @param {number} x @param {number} y @param {number} w @returns {void} */
+  /**
+   * Draw the rule row. A `chat.rule` listener puts a line on it, such as the working indicator, and the rule fills the rest.
+   * @param {number} x @param {number} y @param {number} w @returns {void}
+   */
   _drawRule(x, y, w) {
     const line = events.bail("chat.rule", this);
     const label = line ? clip(line.text, w) : "";
@@ -173,8 +213,10 @@ export class ChatView {
     if (w > used) text(x + used, y, "─".repeat(w - used), "YukeRule");
   }
 
-  // The caret belongs to the focused region, so a transcript with no cursor provider shows none.
-  /** @returns {{ x: number, y: number, visible: boolean } | null} */
+  /**
+   * The caret: the `chat.cursor` answer, else the composer caret while the composer has focus, else null.
+   * @returns {{ x: number, y: number, visible: boolean } | null}
+   */
   cursor() {
     const supplied = events.bail("chat.cursor", this);
     if (supplied) return supplied;

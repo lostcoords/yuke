@@ -52,8 +52,11 @@ style.add(UI_GROUPS);
 // Default page jump before a draw sets the real page height.
 const PAGE_FALLBACK = 10;
 
-// The nav vocabulary, written once. The shell binds these strokes and a modal layer reads them.
-/** @type {Record<string, NavAction | undefined>} */
+/**
+ * The nav keys: each stroke moves a `NavTarget` by one row, one page, or to an edge.
+ * The strokes are `j`, `k`, the arrows, the page keys, `ctrl+d`, `ctrl+u`, `home`, `end`, and `G`. The shell binds them, and a modal layer reads them.
+ * @type {Record<string, NavAction | undefined>}
+ */
 export const NAV_KEYS = Object.freeze(Object.assign(Object.create(null), /** @type {Record<string, NavAction>} */ ({
   j: (t) => t.navBy(1),
   down: (t) => t.navBy(1),
@@ -68,7 +71,7 @@ export const NAV_KEYS = Object.freeze(Object.assign(Object.create(null), /** @ty
   G: (t) => t.navEdge(1),
 })));
 
-// A scrolling overlay body: the nav keys and the wheel move it, and esc or q closes it.
+/** A scrolling overlay body over a `Pager`. The nav keys and the wheel move it, and esc or q calls `onClose`. */
 export class ScrollView {
   /** @param {() => void} onClose */
   constructor(onClose) {
@@ -139,8 +142,11 @@ function normalizeCell(cell) {
   return typeof cell.text === "string" ? cell : { ...cell, text: cell.text != null ? String(cell.text) : "" };
 }
 
-// A scrollable list where `key(item)` gives a stable identity, so the selection follows its item across a re-sort.
-/** @template T */
+/**
+ * A scrollable list where `key(item)` gives a stable identity, so the selection follows its item across a re-sort.
+ * It draws into a rect that its owner passes, so it is a part of a view and not a view.
+ * @template T
+ */
 export class List {
   /** @param {ListOptions<T>} [opts] */
   constructor(opts = {}) {
@@ -171,7 +177,11 @@ export class List {
     return Math.max(1, Math.floor(h / this.itemHeight));
   }
 
-  /** @param {T[]} items @returns {void} */
+  /**
+   * Replace the items. When the selected item left, the selection moves to the first selectable item.
+   * @param {T[]} items
+   * @returns {void}
+   */
   setItems(items) {
     /** @type {T[]} */
     this.items = items || [];
@@ -183,8 +193,11 @@ export class List {
     this._clampScroll(this._page);
   }
 
-  // Put the cursor on the item that `k` names. Return false when the list holds no such item.
-  /** @param {ListKey | null | undefined} k @returns {boolean} */
+  /**
+   * Put the cursor on the selectable item that `k` names. Return false when the list holds no such item.
+   * @param {ListKey | null | undefined} k
+   * @returns {boolean}
+   */
   selectKey(k) {
     if (k == null) return false;
     for (const it of this.items) {
@@ -195,7 +208,10 @@ export class List {
     return false;
   }
 
-  /** @returns {number} */
+  /**
+   * The index of the selected item, or -1 when no item is selected.
+   * @returns {number}
+   */
   selectedIndex() {
     if (this.selectedKey == null) return -1;
     for (let i = 0; i < this.items.length; i++) {
@@ -205,20 +221,31 @@ export class List {
     return -1;
   }
 
-  /** @returns {T | null} */
+  /**
+   * The selected item, or null when no item is selected.
+   * @returns {T | null}
+   */
   selected() {
     const i = this.selectedIndex();
     return i < 0 ? null : /** @type {T} */ (this.items[i]);
   }
 
-  /** @param {number} h @returns {void} */
+  /**
+   * Scroll so the selection shows in a height of `h` screen rows.
+   * @param {number} h
+   * @returns {void}
+   */
   ensureVisible(h) {
     const vis = this._visible(h);
     this._page = vis;
     this._scrollToVisible(vis);
   }
 
-  /** @param {number} delta @returns {void} */
+  /**
+   * Move the selection by `delta` selectable items, and stop at each end. Then call `onMove`.
+   * @param {number} delta
+   * @returns {void}
+   */
   navBy(delta) {
     const dir = delta < 0 ? -1 : 1;
     let index = this.selectedIndex();
@@ -243,7 +270,11 @@ export class List {
     return -1;
   }
 
-  /** @param {number} dir @returns {void} */
+  /**
+   * Select the first selectable item when `dir` is negative, else the last.
+   * @param {number} dir
+   * @returns {void}
+   */
   navEdge(dir) {
     this.navBy(dir < 0 ? -this.items.length : this.items.length);
   }
@@ -264,19 +295,29 @@ export class List {
     this.scroll = Math.min(Math.max(this.scroll, 0), max);
   }
 
-  /** @param {number} dir @returns {void} */
+  /**
+   * Move the selection by `dir` pages of the last drawn height.
+   * @param {number} dir
+   * @returns {void}
+   */
   navPage(dir) {
     this.navBy(dir * this._page);
   }
 
-  // Forget the drawn rect when a container draws something else there, so a click cannot hit a row that left.
-  /** @returns {void} */
+  /**
+   * Forget the drawn rect when a container draws something else there, so a click cannot hit a row that left.
+   * @returns {void}
+   */
   clearRect() {
     this._rect = null;
   }
 
-  // A wheel step moves the cursor, because `draw` always scrolls the selection back into view.
-  /** @param {MouseEvent} ev @returns {boolean} */
+  /**
+   * Select the clicked row, or move the selection by a wheel step. Answer true when the list used the event.
+   * A wheel step moves the cursor, because `draw` always scrolls the selection back into view.
+   * @param {MouseEvent} ev
+   * @returns {boolean}
+   */
   onMouse(ev) {
     const r = this._rect;
     if (!r || ev.event !== "press") return false;
@@ -303,8 +344,11 @@ export class List {
     return true;
   }
 
-  // Paint into rect { x, y, w, h }, up to `itemHeight` lines per item; every row repaints, so `format` may be dynamic.
-  /** @param {Rect} rect @returns {void} */
+  /**
+   * Paint into `rect`, up to `itemHeight` lines per item. Every row repaints, so `format` may be dynamic.
+   * @param {Rect} rect
+   * @returns {void}
+   */
   draw(rect) {
     const { x, y, w, h } = rect;
     if (w <= 0 || h <= 0) return this.clearRect();
@@ -367,11 +411,15 @@ export class List {
   }
 }
 
-// A message input grows with its text. Enter submits and the newline keys add a line.
+/**
+ * A message input that grows with its text. Enter submits, and shift+enter, alt+enter, or ctrl+j adds a line.
+ * A large paste and an attached image show as a label, and the submit still sends the full text and the image.
+ */
 export class Composer {
   /** @param {ComposerOptions} [opts] */
   constructor(opts = {}) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
+    /** The text buffer and the caret. An edit through it emits `composer.changed`. */
     this.input = new TextInput({
       // A plugin follows the text through the bus, so the slash menu needs no hook on each pane.
       onChange: () => {
@@ -503,8 +551,11 @@ export class Composer {
     return this._rows;
   }
 
-  // The rows the text needs. The caller caps this against the space it has.
-  /** @param {number} w @returns {number} */
+  /**
+   * The screen rows the text needs at width `w`, at most `maxRows`. The caller caps this against the space it has.
+   * @param {number} w
+   * @returns {number}
+   */
   height(w) {
     if (w <= 0) return 0;
     if (this.input.text === "") return 1;
@@ -520,6 +571,7 @@ export class Composer {
     this.rect = rect;
   }
 
+  /** The buffer text. A set replaces it and puts the caret at the end. */
   get text() {
     return this.input.text;
   }
@@ -528,8 +580,11 @@ export class Composer {
     this.input.setText(s);
   }
 
-  // The buffer as content parts: one text run between image spans, each image at its own position.
-  /** @returns {Wire.ContentPart[]} */
+  /**
+   * The buffer as content parts: one text run between image spans, each image at its own position.
+   * The whole input trims at its edges, and a run of white space alone makes no part.
+   * @returns {Wire.ContentPart[]}
+   */
   content() {
     const s = this.input.text;
     /** @type {Wire.ContentPart[]} */
@@ -552,20 +607,27 @@ export class Composer {
     return out;
   }
 
-  // Whether the buffer holds an attachment, so an owner answers for the input it is about to send.
-  /** @returns {boolean} */
+  /**
+   * Whether the buffer holds an image, so an owner answers for the input it is about to send.
+   * @returns {boolean}
+   */
   hasImages() {
     return this.spans.some((sp) => "blob" in sp);
   }
 
-  // Save the buffer and its spans, so a failed send puts the images back with the text.
-  /** @returns {ComposerSnapshot} */
+  /**
+   * Save the buffer and its spans, so a failed send puts the images back with the text.
+   * @returns {ComposerSnapshot}
+   */
   snapshot() {
     return { text: this.input.text, spans: this.spans.map((sp) => ({ ...sp })) };
   }
 
-  // Put a snapshot back above the text the user typed since, and move every live span past the insert.
-  /** @param {ComposerSnapshot} snap @returns {void} */
+  /**
+   * Put a snapshot back above the text the user typed since, and move every live span past the insert.
+   * @param {ComposerSnapshot} snap
+   * @returns {void}
+   */
   restore(snap) {
     if (snap.text === "") return;
     this.input.replace(0, 0, this.input.text === "" ? snap.text : snap.text + "\n");
@@ -574,8 +636,10 @@ export class Composer {
     this._invalidate();
   }
 
-  // Submit the content and not the projection, so a lost span can never send a label.
-  /** @returns {void} */
+  /**
+   * Send the content to `onSubmit` and clear the buffer. An empty buffer sends nothing. When `onSubmit` returns false, the buffer stays.
+   * @returns {void}
+   */
   submit() {
     const content = this.content();
     if (content.length === 0) return;
@@ -585,7 +649,11 @@ export class Composer {
     this.input.setText("");
   }
 
-  /** @param {HostEvent} ev @returns {boolean} */
+  /**
+   * Handle one key or paste event. Answer true when the composer used it.
+   * @param {HostEvent} ev
+   * @returns {boolean}
+   */
   onKey(ev) {
     if (ev.type === "paste") return this._paste(ev.text || "");
     const s = strokeOf(/** @type {Extract<HostEvent, { type: "key" }>} */ (ev));
@@ -643,8 +711,14 @@ export class Composer {
     return true;
   }
 
-  // Turn the text at `from` into an attachment. An edit that moved or changed it cancels the attach.
-  /** @param {number} from @param {string} text @param {Wire.MediaBlob} blob @returns {boolean} */
+  /**
+   * Show the text at `from` as an image label, and send `blob` in its place.
+   * Return false when the buffer no longer holds `text` at `from`, for example after an edit.
+   * @param {number} from
+   * @param {string} text
+   * @param {Wire.MediaBlob} blob
+   * @returns {boolean}
+   */
   attach(from, text, blob) {
     const end = from + text.length;
     if (text === "" || this.input.text.slice(from, end) !== text) return false;
@@ -653,8 +727,11 @@ export class Composer {
     return true;
   }
 
-  // Move the caret one drawn row. The goal column survives a short row.
-  /** @param {number} delta @returns {boolean} */
+  /**
+   * Move the caret by `delta` drawn rows. The goal column survives a short row.
+   * @param {number} delta
+   * @returns {boolean}
+   */
   moveRow(delta) {
     const rows = this._rowsAt(this._textWidth(this.rect.w));
     const proj = this._projection().text;
@@ -711,7 +788,7 @@ export class Composer {
   }
 }
 
-// A retained text leaf wraps during layout, so paint only copies its cached visible rows.
+/** A text view. It wraps its text during layout, so a draw only copies its cached visible rows. */
 export class Text {
   /** @param {TextOptions} [opts] */
   constructor(opts = {}) {
@@ -723,7 +800,11 @@ export class Text {
     this._layoutCache = { text: "", width: 0, height: 0, rows: [] };
   }
 
-  /** @param {string} value @returns {void} */
+  /**
+   * Replace the text and request a frame.
+   * @param {string} value
+   * @returns {void}
+   */
   setText(value) {
     const textValue = String(value);
     if (textValue === this.text) return;
@@ -731,7 +812,11 @@ export class Text {
     root.invalidate();
   }
 
-  /** @param {number} width @returns {{ w: number, h: number }} */
+  /**
+   * The size of the text wrapped at `width`: the widest row and the row count.
+   * @param {number} width
+   * @returns {{ w: number, h: number }}
+   */
   measure(width) {
     width = Math.max(0, Math.floor(width));
     const cache = this._measurement;
@@ -813,14 +898,18 @@ const COMPOSER_NEWLINE = { "shift+enter": true, "alt+enter": true, "ctrl+j": tru
 const DIALOG_INSET = Object.freeze({ x: 3, y: 2 });
 const NO_INSET = Object.freeze({ x: 0, y: 0 });
 
-// Border glyph sets, keyed by name. Extend by adding an entry.
+/** The border glyph sets by name. A `Window` takes a name or its own `BorderSet`. */
 export const borders = {
   single: { tl: "┌", t: "─", tr: "┐", r: "│", br: "┘", b: "─", bl: "└", l: "│" },
   rounded: { tl: "╭", t: "─", tr: "╮", r: "│", br: "╯", b: "─", bl: "╰", l: "│" },
   double: { tl: "╔", t: "═", tr: "╗", r: "║", br: "╝", b: "═", bl: "╚", l: "║" },
 };
 
-// A floating, bordered, titled window as an overlay layer.
+/**
+ * A floating, bordered, titled window as an overlay layer. `tui.overlay(win)` shows it.
+ * The window claims its content, so one content object serves one window.
+ * It throws a TypeError for bad padding, or for content without `layout` and `draw`.
+ */
 export class Window {
   /** @param {WindowOptions} [opts] */
   constructor(opts = {}) {
@@ -856,12 +945,20 @@ export class Window {
     return this._borderSet() ? this._borderInset : NO_INSET;
   }
 
-  /** @param {number} width @returns {number} */
+  /**
+   * The content width inside the outer width `width`.
+   * @param {number} width
+   * @returns {number}
+   */
   contentWidth(width) {
     return Math.max(0, width - 2 * this._inset().x);
   }
 
-  /** @param {number} rows @returns {number} */
+  /**
+   * The outer height for `rows` content rows, with the border, the padding, and the footer.
+   * @param {number} rows
+   * @returns {number}
+   */
   heightFor(rows) {
     return rows + 2 * this._inset().y + (this.opts.footer ? 1 : 0);
   }
@@ -975,24 +1072,35 @@ export class Window {
   }
 }
 
-// A picker window's content: a List with accept/cancel/validate, an optional keymap over the default actions, and an optional query line.
+// The glyph before the query of a picker and the text of a prompt.
 const PICKER_PROMPT = "\u203a ";
 
-/** @template T */
+/**
+ * A picker window's content: a List with accept, cancel, and validate, an optional keymap over the default actions, and an optional query line.
+ * `ui.pick` and `ui.select` build one. Enter accepts, and esc cancels.
+ * @template T
+ */
 export class Picker {
   /** @param {PickOptions<T>} opts */
   constructor(opts) {
     this.opts = opts;
-    /** @type {Window | null} */
+    /**
+     * The window that shows this picker. `ui.pick` sets it.
+     * @type {Window | null}
+     */
     this.win = null;
     this.filter = opts.filter !== false;
+    /** The query buffer, or null for a menu. */
     this.input = this.filter ? new TextInput({ onChange: () => this.refilter() }) : null;
     /** @type {T[]} */
     this.source = opts.items || [];
     this.suggest = opts.suggest || null;
     this.textOf = opts.filterText || String;
 
-    /** @type {List<T>} */
+    /**
+     * The list of the items that match the query.
+     * @type {List<T>}
+     */
     this.list = new List({
       items: [],
       format: opts.format,
@@ -1047,7 +1155,10 @@ export class Picker {
     return this.win ? this.win.heightFor(rows) : rows;
   }
 
-  /** @returns {string} */
+  /**
+   * The query text, or "" for a menu. A set on a finder filters the items again.
+   * @returns {string}
+   */
   get query() {
     return this.input ? this.input.text : "";
   }
@@ -1057,14 +1168,20 @@ export class Picker {
     if (this.input) this.input.setText(s); // onChange refilters
   }
 
-  /** @param {T[]} items @returns {void} */
+  /**
+   * Replace the source items and filter them again.
+   * @param {T[]} items
+   * @returns {void}
+   */
   setSource(items) {
     this.source = items || [];
     this.refilter();
   }
 
-  // A menu shows its source as given. A finder takes the order `suggest` returns, or ranks the source and selects the first result.
-  /** @returns {void} */
+  /**
+   * Build the list again. A menu shows its source as given. A finder takes the order `suggest` returns, or ranks the source and selects the first result.
+   * @returns {void}
+   */
   refilter() {
     if (!this.filter) {
       this.list.setItems(this.source);
@@ -1080,7 +1197,10 @@ export class Picker {
     return this.opts.needsTick || null;
   }
 
-  /** @returns {void} */
+  /**
+   * Close the window of this picker. It does not call `onCancel`.
+   * @returns {void}
+   */
   close() {
     root.popOverlay(/** @type {Window} */ (this.win));
   }
@@ -1149,8 +1269,11 @@ export class Picker {
     return { x: Math.min(x + Math.max(0, col), x + Math.max(0, w - 1)), y: Math.min(rowY, y + Math.max(0, h - 1)), visible: true };
   }
 
-  // Accept the selection, gated by `validate`. The close removes this window by identity, so a picker that `onAccept` opens survives it.
-  /** @returns {void} */
+  /**
+   * Accept the selection, gated by `validate`, and then call `onAccept`. With no selection, nothing happens.
+   * The close removes this window by identity, so a picker that `onAccept` opens survives it.
+   * @returns {void}
+   */
   accept() {
     const it = this.list.selected();
     if (it == null) return;
@@ -1160,14 +1283,20 @@ export class Picker {
     if (this.onAccept) this.onAccept(it, at);
   }
 
-  // A cancel always closes. `onCancel` reports it; a picker that must survive Escape binds it to false.
-  /** @returns {void} */
+  /**
+   * Close the window and then call `onCancel`. A cancel always closes; a picker that must survive esc binds esc to false in `keymap`.
+   * @returns {void}
+   */
   cancel() {
     this.close();
     if (this.onCancel) this.onCancel();
   }
 
-  /** @param {PickerAction} name @returns {void} */
+  /**
+   * Run one picker action, as a string in `keymap` does.
+   * @param {PickerAction} name
+   * @returns {void}
+   */
   action(name) {
     switch (name) {
       case "accept": return this.accept();
@@ -1234,20 +1363,27 @@ export class Picker {
   }
 }
 
-// A one-line prompt as window content. The prompt answers its text on Enter and no value on Escape.
+/**
+ * A one-line prompt as window content. Enter calls `settle` with the text, and esc calls it with undefined.
+ * A masked prompt shows one dot for each grapheme.
+ */
 export class Prompt {
   /** @param {PromptOptions} opts */
   constructor(opts) {
     this.placeholder = opts.placeholder || "";
     this.mask = !!opts.mask;
     this.settle = opts.settle;
+    /** The text buffer and the caret. */
     this.input = new TextInput({ onChange: () => root.invalidate() });
     /** @type {Rect} */
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
   }
 
-  // The text as the screen shows it. A masked prompt paints one dot for each grapheme, so a key never shows.
-  /** @param {string} s @returns {string} */
+  /**
+   * The text as the screen shows it. A masked prompt paints one dot for each grapheme, so a key never shows.
+   * @param {string} s
+   * @returns {string}
+   */
   shown(s) {
     if (!this.mask) return s;
     let n = 0;
@@ -1292,15 +1428,29 @@ export class Prompt {
   }
 }
 
-// The kit's public surface. `select` navigates a set, `pick` adds the query line, and both build { win, content }.
-// A builder shows nothing; `ctx.tui.overlay(win)` shows the window, so a plugin owns every overlay it opens.
+/**
+ * The picker builders. `select` navigates a set, `pick` adds the query line, and both build `{ win, content }`.
+ * A builder shows nothing; `tui.overlay(win)` shows the window, so a plugin owns every overlay it opens.
+ */
 export const ui = {
-  /** @template T @param {T[]} items @param {PickOptions<T>} [opts] @returns {{ win: Window, content: Picker<T> }} */
+  /**
+   * Build a menu over `items` with no query line. The nav keys move it. It shows nothing until `tui.overlay(win)`.
+   * @template T
+   * @param {T[]} items
+   * @param {PickOptions<T>} [opts]
+   * @returns {{ win: Window, content: Picker<T> }}
+   */
   select(items, opts = {}) {
     return ui.pick({ ...opts, items: items || [], filter: false });
   },
 
-  /** @template T @param {PickOptions<T>} [opts] @returns {{ win: Window, content: Picker<T> }} */
+  /**
+   * Build a finder: a query line over the fuzzy-ranked items, or over the items that `suggest` returns.
+   * It shows nothing until `tui.overlay(win)`.
+   * @template T
+   * @param {PickOptions<T>} [opts]
+   * @returns {{ win: Window, content: Picker<T> }}
+   */
   pick(opts = {}) {
     const content = new Picker(opts);
     const rows = opts.maxRows;

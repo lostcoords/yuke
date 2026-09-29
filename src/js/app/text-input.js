@@ -159,19 +159,34 @@ export function nextGrapheme(s, at) {
   return at + offset + length;
 }
 
+/**
+ * A text buffer with a caret: the edit state of a query line, a prompt, or a composer.
+ * Each offset is a UTF-16 index into `text`. `onKey` applies the common line keys.
+ */
 export class TextInput {
   /** @param {TextInputOptions} opts */
   constructor(opts = {}) {
+    /** The buffer. Change it through `setText`, `replace`, or `insert`, so the hooks run. */
     this.text = "";
+    /** The caret offset in `text`. A direct set moves the caret and runs no hook. */
     this.caret = 0;
-    /** @type {(() => void) | null} */
+    /**
+     * Called after each edit.
+     * @type {(() => void) | null}
+     */
     this.onChange = opts.onChange || null;
-    // onEdit(from, to, insertedLength) reports the range an edit replaced, for an owner that keeps its own offsets.
-    /** @type {((from: number, to: number, insertedLength: number) => void) | null} */
+    /**
+     * Reports the range [from, to) that an edit replaced and the inserted length, for an owner that keeps its own offsets.
+     * @type {((from: number, to: number, insertedLength: number) => void) | null}
+     */
     this.onEdit = opts.onEdit || null;
   }
 
-  /** @param {string} s @returns {void} */
+  /**
+   * Replace the whole text and put the caret at the end. `setText("")` clears the buffer.
+   * @param {string} s
+   * @returns {void}
+   */
   setText(s) {
     const had = this.text.length;
     this.text = String(s);
@@ -180,13 +195,21 @@ export class TextInput {
     callHook(this, "onChange");
   }
 
-  /** @returns {string} */
+  /**
+   * The text before the caret.
+   * @returns {string}
+   */
   beforeCaret() {
     return this.text.slice(0, this.caret);
   }
 
-  // Replace [from, to) with `s`. The caret lands after the new text.
-  /** @param {number} from @param {number} to @param {string} s @returns {void} */
+  /**
+   * Replace [from, to) with `s`. The caret lands after the new text.
+   * @param {number} from
+   * @param {number} to
+   * @param {string} s
+   * @returns {void}
+   */
   replace(from, to, s) {
     s = String(s);
     this.text = this.text.slice(0, from) + s + this.text.slice(to);
@@ -195,14 +218,22 @@ export class TextInput {
     callHook(this, "onChange");
   }
 
-  // Insert `s` at the caret with one edit. A paste and a newline key use this.
-  /** @param {string} s @returns {void} */
+  /**
+   * Insert `s` at the caret with one edit, and put the caret after it. An empty `s` does nothing.
+   * @param {string} s
+   * @returns {void}
+   */
   insert(s) {
     s = String(s);
     if (s !== "") this.replace(this.caret, this.caret, s);
   }
 
-  /** @param {HostEvent} ev @returns {boolean} */
+  /**
+   * Apply one key: left, right, home, end, ctrl+a, ctrl+e, backspace, delete, ctrl+w, ctrl+u, or typed text.
+   * Answer false for any other key. A caret move steps over a whole grapheme.
+   * @param {HostEvent} ev
+   * @returns {boolean}
+   */
   onKey(ev) {
     const s = strokeOf(/** @type {Extract<HostEvent, { type: "key" }>} */ (ev));
     switch (s) {

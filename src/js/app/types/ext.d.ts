@@ -9,6 +9,7 @@ import type { ChatRegion, ChatView, StripRow } from "../chat-view.js";
 import type { Composer } from "../ui.js";
 import type { HostMouseEvent, ViewLike } from "./core.js";
 
+/** A function that reverts one registration. A second call does nothing. */
 export type Disposer = () => void;
 
 /** One notification in the history. */
@@ -36,7 +37,9 @@ export type AdviceFor<F extends AdviceFunction, W extends AdviceWhere> =
   never;
 
 export interface AdviceOptions {
+  /** The plugin that owns the advice. `ctx.advise` sets it to the plugin name. */
   owner?: string;
+  /** The label that `advice.list` shows. The default is the function name. */
   name?: string;
   /** Lower order runs first; equal orders keep registration order. */
   order?: number;
@@ -98,37 +101,57 @@ export interface EventOptions { prepend?: boolean }
 
 /** The shared event bus: `emit` tells every listener in registration order; `bail` asks the newest listener first and answers the first value that is not false or null. */
 export interface Bus {
+  /** Add a listener. It throws a TypeError for an event name that no tier declares; an `owner:event` name needs no declaration. */
   on<K extends EventName>(name: K, fn: Events[K], opts?: EventOptions): Disposer;
+  /** Add a listener for the next emit only. */
   once<K extends EventName>(name: K, fn: Events[K]): Disposer;
+  /** Tell every listener in registration order. A listener that throws is reported, and the next listener runs. */
   emit<K extends EventName>(name: K, ...args: Parameters<Events[K]>): void;
+  /** Ask the newest listener first. Answers the first value that is not false, null, or undefined, or undefined when no listener answers. */
   bail<K extends EventName>(name: K, ...args: Parameters<Events[K]>): Exclude<ReturnType<Events[K]>, false | null | undefined | void> | undefined;
   /** Declare more names for the life of a tier; the disposer withdraws them. */
   declare(names: string[]): Disposer;
   onError: ((error: unknown, name: string) => void) | null;
 }
-/** A sync apply may return its cleanup; an async apply resolves to nothing. */
-/** Register the plugin in the synchronous part of `apply`. The host never waits for an async apply. A rejection closes the plugin. */
+/**
+ * The start function of a plugin. Register the plugin in the synchronous part of `apply`.
+ * A sync apply may return its cleanup; an async apply resolves to nothing. The host never waits for an async apply. A rejection closes the plugin.
+ */
 export type PluginApply = (context: Context) => void | (() => void) | Promise<void>;
 
+/** The facts of one tool call. */
 export interface ToolContext {
+  /** The absolute workspace root of the session that made the call. */
   workspaceRoot: string;
+  /** The session that made the call. It is absent when the call has no transcript site. */
   sessionId?: string;
+  /** The message that holds the call in the transcript. It is absent together with `sessionId`. */
   messageId?: number;
+  /** The part that holds the call in its message. It is absent together with `sessionId`. */
   partId?: number;
   /** Shows one chunk of live output while the tool runs. The model reads only the result; the stream stops at 1 MiB. */
   output(text: string): void;
 }
 
+/**
+ * Run one tool call. A string result reaches the model as is, another value reaches it as JSON, and undefined or null is empty output.
+ * A rejection gives the model an error result with the message of the error.
+ */
 export type ToolExecute = (
   /** The JSON the model wrote. It may be any value, so a tool checks it before use. */
   args: unknown,
+  /** The host cancels it when the call stops. */
   signal: CancellationSignal,
   context: ToolContext,
 ) => Promise<unknown>;
 
+/** One tool for `ctx.tools.define`. */
 export interface ToolDefinition {
+  /** 1 to 64 characters of a-z, A-Z, 0-9, _ or -. No other tool may have the name. */
   name: string;
+  /** The text the model reads to decide when to call the tool. It must not be empty. */
   description: string;
+  /** The JSON Schema of the arguments. It needs `type: "object"` and a `properties` object. */
   parameters: Record<string, unknown>;
   execute: ToolExecute;
   /** Request deferred loading until a tool search names the definition. */
@@ -137,8 +160,11 @@ export interface ToolDefinition {
 
 /** The value `inject` gives each capability name. A plugin declares its own through `declare module "yuke"`; an undeclared name is `unknown`. */
 export interface Capabilities {
+  /** The terminal UI of one block. An unload of the block removes what the block adds. The shell provides it. */
   tui: ReturnType<typeof tui.bindTo>;
+  /** The chat panes and their transcript labels. The shell provides it. */
   chat: ChatSurface;
+  /** The composer mode service. It exists only while the `composerVim` plugin runs. */
   "composer-vim": ComposerVim;
   [name: string]: unknown;
 }
@@ -150,15 +176,20 @@ export type FreeName<K extends string> = [Extract<K, ContextMember>] extends [ne
 /** A provider is the capability, or an object whose `bindTo` builds the capability for each block. */
 export type Provider<K extends string> = Capabilities[K] | { bindTo(context: Context): Capabilities[K] };
 
+/** The context of an `inject` block: a Context with each named capability as a member. */
 export type InjectContext<K extends string = "tui"> = Context & Pick<Capabilities, K>;
+/** The block of `inject`. It runs synchronously, and a returned function runs as its cleanup when the block reverts. */
 export type InjectApply<K extends string = string> = (context: InjectContext<K>) => unknown;
 
+/** The handle that `plugins.use` and `ctx.use` answer. */
 export interface PluginHandle {
   /** Cancels the signal, reverts the registrations, and waits for the releases and an async apply until the close deadline. Then it frees the name. A sync close answers nothing. */
   dispose(): void | Promise<void>;
 }
 
+/** A plugin for `plugins.use` or `ctx.use`. */
 export interface Plugin {
+  /** A non-empty name. No other live plugin may have it. It prefixes the commands of the plugin. */
   name: string;
   apply: PluginApply;
 }
@@ -242,34 +273,50 @@ export interface HookReplacements {
   "input.before": { content: Wire.ContentPart[] };
 }
 
+/** A hook point that `ctx.hook` can answer. */
 export type HookPoint = keyof HookPayloads;
 
 /** A block stops the action with a reason. A replace hands the next handler a new value. Nothing means proceed. */
 export type HookAnswer<P extends HookPoint = HookPoint> = { block: string; replace?: undefined } | { replace: HookReplacements[P]; block?: undefined };
 
+/** A handler of one hook point. It may be async. A throw blocks the action and reports a fault. */
 export type HookHandler<P extends HookPoint = HookPoint> = (payload: HookPayloads[P]) => HookAnswer<P> | null | undefined | void | Promise<HookAnswer<P> | null | undefined | void>;
 
 /** A resource release; the close awaits a returned Promise before the next older release. */
 export type Release = () => unknown;
 
+/** The options of one prompt. */
 export interface InteractionOptions {
+  /** A cancel of this signal closes the prompt, and the prompt answers undefined. */
   signal?: CancellationSignal;
+  /** Hide the typed text of `input`. */
   secret?: boolean;
+  /** The two answers of `confirm`. The defaults are Yes and No. */
   labels?: { accept?: string; cancel?: string };
 }
 
+/**
+ * Prompts and notifications for one plugin. Each prompt answers undefined on a cancel, a signal cancel, or an unload of the plugin.
+ * A prompt rejects with an InteractionUnavailable error when no answerer is installed.
+ */
 export interface InteractionSurface {
   /** The process-wide pending count; interaction.changed has no payload and tells callers to read it again. */
   readonly pending: number;
+  /** True when the frontend can show prompts and the plugin is alive. Without it, `confirm` answers false, the other prompts answer undefined, and a warning names the prompt. */
   readonly interactive: boolean;
+  /** Show the URL and the code of a device-code login. Answers the login outcome, or undefined on a cancel. */
   deviceLogin: (
     start: Wire.AuthLoginResult,
     outcome: Promise<Wire.AuthLoginOutcome>,
     options?: InteractionOptions,
   ) => Promise<Wire.AuthLoginOutcome | undefined>;
+  /** Ask a yes or no question. Answers true or false, or undefined on a cancel. */
   confirm(title: string, message?: string, options?: InteractionOptions): Promise<boolean | undefined>;
+  /** Ask for one of `choices`, which must be non-empty and unique. Answers the chosen string, or undefined on a cancel. */
   select(title: string, choices: string[], options?: InteractionOptions): Promise<string | undefined>;
+  /** Ask for one line of text. Answers the text, or undefined on a cancel. */
   input(title: string, placeholder?: string, options?: InteractionOptions): Promise<string | undefined>;
+  /** Add a notification from this plugin to the history. It needs no frontend. The default level is info. */
   notify(message: string, level?: "info" | "warn" | "error"): void;
 }
 

@@ -31,8 +31,11 @@ const ACTION_FIRST = 1;
 const ACTION_LAST = 2;
 const ACTION_SCALE = 4;
 // A part joins the run of actions, closes it, or passes through it. Tools and reasoning group alike.
+/** A `labels.role` answer: the part passes through the current group of actions and takes no place in it. */
 export const ROLE_NONE = 0;
+/** A `labels.role` answer: the part joins the current group of actions. Tool calls and reasoning are actions. */
 export const ROLE_ACTION = 1;
+/** A `labels.role` answer: the part closes the current group of actions. */
 export const ROLE_TEXT = 2;
 
 // The label a reader sees above an input with an engine source.
@@ -139,7 +142,10 @@ presenters.edit = { category: "write", present: (o) => ({ verb: "Edit", subject:
 presenters.exec = { category: "run", present: (o) => ({ verb: "Run", subject: shortCommand(o.command) }) };
 presenters.skill = { category: "other", present: (o) => ({ verb: "Skill", subject: String(o.name || "") }) };
 
-/** @typedef {{ tools?: Record<string, Presenter>, sources?: SourceLabels }} LabelRegistration */
+/**
+ * `tools` maps a tool name to its presenter. `sources` maps an input source type to its label.
+ * @typedef {{ tools?: Record<string, Presenter>, sources?: SourceLabels }} LabelRegistration
+ */
 /** @type {LabelRegistration[]} */
 const registrations = [{ tools: presenters, sources }];
 let labelRevision = 0;
@@ -156,8 +162,11 @@ function refreshLabels() {
   root.invalidate();
 }
 
-// `ctx.chat.labels` owns each registration; the newest one wins, and its disposer removes only its own layer.
-/** @param {LabelRegistration} entries @returns {() => void} */
+/**
+ * Add tool presenters and input source labels to every transcript. For each tool name and source type, the newest registration wins.
+ * The call copies `entries`, so a later change to them has no effect. A plugin uses `ctx.chat.labels`, which removes the registration when the block unloads.
+ * @param {LabelRegistration} entries @returns {() => void} Removes only this registration.
+ */
 export function registerLabels(entries) {
   const entry = { tools: { ...entries.tools }, sources: { ...entries.sources } };
   registrations.push(entry);
@@ -170,10 +179,13 @@ export function registerLabels(entries) {
   };
 }
 
-// The words a transcript gives a part. Plugins change them with method advice through `ctx.advise`.
+/** The words and the grouping that a transcript gives a part. Plugins change them with method advice through `ctx.advise`. */
 export const labels = {
-  // A tool with no presenter keeps its own name beside the field a reader acts on.
-  /** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {Record<string, any>} args @param {string} raw @returns {ToolLabel} */
+  /**
+   * The label of a tool call with no presenter: the tool name, then its `path`, its `command`, or the raw arguments cut to 48 characters.
+   * `args` holds the parsed JSON arguments, or `{}` when they do not parse.
+   * @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {Record<string, any>} args @param {string} raw @returns {ToolLabel}
+   */
   fallback(part, args, raw) {
     const verb = String(part.name || "tool");
     if (typeof args.path === "string") return { verb, subject: shortPath(args.path), category: "other" };
@@ -181,8 +193,11 @@ export const labels = {
     return { verb, subject: raw.length > 48 ? raw.slice(0, 47) + "…" : raw, category: "other" };
   },
 
-  // A part joins the run of actions, closes it, or passes through it. An empty summary takes no place.
-  /** @param {Wire.AssistantPart} part @returns {number} */
+  /**
+   * The group role of a part: `ROLE_ACTION` joins the run of actions, `ROLE_TEXT` closes it, and `ROLE_NONE` passes through it.
+   * Tool calls and reasoning are actions, text closes the run, and empty reasoning takes no place.
+   * @param {Wire.AssistantPart} part @returns {number}
+   */
   role(part) {
     if (part.type === "tool") return ROLE_ACTION;
     if (part.type === "reasoning") return emptyPart(part) ? ROLE_NONE : ROLE_ACTION;
@@ -657,13 +672,17 @@ function userBody(parts, text) {
   return parts.map((part) => (isMedia(part) ? mediaLabel(part.source, part.type === "image" ? ++image : 0) : part.type === "text" ? part.text : "")).join("");
 }
 
-// The chat transcript: message descriptors, exact row counts, and a bounded cache of rendered rows.
+/**
+ * The transcript of one chat pane: the message outline, exact row counts, and a bounded cache of rendered rows.
+ * The owner feeds it with `setOutline` and `setActive`. The `pager` scrolls and draws it.
+ */
 export class Transcript {
   /** @param {TranscriptOptions} [opts] */
   constructor(opts = {}) {
     this.partsOf = opts.partsOf || (() => []);
     this.partOf = opts.partOf || null;
     this.partTextPage = opts.partTextPage || null;
+    /** The scroll state and the drawn rect. Nav bindings drive it. */
     this.pager = new Pager();
     this.pager.setSource({
       rowCount: (width) => this.rowCount(width),
@@ -692,17 +711,23 @@ export class Transcript {
     this._actionPlanCache = null;
     /** @type {Map<string, boolean>} */
     this._expand = new Map(); // id:partId -> user override
-    // A selection holds two `{ id, row, col }` positions, where `row` counts rendered rows and `col` indexes the row text.
-    /** @type {Selection | null} */
+    /**
+     * The selection, or null. It holds two `{ id, row, col }` positions, where `row` counts rendered rows and `col` indexes the row text.
+     * @type {Selection | null}
+     */
     this.selection = null;
     this._dragging = false;
     this._didDrag = false;
     /** @type {Position | null} */
     this._press = null;
+    /** Receives the selected text when a mouse drag ends on a selection that is not empty. */
     this.onSelect = opts.onSelect || null;
   }
 
-  /** @returns {void} */
+  /**
+   * Remove the selection and stop a drag in progress.
+   * @returns {void}
+   */
   clearSelection() {
     this.selection = null;
     this._dragging = false;
@@ -710,8 +735,10 @@ export class Transcript {
     this._press = null;
   }
 
-  // Set both ends. `{ inclusive: true }` grows the later end by one grapheme.
-  /** @param {Position | null} anchor @param {Position | null} cursor @param {{ inclusive?: boolean } | null | undefined} [opts] @returns {void} */
+  /**
+   * Set both ends of the selection. `{ inclusive: true }` grows the later end by one grapheme. A null end clears the selection.
+   * @param {Position | null} anchor @param {Position | null} cursor @param {{ inclusive?: boolean } | null | undefined} [opts] @returns {void}
+   */
   select(anchor, cursor, opts) {
     if (!anchor || !cursor) {
       this.clearSelection();
@@ -731,14 +758,19 @@ export class Transcript {
     this.selection = { anchor: a, cursor: b };
   }
 
-  /** @param {Position} a @param {Position} b @returns {number} */
+  /**
+   * Compare two positions in transcript order: below 0 when `a` comes first, 0 when they are equal, above 0 when `b` comes first.
+   * @param {Position} a @param {Position} b @returns {number}
+   */
   comparePos(a, b) {
     if (a.id !== b.id) return this.messageIndex(a.id) - this.messageIndex(b.id);
     return a.row !== b.row ? a.row - b.row : a.col - b.col;
   }
 
-  // The pane draws something else in this space, so a click must not hit a row that left it.
-  /** @returns {void} */
+  /**
+   * Forget the drawn rect and clear the selection. Call it when the pane draws something else in this space, so a click cannot hit a row that left.
+   * @returns {void}
+   */
   hide() {
     this.pager.clearRect();
     this.clearSelection();
@@ -750,8 +782,11 @@ export class Transcript {
     return this._messages.length === 0 && this._active === null;
   }
 
-  // A committed message never changes under its id, so its render survives; the draft goes because a commit folds its reasoning.
-  /** @param {MessageDescriptor[]} messages @param {MessageDescriptor | null} active @returns {void} */
+  /**
+   * Replace the outline with the committed `messages` and the streaming draft `active`, or null without a draft. It clears the selection.
+   * A committed message never changes under its id, so its render survives; the draft render goes because a commit folds its reasoning.
+   * @param {MessageDescriptor[]} messages @param {MessageDescriptor | null} active @returns {void}
+   */
   setOutline(messages, active) {
     const oldPlan = this._actionPlanCache;
     const oldMessages = oldPlan ? this.messages() : [];
@@ -850,8 +885,10 @@ export class Transcript {
     return lo;
   }
 
-  // A streaming delta on draft `id`: adopt it if new, then re-read one part `partId`, or every part without one.
-  /** @param {number} id @param {number} [partId] @returns {void} */
+  /**
+   * Apply a streaming delta on draft `id`: adopt the draft when it is new, then read part `partId` again, or every part without `partId`.
+   * @param {number} id @param {number} [partId] @returns {void}
+   */
   setActive(id, partId) {
     const oldPlan = this._actionPlanCache;
     const adopted = !this._active || !sameId(this._active.id, id);
@@ -874,8 +911,10 @@ export class Transcript {
     if (touches) this._reanchor(anchors);
   }
 
-  // Rebuild one tool row whose presenter reads state outside the part, so a child's activity reaches its spawn row.
-  /** @param {number} id @param {number} partId @returns {void} */
+  /**
+   * Rebuild one tool row whose presenter reads state outside the part, so a child's activity reaches its spawn row. Nothing happens when the row has no render.
+   * @param {number} id @param {number} partId @returns {void}
+   */
   refreshRow(id, partId) {
     const state = this._parts.get(String(id));
     const c = state && state.rows.get(String(partId));
@@ -1006,8 +1045,10 @@ export class Transcript {
     this.selection = { anchor, cursor };
   }
 
-  // The markdown blocks of one message, oldest first. A plain turn has none.
-  /** @param {number} id @returns {{ kind: string, at: number, end: number }[]} */
+  /**
+   * The markdown blocks of message `id`, oldest first, as source offsets. A plain turn has none.
+   * @param {number} id @returns {{ kind: string, at: number, end: number }[]}
+   */
   blocksOf(id) {
     this._rowsFor(id);
     const c = this._rows.get(String(id));
@@ -1033,15 +1074,19 @@ export class Transcript {
     return this._rowsOf(message, this._width, i);
   }
 
-  // The number of rendered rows in one message.
-  /** @param {number} id @returns {number} */
+  /**
+   * The number of rendered rows in message `id` at the drawn width. 0 before the first draw or for an id outside the outline.
+   * @param {number} id @returns {number}
+   */
   rowCountOf(id) {
     if (this._width <= 0 || this.messageIndex(id) < 0) return 0;
     return this._counts.get(String(id)) ?? this._rowsFor(id).length;
   }
 
-  // The rendered text of one row, or "" when the row is gone.
-  /** @param {number} id @param {number} row @returns {string} */
+  /**
+   * The rendered text of one row, or "" when the row is gone.
+   * @param {number} id @param {number} row @returns {string}
+   */
   rowTextAt(id, row) {
     const rows = this._rowsFor(id);
     if (row >= 0 && row < rows.length) {
@@ -1061,8 +1106,10 @@ export class Transcript {
     return pos.row < this._offset(i + 1) - this._offset(i) ? this._offset(i) + pos.row : -1;
   }
 
-  // The source offset under a logical position, or -1 without one.
-  /** @param {Position | null} pos @returns {number} */
+  /**
+   * The message source offset under `pos`, or -1 when `pos` is null or no source is under it.
+   * @param {Position | null} pos @returns {number}
+   */
   sourceAt(pos) {
     if (!pos || pos.row < 0) return -1;
     const rows = this._rowsFor(pos.id);
@@ -1071,8 +1118,11 @@ export class Transcript {
     return rowSourceAt(row, pos.col, rowSourceBase(this._rows.get(String(pos.id)), row));
   }
 
-  // The position that renders source `offset`, or the first after it, so a selection to the end survives a rewrap.
-  /** @param {number} id @param {number} offset @returns {Position | null} */
+  /**
+   * The position that renders source `offset` of message `id`, or the first after it, so a selection to the end survives a rewrap.
+   * Past the end it answers the end of the last source text. Null when no row of the message has a source.
+   * @param {number} id @param {number} offset @returns {Position | null}
+   */
   posAtSource(id, offset) {
     const rows = this._rowsFor(id);
     const cache = this._rows.get(String(id));
@@ -1104,8 +1154,10 @@ export class Transcript {
     return tail;
   }
 
-  // The screen cell of a logical position, or null when it is off the drawn rows.
-  /** @param {Position | null} pos @returns {{ x: number, y: number } | null} */
+  /**
+   * The screen cell of a logical position, or null when it is off the drawn rows.
+   * @param {Position | null} pos @returns {{ x: number, y: number } | null}
+   */
   screenAt(pos) {
     const rect = this.pager.rect();
     const g = this._globalRow(pos);
@@ -1119,8 +1171,10 @@ export class Transcript {
     return x >= rect.x + rect.w ? null : { x, y };
   }
 
-  // Scroll the least amount that brings `pos` onto the screen.
-  /** @param {Position} pos @returns {void} */
+  /**
+   * Scroll the least amount that brings `pos` onto the screen.
+   * @param {Position} pos @returns {void}
+   */
   ensureVisible(pos) {
     this.pager.scrollIntoView(this._globalRow(pos));
   }
@@ -1321,8 +1375,10 @@ export class Transcript {
     return t === "running" || t === "error" || t === "canceled";
   }
 
-  // Flip the user override for one foldable part. A missing part is a no-op.
-  /** @param {number} id @param {number} partId @returns {void} */
+  /**
+   * Open a folded part or fold an open part, and redraw.
+   * @param {number} id @param {number} partId @returns {void}
+   */
   togglePart(id, partId) {
     const k = this._expandKey(id, partId);
     let part = null;
@@ -1356,7 +1412,10 @@ export class Transcript {
     }
   }
 
-  /** @param {number} id @param {number} partId @returns {boolean} */
+  /**
+   * Open a window with the full input and output of tool part `partId`. It first reads the rest of a cut field from the host. False when the part is not a tool.
+   * @param {number} id @param {number} partId @returns {boolean}
+   */
   openTool(id, partId) {
     const part = this._partState(id).list.find((entry) => sameId(entry.id, partId));
     if (!part || part.type !== "tool") return false;
@@ -1372,7 +1431,10 @@ export class Transcript {
     return true;
   }
 
-  /** @param {number} id @param {number} partId @returns {boolean} */
+  /**
+   * Open a window with the full text of reasoning part `partId`. False when the part is not reasoning.
+   * @param {number} id @param {number} partId @returns {boolean}
+   */
   openReasoning(id, partId) {
     const part = this._partState(id).list.find((entry) => sameId(entry.id, partId));
     if (!part || part.type !== "reasoning") return false;
@@ -1380,8 +1442,10 @@ export class Transcript {
     return true;
   }
 
-  // The part under a logical position, or null on a gutter/separator row.
-  /** @param {Position | null} pos @returns {PartHit | null} */
+  /**
+   * The part under a logical position, or null on a gutter or separator row.
+   * @param {Position | null} pos @returns {PartHit | null}
+   */
   partAt(pos) {
     if (!pos) return null;
     const rows = this._rowsFor(pos.id);
@@ -1390,8 +1454,10 @@ export class Transcript {
     return { id: pos.id, partId: row.partId, kind: row.kind };
   }
 
-  // Open the tool or thought under `pos`, or fold its group; answer where the reader lands, or null when no part acts.
-  /** @param {Position} pos @returns {Position | null} */
+  /**
+   * Open the tool or thought under `pos`, or fold its group. It answers where the reader lands, or null when no part acts.
+   * @param {Position} pos @returns {Position | null}
+   */
   activate(pos) {
     const hit = this.partAt(pos);
     if (!hit) return null;
@@ -1406,8 +1472,10 @@ export class Transcript {
     return pos;
   }
 
-  // The header position of a foldable part, or null when it is gone.
-  /** @param {number} id @param {number} partId @returns {Position | null} */
+  /**
+   * The header position of a foldable part, or null when it is gone.
+   * @param {number} id @param {number} partId @returns {Position | null}
+   */
   partHeader(id, partId) {
     const rows = this._rowsFor(id);
     for (let row = 0; row < rows.length; row++) {
@@ -1440,8 +1508,11 @@ export class Transcript {
     return out;
   }
 
-  // A part motion reads only the messages between the cursor and its next stop.
-  /** @param {Position | null} pos @param {number} dir @returns {Position | null} */
+  /**
+   * The next part stop after `pos` when `dir` is above 0, else the previous one. Null when `pos` is null or no stop is left.
+   * A stop is a tool or reasoning header, an error, the first row of a text part, or the first row of a user or compaction message.
+   * @param {Position | null} pos @param {number} dir @returns {Position | null}
+   */
   partStep(pos, dir) {
     if (!pos) return null;
     const step = dir > 0 ? 1 : -1;
@@ -1555,8 +1626,10 @@ export class Transcript {
     return i < this._messages.length ? /** @type {MessageDescriptor} */ (this._messages[i]) : i === this._messages.length ? this._active : null;
   }
 
-  // The message order index of `id`, or -1. A position outside the outline has no selection.
-  /** @param {number} id @returns {number} */
+  /**
+   * The order index of message `id`, or -1 when `id` is outside the outline. The streaming draft comes last.
+   * @param {number} id @returns {number}
+   */
   messageIndex(id) {
     return this._positions.get(String(id)) ?? -1;
   }
@@ -1588,8 +1661,11 @@ export class Transcript {
     return to < from ? null : { from, to };
   }
 
-  // The selection as shown text, one line feed between rows and no indent. With `source`, a turn whose rows map to markdown gives that markdown instead.
-  /** @param {boolean} [source] @returns {string} */
+  /**
+   * The selection as shown text, one line feed between rows and no indent, or "" without a selection.
+   * With `source`, a turn whose rows map to markdown gives that markdown instead.
+   * @param {boolean} [source] @returns {string}
+   */
   selectedText(source = false) {
     const range = this._range();
     if (!range || this._width <= 0) return "";
@@ -1619,7 +1695,10 @@ export class Transcript {
     return out.join("\n");
   }
 
-  /** @param {number} width @returns {number} */
+  /**
+   * The total number of rendered rows at `width`. It renders each message whose count it does not know yet.
+   * @param {number} width @returns {number}
+   */
   rowCount(width) {
     if (width <= 0) return 0;
     this._invalidate(width);
@@ -1654,38 +1733,54 @@ export class Transcript {
     return out;
   }
 
-  /** @param {number} width @param {number} top @param {number} height @returns {TranscriptRow[]} */
+  /**
+   * The rendered rows from row `top` for `height` rows at `width`, with the selection marked. Source offsets count from the start of each message source.
+   * @param {number} width @param {number} top @param {number} height @returns {TranscriptRow[]}
+   */
   rows(width, top, height) {
     return this._rowsRange(width, top, height, true);
   }
 
-  // The committed messages oldest first, then the streaming draft, each a copy the caller cannot write through.
-  /** @returns {MessageDescriptor[]} */
+  /**
+   * The committed messages oldest first, then the streaming draft, each a copy the caller cannot write through.
+   * @returns {MessageDescriptor[]}
+   */
   messages() {
     const out = this._messages.map((m) => ({ ...m }));
     if (this._active) out.push({ ...this._active });
     return out;
   }
 
-  /** @returns {number} */
+  /**
+   * The number of committed messages, plus one for a streaming draft.
+   * @returns {number}
+   */
   messageCount() {
     return this._messages.length + (this._active ? 1 : 0);
   }
 
-  /** @param {number} index @returns {number} */
+  /**
+   * The id of the message at order `index`. The streaming draft comes last. Throws a RangeError when `index` is out of range.
+   * @param {number} index @returns {number}
+   */
   messageIdAt(index) {
     const m = this._at(index);
     if (!m) throw new RangeError("message index out of range");
     return m.id;
   }
 
-  /** @param {Rect} rect @returns {void} */
+  /**
+   * Draw the visible rows into `rect`.
+   * @param {Rect} rect @returns {void}
+   */
   draw(rect) {
     this.pager.draw(rect);
   }
 
-  // The logical position under a screen cell, or null off the drawn rows; `clamp` pulls a drag back to the nearest row.
-  /** @param {number} col @param {number} row @param {boolean} clamp @returns {Position | null} */
+  /**
+   * The logical position under a screen cell, or null off the drawn rows. `clamp` pulls a drag back to the nearest row.
+   * @param {number} col @param {number} row @param {boolean} clamp @returns {Position | null}
+   */
   posAt(col, row, clamp) {
     const rect = this.pager.rect();
     if (!rect) return null;
@@ -1705,8 +1800,11 @@ export class Transcript {
     return { id: m.id, row: k, col: caretAtCol(body, wrapRow, x) };
   }
 
-  // A left drag selects text: a press records the start and a drag opens the range, so a click leaves no one-cell range.
-  /** @param {MouseEvent} ev @returns {boolean} */
+  /**
+   * A left drag selects text: a press records the start and a drag opens the range, so a click leaves no one-cell range.
+   * A click on a part opens or folds it. The wheel scrolls. A finished selection goes to `onSelect`.
+   * @param {MouseEvent} ev @returns {boolean}
+   */
   onMouse(ev) {
     if (isWheel(ev.button)) return this.pager.onMouse(ev);
     if (ev.button !== "left") return false;

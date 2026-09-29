@@ -14,8 +14,10 @@ events.on("engine.drained", (ev) => {
   else events.emit("index.changed", ev);
 });
 
-// The native task answers JSON after the command and its hooks settle. Input passes the `input.before` gate first.
-/** @template {keyof Wire.Methods} M @param {M} method @param {Wire.Methods[M]["paramsType"]} args @returns {Promise<Wire.Methods[M]["returnType"]>} */
+/**
+ * Send one engine request and answer its parsed result after the command and its hooks settle. An input passes the `input.before` hooks first.
+ * @template {keyof Wire.Methods} M @param {M} method @param {Wire.Methods[M]["paramsType"]} args @returns {Promise<Wire.Methods[M]["returnType"]>}
+ */
 async function request(method, ...args) {
   const params = await gateInput(method, args[0] ?? /** @type {Wire.Methods[M]["paramsType"][0]} */ ({}));
   const text = await native.request(method, JSON.stringify(params));
@@ -28,7 +30,10 @@ async function request(method, ...args) {
   }
 }
 
-/** @param {Wire.SessionListParams} [params] @returns {Promise<Wire.SessionListResult>} */
+/**
+ * List one page of sessions. The default population is the top-level sessions.
+ * @param {Wire.SessionListParams} [params] @returns {Promise<Wire.SessionListResult>}
+ */
 function sessionList(params = {}) {
   return request("session.list", {
     population: { type: "top_level" },
@@ -56,69 +61,91 @@ export async function allChildren(parentId) {
 }
 
 
-// The transcript outline (message ids, roles, and the draft), or null when the session is not open.
-/** @param {string} sessionId @returns {SessionOutline | null} */
+/**
+ * The transcript outline (message ids, roles, and the draft), or null when the session is not open.
+ * @param {string} sessionId @returns {SessionOutline | null}
+ */
 function sessionOutline(sessionId) {
   return JSON.parse(native.sessionOutline(sessionId));
 }
 
-// The live activity of an open session, or null when no pane holds it.
-/** @param {string} sessionId @returns {Wire.SessionActivity | null} */
+/**
+ * The live activity of an open session, or null when no pane holds it.
+ * @param {string} sessionId @returns {Wire.SessionActivity | null}
+ */
 function sessionActivity(sessionId) {
   return JSON.parse(native.sessionActivity(sessionId));
 }
 
-// One session with the activity the engine holds now, open or not.
-/** @param {string} sessionId @returns {Promise<Wire.SessionListItem>} */
+/**
+ * One session with the activity the engine holds now, open or not.
+ * @param {string} sessionId @returns {Promise<Wire.SessionListItem>}
+ */
 function sessionGet(sessionId) {
   return request("session.get", { session_id: sessionId });
 }
 
-// Read the session with `context_changes` set. The flags say whether AGENTS.md or the skill roots differ from the stored snapshots.
-/** @param {string} sessionId @returns {Promise<Wire.SessionListItem>} */
+/**
+ * Read one session and check its files. `context_changes` says whether AGENTS.md or the skill roots differ from the stored snapshots.
+ * @param {string} sessionId @returns {Promise<Wire.SessionListItem>}
+ */
 function sessionCheckContext(sessionId) {
   return request("session.get", { session_id: sessionId, check_files: true });
 }
 
-// Rescan AGENTS.md and the skill roots for one idle session. The next run uses the new snapshots.
-/** @param {string} sessionId @returns {Promise<Wire.SessionReloadContextResult>} */
+/**
+ * Rescan AGENTS.md and the skill roots for one idle session. The next run uses the new snapshots.
+ * @param {string} sessionId @returns {Promise<Wire.SessionReloadContextResult>}
+ */
 function sessionReloadContext(sessionId) {
   return request("session.reload_context", { session_id: sessionId });
 }
 
-// Read the body of one skill from the session catalog. The engine reads the file now.
-/** @param {string} sessionId @param {string} name @returns {Promise<Wire.SkillLoadResult>} */
+/**
+ * Read the body of one skill from the session catalog. The engine reads the file now.
+ * @param {string} sessionId @param {string} name @returns {Promise<Wire.SkillLoadResult>}
+ */
 function skillLoad(sessionId, name) {
   return request("skill.load", { session_id: sessionId, name });
 }
 
-// The queued inputs of a session, oldest first.
-/** @param {string} sessionId @returns {Promise<Wire.SessionQueueResult>} */
+/**
+ * The queued inputs of a session, oldest first.
+ * @param {string} sessionId @returns {Promise<Wire.SessionQueueResult>}
+ */
 function sessionQueue(sessionId) {
   return request("session.queue", { session_id: sessionId });
 }
 
-// Copy one image file into the engine blob store. The ref goes into an image content part.
-/** @param {string} path @returns {Promise<Wire.MediaBlob>} */
+/**
+ * Copy one image file into the engine blob store. The ref goes into an image content part.
+ * @param {string} path @returns {Promise<Wire.MediaBlob>}
+ */
 function blobPut(path) {
   return request("blob.put", { path });
 }
 
-// Store image bytes a tool received in base64, such as an MCP image block. The engine names the type from the bytes.
-/** @param {string} data @returns {Promise<Wire.MediaBlob>} */
+/**
+ * Store image bytes a tool received in base64, such as an MCP image block. The engine names the type from the bytes.
+ * @param {string} data @returns {Promise<Wire.MediaBlob>}
+ */
 function blobPutData(data) {
   return request("blob.put", { data });
 }
 
-// The parts of one message. A cut field every row reads is completed here, and a large body stays paged.
-/** @param {string} sessionId @param {number} messageId @returns {MessagePart[]} */
+/**
+ * The parts of one message. The text of a text part and the arguments of a tool part are complete; a tool body and a view stay paged.
+ * @param {string} sessionId @param {number} messageId @returns {MessagePart[]}
+ */
 function sessionParts(sessionId, messageId) {
   const parts = /** @type {ViewPart[]} */ (JSON.parse(native.sessionParts(sessionId, messageId)));
   return parts.map((p) => wholePart(sessionId, messageId, p));
 }
 
-// One part of a message, or null when it is gone. With the cursor of a held text, the read carries only the new text.
-/** @param {string} sessionId @param {number} messageId @param {number} partId @param {TextCursor} [cursor] @returns {PartRead | null} */
+/**
+ * One part of a message, or null when it is gone. With the cursor of a held text, the read carries only the new text.
+ * @param {string} sessionId @param {number} messageId @param {number} partId @param {TextCursor} [cursor] @returns {PartRead | null}
+ */
 function sessionPart(sessionId, messageId, partId, cursor) {
   const p = /** @type {ViewPart | undefined} */ (JSON.parse(native.sessionPart(sessionId, messageId, partId, cursor?.generation, cursor?.bytes))[0]);
   if (!p) return null;
@@ -157,31 +184,43 @@ function partTextFrom(sessionId, messageId, partId, field, offset) {
   return text;
 }
 
-// One page of one field of a part. `field` is the address a `cut` entry names, passed back unchanged.
-/** @param {string} sessionId @param {number} messageId @param {number} partId @param {string} field @param {number} [offset] @param {number} [limit] @returns {{ text: string, next: number | null }} */
+/**
+ * One page of one field of a part. `field` is the address that a `cut` entry names. `next` is the offset of the next page, or null at the end.
+ * @param {string} sessionId @param {number} messageId @param {number} partId @param {string} field @param {number} [offset] @param {number} [limit] @returns {{ text: string, next: number | null }}
+ */
 function partTextPage(sessionId, messageId, partId, field, offset = 0, limit = 0) {
   return JSON.parse(native.partText(sessionId, messageId, partId, field, offset, limit));
 }
 
-// The content of one text part. Every text-only caller builds it here, so the shape is written once.
-/** @param {string} text @returns {Wire.ContentPart[]} */
+/**
+ * The content array for one text input, such as the `content` of `sessionSendInput`.
+ * @param {string} text @returns {Wire.ContentPart[]}
+ */
 function textContent(text) {
   return [{ type: "text", text }];
 }
 
-/** @param {string} id @param {readonly Wire.ContentPart[]} content @param {Wire.ToolSite} [parentTool] @returns {Promise<Wire.SessionSendInputResult>} */
+/**
+ * Send user content to a session. The engine starts a run, or queues the input while a run is active. The `input.before` hooks can change or block it.
+ * @param {string} id @param {readonly Wire.ContentPart[]} content @param {Wire.ToolSite} [parentTool] - The tool call of a parent session that sends this input.
+ * @returns {Promise<Wire.SessionSendInputResult>}
+ */
 function sessionSendInput(id, content, parentTool) {
   return request("session.send_input", { ...(parentTool ? { parent_tool: parentTool } : {}), session_id: id, input: { type: "content", content } });
 }
 
-// Send an explicit skill invocation. The engine loads the body and appends one user message with the arguments after it.
-/** @param {string} id @param {string} name @param {string} [args] @returns {Promise<Wire.SessionSendInputResult>} */
+/**
+ * Send an explicit skill invocation. The engine loads the body and appends one user message with the arguments after it.
+ * @param {string} id @param {string} name @param {string} [args] @returns {Promise<Wire.SessionSendInputResult>}
+ */
 function sessionSendSkill(id, name, args) {
   return request("session.send_input", { session_id: id, input: { type: "skill", name, ...(args ? { arguments: args } : {}) } });
 }
 
-// Stop the active run. The queue survives unless `clearQueue` asks otherwise, and the next queued input starts at once.
-/** @param {string} id @param {boolean} [clearQueue] @returns {Promise<Wire.SessionCancelRunResult>} */
+/**
+ * Stop the active run. The queue survives unless `clearQueue` asks otherwise, and the next queued input starts at once.
+ * @param {string} id @param {boolean} [clearQueue] @returns {Promise<Wire.SessionCancelRunResult>}
+ */
 function sessionCancelRun(id, clearQueue = false) {
   return request("session.cancel_run", {
     session_id: id,
@@ -189,50 +228,68 @@ function sessionCancelRun(id, clearQueue = false) {
   });
 }
 
-// Summarize the history below a boundary. A run in flight holds the compaction until it ends.
-/** @param {string} id @returns {Promise<Wire.SessionCompactResult>} */
+/**
+ * Summarize the history below a boundary. A run in flight holds the compaction until it ends.
+ * @param {string} id @returns {Promise<Wire.SessionCompactResult>}
+ */
 function sessionCompact(id) {
   return request("session.compact", { session_id: id });
 }
 
-// Drop one queued input. A started input belongs to the run, so the engine refuses it.
-/** @param {string} id @param {number} inputId @returns {Promise<Wire.SessionCancelInputResult>} */
+/**
+ * Drop one queued input. A started input belongs to the run, so the engine refuses it.
+ * @param {string} id @param {number} inputId @returns {Promise<Wire.SessionCancelInputResult>}
+ */
 function sessionCancelInput(id, inputId) {
   return request("session.cancel_input", { session_id: id, input_id: inputId });
 }
 
-// Create a session. An unset reasoning takes the default of the model, and a session with no model is refused.
-/** @param {Wire.CreateSession} params @returns {Promise<Wire.SessionResult>} */
+/**
+ * Create a session. An unset reasoning takes the default of the model, and a session with no model is refused.
+ * @param {Wire.CreateSession} params @returns {Promise<Wire.SessionResult>}
+ */
 function sessionCreate(params) {
   return request("session.create", params);
 }
 
-// Change the named settings of one session; an absent field keeps its current value.
-/** @param {string} sessionId @param {Wire.SessionPatch} patch @returns {Promise<Wire.Session>} */
+/**
+ * Change the named settings of one session; an absent field keeps its current value.
+ * @param {string} sessionId @param {Wire.SessionPatch} patch @returns {Promise<Wire.Session>}
+ */
 function sessionPatch(sessionId, patch) {
   return request("session.patch", { session_id: sessionId, patch });
 }
 
-// The provider and model catalog. An `unchanged` result means the caller keeps the models it holds.
-/** @param {Wire.CatalogRev | null | undefined} sinceRev @returns {Promise<Wire.CatalogListResult>} */
+/**
+ * The provider and model catalog. An `unchanged` result means the caller keeps the models it holds.
+ * @param {Wire.CatalogRev | null | undefined} sinceRev @returns {Promise<Wire.CatalogListResult>}
+ */
 function catalogList(sinceRev) {
   return request("catalog.list", sinceRev ? { since_rev: sinceRev } : {});
 }
 
-// Read providers.json again. `changed` reports whether the catalog revision moved.
-/** @returns {Promise<Wire.CatalogReloadResult>} */
+/**
+ * Read providers.json again. `changed` reports whether the catalog revision moved.
+ * @returns {Promise<Wire.CatalogReloadResult>}
+ */
 function catalogReload() {
   return request("catalog.reload", {});
 }
 
-// Start a device-code login. The engine polls in its own task and reports through `auth.login_finished`.
-/** @param {string} providerId @returns {Promise<Wire.AuthLoginResult>} */
+/**
+ * Start a device-code login. The engine polls in its own task and reports through `auth.login_finished`.
+ * @param {string} providerId @returns {Promise<Wire.AuthLoginResult>}
+ */
 function authLogin(providerId) {
   return request("auth.login", { provider_id: providerId });
 }
 
 // Subscribe first because the owner drains engine events before it settles request promises.
-/** @param {string} providerId @returns {{ start: Promise<Wire.AuthLoginResult>, outcome: Promise<Wire.AuthLoginOutcome>, dispose: () => void }} */
+/**
+ * Start a device-code login and follow it. `start` answers the URL and the code, and `outcome` settles when the login ends.
+ * `dispose` stops the follow, and `outcome` then never settles.
+ * @param {string} providerId @returns {{ start: Promise<Wire.AuthLoginResult>, outcome: Promise<Wire.AuthLoginOutcome>, dispose: () => void }}
+ */
 function authLoginTracked(providerId) {
   /** @type {Wire.AuthLoginFinishedData[]} */
   const seen = [];
@@ -273,34 +330,41 @@ function authLoginTracked(providerId) {
   return { start, outcome, dispose };
 }
 
-/** @param {string} loginId @returns {Promise<Wire.Empty>} */
+/** Cancel a device-code login that `authLogin` started. @param {string} loginId @returns {Promise<Wire.Empty>} */
 function authCancelLogin(loginId) {
   return request("auth.cancel_login", { login_id: loginId });
 }
 
-// Store one API key. The wire never returns it.
-/** @param {string} providerId @param {string} apiKey @returns {Promise<Wire.Empty>} */
+/**
+ * Store one API key. The wire never returns it.
+ * @param {string} providerId @param {string} apiKey @returns {Promise<Wire.Empty>}
+ */
 function authSetApiKey(providerId, apiKey) {
   return request("auth.set_api_key", { provider_id: providerId, api_key: apiKey });
 }
 
-/** @param {string} providerId @returns {Promise<Wire.Empty>} */
+/** Remove the credential that the engine holds for one provider. @param {string} providerId @returns {Promise<Wire.Empty>} */
 function authRemove(providerId) {
   return request("auth.remove", { provider_id: providerId });
 }
 
 // One object carries the whole surface, so a test or a plugin can replace a single method.
 
+/**
+ * The in-process engine client: sessions, input, transcripts, the model catalog, and provider logins.
+ * A request method rejects when the engine refuses the request.
+ */
 export const client = {
-  // The counts of process-owned runs and continuations; engine.activity.changed fires once per changed load.
+  /** The counts of process-owned runs and continuations. `engine.activity.changed` fires once for each change. */
   load: native.load,
+  /** True while the process owns a run or a continuation. */
   isBusy: () => { const load = native.load(); return load.runs > 0 || load.continuations > 0; },
   request,
   sessionList,
-  // A pin holds the engine runtime while a pane shows the session. Every open needs exactly one close, or the runtime never evicts.
+  /** Pin the engine runtime of a session while a pane shows it. It answers false when the engine cannot open the session. Each open needs exactly one `sessionClose`, or the runtime never evicts. */
   sessionOpen: native.sessionOpen,
   sessionClose: native.sessionClose,
-  // What the JavaScript runtime holds right now. The process footprint also carries the Zig side.
+  /** The memory that the JavaScript runtime holds now. The process also holds memory on the Zig side. */
   memoryUsage: native.memoryUsage,
   sessionOutline,
   sessionActivity,

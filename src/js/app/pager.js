@@ -6,11 +6,17 @@ import { clip } from "yuke:internal/text-input";
 import { isLinear } from "yuke:internal/md";
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
 /** @import { RowSource, Segment, TranscriptRow } from "./types/pager.js" */
+/**
+ * The scroll state and the painter for the rows of a `RowSource`. It is a `NavTarget`, so the nav keys move it.
+ * While `stuck` is true, the view follows the tail as rows arrive.
+ */
 export class Pager {
   constructor() {
     /** @type {RowSource} */
     this.source = staticRowSource([]);
+    /** The index of the first row that shows. */
     this.scroll = 0;
+    /** True while the view follows the tail. */
     this.stuck = true;
     this._h = 0;
     this._w = 0;
@@ -18,17 +24,24 @@ export class Pager {
     this._rect = null; // the last drawn rect, for the mouse hit test
   }
 
-  /** @returns {Rect | null} */
+  /**
+   * The last drawn rect, or null before a draw or after `clearRect`.
+   * @returns {Rect | null}
+   */
   rect() {
     return this._rect;
   }
 
+  /** Forget the drawn rect, so a click cannot hit a row that left. */
   clearRect() {
     this._rect = null;
   }
 
-  // The source row index under screen row `y`. Return -1 outside the drawn rows.
-  /** @param {number} y @returns {number} */
+  /**
+   * The source row index under screen row `y`. Return -1 outside the drawn rows.
+   * @param {number} y
+   * @returns {number}
+   */
   rowAtY(y) {
     const r = this._rect;
     if (!r || y < r.y || y >= r.y + r.h) return -1;
@@ -46,30 +59,40 @@ export class Pager {
     return Math.max(0, this._total() - this._h);
   }
 
-  /** @returns {boolean} */
+  /**
+   * True when the last row shows.
+   * @returns {boolean}
+   */
   atBottom() {
     return this.scroll >= this._maxScroll();
   }
 
+  /** Scroll to the tail and follow it. */
   toBottom() {
     this.scroll = this._maxScroll();
     this.stuck = true;
   }
 
+  /** Scroll to the first row and stop following the tail. */
   toTop() {
     this.scroll = 0;
     this.stuck = false;
   }
 
-  /** @param {number} delta */
+  /**
+   * Scroll by `delta` rows, inside the range. At the end, the view follows the tail again.
+   * @param {number} delta
+   */
   scrollBy(delta) {
     const max = this._maxScroll();
     this.scroll = Math.min(Math.max(0, this.scroll + delta), max);
     this.stuck = this.scroll >= max;
   }
 
-  // Scroll the least that puts row `index` on the screen, and refresh `stuck` so an unfold cannot jump to the tail.
-  /** @param {number} index */
+  /**
+   * Scroll the least that puts row `index` on the screen, and refresh `stuck` so an unfold cannot jump to the tail.
+   * @param {number} index
+   */
   scrollIntoView(index) {
     if (index < 0 || this._h <= 0) return;
     let next = this.scroll;
@@ -78,12 +101,18 @@ export class Pager {
     this.scrollBy(next - this.scroll);
   }
 
-  /** @param {RowSource} source */
+  /**
+   * Read the rows from `source`. The next draw keeps the scroll in range.
+   * @param {RowSource} source
+   */
   setSource(source) {
     this.source = source || staticRowSource([]);
   }
 
-  /** @param {TranscriptRow[]} rows */
+  /**
+   * Show a fixed array of rows.
+   * @param {TranscriptRow[]} rows
+   */
   setRows(rows) {
     this.setSource(staticRowSource(rows));
     this._clamp();
@@ -96,7 +125,10 @@ export class Pager {
     if (this.scroll >= max) this.stuck = true;
   }
 
-  /** @param {Rect} rect */
+  /**
+   * Paint the rows that show in `rect`, and keep this rect for the mouse and the page size.
+   * @param {Rect} rect
+   */
   draw(rect) {
     const { x, y, w, h } = rect;
     this._h = h;
@@ -123,19 +155,29 @@ export class Pager {
     this.scrollBy(delta);
   }
 
-  /** @param {number} dir */
+  /**
+   * Scroll by `dir` pages. A page is one row less than the drawn height.
+   * @param {number} dir
+   */
   navPage(dir) {
     this.scrollBy(dir * Math.max(1, this._h - 1));
   }
 
-  /** @param {number} dir */
+  /**
+   * Scroll to the top when `dir` is negative, else to the tail.
+   * @param {number} dir
+   */
   navEdge(dir) {
     if (dir < 0) this.toTop();
     else this.toBottom();
   }
 
-  // The wheel scrolls by `config.mouse.scrollLines` per step, and `ev.count` holds the steps the owner folded in.
-  /** @param {MouseEvent} ev @returns {boolean} */
+  /**
+   * Scroll on a wheel press. Answer false for any other event.
+   * The wheel scrolls by `config.mouse.scrollLines` per step, and `ev.count` holds the steps the owner folded in.
+   * @param {MouseEvent} ev
+   * @returns {boolean}
+   */
   onMouse(ev) {
     if (!isWheel(ev.button) || ev.event !== "press") return false;
     const n = config.mouse.scrollLines * (ev.count || 1);

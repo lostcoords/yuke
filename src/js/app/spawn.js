@@ -6,7 +6,12 @@ import * as native from "yuke:internal/native/process";
 /** @typedef {{ cwd?: string, env?: Record<string, string>, workspaceRoot?: string }} SpawnOptions */
 /** @typedef {{ onStdout(listener: (text: string) => void): void, onStderr(listener: (text: string) => void): void, write(text: string): Promise<void>, closeStdin(): void, kill(): boolean, exited: Promise<ProcessExit> }} ChildProcess */
 
-/** @param {string[]} argv @param {SpawnOptions} [options] @returns {ChildProcess} */
+/**
+ * Start a long-lived child from an argument array, with no shell, in a new process group. The caller kills it; `ctx.effect(() => () => child.kill())` ties it to a plugin.
+ * A failed start rejects `exited`. `onStdout` and `onStderr` get text chunks, not lines; `lines` splits them.
+ * @param {string[]} argv @param {SpawnOptions} [options] - `cwd` resolves against `workspaceRoot`, or the host directory. `env` adds to or replaces the host environment.
+ * @returns {ChildProcess}
+ */
 export function spawn(argv, options = {}) {
   /** @type {[((text: string) => void)[], ((text: string) => void)[]]} */
   const listeners = [[], []];
@@ -27,8 +32,11 @@ export function spawn(argv, options = {}) {
 // The longest line a child may send. A longer one is dropped up to its newline, so a stuck line cannot grow forever.
 const MAX_LINE_CHARS = 1024 * 1024;
 
-// Join chunks into lines and strip one CR before each LF, as MCP stdio framing does.
-/** @param {(line: string) => void} onLine @param {() => void} [onOverflow] @returns {(text: string) => void} */
+/**
+ * Build a chunk handler that calls `onLine` once for each whole line, without its LF and one CR before it. A tail with no LF waits for the next chunk.
+ * @param {(line: string) => void} onLine @param {() => void} [onOverflow] - Called for each line above 1048576 characters, which `lines` drops.
+ * @returns {(text: string) => void}
+ */
 export function lines(onLine, onOverflow = () => {}) {
   let rest = "";
   let dropping = false;

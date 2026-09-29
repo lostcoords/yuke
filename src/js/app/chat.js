@@ -20,15 +20,18 @@ function checkVision(view, selector = view.session.modelSelector()) {
   notify("warn", model.name + " reads no images", "chat");
 }
 
-// One block's view of the chat: the chat features it registers belong to that block.
+/** The `chat` capability, bound to one plugin block. What the block registers through it ends when the block unloads. */
 export class ChatSurface {
   /** @param {Context} ctx */
   constructor(ctx) {
     this._ctx = ctx;
   }
 
-  // A chat view for `session`. The shell asks this for every pane it opens.
-  /** @param {Session} [session] @returns {ChatView} */
+  /**
+   * A new chat pane on `session`, or on a new draft when `session` is absent. A pane on an open session shows its history at once.
+   * The caller puts the pane in the tree.
+   * @param {Session} [session] @returns {ChatView}
+   */
   create(session = new Session()) {
     const view = new ChatView(session);
     // A view on an open session shows its history at once, as a view that joins through `showSession` does.
@@ -36,8 +39,10 @@ export class ChatSurface {
     return view;
   }
 
-  // Name tool calls and message sources in the transcript; the newest registration wins.
-  /** @param {Parameters<typeof registerLabels>[0]} entries @returns {Disposer} */
+  /**
+   * Name tool calls and input sources in every transcript for the life of this block. The newest registration wins. See `registerLabels`.
+   * @param {Parameters<typeof registerLabels>[0]} entries @returns {Disposer} Removes the registration before the block unloads.
+   */
   labels(entries) {
     return this._ctx.effect(() => registerLabels(entries));
   }

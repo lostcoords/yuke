@@ -127,7 +127,14 @@ async function ownedChild(parentId, target) {
     return child;
 }
 
-/** @param {AgentsOptions} options */
+/**
+ * Build the `agents` plugin. It gives the model the tools spawn_agent, send_agent_input, and stop_agent, which start and steer child sessions.
+ * It throws a TypeError for invalid options.
+ * @param {AgentsOptions} options - `catalog` maps each child label (a-z first, then a-z, 0-9, _ or -, up to 64 characters, not "root") to a row.
+ * A row has `description` for the model, `model` (the parent model without it), `prompt` after the child policy, and `tools`, a subset of read, write, edit, exec, and skill.
+ * `default` names the row for a call without `agent`; with one row, that row is the default.
+ * `maxConcurrent` and `maxDepth` replace the engine limits, and `maxRounds` caps the rounds of each child. Each is a positive 32-bit integer.
+ */
 export function agents(options) {
     const catalog = validate(options);
     const childField = { type: "string", pattern: SESSION_ID.source };

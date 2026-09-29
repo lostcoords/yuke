@@ -4,6 +4,10 @@ import { windowKeys } from "yuke:internal/keys";
 
 /** @import { Context } from "yuke:internal/ext" */
 
+/**
+ * The `shell` plugin: the window manager. It shows the first chat pane and adds the focus, split, and close commands under the ctrl+k leader.
+ * It needs the `tui` and `chat` capabilities. An unload closes every pane.
+ */
 export const shell = {
   name: "shell",
   /** @param {Context} ctx @returns {void} */

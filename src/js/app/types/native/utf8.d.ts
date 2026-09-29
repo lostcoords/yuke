@@ -1,4 +1,5 @@
 declare module "yuke:internal/native/utf8" {
+  /** Strict conversion between strings and UTF-8 bytes, with no replacement character. */
   export const utf8: {
     /** Encode a string as independent UTF-8 bytes; reject lone surrogates with TypeError. */
     encode(text: string): Uint8Array;

@@ -19,12 +19,15 @@ declare module "yuke:internal/native/exec" {
   }
 
   interface ExecResult {
+    /** Valid UTF-8 text; each invalid byte becomes U+FFFD. Above `maxBytes`, the text keeps its head and tail. */
     stdout: string;
+    /** The same form as `stdout`. */
     stderr: string;
     /** The exit code, or null after a signal or a deadline. */
     code: number | null;
     /** The signal that ended the command, or null. */
     signal: number | null;
+    /** True when the deadline ended the command. */
     timedOut: boolean;
     /** The bytes the stream dropped between its head and its tail. */
     stdoutDropped: number;
@@ -33,6 +36,9 @@ declare module "yuke:internal/native/exec" {
     log: string | null;
   }
 
-  /** Runs one shell line with stdin closed, and ends its process group at shell exit or the deadline. */
+  /**
+   * Runs one line with the `-c` option of the host shell, with stdin closed. It ends the process group at shell exit or the deadline.
+   * A nonzero exit resolves. A blank command, an invalid option, or a missing working directory rejects.
+   */
   export function exec(command: string, options?: ExecOptions): Promise<ExecResult>;
 }

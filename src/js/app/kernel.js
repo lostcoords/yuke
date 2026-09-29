@@ -22,8 +22,8 @@ export function once(fn) {
   };
 }
 
-// Runtime configuration. A direct write bypasses validation, so use `defineConfig`.
-/** @type {Config} */
+// A direct write bypasses validation, so use `defineConfig`.
+/** The live process configuration. `defineConfig` changes it in place. @type {Config} */
 export const config = {
   // A null base selects the built-in prompt for new root sessions.
   systemPrompt: null,
@@ -39,8 +39,15 @@ export const config = {
   },
 };
 
-// Merge a user config and return it for a default export.
-/** @param {ConfigPatch} partial @returns {ConfigPatch} */
+/**
+ * Check a config patch and merge it into `config` at once. An absent or undefined field keeps its current value.
+ * `systemPrompt` replaces the built-in base prompt, and null keeps the built-in prompt; `${workspace}`, `${session_id}`, and `${agent_name}` in it expand to the session facts.
+ * `mouse.scrollLines` is the count of screen lines that one wheel step moves, an integer from 1 to 20 (default 3).
+ * `mouse.copyOnSelect` copies the selection when a drag ends (default true).
+ * `keymap.chordMs` is the longest wait in milliseconds for the next stroke of a chord, an integer from 1 to 10000 (default 1000).
+ * It throws a TypeError for an unknown key or an invalid value, and a throw changes no field.
+ * @param {ConfigPatch} partial @returns {ConfigPatch} The same `partial` object.
+ */
 export function defineConfig(partial) {
   if (partial == null || typeof partial !== "object" || Array.isArray(partial)) {
     throw new TypeError("defineConfig expects a config object");
@@ -219,6 +226,7 @@ export class Emitter {
 }
 
 // The shared bus has the typed surface; the Emitter class stays untyped, so a private bus needs no event map.
+/** The process event bus. A listener fault enters the notification history, and the other listeners still run. Prefer `ctx.on`, because an unload of the plugin removes its listener. */
 export const events = /** @type {Bus} */ (/** @type {unknown} */ (new Emitter(CORE_EVENTS)));
 
 // The native drains engine events on the owner. The digest coalesces, so a fact says that it happened and never how many times.

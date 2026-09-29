@@ -268,6 +268,10 @@ function syncSelection(t, s) {
   t.select(s.anchor, s.cursor, { inclusive: true });
 }
 
+/**
+ * The `transcript-vim` plugin: cursor motions, visual selection, and yank keys for the transcript. Tab moves the focus between the composer and the transcript.
+ * It needs the `tui` capability. An unload gives the focus back to the composer.
+ */
 export const transcriptVim = {
   name: "transcript-vim",
   /** @param {Context} ctx */

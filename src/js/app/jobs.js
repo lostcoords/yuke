@@ -15,7 +15,7 @@ export async function start(command, options = {}) {
   return job;
 }
 
-/** @param {number} id @returns {Promise<Job | null>} */
+/** Ask a running job to stop. It answers the job as it is now, or null for an unknown id; `wait` answers the end. @param {number} id @returns {Promise<Job | null>} */
 export async function stop(id) {
   const before = native.get(id);
   const job = native.stop(id);
@@ -23,7 +23,7 @@ export async function stop(id) {
   return job;
 }
 
-/** @param {number} id @returns {Promise<Job | null>} */
+/** Wait until the job ends, and answer the final job. A job that is not running answers at once, and an unknown id answers null. @param {number} id @returns {Promise<Job | null>} */
 export function wait(id) {
   const job = native.get(id);
   if (job === null || job.state !== "running") return Promise.resolve(job);
@@ -66,5 +66,6 @@ export async function tail(id, count) {
   return text.split("\n").filter((line, i, all) => line !== "" || i < all.length - 1).slice(-count).join("\n");
 }
 
-// The public surface: a plugin reads and stops jobs, and only the exec tool starts them.
+// Only the exec tool starts a job.
+/** The background jobs of the exec tool. A plugin lists, reads, stops, and waits for them. Each start and end emits `jobs.changed`. */
 export const jobs = { list, get, stop, wait, read };

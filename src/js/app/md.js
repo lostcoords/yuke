@@ -885,6 +885,10 @@ export function normalizeSource(text) {
   return source.includes("\r") ? source.replace(/\r\n?/g, "\n") : source;
 }
 
+/**
+ * A markdown document that renders to styled rows. `setText` and `append` parse only the changed tail, so a stream stays cheap.
+ * A segment offset in a row indexes into `sourceText()`.
+ */
 export class Document {
   constructor() {
     /** @type {string | null} */
@@ -901,8 +905,11 @@ export class Document {
     this._cache = new Map();
   }
 
-  // Return true when the source changed. An append keeps every block but the last two, because only the tail can change.
-  /** @param {string} text @returns {boolean} */
+  /**
+   * Replace the source, and return true when it changed. A text that extends the old source keeps every block but the last two.
+   * @param {string} text
+   * @returns {boolean}
+   */
   setText(text) {
     return this._setText(text) !== -1;
   }
@@ -922,9 +929,12 @@ export class Document {
     return this._parse(text);
   }
 
-  // Add `fragment` at the end of the source. `text` is the whole raw input after it. Only the last two blocks parse again.
-  // Return the retained block count.
-  /** @param {string} fragment @param {string} text @returns {number} */
+  /**
+   * Add `fragment` at the end of the source. Only the last two blocks parse again.
+   * @param {string} fragment
+   * @param {string} text - the whole raw input after the append.
+   * @returns {number} the count of blocks that did not parse again.
+   */
   append(fragment, text) {
     const raw = this._cr && fragment[0] === "\n" ? fragment.slice(1) : fragment;
     if (fragment) this._cr = raw.endsWith("\r");
@@ -956,13 +966,20 @@ export class Document {
     return keep;
   }
 
-  // The normalized markdown. A segment offset indexes into this text, never into the raw input.
-  /** @returns {string} */
+  /**
+   * The normalized markdown: "\r\n" and "\r" become "\n". A segment offset indexes into this text, never into the raw input.
+   * @returns {string}
+   */
   sourceText() {
     return this._src == null ? "" : this._src;
   }
 
-  /** @param {number} width @param {number} [limit] @returns {Row[]} */
+  /**
+   * The rows of the document at `width`, with an empty row between blocks.
+   * @param {number} width
+   * @param {number} [limit] - the most rows to return. The default is no limit.
+   * @returns {Row[]}
+   */
   rows(width, limit = Infinity) {
     limit = !Number.isFinite(limit) ? Infinity : Math.max(0, Math.floor(limit));
     if (limit === 0) return [];
@@ -981,8 +998,10 @@ export class Document {
     return out;
   }
 
-  // The blocks in document order, for a caller that moves by markdown structure.
-  /** @returns {BlockSummary[]} */
+  /**
+   * The blocks in document order, for a caller that moves by markdown structure.
+   * @returns {BlockSummary[]}
+   */
   blocks() {
     return this._blocks.map((b) => ({ kind: b.kind, at: b.at, end: b.end }));
   }

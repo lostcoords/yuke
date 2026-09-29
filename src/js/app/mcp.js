@@ -856,7 +856,14 @@ async function readServers(path, problems) {
 
 /** @typedef {Plugin & { rows(): [string, string][], resetTrust(): Promise<void>, login(name: string, open?: (url: string) => Promise<void> | void): Promise<void>, logout(name: string): Promise<void> }} McpPlugin */
 
-/** @param {McpOptions} [options] @returns {McpPlugin} */
+/**
+ * Build the `mcp` plugin. It starts MCP servers and gives the model their tools. A tool stays deferred until the tool_search tool loads it, unless its server sets `alwaysLoad`.
+ * The servers come from `options.servers`, then `.mcp.json` in `$XDG_CONFIG_HOME` or `~/.config`, then `.mcp.json` in the workspace. The first entry of a name wins.
+ * A workspace server starts only after the user trusts it. It throws a TypeError for a timeout that is not a positive integer.
+ * @param {McpOptions} [options] - `servers` has the shape of `mcpServers` in `.mcp.json`. `startupMs` limits the start of each server (default 10000).
+ * `callMs` limits each tool call (default 60000), and the `timeout` of a server replaces it.
+ * @returns {McpPlugin} The plugin, with `rows`, `login`, `logout`, and `resetTrust` for the MCP commands.
+ */
 export function mcp(options = {}) {
   /** @type {Limits} */
   const limits = { startupMs: options.startupMs ?? 10_000, callMs: options.callMs ?? 60_000 };

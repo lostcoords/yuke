@@ -637,6 +637,7 @@ export async function gateInput(method, params) {
 export let scopeOf;
 
 // --- plugin context: the register-through-me surface --- Every registration is an effect on the scope, so an unload reverts all of them.
+/** The registration surface that `apply` of a plugin gets. Each registration is an effect of the plugin, so an unload of the plugin reverts it. */
 export class Context {
   // The plugin never holds its scope, so it cannot close itself around the registry.
   /** @type {Scope} */
@@ -645,69 +646,101 @@ export class Context {
   /** @param {Scope} scope @param {string} id */
   constructor(scope, id) {
     this.#scope = scope;
-    this.id = id; // the plugin id; it namespaces commands and owns this plugin's advice
+    /** The plugin name. It prefixes the commands of the plugin and owns its advice. */
+    this.id = id;
   }
 
   static {
     scopeOf = (ctx) => ctx.#scope;
   }
 
-  // False once the close starts, so late async work can skip its registrations.
+  /** True until the close of the plugin starts. Async work reads it to skip late registrations. */
   get alive() {
     return this.#scope.alive;
   }
 
-  // A close cancels this signal before any effect reverts, so I/O started with it aborts.
+  /** The cancellation signal of the plugin. The close cancels it before any effect reverts, so I/O that holds it aborts. */
   get signal() {
     return this.#scope.signal;
   }
 
-  // Hold a resource until the close; its release may be async and runs after the effects revert, newest first.
-  /** @param {Release} release @returns {() => void | Promise<void>} */
+  /**
+   * Hold a resource until the plugin closes. The close calls `release` after the effects revert, newest first, and waits for a returned Promise.
+   * On a closed plugin, `own` calls `release` at once and throws a TypeError.
+   * @param {Release} release @returns {() => void | Promise<void>} A function that releases the resource now, one time.
+   */
   own(release) {
     return this.#scope.own(release);
   }
 
-  /** @param {() => unknown} fn @returns {Disposer} */
+  /**
+   * Run `fn` now and keep the cleanup function it returns. The close runs the cleanups newest first.
+   * It throws a TypeError on a closed plugin or when `fn` returns a Promise.
+   * @param {() => unknown} fn @returns {Disposer} A disposer that runs this cleanup now, one time.
+   */
   effect(fn) {
     return this.#scope.effect(fn);
   }
 
-  /** @template {EventName} K @param {K} name @param {Events[K]} fn @param {EventOptions} [opts] @returns {Disposer} */
+  /**
+   * Listen to one bus event until the disposer runs or the plugin unloads.
+   * It throws a TypeError for an event name that no tier declares. An `owner:event` name needs no declaration.
+   * @template {EventName} K @param {K} name @param {Events[K]} fn @param {EventOptions} [opts] @returns {Disposer}
+   */
   on(name, fn, opts) {
     return this.#scope.effect(() => events.on(name, fn, opts));
   }
 
-  /** @template {EventName} K @param {K} name @param {Events[K]} fn @returns {Disposer} */
+  /**
+   * Listen to the next emit of one bus event only. The disposer or an unload of the plugin removes the listener before that emit.
+   * @template {EventName} K @param {K} name @param {Events[K]} fn @returns {Disposer}
+   */
   once(name, fn) {
     return this.#scope.effect(() => events.once(name, fn));
   }
 
-  /** @template {object} T @template {MethodKey<T>} P @template {AdviceWhere} W @param {T} obj @param {P} prop @param {W} where @param {AdviceFor<Extract<T[P], AdviceFunction>, W>} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
+  /**
+   * Wrap the method `prop` of `obj` with advice until the disposer runs or the plugin unloads.
+   * It throws a TypeError when `prop` is an accessor or not a method, or when `where` is unknown.
+   * @template {object} T @template {MethodKey<T>} P @template {AdviceWhere} W @param {T} obj @param {P} prop @param {W} where @param {AdviceFor<Extract<T[P], AdviceFunction>, W>} fn @param {AdviceOptions | undefined} [opts] - The context sets `owner` to the plugin name.
+   * @returns {Disposer} A disposer that removes this advice only. The last removal puts the original method back.
+   */
   advise(obj, prop, where, fn, opts) {
     return this.#scope.effect(() =>
       advice.advise(obj, prop, where, fn, Object.assign({}, opts, { owner: this.id })),
     );
   }
 
-  /** @template {string} K @param {K & FreeName<K>} name @param {Provider<K>} value @returns {Disposer} */
+  /**
+   * Provide the capability `name` until the disposer runs or the plugin unloads. A newer provider hides an older one until the newer one leaves.
+   * It throws a TypeError for an empty name or the name of a Context member.
+   * @template {string} K @param {K & FreeName<K>} name @param {Provider<K>} value - The capability, or an object whose `bindTo(ctx)` builds one for each `inject` block.
+   * @returns {Disposer}
+   */
   provide(name, value) {
     return this.#scope.effect(() => services.provide(name, value));
   }
 
-  // Answer one point. The chain runs in registration order and this plugin's turn reverts on unload.
-  /** @template {HookPoint} P @param {P} point @param {HookHandler<P>} fn @returns {Disposer} */
+  /**
+   * Answer one engine hook point until the disposer runs or the plugin unloads. The handlers of a point run in registration order.
+   * A handler that throws blocks the action. It throws a TypeError when `fn` is not a function or the point is unknown.
+   * @template {HookPoint} P @param {P} point @param {HookHandler<P>} fn @returns {Disposer}
+   */
   hook(point, fn) {
     if (typeof fn !== "function") throw new TypeError("hook needs a handler function");
     return this.#scope.effect(() => addHook(point, this.id, fn));
   }
 
-  // The tools this plugin owns. A dispose withdraws them, so an unload leaves no tool behind.
+  /** The tools of this plugin. An unload of the plugin removes each tool it defines. */
   get tools() {
     const scope = this.#scope;
     // The scope owns each tool until its disposer runs or the scope closes.
     const tools = {
-      /** @param {ToolDefinition} definition @returns {Disposer} */
+      /**
+       * Register one tool that the model can call. It throws a TypeError for a name that another tool has, an invalid name,
+       * an empty description, parameters without `type: "object"` and a `properties` object, or a missing `execute`.
+       * @param {ToolDefinition} definition @returns {Disposer} A disposer that removes the tool.
+       */
       define(definition) {
         if (definition == null || typeof definition !== "object") throw new TypeError("tools.define expects a tool definition object");
         const name = definition.name;
@@ -721,22 +754,29 @@ export class Context {
     return tools;
   }
 
-  // Start a plugin this plugin owns. Its close runs as a release of this plugin; a child that closes first drops that release.
-  /** @param {Plugin} plugin @returns {PluginHandle} */
+  // Its close runs as a release of this plugin; a child that closes first drops that release.
+  /**
+   * Start a child plugin that this plugin owns. The close of this plugin also closes the child.
+   * It throws a TypeError for a plugin without `name` and `apply`, or for a name that a live plugin has.
+   * @param {Plugin} plugin @returns {PluginHandle}
+   */
   use(plugin) {
     const instance = startPlugin(plugin);
     if (instance._phase !== "closed") instance._state().owner = this.#scope.own(() => instance.dispose());
     return { dispose: () => instance.dispose() };
   }
 
-  // Run `apply` only while every named capability exists, in a child scope a withdrawal reverts.
-  /** @template {string} K @param {(K & FreeName<K>)[]} names @param {InjectApply<K>} apply @returns {Disposer} */
+  /**
+   * Run `apply` while each named capability has a provider. `apply` reads each capability as `ctx.<name>`.
+   * A change of a live provider reverts the block and runs it again. A missing capability reverts it. A fault in `apply` is reported, and the block stays off.
+   * It throws a TypeError for an empty list, an empty name, the name of a Context member, or an `apply` that is not a function.
+   * @template {string} K @param {(K & FreeName<K>)[]} names @param {InjectApply<K>} apply @returns {Disposer} A disposer that stops the injection and reverts the live block.
+   */
   inject(names, apply) {
     return injectInto(this, names, apply);
   }
 
-  // The frontend seam. A service is always installed, so a plugin calls it without `inject`.
-  /** @returns {InteractionSurface} */
+  /** Prompts and notifications through the frontend. It needs no `inject`. @returns {InteractionSurface} */
   get interaction() {
     const surface = bindInteraction(this);
     Object.defineProperty(this, "interaction", { value: surface });
@@ -859,25 +899,33 @@ function startPlugin(plugin) {
   return instance;
 }
 
+/** The process plugin registry. One name holds at most one live plugin. A plugin that closes frees its name. */
 export const plugins = {
   /** @type {Record<string, PluginInstance>} */
   _live: Object.create(null),
   _closing: false,
 
-  /** @param {Plugin} plugin @returns {PluginHandle} */
+  /**
+   * Start a plugin under its name. The host does not wait for an async `apply`, and a rejection reports a fault and closes the plugin.
+   * It throws a TypeError for a plugin without `name` and `apply`, for a name that a live plugin has, or after the registry closes.
+   * @param {Plugin} plugin @returns {PluginHandle} A handle that closes this instance only.
+   */
   use(plugin) {
     const instance = startPlugin(plugin);
     // The handle closes this instance only, so an old handle cannot close a replacement.
     return { dispose: () => instance.dispose() };
   },
 
-  /** @param {string} name @returns {boolean} */
+  /** Report whether a live plugin has this name. A plugin that still closes counts as live. @param {string} name @returns {boolean} */
   has(name) { return this._live[name] !== undefined; },
 
-  /** @param {string} name @returns {void | Promise<void>} */
+  /**
+   * Close the live plugin with this name. No live plugin with the name answers undefined.
+   * @param {string} name @returns {void | Promise<void>} A Promise while the close waits for async releases or an async apply, else undefined.
+   */
   dispose(name) { return this._live[name]?.dispose(); },
 
-  /** @returns {string[]} */
+  /** The names of the live plugins. @returns {string[]} */
   names() { return Object.keys(this._live); },
 };
 

@@ -6,20 +6,31 @@ import { callHook, config, events, fault, notify, once } from "yuke:internal/ker
 /** @import { Color, Style } from "yuke:internal/native/term" */
 /** @import { CommandAction, CommandEntry, CommandListing, CommandRegistry, CommandSpec, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
 
-// True for a wheel button. The wheel scrolls a pane but never moves the focus.
-/** @param {string} button @returns {boolean} */
+/**
+ * True for a wheel button of a mouse event. The wheel scrolls a pane but never moves the focus.
+ * @param {string} button
+ * @returns {boolean}
+ */
 export function isWheel(button) {
   return button === "wheel_up" || button === "wheel_down" || button === "wheel_left" || button === "wheel_right";
 }
 
-/** @param {Rect} r @param {number} col @param {number} row @returns {boolean} */
+/**
+ * True when the cell at `col`, `row` is inside `r`.
+ * @param {Rect} r
+ * @param {number} col
+ * @param {number} row
+ * @returns {boolean}
+ */
 export const contains = (r, col, row) => col >= r.x && col < r.x + r.w && row >= r.y && row < r.y + r.h;
 
 // Bound a link chain, so a cycle falls back instead of looping for ever.
 const link_depth_max = 100;
 
-// The highlight groups are monochrome: emphasis is weight and inversion, `Normal` is `reset`, and `danger` is the only color.
-/** @type {StyleConfig} */
+/**
+ * The highlight groups. The built-in groups are monochrome: emphasis is weight and inversion, `Normal` is `reset`, and `danger` is the only color.
+ * @type {StyleConfig}
+ */
 export const style = {
   palette: {
     fg: "reset",
@@ -117,18 +128,35 @@ function resolveColor(palette, color) {
   return /** @type {Color} */ (color);
 }
 
-/** @param {number} x @param {number} y @param {number} w @param {number} h @param {string} group @returns {void} */
+/**
+ * Paint a rectangle of screen cells with the style of the highlight group `group`. A view calls it from its `draw`.
+ * @param {number} x
+ * @param {number} y
+ * @param {number} w
+ * @param {number} h
+ * @param {string} group
+ * @returns {void}
+ */
 export function fill(x, y, w, h, group) {
   term.fill(x, y, w, h, style.resolve(group));
 }
 
-/** @param {number} x @param {number} y @param {string} s @param {string} group @returns {void} */
+/**
+ * Draw `s` from the screen cell at `x`, `y` with the style of the highlight group `group`. A view calls it from its `draw`.
+ * @param {number} x
+ * @param {number} y
+ * @param {string} s
+ * @param {string} group
+ * @returns {void}
+ */
 export function text(x, y, s, group) {
   term.text(x, y, s, style.resolve(group));
 }
 
-// A command has a predicate and an action. A key binding, not the command, names the context where it applies.
-/** @type {CommandRegistry} */
+/**
+ * The command registry. A command has a predicate and an action. A key binding, not the command, names the context where it applies.
+ * @type {CommandRegistry}
+ */
 export const command = {
   map: Object.create(null),
 
@@ -238,13 +266,17 @@ function evalPredicate(entry, args) {
   return res.length > 1 ? res.slice(1) : args;
 }
 
-// The active context: an ordered atom stack plus plugin flags, where a deeper atom beats a shallower or unscoped one.
+/** The active context: an ordered atom stack plus plugin flags. A key binding context tests them, and a deeper atom beats a shallower or unscoped one. */
 export const context = {
   /** @type {Record<string, Array<{ value: ContextFlag }>>} */
   _flags: Object.create(null),
 
-  // Each registration owns one entry; removal preserves every other live provider.
-  /** @param {Record<string, ContextFlag>} flags @returns {() => void} */
+  /**
+   * Add flags and return a disposer. A context tests a flag with `name == value` or `name != value`.
+   * The newest live provider of a name gives its value. The disposer removes only its own providers.
+   * @param {Record<string, ContextFlag>} flags
+   * @returns {() => void}
+   */
   add(flags) {
     /** @type {Array<[string, { value: ContextFlag }]>} */
     const held = [];
@@ -263,8 +295,11 @@ export const context = {
     });
   },
 
-  // The value of one flag. A throwing provider reads as absent, so it never breaks a key.
-  /** @param {string} name @returns {string | undefined} */
+  /**
+   * The value of one flag, or undefined when no provider gives one. A provider that throws reads as absent, so it never breaks a key.
+   * @param {string} name
+   * @returns {string | undefined}
+   */
   flag(name) {
     const v = this._flags[name]?.at(-1)?.value;
     if (typeof v !== "function") return v;
@@ -276,8 +311,11 @@ export const context = {
     }
   },
 
-  // The atom stack, root first; the index is the depth. A float adds no atom, because it holds no focus.
-  /** @returns {string[]} */
+  /**
+   * The active atoms, root first; the index is the depth. It holds "root", the atoms of the active pane,
+   * and then "overlay" and the atoms of the focused overlay while one has the focus. A float adds no atom, because it holds no focus.
+   * @returns {string[]}
+   */
   stack() {
     const out = ["root"];
     pushAtoms(out, root.active);
@@ -309,8 +347,11 @@ function pushAtoms(out, view) {
   }
 }
 
-// Parse one context expression over `!`, `==`, `!=`, `&&`, `||`, and `()`.
-/** @param {string} source @returns {ContextExpr} */
+/**
+ * Parse one context expression over `!`, `==`, `!=`, `&&`, `||`, and `()`. It throws an Error for bad syntax.
+ * @param {string} source
+ * @returns {ContextExpr}
+ */
 export function parseContext(source) {
   const text = String(source);
   const tokens = text.match(/&&|\|\||==|!=|[()!]|[A-Za-z_][\w-]*/g) || [];
@@ -449,8 +490,10 @@ function rankByContext(entries, copy = true) {
 // The share of a period a tick pulse can arrive early and still count, so timer jitter never skips a beat.
 const TICK_EARLY_SHARE = 0.75;
 
-// New bindings run before old bindings. A space separates chord strokes.
-/** @type {KeymapRegistry} */
+/**
+ * The key binding registry. New bindings run before old bindings. A space separates the strokes of a sequence.
+ * @type {KeymapRegistry}
+ */
 export const keymap = {
   map: Object.create(null),
   prefixes: Object.create(null),
@@ -629,15 +672,20 @@ export const keymap = {
   },
 };
 
-// A route chooses whether the keymap or the view reads a key first.
+/** The key routes. A route chooses whether the keymap or the active view reads a key first. */
 export const route = {
   /** @type {RouteEntry[]} */
   _list: [],
 
   _seq: 0,
 
-  // Register one route under a context and return a disposer.
-  /** @param {RouteWhere} where @param {string} [ctx] @returns {() => void} */
+  /**
+   * Register one route under a context and return a disposer. The newest route with the deepest matching atom wins.
+   * It throws a TypeError for another `where`, and an Error when `ctx` has bad syntax.
+   * @param {RouteWhere} where
+   * @param {string} [ctx] - a context expression, as `keymap.add` takes. No context applies everywhere.
+   * @returns {() => void}
+   */
   add(where, ctx) {
     if (where !== "keymap" && where !== "view") throw new TypeError("route.add: where must be keymap or view");
     /** @type {RouteEntry} */
@@ -649,8 +697,10 @@ export const route = {
     });
   },
 
-  // The route for the active context. A view reads first when no route matches.
-  /** @returns {RouteWhere} */
+  /**
+   * The route for the active context. The view reads first when no route matches.
+   * @returns {RouteWhere}
+   */
   reader() {
     if (this._list.length === 0) return "view";
     const hit = rankByContext(this._list, false)[0];
@@ -658,8 +708,12 @@ export const route = {
   },
 };
 
-// Write `text` to the clipboard, tell the user the result, emit `clipboard.copied`, and return the byte count or -1.
-/** @param {string | null | undefined} text @param {string | undefined} what @returns {number} */
+/**
+ * Write `text` to the clipboard, tell the user the result, and emit `clipboard.copied`.
+ * @param {string | null | undefined} text - null, undefined, or "" copies nothing.
+ * @param {string | undefined} what - the name of the text in the notice. The default is "text".
+ * @returns {number} the byte count, 0 for empty text, or -1 when the text is larger than the clipboard limit.
+ */
 export function copy(text, what) {
   const s = text == null ? "" : String(text);
   const bytes = s === "" ? 0 : term.copy(s);
@@ -680,8 +734,13 @@ function requireView(obj, message) {
 /** @type {WeakMap<object, object>} */
 const VIEW_OWNER = new WeakMap();
 
-// Claim a mounted view without writing ownership state onto caller objects.
-/** @param {object} view @param {object} owner @returns {void} */
+/**
+ * Claim a mounted view for `owner` without writing ownership state onto caller objects.
+ * It throws a TypeError when another owner holds the view.
+ * @param {object} view
+ * @param {object} owner
+ * @returns {void}
+ */
 export function claimView(view, owner) {
   if ((typeof view !== "object" && typeof view !== "function") || view === null) throw new TypeError("view ownership needs an object");
   if ((typeof owner !== "object" && typeof owner !== "function") || owner === null) throw new TypeError("view ownership needs an owner");
@@ -690,8 +749,12 @@ export function claimView(view, owner) {
   VIEW_OWNER.set(view, owner);
 }
 
-// Release only the claim held by the caller; a stale disposer cannot release a newer mount.
-/** @param {object} view @param {object} owner @returns {void} */
+/**
+ * Release the claim of `owner` on `view`. It throws a TypeError when another owner holds the view, so a stale disposer cannot release a newer mount.
+ * @param {object} view
+ * @param {object} owner
+ * @returns {void}
+ */
 export function releaseView(view, owner) {
   const held = VIEW_OWNER.get(view);
   if (held === undefined) return;
@@ -727,6 +790,7 @@ const HOST_TO_CORE_EVENT = /** @type {const} */ ({
   focus: "focus.changed",
 });
 
+/** A base class for a pane view. Each hook does nothing, and `layout` keeps the rect. A subclass overrides the hooks it needs. */
 export class View {
   constructor() {
     /** @type {Rect} */
@@ -767,6 +831,7 @@ function leafView(node) {
   return node.shape.view;
 }
 
+/** One node of the pane tree: a leaf that shows a view, or a split of two nodes. */
 export class Node {
   /** @param {NodeShape} shape */
   constructor(shape) {
@@ -870,13 +935,16 @@ function clampChildSize(size, total) {
   return Math.max(1, Math.min(size, total - 1));
 }
 
-// The status bar takes one row under the whole layout. A segment renders to a string or to nothing.
+/** The status bar. It takes one row under the whole layout. A segment renders to a string or to nothing. */
 export const status = {
   /** @type {StatusEntry[]} */
   _list: [],
 
-  // Register a segment and return a disposer. `side` is "left" or "right"; `order` sorts a side.
-  /** @param {StatusSegment} seg @returns {() => void} */
+  /**
+   * Register a segment and return a disposer. It throws a TypeError for a missing `render`, a bad `side`, or an `order` that is not finite.
+   * @param {StatusSegment} seg
+   * @returns {() => void}
+   */
   add(seg) {
     if (typeof seg.render !== "function") throw new TypeError("status.add needs a render function");
     const side = seg.side == null ? "left" : seg.side;
@@ -892,8 +960,11 @@ export const status = {
     });
   },
 
-  // The text of one side. A segment that renders nothing drops out of the join.
-  /** @param {"left" | "right"} which @returns {string} */
+  /**
+   * The text of one side now. A segment that renders nothing drops out of the join.
+   * @param {"left" | "right"} which
+   * @returns {string}
+   */
   side(which) {
     const out = [];
     for (const seg of this._list) {
@@ -925,6 +996,7 @@ export const status = {
   },
 };
 
+/** The screen: the pane tree, the overlay stack, the status bar, and the frame loop. `root` is the one instance. */
 export class RootView {
   constructor() {
     /** @type {Node | null} */
@@ -952,11 +1024,17 @@ export class RootView {
     this._started = false;
   }
 
+  /** The view in the focused pane, or null when the tree is empty. */
   get active() {
     return this.activeLeaf ? leafView(this.activeLeaf) : null;
   }
 
-  /** @param {Node | null} node @returns {void} */
+  /**
+   * Replace the pane tree and focus its first leaf. Each view that leaves the tree gets a `pane.closed` event.
+   * It throws a TypeError when a view shows twice or another owner holds it.
+   * @param {Node | null} node
+   * @returns {void}
+   */
   setRoot(node) {
     const leaves = node ? node.leaves() : [];
     const next = leaves.map(leafView);
@@ -998,8 +1076,11 @@ export class RootView {
     this.invalidatePaint();
   }
 
-  // Focus the leaf that holds `view`. Return false when the view is not in the tree.
-  /** @param {ViewLike | null} view @returns {boolean} */
+  /**
+   * Focus the pane that shows `view`. Return false when the view is not in the tree.
+   * @param {ViewLike | null} view
+   * @returns {boolean}
+   */
   focusView(view) {
     if (!view || !this.root_node) return false;
     for (const leaf of this.root_node.leaves()) {
@@ -1030,7 +1111,13 @@ export class RootView {
     return !!callHook(leafView(leaf), "onMouse", ev);
   }
 
-  /** @param {"row" | "col"} kind @param {ViewLike} view @returns {Node | null} */
+  /**
+   * Split the focused pane and show `view` in the new pane, which gets the focus. Prefer `tui.split`, which closes the pane when its block stops.
+   * It throws a TypeError when `view` has no `layout` and `draw` or already shows.
+   * @param {"row" | "col"} kind - "row" puts the new pane on the right, and "col" puts it below.
+   * @param {ViewLike} view
+   * @returns {Node | null} the new leaf, or null when no pane has the focus.
+   */
   split(kind, view) {
     const leaf = this.activeLeaf;
     if (!leaf) return null;
@@ -1045,8 +1132,12 @@ export class RootView {
     return add;
   }
 
-  // Close the pane that shows `view`, or the focused pane. A view no longer in the tree closes nothing.
-  /** @param {ViewLike} [view] @returns {void} */
+  /**
+   * Close the pane that shows `view`, or the focused pane, and emit `pane.closed`. A view no longer in the tree closes nothing.
+   * The last pane does not close.
+   * @param {ViewLike} [view]
+   * @returns {void}
+   */
   close(view) {
     const leaf = view ? (this.root_node?.leaves().find((held) => leafView(held) === view) ?? null) : this.activeLeaf;
     const p = leaf && leaf.parent;
@@ -1069,7 +1160,11 @@ export class RootView {
     this.invalidate();
   }
 
-  /** @param {"h" | "j" | "k" | "l"} d @returns {void} */
+  /**
+   * Focus the nearest pane in a direction: "h" left, "j" down, "k" up, "l" right. With no pane there, the focus stays.
+   * @param {"h" | "j" | "k" | "l"} d
+   * @returns {void}
+   */
   focusDir(d) {
     if (!this.activeLeaf) return;
     const cur = this.activeLeaf.rect;
@@ -1093,7 +1188,11 @@ export class RootView {
     if (best) this._setActiveLeaf(best);
   }
 
-  /** @param {number} step @returns {void} */
+  /**
+   * Move the focus `step` panes through the tree order, and wrap at each end.
+   * @param {number} step
+   * @returns {void}
+   */
   focusCycle(step) {
     if (!this.root_node) return;
     const leaves = this.root_node.leaves();
@@ -1109,14 +1208,21 @@ export class RootView {
     return undefined;
   }
 
-  // Report whether a tickable is registered, so a caller never reads the entry list itself.
-  /** @param {Tickable} tickable @returns {boolean} */
+  /**
+   * Report whether a tickable is registered, so a caller never reads the entry list itself.
+   * @param {Tickable} tickable
+   * @returns {boolean}
+   */
   hasTickable(tickable) {
     return this._tickableEntry(tickable) !== undefined;
   }
 
-  // A second registration shares one entry, so one owner cannot stop a service another still holds.
-  /** @param {Tickable} tickable @returns {Tickable} */
+  /**
+   * Add a tickable to the frame loop and return it. After the start, it gets `onStart` at once. Prefer `tui.tickable`, which removes it when its block stops.
+   * A second registration shares one entry, so one owner cannot stop a service another still holds.
+   * @param {Tickable} tickable
+   * @returns {Tickable}
+   */
   addTickable(tickable) {
     const held = this._tickableEntry(tickable);
     if (held) {
@@ -1141,8 +1247,11 @@ export class RootView {
     return tickable;
   }
 
-  // Drop one registration. The last one removes the entry, and only a started service gets `onStop`.
-  /** @param {Tickable} tickable @returns {void} */
+  /**
+   * Drop one registration. The last one removes the entry, and only a started service gets `onStop`.
+   * @param {Tickable} tickable
+   * @returns {void}
+   */
   removeTickable(tickable) {
     const entry = this._tickableEntry(tickable);
     if (!entry) return;
@@ -1158,13 +1267,15 @@ export class RootView {
     }
   }
 
-  // The widget a nav binding drives, taken from the layer that reads the keyboard.
-  /** @returns {NavTarget | null} */
+  /**
+   * The widget that a nav binding drives, from the layer that reads the keyboard, or null when that layer has none.
+   * @returns {NavTarget | null}
+   */
   navTarget() {
     return /** @type {NavTarget | null} */ (callHook(this.focused, "navTarget") || null);
   }
 
-  // The layer that owns the cursor and the nav target: the top modal overlay, else the active view.
+  /** The layer that reads the keys and owns the cursor: the top modal overlay, else the active view, else null. */
   get focused() {
     for (let i = this.overlays.length - 1; i >= 0; i--) {
       const layer = /** @type {Overlay} */ (this.overlays[i]);
@@ -1173,7 +1284,13 @@ export class RootView {
     return this.active;
   }
 
-  /** @param {Overlay} layer @returns {Overlay} */
+  /**
+   * Show `layer` on top of the overlay stack and return it. A modal layer ends a waiting key sequence.
+   * Prefer `tui.overlay`, which closes the layer when its block stops.
+   * It throws a TypeError when the layer has no `layout` and `draw` or already shows.
+   * @param {Overlay} layer
+   * @returns {Overlay}
+   */
   pushOverlay(layer) {
     requireView(layer, "pushOverlay needs layout and draw methods");
     if (this.overlays.indexOf(layer) >= 0) throw new TypeError("an overlay cannot be pushed twice");
@@ -1186,14 +1303,22 @@ export class RootView {
     return layer;
   }
 
-  // Run `onClose` once when `layer` leaves the stack, by any pop. A later call replaces it, so the newest owner answers.
-  /** @param {Overlay} layer @param {() => void} onClose @returns {void} */
+  /**
+   * Run `onClose` once when `layer` leaves the stack, by any pop. A later call replaces it, so the newest owner answers.
+   * @param {Overlay} layer
+   * @param {() => void} onClose
+   * @returns {void}
+   */
   closeWith(layer, onClose) {
     this._closers.set(layer, onClose);
   }
 
-  // Take `layer` off the stack, or the top layer, and run its close function.
-  /** @param {Overlay} [layer] @returns {void} */
+  /**
+   * Take `layer`, or the top layer, off the stack, and run its close function once.
+   * A layer that does not show still runs its close function. An empty stack does nothing.
+   * @param {Overlay} [layer]
+   * @returns {void}
+   */
   popOverlay(layer) {
     const target = layer ?? this.overlays[this.overlays.length - 1];
     if (!target) return;
@@ -1210,14 +1335,19 @@ export class RootView {
     closer();
   }
 
-  // Ask for a frame. The host paints once after the queue drains, so a burst costs one paint.
-  /** @returns {void} */
+  /**
+   * Ask for a new layout and a frame. The host paints once after the queue drains, so a burst costs one paint.
+   * @returns {void}
+   */
   invalidate() {
     this._needsDraw = true;
     this._layoutDirty = true;
   }
 
-  /** @returns {void} */
+  /**
+   * Ask for a frame without a new layout.
+   * @returns {void}
+   */
   invalidatePaint() {
     this._needsDraw = true;
   }
@@ -1380,12 +1510,16 @@ export class RootView {
   }
 }
 
+/** The one root view of the process. */
 export const root = new RootView();
 
 /** A synthetic esc key press. Every dialog cancels when it receives esc. */
 export const ESC_PRESS = /** @type {Readonly<Extract<HostEvent, { type: "key" }>>} */ (Object.freeze({ type: "key", code: "esc", char: "", shifted: "", baseLayout: "", text: "", event: "press", mods: 0 }));
 
-// A guard claims the ask while work runs, so the key, the palette, the slash word, and user code follow one rule.
+/**
+ * Ask yuke to quit. A `quit.request` listener can stop the quit, for example while work runs.
+ * The key, the palette, the slash word, and user code all call this, so they follow one rule.
+ */
 export function quit() {
   if (events.bail("quit.request")) return;
   term.quit();

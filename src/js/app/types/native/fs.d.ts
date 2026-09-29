@@ -28,18 +28,25 @@ declare module "yuke:internal/native/fs" {
     workspaceRoot?: string;
   }
 
+  /**
+   * Text file access on the local file system, with no confinement. A relative path resolves against `workspaceRoot`, or the host directory without one.
+   * A leading `~` expands to the home directory. A failure rejects with a sentence such as "the path does not exist".
+   */
   export const fs: {
-    /** A relative path anchors at the directory the host runs in. Rejects on invalid UTF-8. */
+    /** Read a whole file as text. It rejects for a missing path, a directory, invalid UTF-8, or a file above 10 MiB. */
     readFile(path: string, options?: RootOptions): Promise<string>;
-    /** Returns an image path or bounded text with the next line after a cut. */
+    /**
+     * Read whole lines from the 1-based line `start` through `end`, at most 2000 lines and 64 KiB; a line above 8000 bytes is cut.
+     * An image file answers its path. `next` names the first line that a limit left out, or null. `longLines` counts the cut lines.
+     */
     readRange(path: string, options?: RootOptions & { start?: number | null; end?: number | null }): Promise<RangeRead | { imagePath: string }>;
-    /** Replaces the whole file and resolves the byte count. */
+    /** Replace the whole file in one atomic rename, and resolve the byte count. It creates a missing file in an existing directory. A link or a directory rejects. */
     writeFile(path: string, contents: string, options?: RootOptions): Promise<number>;
-    /** Resolves null when nothing is at the path. A relative path anchors at the workspace root, or at the cwd. */
+    /** Describe one path. It resolves null when nothing is at the path. An absent or empty path names the workspace root. */
     stat(path?: string | null, options?: RootOptions): Promise<Stat | null>;
-    /** Removes one regular file and resolves false when nothing is there. A directory or a link rejects. A relative path anchors at the workspace root, or at the cwd. */
+    /** Remove one regular file. It resolves true after the remove and false when nothing is there. A directory or a link rejects. */
     removeFile(path: string, options?: RootOptions): Promise<boolean>;
-    /** Lists the directories of one path. */
+    /** List the subdirectories of one absolute path, at most 512. Files are left out. An absent path names the host directory, and a relative path rejects. */
     list(path?: string | null): Promise<Page>;
   };
 

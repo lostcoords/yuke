@@ -15,10 +15,16 @@ import { errorText } from "yuke:internal/format";
 /** @import { Context } from "yuke:internal/ext" */
 /** @typedef {Wire.CreateSession} CreateSessionDraft */
 /** @typedef {Wire.SessionActivity | { state: { type: "idle" }, queued: number, context_usage: Wire.TokenUsage, pending_compaction: null }} FeedActivity */
-/** @typedef {{ session: Wire.Session, activity: FeedActivity }} FeedItem */
+/**
+ * One entry of the session list: the session record and its activity.
+ * @typedef {{ session: Wire.Session, activity: FeedActivity }} FeedItem
+ */
 /** @typedef {{ id: string, title: string, activity: FeedActivity, session: Wire.Session }} SessionRow */
 /** @typedef {{ model: string | null, reasoning: string }} ModelDefaults */
-/** @typedef {ViewLike & { session: Session, transcript: Transcript, composer?: Composer }} SessionPane */
+/**
+ * A pane that shows a session. It has a `session` and a `transcript`, and a `composer` when it takes input. `ChatView` is one.
+ * @typedef {ViewLike & { session: Session, transcript: Transcript, composer?: Composer }} SessionPane
+ */
 
 // This module emits these names, so it declares them.
 events.declare(["session.current.changed", "model.changed", "activity.changed"]);
@@ -38,25 +44,38 @@ export function soleText(content) {
   return only && only.type === "text" ? only.text : null;
 }
 
-// One engine session in the TUI: its id, its pin, and the views that show it. A draft has no id until its first input creates one.
+/**
+ * One engine session in the TUI: its id, its pin, and the panes that show it. A draft has a null `sessionId` until its first input creates the session.
+ * Panes on the same id share one `Session`. `showSession` and `openSession` move one pane; `open` moves every pane of this session.
+ */
 export class Session {
   constructor() {
-    // Use open, or show a view another session, to change the id and its native pin.
-    /** @type {string | null} */
+    /**
+     * The engine session id, or null for a draft. Only this class writes it, because the id and the native pin change together.
+     * @type {string | null}
+     */
     this.sessionId = null;
+    /** True while the create request of this draft is in flight. */
     this.creating = false;
     this.gen = 0;
-    // Every pane that shows this session. A pane enters through `join` and leaves through `leave`.
     // An array, so a stream delta walks it by index and allocates no iterator.
-    /** @type {SessionPane[]} */
+    /**
+     * Every pane that shows this session. A pane enters through `join` and leaves through `leave`.
+     * @type {SessionPane[]}
+     */
     this.views = [];
-    // The live activity while the session holds its pin, read back after each activity fact.
-    /** @type {Wire.SessionActivity | null} */
+    /**
+     * The live activity, or null while the session holds no pin. Each activity fact reads it again and emits `activity.changed`.
+     * @type {Wire.SessionActivity | null}
+     */
     this.activity = null;
   }
 
-  // Pin `id` and show it in every view. The engine counts pins, so one open owes exactly one release. False when the engine refuses.
-  /** @param {string} id @returns {boolean} */
+  /**
+   * Pin session `id` and show it in every pane of this session. The engine counts pins, so each open needs exactly one release.
+   * An open of the current id only reloads the transcripts. When the engine refuses `id`, the session keeps its old id, shows an error notification, and returns false.
+   * @param {string} id @returns {boolean}
+   */
   open(id) {
     if (this.sessionId === id) {
       this.reload();
@@ -81,8 +100,10 @@ export class Session {
     return true;
   }
 
-  // Tell the user once per open when the files behind the stored snapshots changed. The user decides on /reload.
-  /** @param {string} id */
+  /**
+   * Warn once per open when AGENTS.md or the skills changed on disk after the session stored them. The user decides on /reload.
+   * @param {string} id
+   */
   checkContext(id) {
     const token = this.gen;
     client.sessionCheckContext(id).then((item) => {
@@ -96,8 +117,13 @@ export class Session {
     }).catch(() => {});
   }
 
-  // Send composer content into the session, or return false so the composer keeps it. A failure restores that composer.
-  /** @param {readonly Wire.ContentPart[]} content @param {Composer} composer @returns {boolean} */
+  /**
+   * Send composer content to the session. A draft creates the session with this content as its first input.
+   * One text part of the form `/skill:<name> [arguments]` invokes that skill.
+   * It returns false when the composer must keep the content: a create is already in flight, or no workspace directory exists.
+   * A later failure puts the content back into `composer` and shows an error notification.
+   * @param {readonly Wire.ContentPart[]} content @param {Composer} composer @returns {boolean}
+   */
   send(content, composer) {
     const text = soleText(content);
     const invocation = text === null ? null : parseSkillLine(text);
@@ -111,16 +137,20 @@ export class Session {
     return true;
   }
 
-  // The model the next input goes to: the session's own, or the default a new chat takes.
-  /** @returns {string} */
+  /**
+   * The model selector that the next input goes to: the model of the session, else the default for a new chat. "" when no model is known.
+   * @returns {string}
+   */
   modelSelector() {
     const item = this.sessionId ? feedItem(this.sessionId) : null;
     return (item && item.session.model) || defaultModel().model || "";
   }
 
-  // Send the next input to `model`, and make it the default a new chat takes.
-  // An open session takes the choice only when the engine accepts the patch, so a refused choice changes nothing.
-  /** @param {Wire.ModelInfo} model @param {string} reasoning @returns {void} */
+  /**
+   * Send the next input to `model` with `reasoning`, and make the pair the default for a new chat. On success it emits `model.changed`.
+   * An open session takes the choice only after the engine accepts the patch, so a refused choice changes nothing. A run in flight keeps its settings until the next turn.
+   * @param {Wire.ModelInfo} model @param {string} reasoning @returns {void}
+   */
   setModel(model, reasoning) {
     notify("info", model.name + (reasoning ? " · " + reasoning : ""), "model");
     const sessionId = this.sessionId;
@@ -140,7 +170,7 @@ export class Session {
     });
   }
 
-  // Read the activity again. The pin makes it readable, so a read while the session holds none finds nothing.
+  /** Read the activity again and emit `activity.changed`. The read finds the activity only while the session holds its pin. */
   refreshActivity() {
     const id = this.sessionId;
     if (!id) return;
@@ -149,7 +179,7 @@ export class Session {
     root.invalidate();
   }
 
-  // The session is about to stop holding its id, so the activity leaves with it.
+  /** Set the activity to null and emit `activity.changed`. Call it before the session stops holding its id. */
   forgetActivity() {
     if (!this.sessionId || this.activity === null) return;
     this.activity = null;
@@ -157,14 +187,16 @@ export class Session {
     root.invalidate();
   }
 
-  // Stop the run and keep the queue, so an interrupt never drops a message the user already typed.
+  /** Stop the current run. The queue stays, so an interrupt never drops a message the user already typed. A draft ignores it. */
   interrupt() {
     if (!this.sessionId) return;
     client.sessionCancelRun(this.sessionId).catch(() => {});
   }
 
-  // Re-pull the outline into `views` on a structural change; a closed session must not empty them.
-  /** @param {readonly SessionPane[]} [views] */
+  /**
+   * Read the outline again into `views` after a structural change. The default is every pane of this session. A draft or an unreadable outline leaves the panes as they are.
+   * @param {readonly SessionPane[]} [views]
+   */
   reload(views = this.views) {
     if (!this.sessionId) return;
     const o = client.sessionOutline(this.sessionId);
@@ -173,16 +205,21 @@ export class Session {
     root.invalidate();
   }
 
-  // A draft delta: re-wrap only the streaming message `id`, or only its part `partId` when the digest names one.
-  /** @param {number} id @param {number} [partId] */
+  /**
+   * Apply a streaming delta: rebuild only the streaming message `id`, or only its part `partId` when the digest names one.
+   * @param {number} id @param {number} [partId]
+   */
   active(id, partId) {
     const views = this.views;
     for (let i = 0; i < views.length; i++) /** @type {SessionPane} */ (views[i]).transcript.setActive(id, partId);
     root.invalidate();
   }
 
-  // Accept the session and first input together, then open the accepted session. The composer takes the input back on failure.
-  /** @param {Wire.Input} input @param {Composer} composer @returns {boolean} */
+  /**
+   * Create the session with its first input, then open the new session. It returns false when a create is in flight or no workspace directory exists.
+   * On a failure the composer takes the input back.
+   * @param {Wire.Input} input @param {Composer} composer @returns {boolean}
+   */
   startChat(input, composer) {
     if (this.creating) return false;
     if (!term.cwd) {
@@ -214,7 +251,7 @@ export class Session {
     return true;
   }
 
-  // The engine lost the session. Clear its views back to the placeholder.
+  /** The engine removed the session. Make this session a draft again and clear its panes back to the placeholder. */
   sessionGone() {
     this.forgetActivity();
     this.sessionId = null;
@@ -223,23 +260,29 @@ export class Session {
     notifyCurrent();
   }
 
-  // Drop the pin. The engine counts pins, so an unrelated open of the same id elsewhere keeps it.
+  /** Drop the pin. The engine counts pins, so an unrelated open of the same id keeps its own pin. */
   release() {
     if (!this.sessionId) return;
     client.sessionClose(this.sessionId);
     this.forgetActivity();
   }
 
-  // A view starts to show this session. The first view puts the session in `sessions`, so a session nobody shows is never there.
-  /** @param {SessionPane} view */
+  /**
+   * A pane starts to show this session. The first pane adds the session to `sessions`, so a session that no pane shows is never there.
+   * Throws when the pane already joined. To move a pane, use `showSession`.
+   * @param {SessionPane} view
+   */
   join(view) {
     if (this.views.indexOf(view) >= 0) throw new Error("session: a view joins once");
     if (this.views.length === 0) sessions.push(this);
     this.views.push(view);
   }
 
-  // A view stops showing this session. The last view releases the pin and takes the session out of `sessions`.
-  /** @param {SessionPane} view */
+  /**
+   * A pane stops showing this session. The last pane releases the pin, makes the session a draft, and removes it from `sessions`.
+   * Throws when the pane did not join.
+   * @param {SessionPane} view
+   */
   leave(view) {
     const at = this.views.indexOf(view);
     if (at < 0) throw new Error("session: a view leaves only after it joins");
@@ -253,9 +296,12 @@ export class Session {
   }
 }
 
-// Every session that a view shows, drafts too, so an event reaches each session it names once, however many views show it.
 // An array, so a stream delta and a frame walk it by index and allocate no iterator.
-/** @type {Session[]} */
+/**
+ * Every session that a pane shows, drafts included. An event reaches each session it names once, however many panes show it.
+ * `join` and `leave` keep this list. Do not write it.
+ * @type {Session[]}
+ */
 export const sessions = [];
 
 // The session list the finder and the default model read. The first reader starts one `session.list` read, so nothing reads
@@ -370,8 +416,11 @@ function isSessionPane(view) {
   return /** @type {{ session?: unknown } | null} */ (view)?.session instanceof Session;
 }
 
-// Show `session` in `view`. The old session leaves, and its last view releases it.
-/** @param {SessionPane} view @param {Session} session @returns {void} */
+/**
+ * Show `session` in `view`. The pane leaves its old session, and the last pane of that session releases it.
+ * Nothing happens when the pane already shows `session`.
+ * @param {SessionPane} view @param {Session} session @returns {void}
+ */
 export function showSession(view, session) {
   if (view.session === session) return;
   view.session.leave(view);
@@ -385,8 +434,11 @@ export function showSession(view, session) {
   notifyCurrent();
 }
 
-// Open session `id` in `view`. A view on the same id already holds it, so the two share one session and one pin.
-/** @param {SessionPane} view @param {string} id @returns {void} */
+/**
+ * Open engine session `id` in `view`. When a pane already shows `id`, the two panes share one `Session` and one pin.
+ * When the engine refuses `id`, the pane stays as it is and an error notification shows.
+ * @param {SessionPane} view @param {string} id @returns {void}
+ */
 export function openSession(view, id) {
   const held = sessionOf(id);
   if (held) return showSession(view, held);
@@ -399,12 +451,19 @@ export function openSession(view, id) {
 /** @type {SessionPane | null} */
 let current = null;
 
-/** @returns {SessionPane | null} */
+/**
+ * The pane that holds a session and had focus last, or null when no pane holds a session.
+ * A focused pane with no session does not change it. `session.current.changed` announces a change of its session id.
+ * @returns {SessionPane | null}
+ */
 export function currentPane() {
   return current;
 }
 
-/** @returns {Session | null} */
+/**
+ * The session of `currentPane()`, or null when there is no current pane. A draft has a null `sessionId`.
+ * @returns {Session | null}
+ */
 export function currentSession() {
   return current ? current.session : null;
 }
@@ -431,8 +490,10 @@ function fallbackPane() {
   return null;
 }
 
-// The current session's entry with the live activity, or null with no open session.
-/** @returns {FeedItem | null} */
+/**
+ * The list entry of the current session with its live activity. Null when no current pane exists, the pane shows a draft, or the list has no entry for the session yet.
+ * @returns {FeedItem | null}
+ */
 export function currentEntry() {
   const id = current?.session.sessionId;
   if (!id) return null;

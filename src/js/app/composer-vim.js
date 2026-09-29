@@ -179,6 +179,10 @@ function normalKey(c, k) {
   return false;
 }
 
+/**
+ * The `composer-vim` plugin: modal Vim keys for the composer of the focused pane. Esc enters normal mode, and an insert command leaves it.
+ * It needs the `tui` capability. It provides the `composer-vim` capability, which reads and sets the mode, and emits `composer-vim:mode` on each change.
+ */
 export const composerVim = {
   name: "composer-vim",
   /** @param {Context} ctx @returns {void} */
