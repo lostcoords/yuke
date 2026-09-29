@@ -84,7 +84,10 @@ for (const name of list(`${app}/types`)) {
   else if (name === globals) block("declare global", rewrite(text, "types"));
   else chunks.push({ text: text.trimEnd() + "\n" });
 }
-chunks.push({ text: readFileSync(`${app}/generated/proto.d.ts`, "utf8").trimEnd() + "\n" });
+// `proto.d.ts` is a script, so `Wire` is global in the app. This file is a module, so the namespace moves into `declare global` for plugin code too.
+const proto = readFileSync(`${app}/generated/proto.d.ts`, "utf8").trimEnd();
+if (!proto.includes("\ndeclare namespace Wire {")) throw new Error("proto.d.ts has no Wire namespace");
+chunks.push({ text: proto.replace("\ndeclare namespace Wire {", "\ndeclare global {\nnamespace Wire {") + "\n}\n" });
 
 // TypeScript merges an augmentation only into an interface, so a plugin can add to these through `declare module "yuke"`.
 // `yuke` declares each one as an interface over its base, and its home namespace reads the merged interface back.

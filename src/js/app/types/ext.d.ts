@@ -3,7 +3,8 @@ import type { DrainFact, EngineEvent } from "yuke:internal/native/engine";
 import type { Job } from "yuke:internal/native/jobs";
 import type { Context, Scope } from "../ext.js";
 import type { tui } from "../tui.js";
-import type { ChatSurface } from "../chat.js";
+import type { Session } from "../session.js";
+import type { LabelRegistration } from "../transcript.js";
 import type { ComposerVim } from "../composer-vim.js";
 import type { ChatRegion, ChatView, StripRow } from "../chat-view.js";
 import type { Composer } from "../ui.js";
@@ -28,12 +29,12 @@ export type AdviceFunction = (...args: any[]) => any;
 export type AdviceWhere = "before" | "after" | "around" | "filterArgs" | "filterReturn";
 /** The keys of `T` that hold a method, so advice cannot name a field, an accessor value, or a missing key. */
 export type MethodKey<T> = { [P in keyof T]-?: T[P] extends AdviceFunction ? P : never }[keyof T] & string;
-/** The advice for one `where` on method `F`, as `applyAdvice` calls it. A falsy `filterArgs` or an undefined `filterReturn` keeps the value. */
-export type AdviceFor<F extends AdviceFunction, W extends AdviceWhere> =
-  W extends "filterArgs" ? (args: Parameters<F>) => Parameters<F> | null | void :
-  W extends "before" | "after" ? (...args: Parameters<F>) => void :
-  W extends "around" ? (next: F, ...args: Parameters<F>) => ReturnType<F> :
-  W extends "filterReturn" ? (result: ReturnType<F>) => ReturnType<F> | void :
+/** The advice for one `where` on method `F`, as `applyAdvice` calls it. `this` is the object whose method runs. A falsy `filterArgs` or an undefined `filterReturn` keeps the value. */
+export type AdviceFor<F extends AdviceFunction, W extends AdviceWhere, This = unknown> =
+  W extends "filterArgs" ? (this: This, args: Parameters<F>) => Parameters<F> | null | void :
+  W extends "before" | "after" ? (this: This, ...args: Parameters<F>) => void :
+  W extends "around" ? (this: This, next: F, ...args: Parameters<F>) => ReturnType<F> :
+  W extends "filterReturn" ? (this: This, result: ReturnType<F>) => ReturnType<F> | void :
   never;
 
 export interface AdviceOptions {
@@ -159,11 +160,19 @@ export interface ToolDefinition {
 }
 
 /** The value `inject` gives each capability name. A plugin declares its own through `declare module "yuke"`; an undeclared name is `unknown`. */
+/** The `chat` capability. The shell asks it for each new pane, and tools name their calls through it. */
+export interface ChatService {
+  /** A new chat pane. Without `session`, the pane shows a new draft. */
+  create(session?: Session): ChatView;
+  /** Register tool and source labels. The disposer removes them, and an unload of the block removes them too. */
+  labels(entries: LabelRegistration): Disposer;
+}
+
 export interface Capabilities {
   /** The terminal UI of one block. An unload of the block removes what the block adds. The shell provides it. */
   tui: ReturnType<typeof tui.bindTo>;
-  /** The chat panes and their transcript labels. The shell provides it. */
-  chat: ChatSurface;
+  /** The chat panes and their transcript labels. The `chat` plugin provides it, and a plugin that replaces the chat pane provides its own. */
+  chat: ChatService;
   /** The composer mode service. It exists only while the `composerVim` plugin runs. */
   "composer-vim": ComposerVim;
   [name: string]: unknown;

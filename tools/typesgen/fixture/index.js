@@ -8,6 +8,7 @@ import { agents } from "yuke:plugins";
 import { scopeOf } from "yuke:internal/ext";
 
 const adder = {
+  step: 1,
   /** @param {number} n */
   add: (n) => n + 1,
 };
@@ -26,6 +27,7 @@ const demo = {
     ctx.provide("counter", { count: () => 1 });
     ctx.inject(["counter"], (c) => c.counter.count().toFixed());
     ctx.advise(adder, "add", "filterReturn", (sum) => sum * 2);
+    ctx.advise(adder, "add", "around", function (next, n) { return next(n + this.step); });
     // @ts-expect-error A declared capability checks its provider.
     ctx.provide("counter", 1);
     // @ts-expect-error A context member cannot be a capability name.

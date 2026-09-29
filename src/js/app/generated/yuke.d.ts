@@ -13,6 +13,8 @@ export import ROLE_ACTION = $transcript.ROLE_ACTION;
 export import ROLE_TEXT = $transcript.ROLE_TEXT;
 export import attachPath = $attach.attachPath;
 export import attachClipboard = $attach.attachClipboard;
+export type Presenter = $types_transcript.Presenter;
+export type LabelRegistration = $transcript.LabelRegistration;
 }
 
 declare module "yuke:plugins" {
@@ -267,29 +269,6 @@ export class ChatView {
         y: number;
         visible: boolean;
     } | null;
-}
-}
-
-declare namespace $chat {
-import ChatView = $chat_view.ChatView;
-import registerLabels = $transcript.registerLabels;
-import Session = $session.Session;
-import Disposer = $types_ext.Disposer;
-import Context = $ext.Context;
-/** The `chat` capability, bound to one plugin block. What the block registers through it ends when the block unloads. */
-export class ChatSurface {
-    _ctx: Context;
-    constructor(ctx: Context);
-    /**
-     * A new chat pane on `session`, or on a new draft when `session` is absent. A pane on an open session shows its history at once.
-     * The caller puts the pane in the tree.
-     */
-    create(session?: Session): ChatView;
-    /**
-     * Name tool calls and input sources in every transcript for the life of this block. The newest registration wins. See `registerLabels`.
-     * @returns Removes the registration before the block unloads.
-     */
-    labels(entries: Parameters<typeof registerLabels>[0]): Disposer;
 }
 }
 
@@ -800,7 +779,7 @@ export class Context {
      * @param [opts] - The context sets `owner` to the plugin name.
      * @returns A disposer that removes this advice only. The last removal puts the original method back.
      */
-    advise<T extends object, P extends MethodKey<T>, W extends AdviceWhere>(obj: T, prop: P, where: W, fn: AdviceFor<Extract<T[P], AdviceFunction>, W>, opts?: AdviceOptions | undefined): Disposer;
+    advise<T extends object, P extends MethodKey<T>, W extends AdviceWhere>(obj: T, prop: P, where: W, fn: AdviceFor<Extract<T[P], AdviceFunction>, W, T>, opts?: AdviceOptions | undefined): Disposer;
     /**
      * Provide the capability `name` until the disposer runs or the plugin unloads. A newer provider hides an older one until the newer one leaves.
      * It throws a TypeError for an empty name or the name of a Context member.
@@ -2834,7 +2813,8 @@ import EngineEvent = $native_engine.EngineEvent;
 import Job = $native_jobs.Job;
 import Context = $ext.Context;
 import tui = $tui.tui;
-import ChatSurface = $chat.ChatSurface;
+import Session = $session.Session;
+import LabelRegistration = $transcript.LabelRegistration;
 import ComposerVim = $composer_vim.ComposerVim;
 import ChatRegion = $chat_view.ChatRegion;
 import ChatView = $chat_view.ChatView;
@@ -2862,12 +2842,12 @@ export type AdviceFunction = (...args: any[]) => any;
 export type AdviceWhere = "before" | "after" | "around" | "filterArgs" | "filterReturn";
 /** The keys of `T` that hold a method, so advice cannot name a field, an accessor value, or a missing key. */
 export type MethodKey<T> = { [P in keyof T]-?: T[P] extends AdviceFunction ? P : never }[keyof T] & string;
-/** The advice for one `where` on method `F`, as `applyAdvice` calls it. A falsy `filterArgs` or an undefined `filterReturn` keeps the value. */
-export type AdviceFor<F extends AdviceFunction, W extends AdviceWhere> =
-  W extends "filterArgs" ? (args: Parameters<F>) => Parameters<F> | null | void :
-  W extends "before" | "after" ? (...args: Parameters<F>) => void :
-  W extends "around" ? (next: F, ...args: Parameters<F>) => ReturnType<F> :
-  W extends "filterReturn" ? (result: ReturnType<F>) => ReturnType<F> | void :
+/** The advice for one `where` on method `F`, as `applyAdvice` calls it. `this` is the object whose method runs. A falsy `filterArgs` or an undefined `filterReturn` keeps the value. */
+export type AdviceFor<F extends AdviceFunction, W extends AdviceWhere, This = unknown> =
+  W extends "filterArgs" ? (this: This, args: Parameters<F>) => Parameters<F> | null | void :
+  W extends "before" | "after" ? (this: This, ...args: Parameters<F>) => void :
+  W extends "around" ? (this: This, next: F, ...args: Parameters<F>) => ReturnType<F> :
+  W extends "filterReturn" ? (this: This, result: ReturnType<F>) => ReturnType<F> | void :
   never;
 
 export interface AdviceOptions {
@@ -2994,12 +2974,20 @@ export interface ToolDefinition {
 }
 
 /** The value `inject` gives each capability name. A plugin declares its own through `declare module "yuke"`; an undeclared name is `unknown`. */
+/** The `chat` capability. The shell asks it for each new pane, and tools name their calls through it. */
+export interface ChatService {
+  /** A new chat pane. Without `session`, the pane shows a new draft. */
+  create(session?: Session): ChatView;
+  /** Register tool and source labels. The disposer removes them, and an unload of the block removes them too. */
+  labels(entries: LabelRegistration): Disposer;
+}
+
 export type Capabilities = import("yuke").Capabilities;
 export interface CapabilitiesBase {
   /** The terminal UI of one block. An unload of the block removes what the block adds. The shell provides it. */
   tui: ReturnType<typeof tui.bindTo>;
-  /** The chat panes and their transcript labels. The shell provides it. */
-  chat: ChatSurface;
+  /** The chat panes and their transcript labels. The `chat` plugin provides it, and a plugin that replaces the chat pane provides its own. */
+  chat: ChatService;
   /** The composer mode service. It exists only while the `composerVim` plugin runs. */
   "composer-vim": ComposerVim;
   [name: string]: unknown;
@@ -3735,7 +3723,8 @@ export interface PromptOptions {
 }
 
 // GENERATED by tools/protogen (zig build gen-schema). Do not edit.
-declare namespace Wire {
+declare global {
+namespace Wire {
 
 /** This type identifies the client connection. */
 export interface Client {
@@ -5438,4 +5427,5 @@ export interface Broadcasts {
   "job.changed": JobChangedData;
 }
 
+}
 }

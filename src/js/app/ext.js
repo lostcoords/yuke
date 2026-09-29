@@ -306,7 +306,7 @@ function applyAdvice(rec, self, args) {
 
 export const advice = {
   // Install one advice, ordered by `order`. The disposer removes only this advice.
-  /** @template {object} T @template {MethodKey<T>} P @template {AdviceWhere} W @param {T} obj @param {P} prop @param {W} where @param {AdviceFor<Extract<T[P], AdviceFunction>, W>} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
+  /** @template {object} T @template {MethodKey<T>} P @template {AdviceWhere} W @param {T} obj @param {P} prop @param {W} where @param {AdviceFor<Extract<T[P], AdviceFunction>, W, T>} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
   advise(obj, prop, where, fn, opts) {
     if (!Object.hasOwn(WHERE, where)) throw new TypeError("advise: unknown kind " + where);
     if (typeof fn !== "function") throw new TypeError("advise: fn must be a function");
@@ -702,7 +702,7 @@ export class Context {
   /**
    * Wrap the method `prop` of `obj` with advice until the disposer runs or the plugin unloads.
    * It throws a TypeError when `prop` is an accessor or not a method, or when `where` is unknown.
-   * @template {object} T @template {MethodKey<T>} P @template {AdviceWhere} W @param {T} obj @param {P} prop @param {W} where @param {AdviceFor<Extract<T[P], AdviceFunction>, W>} fn @param {AdviceOptions | undefined} [opts] - The context sets `owner` to the plugin name.
+   * @template {object} T @template {MethodKey<T>} P @template {AdviceWhere} W @param {T} obj @param {P} prop @param {W} where @param {AdviceFor<Extract<T[P], AdviceFunction>, W, T>} fn @param {AdviceOptions | undefined} [opts] - The context sets `owner` to the plugin name.
    * @returns {Disposer} A disposer that removes this advice only. The last removal puts the original method back.
    */
   advise(obj, prop, where, fn, opts) {

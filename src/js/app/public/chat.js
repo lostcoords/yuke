@@ -3,3 +3,6 @@ export { ChatView } from "yuke:internal/chat-view";
 export { Transcript, labels, registerLabels, ROLE_NONE, ROLE_ACTION, ROLE_TEXT } from "yuke:internal/transcript";
 export { attachPath, attachClipboard } from "yuke:internal/attach";
 
+
+/** @typedef {import("../types/transcript.js").Presenter} Presenter */
+/** @typedef {import("yuke:internal/transcript").LabelRegistration} LabelRegistration */
