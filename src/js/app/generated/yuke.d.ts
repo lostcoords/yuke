@@ -113,19 +113,31 @@ export type AgentsOptions = {
     maxDepth?: number;
     maxRounds?: number;
 };
-/** @param {AgentsOptions} options */
+/**
+ * Build the `agents` plugin. It gives the model the tools spawn_agent, send_agent_input, and stop_agent, which start and steer child sessions.
+ * It throws a TypeError for invalid options.
+ * @param options - `catalog` maps each child label (a-z first, then a-z, 0-9, _ or -, up to 64 characters, not "root") to a row.
+ * A row has `description` for the model, `model` (the parent model without it), `prompt` after the child policy, and `tools`, a subset of read, write, edit, exec, and skill.
+ * `default` names the row for a call without `agent`; with one row, that row is the default.
+ * `maxConcurrent` and `maxDepth` replace the engine limits, and `maxRounds` caps the rounds of each child. Each is a positive 32-bit integer.
+ */
 export function agents(options: AgentsOptions): {
     name: string;
-    /** @param {Context} ctx */
     apply(ctx: Context): void;
 };
 }
 
 declare namespace $attach {
 import Composer = $ui.Composer;
-/** @param {Composer} composer @param {string} text @param {number} from @returns {Promise<boolean>} */
+/**
+ * Copy the image at path `text` into the blob store, and attach it to `composer` over the `text` that the caller inserted at offset `from`.
+ * Emits `composer.attached` on success. Resolves to false when the path names no file or names a directory, or when the store refuses the image; a refusal shows an error notification.
+ */
 export function attachPath(composer: Composer, text: string, from: number): Promise<boolean>;
-/** @param {Composer} composer @returns {Promise<boolean>} */
+/**
+ * Attach the clipboard image to `composer` at the caret. Nothing goes into the composer until the blob store holds the image.
+ * Emits `composer.attached` on success. Resolves to false and shows a notification when the clipboard holds no image or the store refuses it.
+ */
 export function attachClipboard(composer: Composer): Promise<boolean>;
 }
 
@@ -142,6 +154,10 @@ import Session = $session.Session;
 import MouseEvent = $types_core.HostMouseEvent;
 import NavTarget = $types_core.NavTarget;
 import Rect = $types_core.Rect;
+/**
+ * The chat pane: a transcript above a composer in one leaf. Plugins extend it through events, and the newest listener that answers wins:
+ * `chat.press` claims a left press, `chat.strip` adds rows under the transcript, `chat.rule` puts a line on the rule, and `chat.cursor` places the caret.
+ */
 export class ChatView {
     rect: {
         x: number;
@@ -149,8 +165,11 @@ export class ChatView {
         w: number;
         h: number;
     };
+    /** The session that this pane reads and sends through. To move the pane to another session, use `showSession` or `openSession`. */
     session: Session;
+    /** The messages of the shown session. It reads parts straight from the engine for the current `session`; a draft has none. */
     transcript: Transcript;
+    /** The input box. A submit sends its content through `session.send`, and a pasted image path becomes an attachment. */
     composer: Composer;
     title: Text;
     hint: Text;
@@ -190,31 +209,59 @@ export class ChatView {
         w: number;
         h: number;
     };
-    /** @type {StripRow[]} */
+    /**
+     * The rows that `chat.strip` answered at the last layout.
+     */
     strip: StripRow[];
-    /** @type {ChatRegion} */
+    /**
+     * The region that reads the keyboard. The mouse routes by rect instead. To change it, use `focusRegion`.
+     */
     focus: ChatRegion;
-    /** @param {Session} session */
+    /**
+     * The pane joins `session` at once, so it appears in `session.views`.
+     */
     constructor(session: Session);
+    /** Always "chat". */
     get name(): string;
-    /** @returns {string[]} */
+    /**
+     * The keymap contexts of this pane: "chat", then the focused region. So a binding can own one region alone.
+     */
     contexts(): string[];
+    /** A pane focus gives the keyboard back to the composer. */
     onFocus(): void;
-    /** @param {ChatRegion} name */
+    /**
+     * Give the keyboard to region `name`, and emit `region.focused` when the region changes. Throws a TypeError for an unknown region.
+     */
     focusRegion(name: ChatRegion): void;
-    /** @param {HostEvent} ev @returns {boolean} */
+    /**
+     * Send a key to the composer. It returns false while the transcript has focus, because keymap bindings move the transcript.
+     */
     onKey(ev: HostEvent): boolean;
-    /** @returns {NavTarget | null} */
+    /**
+     * The widget that a nav binding drives here: the transcript pager. The transcript scrolls even while the composer has focus.
+     */
     navTarget(): NavTarget | null;
-    /** @param {MouseEvent} ev @returns {boolean} */
+    /**
+     * Route a mouse event by sub-rect, so a wheel step over the composer never moves the transcript. A drag or a release always goes to the transcript.
+     * After the transcript reads a left press, a `chat.press` listener can claim it.
+     */
     onMouse(ev: MouseEvent): boolean;
-    /** @param {Rect} bounds @returns {void} */
+    /**
+     * Stack the transcript, the strip, the rule, and the composer; the transcript takes the rows the others leave. The composer takes at most half the pane.
+     * Each layout asks `chat.strip` for the strip rows. An empty draft shows its title and hint in the transcript region.
+     */
     layout(bounds: Rect): void;
-    /** @param {boolean} [focused] @returns {void} */
+    /**
+     * Draw the pane into the rects of the last layout.
+     */
     draw(focused?: boolean): void;
-    /** @param {number} x @param {number} y @param {number} w @returns {void} */
+    /**
+     * Draw the rule row. A `chat.rule` listener puts a line on it, such as the working indicator, and the rule fills the rest.
+     */
     _drawRule(x: number, y: number, w: number): void;
-    /** @returns {{ x: number, y: number, visible: boolean } | null} */
+    /**
+     * The caret: the `chat.cursor` answer, else the composer caret while the composer has focus, else null.
+     */
     cursor(): {
         x: number;
         y: number;
@@ -229,13 +276,19 @@ import registerLabels = $transcript.registerLabels;
 import Session = $session.Session;
 import Disposer = $types_ext.Disposer;
 import Context = $ext.Context;
+/** The `chat` capability, bound to one plugin block. What the block registers through it ends when the block unloads. */
 export class ChatSurface {
     _ctx: Context;
-    /** @param {Context} ctx */
     constructor(ctx: Context);
-    /** @param {Session} [session] @returns {ChatView} */
+    /**
+     * A new chat pane on `session`, or on a new draft when `session` is absent. A pane on an open session shows its history at once.
+     * The caller puts the pane in the tree.
+     */
     create(session?: Session): ChatView;
-    /** @param {Parameters<typeof registerLabels>[0]} entries @returns {Disposer} */
+    /**
+     * Name tool calls and input sources in every transcript for the life of this block. The newest registration wins. See `registerLabels`.
+     * @returns Removes the registration before the block unloads.
+     */
     labels(entries: Parameters<typeof registerLabels>[0]): Disposer;
 }
 }
@@ -245,78 +298,142 @@ import MessagePart = $native_engine.MessagePart;
 import PartRead = $native_engine.PartRead;
 import SessionOutline = $native_engine.SessionOutline;
 import TextCursor = $native_engine.TextCursor;
-/** @template {keyof Wire.Methods} M @param {M} method @param {Wire.Methods[M]["paramsType"]} args @returns {Promise<Wire.Methods[M]["returnType"]>} */
+/**
+ * Send one engine request and answer its parsed result after the command and its hooks settle. An input passes the `input.before` hooks first.
+ */
 function request<M extends keyof Wire.Methods>(method: M, ...args: Wire.Methods[M]["paramsType"]): Promise<Wire.Methods[M]["returnType"]>;
-/** @param {Wire.SessionListParams} [params] @returns {Promise<Wire.SessionListResult>} */
+/**
+ * List one page of sessions. The default population is the top-level sessions.
+ */
 function sessionList(params?: Wire.SessionListParams): Promise<Wire.SessionListResult>;
-/** @param {string} sessionId @returns {SessionOutline | null} */
+/**
+ * The transcript outline (message ids, roles, and the draft), or null when the session is not open.
+ */
 function sessionOutline(sessionId: string): SessionOutline | null;
-/** @param {string} sessionId @returns {Wire.SessionActivity | null} */
+/**
+ * The live activity of an open session, or null when no pane holds it.
+ */
 function sessionActivity(sessionId: string): Wire.SessionActivity | null;
-/** @param {string} sessionId @returns {Promise<Wire.SessionListItem>} */
+/**
+ * One session with the activity the engine holds now, open or not.
+ */
 function sessionGet(sessionId: string): Promise<Wire.SessionListItem>;
-/** @param {string} sessionId @returns {Promise<Wire.SessionListItem>} */
+/**
+ * Read one session and check its files. `context_changes` says whether AGENTS.md or the skill roots differ from the stored snapshots.
+ */
 function sessionCheckContext(sessionId: string): Promise<Wire.SessionListItem>;
-/** @param {string} sessionId @returns {Promise<Wire.SessionReloadContextResult>} */
+/**
+ * Rescan AGENTS.md and the skill roots for one idle session. The next run uses the new snapshots.
+ */
 function sessionReloadContext(sessionId: string): Promise<Wire.SessionReloadContextResult>;
-/** @param {string} sessionId @param {string} name @returns {Promise<Wire.SkillLoadResult>} */
+/**
+ * Read the body of one skill from the session catalog. The engine reads the file now.
+ */
 function skillLoad(sessionId: string, name: string): Promise<Wire.SkillLoadResult>;
-/** @param {string} sessionId @returns {Promise<Wire.SessionQueueResult>} */
+/**
+ * The queued inputs of a session, oldest first.
+ */
 function sessionQueue(sessionId: string): Promise<Wire.SessionQueueResult>;
-/** @param {string} path @returns {Promise<Wire.MediaBlob>} */
+/**
+ * Copy one image file into the engine blob store. The ref goes into an image content part.
+ */
 function blobPut(path: string): Promise<Wire.MediaBlob>;
-/** @param {string} data @returns {Promise<Wire.MediaBlob>} */
+/**
+ * Store image bytes a tool received in base64, such as an MCP image block. The engine names the type from the bytes.
+ */
 function blobPutData(data: string): Promise<Wire.MediaBlob>;
-/** @param {string} sessionId @param {number} messageId @returns {MessagePart[]} */
+/**
+ * The parts of one message. The text of a text part and the arguments of a tool part are complete; a tool body and a view stay paged.
+ */
 function sessionParts(sessionId: string, messageId: number): MessagePart[];
-/** @param {string} sessionId @param {number} messageId @param {number} partId @param {TextCursor} [cursor] @returns {PartRead | null} */
+/**
+ * One part of a message, or null when it is gone. With the cursor of a held text, the read carries only the new text.
+ */
 function sessionPart(sessionId: string, messageId: number, partId: number, cursor?: TextCursor): PartRead | null;
-/** @param {string} sessionId @param {number} messageId @param {number} partId @param {string} field @param {number} [offset] @param {number} [limit] @returns {{ text: string, next: number | null }} */
+/**
+ * One page of one field of a part. `field` is the address that a `cut` entry names. `next` is the offset of the next page, or null at the end.
+ */
 function partTextPage(sessionId: string, messageId: number, partId: number, field: string, offset?: number, limit?: number): {
     text: string;
     next: number | null;
 };
-/** @param {string} text @returns {Wire.ContentPart[]} */
+/**
+ * The content array for one text input, such as the `content` of `sessionSendInput`.
+ */
 function textContent(text: string): Wire.ContentPart[];
-/** @param {string} id @param {readonly Wire.ContentPart[]} content @param {Wire.ToolSite} [parentTool] @returns {Promise<Wire.SessionSendInputResult>} */
+/**
+ * Send user content to a session. The engine starts a run, or queues the input while a run is active. The `input.before` hooks can change or block it.
+ * @param [parentTool] - The tool call of a parent session that sends this input.
+ */
 function sessionSendInput(id: string, content: readonly Wire.ContentPart[], parentTool?: Wire.ToolSite): Promise<Wire.SessionSendInputResult>;
-/** @param {string} id @param {string} name @param {string} [args] @returns {Promise<Wire.SessionSendInputResult>} */
+/**
+ * Send an explicit skill invocation. The engine loads the body and appends one user message with the arguments after it.
+ */
 function sessionSendSkill(id: string, name: string, args?: string): Promise<Wire.SessionSendInputResult>;
-/** @param {string} id @param {boolean} [clearQueue] @returns {Promise<Wire.SessionCancelRunResult>} */
+/**
+ * Stop the active run. The queue survives unless `clearQueue` asks otherwise, and the next queued input starts at once.
+ */
 function sessionCancelRun(id: string, clearQueue?: boolean): Promise<Wire.SessionCancelRunResult>;
-/** @param {string} id @returns {Promise<Wire.SessionCompactResult>} */
+/**
+ * Summarize the history below a boundary. A run in flight holds the compaction until it ends.
+ */
 function sessionCompact(id: string): Promise<Wire.SessionCompactResult>;
-/** @param {string} id @param {number} inputId @returns {Promise<Wire.SessionCancelInputResult>} */
+/**
+ * Drop one queued input. A started input belongs to the run, so the engine refuses it.
+ */
 function sessionCancelInput(id: string, inputId: number): Promise<Wire.SessionCancelInputResult>;
-/** @param {Wire.CreateSession} params @returns {Promise<Wire.SessionResult>} */
+/**
+ * Create a session. An unset reasoning takes the default of the model, and a session with no model is refused.
+ */
 function sessionCreate(params: Wire.CreateSession): Promise<Wire.SessionResult>;
-/** @param {string} sessionId @param {Wire.SessionPatch} patch @returns {Promise<Wire.Session>} */
+/**
+ * Change the named settings of one session; an absent field keeps its current value.
+ */
 function sessionPatch(sessionId: string, patch: Wire.SessionPatch): Promise<Wire.Session>;
-/** @param {Wire.CatalogRev | null | undefined} sinceRev @returns {Promise<Wire.CatalogListResult>} */
+/**
+ * The provider and model catalog. An `unchanged` result means the caller keeps the models it holds.
+ */
 function catalogList(sinceRev: Wire.CatalogRev | null | undefined): Promise<Wire.CatalogListResult>;
-/** @returns {Promise<Wire.CatalogReloadResult>} */
+/**
+ * Read providers.json again. `changed` reports whether the catalog revision moved.
+ */
 function catalogReload(): Promise<Wire.CatalogReloadResult>;
-/** @param {string} providerId @returns {Promise<Wire.AuthLoginResult>} */
+/**
+ * Start a device-code login. The engine polls in its own task and reports through `auth.login_finished`.
+ */
 function authLogin(providerId: string): Promise<Wire.AuthLoginResult>;
-/** @param {string} providerId @returns {{ start: Promise<Wire.AuthLoginResult>, outcome: Promise<Wire.AuthLoginOutcome>, dispose: () => void }} */
+/**
+ * Start a device-code login and follow it. `start` answers the URL and the code, and `outcome` settles when the login ends.
+ * `dispose` stops the follow, and `outcome` then never settles.
+ */
 function authLoginTracked(providerId: string): {
     start: Promise<Wire.AuthLoginResult>;
     outcome: Promise<Wire.AuthLoginOutcome>;
     dispose: () => void;
 };
-/** @param {string} loginId @returns {Promise<Wire.Empty>} */
+/** Cancel a device-code login that `authLogin` started. */
 function authCancelLogin(loginId: string): Promise<Wire.Empty>;
-/** @param {string} providerId @param {string} apiKey @returns {Promise<Wire.Empty>} */
+/**
+ * Store one API key. The wire never returns it.
+ */
 function authSetApiKey(providerId: string, apiKey: string): Promise<Wire.Empty>;
-/** @param {string} providerId @returns {Promise<Wire.Empty>} */
+/** Remove the credential that the engine holds for one provider. */
 function authRemove(providerId: string): Promise<Wire.Empty>;
+/**
+ * The in-process engine client: sessions, input, transcripts, the model catalog, and provider logins.
+ * A request method rejects when the engine refuses the request.
+ */
 export const client: {
+    /** The counts of process-owned runs and continuations. `engine.activity.changed` fires once for each change. */
     load: () => $native_engine.EngineLoad;
+    /** True while the process owns a run or a continuation. */
     isBusy: () => boolean;
     request: typeof request;
     sessionList: typeof sessionList;
+    /** Pin the engine runtime of a session while a pane shows it. It answers false when the engine cannot open the session. Each open needs exactly one `sessionClose`, or the runtime never evicts. */
     sessionOpen: (sessionId: string) => boolean;
     sessionClose: (sessionId: string) => void;
+    /** The memory that the JavaScript runtime holds now. The process also holds memory on the Zig side. */
     memoryUsage: () => $native_engine.MemoryUsage;
     sessionOutline: typeof sessionOutline;
     sessionActivity: typeof sessionActivity;
@@ -356,9 +473,12 @@ export type ComposerVim = {
     mode: (c: ComposerType | null) => ComposerMode | null;
     setMode: (c: ComposerType | null, mode: ComposerMode) => void;
 };
+/**
+ * The `composer-vim` plugin: modal Vim keys for the composer of the focused pane. Esc enters normal mode, and an insert command leaves it.
+ * It needs the `tui` capability. It provides the `composer-vim` capability, which reads and sets the mode, and emits `composer-vim:mode` on each change.
+ */
 export const composerVim: {
     name: string;
-    /** @param {Context} ctx @returns {void} */
     apply(ctx: Context): void;
 };
 }
@@ -380,179 +500,221 @@ import StyleConfig = $types_core.StyleConfig;
 import Tickable = $types_core.Tickable;
 import TickableEntry = $types_core.TickableEntry;
 import ViewLike = $types_core.ViewLike;
-/** @type {StyleConfig} */
+/**
+ * The highlight groups. The built-in groups are monochrome: emphasis is weight and inversion, `Normal` is `reset`, and `danger` is the only color.
+ */
 export const style: StyleConfig;
-/** @param {number} x @param {number} y @param {number} w @param {number} h @param {string} group @returns {void} */
+/**
+ * Paint a rectangle of screen cells with the style of the highlight group `group`. A view calls it from its `draw`.
+ */
 export function fill(x: number, y: number, w: number, h: number, group: string): void;
-/** @param {number} x @param {number} y @param {string} s @param {string} group @returns {void} */
+/**
+ * Draw `s` from the screen cell at `x`, `y` with the style of the highlight group `group`. A view calls it from its `draw`.
+ */
 export function text(x: number, y: number, s: string, group: string): void;
-/** @type {CommandRegistry} */
+/**
+ * The command registry. A command has a predicate and an action. A key binding, not the command, names the context where it applies.
+ */
 export const command: CommandRegistry;
+/** The active context: an ordered atom stack plus plugin flags. A key binding context tests them, and a deeper atom beats a shallower or unscoped one. */
 export const context: {
-    /** @type {Record<string, Array<{ value: ContextFlag }>>} */
     _flags: Record<string, Array<{
         value: ContextFlag;
     }>>;
-    /** @param {Record<string, ContextFlag>} flags @returns {() => void} */
+    /**
+     * Add flags and return a disposer. A context tests a flag with `name == value` or `name != value`.
+     * The newest live provider of a name gives its value. The disposer removes only its own providers.
+     */
     add(flags: Record<string, ContextFlag>): () => void;
-    /** @param {string} name @returns {string | undefined} */
+    /**
+     * The value of one flag, or undefined when no provider gives one. A provider that throws reads as absent, so it never breaks a key.
+     */
     flag(name: string): string | undefined;
-    /** @returns {string[]} */
+    /**
+     * The active atoms, root first; the index is the depth. It holds "root", the atoms of the active pane,
+     * and then "overlay" and the atoms of the focused overlay while one has the focus. A float adds no atom, because it holds no focus.
+     */
     stack(): string[];
 };
-/** @type {KeymapRegistry} */
+/**
+ * The key binding registry. New bindings run before old bindings. A space separates the strokes of a sequence.
+ */
 export const keymap: KeymapRegistry;
+/** The key routes. A route chooses whether the keymap or the active view reads a key first. */
 export const route: {
-    /** @type {RouteEntry[]} */
     _list: RouteEntry[];
     _seq: number;
-    /** @param {RouteWhere} where @param {string} [ctx] @returns {() => void} */
+    /**
+     * Register one route under a context and return a disposer. The newest route with the deepest matching atom wins.
+     * It throws a TypeError for another `where`, and an Error when `ctx` has bad syntax.
+     * @param [ctx] - a context expression, as `keymap.add` takes. No context applies everywhere.
+     */
     add(where: RouteWhere, ctx?: string): () => void;
-    /** @returns {RouteWhere} */
+    /**
+     * The route for the active context. The view reads first when no route matches.
+     */
     reader(): RouteWhere;
 };
-/** @param {string | null | undefined} text @param {string | undefined} what @returns {number} */
+/**
+ * Write `text` to the clipboard, tell the user the result, and emit `clipboard.copied`.
+ * @param text - null, undefined, or "" copies nothing.
+ * @param what - the name of the text in the notice. The default is "text".
+ * @returns the byte count, 0 for empty text, or -1 when the text is larger than the clipboard limit.
+ */
 export function copy(text: string | null | undefined, what: string | undefined): number;
+/** A base class for a pane view. Each hook does nothing, and `layout` keeps the rect. A subclass overrides the hooks it needs. */
 export class View {
-    /** @type {Rect} */
     rect: Rect;
     constructor();
     get name(): string;
-    /** @param {Rect} rect @returns {void} */
     layout(rect: Rect): void;
-    /** @returns {void} */
     draw(): void;
-    /** @param {HostEvent} _ev @returns {boolean} */
     onKey(_ev: HostEvent): boolean;
-    /** @param {Extract<HostEvent, { type: "mouse" }>} _ev @returns {boolean} */
     onMouse(_ev: Extract<HostEvent, {
         type: "mouse";
     }>): boolean;
-    /** @returns {void} */
     tick(): void;
-    /** @returns {{ periodMs: number } | null} */
     needsTick(): {
         periodMs: number;
     } | null;
-    /** @returns {{ x: number, y: number, visible: boolean } | null} */
     cursor(): {
         x: number;
         y: number;
         visible: boolean;
     } | null;
 }
+/** One node of the pane tree: a leaf that shows a view, or a split of two nodes. */
 export class Node {
-    /** @type {Node | null} */
     parent: Node | null;
-    /** @type {Rect} */
     rect: Rect;
-    /** @type {NodeShape} */
     shape: NodeShape;
-    /** @param {NodeShape} shape */
     constructor(shape: NodeShape);
-    /** @param {ViewLike} view @returns {Node} */
     static leaf(view: ViewLike): Node;
-    /** @param {"row" | "col"} kind @param {Node} a @param {Node} b @param {number | undefined} ratio @returns {Node} */
     static branch(kind: "row" | "col", a: Node, b: Node, ratio: number | undefined): Node;
-    /** @param {"row" | "col"} kind @param {Node} a @param {Node} b @returns {void} */
     becomeSplit(kind: "row" | "col", a: Node, b: Node): void;
-    /** @param {number} col @param {number} row @returns {Node | null} */
     leafAt(col: number, row: number): Node | null;
-    /** @param {Node[] | undefined} [out] @returns {Node[]} */
     leaves(out?: Node[] | undefined): Node[];
-    /** @param {Rect} rect @returns {void} */
     layout(rect: Rect): void;
-    /** @param {Node | null} activeLeaf @returns {void} */
     draw(activeLeaf: Node | null): void;
 }
+/** The status bar. It takes one row under the whole layout. A segment renders to a string or to nothing. */
 export const status: {
-    /** @type {StatusEntry[]} */
     _list: StatusEntry[];
-    /** @param {StatusSegment} seg @returns {() => void} */
+    /**
+     * Register a segment and return a disposer. It throws a TypeError for a missing `render`, a bad `side`, or an `order` that is not finite.
+     */
     add(seg: StatusSegment): () => void;
-    /** @param {"left" | "right"} which @returns {string} */
+    /**
+     * The text of one side now. A segment that renders nothing drops out of the join.
+     */
     side(which: "left" | "right"): string;
-    /** @param {Rect} rect @returns {void} */
     draw(rect: Rect): void;
 };
+/** The screen: the pane tree, the overlay stack, the status bar, and the frame loop. `root` is the one instance. */
 export class RootView {
-    /** @type {Node | null} */
     root_node: Node | null;
-    /** @type {Node | null} */
     activeLeaf: Node | null;
-    /** @type {Overlay[]} */
     overlays: Overlay[];
-    /** @type {WeakMap<Overlay, () => void>} */
     _closers: WeakMap<Overlay, () => void>;
-    /** @type {Node[]} */
     _leafScratch: Node[];
-    /** @type {TickableEntry[]} */
     tickables: TickableEntry[];
-    /** @type {WeakMap<object, number>} */
     _tickedAt: WeakMap<object, number>;
-    /** @type {Node | null} */
     _capture: Node | null;
-    /** @type {boolean} */
     _needsDraw: boolean;
-    /** @type {boolean} */
     _layoutDirty: boolean;
-    /** @type {boolean} */
     _started: boolean;
     constructor();
+    /** The view in the focused pane, or null when the tree is empty. */
     get active(): ViewLike | null;
-    /** @param {Node | null} node @returns {void} */
+    /**
+     * Replace the pane tree and focus its first leaf. Each view that leaves the tree gets a `pane.closed` event.
+     * It throws a TypeError when a view shows twice or another owner holds it.
+     */
     setRoot(node: Node | null): void;
-    /** @param {Node | null} leaf @returns {void} */
     _setActiveLeaf(leaf: Node | null): void;
-    /** @param {ViewLike | null} view @returns {boolean} */
+    /**
+     * Focus the pane that shows `view`. Return false when the view is not in the tree.
+     */
     focusView(view: ViewLike | null): boolean;
-    /** @param {Extract<HostEvent, { type: "mouse" }>} ev @returns {boolean} */
     routeMouse(ev: Extract<HostEvent, {
         type: "mouse";
     }>): boolean;
-    /** @param {"row" | "col"} kind @param {ViewLike} view @returns {Node | null} */
+    /**
+     * Split the focused pane and show `view` in the new pane, which gets the focus. Prefer `tui.split`, which closes the pane when its block stops.
+     * It throws a TypeError when `view` has no `layout` and `draw` or already shows.
+     * @param kind - "row" puts the new pane on the right, and "col" puts it below.
+     * @returns the new leaf, or null when no pane has the focus.
+     */
     split(kind: "row" | "col", view: ViewLike): Node | null;
-    /** @param {ViewLike} [view] @returns {void} */
+    /**
+     * Close the pane that shows `view`, or the focused pane, and emit `pane.closed`. A view no longer in the tree closes nothing.
+     * The last pane does not close.
+     */
     close(view?: ViewLike): void;
-    /** @param {"h" | "j" | "k" | "l"} d @returns {void} */
+    /**
+     * Focus the nearest pane in a direction: "h" left, "j" down, "k" up, "l" right. With no pane there, the focus stays.
+     */
     focusDir(d: "h" | "j" | "k" | "l"): void;
-    /** @param {number} step @returns {void} */
+    /**
+     * Move the focus `step` panes through the tree order, and wrap at each end.
+     */
     focusCycle(step: number): void;
-    /** @param {Tickable} tickable @returns {TickableEntry | undefined} */
     _tickableEntry(tickable: Tickable): TickableEntry | undefined;
-    /** @param {Tickable} tickable @returns {boolean} */
+    /**
+     * Report whether a tickable is registered, so a caller never reads the entry list itself.
+     */
     hasTickable(tickable: Tickable): boolean;
-    /** @param {Tickable} tickable @returns {Tickable} */
+    /**
+     * Add a tickable to the frame loop and return it. After the start, it gets `onStart` at once. Prefer `tui.tickable`, which removes it when its block stops.
+     * A second registration shares one entry, so one owner cannot stop a service another still holds.
+     */
     addTickable(tickable: Tickable): Tickable;
-    /** @param {Tickable} tickable @returns {void} */
+    /**
+     * Drop one registration. The last one removes the entry, and only a started service gets `onStop`.
+     */
     removeTickable(tickable: Tickable): void;
-    /** @returns {NavTarget | null} */
+    /**
+     * The widget that a nav binding drives, from the layer that reads the keyboard, or null when that layer has none.
+     */
     navTarget(): NavTarget | null;
+    /** The layer that reads the keys and owns the cursor: the top modal overlay, else the active view, else null. */
     get focused(): Overlay | null;
-    /** @param {Overlay} layer @returns {Overlay} */
+    /**
+     * Show `layer` on top of the overlay stack and return it. A modal layer ends a waiting key sequence.
+     * Prefer `tui.overlay`, which closes the layer when its block stops.
+     * It throws a TypeError when the layer has no `layout` and `draw` or already shows.
+     */
     pushOverlay(layer: Overlay): Overlay;
-    /** @param {Overlay} layer @param {() => void} onClose @returns {void} */
+    /**
+     * Run `onClose` once when `layer` leaves the stack, by any pop. A later call replaces it, so the newest owner answers.
+     */
     closeWith(layer: Overlay, onClose: () => void): void;
-    /** @param {Overlay} [layer] @returns {void} */
+    /**
+     * Take `layer`, or the top layer, off the stack, and run its close function once.
+     * A layer that does not show still runs its close function. An empty stack does nothing.
+     */
     popOverlay(layer?: Overlay): void;
-    /** @returns {void} */
+    /**
+     * Ask for a new layout and a frame. The host paints once after the queue drains, so a burst costs one paint.
+     */
     invalidate(): void;
-    /** @returns {void} */
+    /**
+     * Ask for a frame without a new layout.
+     */
     invalidatePaint(): void;
-    /** @returns {void} */
     flush(): void;
-    /** @param {(layer: Overlay | Tickable, isTickable: boolean) => void} fn @returns {void} */
     _forEachTickable(fn: (layer: Overlay | Tickable, isTickable: boolean) => void): void;
-    /** @returns {void} */
     draw(): void;
-    /** @returns {void} */
     syncTick(): void;
-    /** @returns {boolean} */
     tickLayers(): boolean;
-    /** @param {RootEvent} ev @returns {void} */
     onEvent(ev: RootEvent): void;
 }
+/** The one root view of the process. */
 export const root: RootView;
+/**
+ * Ask yuke to quit. A `quit.request` listener can stop the quit, for example while work runs.
+ * The key, the palette, the slash word, and user code all call this, so they follow one rule.
+ */
 export function quit(): void;
 }
 
@@ -583,106 +745,131 @@ import ScopeLife = $types_runtime.ScopeLife;
 export class Scope {
     name: string;
     alive: boolean;
-    /** @type {ScopeEntry[]} */
     _disposers: ScopeEntry[];
-    /** @type {ScopeEntry | null} */
     _parentEntry: ScopeEntry | null;
-    /** @type {ScopeLife | null} */
     _life: ScopeLife | null;
-    /** @param {string | undefined} name */
     constructor(name: string | undefined);
-    /** @returns {ScopeLife} */
     _state(): ScopeLife;
-    /** @returns {boolean} */
     _quiet(): boolean;
-    /** @param {() => unknown} fn @returns {Disposer} */
     effect(fn: () => unknown): Disposer;
-    /** @param {Release} release @returns {() => void | Promise<void>} */
     own(release: Release): () => void | Promise<void>;
     get signal(): cancellation.CancellationSignal;
-    /** @param {Disposer | null} cleanup @returns {ScopeEntry} */
     _addEntry(cleanup: Disposer | null): ScopeEntry;
-    /** @param {ScopeEntry} entry @returns {Disposer | null} */
     _takeEntry(entry: ScopeEntry): Disposer | null;
-    /** @param {string | undefined} name @returns {Scope} */
     child(name: string | undefined): Scope;
     _cancel(): void;
-    /** @returns {void | Promise<void>} */
     dispose(): void | Promise<void>;
-    /** @returns {Promise<void>} */
     _later(): Promise<void>;
-    /** @returns {void | Promise<void>} */
     _release(): void | Promise<void>;
-    /** @param {Release} fn @returns {Promise<void> | undefined} */
     _attempt(fn: Release): Promise<void> | undefined;
 }
+/** The registration surface that `apply` of a plugin gets. Each registration is an effect of the plugin, so an unload of the plugin reverts it. */
 export class Context {
     #private;
+    /** The plugin name. It prefixes the commands of the plugin and owns its advice. */
     id: string;
-    /** @param {Scope} scope @param {string} id */
     constructor(scope: Scope, id: string);
+    /** True until the close of the plugin starts. Async work reads it to skip late registrations. */
     get alive(): boolean;
+    /** The cancellation signal of the plugin. The close cancels it before any effect reverts, so I/O that holds it aborts. */
     get signal(): cancellation.CancellationSignal;
-    /** @param {Release} release @returns {() => void | Promise<void>} */
+    /**
+     * Hold a resource until the plugin closes. The close calls `release` after the effects revert, newest first, and waits for a returned Promise.
+     * On a closed plugin, `own` calls `release` at once and throws a TypeError.
+     * @returns A function that releases the resource now, one time.
+     */
     own(release: Release): () => void | Promise<void>;
-    /** @param {() => unknown} fn @returns {Disposer} */
+    /**
+     * Run `fn` now and keep the cleanup function it returns. The close runs the cleanups newest first.
+     * It throws a TypeError on a closed plugin or when `fn` returns a Promise.
+     * @returns A disposer that runs this cleanup now, one time.
+     */
     effect(fn: () => unknown): Disposer;
-    /** @template {EventName} K @param {K} name @param {Events[K]} fn @param {EventOptions} [opts] @returns {Disposer} */
+    /**
+     * Listen to one bus event until the disposer runs or the plugin unloads.
+     * It throws a TypeError for an event name that no tier declares. An `owner:event` name needs no declaration.
+     */
     on<K extends EventName>(name: K, fn: Events[K], opts?: EventOptions): Disposer;
-    /** @template {EventName} K @param {K} name @param {Events[K]} fn @returns {Disposer} */
+    /**
+     * Listen to the next emit of one bus event only. The disposer or an unload of the plugin removes the listener before that emit.
+     */
     once<K extends EventName>(name: K, fn: Events[K]): Disposer;
-    /** @template {object} T @template {MethodKey<T>} P @template {AdviceWhere} W @param {T} obj @param {P} prop @param {W} where @param {AdviceFor<Extract<T[P], AdviceFunction>, W>} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
+    /**
+     * Wrap the method `prop` of `obj` with advice until the disposer runs or the plugin unloads.
+     * It throws a TypeError when `prop` is an accessor or not a method, or when `where` is unknown.
+     * @param [opts] - The context sets `owner` to the plugin name.
+     * @returns A disposer that removes this advice only. The last removal puts the original method back.
+     */
     advise<T extends object, P extends MethodKey<T>, W extends AdviceWhere>(obj: T, prop: P, where: W, fn: AdviceFor<Extract<T[P], AdviceFunction>, W>, opts?: AdviceOptions | undefined): Disposer;
-    /** @template {string} K @param {K & FreeName<K>} name @param {Provider<K>} value @returns {Disposer} */
+    /**
+     * Provide the capability `name` until the disposer runs or the plugin unloads. A newer provider hides an older one until the newer one leaves.
+     * It throws a TypeError for an empty name or the name of a Context member.
+     * @param value - The capability, or an object whose `bindTo(ctx)` builds one for each `inject` block.
+     */
     provide<K extends string>(name: K & FreeName<K>, value: Provider<K>): Disposer;
-    /** @template {HookPoint} P @param {P} point @param {HookHandler<P>} fn @returns {Disposer} */
+    /**
+     * Answer one engine hook point until the disposer runs or the plugin unloads. The handlers of a point run in registration order.
+     * A handler that throws blocks the action. It throws a TypeError when `fn` is not a function or the point is unknown.
+     */
     hook<P extends HookPoint>(point: P, fn: HookHandler<P>): Disposer;
+    /** The tools of this plugin. An unload of the plugin removes each tool it defines. */
     get tools(): {
-        /** @param {ToolDefinition} definition @returns {Disposer} */
+        /**
+         * Register one tool that the model can call. It throws a TypeError for a name that another tool has, an invalid name,
+         * an empty description, parameters without `type: "object"` and a `properties` object, or a missing `execute`.
+         * @returns A disposer that removes the tool.
+         */
         define(definition: ToolDefinition): Disposer;
     };
-    /** @param {Plugin} plugin @returns {PluginHandle} */
+    /**
+     * Start a child plugin that this plugin owns. The close of this plugin also closes the child.
+     * It throws a TypeError for a plugin without `name` and `apply`, or for a name that a live plugin has.
+     */
     use(plugin: Plugin): PluginHandle;
-    /** @template {string} K @param {(K & FreeName<K>)[]} names @param {InjectApply<K>} apply @returns {Disposer} */
+    /**
+     * Run `apply` while each named capability has a provider. `apply` reads each capability as `ctx.<name>`.
+     * A change of a live provider reverts the block and runs it again. A missing capability reverts it. A fault in `apply` is reported, and the block stays off.
+     * It throws a TypeError for an empty list, an empty name, the name of a Context member, or an `apply` that is not a function.
+     * @returns A disposer that stops the injection and reverts the live block.
+     */
     inject<K extends string>(names: (K & FreeName<K>)[], apply: InjectApply<K>): Disposer;
-    /** @returns {InteractionSurface} */
+    /** Prompts and notifications through the frontend. It needs no `inject`. */
     get interaction(): InteractionSurface;
 }
 class PluginInstance {
     scope: Scope;
     context: Context;
     _name: string;
-    /** @type {"active" | "closing" | "closed"} */
     _phase: "active" | "closing" | "closed";
-    /** @type {PluginAsync | undefined} */
     _async: PluginAsync | undefined;
-    /** @type {Promise<void> | undefined} */
     _running: Promise<void> | undefined;
     _applying: boolean;
-    /** @param {string} name */
     constructor(name: string);
-    /** @returns {PluginAsync} */
     _state(): PluginAsync;
-    /** @returns {void | Promise<void>} */
     dispose(): void | Promise<void>;
-    /** @returns {Promise<void>} */
     _promise(): Promise<void>;
     _force(): void;
-    /** @param {unknown} error */
     _fail(error: unknown): void;
     _finish(): void;
 }
+/** The process plugin registry. One name holds at most one live plugin. A plugin that closes frees its name. */
 export const plugins: {
-    /** @type {Record<string, PluginInstance>} */
     _live: Record<string, PluginInstance>;
     _closing: boolean;
-    /** @param {Plugin} plugin @returns {PluginHandle} */
+    /**
+     * Start a plugin under its name. The host does not wait for an async `apply`, and a rejection reports a fault and closes the plugin.
+     * It throws a TypeError for a plugin without `name` and `apply`, for a name that a live plugin has, or after the registry closes.
+     * @returns A handle that closes this instance only.
+     */
     use(plugin: Plugin): PluginHandle;
-    /** @param {string} name @returns {boolean} */
+    /** Report whether a live plugin has this name. A plugin that still closes counts as live. */
     has(name: string): boolean;
-    /** @param {string} name @returns {void | Promise<void>} */
+    /**
+     * Close the live plugin with this name. No live plugin with the name answers undefined.
+     * @returns A Promise while the close waits for async releases or an async apply, else undefined.
+     */
     dispose(name: string): void | Promise<void>;
-    /** @returns {string[]} */
+    /** The names of the live plugins. */
     names(): string[];
 };
 }
@@ -691,53 +878,58 @@ declare namespace $http {
 import FetchOptions = $native_http.FetchOptions;
 import HttpHead = $native_http.HttpHead;
 import ReadOptions = $native_http.ReadOptions;
+/** The response header fields. */
 class Headers {
     _values: Record<string, string>;
-    /** @param {Record<string, string>} values */
     constructor(values: Record<string, string>);
-    /** @param {string} name @returns {string | null} */
+    /** Read one field; the name ignores case. A missing field answers null, and a repeated field joins its values with ", ". */
     get(name: string): string | null;
 }
+/** The response body. It waits in the host until a read pulls it. Each read inherits the deadline and the signal of the request. */
 class Body {
     _id: number;
     _defaults: ReadOptions;
     _done: boolean;
-    /** @param {number} id @param {ReadOptions} defaults */
     constructor(id: number, defaults: ReadOptions);
-    /** @param {ReadOptions} [options] @returns {Promise<string | null>} */
+    /** Read the next text chunk, cut on a character boundary. It answers null at the end, and a concurrent read rejects. */
     read(options?: ReadOptions): Promise<string | null>;
-    /** @param {ReadOptions} [options] @returns {Promise<string>} */
+    /** Read the rest of the body as text. It rejects above 256 KiB, and a body that ended answers "". */
     readAll(options?: ReadOptions): Promise<string>;
-    /** @returns {void} */
+    /** Drop the rest of the body and its connection. A second call does nothing. */
     cancel(): void;
-    /** @returns {AsyncGenerator<string, void, undefined>} */
     [Symbol.asyncIterator](): AsyncGenerator<string, void, undefined>;
 }
+/** One HTTP response. `text` and `json` read the whole body, and `body` reads it in chunks. A body reads only once. */
 class Response {
+    /** The HTTP status code. */
     status: number;
+    /** True for a 2xx status. */
     ok: boolean;
     headers: Headers;
+    /** The body in chunks. Use it for a body above 256 KiB or a stream. */
     body: Body;
-    /** @type {Promise<string> | undefined} */
     _text: Promise<string> | undefined;
-    /** @param {HttpHead} head @param {ReadOptions} defaults */
     constructor(head: HttpHead, defaults: ReadOptions);
-    /** @returns {Promise<string>} */
+    /** The whole body as text. It rejects above 256 KiB. A second call answers the same Promise. */
     text(): Promise<string>;
-    /** @returns {Promise<any>} */
+    /** The body parsed as JSON. It rejects for a body that is not JSON. */
     json(): Promise<any>;
 }
-/** @param {string} url @param {FetchOptions} [options] @returns {Promise<Response>} */
+/**
+ * Send one HTTP request, and resolve at the response head. A 3xx status answers the head alone, with no redirect.
+ * A non-2xx status resolves; read `ok` or `status`. A network failure, the deadline, or a signal cancel rejects.
+ */
 export function fetch(url: string, options?: FetchOptions): Promise<Response>;
 }
 
 declare namespace $jobs {
 import native = $native_jobs;
 import Job = $native_jobs.Job;
-/** @param {number} id @returns {Promise<Job | null>} */
+/** Ask a running job to stop. It answers the job as it is now, or null for an unknown id; `wait` answers the end. */
 export function stop(id: number): Promise<Job | null>;
-/** @param {number} id @returns {Promise<Job | null>} */
+/** Wait until the job ends, and answer the final job. A job that is not running answers at once, and an unknown id answers null. */
 export function wait(id: number): Promise<Job | null>;
+/** The background jobs of the exec tool. A plugin lists, reads, stops, and waits for them. Each start and end emits `jobs.changed`. */
 export const jobs: {
     list: typeof native.list;
     get: typeof native.get;
@@ -766,25 +958,29 @@ export type ConfigPatch = {
     keymap?: Partial<KeymapConfig>;
 };
 import Bus = $types_ext.Bus;
-/** @type {Config} */
+/** The live process configuration. `defineConfig` changes it in place. */
 export const config: Config;
-/** @param {ConfigPatch} partial @returns {ConfigPatch} */
+/**
+ * Check a config patch and merge it into `config` at once. An absent or undefined field keeps its current value.
+ * `systemPrompt` replaces the built-in base prompt, and null keeps the built-in prompt; `${workspace}`, `${session_id}`, and `${agent_name}` in it expand to the session facts.
+ * `mouse.scrollLines` is the count of screen lines that one wheel step moves, an integer from 1 to 20 (default 3).
+ * `mouse.copyOnSelect` copies the selection when a drag ends (default true).
+ * `keymap.chordMs` is the longest wait in milliseconds for the next stroke of a chord, an integer from 1 to 10000 (default 1000).
+ * It throws a TypeError for an unknown key or an invalid value, and a throw changes no field.
+ * @returns The same `partial` object.
+ */
 export function defineConfig(partial: ConfigPatch): ConfigPatch;
+/** The process event bus. A listener fault enters the notification history, and the other listeners still run. Prefer `ctx.on`, because an unload of the plugin removes its listener. */
 export const events: Bus;
 }
 
 declare namespace $keys {
-/** @param {string} leader @returns {Record<string, string>} */
 export function windowKeys(leader: string): Record<string, string>;
-/** @param {string} seq @returns {string} */
 export function normalizeSeq(seq: string): string;
-/** @param {string} stroke @returns {string} */
 export function stripCtrl(stroke: string): string;
-/** @param {Extract<HostEvent, { type: "key" }>} ev @returns {string} */
 export function strokeOf(ev: Extract<HostEvent, {
     type: "key";
 }>): string;
-/** @param {HostEvent} ev @returns {string} */
 export function textOf(ev: HostEvent): string;
 }
 
@@ -796,42 +992,34 @@ import LayoutNode = $types_layout.LayoutNode;
 import LayoutResult = $types_layout.LayoutResult;
 import Padding = $types_layout.Padding;
 import SizeSpec = $types_layout.SizeSpec;
-/** @param {number} cells @param {{ min?: number, max?: number }} [options] @returns {SizeSpec} */
 export function fixed(cells: number, options?: {
     min?: number;
     max?: number;
 }): SizeSpec;
-/** @param {{ min?: number, max?: number }} [options] @returns {SizeSpec} */
 export function fit(options?: {
     min?: number;
     max?: number;
 }): SizeSpec;
-/** @param {number} [weight] @param {{ min?: number, max?: number }} [options] @returns {SizeSpec} */
 export function grow(weight?: number, options?: {
     min?: number;
     max?: number;
 }): SizeSpec;
-/** @param {unknown} value @param {SizeSpec} size @param {{ align?: "start" | "center" | "end" | "stretch", intrinsic?: IntrinsicSize, layout?: LayoutNode }} [options] @returns {LayoutChild} */
 export function child(value: unknown, size: SizeSpec, options?: {
     align?: "start" | "center" | "end" | "stretch";
     intrinsic?: IntrinsicSize;
     layout?: LayoutNode;
 }): LayoutChild;
-/** @param {LayoutChild[]} children @param {{ gap?: number, padding?: number | Partial<Padding>, align?: "start" | "center" | "end" | "stretch" }} [options] @returns {LayoutNode} */
 export function row(children: LayoutChild[], options?: {
     gap?: number;
     padding?: number | Partial<Padding>;
     align?: "start" | "center" | "end" | "stretch";
 }): LayoutNode;
-/** @param {LayoutChild[]} children @param {{ gap?: number, padding?: number | Partial<Padding>, align?: "start" | "center" | "end" | "stretch" }} [options] @returns {LayoutNode} */
 export function column(children: LayoutChild[], options?: {
     gap?: number;
     padding?: number | Partial<Padding>;
     align?: "start" | "center" | "end" | "stretch";
 }): LayoutNode;
-/** @param {Rect} rect @param {Rect} bounds @returns {Rect} */
 export function clipRect(rect: Rect, bounds: Rect): Rect;
-/** @param {LayoutNode} node @param {Rect} bounds @returns {LayoutResult} */
 export function solve(node: LayoutNode, bounds: Rect): LayoutResult;
 }
 
@@ -874,7 +1062,14 @@ export type McpPlugin = Plugin & {
     login(name: string, open?: (url: string) => Promise<void> | void): Promise<void>;
     logout(name: string): Promise<void>;
 };
-/** @param {McpOptions} [options] @returns {McpPlugin} */
+/**
+ * Build the `mcp` plugin. It starts MCP servers and gives the model their tools. A tool stays deferred until the tool_search tool loads it, unless its server sets `alwaysLoad`.
+ * The servers come from `options.servers`, then `.mcp.json` in `$XDG_CONFIG_HOME` or `~/.config`, then `.mcp.json` in the workspace. The first entry of a name wins.
+ * A workspace server starts only after the user trusts it. It throws a TypeError for a timeout that is not a positive integer.
+ * @param [options] - `servers` has the shape of `mcpServers` in `.mcp.json`. `startupMs` limits the start of each server (default 10000).
+ * `callMs` limits each tool call (default 60000), and the `timeout` of a server replaces it.
+ * @returns The plugin, with `rows`, `login`, `logout`, and `resetTrust` for the MCP commands.
+ */
 export function mcp(options?: McpOptions): McpPlugin;
 }
 
@@ -883,32 +1078,43 @@ import Block = $types_md.Block;
 import BlockSummary = $types_md.BlockSummary;
 import CacheEntry = $types_md.CacheEntry;
 import Row = $types_md.Row;
+/**
+ * A markdown document that renders to styled rows. `setText` and `append` parse only the changed tail, so a stream stays cheap.
+ * A segment offset in a row indexes into `sourceText()`.
+ */
 export class Document {
-    /** @type {string | null} */
     _src: string | null;
     _tail: string;
     _cr: boolean;
     _raw: boolean;
-    /** @type {Block[]} */
     _blocks: Block[];
-    /** @type {Map<number, CacheEntry>} */
     _cache: Map<number, CacheEntry>;
     constructor();
-    /** @param {string} text @returns {boolean} */
+    /**
+     * Replace the source, and return true when it changed. A text that extends the old source keeps every block but the last two.
+     */
     setText(text: string): boolean;
-    /** @param {string} text @returns {number} */
     _setText(text: string): number;
-    /** @param {string} fragment @param {string} text @returns {number} */
+    /**
+     * Add `fragment` at the end of the source. Only the last two blocks parse again.
+     * @param text - the whole raw input after the append.
+     * @returns the count of blocks that did not parse again.
+     */
     append(fragment: string, text: string): number;
-    /** @param {string} text @returns {number} */
     _parse(text: string): number;
-    /** @returns {string} */
+    /**
+     * The normalized markdown: "\r\n" and "\r" become "\n". A segment offset indexes into this text, never into the raw input.
+     */
     sourceText(): string;
-    /** @param {number} width @param {number} [limit] @returns {Row[]} */
+    /**
+     * The rows of the document at `width`, with an empty row between blocks.
+     * @param [limit] - the most rows to return. The default is no limit.
+     */
     rows(width: number, limit?: number): Row[];
-    /** @returns {BlockSummary[]} */
+    /**
+     * The blocks in document order, for a caller that moves by markdown structure.
+     */
     blocks(): BlockSummary[];
-    /** @param {Block} block @param {number} width @param {number} [limit] @returns {Row[]} */
     _blockRows(block: Block, width: number, limit?: number): Row[];
 }
 }
@@ -916,8 +1122,11 @@ export class Document {
 declare namespace $net {
 import ConnectOptions = $native_net.ConnectOptions;
 import Socket = $native_net.Socket;
+/** Byte streams over Unix domain sockets. */
 export const net: {
-    /** @param {ConnectOptions} options @returns {Promise<Socket>} */
+    /**
+     * Connect to the Unix socket at `options.path`. The host allows at most 64 live connections. The caller closes the socket.
+     */
     connect(options: ConnectOptions): Promise<Socket>;
 };
 }
@@ -927,47 +1136,74 @@ import MouseEvent = $types_core.HostMouseEvent;
 import Rect = $types_core.Rect;
 import RowSource = $types_pager.RowSource;
 import TranscriptRow = $types_pager.TranscriptRow;
+/**
+ * The scroll state and the painter for the rows of a `RowSource`. It is a `NavTarget`, so the nav keys move it.
+ * While `stuck` is true, the view follows the tail as rows arrive.
+ */
 export class Pager {
-    /** @type {RowSource} */
     source: RowSource;
+    /** The index of the first row that shows. */
     scroll: number;
+    /** True while the view follows the tail. */
     stuck: boolean;
     _h: number;
     _w: number;
-    /** @type {Rect | null} */
     _rect: Rect | null;
     constructor();
-    /** @returns {Rect | null} */
+    /**
+     * The last drawn rect, or null before a draw or after `clearRect`.
+     */
     rect(): Rect | null;
+    /** Forget the drawn rect, so a click cannot hit a row that left. */
     clearRect(): void;
-    /** @param {number} y @returns {number} */
+    /**
+     * The source row index under screen row `y`. Return -1 outside the drawn rows.
+     */
     rowAtY(y: number): number;
-    /** @returns {number} */
     _total(): number;
-    /** @returns {number} */
     _maxScroll(): number;
-    /** @returns {boolean} */
+    /**
+     * True when the last row shows.
+     */
     atBottom(): boolean;
+    /** Scroll to the tail and follow it. */
     toBottom(): void;
+    /** Scroll to the first row and stop following the tail. */
     toTop(): void;
-    /** @param {number} delta */
+    /**
+     * Scroll by `delta` rows, inside the range. At the end, the view follows the tail again.
+     */
     scrollBy(delta: number): void;
-    /** @param {number} index */
+    /**
+     * Scroll the least that puts row `index` on the screen, and refresh `stuck` so an unfold cannot jump to the tail.
+     */
     scrollIntoView(index: number): void;
-    /** @param {RowSource} source */
+    /**
+     * Read the rows from `source`. The next draw keeps the scroll in range.
+     */
     setSource(source: RowSource): void;
-    /** @param {TranscriptRow[]} rows */
+    /**
+     * Show a fixed array of rows.
+     */
     setRows(rows: TranscriptRow[]): void;
     _clamp(): void;
-    /** @param {Rect} rect */
+    /**
+     * Paint the rows that show in `rect`, and keep this rect for the mouse and the page size.
+     */
     draw(rect: Rect): void;
-    /** @param {number} delta */
     navBy(delta: number): void;
-    /** @param {number} dir */
+    /**
+     * Scroll by `dir` pages. A page is one row less than the drawn height.
+     */
     navPage(dir: number): void;
-    /** @param {number} dir */
+    /**
+     * Scroll to the top when `dir` is negative, else to the tail.
+     */
     navEdge(dir: number): void;
-    /** @param {MouseEvent} ev @returns {boolean} */
+    /**
+     * Scroll on a wheel press. Answer false for any other event.
+     * The wheel scrolls by `config.mouse.scrollLines` per step, and `ev.count` holds the steps the owner folded in.
+     */
     onMouse(ev: MouseEvent): boolean;
 }
 }
@@ -993,61 +1229,124 @@ export type SessionPane = ViewLike & {
     transcript: Transcript;
     composer?: Composer;
 };
+/**
+ * One engine session in the TUI: its id, its pin, and the panes that show it. A draft has a null `sessionId` until its first input creates the session.
+ * Panes on the same id share one `Session`. `showSession` and `openSession` move one pane; `open` moves every pane of this session.
+ */
 export class Session {
-    /** @type {string | null} */
+    /**
+     * The engine session id, or null for a draft. Only this class writes it, because the id and the native pin change together.
+     */
     sessionId: string | null;
+    /** True while the create request of this draft is in flight. */
     creating: boolean;
     gen: number;
-    /** @type {SessionPane[]} */
+    /**
+     * Every pane that shows this session. A pane enters through `join` and leaves through `leave`.
+     */
     views: SessionPane[];
-    /** @type {Wire.SessionActivity | null} */
+    /**
+     * The live activity, or null while the session holds no pin. Each activity fact reads it again and emits `activity.changed`.
+     */
     activity: Wire.SessionActivity | null;
     constructor();
-    /** @param {string} id @returns {boolean} */
+    /**
+     * Pin session `id` and show it in every pane of this session. The engine counts pins, so each open needs exactly one release.
+     * An open of the current id only reloads the transcripts. When the engine refuses `id`, the session keeps its old id, shows an error notification, and returns false.
+     */
     open(id: string): boolean;
-    /** @param {string} id */
+    /**
+     * Warn once per open when AGENTS.md or the skills changed on disk after the session stored them. The user decides on /reload.
+     */
     checkContext(id: string): void;
-    /** @param {readonly Wire.ContentPart[]} content @param {Composer} composer @returns {boolean} */
+    /**
+     * Send composer content to the session. A draft creates the session with this content as its first input.
+     * One text part of the form `/skill:<name> [arguments]` invokes that skill.
+     * It returns false when the composer must keep the content: a create is already in flight, or no workspace directory exists.
+     * A later failure puts the content back into `composer` and shows an error notification.
+     */
     send(content: readonly Wire.ContentPart[], composer: Composer): boolean;
-    /** @returns {string} */
+    /**
+     * The model selector that the next input goes to: the model of the session, else the default for a new chat. "" when no model is known.
+     */
     modelSelector(): string;
-    /** @param {Wire.ModelInfo} model @param {string} reasoning @returns {void} */
+    /**
+     * Send the next input to `model` with `reasoning`, and make the pair the default for a new chat. On success it emits `model.changed`.
+     * An open session takes the choice only after the engine accepts the patch, so a refused choice changes nothing. A run in flight keeps its settings until the next turn.
+     */
     setModel(model: Wire.ModelInfo, reasoning: string): void;
+    /** Read the activity again and emit `activity.changed`. The read finds the activity only while the session holds its pin. */
     refreshActivity(): void;
+    /** Set the activity to null and emit `activity.changed`. Call it before the session stops holding its id. */
     forgetActivity(): void;
+    /** Stop the current run. The queue stays, so an interrupt never drops a message the user already typed. A draft ignores it. */
     interrupt(): void;
-    /** @param {readonly SessionPane[]} [views] */
+    /**
+     * Read the outline again into `views` after a structural change. The default is every pane of this session. A draft or an unreadable outline leaves the panes as they are.
+     */
     reload(views?: readonly SessionPane[]): void;
-    /** @param {number} id @param {number} [partId] */
+    /**
+     * Apply a streaming delta: rebuild only the streaming message `id`, or only its part `partId` when the digest names one.
+     */
     active(id: number, partId?: number): void;
-    /** @param {Wire.Input} input @param {Composer} composer @returns {boolean} */
+    /**
+     * Create the session with its first input, then open the new session. It returns false when a create is in flight or no workspace directory exists.
+     * On a failure the composer takes the input back.
+     */
     startChat(input: Wire.Input, composer: Composer): boolean;
+    /** The engine removed the session. Make this session a draft again and clear its panes back to the placeholder. */
     sessionGone(): void;
+    /** Drop the pin. The engine counts pins, so an unrelated open of the same id keeps its own pin. */
     release(): void;
-    /** @param {SessionPane} view */
+    /**
+     * A pane starts to show this session. The first pane adds the session to `sessions`, so a session that no pane shows is never there.
+     * Throws when the pane already joined. To move a pane, use `showSession`.
+     */
     join(view: SessionPane): void;
-    /** @param {SessionPane} view */
+    /**
+     * A pane stops showing this session. The last pane releases the pin, makes the session a draft, and removes it from `sessions`.
+     * Throws when the pane did not join.
+     */
     leave(view: SessionPane): void;
 }
-/** @type {Session[]} */
+/**
+ * Every session that a pane shows, drafts included. An event reaches each session it names once, however many panes show it.
+ * `join` and `leave` keep this list. Do not write it.
+ */
 export const sessions: Session[];
-/** @param {SessionPane} view @param {Session} session @returns {void} */
+/**
+ * Show `session` in `view`. The pane leaves its old session, and the last pane of that session releases it.
+ * Nothing happens when the pane already shows `session`.
+ */
 export function showSession(view: SessionPane, session: Session): void;
-/** @param {SessionPane} view @param {string} id @returns {void} */
+/**
+ * Open engine session `id` in `view`. When a pane already shows `id`, the two panes share one `Session` and one pin.
+ * When the engine refuses `id`, the pane stays as it is and an error notification shows.
+ */
 export function openSession(view: SessionPane, id: string): void;
-/** @returns {SessionPane | null} */
+/**
+ * The pane that holds a session and had focus last, or null when no pane holds a session.
+ * A focused pane with no session does not change it. `session.current.changed` announces a change of its session id.
+ */
 export function currentPane(): SessionPane | null;
-/** @returns {Session | null} */
+/**
+ * The session of `currentPane()`, or null when there is no current pane. A draft has a null `sessionId`.
+ */
 export function currentSession(): Session | null;
-/** @returns {FeedItem | null} */
+/**
+ * The list entry of the current session with its live activity. Null when no current pane exists, the pane shows a draft, or the list has no entry for the session yet.
+ */
 export function currentEntry(): FeedItem | null;
 }
 
 declare namespace $shell {
 import Context = $ext.Context;
+/**
+ * The `shell` plugin: the window manager. It shows the first chat pane and adds the focus, split, and close commands under the ctrl+k leader.
+ * It needs the `tui` and `chat` capabilities. An unload closes every pane.
+ */
 export const shell: {
     name: string;
-    /** @param {Context} ctx @returns {void} */
     apply(ctx: Context): void;
 };
 }
@@ -1067,9 +1366,16 @@ export type ChildProcess = {
     kill(): boolean;
     exited: Promise<ProcessExit>;
 };
-/** @param {string[]} argv @param {SpawnOptions} [options] @returns {ChildProcess} */
+/**
+ * Start a long-lived child from an argument array, with no shell, in a new process group. The caller kills it; `ctx.effect(() => () => child.kill())` ties it to a plugin.
+ * A failed start rejects `exited`. `onStdout` and `onStderr` get text chunks, not lines; `lines` splits them.
+ * @param [options] - `cwd` resolves against `workspaceRoot`, or the host directory. `env` adds to or replaces the host environment.
+ */
 export function spawn(argv: string[], options?: SpawnOptions): ChildProcess;
-/** @param {(line: string) => void} onLine @param {() => void} [onOverflow] @returns {(text: string) => void} */
+/**
+ * Build a chunk handler that calls `onLine` once for each whole line, without its LF and one CR before it. A tail with no LF waits for the next chunk.
+ * @param [onOverflow] - Called for each line above 1048576 characters, which `lines` drops.
+ */
 export function lines(onLine: (line: string) => void, onOverflow?: () => void): (text: string) => void;
 }
 
@@ -1078,33 +1384,56 @@ export type TextInputOptions = {
     onChange?: (() => void) | null;
     onEdit?: ((from: number, to: number, insertedLength: number) => void) | null;
 };
+/**
+ * A text buffer with a caret: the edit state of a query line, a prompt, or a composer.
+ * Each offset is a UTF-16 index into `text`. `onKey` applies the common line keys.
+ */
 export class TextInput {
+    /** The buffer. Change it through `setText`, `replace`, or `insert`, so the hooks run. */
     text: string;
+    /** The caret offset in `text`. A direct set moves the caret and runs no hook. */
     caret: number;
-    /** @type {(() => void) | null} */
+    /**
+     * Called after each edit.
+     */
     onChange: (() => void) | null;
-    /** @type {((from: number, to: number, insertedLength: number) => void) | null} */
+    /**
+     * Reports the range [from, to) that an edit replaced and the inserted length, for an owner that keeps its own offsets.
+     */
     onEdit: ((from: number, to: number, insertedLength: number) => void) | null;
-    /** @param {TextInputOptions} opts */
     constructor(opts?: TextInputOptions);
-    /** @param {string} s @returns {void} */
+    /**
+     * Replace the whole text and put the caret at the end. `setText("")` clears the buffer.
+     */
     setText(s: string): void;
-    /** @returns {string} */
+    /**
+     * The text before the caret.
+     */
     beforeCaret(): string;
-    /** @param {number} from @param {number} to @param {string} s @returns {void} */
+    /**
+     * Replace [from, to) with `s`. The caret lands after the new text.
+     */
     replace(from: number, to: number, s: string): void;
-    /** @param {string} s @returns {void} */
+    /**
+     * Insert `s` at the caret with one edit, and put the caret after it. An empty `s` does nothing.
+     */
     insert(s: string): void;
-    /** @param {HostEvent} ev @returns {boolean} */
+    /**
+     * Apply one key: left, right, home, end, ctrl+a, ctrl+e, backspace, delete, ctrl+w, ctrl+u, or typed text.
+     * Answer false for any other key. A caret move steps over a whole grapheme.
+     */
     onKey(ev: HostEvent): boolean;
 }
 }
 
 declare namespace $transcript_vim {
 import Context = $ext.Context;
+/**
+ * The `transcript-vim` plugin: cursor motions, visual selection, and yank keys for the transcript. Tab moves the focus between the composer and the transcript.
+ * It needs the `tui` capability. An unload gives the focus back to the composer.
+ */
 export const transcriptVim: {
     name: string;
-    /** @param {Context} ctx */
     apply(ctx: Context): void;
 };
 }
@@ -1132,216 +1461,259 @@ import TranscriptOptions = $types_transcript.TranscriptOptions;
 import SourceLabels = $types_transcript.SourceLabels;
 import MessagePart = $native_engine.MessagePart;
 import TextCursor = $native_engine.TextCursor;
+/** A `labels.role` answer: the part passes through the current group of actions and takes no place in it. */
 export const ROLE_NONE = 0;
+/** A `labels.role` answer: the part joins the current group of actions. Tool calls and reasoning are actions. */
 export const ROLE_ACTION = 1;
+/** A `labels.role` answer: the part closes the current group of actions. */
 export const ROLE_TEXT = 2;
 export type LabelRegistration = {
     tools?: Record<string, Presenter>;
     sources?: SourceLabels;
 };
-/** @param {LabelRegistration} entries @returns {() => void} */
+/**
+ * Add tool presenters and input source labels to every transcript. For each tool name and source type, the newest registration wins.
+ * The call copies `entries`, so a later change to them has no effect. A plugin uses `ctx.chat.labels`, which removes the registration when the block unloads.
+ * @returns Removes only this registration.
+ */
 export function registerLabels(entries: LabelRegistration): () => void;
+/** The words and the grouping that a transcript gives a part. Plugins change them with method advice through `ctx.advise`. */
 export const labels: {
-    /** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {Record<string, any>} args @param {string} raw @returns {ToolLabel} */
+    /**
+     * The label of a tool call with no presenter: the tool name, then its `path`, its `command`, or the raw arguments cut to 48 characters.
+     * `args` holds the parsed JSON arguments, or `{}` when they do not parse.
+     */
     fallback(part: Extract<Wire.AssistantPart, {
         type: "tool";
     }>, args: Record<string, any>, raw: string): ToolLabel;
-    /** @param {Wire.AssistantPart} part @returns {number} */
+    /**
+     * The group role of a part: `ROLE_ACTION` joins the run of actions, `ROLE_TEXT` closes it, and `ROLE_NONE` passes through it.
+     * Tool calls and reasoning are actions, text closes the run, and empty reasoning takes no place.
+     */
     role(part: Wire.AssistantPart): number;
 };
+/**
+ * The transcript of one chat pane: the message outline, exact row counts, and a bounded cache of rendered rows.
+ * The owner feeds it with `setOutline` and `setActive`. The `pager` scrolls and draws it.
+ */
 export class Transcript {
     partsOf: $types_transcript.PartsOf;
     partOf: PartOf | null;
     partTextPage: $types_transcript.PartTextPage | null;
+    /** The scroll state and the drawn rect. Nav bindings drive it. */
     pager: Pager;
-    /** @type {MessageDescriptor[]} */
     _messages: MessageDescriptor[];
-    /** @type {MessageDescriptor | null} */
     _active: MessageDescriptor | null;
     _width: number;
     _labelRevision: number;
-    /** @type {Map<string, number>} */
     _positions: Map<string, number>;
-    /** @type {Map<string, number>} */
     _counts: Map<string, number>;
     _prefix: number[];
-    /** @type {Set<string>} */
     _viewport: Set<string>;
-    /** @type {Map<string, RowCache>} */
     _rows: Map<string, RowCache>;
-    /** @type {Map<string, PartState>} */
     _parts: Map<string, PartState>;
-    /** @type {WeakMap<Wire.AssistantPart, TextCursor>} */
     _cursors: WeakMap<Wire.AssistantPart, TextCursor>;
-    /** @type {ActionPlan | null} */
     _actionPlanCache: ActionPlan | null;
-    /** @type {Map<string, boolean>} */
     _expand: Map<string, boolean>;
-    /** @type {Selection | null} */
+    /**
+     * The selection, or null. It holds two `{ id, row, col }` positions, where `row` counts rendered rows and `col` indexes the row text.
+     */
     selection: Selection | null;
     _dragging: boolean;
     _didDrag: boolean;
-    /** @type {Position | null} */
     _press: Position | null;
+    /** Receives the selected text when a mouse drag ends on a selection that is not empty. */
     onSelect: ((text: string) => void) | null;
-    /** @param {TranscriptOptions} [opts] */
     constructor(opts?: TranscriptOptions);
-    /** @returns {void} */
+    /**
+     * Remove the selection and stop a drag in progress.
+     */
     clearSelection(): void;
-    /** @param {Position | null} anchor @param {Position | null} cursor @param {{ inclusive?: boolean } | null | undefined} [opts] @returns {void} */
+    /**
+     * Set both ends of the selection. `{ inclusive: true }` grows the later end by one grapheme. A null end clears the selection.
+     */
     select(anchor: Position | null, cursor: Position | null, opts?: {
         inclusive?: boolean;
     } | null | undefined): void;
-    /** @param {Position} a @param {Position} b @returns {number} */
+    /**
+     * Compare two positions in transcript order: below 0 when `a` comes first, 0 when they are equal, above 0 when `b` comes first.
+     */
     comparePos(a: Position, b: Position): number;
-    /** @returns {void} */
+    /**
+     * Forget the drawn rect and clear the selection. Call it when the pane draws something else in this space, so a click cannot hit a row that left.
+     */
     hide(): void;
     /** True when the transcript holds no committed message and no streaming draft. */
-    /** @returns {boolean} */
     isEmpty(): boolean;
-    /** @param {MessageDescriptor[]} messages @param {MessageDescriptor | null} active @returns {void} */
+    /**
+     * Replace the outline with the committed `messages` and the streaming draft `active`, or null without a draft. It clears the selection.
+     * A committed message never changes under its id, so its render survives; the draft render goes because a commit folds its reasoning.
+     */
     setOutline(messages: MessageDescriptor[], active: MessageDescriptor | null): void;
-    /** @returns {void} */
     _resetOrder(): void;
-    /** @param {string} key @returns {void} */
     _evict(key: string): void;
-    /** @returns {void} */
     _trimCaches(): void;
-    /** @param {number} id @returns {void} */
     _markStale(id: number): void;
-    /** @param {number} last @returns {void} */
     _indexRowsThrough(last: number): void;
-    /** @param {number} i @returns {number} */
     _offset(i: number): number;
-    /** @param {number} row @returns {number} */
     _messageAtRow(row: number): number;
-    /** @param {number} id @param {number} [partId] @returns {void} */
+    /**
+     * Apply a streaming delta on draft `id`: adopt the draft when it is new, then read part `partId` again, or every part without `partId`.
+     */
     setActive(id: number, partId?: number): void;
-    /** @param {number} id @param {number} partId @returns {void} */
+    /**
+     * Rebuild one tool row whose presenter reads state outside the part, so a child's activity reaches its spawn row. Nothing happens when the row has no render.
+     */
     refreshRow(id: number, partId: number): void;
-    /** @param {number} id @param {number} [partId] @returns {{ groupingChanged: boolean, rowsChanged: boolean }} */
     _refreshParts(id: number, partId?: number): {
         groupingChanged: boolean;
         rowsChanged: boolean;
     };
-    /** @param {number} width @returns {void} */
     _invalidate(width: number): void;
-    /** @param {number} id @returns {string} */
     _sourceOf(id: number): string;
-    /** @returns {SelectionAnchors | null} */
     _anchors(): SelectionAnchors | null;
-    /** @param {{ id: number, off: number, was: string, partId?: string }} a @returns {Position | null} */
     _posAtAnchor(a: {
         id: number;
         off: number;
         was: string;
         partId?: string;
     }): Position | null;
-    /** @param {SelectionAnchors | null} anchors @returns {void} */
     _reanchor(anchors: SelectionAnchors | null): void;
-    /** @param {number} id @returns {{ kind: string, at: number, end: number }[]} */
+    /**
+     * The markdown blocks of message `id`, oldest first, as source offsets. A plain turn has none.
+     */
     blocksOf(id: number): {
         kind: string;
         at: number;
         end: number;
     }[];
-    /** @param {number} id @returns {TranscriptRow[]} */
     _rowsFor(id: number): TranscriptRow[];
-    /** @param {number} id @returns {number} */
+    /**
+     * The number of rendered rows in message `id` at the drawn width. 0 before the first draw or for an id outside the outline.
+     */
     rowCountOf(id: number): number;
-    /** @param {number} id @param {number} row @returns {string} */
+    /**
+     * The rendered text of one row, or "" when the row is gone.
+     */
     rowTextAt(id: number, row: number): string;
-    /** @param {Position | null} pos @returns {number} */
     _globalRow(pos: Position | null): number;
-    /** @param {Position | null} pos @returns {number} */
+    /**
+     * The message source offset under `pos`, or -1 when `pos` is null or no source is under it.
+     */
     sourceAt(pos: Position | null): number;
-    /** @param {number} id @param {number} offset @returns {Position | null} */
+    /**
+     * The position that renders source `offset` of message `id`, or the first after it, so a selection to the end survives a rewrap.
+     * Past the end it answers the end of the last source text. Null when no row of the message has a source.
+     */
     posAtSource(id: number, offset: number): Position | null;
-    /** @param {Position | null} pos @returns {{ x: number, y: number } | null} */
+    /**
+     * The screen cell of a logical position, or null when it is off the drawn rows.
+     */
     screenAt(pos: Position | null): {
         x: number;
         y: number;
     } | null;
-    /** @param {Position} pos @returns {void} */
+    /**
+     * Scroll the least amount that brings `pos` onto the screen.
+     */
     ensureVisible(pos: Position): void;
-    /** @param {MessageDescriptor} m @param {number} width @param {number} index @returns {TranscriptRow[]} */
     _rowsOf(m: MessageDescriptor, width: number, index: number): TranscriptRow[];
-    /** @param {number} id @returns {readonly MessagePart[]} */
     _allParts(id: number): readonly MessagePart[];
-    /** @param {number} id @returns {Wire.AssistantPart[]} */
     _readParts(id: number): Wire.AssistantPart[];
-    /** @param {number} id */
     _partState(id: number): PartState & {
         list: Wire.AssistantPart[];
     };
-    /** @returns {ActionPlan} */
     _actionPlan(): ActionPlan;
-    /** @param {(message: MessageDescriptor) => readonly Wire.AssistantPart[]} readParts @param {((last: number) => void) | null} [ready] @returns {ActionPlan} */
     _buildActionPlan(readParts: (message: MessageDescriptor) => readonly Wire.AssistantPart[], ready?: ((last: number) => void) | null): ActionPlan;
-    /** @param {ActionPlan | null} oldPlan @param {MessageDescriptor[]} [oldMessages] @returns {void} */
     _refreshActionRows(oldPlan: ActionPlan | null, oldMessages?: MessageDescriptor[]): void;
-    /** @param {ItemKey} id @param {ItemKey} partId @returns {string} */
     _expandKey(id: ItemKey, partId: ItemKey): string;
-    /** @param {number} id @param {number} partId @returns {boolean} */
     _reasoningLive(id: number, partId: number): boolean;
-    /** @param {number} id @param {number} partId @param {Wire.AssistantPart | null | undefined} part @returns {boolean} */
     _isExpanded(id: number, partId: number, part: Wire.AssistantPart | null | undefined): boolean;
-    /** @param {number} id @param {number} partId @returns {void} */
+    /**
+     * Open a folded part or fold an open part, and redraw.
+     */
     togglePart(id: number, partId: number): void;
-    /** @param {number} id @param {number} partId @param {Wire.AssistantPart} part @param {string} field @param {string} prefix @returns {string} */
     _wholePartField(id: number, partId: number, part: Wire.AssistantPart, field: string, prefix: string): string;
-    /** @param {number} id @param {number} partId @returns {boolean} */
+    /**
+     * Open a window with the full input and output of tool part `partId`. It first reads the rest of a cut field from the host. False when the part is not a tool.
+     */
     openTool(id: number, partId: number): boolean;
-    /** @param {number} id @param {number} partId @returns {boolean} */
+    /**
+     * Open a window with the full text of reasoning part `partId`. False when the part is not reasoning.
+     */
     openReasoning(id: number, partId: number): boolean;
-    /** @param {Position | null} pos @returns {PartHit | null} */
+    /**
+     * The part under a logical position, or null on a gutter or separator row.
+     */
     partAt(pos: Position | null): PartHit | null;
-    /** @param {Position} pos @returns {Position | null} */
+    /**
+     * Open the tool or thought under `pos`, or fold its group. It answers where the reader lands, or null when no part acts.
+     */
     activate(pos: Position): Position | null;
-    /** @param {number} id @param {number} partId @returns {Position | null} */
+    /**
+     * The header position of a foldable part, or null when it is gone.
+     */
     partHeader(id: number, partId: number): Position | null;
-    /** @param {MessageDescriptor} m @returns {Position[]} */
     _partStopsOf(m: MessageDescriptor): Position[];
-    /** @param {Position | null} pos @param {number} dir @returns {Position | null} */
+    /**
+     * The next part stop after `pos` when `dir` is above 0, else the previous one. Null when `pos` is null or no stop is left.
+     * A stop is a tool or reasoning header, an error, the first row of a text part, or the first row of a user or compaction message.
+     */
     partStep(pos: Position | null, dir: number): Position | null;
-    /** @param {MessageDescriptor} m @param {number} width @param {number} messageIndex @param {TranscriptRow[] | undefined} old @returns {{ rows: TranscriptRow[], source: string, partBases: Map<string, number> }} */
     _partRows(m: MessageDescriptor, width: number, messageIndex: number, old: TranscriptRow[] | undefined): {
         rows: TranscriptRow[];
         source: string;
         partBases: Map<string, number>;
     };
-    /** @param {number} id @param {Wire.AssistantPart} part @param {number} width @param {boolean} expanded @param {boolean} live @param {number} tree @param {PartCache | undefined} previous @returns {PartCache} */
     _buildPart(id: number, part: Wire.AssistantPart, width: number, expanded: boolean, live: boolean, tree: number, previous: PartCache | undefined): PartCache;
-    /** @param {number} i @returns {MessageDescriptor | null} */
     _at(i: number): MessageDescriptor | null;
-    /** @param {number} id @returns {number} */
+    /**
+     * The order index of message `id`, or -1 when `id` is outside the outline. The streaming draft comes last.
+     */
     messageIndex(id: number): number;
-    /** @returns {SelectionRange | null} */
     _range(): SelectionRange | null;
-    /** @param {SelectionRange} range @param {number} i @param {number} k @param {number} len @returns {{ from: number, to: number } | null} */
     _rowRange(range: SelectionRange, i: number, k: number, len: number): {
         from: number;
         to: number;
     } | null;
-    /** @param {boolean} [source] @returns {string} */
+    /**
+     * The selection as shown text, one line feed between rows and no indent, or "" without a selection.
+     * With `source`, a turn whose rows map to markdown gives that markdown instead.
+     */
     selectedText(source?: boolean): string;
-    /** @param {number} width @returns {number} */
+    /**
+     * The total number of rendered rows at `width`. It renders each message whose count it does not know yet.
+     */
     rowCount(width: number): number;
-    /** @param {number} width @param {number} top @param {number} height @param {boolean} absolute @returns {TranscriptRow[]} */
     _rowsRange(width: number, top: number, height: number, absolute: boolean): TranscriptRow[];
-    /** @param {number} width @param {number} top @param {number} height @returns {TranscriptRow[]} */
+    /**
+     * The rendered rows from row `top` for `height` rows at `width`, with the selection marked. Source offsets count from the start of each message source.
+     */
     rows(width: number, top: number, height: number): TranscriptRow[];
-    /** @returns {MessageDescriptor[]} */
+    /**
+     * The committed messages oldest first, then the streaming draft, each a copy the caller cannot write through.
+     */
     messages(): MessageDescriptor[];
-    /** @returns {number} */
+    /**
+     * The number of committed messages, plus one for a streaming draft.
+     */
     messageCount(): number;
-    /** @param {number} index @returns {number} */
+    /**
+     * The id of the message at order `index`. The streaming draft comes last. Throws a RangeError when `index` is out of range.
+     */
     messageIdAt(index: number): number;
-    /** @param {Rect} rect @returns {void} */
+    /**
+     * Draw the visible rows into `rect`.
+     */
     draw(rect: Rect): void;
-    /** @param {number} col @param {number} row @param {boolean} clamp @returns {Position | null} */
+    /**
+     * The logical position under a screen cell, or null off the drawn rows. `clamp` pulls a drag back to the nearest row.
+     */
     posAt(col: number, row: number, clamp: boolean): Position | null;
-    /** @param {MouseEvent} ev @returns {boolean} */
+    /**
+     * A left drag selects text: a press records the start and a drag opens the range, so a click leaves no one-cell range.
+     * A click on a part opens or folds it. The wheel scrolls. A finished selection goes to `onSelect`.
+     */
     onMouse(ev: MouseEvent): boolean;
 }
 }
@@ -1359,34 +1731,68 @@ import Context = $ext.Context;
 import ViewLike = $types_core.ViewLike;
 export type Tickable = Parameters<typeof root.addTickable>[0];
 export type Overlay = Parameters<typeof root.pushOverlay>[0];
+/**
+ * The terminal capability as one block sees it: `c.tui` inside `ctx.inject(["tui"], (c) => ...)`.
+ * Each `add`, `overlay`, `split`, and `tickable` call belongs to the block. When the block stops, each one goes away.
+ * The block stops when its plugin unloads or when the `tui` provider changes.
+ */
 class Surface {
     _ctx: Context;
+    /** The shared root view: the pane tree, the overlays, the focus, and the repaint requests. A change through it does not belong to the block. */
     root: $core.RootView;
-    /** @param {Context} ctx */
     constructor(ctx: Context);
-    /** @template T @param {string} name @param {T} value @returns {T} */
     _settle<T>(name: string, value: T): T;
-    /** @returns {typeof command} */
+    /**
+     * The command registry. `add` registers the command for this block. A name without ":" becomes "<plugin id>:<name>".
+     * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+     */
     get command(): typeof command;
-    /** @returns {typeof keymap} */
+    /**
+     * The key binding registry. `add` registers for this block and returns a disposer.
+     * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+     */
     get keymap(): typeof keymap;
-    /** @returns {typeof route} */
+    /**
+     * The key route registry. `add` registers for this block and returns a disposer.
+     * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+     */
     get route(): typeof route;
-    /** @returns {typeof context} */
+    /**
+     * The context flag registry. `add` registers for this block and returns a disposer.
+     * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+     */
     get context(): typeof context;
-    /** @returns {typeof status} */
+    /**
+     * The status bar segment registry. `add` registers for this block and returns a disposer.
+     * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+     */
     get status(): typeof status;
-    /** @returns {typeof style} */
+    /**
+     * The highlight group registry. `add` registers for this block and returns a disposer.
+     * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+     */
     get style(): typeof style;
-    /** @param {Overlay} layer @param {() => void} [onClose] @returns {Disposer} */
+    /**
+     * Show `layer` above the panes until it closes. The disposer, a pop of the layer, or the block stop closes it.
+     * Any close runs `onClose` once. After the block stops, the layer does not show and `onClose` runs at once.
+     * @param layer - a view such as the `win` from `ui.pick`. A layer that already shows stays in its place.
+     */
     overlay(layer: Overlay, onClose?: () => void): Disposer;
-    /** @param {"row" | "col"} kind @param {ViewLike} view @returns {Disposer} */
+    /**
+     * Split the focused pane and show `view` in the new pane, which gets the focus. The disposer or the block stop closes that pane.
+     * With no focused pane, nothing splits. It throws a TypeError when `view` has no `layout` and `draw` or already shows.
+     * @param kind - "row" puts the new pane on the right, and "col" puts it below.
+     */
     split(kind: "row" | "col", view: ViewLike): Disposer;
-    /** @param {Tickable} tickable @returns {Disposer} */
+    /**
+     * Add `tickable` to the frame loop until the disposer runs or the block stops.
+     * The loop calls its `onStart`, `onStop`, `needsTick`, and `tick` hooks. Two adds of one object share one entry.
+     */
     tickable(tickable: Tickable): Disposer;
 }
+/** The `tui` capability. `ctx.inject(["tui"], ...)` calls `bindTo`, so each block gets its own `Surface`. */
 export const tui: {
-    bindTo: (/** @type {Context} */ ctx: Context) => Surface;
+    bindTo: (ctx: Context) => Surface;
 };
 }
 
@@ -1412,9 +1818,15 @@ import TextOptions = $types_ui.TextOptions;
 import WindowContent = $types_ui.WindowContent;
 import WindowOptions = $types_ui.WindowOptions;
 import WrapRow = $types_ui.WrapRow;
-/** @type {Record<string, NavAction | undefined>} */
+/**
+ * The nav keys: each stroke moves a `NavTarget` by one row, one page, or to an edge.
+ * The strokes are `j`, `k`, the arrows, the page keys, `ctrl+d`, `ctrl+u`, `home`, `end`, and `G`. The shell binds them, and a modal layer reads them.
+ */
 export const NAV_KEYS: Record<string, NavAction | undefined>;
-/** @template T */
+/**
+ * A scrollable list where `key(item)` gives a stable identity, so the selection follows its item across a re-sort.
+ * It draws into a rect that its owner passes, so it is a part of a view and not a view.
+ */
 export class List<T> {
     format: ((item: T, index: number) => string | ListItem) | ((it: T) => {
         text: string;
@@ -1428,49 +1840,67 @@ export class List<T> {
     dimGroup: string;
     dimSelGroup: string;
     drawCursor: boolean;
-    /** @type {Rect | null} */
     _rect: Rect | null;
-    /** @type {ListKey | null} */
     selectedKey: ListKey | null;
     scroll: number;
     _page: number;
-    /** @type {T[]} */
     items: T[];
-    /** @param {ListOptions<T>} [opts] */
     constructor(opts?: ListOptions<T>);
-    /** @param {number} h @returns {number} */
     _visible(h: number): number;
-    /** @param {T[]} items @returns {void} */
+    /**
+     * Replace the items. When the selected item left, the selection moves to the first selectable item.
+     */
     setItems(items: T[]): void;
-    /** @param {ListKey | null | undefined} k @returns {boolean} */
+    /**
+     * Put the cursor on the selectable item that `k` names. Return false when the list holds no such item.
+     */
     selectKey(k: ListKey | null | undefined): boolean;
-    /** @returns {number} */
+    /**
+     * The index of the selected item, or -1 when no item is selected.
+     */
     selectedIndex(): number;
-    /** @returns {T | null} */
+    /**
+     * The selected item, or null when no item is selected.
+     */
     selected(): T | null;
-    /** @param {number} h @returns {void} */
+    /**
+     * Scroll so the selection shows in a height of `h` screen rows.
+     */
     ensureVisible(h: number): void;
-    /** @param {number} delta @returns {void} */
+    /**
+     * Move the selection by `delta` selectable items, and stop at each end. Then call `onMove`.
+     */
     navBy(delta: number): void;
-    /** @param {number} index @param {number} dir @returns {number} */
     _stepSelectable(index: number, dir: number): number;
-    /** @param {number} dir @returns {void} */
+    /**
+     * Select the first selectable item when `dir` is negative, else the last.
+     */
     navEdge(dir: number): void;
-    /** @param {number} vis @returns {void} */
     _scrollToVisible(vis: number): void;
-    /** @param {number} vis @returns {void} */
     _clampScroll(vis: number): void;
-    /** @param {number} dir @returns {void} */
+    /**
+     * Move the selection by `dir` pages of the last drawn height.
+     */
     navPage(dir: number): void;
-    /** @returns {void} */
+    /**
+     * Forget the drawn rect when a container draws something else there, so a click cannot hit a row that left.
+     */
     clearRect(): void;
-    /** @param {MouseEvent} ev @returns {boolean} */
+    /**
+     * Select the clicked row, or move the selection by a wheel step. Answer true when the list used the event.
+     * A wheel step moves the cursor, because `draw` always scrolls the selection back into view.
+     */
     onMouse(ev: MouseEvent): boolean;
-    /** @param {Rect} rect @returns {void} */
+    /**
+     * Paint into `rect`, up to `itemHeight` lines per item. Every row repaints, so `format` may be dynamic.
+     */
     draw(rect: Rect): void;
-    /** @param {number} x @param {number} sy @param {number} w @param {ListItem} spec @param {boolean} isSel @returns {void} */
     _drawLine(x: number, sy: number, w: number, spec: ListItem, isSel: boolean): void;
 }
+/**
+ * A message input that grows with its text. Enter submits, and shift+enter, alt+enter, or ctrl+j adds a line.
+ * A large paste and an attached image show as a label, and the submit still sends the full text and the image.
+ */
 export class Composer {
     rect: {
         x: number;
@@ -1478,83 +1908,86 @@ export class Composer {
         w: number;
         h: number;
     };
+    /** The text buffer and the caret. An edit through it emits `composer.changed`. */
     input: TextInput;
     prompt: string;
     placeholder: string;
     onSubmit: ((content: Wire.ContentPart[]) => boolean | void) | null;
-    /** @type {((text: string, from: number) => boolean) | null} */
     onPaste: ((text: string, from: number) => boolean) | null;
     maxRows: number;
     scroll: number;
-    /** @type {number | null} */
     goalCol: number | null;
-    /** @type {ComposerSpan[]} */
     spans: ComposerSpan[];
-    /** @type {WrapRow[] | null} */
     _rows: WrapRow[] | null;
     _rowsW: number;
-    /** @type {Projection | null} */
     _proj: Projection | null;
-    /** @param {ComposerOptions} [opts] */
     constructor(opts?: ComposerOptions);
-    /** @returns {void} */
     _invalidate(): void;
-    /** @param {number} from @param {number} to @param {number} ins @returns {void} */
     _shiftSpans(from: number, to: number, ins: number): void;
-    /** @returns {Projection} */
     _projection(): Projection;
-    /** @param {number} caret @returns {number} */
     _toDisplay(caret: number): number;
-    /** @param {number} disp @returns {number} */
     _toText(disp: number): number;
-    /** @param {number} caret @returns {ComposerSpan | null} */
     _spanEndingAt(caret: number): ComposerSpan | null;
-    /** @param {number} caret @returns {ComposerSpan | null} */
     _spanStartingAt(caret: number): ComposerSpan | null;
-    /** @returns {string} */
     _prompt(): string;
-    /** @param {number} w @returns {number} */
     _textWidth(w: number): number;
-    /** @param {number} width @returns {{ start: number, end: number, soft: boolean }[]} */
     _rowsAt(width: number): {
         start: number;
         end: number;
         soft: boolean;
     }[];
-    /** @param {number} w @returns {number} */
+    /**
+     * The screen rows the text needs at width `w`, at most `maxRows`. The caller caps this against the space it has.
+     */
     height(w: number): number;
     get name(): string;
-    /** @param {Rect} rect @returns {void} */
     layout(rect: Rect): void;
+    /** The buffer text. A set replaces it and puts the caret at the end. */
     get text(): string;
     set text(s: string);
-    /** @returns {Wire.ContentPart[]} */
+    /**
+     * The buffer as content parts: one text run between image spans, each image at its own position.
+     * The whole input trims at its edges, and a run of white space alone makes no part.
+     */
     content(): Wire.ContentPart[];
-    /** @returns {boolean} */
+    /**
+     * Whether the buffer holds an image, so an owner answers for the input it is about to send.
+     */
     hasImages(): boolean;
-    /** @returns {ComposerSnapshot} */
+    /**
+     * Save the buffer and its spans, so a failed send puts the images back with the text.
+     */
     snapshot(): ComposerSnapshot;
-    /** @param {ComposerSnapshot} snap @returns {void} */
+    /**
+     * Put a snapshot back above the text the user typed since, and move every live span past the insert.
+     */
     restore(snap: ComposerSnapshot): void;
-    /** @returns {void} */
+    /**
+     * Send the content to `onSubmit` and clear the buffer. An empty buffer sends nothing. When `onSubmit` returns false, the buffer stays.
+     */
     submit(): void;
-    /** @param {HostEvent} ev @returns {boolean} */
+    /**
+     * Handle one key or paste event. Answer true when the composer used it.
+     */
     onKey(ev: HostEvent): boolean;
-    /** @param {string} t @returns {boolean} */
     _paste(t: string): boolean;
-    /** @param {number} from @param {string} text @param {Wire.MediaBlob} blob @returns {boolean} */
+    /**
+     * Show the text at `from` as an image label, and send `blob` in its place.
+     * Return false when the buffer no longer holds `text` at `from`, for example after an edit.
+     */
     attach(from: number, text: string, blob: Wire.MediaBlob): boolean;
-    /** @param {number} delta @returns {boolean} */
+    /**
+     * Move the caret by `delta` drawn rows. The goal column survives a short row.
+     */
     moveRow(delta: number): boolean;
-    /** @param {boolean} _focused @returns {void} */
     draw(_focused: boolean): void;
-    /** @returns {{ x: number, y: number, visible: boolean } | null} */
     cursor(): {
         x: number;
         y: number;
         visible: boolean;
     } | null;
 }
+/** A text view. It wraps its text during layout, so a draw only copies its cached visible rows. */
 export class Text {
     text: string;
     group: string;
@@ -1574,27 +2007,28 @@ export class Text {
         rows: WrapRow[];
         widths: number[];
     };
-    /** @type {{ text: string, width: number, height: number, rows: string[] }} */
     _layoutCache: {
         text: string;
         width: number;
         height: number;
         rows: string[];
     };
-    /** @param {TextOptions} [opts] */
     constructor(opts?: TextOptions);
-    /** @param {string} value @returns {void} */
+    /**
+     * Replace the text and request a frame.
+     */
     setText(value: string): void;
-    /** @param {number} width @returns {{ w: number, h: number }} */
+    /**
+     * The size of the text wrapped at `width`: the widest row and the row count.
+     */
     measure(width: number): {
         w: number;
         h: number;
     };
-    /** @param {Rect} rect @returns {void} */
     layout(rect: Rect): void;
-    /** @param {boolean} [_focused] @returns {void} */
     draw(_focused?: boolean): void;
 }
+/** The border glyph sets by name. A `Window` takes a name or its own `BorderSet`. */
 export const borders: {
     single: {
         tl: string;
@@ -1627,6 +2061,11 @@ export const borders: {
         l: string;
     };
 };
+/**
+ * A floating, bordered, titled window as an overlay layer. `tui.overlay(win)` shows it.
+ * The window claims its content, so one content object serves one window.
+ * It throws a TypeError for bad padding, or for content without `layout` and `draw`.
+ */
 export class Window {
     opts: WindowOptions;
     modal: boolean;
@@ -1648,60 +2087,57 @@ export class Window {
         w: number;
         h: number;
     };
-    /** @param {WindowOptions} [opts] */
     constructor(opts?: WindowOptions);
-    /** @returns {string} */
     get name(): string;
-    /** @returns {BorderSet | null} */
     _borderSet(): BorderSet | null;
-    /** @returns {Readonly<{ x: number, y: number }>} */
     _inset(): Readonly<{
         x: number;
         y: number;
     }>;
-    /** @param {number} width @returns {number} */
+    /**
+     * The content width inside the outer width `width`.
+     */
     contentWidth(width: number): number;
-    /** @param {number} rows @returns {number} */
+    /**
+     * The outer height for `rows` content rows, with the border, the padding, and the footer.
+     */
     heightFor(rows: number): number;
-    /** @param {Dimension | ContentHeight | null | undefined} v @param {number} max @param {number} fallback @param {number} [width] @returns {number} */
     _dim(v: Dimension | ContentHeight | null | undefined, max: number, fallback: number, width?: number): number;
-    /** @param {Rect} bounds @returns {void} */
     layout(bounds: Rect): void;
-    /** @param {boolean} [_focused] @returns {void} */
     draw(_focused?: boolean): void;
-    /** @returns {{ x: number, y: number, visible: boolean } | null} */
     cursor(): {
         x: number;
         y: number;
         visible: boolean;
     } | null;
-    /** @param {HostEvent} ev @returns {boolean} */
     onKey(ev: HostEvent): boolean;
-    /** @param {MouseEvent} ev @returns {boolean} */
     onMouse(ev: MouseEvent): boolean;
-    /** @returns {{ periodMs: number } | null} */
     needsTick(): {
         periodMs: number;
     } | null;
-    /** @returns {void} */
     tick(): void;
-    /** @param {BorderSet} bs @returns {void} */
     _drawBorder(bs: BorderSet): void;
-    /** @param {string | (() => string) | undefined} label @param {"left" | "center" | "right" | undefined} pos @param {number} ry @param {string} group @param {number} [x] @param {number} [w] @returns {void} */
     _drawLabel(label: string | (() => string) | undefined, pos: "left" | "center" | "right" | undefined, ry: number, group: string, x?: number, w?: number): void;
 }
-/** @template T */
+/**
+ * A picker window's content: a List with accept, cancel, and validate, an optional keymap over the default actions, and an optional query line.
+ * `ui.pick` and `ui.select` build one. Enter accepts, and esc cancels.
+ */
 export class Picker<T> {
     opts: PickOptions<T>;
-    /** @type {Window | null} */
+    /**
+     * The window that shows this picker. `ui.pick` sets it.
+     */
     win: Window | null;
     filter: boolean;
+    /** The query buffer, or null for a menu. */
     input: TextInput | null;
-    /** @type {T[]} */
     source: T[];
     suggest: ((query: string) => T[] | undefined) | null;
     textOf: (item: T) => string;
-    /** @type {List<T>} */
+    /**
+     * The list of the items that match the query.
+     */
     list: List<T>;
     onAccept: ((item: T, index: number) => void) | null;
     onCancel: (() => void) | null;
@@ -1709,92 +2145,104 @@ export class Picker<T> {
     keymap: Record<string, string | false | ((event: HostEvent, content: Picker<T>) => void)> | null;
     closeOnAccept: boolean;
     body: string;
-    /** @type {WrapRow[]} */
     _bodyRows: WrapRow[];
     _bodyWidth: number;
     _bodyText: string;
     _bodyScroll: number;
-    /** @type {Rect} */
     _layoutRect: Rect;
-    /** @param {PickOptions<T>} opts */
     constructor(opts: PickOptions<T>);
-    /** @param {number} width @returns {number} */
     _bodyHeight(width: number): number;
-    /** @param {Rect} r @returns {{ height: number, gap: number }} */
     _bodyLayout(r: Rect): {
         height: number;
         gap: number;
     };
-    /** @param {number} width @returns {number} */
     preferredHeight(width: number): number;
-    /** @returns {string} */
+    /**
+     * The query text, or "" for a menu. A set on a finder filters the items again.
+     */
     get query(): string;
-    /** @param {string} s */
     set query(s: string);
-    /** @param {T[]} items @returns {void} */
+    /**
+     * Replace the source items and filter them again.
+     */
     setSource(items: T[]): void;
-    /** @returns {void} */
+    /**
+     * Build the list again. A menu shows its source as given. A finder takes the order `suggest` returns, or ranks the source and selects the first result.
+     */
     refilter(): void;
-    /** @returns {{ periodMs: number } | null} */
     needsTick(): {
         periodMs: number;
     } | null;
-    /** @returns {void} */
+    /**
+     * Close the window of this picker. It does not call `onCancel`.
+     */
     close(): void;
-    /** @param {Rect} rect @returns {void} */
     layout(rect: Rect): void;
-    /** @param {boolean} [_focused] @returns {void} */
     draw(_focused?: boolean): void;
-    /** @param {MouseEvent} ev @returns {boolean} */
     onMouse(ev: MouseEvent): boolean;
-    /** @returns {{ x: number, y: number, visible: boolean } | null} */
     cursor(): {
         x: number;
         y: number;
         visible: boolean;
     } | null;
-    /** @returns {void} */
+    /**
+     * Accept the selection, gated by `validate`, and then call `onAccept`. With no selection, nothing happens.
+     * The close removes this window by identity, so a picker that `onAccept` opens survives it.
+     */
     accept(): void;
-    /** @returns {void} */
+    /**
+     * Close the window and then call `onCancel`. A cancel always closes; a picker that must survive esc binds esc to false in `keymap`.
+     */
     cancel(): void;
-    /** @param {PickerAction} name @returns {void} */
+    /**
+     * Run one picker action, as a string in `keymap` does.
+     */
     action(name: PickerAction): void;
-    /** @param {Extract<HostEvent, { type: "key" }>} ev @returns {boolean} */
     onKey(ev: Extract<HostEvent, {
         type: "key";
     }>): boolean;
 }
+/**
+ * A one-line prompt as window content. Enter calls `settle` with the text, and esc calls it with undefined.
+ * A masked prompt shows one dot for each grapheme.
+ */
 export class Prompt {
     placeholder: string;
     mask: boolean;
     settle: (value: string | undefined) => void;
+    /** The text buffer and the caret. */
     input: TextInput;
-    /** @type {Rect} */
     rect: Rect;
-    /** @param {PromptOptions} opts */
     constructor(opts: PromptOptions);
-    /** @param {string} s @returns {string} */
+    /**
+     * The text as the screen shows it. A masked prompt paints one dot for each grapheme, so a key never shows.
+     */
     shown(s: string): string;
-    /** @param {Rect} rect @returns {void} */
     layout(rect: Rect): void;
-    /** @param {boolean} [_focused] @returns {void} */
     draw(_focused?: boolean): void;
-    /** @returns {{ x: number, y: number, visible: boolean }} */
     cursor(): {
         x: number;
         y: number;
         visible: boolean;
     };
-    /** @param {HostEvent} event @returns {boolean} */
     onKey(event: HostEvent): boolean;
 }
+/**
+ * The picker builders. `select` navigates a set, `pick` adds the query line, and both build `{ win, content }`.
+ * A builder shows nothing; `tui.overlay(win)` shows the window, so a plugin owns every overlay it opens.
+ */
 export const ui: {
-    /** @template T @param {T[]} items @param {PickOptions<T>} [opts] @returns {{ win: Window, content: Picker<T> }} */
+    /**
+     * Build a menu over `items` with no query line. The nav keys move it. It shows nothing until `tui.overlay(win)`.
+     */
     select<T>(items: T[], opts?: PickOptions<T>): {
         win: Window;
         content: Picker<T>;
     };
-    /** @template T @param {PickOptions<T>} [opts] @returns {{ win: Window, content: Picker<T> }} */
+    /**
+     * Build a finder: a query line over the fuzzy-ranked items, or over the items that `suggest` returns.
+     * It shows nothing until `tui.overlay(win)`.
+     */
     pick<T>(opts?: PickOptions<T>): {
         win: Window;
         content: Picker<T>;
@@ -1826,7 +2274,7 @@ interface DiffFile {
   hunks: DiffHunk[];
 }
 
-/** Compares two texts. `path` only labels the result. An equal pair, a side above the size cap, and a change too large to describe all answer no hunk. */
+/** Compares two texts as unified hunks for display. `path` only labels the result. An equal pair, a side above 1 MiB, and a change too large to describe all answer no hunk. */
 export function diff(path: string, before: string, after: string): Promise<DiffFile>;
 }
 
@@ -1873,8 +2321,9 @@ export type EngineLoad = { runs: number; childRuns: number; continuations: numbe
 }
 
 declare namespace $native_env {
+/** The effective environment of the host, read-only. */
 export const env: {
-  /** Read the effective environment; a missing key returns undefined and an empty value stays empty. */
+  /** Read one variable. A missing name answers undefined, and an empty value stays empty. An empty name or a name with NUL or = throws a TypeError. */
   get(name: string): string | undefined;
 };
 }
@@ -1900,12 +2349,15 @@ interface ExecOptions {
 }
 
 interface ExecResult {
+  /** Valid UTF-8 text; each invalid byte becomes U+FFFD. Above `maxBytes`, the text keeps its head and tail. */
   stdout: string;
+  /** The same form as `stdout`. */
   stderr: string;
   /** The exit code, or null after a signal or a deadline. */
   code: number | null;
   /** The signal that ended the command, or null. */
   signal: number | null;
+  /** True when the deadline ended the command. */
   timedOut: boolean;
   /** The bytes the stream dropped between its head and its tail. */
   stdoutDropped: number;
@@ -1914,7 +2366,10 @@ interface ExecResult {
   log: string | null;
 }
 
-/** Runs one shell line with stdin closed, and ends its process group at shell exit or the deadline. */
+/**
+ * Runs one line with the `-c` option of the host shell, with stdin closed. It ends the process group at shell exit or the deadline.
+ * A nonzero exit resolves. A blank command, an invalid option, or a missing working directory rejects.
+ */
 export function exec(command: string, options?: ExecOptions): Promise<ExecResult>;
 }
 
@@ -1948,18 +2403,25 @@ interface RootOptions {
   workspaceRoot?: string;
 }
 
+/**
+ * Text file access on the local file system, with no confinement. A relative path resolves against `workspaceRoot`, or the host directory without one.
+ * A leading `~` expands to the home directory. A failure rejects with a sentence such as "the path does not exist".
+ */
 export const fs: {
-  /** A relative path anchors at the directory the host runs in. Rejects on invalid UTF-8. */
+  /** Read a whole file as text. It rejects for a missing path, a directory, invalid UTF-8, or a file above 10 MiB. */
   readFile(path: string, options?: RootOptions): Promise<string>;
-  /** Returns an image path or bounded text with the next line after a cut. */
+  /**
+   * Read whole lines from the 1-based line `start` through `end`, at most 2000 lines and 64 KiB; a line above 8000 bytes is cut.
+   * An image file answers its path. `next` names the first line that a limit left out, or null. `longLines` counts the cut lines.
+   */
   readRange(path: string, options?: RootOptions & { start?: number | null; end?: number | null }): Promise<RangeRead | { imagePath: string }>;
-  /** Replaces the whole file and resolves the byte count. */
+  /** Replace the whole file in one atomic rename, and resolve the byte count. It creates a missing file in an existing directory. A link or a directory rejects. */
   writeFile(path: string, contents: string, options?: RootOptions): Promise<number>;
-  /** Resolves null when nothing is at the path. A relative path anchors at the workspace root, or at the cwd. */
+  /** Describe one path. It resolves null when nothing is at the path. An absent or empty path names the workspace root. */
   stat(path?: string | null, options?: RootOptions): Promise<Stat | null>;
-  /** Removes one regular file and resolves false when nothing is there. A directory or a link rejects. A relative path anchors at the workspace root, or at the cwd. */
+  /** Remove one regular file. It resolves true after the remove and false when nothing is there. A directory or a link rejects. */
   removeFile(path: string, options?: RootOptions): Promise<boolean>;
-  /** Lists the directories of one path. */
+  /** List the subdirectories of one absolute path, at most 512. Files are left out. An absent path names the host directory, and a relative path rejects. */
   list(path?: string | null): Promise<Page>;
 };
 
@@ -2090,6 +2552,7 @@ export type ColorName =
 }
 
 declare namespace $native_utf8 {
+/** Strict conversion between strings and UTF-8 bytes, with no replacement character. */
 export const utf8: {
   /** Encode a string as independent UTF-8 bytes; reject lone surrogates with TypeError. */
   encode(text: string): Uint8Array;
@@ -2110,11 +2573,14 @@ export interface Rect {
   h: number;
 }
 
+/** One highlight group: the style that a draw call names. A string color first names a palette key, then a literal color. */
 export interface StyleGroup {
-  // A string first selects an own palette key, then a literal color.
+  /** The text color. The default is the palette key "fg". */
   fg?: Color | string;
   bg?: Color | string;
+  /** The underline color. */
   ul?: Color | string;
+  /** The name of another group. This group then takes that style and ignores its other fields. A link cycle gives the default style. */
   link?: string;
   bold?: boolean;
   dim?: boolean;
@@ -2123,13 +2589,22 @@ export interface StyleGroup {
   underline?: boolean;
 }
 
+/** The highlight groups and the palette. A draw call names a group, and `resolve` gives its terminal style. */
 export interface StyleConfig {
+  /** The named colors that a group can use. After a change, call `invalidate`. */
   palette: Record<string, Color>;
+  /** The groups by name. After a direct change, call `invalidate`. */
   groups: Record<string, StyleGroup>;
   _refs: Record<string, number>;
   _cache: Record<string, Style>;
+  /**
+   * Add each group that has no definition yet, and return a disposer.
+   * A group that a theme or the core set first keeps its definition. The disposer removes a group after the last `add` of it goes away.
+   */
   add: (groups: Record<string, StyleGroup>) => () => void;
+  /** The terminal style of a group after its links. An unknown group gets the default text color. The result stays cached until `invalidate`. */
   resolve: (name: string) => Style;
+  /** Clear the cached styles, so the next `resolve` reads the palette and the groups again. It does not request a frame. */
   invalidate: () => void;
 }
 
@@ -2141,6 +2616,7 @@ export interface NavTarget {
 
 export type HostMouseEvent = Extract<HostEvent, { type: "mouse" }>;
 
+/** A view that a pane or an overlay can show. The root calls `layout` and then `draw`. Each other hook is optional. */
 export interface ViewLike {
   rect: Rect;
   layout: (rect: Rect) => void;
@@ -2157,8 +2633,14 @@ export interface ViewLike {
   modal?: boolean;
 }
 
+/**
+ * A layer above the panes, such as a `Window`. The root lays it out over the whole screen.
+ * A layer with `modal: false` is a float: it takes no focus, and an event that it does not claim goes to the layers below.
+ * Every other layer is modal: it takes every key and click that reaches it, except a key of an `aboveModal` command.
+ */
 export type Overlay = Omit<ViewLike, "rect"> & { rect?: Rect };
 
+/** A member of the frame loop without a view. `needsTick` answers its period, or null when it needs no tick now. */
 export interface Tickable {
   onStart?: () => void;
   onStop?: () => void;
@@ -2181,10 +2663,16 @@ export type CommandPredicate = (...args: any[]) => boolean | [boolean, ...any[]]
 
 /** One command. `desc` lists it in the palette; `slash: true` answers `/<name after the owner prefix>`, and a string names another word. */
 export interface CommandSpec {
+  /** The action. It gets the arguments of `perform`: a key binding passes the key event. */
   run: CommandAction;
-  /** The command runs, and lists, only while this answers true. */
+  /**
+   * The command runs, and lists, only while this answers true. It gets the same arguments as `run`.
+   * A result `[true, ...args]` gives `run` those arguments. While it answers false, an older command of the same name can run.
+   */
   when?: CommandPredicate | null;
+  /** The text that the palette and the slash menu show. A command without it does not show in a listing. */
   desc?: string;
+  /** A slash word needs `desc`, else `add` throws a TypeError. */
   slash?: boolean | string;
   /** The slash word takes the rest of the line as its argument. */
   args?: boolean;
@@ -2210,16 +2698,29 @@ export interface CommandListing {
 
 export type CommandMap = Record<string, CommandEntry[]>;
 
+/** The commands by name. A key binding, the palette, and a slash word run a command through `perform`. */
 export interface CommandRegistry {
+  /** The entries by name, newest first. */
   map: CommandMap;
+  /**
+   * Register `spec` under `name` and return a disposer. A newer command of the same name runs first.
+   * It throws a TypeError for an empty name, a missing `run`, a `when` that is not a function, or a slash word without `desc`.
+   */
   add: (name: string, spec: CommandSpec) => () => void;
+  /** Run the newest command of `name` whose `when` answers true. Answer false when no command ran. */
   perform: (name: string, ...args: any[]) => boolean;
   /** Run the entry that `perform` would run, only when that entry is marked `aboveModal`. */
   performAboveModal: (name: string, ...args: any[]) => boolean;
+  /** True when a command of `name` would run now. It calls each `when` with no arguments, and a `when` that throws counts as true. */
   available: (name: string) => boolean;
+  /** The commands that have `desc` and would run now, sorted by the word that the palette shows. */
   list: () => CommandListing[];
 }
 
+/**
+ * A command name, which runs through `command.perform` with the key event, or a function that gets the key event.
+ * A function that returns false, or a command that does not run, lets the next binding of the stroke try.
+ */
 export type KeyBinding = string | ((event: HostEvent) => boolean | void);
 
 export type ContextNode =
@@ -2229,6 +2730,7 @@ export type ContextNode =
   | { t: "and"; a: ContextNode; b: ContextNode }
   | { t: "or"; a: ContextNode; b: ContextNode };
 
+/** A flag value, or a function that reads it at each key. A result of null or undefined, or a throw, makes the flag absent. */
 export type ContextFlag = string | (() => string | null | undefined);
 
 export interface ContextExpr {
@@ -2261,30 +2763,58 @@ export interface Pending {
 
 export type KeyMap = Record<string, KeyEntry[]>;
 
+/**
+ * The key bindings. A stroke is a key with optional modifiers: "enter", "G", "ctrl+s", "alt+shift+tab".
+ * A modifier is "ctrl", "alt", "super", or "shift". A named key such as "esc", "up", or "page_down" is lower case.
+ * A character key keeps its case, so "G" and "g" differ and "shift+g" is "G". With ctrl, alt, or super, a character is lower case.
+ * For one stroke, the binding whose context names the deepest active atom wins: a focused overlay, then the active pane, then the root.
+ * On a tie, the newest binding wins. A binding without a context counts as the root.
+ */
 export interface KeymapRegistry {
+  /** The bindings by normalized stroke, newest first. */
   map: KeyMap;
   prefixes: Record<string, string[]>;
+  /** The first stroke of a sequence that waits for its second stroke, or null. */
   pending: Pending | null;
+  /**
+   * Register `bindings` and return a disposer. A key is a stroke, or two strokes with a space between them, such as "g g".
+   * A second stroke also matches without ctrl, so "ctrl+w h" also answers ctrl+w ctrl+h. An array gives several bindings, tried in order.
+   * It throws an Error when `context` has bad syntax.
+   * @param context - an expression over the active atoms and the flags: `overlay`, `!chat`, `mode == insert`, `a && (b || c)`.
+   * An atom is "root", a view name or one of its `contexts()`, or "overlay" while an overlay has the focus. No context applies everywhere.
+   * @param options - `pending` sets how a sequence waits after its first stroke. "chord", the default, runs the first stroke alone
+   * after `config.keymap.chordMs`. "operator" waits for the next key with no time limit. A second stroke that completes no sequence runs alone, and the first stroke does nothing.
+   */
   add: (bindings: Record<string, KeyBinding | KeyBinding[]>, context?: string, options?: { pending?: "chord" | "operator" }) => () => void;
   /** Run the stroke above an open modal when its winning binding names an `aboveModal` command. */
   performAboveModal: (ev: Extract<HostEvent, { type: "key" }>) => boolean;
   _indexPrefix: (key: string, present: boolean) => void;
   _armKind: (prefix: string) => "chord" | "operator" | null;
+  /** True while a sequence waits for its second stroke. */
   owns: () => boolean;
+  /** Run the bindings for one key event from the root. Answer true when a binding claimed the key or a sequence started. */
   onKey: (event: Extract<HostEvent, { type: "key" }>) => boolean;
   _seq: number;
+  /** The waiting first stroke, or "" when no sequence waits. */
   pendingLabel: () => string;
   needsTick: () => { periodMs: number } | null;
   tick: () => void;
+  /** The bindings of one stroke that apply now, best first. It does not normalize `stroke`. */
   candidates: (stroke: string) => KeyEntry[];
+  /** For each command name, a stroke whose best binding runs that command now. A caller shows it next to the command. */
   hints: () => Record<string, string>;
+  /** The binding that `stroke` runs now and the bindings that it shadows, each with its context source. `winner` is null when no binding applies. */
   describe: (stroke: string) => unknown;
   _perform: (stroke: string, event: Extract<HostEvent, { type: "key" }>) => boolean;
 }
 
+/** One status bar segment. The bar is the last row. It joins the segments of each side with " · ". */
 export interface StatusSegment {
+  /** The default is "left". The right side keeps its full width, and the left side clips. */
   side?: "left" | "right";
+  /** The position in its side, low first. The default is 0. It must be finite. */
   order?: number;
+  /** Answer the text at each draw. An empty string, null, or undefined hides the segment. A throw hides it and reports a fault. */
   render: () => string | null | undefined;
 }
 
@@ -2313,6 +2843,7 @@ import Composer = $ui.Composer;
 import HostMouseEvent = $types_core.HostMouseEvent;
 import ViewLike = $types_core.ViewLike;
 
+/** A function that reverts one registration. A second call does nothing. */
 export type Disposer = () => void;
 
 /** One notification in the history. */
@@ -2340,7 +2871,9 @@ export type AdviceFor<F extends AdviceFunction, W extends AdviceWhere> =
   never;
 
 export interface AdviceOptions {
+  /** The plugin that owns the advice. `ctx.advise` sets it to the plugin name. */
   owner?: string;
+  /** The label that `advice.list` shows. The default is the function name. */
   name?: string;
   /** Lower order runs first; equal orders keep registration order. */
   order?: number;
@@ -2403,37 +2936,57 @@ export interface EventOptions { prepend?: boolean }
 
 /** The shared event bus: `emit` tells every listener in registration order; `bail` asks the newest listener first and answers the first value that is not false or null. */
 export interface Bus {
+  /** Add a listener. It throws a TypeError for an event name that no tier declares; an `owner:event` name needs no declaration. */
   on<K extends EventName>(name: K, fn: Events[K], opts?: EventOptions): Disposer;
+  /** Add a listener for the next emit only. */
   once<K extends EventName>(name: K, fn: Events[K]): Disposer;
+  /** Tell every listener in registration order. A listener that throws is reported, and the next listener runs. */
   emit<K extends EventName>(name: K, ...args: Parameters<Events[K]>): void;
+  /** Ask the newest listener first. Answers the first value that is not false, null, or undefined, or undefined when no listener answers. */
   bail<K extends EventName>(name: K, ...args: Parameters<Events[K]>): Exclude<ReturnType<Events[K]>, false | null | undefined | void> | undefined;
   /** Declare more names for the life of a tier; the disposer withdraws them. */
   declare(names: string[]): Disposer;
   onError: ((error: unknown, name: string) => void) | null;
 }
-/** A sync apply may return its cleanup; an async apply resolves to nothing. */
-/** Register the plugin in the synchronous part of `apply`. The host never waits for an async apply. A rejection closes the plugin. */
+/**
+ * The start function of a plugin. Register the plugin in the synchronous part of `apply`.
+ * A sync apply may return its cleanup; an async apply resolves to nothing. The host never waits for an async apply. A rejection closes the plugin.
+ */
 export type PluginApply = (context: Context) => void | (() => void) | Promise<void>;
 
+/** The facts of one tool call. */
 export interface ToolContext {
+  /** The absolute workspace root of the session that made the call. */
   workspaceRoot: string;
+  /** The session that made the call. It is absent when the call has no transcript site. */
   sessionId?: string;
+  /** The message that holds the call in the transcript. It is absent together with `sessionId`. */
   messageId?: number;
+  /** The part that holds the call in its message. It is absent together with `sessionId`. */
   partId?: number;
   /** Shows one chunk of live output while the tool runs. The model reads only the result; the stream stops at 1 MiB. */
   output(text: string): void;
 }
 
+/**
+ * Run one tool call. A string result reaches the model as is, another value reaches it as JSON, and undefined or null is empty output.
+ * A rejection gives the model an error result with the message of the error.
+ */
 export type ToolExecute = (
   /** The JSON the model wrote. It may be any value, so a tool checks it before use. */
   args: unknown,
+  /** The host cancels it when the call stops. */
   signal: CancellationSignal,
   context: ToolContext,
 ) => Promise<unknown>;
 
+/** One tool for `ctx.tools.define`. */
 export interface ToolDefinition {
+  /** 1 to 64 characters of a-z, A-Z, 0-9, _ or -. No other tool may have the name. */
   name: string;
+  /** The text the model reads to decide when to call the tool. It must not be empty. */
   description: string;
+  /** The JSON Schema of the arguments. It needs `type: "object"` and a `properties` object. */
   parameters: Record<string, unknown>;
   execute: ToolExecute;
   /** Request deferred loading until a tool search names the definition. */
@@ -2443,8 +2996,11 @@ export interface ToolDefinition {
 /** The value `inject` gives each capability name. A plugin declares its own through `declare module "yuke"`; an undeclared name is `unknown`. */
 export type Capabilities = import("yuke").Capabilities;
 export interface CapabilitiesBase {
+  /** The terminal UI of one block. An unload of the block removes what the block adds. The shell provides it. */
   tui: ReturnType<typeof tui.bindTo>;
+  /** The chat panes and their transcript labels. The shell provides it. */
   chat: ChatSurface;
+  /** The composer mode service. It exists only while the `composerVim` plugin runs. */
   "composer-vim": ComposerVim;
   [name: string]: unknown;
 }
@@ -2456,15 +3012,20 @@ export type FreeName<K extends string> = [Extract<K, ContextMember>] extends [ne
 /** A provider is the capability, or an object whose `bindTo` builds the capability for each block. */
 export type Provider<K extends string> = Capabilities[K] | { bindTo(context: Context): Capabilities[K] };
 
+/** The context of an `inject` block: a Context with each named capability as a member. */
 export type InjectContext<K extends string = "tui"> = Context & Pick<Capabilities, K>;
+/** The block of `inject`. It runs synchronously, and a returned function runs as its cleanup when the block reverts. */
 export type InjectApply<K extends string = string> = (context: InjectContext<K>) => unknown;
 
+/** The handle that `plugins.use` and `ctx.use` answer. */
 export interface PluginHandle {
   /** Cancels the signal, reverts the registrations, and waits for the releases and an async apply until the close deadline. Then it frees the name. A sync close answers nothing. */
   dispose(): void | Promise<void>;
 }
 
+/** A plugin for `plugins.use` or `ctx.use`. */
 export interface Plugin {
+  /** A non-empty name. No other live plugin may have it. It prefixes the commands of the plugin. */
   name: string;
   apply: PluginApply;
 }
@@ -2548,34 +3109,50 @@ export interface HookReplacements {
   "input.before": { content: Wire.ContentPart[] };
 }
 
+/** A hook point that `ctx.hook` can answer. */
 export type HookPoint = keyof HookPayloads;
 
 /** A block stops the action with a reason. A replace hands the next handler a new value. Nothing means proceed. */
 export type HookAnswer<P extends HookPoint = HookPoint> = { block: string; replace?: undefined } | { replace: HookReplacements[P]; block?: undefined };
 
+/** A handler of one hook point. It may be async. A throw blocks the action and reports a fault. */
 export type HookHandler<P extends HookPoint = HookPoint> = (payload: HookPayloads[P]) => HookAnswer<P> | null | undefined | void | Promise<HookAnswer<P> | null | undefined | void>;
 
 /** A resource release; the close awaits a returned Promise before the next older release. */
 export type Release = () => unknown;
 
+/** The options of one prompt. */
 export interface InteractionOptions {
+  /** A cancel of this signal closes the prompt, and the prompt answers undefined. */
   signal?: CancellationSignal;
+  /** Hide the typed text of `input`. */
   secret?: boolean;
+  /** The two answers of `confirm`. The defaults are Yes and No. */
   labels?: { accept?: string; cancel?: string };
 }
 
+/**
+ * Prompts and notifications for one plugin. Each prompt answers undefined on a cancel, a signal cancel, or an unload of the plugin.
+ * A prompt rejects with an InteractionUnavailable error when no answerer is installed.
+ */
 export interface InteractionSurface {
   /** The process-wide pending count; interaction.changed has no payload and tells callers to read it again. */
   readonly pending: number;
+  /** True when the frontend can show prompts and the plugin is alive. Without it, `confirm` answers false, the other prompts answer undefined, and a warning names the prompt. */
   readonly interactive: boolean;
+  /** Show the URL and the code of a device-code login. Answers the login outcome, or undefined on a cancel. */
   deviceLogin: (
     start: Wire.AuthLoginResult,
     outcome: Promise<Wire.AuthLoginOutcome>,
     options?: InteractionOptions,
   ) => Promise<Wire.AuthLoginOutcome | undefined>;
+  /** Ask a yes or no question. Answers true or false, or undefined on a cancel. */
   confirm(title: string, message?: string, options?: InteractionOptions): Promise<boolean | undefined>;
+  /** Ask for one of `choices`, which must be non-empty and unique. Answers the chosen string, or undefined on a cancel. */
   select(title: string, choices: string[], options?: InteractionOptions): Promise<string | undefined>;
+  /** Ask for one line of text. Answers the text, or undefined on a cancel. */
   input(title: string, placeholder?: string, options?: InteractionOptions): Promise<string | undefined>;
+  /** Add a notification from this plugin to the history. It needs no frontend. The default level is info. */
   notify(message: string, level?: "info" | "warn" | "error"): void;
 }
 
@@ -2831,6 +3408,7 @@ import MessagePart = $native_engine.MessagePart;
 import PartRead = $native_engine.PartRead;
 import TextCursor = $native_engine.TextCursor;
 
+/** One message in the transcript outline. `source` names the engine source of an input. `error` holds the failure of the message, if any. */
 export interface MessageDescriptor {
   id: number;
   type: "user" | "assistant" | "compaction";
@@ -2839,17 +3417,20 @@ export interface MessageDescriptor {
   error?: Wire.MessageError;
 }
 
+/** A place in the transcript: message `id`, `row` counts the rendered rows of that message from 0, and `col` indexes the row text. */
 export interface Position {
   id: number;
   row: number;
   col: number;
 }
 
+/** The two ends of a selection. `anchor` stays where the selection started and `cursor` moves; either end can come first. */
 export interface Selection {
   anchor: Position;
   cursor: Position;
 }
 
+/** The part under a position: message `id`, part `partId`, and the row `kind`, such as "tool-header" or "reasoning-body". */
 export interface PartHit {
   id: number;
   partId: number;
@@ -2891,10 +3472,14 @@ export interface PartState {
   rows: Map<string, PartCache>;
 }
 
+/** Read every part of message `id`. */
 export type PartsOf = (id: number) => readonly MessagePart[];
+/** Read one part of message `id`, or null when it is gone. */
 export type PartOf = (id: number, partId: number, cursor?: TextCursor) => PartRead | null;
+/** Read one page of the cut field `field` of a part from `offset`. `next` is the offset of the next page, or null after the last page. */
 export type PartTextPage = (id: number, partId: number, field: string, offset?: number, limit?: number) => { text: string; next: number | null };
 
+/** The readers of a transcript. Without `partsOf` the transcript shows no parts. `onSelect` receives the text of each finished mouse selection. */
 export interface TranscriptOptions {
   partsOf?: PartsOf | null | undefined;
   partOf?: PartOf | null | undefined;
@@ -2908,14 +3493,22 @@ export interface ActionPlan {
   joinAfter: number[] | Uint8Array;
 }
 
+/** The header words of a tool call: `verb` first, then `subject`. `category` picks the style group, as in `Presenter`. */
 export interface ToolLabel {
   verb: string;
   subject: string;
   category: string;
 }
 
+/** Names one tool call in its transcript header. It must not walk the tool output and must not scan a whole text, because it runs when the row builds. */
 export interface Presenter {
+  /** The style group of the header. "read", "write", "run", and "agent" use TxToolRead, TxToolWrite, TxToolRun, and TxToolAgent; any other value uses TxToolName. */
   category: string;
+  /**
+   * Answer the header words: `verb` first, then `subject`. A throw shows the tool name with no subject.
+   * @param args - The parsed JSON arguments, or `{}` when they do not parse.
+   * @param raw - The argument text before the parse.
+   */
   present(args: Record<string, unknown>, raw: string, part: Extract<Wire.AssistantPart, { type: "tool" }>): { verb: string; subject: string };
 }
 
@@ -2988,15 +3581,21 @@ export interface WrapRow {
   soft: boolean;
 }
 
+/** The options of a `Composer`. */
 export interface ComposerOptions {
+  /** The glyph before the first row. The default is "› ". A `composer.prompt` listener can replace it. */
   prompt?: string | undefined;
+  /** The dim text that shows while the buffer is empty. */
   placeholder?: string | undefined;
+  /** Gets the content on enter. A result of false keeps the buffer; any other result clears it. */
   onSubmit?: ((content: Wire.ContentPart[]) => boolean | void) | null | undefined;
   /** Answer true to claim a paste, for example a path the owner attaches. A claimed paste never collapses. */
   onPaste?: ((text: string, from: number) => boolean) | null | undefined;
+  /** The most rows that the composer grows to. The default is 10. */
   maxRows?: number | undefined;
 }
 
+/** The glyphs of a border: the corners tl, tr, br, bl and the edges t, r, b, l. */
 export interface BorderSet {
   tl: string;
   t: string;
@@ -3023,15 +3622,23 @@ export interface WindowContent {
   tick?: () => void;
 }
 
+/** The options of a `Window`. */
 export interface WindowOptions {
+  /** The context atom of the window while it has the focus, for a key binding context. The default is "window". */
   name?: string;
+  /** False makes a float: it takes no focus, and an event that it does not claim goes to the layers below. The default is true. */
   modal?: boolean;
+  /** The default is "single". "none" draws no border and no padding. */
   border?: Border;
+  /** The view inside the border. The window lays it out, draws it, and passes the keys and the clicks to it. */
   content?: WindowContent | null;
+  /** The outer width in cells, or a function of the available width. The default is 60% of the screen, or the anchor width. */
   width?: Dimension;
+  /** The outer height in rows, or a function of the available rows. The default is 60% of the available rows. */
   height?: Dimension;
   /** The content row count, before the border, padding, and footer; height takes precedence. */
   contentHeight?: ContentHeight;
+  /** Answer a rect to sit on: the window takes its x and its width, and its bottom row is just above the rect. */
   anchor?: (() => Rect) | null;
   /** Place the window in `bounds`. The layout keeps it inside. It replaces the center and the anchor placement. */
   place?: ((bounds: Rect, w: number, h: number) => { x: number; y: number }) | null;
@@ -3039,13 +3646,21 @@ export interface WindowOptions {
   outsidePress?: "cancel" | "ignore";
   /** The blank cells between the border and the content. The default is `{ x: 2, y: 1 }`. */
   padding?: { x: number; y: number };
+  /** The highlight group of the window area. The default is "UIPanel". */
   panelGroup?: string;
+  /** The default is "UIBorder". */
   borderGroup?: string;
+  /** The text in the top border. A function gives it at each draw. It shows only with a border. */
   title?: string | (() => string);
+  /** The default is "left". */
   title_pos?: "left" | "center" | "right";
+  /** The default is "UITitle". */
   titleGroup?: string;
+  /** A row under the content. A function gives it at each draw. */
   footer?: string | (() => string);
+  /** The default is "left". */
   footer_pos?: "left" | "center" | "right";
+  /** The default is "UIDim". */
   footerGroup?: string;
 }
 
@@ -3063,24 +3678,43 @@ export interface ListOptions<T> {
   drawCursor?: boolean | undefined;
 }
 
+/** The options of `ui.pick` and `ui.select`: the window options and the picker options. */
 export type PickOptions<T> = WindowOptions & {
+  /** The source items. `ui.select` sets them from its argument. */
   items?: T[] | undefined;
+  /** Answer the items for a query, in their final order, in place of the fuzzy rank. undefined gives no items. */
   suggest?: ((query: string) => T[] | undefined) | undefined;
+  /** The text that the fuzzy rank matches for an item. The default is `String(item)`. */
   filterText?: ((item: T) => string) | undefined;
+  /** The row of an item. The default is `String(item)`. */
   format?: ((item: T, index: number) => string | ListItem) | undefined;
+  /** A stable identity for an item, so the selection follows it. The default is the item itself. */
   key?: ((item: T) => ListKey) | undefined;
+  /** False makes a row that the selection skips. */
   isSelectable?: ((item: T) => boolean) | undefined;
+  /** The default is "UIItem". */
   itemGroup?: string | undefined;
+  /** The highlight group of the selected row. The default is "UIItemSel". */
   selGroup?: string | undefined;
+  /** The screen rows for each item. The default is 1. */
   itemHeight?: number | undefined;
+  /** Called when a key or a click moves the selection. */
   onMove?: ((item: T, index: number) => void) | null | undefined;
+  /** Called with the selected item on enter. The window closes first, unless `closeOnAccept` is false. */
   onAccept?: ((item: T, index: number) => void) | null | undefined;
+  /** Called after esc closes the window. */
   onCancel?: (() => void) | null | undefined;
+  /** False keeps the picker open on enter, and `onAccept` does not run. */
   validate?: ((item: T) => boolean) | null | undefined;
+  /** Strokes that run before the default keys: a `PickerAction` name, a function, or false to ignore the key. */
   keymap?: Record<string, string | false | ((event: HostEvent, content: Picker<T>) => void)> | null | undefined;
+  /** False keeps the window open after an accept. The default is true. */
   closeOnAccept?: boolean | undefined;
+  /** A redraw period while the picker shows, for rows whose `format` reads live values. */
   needsTick?: { periodMs: number } | null | undefined;
+  /** False removes the query line, as `ui.select` does. The default is true. */
   filter?: boolean | undefined;
+  /** Text above the list. It wraps, and the wheel and the page keys scroll it. */
   body?: string | undefined;
   /** Fit the window to the query line and at most this many rows. */
   maxRows?: number | undefined;

@@ -3,6 +3,7 @@
 // usage: node tools/typesgen/main.ts <tsc-declaration-dir> <output-dir>
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { posix } from "node:path";
+import { cleanDocs, summaryOf } from "./docs.ts";
 
 const [emitted, output] = process.argv.slice(2);
 if (!emitted || !output) throw new Error("usage: main.ts <tsc-declaration-dir> <output-dir>");
@@ -191,6 +192,20 @@ function reach(text: string, home?: string): void {
 }
 for (const chunk of chunks) if ("text" in chunk) reach(chunk.text);
 
+// An agent reads only the declaration file, so each export of a public module needs a summary.
+const bare: string[] = [];
+for (const chunk of chunks) {
+  if (!("text" in chunk) || !chunk.text.startsWith("declare module ")) continue;
+  const module = /^declare module "([^"]+)"/.exec(chunk.text)![1];
+  for (const [, name, space, member] of chunk.text.matchAll(/^export import (\w+) = (\$\w+)\.(\w+);$/gm)) {
+    let texts = spaces.get(space!)?.get(member!);
+    // A re-export names another namespace, so the summary sits on the declaration it names.
+    for (let alias; texts !== undefined && (alias = /^(?:export )?import \w+ = (\$\w+)\.(\w+);$/m.exec(texts.at(-1)!)); ) texts = spaces.get(alias[1]!)?.get(alias[2]!);
+    if (texts === undefined || !texts.some((text) => summaryOf(text) !== "")) bare.push(`${module}:${name}`);
+  }
+}
+if (bare.length > 0) throw new Error(`public exports without a summary: ${bare.join(", ")}`);
+
 const out: string[] = [];
 for (const chunk of chunks) {
   if ("text" in chunk) {
@@ -202,5 +217,5 @@ for (const chunk of chunks) {
   const body = [...spaces.get(chunk.space)!].filter(([name]) => names.has(name)).flatMap(([, texts]) => texts);
   out.push(`${chunk.head} {\n${body.join("\n")}\n}\n`);
 }
-writeFileSync(posix.join(output, "yuke.d.ts"), out.join("\n"));
+writeFileSync(posix.join(output, "yuke.d.ts"), cleanDocs(out.join("\n")));
 writeFileSync(posix.join(output, "yuke-modules.d.ts"), modules.concat("").join("\n"));
