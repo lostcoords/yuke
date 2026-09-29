@@ -41,6 +41,8 @@ const job_budget: u32 = 1024;
 const max_pump_passes: u32 = 8;
 /// Bound one evaluation by interrupt polls, a coarse CPU proxy, so scheduling jitter never aborts a script.
 pub const default_interrupt_budget: u32 = 100_000;
+/// The Host stores up to 16 rejections for a report. It reports each rejection past that limit as a count.
+const rejection_max = 16;
 /// Limit the fault text the Host stores, so `captureFault` runs from a fixed buffer without an allocation.
 const fault_text_max: usize = 512;
 /// Report this when QuickJS gives no readable text for the exception.
@@ -78,6 +80,11 @@ pub const Host = struct {
     /// Hold the last script fault text. The Host owns these bytes. `postFault` hands them to the notification history, or to the log without the kernel sink.
     fault_text: [fault_text_max]u8,
     fault_text_len: usize,
+    /// The Host holds each rejected promise that has no handler yet. It keeps the reference until `pump` reports it or a handler arrives.
+    rejections: [rejection_max]Rejection = undefined,
+    rejections_len: usize = 0,
+    /// The tracker counts each rejection it cannot record, because the buffer is full. The next report names the count.
+    rejections_lost: u32 = 0,
     paint: term_module.Paint,
     /// Engine seam state for `yuke:internal/native/engine`.
     engine: *engine_module.Engine,
@@ -181,6 +188,7 @@ pub const Host = struct {
         runtime.setRuntimeOpaque(self);
         ctx.setContextOpaque(self);
         runtime.setInterruptHandler(self);
+        runtime.setHostPromiseRejectionTracker(self);
         runtime.setModuleLoader(&self.loader);
         // A host with no renderer still installs the term module, because every draw call refuses a null render.
         const installers = [_]*const fn (*Host) void{
@@ -261,7 +269,67 @@ pub const Host = struct {
             pending.dropException(self.ctx);
             return error.JavaScriptFault;
         }
+        // The fault text is free here, and a queued job can still attach a handler, so only an empty queue proves a rejection unhandled.
+        if ((self.rejections_len != 0 or self.rejections_lost != 0) and !self.runtime.isJobPending()) self.reportRejections();
     }
+
+    /// QuickJS calls this when a promise rejects with no handler, and again when a handler arrives. It records and runs no JavaScript.
+    pub fn onRejection(self: *Host, ctx: quickjs.Context, promise: quickjs.Value, reason: quickjs.Value, is_handled: bool) void {
+        if (is_handled) return self.forgetRejection(promise);
+        if (self.rejections_len == rejection_max) {
+            self.rejections_lost +|= 1;
+            return;
+        }
+        self.rejections[self.rejections_len] = .{ .promise = ctx.dupValue(promise), .reason = ctx.dupValue(reason) };
+        self.rejections_len += 1;
+    }
+
+    /// Drop a rejection that a handler or the host itself consumes, so `pump` does not report it.
+    pub fn forgetRejection(self: *Host, promise: quickjs.Value) void {
+        const live = self.rejections[0..self.rejections_len];
+        for (live, 0..) |rejection, i| {
+            if (!self.ctx.isStrictEqual(rejection.promise, promise)) continue;
+            rejection.free(self.ctx);
+            // The report keeps the order of rejection, so the later entries move down one place.
+            std.mem.copyForwards(Rejection, live[i..], live[i + 1 ..]);
+            self.rejections_len -= 1;
+            return;
+        }
+    }
+
+    /// Post each rejection that no handler took as a script fault, oldest first.
+    fn reportRejections(self: *Host) void {
+        // A fault sink can reject again, so the report takes the entries and the lost count. A new rejection waits for the next pump.
+        var taken: [rejection_max]Rejection = undefined;
+        const count = self.rejections_len;
+        @memcpy(taken[0..count], self.rejections[0..count]);
+        self.rejections_len = 0;
+        const lost = self.rejections_lost;
+        self.rejections_lost = 0;
+        for (taken[0..count]) |rejection| {
+            defer rejection.free(self.ctx);
+            self.fault_text_len = 0;
+            self.captureFault(rejection.reason);
+            self.postFault(script_source);
+        }
+        if (lost == 0) return;
+        var buf: [96]u8 = undefined;
+        self.fault_text_len = 0;
+        // A u32 has 10 digits at most, and the text with 10 digits takes 76 bytes, so the buffer always fits.
+        self.appendFaultText(std.fmt.bufPrint(&buf, "the host could not record {d} promise rejections: its buffer was full", .{lost}) catch unreachable);
+        self.postFault(script_source);
+    }
+
+    /// This entry holds a rejected promise and its reason. The Host owns one reference to each.
+    const Rejection = struct {
+        promise: quickjs.Value,
+        reason: quickjs.Value,
+
+        fn free(self: Rejection, ctx: quickjs.Context) void {
+            ctx.freeValue(self.promise);
+            ctx.freeValue(self.reason);
+        }
+    };
 
     /// Report whether a pass can settle anything now; timers and engine events wait for the next pump.
     fn hasLocalWork(self: *const Host) bool {
@@ -270,7 +338,8 @@ pub const Host = struct {
 
     /// Report whether the owner has work to run. The owner asks before it sleeps.
     pub fn hasPending(self: *const Host) bool {
-        return self.hasLocalWork() or self.engine.hasPending() or self.timers.isDue(std.Io.Timestamp.now(self.io, .awake));
+        // A recorded rejection waits for `pump` to report it, so it keeps the owner awake.
+        return self.hasLocalWork() or self.engine.hasPending() or self.timers.isDue(std.Io.Timestamp.now(self.io, .awake)) or self.rejections_len != 0 or self.rejections_lost != 0;
     }
 
     /// Sleep until a task sets the wake, the next timer is due, or `deadline` passes; a passed deadline is `error.Timeout`.
@@ -312,6 +381,8 @@ pub const Host = struct {
         self.calls.deinit(self.ctx);
         self.tools.deinit(self.ctx);
         self.hooks.deinit(self.ctx);
+        for (self.rejections[0..self.rejections_len]) |rejection| rejection.free(self.ctx);
+        self.rejections_len = 0;
         if (self.plugin_lifecycle) |callback| self.ctx.freeValue(callback);
         self.engine.destroy();
         self.paint.freeRoots(self.ctx);
@@ -411,6 +482,7 @@ pub const Host = struct {
             };
         }
         if (self.ctx.promiseState(promise) == .Rejected) {
+            self.forgetRejection(promise);
             const reason = self.ctx.promiseResult(promise);
             defer self.ctx.freeValue(reason);
             self.fault_text_len = 0;
@@ -484,6 +556,8 @@ pub const Host = struct {
         switch (self.ctx.promiseState(value)) {
             .Fulfilled => return,
             .Rejected => {
+                // The host reports this reason itself, so the rejection tracker must not report it again.
+                self.forgetRejection(value);
                 const reason = self.ctx.promiseResult(value);
                 defer self.ctx.freeValue(reason);
                 self.fault_text_len = 0;
@@ -762,6 +836,48 @@ test "a memory-limit hit is a catchable fault" {
         host.eval("globalThis.s = 'x'.repeat(2 * 1024 * 1024)", "oom.js"),
     );
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "out of memory") != null);
+}
+
+test "an unhandled rejection is reported once after the jobs run, and a late handler keeps it silent" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try host.evalModule(
+        \\import { events, notifications } from "yuke:internal/kernel";
+        \\import { plugins } from "yuke:internal/ext";
+        \\globalThis.reports = () => notifications.map((n) => n.source + ":" + n.message.replace(/ at .*/, "")).join("|");
+        \\// The bus catches a sync throw only, so the rejection of an async listener reaches the tracker.
+        \\events.on("demo:async", async () => { throw new Error("async listener"); });
+        \\events.emit("demo:async");
+        \\// A handler that arrives one job later takes the rejection before the pump ends.
+        \\const late = Promise.reject(new Error("late"));
+        \\Promise.resolve().then(() => late.catch(() => {}));
+        \\plugins.use({ name: "tool-owner", apply(ctx) {
+        \\  ctx.tools.define({ name: "failing", description: "Fail.", parameters: { type: "object", properties: {} }, execute: async () => { throw new Error("tool broke"); } });
+        \\} });
+    , "rejections.js");
+    // A rejection waits for the next pump, so the owner must not sleep past it.
+    try std.testing.expect(host.hasPending());
+    try host.pump();
+    try host.pump();
+    try std.testing.expectEqual(@as(usize, 0), host.rejections_len);
+    try support.expectString(host, "reports()", "script:Error: async listener");
+    // The host answers a failed tool and a rejected module itself, so the tracker stays silent about both.
+    try support.expectTool(host, "failing", "{}", .{ .is_error = true, .text = .{ .contains = "tool broke" } });
+    try std.testing.expectError(error.JavaScriptFault, host.evalModule("await Promise.reject(new Error('module'));", "module-reject.js"));
+    try host.pump();
+    try support.expectString(host, "reports()", "script:Error: async listener");
+}
+
+test "a full rejection buffer reports the rest as a count" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try host.evalModule(
+        \\import { notifications } from "yuke:internal/kernel";
+        \\globalThis.counts = () => notifications.length + ":" + notifications[notifications.length - 1].message;
+        \\for (let i = 0; i < 17; i++) Promise.reject(new Error("r" + i));
+    , "full.js");
+    try host.pump();
+    try support.expectString(host, "counts()", "17:the host could not record 1 promise rejections: its buffer was full");
 }
 
 test "a module that waits at the top level is a fault" {

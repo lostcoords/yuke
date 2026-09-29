@@ -147,6 +147,8 @@ fn poll(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
     const state = ctx.promiseState(call.promise);
     if (state == .Pending) return;
+    // The call answers the rejection itself, so the rejection tracker must not report it again.
+    if (state == .Rejected) host.forgetRejection(call.promise);
     // A settle can run a user `toJSON` or getter, so it starts a fresh interrupt slice.
     host.enterSlice();
     const result = ctx.promiseResult(call.promise);
