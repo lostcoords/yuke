@@ -27,9 +27,8 @@ check("shared-stops-last", !root.hasTickable(svc) && log.join(",") === "start,st
 
 // A throwing `onStart` registers nothing, so a failed scope leaves no service behind.
 const bad = { onStart() { throw new Error("bad start"); } };
-let threw = 0;
-try { plugins.use({ name: "bad", apply(ctx) { const t = tui.bindTo(ctx); t.tickable(bad); } }); } catch (e) { threw = 1; }
-check("bad-start-rejected", threw === 1 && !root.hasTickable(bad) && !plugins.has("bad"));
+plugins.use({ name: "bad", apply(ctx) { const t = tui.bindTo(ctx); t.tickable(bad); } });
+check("bad-start-rejected", !root.hasTickable(bad) && !plugins.has("bad"));
 
 // A throwing `onStop` still restores the tick state.
 let synced = 0;

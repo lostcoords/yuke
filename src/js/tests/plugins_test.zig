@@ -297,7 +297,7 @@ test "shutdown bounds a synchronous release and still reverts the effects" {
     try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
 }
 
-test "async plugin startup cancels, releases late resources, and isolates a replacement" {
+test "a close cancels a running async apply, refuses its late resources, and isolates a replacement" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "plugins/start.test.js");
@@ -315,7 +315,7 @@ test "a capability withdrawal closes its child resource owner" {
     try std.testing.expectEqual(@as(usize, 0), host.signal_waiters.items.len);
 }
 
-test "unload bounds startup that ignores cancellation" {
+test "unload bounds an async apply that ignores cancellation" {
     const host = createTimeoutHost();
     defer support.destroyHost(host);
     const start = std.Io.Timestamp.now(host.io, .awake);
@@ -326,7 +326,7 @@ test "unload bounds startup that ignores cancellation" {
     try std.testing.expectEqual(@as(usize, 0), host.timers.entries.items.len);
 }
 
-test "plugin unload cancels and drains native startup" {
+test "plugin unload cancels and drains the native work of an async apply" {
     const reactor = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer reactor.deinit();
     const host = support.createHostWith(reactor.io(), "/tmp");

@@ -49,7 +49,7 @@ export class Scope {
     const cleanup = fn();
     if (typeof cleanup !== "function") {
       if (cleanup != null && typeof /** @type {{ then?: unknown }} */ (cleanup).then === "function") {
-        Promise.resolve(cleanup).catch(() => {});
+        Promise.resolve(cleanup).catch(NOOP);
         throw new TypeError("scope effects must be synchronous");
       }
       return NOOP;
@@ -726,7 +726,7 @@ export class Context {
   use(plugin) {
     const instance = startPlugin(plugin);
     if (instance._phase !== "closed") instance._state().owner = this.#scope.own(() => instance.dispose());
-    return { ready: instance.ready, dispose: () => instance.dispose() };
+    return { dispose: () => instance.dispose() };
   }
 
   // Run `apply` only while every named capability exists, in a child scope a withdrawal reverts.
@@ -748,16 +748,10 @@ export class Context {
 const RESERVED = new Set([...Object.getOwnPropertyNames(Context.prototype), "id"]);
 
 // --- plugin registry --- A plugin is `{ name, apply }`; the name keys the registry and prefixes every command, so it is required.
+
 const readyNow = Promise.resolve();
 
-/** @returns {Error} */
-function startupCanceled() {
-  const error = new Error("plugin startup was canceled");
-  error.name = "AbortError";
-  return error;
-}
-
-// One loaded plugin: its scope, its startup, and the close that holds its name until the scope and the startup settle.
+// One loaded plugin: its scope, its async apply, and the close that holds its name until both settle.
 // Only the registry holds an instance; `apply` gets the context and the caller gets a handle.
 class PluginInstance {
   /** @param {string} name */
@@ -765,36 +759,35 @@ class PluginInstance {
     this.scope = new Scope(name);
     this.context = new Context(this.scope, name);
     this._name = name;
-    /** @type {"applying" | "active" | "closing" | "closed"} */
-    this._phase = "applying";
+    /** @type {"active" | "closing" | "closed"} */
+    this._phase = "active";
     /** @type {PluginAsync | undefined} */
-    this._async = undefined; // made only for an async apply or an async close
+    this._async = undefined; // made only for an async close
+    /** @type {Promise<void> | undefined} */
+    this._running = undefined; // an async apply until it settles; it never rejects
+    this._applying = true; // true while `apply` runs, so a close inside it waits for the promise it returns
   }
-
-  get ready() { return this._async?.ready ?? readyNow; }
 
   /** @returns {PluginAsync} */
   _state() {
     return this._async ??= {};
   }
 
-  // Close the scope and free the name once the close and any startup settle, or once the deadline gives up.
+  // Close the scope and free the name once the close and the apply settle, or once the deadline gives up.
   /** @returns {void | Promise<void>} */
   dispose() {
     if (this._phase === "closed") return this._async?.closed;
     if (this._phase === "closing") return this._promise();
-    const applying = this._phase === "applying";
     this._phase = "closing";
-    this._async?.cancelReady?.(startupCanceled());
     const closed = this.scope.dispose();
-    // A reentrant dispose can run before apply returns its promise.
-    const startup = applying ? readyNow.then(() => this._async?.startup) : this._async?.startup;
-    if (!closed && !startup) {
+    // A close inside `apply` cannot see its promise yet, so it reads `_running` one job later.
+    const running = this._applying ? readyNow.then(() => this._running) : this._running;
+    if (!closed && !running) {
       this._finish();
       return this._async?.closed;
     }
     this._state().timer = setTimeout(() => this._force(), closeTimeoutMs);
-    Promise.all([closed, startup?.catch(NOOP)]).then(() => this._finish());
+    Promise.all([closed, running]).then(() => this._finish());
     return this._promise();
   }
 
@@ -812,22 +805,27 @@ class PluginInstance {
     this._finish();
   }
 
+  // A failed apply is the plugin's fault. A close cancels the signal, so a rejection after the close stays silent.
+  /** @param {unknown} error */
+  _fail(error) {
+    if (!this.scope.alive) return;
+    fault(error, this._name);
+    this.dispose();
+  }
+
   _finish() {
     if (this._phase === "closed") return;
     this._phase = "closed";
     const state = this._async;
-    if (state) {
-      if (state.timer !== undefined) clearTimeout(state.timer);
-      state.startup = undefined;
-      state.cancelReady = undefined;
-    }
+    if (state?.timer !== undefined) clearTimeout(state.timer);
     if (plugins._live[this._name] === this) delete plugins._live[this._name];
     state?.owner?.();
     state?.settle?.();
   }
 }
 
-// Apply `plugin` under its name for `plugins.use` and `ctx.use`.
+// Apply `plugin` under its name for `plugins.use` and `ctx.use`. The host never waits for an async apply.
+// A failed apply is reported once under the plugin name, and only that plugin closes.
 /** @param {Plugin} plugin @returns {PluginInstance} */
 function startPlugin(plugin) {
   // A plugin comes from user code, so its shape is checked here.
@@ -838,48 +836,26 @@ function startPlugin(plugin) {
   if (plugins._live[name]) throw new TypeError("plugin `" + name + "` is already in use");
   const instance = new PluginInstance(name);
   plugins._live[name] = instance;
+  // The apply, the `then` of its result, and a cleanup on a closed scope run user code. The catch reports each failure.
   try {
     const result = plugin.apply(instance.context);
+    instance._applying = false;
     if (result != null && typeof /** @type {{ then?: unknown }} */ (result).then === "function") {
-      /** @type {(error: unknown) => void} */
-      let rejectReady = NOOP;
-      let resolveReady = NOOP;
-      const state = instance._state();
-      state.ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
-      state.ready.catch(NOOP);
-      state.cancelReady = rejectReady;
-      if (instance._phase !== "applying") rejectReady(startupCanceled());
-      state.startup = Promise.resolve(result).then((value) => {
+      const running = Promise.resolve(result).then((value) => {
         if (value !== undefined) throw new TypeError("an async plugin apply must resolve to nothing; register cleanup with ctx.own");
-        resolveReady();
-      }).catch((error) => {
-        rejectReady(error);
-        if (instance._phase === "active") {
-          plugins._startupFailure ??= { error };
-          fault(error, instance._name);
-          instance.dispose();
-        }
-      }).then(() => {
-        state.cancelReady = undefined;
-        state.startup = undefined;
+      }).catch((error) => instance._fail(error)).then(() => {
+        if (instance._running === running) instance._running = undefined;
       });
-    } else {
+      instance._running = running;
+    } else if (typeof result === "function") {
       // A sync apply may return its cleanup, as an `inject` block does; a closed scope runs it at once.
-      if (typeof result === "function") {
-        if (instance.scope.alive) instance.scope.effect(() => result);
-        else result();
-      } else if (result !== undefined) throw new TypeError("plugin apply must return nothing, a cleanup function, or a promise");
-      if (instance._phase !== "applying") {
-        const ready = instance._state().ready = Promise.reject(startupCanceled());
-        ready.catch(NOOP);
-      }
-    }
+      if (instance.scope.alive) instance.scope.effect(() => result);
+      else result();
+    } else if (result !== undefined) throw new TypeError("plugin apply must return nothing, a cleanup function, or a promise");
   } catch (error) {
-    if (instance._phase === "applying") instance._phase = "active";
-    instance.dispose();
-    throw error;
+    instance._applying = false;
+    instance._fail(error);
   }
-  if (instance._phase === "applying") instance._phase = "active";
   return instance;
 }
 
@@ -887,14 +863,12 @@ export const plugins = {
   /** @type {Record<string, PluginInstance>} */
   _live: Object.create(null),
   _closing: false,
-  /** @type {{ error: unknown } | undefined} */
-  _startupFailure: undefined,
 
   /** @param {Plugin} plugin @returns {PluginHandle} */
   use(plugin) {
     const instance = startPlugin(plugin);
-    // The handle closes this instance only, so an old handle cannot close a replacement. `ready` is fixed once `use` returns.
-    return { ready: instance.ready, dispose: () => instance.dispose() };
+    // The handle closes this instance only, so an old handle cannot close a replacement.
+    return { dispose: () => instance.dispose() };
   },
 
   /** @param {string} name @returns {boolean} */
@@ -905,25 +879,6 @@ export const plugins = {
 
   /** @returns {string[]} */
   names() { return Object.keys(this._live); },
-
-  /** @returns {Promise<void>} */
-  _cancelStartup() {
-    return Promise.all(Object.values(this._live).filter((entry) => entry._async?.startup || entry._phase === "closing").map((entry) => entry.dispose())).then(NOOP);
-  },
-
-  // Report a startup failure once, even after the failed plugin exits.
-  /** @returns {void | Promise<void>} */
-  ready() {
-    const failure = this._startupFailure;
-    this._startupFailure = undefined;
-    if (failure) return Promise.reject(failure.error);
-    const pending = Object.values(this._live).filter((entry) => entry._async?.startup && entry._phase === "active");
-    if (!pending.length) return;
-    return Promise.all(pending.map((entry) => entry.ready)).then(() => this.ready(), (error) => {
-      this._startupFailure = undefined;
-      throw error;
-    });
-  },
 };
 
 // Close every plugin newest first under one deadline; a forced pass gives up on the closes that still wait.

@@ -11,6 +11,8 @@ import { errorText } from "yuke:internal/format";
 import { openUrl } from "yuke:internal/browser";
 import { notify } from "yuke:internal/kernel";
 
+const NOOP = () => {};
+
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { Plugin, ToolContext, ToolDefinition } from "./types/ext.js" */
 /** @import { CancellationSignal } from "yuke:internal/native/cancellation" */
@@ -864,6 +866,10 @@ export function mcp(options = {}) {
   /** @type {string[]} */
   const problems = [];
   let asked = false;
+  // The configuration load. A command and a method wait for it, because they read the server list.
+  // A command ignores a failed load, because the registry already reports it under this plugin.
+  /** @type {Promise<void>} */
+  let loaded = Promise.resolve();
   // Start a server again as a new instance, with the same trust; a fresh endpoint holds no cached token.
   /** @param {number} index */
   const restart = async (index) => {
@@ -887,61 +893,67 @@ export function mcp(options = {}) {
   const plugin = {
     name: "mcp",
     /** @param {Context} ctx */
-    async apply(ctx) {
+    apply(ctx) {
       // A restart replaces a server in the list, so the release closes the servers the list holds at unload.
       ctx.own(() => Promise.all(servers.map((server) => server.close())));
-      // The first definition of a name wins: index.js, then the user file, then the workspace file, which is not trusted yet.
-      /** @type {[Record<string, ServerConfig>, boolean][]} */
-      const sources = [[options.servers ?? {}, true]];
-      try {
-        const user = mcpNative.configPath();
-        if (user !== undefined) sources.push([await readServers(user, problems), true]);
-      } catch (error) { problems.push(errorText(error)); }
-      sources.push([await readServers(WORKSPACE_FILE, problems), false]);
-      if (!ctx.alive) return;
-      for (const [configs, trusted] of sources) for (const [name, config] of Object.entries(configs)) {
-        if (servers.some((server) => server.name === name)) continue;
-        if (!record(config)) { problems.push(name + ": the server entry must be an object"); continue; }
-        servers.push(new Server(name, config, limits, trusted, ctx));
-      }
-      /** @type {(() => void) | null} */
-      let disposeSearch = null;
-      let searchDescription = "";
-      // One search tool covers every connected server. Its description names them, so the model knows when to search.
-      const refreshSearchTool = () => {
+      // The host never waits for an apply, so the hook and the TUI capability block register now. `load` reads the configuration.
+      const load = async () => {
+        // The first definition of a name wins: index.js, then the user file, then the workspace file, which is not trusted yet.
+        /** @type {[Record<string, ServerConfig>, boolean][]} */
+        const sources = [[options.servers ?? {}, true]];
+        try {
+          const user = mcpNative.configPath();
+          if (user !== undefined) sources.push([await readServers(user, problems), true]);
+        } catch (error) { problems.push(errorText(error)); }
+        sources.push([await readServers(WORKSPACE_FILE, problems), false]);
         if (!ctx.alive) return;
-        const connected = servers.filter((server) => server.state === "connected");
-        const description = connected.length === 0 ? "" : ("Search the MCP tool catalog by keywords and load the matching tools. Servers: " + connected.map((server) => server.name + (server.instructions ? " (" + server.instructions + ")" : "")).join("; ") + ".").slice(0, SEARCH_DESCRIPTION_MAX);
-        if (description === searchDescription) return;
-        if (disposeSearch) { disposeSearch(); disposeSearch = null; }
-        searchDescription = "";
-        if (description === "") return;
-        // A refused name leaves no search tool; the next change tries again.
-        try { disposeSearch = ctx.tools.define({
-          name: SEARCH_TOOL,
-          description,
-          parameters: {
-            type: "object",
-            properties: {
-              query: { type: "string", description: "Keywords that describe the tool you need." },
-              server: { type: "string", description: "Search one server only." },
-              limit: { type: "integer", description: "How many tools to load, 1 to " + LIMIT_MAX + ". The default is " + LIMIT_DEFAULT + "." },
-            },
-            required: ["query"],
-            additionalProperties: false,
-          },
-          execute: async (args) => searchCatalog(servers, args),
-        }); } catch (error) {
-          problems.push(SEARCH_TOOL + ": " + errorText(error));
-          return;
+        for (const [configs, trusted] of sources) for (const [name, config] of Object.entries(configs)) {
+          if (servers.some((server) => server.name === name)) continue;
+          if (!record(config)) { problems.push(name + ": the server entry must be an object"); continue; }
+          servers.push(new Server(name, config, limits, trusted, ctx));
         }
-        searchDescription = description;
+        /** @type {(() => void) | null} */
+        let disposeSearch = null;
+        let searchDescription = "";
+        // One search tool covers every connected server. Its description names them, so the model knows when to search.
+        const refreshSearchTool = () => {
+          if (!ctx.alive) return;
+          const connected = servers.filter((server) => server.state === "connected");
+          const description = connected.length === 0 ? "" : ("Search the MCP tool catalog by keywords and load the matching tools. Servers: " + connected.map((server) => server.name + (server.instructions ? " (" + server.instructions + ")" : "")).join("; ") + ".").slice(0, SEARCH_DESCRIPTION_MAX);
+          if (description === searchDescription) return;
+          if (disposeSearch) { disposeSearch(); disposeSearch = null; }
+          searchDescription = "";
+          if (description === "") return;
+          // A refused name leaves no search tool; the next change tries again.
+          try { disposeSearch = ctx.tools.define({
+            name: SEARCH_TOOL,
+            description,
+            parameters: {
+              type: "object",
+              properties: {
+                query: { type: "string", description: "Keywords that describe the tool you need." },
+                server: { type: "string", description: "Search one server only." },
+                limit: { type: "integer", description: "How many tools to load, 1 to " + LIMIT_MAX + ". The default is " + LIMIT_DEFAULT + "." },
+              },
+              required: ["query"],
+              additionalProperties: false,
+            },
+            execute: async (args) => searchCatalog(servers, args),
+          }); } catch (error) {
+            problems.push(SEARCH_TOOL + ": " + errorText(error));
+            return;
+          }
+          searchDescription = description;
+        };
+        for (const server of servers) server.onChange = refreshSearchTool;
+        for (const server of servers) if (server.state === "pending") server.start();
       };
-      for (const server of servers) server.onChange = refreshSearchTool;
-      for (const server of servers) if (server.state === "pending") server.start();
+      loaded = load();
 
-      // The loadout follows this hook, so trust prompts and server startup finish before it.
+      // The hook waits for the configuration reads, the trust prompts, and the server starts before it answers.
       ctx.hook("tools.select", async () => {
+        // A failed load closes the plugin, so this turn goes on without MCP instead of failing closed.
+        try { await loaded; } catch { return; }
         if (!asked) {
           asked = true;
           for (const server of servers) {
@@ -960,34 +972,37 @@ export function mcp(options = {}) {
       });
 
       ctx.inject(["tui"], (ctx) => {
-        ctx.tui.command.add("mcp:show", { desc: "show the MCP servers and their tools", slash: "mcp", run: () => showInfo(ctx, "mcp", plugin.rows()) });
-        ctx.tui.command.add("mcp:reset-trust", { desc: "forget this workspace’s MCP server decisions", slash: "mcp-reset-trust", run: () => plugin.resetTrust() });
+        ctx.tui.command.add("mcp:show", { desc: "show the MCP servers and their tools", slash: "mcp", run: () => loaded.then(() => showInfo(ctx, "mcp", plugin.rows()), NOOP) });
+        ctx.tui.command.add("mcp:reset-trust", { desc: "forget this workspace’s MCP server decisions", slash: "mcp-reset-trust", run: () => loaded.then(() => plugin.resetTrust().catch((error) => notify("error", errorText(error), "mcp")), NOOP) });
         ctx.tui.command.add("mcp:login", {
           desc: "sign in to an MCP server over OAuth",
           slash: "mcp-login",
           args: true,
-          run: (/** @type {string | undefined} */ query) => {
+          run: (/** @type {string | undefined} */ query) => loaded.then(() => {
             // Without a name, the first server that waits for a sign-in is the one.
             const name = query?.trim() || servers.find((server) => server.state === "needs auth")?.name;
             if (!name) { notify("info", "no MCP server needs a sign-in", "mcp"); return; }
             notify("info", name + ": sign in through the browser", "mcp");
             plugin.login(name).then(() => notify("info", name + ": signed in", "mcp"), (error) => notify("error", name + ": " + errorText(error), "mcp"));
-          },
+          }, NOOP),
         });
         ctx.tui.command.add("mcp:logout", {
           desc: "forget the sign-in of an MCP server",
           slash: "mcp-logout",
           args: true,
-          run: (/** @type {string | undefined} */ query) => {
+          run: (/** @type {string | undefined} */ query) => loaded.then(() => {
             const name = query?.trim();
             if (!name) { notify("info", "name the MCP server to sign out of", "mcp"); return; }
             plugin.logout(name).then(() => notify("info", name + ": signed out", "mcp"), (error) => notify("error", name + ": " + errorText(error), "mcp"));
-          },
+          }, NOOP),
         });
       });
+      // The registry reports a failed load under this plugin and closes it.
+      return loaded;
     },
     // Sign in, then start the server again when it waited for the sign-in; a running server keeps its session.
     async login(name, open = openUrl) {
+      await loaded;
       const index = remoteIndex(name);
       const server = /** @type {Server} */ (servers[index]);
       const url = /** @type {string} */ (server.endpoint?.url);
@@ -997,12 +1012,14 @@ export function mcp(options = {}) {
     },
     // Forget the grant and start again, so the server asks for a new sign-in.
     async logout(name) {
+      await loaded;
       const index = remoteIndex(name);
       forget(/** @type {string} */ (/** @type {Server} */ (servers[index]).endpoint?.url));
       if (/** @type {Server} */ (servers[index]).state !== "untrusted") await restart(index);
     },
     // A reset server starts over as a new, untrusted instance.
     async resetTrust() {
+      await loaded;
       for (const [index, server] of servers.entries()) {
         if (!server.workspace) continue;
         try { mcpNative.removeRecord("mcp-trust", server.name); } catch (error) {

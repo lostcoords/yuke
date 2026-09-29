@@ -52,11 +52,8 @@ export interface ScopeLife {
   quiet: boolean;
 }
 
-/** The state a plugin makes only for an async apply or an async close. */
+/** The state a plugin makes only for an async close. */
 export interface PluginAsync {
-  ready?: Promise<void>;
-  startup?: Promise<void> | undefined;
-  cancelReady?: ((error: Error) => void) | undefined;
   closed?: Promise<void>;
   settle?: () => void;
   timer?: number;

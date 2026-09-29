@@ -283,19 +283,21 @@ pub const Harness = struct {
 
     const plugin_source =
         \\import { plugins } from "yuke:internal/ext";
-        \\let mode, count = 0;
+        \\let mode, count = 0, applied;
         \\const sync = { name: "probe", apply(ctx) { ctx.effect(() => () => { count++; }); } };
         \\const async = { name: "probe", async apply(ctx) {
         \\  if (ctx.signal.aborted) throw new Error("fresh signal is aborted");
         \\  await Promise.resolve();
         \\  ctx.own(() => { count++; });
+        \\  applied();
         \\} };
         \\globalThis.bench = {
         \\  start(phase) { mode = phase; count = 0; return 1; },
         \\  step() {
-        \\    const handle = plugins.use(mode === "plugin_sync" ? sync : async);
-        \\    if (mode === "plugin_sync") { plugins.dispose("probe"); return count; }
-        \\    return handle.ready.then(() => handle.dispose()).then(() => count);
+        \\    if (mode === "plugin_sync") { plugins.use(sync); plugins.dispose("probe"); return count; }
+        \\    const started = new Promise((resolve) => { applied = resolve; });
+        \\    const handle = plugins.use(async);
+        \\    return started.then(() => handle.dispose()).then(() => count);
         \\  },
         \\  verify() { if (plugins.names().length) throw new Error("plugin remains live"); return count; },
         \\};

@@ -10,9 +10,7 @@ const handle = plugins.use({ name: "stuck-start", async apply(ctx) {
   await new Promise(() => {});
 } });
 globalThis.startDone = false;
-const ready = handle.ready.catch(error => error.name);
 handle.dispose().then(async () => {
-  equal(await ready, "AbortError");
   equal(released, 1);
   equal(faults, 1);
   check("stuck startup releases its name", !plugins.has("stuck-start"));

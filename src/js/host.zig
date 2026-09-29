@@ -451,11 +451,11 @@ pub const Host = struct {
         std.debug.assert(filename.len > 0);
         const name = std.fmt.allocPrintSentinel(self.gpa, "{s}{s}", .{ loader_mod.host_module_prefix, filename }, 0) catch unreachable;
         defer self.gpa.free(name);
-        try self.evalModuleSource(source, name, false);
+        try self.evalModuleSource(source, name);
     }
 
     /// Evaluate a module and drain its jobs; the filename determines its import access.
-    fn evalModuleSource(self: *Host, source: [:0]const u8, filename: [:0]const u8, wait: bool) Error!void {
+    fn evalModuleSource(self: *Host, source: [:0]const u8, filename: [:0]const u8) Error!void {
         std.debug.assert(self.phase == .open);
         std.debug.assert(filename.len > 0);
         self.enterSlice();
@@ -465,34 +465,7 @@ pub const Host = struct {
         };
         defer self.ctx.freeValue(value);
         try self.drainJobs();
-        if (wait) try self.awaitStartup(value);
         try self.checkModulePromise(value);
-    }
-
-    /// Pump native I/O while an entry module waits for plugin startup.
-    pub fn evalStartup(self: *Host, source: [:0]const u8, filename: [:0]const u8) Error!void {
-        const name = std.fmt.allocPrintSentinel(self.gpa, "{s}{s}", .{ loader_mod.host_module_prefix, filename }, 0) catch unreachable;
-        defer self.gpa.free(name);
-        try self.evalModuleSource(source, name, true);
-    }
-
-    fn awaitStartup(self: *Host, promise: quickjs.Value) Error!void {
-        std.debug.assert(self.phase == .open);
-        if (!self.ctx.isPromise(promise) or self.ctx.promiseState(promise) != .Pending) return;
-        var guard: DeadlineGuard = .{
-            .host = self,
-            .deadline = std.Io.Timestamp.now(self.io, .awake).addDuration(.fromSeconds(10)),
-        };
-        self.runtime.setInterruptHandler(&guard);
-        defer self.runtime.setInterruptHandler(self);
-        self.pumpUntil(.{ .raw = guard.deadline, .clock = .awake }, PendingPromise{ .ctx = self.ctx, .promise = promise }, PendingPromise.settled) catch |err| switch (err) {
-            error.JavaScriptFault, error.Canceled => return error.JavaScriptFault,
-            error.Timeout => {
-                self.fault_text_len = 0;
-                self.appendFaultText("plugin startup timed out");
-                return error.JavaScriptFault;
-            },
-        };
     }
 
     /// A promise the owner waits on with `pumpUntil`.
@@ -518,7 +491,7 @@ pub const Host = struct {
             },
             .Pending => {
                 self.fault_text_len = 0;
-                self.appendFaultText("module did not settle: a top-level await cannot complete");
+                self.appendFaultText("the module waits at the top level, and the host does not wait for it: start async work inside a plugin");
             },
         }
         return error.JavaScriptFault;
@@ -538,7 +511,7 @@ pub const Host = struct {
             },
         };
         defer self.gpa.free(source);
-        try self.evalModuleSource(source, path, true);
+        try self.evalModuleSource(source, path);
     }
 
     /// Evaluate source and return its result as `i32`. Tests use this helper.
@@ -791,14 +764,14 @@ test "a memory-limit hit is a catchable fault" {
     try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "out of memory") != null);
 }
 
-test "a module that never settles is a fault" {
+test "a module that waits at the top level is a fault" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try std.testing.expectError(
         error.JavaScriptFault,
         host.evalModule("await new Promise(() => {});", "hang.js"),
     );
-    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "did not settle") != null);
+    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "waits at the top level") != null);
 }
 
 test "a rejected module reports the reason" {

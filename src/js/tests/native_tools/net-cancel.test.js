@@ -38,13 +38,17 @@ async function run() {
 
   let signal;
   let readCanceled;
+  /** @type {() => void} */
+  let applied = () => {};
+  const started = new Promise((resolve) => { applied = resolve; });
   const plugin = plugins.use({ name: "socket-cancel", async apply(ctx) {
     signal = ctx.signal;
     const socket = await net.connect({ path: socketPath, signal });
     ctx.own(() => socket.close());
     readCanceled = refused(socket.read({ signal }), "CANCELED");
+    applied();
   } });
-  await plugin.ready;
+  await started;
   await plugin.dispose();
   await readCanceled;
   await cancellation.drain(signal);

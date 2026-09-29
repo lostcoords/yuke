@@ -68,19 +68,11 @@ pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) (host_mod.Error || er
     const dir = config_dir orelse return;
     const path = try std.Io.Dir.path.joinZ(host.gpa, &.{ dir, user_entry });
     defer host.gpa.free(path);
-    errdefer {
-        const fault = host.fault_text;
-        const fault_len = host.fault_text_len;
-        host.evalStartup("import { plugins } from \"yuke:internal/ext\"; await plugins._cancelStartup();", "plugins-cancel.js") catch {};
-        host.fault_text = fault;
-        host.fault_text_len = fault_len;
-    }
     // An absent entry is a profile with no plugins. Any other failure to read it is a fault.
     host.evalFile(path) catch |err| switch (err) {
         error.FileNotFound => return,
         error.JavaScriptFault, error.OutOfMemory => |e| return e,
     };
-    try host.evalStartup("import { plugins } from \"yuke:internal/ext\"; await plugins.ready();", "plugins-ready.js");
 }
 
 // ---------------------------------------------------------------- tests
@@ -722,7 +714,7 @@ test "session create returns the invalid instruction path through the call API" 
     try std.testing.expectEqual(@as(usize, 0), output.written().len);
 }
 
-test "entry startup pumps native I/O before it publishes plugin tools" {
+test "boot does not wait for an async apply, and its late tool is live" {
     var f: Fixture = undefined;
     try f.init(
         \\import { plugins, exec } from "yuke";
@@ -733,21 +725,19 @@ test "entry startup pumps native I/O before it publishes plugin tools" {
         \\} });
     , kernel_boot);
     defer f.deinit();
-    try std.testing.expect(f.extensions.host.tools.find("started") != null);
-    try std.testing.expectEqual(@as(usize, 0), f.extensions.host.ops.live.items.len);
+    const host = f.extensions.host;
+    // The boot pumps no I/O, so the exec is still in flight when the extensions are up.
+    try std.testing.expect(host.tools.find("started") == null);
+    const Started = struct {
+        fn done(h: *Host) bool {
+            return h.tools.find("started") != null;
+        }
+    };
+    try support.pumpUntil(host, host, Started.done);
+    try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
 }
 
-test "entry top-level await permits native I/O" {
-    var f: Fixture = undefined;
-    try f.init(
-        \\import { exec } from "yuke";
-        \\globalThis.entryResult = (await exec("printf ready")).stdout;
-    , kernel_boot);
-    defer f.deinit();
-    try support.expectString(f.extensions.host, "globalThis.entryResult", "ready");
-}
-
-test "entry failure drains partial startup and preserves an independent plugin" {
+test "a failed apply is reported once under its plugin name, and only that plugin closes" {
     const reactor = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer reactor.deinit();
     var tmp = std.testing.tmpDir(.{});
@@ -756,21 +746,29 @@ test "entry failure drains partial startup and preserves an independent plugin" 
         \\import { plugins, exec } from "yuke";
         \\globalThis.released = 0;
         \\plugins.use({ name: "independent", apply() {} });
-        \\plugins.use({ name: "partial", async apply(ctx) {
+        \\plugins.use({ name: "sync-failed", apply() { throw new Error("sync failure"); } });
+        \\plugins.use({ name: "async-failed", async apply(ctx) {
         \\  ctx.own(() => { globalThis.released++; });
         \\  await exec("printf ready", { signal: ctx.signal });
-        \\  throw new Error("startup failure");
+        \\  throw new Error("async failure");
         \\} });
+        \\plugins.use({ name: "after", apply() {} });
     });
     var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const dir = buf[0..try tmp.dir.realPath(std.testing.io, &buf)];
     const host = support.createHostWith(reactor.io(), dir);
     defer support.destroyHost(host);
-    try std.testing.expectError(error.JavaScriptFault, evalUserEntry(host, dir));
-    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "startup failure") != null);
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.released"));
-    try host.evalModule("import { plugins } from 'yuke'; globalThis.remaining = plugins.names().join(',');", "remaining.js");
-    try support.expectString(host, "globalThis.remaining", "independent");
+    // A plugin failure is not an entry failure, so the entry evaluates to its end.
+    try evalUserEntry(host, dir);
+    try support.pumpUntilTrue(host, "globalThis.released === 1");
+    try host.evalModule(
+        \\import { plugins } from "yuke";
+        \\import { notifications } from "yuke:internal/kernel";
+        \\globalThis.remaining = plugins.names().join(",");
+        \\globalThis.reports = notifications.map((n) => n.source + ":" + n.message).join("|");
+    , "failures.js");
+    try support.expectString(host, "globalThis.remaining", "independent,after");
+    try support.expectString(host, "globalThis.reports", "sync-failed:sync failure|async-failed:async failure");
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
 }
 
@@ -800,21 +798,4 @@ test "a module that does not load is a fault that names it" {
         try std.testing.expectError(error.JavaScriptFault, evalUserEntry(host, dir));
         try std.testing.expect(std.mem.indexOf(u8, host.faultText(), case.want) != null);
     }
-}
-
-test "entry reports a plugin failure after immediate async cleanup" {
-    const reactor = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
-    defer reactor.deinit();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = user_entry, .data =
-        \\import { plugins } from "yuke";
-        \\plugins.use({ name: "failed", async apply() { throw new Error("immediate failure"); } });
-    });
-    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const dir = buf[0..try tmp.dir.realPath(std.testing.io, &buf)];
-    const host = support.createHostWith(reactor.io(), dir);
-    defer support.destroyHost(host);
-    try std.testing.expectError(error.JavaScriptFault, evalUserEntry(host, dir));
-    try std.testing.expect(std.mem.indexOf(u8, host.faultText(), "immediate failure") != null);
 }

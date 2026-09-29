@@ -12,9 +12,8 @@ const owner = plugins.use({ name: "public-owner", apply(ctx) {
   });
 } });
 // The name is taken while its owner lives, and free again once the owner is gone.
-let rejected = false;
-try { plugins.use({ name: "second-owner", apply(ctx) { ctx.tools.define(definition); } }); } catch { rejected = true; }
-check("owner-keeps-its-tool-name", rejected);
+plugins.use({ name: "second-owner", apply(ctx) { ctx.tools.define(definition); } });
+check("owner-keeps-its-tool-name", !plugins.has("second-owner") && plugins.has("public-owner"));
 check("command-waits-for-tui", !command.available("public-owner:note"));
 const terminal = plugins.use(tuiPlugin);
 command.perform("public-owner:note");

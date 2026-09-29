@@ -641,13 +641,15 @@ class PluginInstance {
     scope: Scope;
     context: Context;
     _name: string;
-    /** @type {"applying" | "active" | "closing" | "closed"} */
-    _phase: "applying" | "active" | "closing" | "closed";
+    /** @type {"active" | "closing" | "closed"} */
+    _phase: "active" | "closing" | "closed";
     /** @type {PluginAsync | undefined} */
     _async: PluginAsync | undefined;
+    /** @type {Promise<void> | undefined} */
+    _running: Promise<void> | undefined;
+    _applying: boolean;
     /** @param {string} name */
     constructor(name: string);
-    get ready(): Promise<void>;
     /** @returns {PluginAsync} */
     _state(): PluginAsync;
     /** @returns {void | Promise<void>} */
@@ -655,16 +657,14 @@ class PluginInstance {
     /** @returns {Promise<void>} */
     _promise(): Promise<void>;
     _force(): void;
+    /** @param {unknown} error */
+    _fail(error: unknown): void;
     _finish(): void;
 }
 export const plugins: {
     /** @type {Record<string, PluginInstance>} */
     _live: Record<string, PluginInstance>;
     _closing: boolean;
-    /** @type {{ error: unknown } | undefined} */
-    _startupFailure: {
-        error: unknown;
-    } | undefined;
     /** @param {Plugin} plugin @returns {PluginHandle} */
     use(plugin: Plugin): PluginHandle;
     /** @param {string} name @returns {boolean} */
@@ -673,10 +673,6 @@ export const plugins: {
     dispose(name: string): void | Promise<void>;
     /** @returns {string[]} */
     names(): string[];
-    /** @returns {Promise<void>} */
-    _cancelStartup(): Promise<void>;
-    /** @returns {void | Promise<void>} */
-    ready(): void | Promise<void>;
 };
 }
 
@@ -2395,6 +2391,7 @@ export interface Bus {
   onError: ((error: unknown, name: string) => void) | null;
 }
 /** A sync apply may return its cleanup; an async apply resolves to nothing. */
+/** Register the plugin in the synchronous part of `apply`. The host never waits for an async apply. A rejection closes the plugin. */
 export type PluginApply = (context: Context) => void | (() => void) | Promise<void>;
 
 export interface ToolContext {
@@ -2432,9 +2429,7 @@ export type InjectContext<K extends string = "tui"> = Context & Pick<Capabilitie
 export type InjectApply<K extends string = string> = (context: InjectContext<K>) => unknown;
 
 export interface PluginHandle {
-  /** Rejects on startup failure or cancellation. */
-  readonly ready: Promise<void>;
-  /** Cancels the signal and startup, reverts the registrations, awaits the releases, and frees the name; a sync close answers nothing. */
+  /** Cancels the signal, reverts the registrations, and waits for the releases and an async apply until the close deadline. Then it frees the name. A sync close answers nothing. */
   dispose(): void | Promise<void>;
 }
 
@@ -2780,11 +2775,8 @@ export interface ScopeLife {
   quiet: boolean;
 }
 
-/** The state a plugin makes only for an async apply or an async close. */
+/** The state a plugin makes only for an async close. */
 export interface PluginAsync {
-  ready?: Promise<void>;
-  startup?: Promise<void> | undefined;
-  cancelReady?: ((error: Error) => void) | undefined;
   closed?: Promise<void>;
   settle?: () => void;
   timer?: number;

@@ -2,6 +2,7 @@ import { check } from "yuke:internal/test";
 import { command } from "yuke:internal/core";
 import { scopeOf, plugins } from "yuke:internal/ext";
 import { tui } from "yuke:internal/tui";
+import { events } from "yuke:internal/kernel";
 
 // A plugin registers on use, reverts on dispose, and comes back on reload.
 {
@@ -28,12 +29,20 @@ import { tui } from "yuke:internal/tui";
   check("plugin-duplicate-rejected", threw && kept && disposals === 1 && plugins.names().indexOf("dup") < 0);
 }
 
-// A throwing apply reverts what it already registered and leaves no live plugin.
+// A throwing apply is reported once under its name, reverts what it already registered, and leaves no live plugin.
 {
   const bad = { name: "bad", apply(ctx) { const t = tui.bindTo(ctx); t.command.add("act", { run: () => {} }); throw new Error("nope"); } };
-  let threw = false;
-  try { plugins.use(bad); } catch (e) { threw = true; }
-  check("plugin-partial-revert", threw && !command.map["bad:act"] && !plugins.has("bad"));
+  const reports = [];
+  const off = events.on("notify.posted", (n) => reports.push(n.source + ":" + n.message));
+  plugins.use(bad);
+  off();
+  check("plugin-partial-revert", reports.join("|") === "bad:nope" && !command.map["bad:act"] && !plugins.has("bad"));
+  // A result whose `then` throws is user code too, so the failure closes the plugin instead of escaping `use`.
+  reports.length = 0;
+  const offThen = events.on("notify.posted", (n) => reports.push(n.source + ":" + n.message));
+  plugins.use({ name: "bad-then", apply() { return { get then() { throw new Error("then"); } }; } });
+  offThen();
+  check("plugin-then-getter", reports.join("|") === "bad-then:then" && !plugins.has("bad-then"));
 }
 
 // A plugin is `{ name, apply }` and nothing else, so no shape can register under a guessed name.

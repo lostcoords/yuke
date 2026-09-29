@@ -101,7 +101,7 @@ test "a silent MCP server times out after the legacy fallback and releases its r
     try f.init("silent");
     defer f.deinit();
     const host = f.host;
-    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try support.pumpUntilTrue(host, "mcpLoaded() && mcpSettled()");
     try expectState(host, "silent", "failed · legacy · the request timed out");
     try std.testing.expect(start.durationTo(std.Io.Timestamp.now(std.testing.io, .awake)).toMilliseconds() >= 100);
     try std.testing.expect(!support.hasTool(host, "mcp_silent_echo"));
@@ -116,7 +116,7 @@ test "an MCP call timeout cancels the request and ignores its late reply" {
     try f.init("timeout");
     defer f.deinit();
     const host = f.host;
-    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try support.pumpUntilTrue(host, "mcpLoaded() && mcpSettled()");
     try expectState(host, "modern", "connected · modern · 3 tools: a.tool, a_tool, echo");
     const start = std.Io.Timestamp.now(host.io, .awake);
     const call = host.calls.submit("mcp_modern_echo", "{\"text\":\"slow\"}", host.cwd);
@@ -143,7 +143,7 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try f.init("servers");
     defer f.deinit();
     const host = f.host;
-    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try support.pumpUntilTrue(host, "mcpLoaded() && mcpSettled()");
     try expectState(host, "legacy", "connected · legacy · 1 tool: echo · 1 stray stdout line");
     try expectState(host, "modern", "connected · modern · 3 tools: a.tool, a_tool, echo");
     try expectState(host, "dies", "connected · legacy · 1 tool: echo");
@@ -189,7 +189,7 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     @memcpy(big[100_000..], marker);
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"big\"}", .{ .text = .{ .equals = big } });
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"input\"}", .{ .is_error = true, .text = .{ .equals = "the tool asks for input, which this client cannot answer" } });
-    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpConflict = false; plugins.use({ name: \"mcp-conflict\", apply(ctx) { ctx.tools.define({ name: \"mcp_modern_added\", description: \"Occupied name.\", parameters: { type: \"object\", properties: {} }, execute() { return \"other\"; } }); } }).ready.then(() => { globalThis.mcpConflict = true; });", "mcp-conflict.js");
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpConflict = false; plugins.use({ name: \"mcp-conflict\", apply(ctx) { ctx.tools.define({ name: \"mcp_modern_added\", description: \"Occupied name.\", parameters: { type: \"object\", properties: {} }, execute() { return \"other\"; } }); } }); globalThis.mcpConflict = true;", "mcp-conflict.js");
     try support.pumpUntilTrue(host, "mcpConflict === true");
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"change\"}", .{ .text = .{ .equals = "changed" } });
     try support.pumpUntilTrue(host, "mcpStates().modern.includes('another tool already has this name')");
@@ -230,7 +230,7 @@ test "a search tool name conflict clears on the next catalog change" {
     try f.init("search-conflict");
     defer f.deinit();
     const host = f.host;
-    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try support.pumpUntilTrue(host, "mcpLoaded() && mcpSettled()");
     try support.pumpUntilTrue(host, "(mcpStates().config ?? '').includes('tool_search: another tool already has this name')");
     try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpHeld = true; Promise.resolve(plugins.dispose(\"search-holder\")).then(() => { globalThis.mcpHeld = false; });", "mcp-release.js");
     try support.pumpUntilTrue(host, "mcpHeld === false");
@@ -247,7 +247,7 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     defer f.deinit();
     const host = f.host;
     const peer = f.peer.?;
-    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try support.pumpUntilTrue(host, "mcpLoaded() && mcpSettled()");
     try expectState(host, "modern", "connected · modern · 3 tools: echo, region, slow · dropped: broken (x-mcp-header on a parameter that is not a string, integer, or boolean)");
     // A modern error in a 400 body is no legacy server, so the client does not fall back.
     try expectState(host, "mismatch", "failed · modern · Header mismatch");
@@ -305,13 +305,22 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     try std.testing.expectEqual(@as(?anyerror, null), peer.failure);
 }
 
+test "an MCP method called before the configuration load waits for it" {
+    var f: Fixture = undefined;
+    try f.init("early");
+    defer f.deinit();
+    try support.pumpUntilTrue(f.host, "early !== ''");
+    // A disabled server has no sign-in. Before the load ends, the method would find no server at all.
+    try support.expectString(f.host, "early", "the MCP server remote takes no sign-in");
+}
+
 test "an MCP server behind OAuth signs in through the browser, refreshes its token, and signs out" {
     var f: Fixture = undefined;
     try f.init("oauth");
     defer f.deinit();
     const host = f.host;
     const peer = f.peer.?;
-    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try support.pumpUntilTrue(host, "mcpLoaded() && mcpSettled()");
     try expectState(host, "secure", "needs auth · run /mcp-login secure");
     // An old-transport stream that answers 401 waits for a sign-in too.
     try expectState(host, "lockedsse", "needs auth · run /mcp-login lockedsse");
@@ -346,7 +355,7 @@ test "a confidential MCP client sends its form-encoded secret in HTTP Basic" {
     try f.init("oauth-secret");
     defer f.deinit();
     const host = f.host;
-    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try support.pumpUntilTrue(host, "mcpLoaded() && mcpSettled()");
     try host.evalModule("globalThis.signError = ''; globalThis.signed = false; mcpPlugin.login('private', browse).then(() => { globalThis.signed = true; }, (e) => { globalThis.signError = e.message; });", "mcp-login-secret.js");
     try support.pumpUntilTrue(host, "signed || signError !== ''");
     try support.expectString(host, "signError", "");
@@ -422,7 +431,7 @@ test "MCP refuses incompatible discovery and incomplete catalogs" {
     try f.init("protocol");
     defer f.deinit();
     const host = f.host;
-    try support.pumpUntilTrue(host, "mcpReady && mcpSettled()");
+    try support.pumpUntilTrue(host, "mcpLoaded() && mcpSettled()");
     try expectState(host, "version", "failed · modern · the server supports no protocol version this client speaks");
     try expectState(host, "noTools", "connected · modern · no tools");
     try expectState(host, "capabilities", "failed · modern · invalid MCP tool capabilities");

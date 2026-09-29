@@ -97,6 +97,7 @@ export interface Bus {
   onError: ((error: unknown, name: string) => void) | null;
 }
 /** A sync apply may return its cleanup; an async apply resolves to nothing. */
+/** Register the plugin in the synchronous part of `apply`. The host never waits for an async apply. A rejection closes the plugin. */
 export type PluginApply = (context: Context) => void | (() => void) | Promise<void>;
 
 export interface ToolContext {
@@ -134,9 +135,7 @@ export type InjectContext<K extends string = "tui"> = Context & Pick<Capabilitie
 export type InjectApply<K extends string = string> = (context: InjectContext<K>) => unknown;
 
 export interface PluginHandle {
-  /** Rejects on startup failure or cancellation. */
-  readonly ready: Promise<void>;
-  /** Cancels the signal and startup, reverts the registrations, awaits the releases, and frees the name; a sync close answers nothing. */
+  /** Cancels the signal, reverts the registrations, and waits for the releases and an async apply until the close deadline. Then it frees the name. A sync close answers nothing. */
   dispose(): void | Promise<void>;
 }
 

@@ -4,7 +4,7 @@ import { plugins } from "yuke:internal/ext";
 import { interaction } from "yuke:internal/interaction";
 import { mcp, toolName, decodeMessage, toolResult, mirroredParams } from "yuke:internal/mcp";
 import { headerValue } from "yuke:internal/mcp-transport";
-import { check, equal } from "yuke:internal/test";
+import { check, equal, until } from "yuke:internal/test";
 import { sseParser } from "yuke:internal/sse";
 import { client } from "yuke:internal/client";
 import { fetch } from "yuke:internal/http";
@@ -85,6 +85,8 @@ const sh = (script) => ({ command: "/bin/sh", args: ["-c", script], env });
 
 /** @returns {Record<string, string>} */
 globalThis.mcpStates = () => Object.fromEntries(globalThis.mcpPlugin.rows());
+// The load adds every server in one step, and every case configures a server, so a server row marks the end of the load.
+globalThis.mcpLoaded = () => globalThis.mcpPlugin.rows().some(([name]) => name !== "mcp" && name !== "config");
 globalThis.mcpSettled = () => Object.values(globalThis.mcpStates()).every((/** @type {string} */ row) => !row.startsWith("pending") && !row.startsWith("connecting"));
 
 if (mcpCase === "servers") {
@@ -113,14 +115,12 @@ if (mcpCase === "servers") {
       off: { command: "/bin/sh", enabled: false },
     },
   });
-  globalThis.mcpReady = false;
-  plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
+  plugins.use(globalThis.mcpPlugin);
 }
 
 if (mcpCase === "timeout") {
   globalThis.mcpPlugin = mcp({ startupMs: 3000, callMs: 100, servers: { modern: sh(MODERN) } });
-  globalThis.mcpReady = false;
-  plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
+  plugins.use(globalThis.mcpPlugin);
 }
 
 // Three remote flavors on one loopback peer, and one server without the token the peer wants.
@@ -136,8 +136,7 @@ if (mcpCase === "http") {
     drop: { type: "http", url: mcpHttpBase + "/modern-drop", headers: token },
     end: { type: "http", url: mcpHttpBase + "/modern-end", headers: token },
   } });
-  globalThis.mcpReady = false;
-  plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
+  plugins.use(globalThis.mcpPlugin);
 }
 
 // One server behind OAuth. The test browser follows the authorization redirect to the loopback callback, as a real browser does.
@@ -152,8 +151,7 @@ if (mcpCase === "oauth") {
     const back = await fetch(/** @type {string} */ (authorize.headers.get("location")));
     globalThis.callbackPage = await back.text();
   };
-  globalThis.mcpReady = false;
-  plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
+  plugins.use(globalThis.mcpPlugin);
 }
 
 // A confidential client whose secret needs form encoding before HTTP Basic.
@@ -164,23 +162,27 @@ if (mcpCase === "oauth-secret") {
     authorize.body.cancel();
     await (await fetch(/** @type {string} */ (authorize.headers.get("location")))).text();
   };
-  globalThis.mcpReady = false;
-  plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
+  plugins.use(globalThis.mcpPlugin);
 }
 
 // Another plugin holds the search tool name first, so the MCP plugin must try again on the next change.
 if (mcpCase === "search-conflict") {
-  globalThis.mcpReady = false;
-  plugins.use({ name: "search-holder", apply(ctx) { ctx.tools.define({ name: "tool_search", description: "Occupied name.", parameters: { type: "object", properties: {} }, execute() { return "other"; } }); } }).ready.then(() => {
-    globalThis.mcpPlugin = mcp({ startupMs: 3000, callMs: 500, servers: { modern: sh(MODERN) } });
-    return plugins.use(globalThis.mcpPlugin).ready;
-  }).then(() => { globalThis.mcpReady = true; });
+  plugins.use({ name: "search-holder", apply(ctx) { ctx.tools.define({ name: "tool_search", description: "Occupied name.", parameters: { type: "object", properties: {} }, execute() { return "other"; } }); } });
+  globalThis.mcpPlugin = mcp({ startupMs: 3000, callMs: 500, servers: { modern: sh(MODERN) } });
+  plugins.use(globalThis.mcpPlugin);
+}
+
+// A method called before the configuration load ends waits for it, so it finds the configured server.
+if (mcpCase === "early") {
+  globalThis.mcpPlugin = mcp({ servers: { remote: { type: "http", url: "https://example.test/mcp", enabled: false } } });
+  plugins.use(globalThis.mcpPlugin);
+  globalThis.early = "";
+  globalThis.mcpPlugin.logout("remote").then(() => { globalThis.early = "ok"; }, (/** @type {Error} */ error) => { globalThis.early = error.message; });
 }
 
 if (mcpCase === "silent") {
   globalThis.mcpPlugin = mcp({ startupMs: 100, servers: { silent: sh("exec cat >/dev/null") } });
-  globalThis.mcpReady = false;
-  plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
+  plugins.use(globalThis.mcpPlugin);
 }
 
 // A workspace `.mcp.json` server waits for trust. The answerer records the question and answers `mcpAnswer`.
@@ -194,7 +196,8 @@ if (mcpCase === "trust") {
   globalThis.mcpStart = async (greeting = "hello") => {
     await fs.writeFile(".mcp.json", JSON.stringify({ mcpServers: { ws: { ...sh(LEGACY), enabled: globalThis.mcpEnabled ?? true, timeout: globalThis.mcpTimeout ?? 500, env: globalThis.mcpReorder ? { GREETING: greeting, ...env } : { ...env, GREETING: greeting } } } }));
     globalThis.mcpPlugin = mcp({ startupMs: 3000 });
-    await plugins.use(globalThis.mcpPlugin).ready;
+    plugins.use(globalThis.mcpPlugin);
+    await until(globalThis.mcpLoaded, "MCP configuration load");
   };
 }
 
@@ -290,6 +293,5 @@ if (mcpCase === "protocol") {
     schema: list({ tools: [{ name: "missing" }] }),
     cursor: list({ tools: [], nextCursor: "again" }),
   } });
-  globalThis.mcpReady = false;
-  plugins.use(globalThis.mcpPlugin).ready.then(() => { globalThis.mcpReady = true; });
+  plugins.use(globalThis.mcpPlugin);
 }

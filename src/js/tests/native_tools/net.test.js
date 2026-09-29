@@ -60,6 +60,9 @@ async function run() {
   await refused(socket.write(new Uint8Array()), "CLOSED");
 
   let held;
+  /** @type {() => void} */
+  let applied = () => {};
+  const started = new Promise((resolve) => { applied = resolve; });
   const plugin = plugins.use({ name: "socket-owner", async apply(ctx) {
     held = await net.connect({ path: socketPath, signal: ctx.signal });
     ctx.own(() => held.close());
@@ -69,8 +72,9 @@ async function run() {
       await held.write(new Uint8Array([17]), { timeoutMs: 1000 });
       equal((await held.read({ maxBytes: 1, timeoutMs: 1000 }))[0], 17);
     });
+    applied();
   } });
-  await plugin.ready;
+  await started;
   socket.close();
   await plugin.dispose();
   await refused(held.read(), "CLOSED");
