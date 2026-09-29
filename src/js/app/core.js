@@ -1,7 +1,7 @@
 import { clip } from "yuke:internal/text-input";
 import { normalizeSeq, stripCtrl, strokeOf } from "yuke:internal/keys";
 import { term } from "yuke:internal/native/term";
-import { callHook, config, events, fault, once } from "yuke:internal/kernel";
+import { callHook, config, events, fault, notify, once } from "yuke:internal/kernel";
 
 /** @import { Color, Style } from "yuke:internal/native/term" */
 /** @import { CommandAction, CommandEntry, CommandListing, CommandRegistry, CommandSpec, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
@@ -635,12 +635,16 @@ export const route = {
   },
 };
 
-// Write `text` to the clipboard, emit `clipboard.copied`, and return the byte count or -1.
+// Write `text` to the clipboard, tell the user the result, emit `clipboard.copied`, and return the byte count or -1.
 /** @param {string | null | undefined} text @param {string | undefined} what @returns {number} */
 export function copy(text, what) {
   const s = text == null ? "" : String(text);
   const bytes = s === "" ? 0 : term.copy(s);
-  events.emit("clipboard.copied", { what: what || "text", text: s, bytes });
+  const label = what || "text";
+  if (s === "") notify("info", "nothing to copy", "clipboard");
+  else if (bytes < 0) notify("warn", "too large to copy · over " + term.clipboardMax + " bytes", "clipboard");
+  else notify("info", "copied " + label + " · " + bytes + " bytes", "clipboard");
+  events.emit("clipboard.copied", { what: label, text: s, bytes });
   return bytes;
 }
 

@@ -1,4 +1,4 @@
-import { check } from "yuke:internal/test";
+import { check, detailSections } from "yuke:internal/test";
 import { ChatView } from "yuke:internal/chat-view";
 import { term } from "yuke:internal/native/term";
 import { root, Node } from "yuke:internal/core";
@@ -54,7 +54,7 @@ const doneOpen = t.rows(40, 0, 6);
 check("click-open", markerOf(doneOpen) === "└─" && rowsHave(doneOpen, "alpha"));
 t.onMouse(at(6, 2, "press"));
 t.onMouse(at(6, 2, "release"));
-check("body-opens-details", root.overlays.length === 1 && root.overlays[0].content.sections[1].text === "alpha\\nbeta");
+check("body-opens-details", root.overlays.length === 1 && detailSections(root.overlays[0].content)[1].text === "alpha\\nbeta");
 root.popOverlay(root.overlays[0]);
 t.onMouse(at(6, 1, "press"));
 t.onMouse(at(8, 1, "drag"));
@@ -100,7 +100,7 @@ root.onEvent(key("enter"));
 check("enter-preview", root.overlays.length === 0 && rowsHave(v.transcript.rows(40, 0, 8), "alpha"));
 root.onEvent(key("down"));
 root.onEvent(key("enter"));
-check("enter-details", root.overlays.length === 1 && root.overlays[0].content.sections[0].text.indexOf("a.zig") >= 0 && root.overlays[0].content.sections[1].text === "alpha\\nbeta");
+check("enter-details", root.overlays.length === 1 && detailSections(root.overlays[0].content)[0].text.indexOf("a.zig") >= 0 && detailSections(root.overlays[0].content)[1].text === "alpha\\nbeta");
 root.onEvent(key("esc"));
 check("details-close", root.overlays.length === 0 && rowsHave(v.transcript.rows(40, 0, 8), "alpha"));
 const vr = v.transcript.pager.rect();
@@ -127,7 +127,7 @@ thought.setOutline([], { id: "thought", type: "assistant" });
 term.beginFrame(); thought.draw({ x: 0, y: 0, w: 20, h: 8 }); term.endFrame();
 thought.onMouse(at(6, 2, "press"));
 thought.onMouse(at(6, 2, "release"));
-check("reasoning-body-details", root.overlays.length === 1 && root.overlays[0].content.sections[0].text === parts.thought[0].text);
+check("reasoning-body-details", root.overlays.length === 1 && detailSections(root.overlays[0].content)[0].text === parts.thought[0].text);
 root.popOverlay(root.overlays[0]);
 
 // A scoped presenter changes both the row and its source; a faulty presenter falls back.

@@ -4,7 +4,7 @@ import { term } from "yuke:internal/native/term";
 import { root, isWheel } from "yuke:internal/core";
 import { clip, caretAtCol, wrapPreview, nextGrapheme } from "yuke:internal/text-input";
 import { Document, isLinear, normalizeSource } from "yuke:internal/md";
-import { Window, ScrollView } from "yuke:internal/ui";
+import { RowsView, Window } from "yuke:internal/ui";
 import { byteLabel } from "yuke:internal/format";
 
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
@@ -601,39 +601,22 @@ function toolRows(part, width, expanded, tree) {
 }
 
 // A scrolling overlay over labelled sections, so a tool and a reasoning part share one detail window.
-class PartDetails extends ScrollView {
-  /** @param {readonly { label: string, text: string, empty: string }[]} sections @param {() => void} onClose */
-  constructor(sections, onClose) {
-    super(onClose);
-    this.sections = sections;
-    this.width = -1;
+// The rows of a details window: each section label, then its wrapped text.
+/** @param {readonly { label: string, text: string, empty: string }[]} sections @param {number} width @returns {TranscriptRow[]} */
+function detailRows(sections, width) {
+  const bodyWidth = Math.max(1, width - TX_GUTTER);
+  const rows = /** @type {TranscriptRow[]} */ ([]);
+  for (const section of sections) {
+    if (rows.length) rows.push({ text: "" });
+    rows.push({ text: section.label, group: "TxToolName" });
+    for (const row of wrapBody(section.text || section.empty, bodyWidth, "TxToolBody")) rows.push(row);
   }
-
-  /** @param {number} width @returns {TranscriptRow[]} */
-  rows(width) {
-    const bodyWidth = Math.max(1, width - TX_GUTTER);
-    const rows = /** @type {TranscriptRow[]} */ ([]);
-    for (const section of this.sections) {
-      if (rows.length) rows.push({ text: "" });
-      rows.push({ text: section.label, group: "TxToolName" });
-      for (const row of wrapBody(section.text || section.empty, bodyWidth, "TxToolBody")) rows.push(row);
-    }
-    return rows;
-  }
-
-  /** @param {Rect} bounds @returns {void} */
-  layout(bounds) {
-    super.layout(bounds);
-    if (this.width !== bounds.w) {
-      this.width = bounds.w;
-      this.pager.setRows(this.rows(bounds.w));
-    }
-  }
+  return rows;
 }
 
 /** @param {string} title @param {readonly { label: string, text: string, empty: string }[]} sections @returns {void} */
 function openDetails(title, sections) {
-  const content = new PartDetails(sections, () => root.popOverlay(win));
+  const content = new RowsView((width) => detailRows(sections, width), () => root.popOverlay(win));
   const win = new Window({ title, footer: "j/k scroll · pgup/pgdn · esc close", border: "rounded", width: max => Math.round(max * 0.9), height: max => Math.round(max * 0.85), content });
   root.pushOverlay(win);
 }

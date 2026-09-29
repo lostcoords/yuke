@@ -39,3 +39,14 @@ export async function listSessions(items) {
   defaultModel();
   for (let i = 0; i < 8; i++) await Promise.resolve();
 }
+
+// The sections that a details window shows, as `{ label, text }`. A wide width keeps each source line on one row.
+/** @param {{ rowsFor: (width: number) => any[] }} view @returns {{ label: string, text: string }[]} */
+export function detailSections(view) {
+  const out = [];
+  for (const row of view.rowsFor(1 << 20)) {
+    if (row.group === "TxToolName") out.push({ label: row.text, lines: [] });
+    else if (row.segments && out.length) out[out.length - 1].lines.push(row.segments.map((seg) => seg.text).join(""));
+  }
+  return out.map((section) => ({ label: section.label, text: section.lines.join("\n") }));
+}

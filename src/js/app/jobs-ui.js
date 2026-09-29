@@ -3,8 +3,8 @@ import { root } from "yuke:internal/core";
 import { ui, Window, ScrollView } from "yuke:internal/ui";
 import { list, get, stop, read, name, endLabel, shortCommand } from "yuke:internal/jobs";
 import { currentSession } from "yuke:internal/session";
-import { notice } from "yuke:internal/notice";
 import { elapsedLabel, errorText } from "yuke:internal/format";
+import { notify } from "yuke:internal/kernel";
 
 /** @import { Context as PluginContext } from "yuke:internal/ext" */
 /** @import { InjectContext as Context } from "./types/ext.js" */
@@ -12,7 +12,7 @@ import { elapsedLabel, errorText } from "yuke:internal/format";
 /** @import { TranscriptRow } from "./types/pager.js" */
 
 /** @param {unknown} error */
-function failed(error) { notice.show("jobs · " + errorText(error)); }
+function failed(error) { notify("error", errorText(error), "jobs"); }
 
 /** @param {Job} job @param {number} now @returns {string} */
 function jobState(job, now) {
@@ -159,7 +159,7 @@ export function openJobs(ctx) {
       x: (_event, content) => { const job = content.list.selected(); if (job && job.state === "running") stop(job.id).catch(failed); },
       X: () => {
         const running = items.filter((j) => j.state === "running");
-        Promise.all(running.map((j) => stop(j.id))).then((ended) => notice.show("jobs · stop requested for " + ended.filter((j) => j?.stop_requested).length), failed);
+        Promise.all(running.map((j) => stop(j.id))).then((ended) => notify("info", "stop requested for " + ended.filter((j) => j?.stop_requested).length, "jobs"), failed);
       },
     },
   });

@@ -2,7 +2,7 @@
 import { keymap, root } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import { NAV_KEYS } from "yuke:internal/ui";
-import { noticePlugin } from "yuke:internal/notice";
+import { toastsPlugin } from "yuke:internal/toasts";
 import { commandUi } from "yuke:internal/command-ui";
 import { catalogPlugin } from "yuke:internal/catalog";
 import { jobsUiPlugin } from "yuke:internal/jobs-ui";
@@ -45,7 +45,7 @@ const keysPlugin = {
 };
 
 plugins.use(keysPlugin);
-plugins.use(noticePlugin);
+plugins.use(toastsPlugin);
 plugins.use(commandUi());
 plugins.use(catalogPlugin);
 plugins.use(authPlugin);

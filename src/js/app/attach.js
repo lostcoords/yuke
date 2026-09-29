@@ -1,9 +1,8 @@
 // A pasted path to an image becomes an attachment on the composer.
 import { fs } from "yuke:internal/native/fs";
 import { client } from "yuke:internal/client";
-import { notice } from "yuke:internal/notice";
 import { root } from "yuke:internal/core";
-import { events } from "yuke:internal/kernel";
+import { events, notify } from "yuke:internal/kernel";
 import { clipboard } from "yuke:internal/clipboard";
 import { errorText } from "yuke:internal/format";
 
@@ -35,7 +34,7 @@ export function looksLikeImagePath(text) {
 /** @param {string} path @returns {Promise<Wire.MediaBlob | null>} */
 async function putImage(path) {
   return client.blobPut(path).catch((e) => {
-    notice.show("attach failed · " + errorText(e));
+    notify("error", "attach failed · " + errorText(e), "attach");
     return null;
   });
 }
@@ -55,8 +54,7 @@ export async function attachPath(composer, text, from) {
 export async function attachClipboard(composer) {
   const read = await clipboard.readImage();
   if (!("path" in read)) {
-    notice.show(read.error);
-    root.invalidate();
+    notify("warn", read.error, "attach");
     return false;
   }
   const blob = await putImage(read.path);

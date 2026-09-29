@@ -1,11 +1,10 @@
 // The session layer: the engine sessions the panes show, their pins, the session list, the model a new session takes,
 // the current pane, and the session commands. Any pane that holds a `Session` gets every feature built on this layer.
 import { root, command } from "yuke:internal/core";
-import { events } from "yuke:internal/kernel";
+import { events, notify } from "yuke:internal/kernel";
 import { term } from "yuke:internal/native/term";
 import { ui } from "yuke:internal/ui";
 import { client } from "yuke:internal/client";
-import { notice } from "yuke:internal/notice";
 import { Refresh } from "yuke:internal/refresh";
 import { catalogOf, reloadCatalog, providerState, providerStateLabel } from "yuke:internal/catalog";
 import { errorText } from "yuke:internal/format";
@@ -68,7 +67,7 @@ export class Session {
     this.gen++;
     this.creating = false;
     if (!client.sessionOpen(id)) {
-      notice.show("open failed · session unavailable");
+      notify("error", "open failed · session unavailable", "session");
       root.invalidate();
       return false;
     }
@@ -93,7 +92,7 @@ export class Session {
       const changes = item.context_changes;
       if (!changes || (!changes.instructions && !changes.skills)) return;
       const what = changes.instructions && changes.skills ? "AGENTS.md and skills" : changes.instructions ? "AGENTS.md" : "skills";
-      notice.show(what + " changed on disk. Run /reload to update this session.");
+      notify("warn", what + " changed on disk. Run /reload to update this session.", "session");
       root.invalidate();
     }).catch(() => {});
   }
@@ -108,7 +107,7 @@ export class Session {
     const sent = invocation ? client.sessionSendSkill(this.sessionId, invocation.name, invocation.args) : client.sessionSendInput(this.sessionId, content);
     sent.catch((e) => {
       composer.restore(snap);
-      notice.show("send failed · " + errorText(e));
+      notify("error", "send failed · " + errorText(e), "session");
     });
     return true;
   }
@@ -124,7 +123,7 @@ export class Session {
   // An open session takes the choice only when the engine accepts the patch, so a refused choice changes nothing.
   /** @param {Wire.ModelInfo} model @param {string} reasoning @returns {void} */
   setModel(model, reasoning) {
-    notice.show("model · " + model.name + (reasoning ? " · " + reasoning : ""));
+    notify("info", model.name + (reasoning ? " · " + reasoning : ""), "model");
     const sessionId = this.sessionId;
     const choose = () => {
       modelDefaults.model = model.selector;
@@ -137,7 +136,7 @@ export class Session {
     root.invalidate();
     // A run in flight keeps the settings it started with, so the move lands on the next turn.
     client.sessionPatch(sessionId, { model: model.selector, reasoning }).then(choose, (e) => {
-      notice.show("model · " + errorText(e));
+      notify("error", errorText(e), "model");
       root.invalidate();
     });
   }
@@ -188,7 +187,7 @@ export class Session {
   startChat(input, composer) {
     if (this.creating) return false;
     if (!term.cwd) {
-      notice.show("no workspace directory");
+      notify("error", "no workspace directory", "session");
       return false;
     }
     const snap = composer.snapshot();
@@ -208,7 +207,7 @@ export class Session {
         // A cancelled create must not restore an input into a view the user already moved on from.
         if (token !== this.gen) return;
         composer.restore(snap);
-        notice.show("new chat failed · " + errorText(e));
+        notify("error", "new chat failed · " + errorText(e), "session");
       })
       .then(() => {
         if (token === this.gen) this.creating = false;
@@ -454,13 +453,13 @@ function openModelPicker(ctx, query) {
   const show = () => {
     // Code-unit order: localeCompare NFC-normalizes and traps in ReleaseSafe QuickJS.
     const models = catalogOf().models.slice().sort((a, b) => (a.provider < b.provider ? -1 : a.provider > b.provider ? 1 : 0) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    if (models.length === 0) return notice.show("no model in the catalog");
+    if (models.length === 0) return notify("info", "no model in the catalog", "model");
     if (query) {
       const m = models.find((x) => x.selector === query || x.id === query || x.name === query);
       if (m) {
         if (modelAvailable(m)) pane.session.setModel(m, m.default_reasoning || m.reasoning_levels[0] || "");
       }
-      else notice.show("no model named " + query);
+      else notify("info", "no model named " + query, "model");
       return;
     }
     const p = ui.pick({
@@ -495,7 +494,7 @@ function openModelPicker(ctx, query) {
 function modelAvailable(model) {
   const state = providerState(model.provider);
   if (state === "needs_credential") command.perform("auth:login", model.provider);
-  else if (state === "needs_route") notice.show(model.provider + " needs a route in providers.json");
+  else if (state === "needs_route") notify("warn", model.provider + " needs a route in providers.json", "model");
   else return true;
   return false;
 }
@@ -532,7 +531,7 @@ function openSessionFinder(ctx) {
   feed.refresh().then(() => {
     const rows = feed.rows().filter((row) => row.session.origin.type !== "child").sort((a, b) => (b.session.updated_at_ms || 0) - (a.session.updated_at_ms || 0));
     if (rows.length === 0) {
-      notice.show("no sessions yet");
+      notify("info", "no sessions yet", "session");
       return;
     }
     const p = ui.pick({
@@ -630,12 +629,12 @@ export const sessionsPlugin = {
         slash: true,
         run: () => {
           const id = current?.session.sessionId;
-          if (!id) return notice.show("no open chat");
+          if (!id) return notify("info", "no open chat", "session");
           client.sessionReloadContext(id).then((r) => {
-            notice.show("Context reloaded: " + r.instruction_sources.length + " AGENTS.md, " + r.skills.length + " skills.");
+            notify("info", "Context reloaded: " + r.instruction_sources.length + " AGENTS.md, " + r.skills.length + " skills.", "context");
             root.invalidate();
           }).catch((e) => {
-            notice.show("Context reload failed: " + errorText(e));
+            notify("error", "Context reload failed: " + errorText(e), "context");
           });
         },
       });
@@ -644,12 +643,12 @@ export const sessionsPlugin = {
         slash: true,
         run: () => {
           const id = current?.session.sessionId;
-          if (!id) return notice.show("no open chat");
+          if (!id) return notify("info", "no open chat", "session");
           client.sessionCompact(id).then((r) => {
-            notice.show(r.status === "started" ? "Compacting the context." : "Compaction waits for the active run.");
+            notify("info", r.status === "started" ? "Compacting the context." : "Compaction waits for the active run.", "context");
             root.invalidate();
           }).catch((e) => {
-            notice.show("Compaction failed: " + errorText(e));
+            notify("error", "Compaction failed: " + errorText(e), "context");
           });
         },
       });

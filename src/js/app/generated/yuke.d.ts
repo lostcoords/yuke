@@ -1796,10 +1796,12 @@ import TextInput = $text_input.TextInput;
 import Pager = $pager.Pager;
 import MouseEvent = $types_core.HostMouseEvent;
 import Rect = $types_core.Rect;
+import TranscriptRow = $types_pager.TranscriptRow;
 import BorderSet = $types_ui.BorderSet;
 import ComposerOptions = $types_ui.ComposerOptions;
 import ComposerSnapshot = $types_ui.ComposerSnapshot;
 import ComposerSpan = $types_ui.ComposerSpan;
+import ContentHeight = $types_ui.ContentHeight;
 import Dimension = $types_ui.Dimension;
 import ListItem = $types_ui.ListItem;
 import ListKey = $types_ui.ListKey;
@@ -1831,6 +1833,16 @@ export class ScrollView {
     onKey(event: HostEvent): boolean;
     /** @param {MouseEvent} event @returns {boolean} */
     onMouse(event: MouseEvent): boolean;
+}
+export class RowsView extends ScrollView {
+    rowsFor: (width: number) => TranscriptRow[];
+    width: number;
+    /** @param {(width: number) => TranscriptRow[]} rowsFor @param {() => void} onClose */
+    constructor(rowsFor: (width: number) => TranscriptRow[], onClose: () => void);
+    /** @returns {void} */
+    refresh(): void;
+    /** @param {Rect} bounds @returns {void} */
+    layout(bounds: Rect): void;
 }
 /** @template T */
 export class List<T> {
@@ -2050,6 +2062,10 @@ export class Window {
     modal: boolean;
     border: $types_ui.Border;
     content: WindowContent | null;
+    _borderInset: Readonly<{
+        x: number;
+        y: number;
+    }>;
     rect: {
         x: number;
         y: number;
@@ -2068,12 +2084,17 @@ export class Window {
     get name(): string;
     /** @returns {BorderSet | null} */
     _borderSet(): BorderSet | null;
+    /** @returns {Readonly<{ x: number, y: number }>} */
+    _inset(): Readonly<{
+        x: number;
+        y: number;
+    }>;
     /** @param {number} width @returns {number} */
     contentWidth(width: number): number;
     /** @param {number} rows @returns {number} */
     heightFor(rows: number): number;
-    /** @param {Dimension | null | undefined} v @param {number} max @param {number} fallback @returns {number} */
-    _dim(v: Dimension | null | undefined, max: number, fallback: number): number;
+    /** @param {Dimension | ContentHeight | null | undefined} v @param {number} max @param {number} fallback @param {number} [width] @returns {number} */
+    _dim(v: Dimension | ContentHeight | null | undefined, max: number, fallback: number, width?: number): number;
     /** @param {Rect} bounds @returns {void} */
     layout(bounds: Rect): void;
     /** @param {boolean} [_focused] @returns {void} */
@@ -3402,12 +3423,10 @@ export interface ScopeEntry {
 }
 
 export type Answerer = {
-  notify(owner: string, message: string, level: "info" | "warn" | "error"): void;
-} & ({
   interactive: true;
   open(request: InteractionRequest, context: Context, options: InteractionOptions | undefined,
     resolve: (value: unknown) => void, reject: (error: unknown) => void): Disposer;
-} | { interactive: false });
+} | { interactive: false };
 }
 
 declare namespace $types_transcript {
@@ -3602,6 +3621,8 @@ export interface BorderSet {
 
 export type Border = "none" | "single" | "rounded" | "double" | BorderSet;
 export type Dimension = number | ((max: number) => number);
+/** A row count, or a callback on the available rows and the content width, so the rows can follow wrapped text. */
+export type ContentHeight = number | ((maxRows: number, width: number) => number);
 
 export interface WindowContent {
   layout: (rect: Rect) => void;
@@ -3621,8 +3642,12 @@ export interface WindowOptions {
   width?: Dimension;
   height?: Dimension;
   /** The content row count, before the border, padding, and footer; height takes precedence. */
-  contentHeight?: Dimension;
+  contentHeight?: ContentHeight;
   anchor?: (() => Rect) | null;
+  /** Place the window in `bounds`. The layout keeps it inside. It replaces the center and the anchor placement. */
+  place?: ((bounds: Rect, w: number, h: number) => { x: number; y: number }) | null;
+  /** The blank cells between the border and the content. The default is `{ x: 2, y: 1 }`. */
+  padding?: { x: number; y: number };
   panelGroup?: string;
   borderGroup?: string;
   title?: string | (() => string);

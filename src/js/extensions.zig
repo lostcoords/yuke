@@ -278,6 +278,8 @@ test "a plugin notice reaches every attached frontend" {
     var capture: Capture = .{};
     app_runtime.engine.sinks.add(.{ .ctx = @ptrCast(&capture), .on_event = Capture.onEvent });
     defer app_runtime.engine.sinks.remove(@ptrCast(&capture));
+    // The RPC frontend starts the forwarder once its sink listens.
+    try forwardNotifications(extensions.host);
 
     try extensions.host.evalModule(
         \\import { plugins } from "yuke";

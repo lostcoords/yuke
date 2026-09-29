@@ -1,5 +1,5 @@
 // The shared interaction lifecycle owns each request until its answer or cancellation.
-import { events, notifications } from "yuke:internal/kernel";
+import { events, notifications, notify } from "yuke:internal/kernel";
 import { native } from "yuke:internal/native/interaction";
 import * as cancellation from "yuke:internal/native/cancellation";
 /** @import { CancellationSignal } from "yuke:internal/native/cancellation" */
@@ -92,8 +92,8 @@ function unavailable() {
 export const interaction = {
   /** @param {Answerer} answerer @returns {Disposer} */
   install(answerer) {
-    if (!answerer || typeof answerer.interactive !== "boolean" || typeof answerer.notify !== "function" || (answerer.interactive && typeof answerer.open !== "function")) {
-      throw new TypeError("an answerer needs interactive, notify, and an open method for prompts");
+    if (!answerer || typeof answerer.interactive !== "boolean" || (answerer.interactive && typeof answerer.open !== "function")) {
+      throw new TypeError("an answerer needs interactive and an open method for prompts");
     }
     /** @type {Registration} */
     const entry = { answerer, requests: new Set() };
@@ -116,7 +116,7 @@ function ask(ctx, request, options) {
     const entry = answerers[answerers.length - 1];
     if (!entry) { reject(unavailable()); return; }
     if (!entry.answerer.interactive) {
-      entry.answerer.notify(ctx.id, "denied: " + request.title, "warn");
+      notify("warn", "denied: " + request.title, ctx.id);
       resolve(request.type === "confirm" ? false : undefined);
       return;
     }
@@ -183,13 +183,11 @@ export function bindInteraction(ctx) {
       if (!(outcome instanceof Promise)) throw new TypeError("the login outcome must be a promise");
       return ask(ctx, { type: "device_login", title: "Provider login", start, outcome }, options);
     },
+    // A notification needs no answerer, so a plugin can notify before any frontend starts.
     notify(message, level = "info") {
       text(message, "notify message");
       noticeLevel(level);
-      if (!ctx.alive) return;
-      const entry = answerers[answerers.length - 1];
-      if (!entry) throw unavailable();
-      entry.answerer.notify(ctx.id, message, level);
+      if (ctx.alive) notify(level, message, ctx.id);
     },
   };
 }
@@ -199,7 +197,7 @@ const rpcAnswerer = {
   interactive: true,
   open(request, ctx, options, resolve, reject) {
     if (request.type === "device_login") {
-      native.notify(ctx.id, "Sign in at " + request.start.verification_url + " with code " + request.start.user_code + ". Cancel the tool to stop setup.", "info");
+      notify("info", "Sign in at " + request.start.verification_url + " with code " + request.start.user_code + ". Cancel the tool to stop setup.", ctx.id);
       request.outcome.then(resolve, reject);
       return watchCancellation(options?.signal, () => resolve(undefined));
     }
@@ -207,7 +205,6 @@ const rpcAnswerer = {
     native.request(id, JSON.stringify(request), options?.signal).then(resolve, reject);
     return () => { native.cancel(id); };
   },
-  notify: (owner, message, level) => native.notify(owner, message, level),
 };
 
 export const rpcInteractionPlugin = {
@@ -234,6 +231,6 @@ export const printInteractionPlugin = {
   name: "print-interaction",
   /** @param {Context} ctx */
   apply(ctx) {
-    ctx.effect(() => interaction.install({ interactive: false, notify: rpcAnswerer.notify }));
+    ctx.effect(() => interaction.install({ interactive: false }));
   },
 };

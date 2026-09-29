@@ -1,10 +1,15 @@
 import { root, status } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import { tuiPlugin } from "yuke:internal/tui";
-import { notice } from "yuke:internal/notice";
 import { jobsUiPlugin, openJobs, openOutput, JobOutput } from "yuke:internal/jobs-ui";
 import { start, jobs } from "yuke:internal/jobs";
 import { until } from "yuke:internal/test";
+import { events } from "yuke:internal/kernel";
+// The messages posted since the last reset, as the user saw them. A repeat posts again, so it counts too.
+const shown = [];
+events.on("notify.posted", (n) => shown.push(n.message));
+const lastShown = () => shown[shown.length - 1] ?? "";
+
 const fail = [];
 const check = (name, cond) => { if (!cond) fail.push(name); };
 const key = (picker, char) => picker.content.onKey({ type: "key", code: "char", char, text: char, event: "press", mods: 0 });
@@ -36,7 +41,7 @@ plugins.use({ name: "jobs-ui-test", apply(ctx) { ctx.inject(["tui"], (ctx) => { 
 
   key(picker, "X");
   await jobs.wait(one.id);
-  check("X-stops-all", notice.text === "jobs · stop requested for 1" && !status.side("right").includes("jobs"));
+  check("X-stops-all", lastShown() === "stop requested for 1" && !status.side("right").includes("jobs"));
 
   picker.content.onKey({ type: "key", code: "esc", event: "press", mods: 0 });
   check("esc-closes", root.overlays.length === 0);

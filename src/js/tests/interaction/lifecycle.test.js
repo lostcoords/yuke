@@ -13,7 +13,6 @@ const answerer = {
     shown.push({ request, resolve, reject });
     return () => { closed++; };
   },
-  notify() {},
 };
 const uninstall = interaction.install(answerer);
 const changes = [];
@@ -52,7 +51,7 @@ equal(await newer, true);
 removeNew();
 
 // Validation and immediate denial create no wait state.
-const denied = interaction.install({ interactive: false, notify() {} });
+const denied = interaction.install({ interactive: false });
 const before = changes.length;
 equal(await b.interaction.confirm("Denied"), false);
 equal(await b.interaction.input("Denied"), undefined);

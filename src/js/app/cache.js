@@ -2,9 +2,9 @@
 import { allChildren } from "yuke:internal/client";
 import { showInfo } from "yuke:internal/info-panel";
 import { currentEntry } from "yuke:internal/session";
-import { notice } from "yuke:internal/notice";
 import { modelOf, sessionCost } from "yuke:internal/catalog";
 import { contextBar, money, tokenLabel } from "yuke:internal/format";
+import { notify } from "yuke:internal/kernel";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @typedef {{ name: string, total: Wire.TokenUsage, model: string }} Child */
@@ -99,7 +99,7 @@ export const cachePlugin = {
         run: async () => {
           const entry = currentEntry();
           // A chat with no session has read nothing, so the window would state zeros and explain none of them.
-          if (!entry) return notice.show("no session yet");
+          if (!entry) return notify("info", "no session yet", "cache");
           // A null list says the read failed, so the window states that rather than claim no agent ran.
           const children = await allChildren(entry.session.id)
             .then((items) => items.map(({ session }) => ({ name: session.name || "agent", total: session.usage_total, model: session.model })))

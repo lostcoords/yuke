@@ -9,7 +9,7 @@ import { client } from "yuke:internal/client";
 import { signIn, forget, record } from "yuke:internal/mcp-oauth";
 import { errorText } from "yuke:internal/format";
 import { openUrl } from "yuke:internal/browser";
-import { notice } from "yuke:internal/notice";
+import { notify } from "yuke:internal/kernel";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { Plugin, ToolContext, ToolDefinition } from "./types/ext.js" */
@@ -969,9 +969,9 @@ export function mcp(options = {}) {
           run: (/** @type {string | undefined} */ query) => {
             // Without a name, the first server that waits for a sign-in is the one.
             const name = query?.trim() || servers.find((server) => server.state === "needs auth")?.name;
-            if (!name) { notice.show("no MCP server needs a sign-in"); return; }
-            notice.show("MCP " + name + ": sign in in the browser");
-            plugin.login(name).then(() => notice.show("MCP " + name + ": signed in"), (error) => notice.show("MCP " + name + ": " + errorText(error)));
+            if (!name) { notify("info", "no MCP server needs a sign-in", "mcp"); return; }
+            notify("info", name + ": sign in through the browser", "mcp");
+            plugin.login(name).then(() => notify("info", name + ": signed in", "mcp"), (error) => notify("error", name + ": " + errorText(error), "mcp"));
           },
         });
         ctx.tui.command.add("mcp:logout", {
@@ -980,8 +980,8 @@ export function mcp(options = {}) {
           args: true,
           run: (/** @type {string | undefined} */ query) => {
             const name = query?.trim();
-            if (!name) { notice.show("name the MCP server to sign out of"); return; }
-            plugin.logout(name).then(() => notice.show("MCP " + name + ": signed out"), (error) => notice.show("MCP " + name + ": " + errorText(error)));
+            if (!name) { notify("info", "name the MCP server to sign out of", "mcp"); return; }
+            plugin.logout(name).then(() => notify("info", name + ": signed out", "mcp"), (error) => notify("error", name + ": " + errorText(error), "mcp"));
           },
         });
       });

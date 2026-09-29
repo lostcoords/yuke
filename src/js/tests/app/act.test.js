@@ -6,8 +6,8 @@ import { sessions, currentPane } from "yuke:internal/session";
 // The shell built the first chat pane at boot.
 const chat = currentPane();
 const fail = [];
-// The shell loads the notice as a plugin, so its segment and listeners can be taken back out.
-if (!plugins.has("notice")) fail.push("notice-plugin");
+// The shell loads the toasts as a plugin, so its overlays and listeners can be taken back out.
+if (!plugins.has("toasts")) fail.push("toasts-plugin");
 if (!plugins.has("command-ui")) fail.push("command-ui-plugin");
 if (!plugins.has("catalog")) fail.push("catalog-plugin");
 if (!plugins.has("chat")) fail.push("chat-plugin");

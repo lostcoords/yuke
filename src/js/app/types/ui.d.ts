@@ -83,6 +83,8 @@ export interface BorderSet {
 
 export type Border = "none" | "single" | "rounded" | "double" | BorderSet;
 export type Dimension = number | ((max: number) => number);
+/** A row count, or a callback on the available rows and the content width, so the rows can follow wrapped text. */
+export type ContentHeight = number | ((maxRows: number, width: number) => number);
 
 export interface WindowContent {
   layout: (rect: Rect) => void;
@@ -102,8 +104,12 @@ export interface WindowOptions {
   width?: Dimension;
   height?: Dimension;
   /** The content row count, before the border, padding, and footer; height takes precedence. */
-  contentHeight?: Dimension;
+  contentHeight?: ContentHeight;
   anchor?: (() => Rect) | null;
+  /** Place the window in `bounds`. The layout keeps it inside. It replaces the center and the anchor placement. */
+  place?: ((bounds: Rect, w: number, h: number) => { x: number; y: number }) | null;
+  /** The blank cells between the border and the content. The default is `{ x: 2, y: 1 }`. */
+  padding?: { x: number; y: number };
   panelGroup?: string;
   borderGroup?: string;
   title?: string | (() => string);

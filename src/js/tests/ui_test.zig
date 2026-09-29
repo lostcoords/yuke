@@ -42,6 +42,10 @@ test "yuke:internal/core RootView paints and only ctrl+q quits" {
     try std.testing.expect(host.paint.quit_requested);
 }
 
+test "a window places itself inside its bounds with its own padding" {
+    try support.run("ui/window-place.test.js");
+}
+
 test "yuke:internal/core ticks each layer at its own period under a faster pulse" {
     try support.run("ui/tick-pace.test.js");
 }

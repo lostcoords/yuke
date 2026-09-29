@@ -3,13 +3,13 @@ import { root } from "yuke:internal/core";
 import { ui } from "yuke:internal/ui";
 import { client, allChildren } from "yuke:internal/client";
 import { currentPane, openSession } from "yuke:internal/session";
-import { notice } from "yuke:internal/notice";
 import { errorText } from "yuke:internal/format";
+import { notify } from "yuke:internal/kernel";
 
 /** @import { InjectContext as Context } from "./types/ext.js" */
 /** @typedef {{ item: Wire.SessionListItem, depth: number }} AgentRow */
 /** @param {unknown} error */
-function failed(error) { notice.show("agents · " + errorText(error)); }
+function failed(error) { notify("error", errorText(error), "agents"); }
 /** The state words of a child. A spawn row passes the view it keeps, so the shape is only what the words read. */
 /** @param {{ activity: Wire.SessionActivity, last_run?: Wire.RunOutcome | null }} child */
 export function childState(child) {
@@ -83,7 +83,7 @@ export async function openAgents(ctx, sessionId) {
     onAccept: (row) => { if (chat && chat === currentPane() && chat.session.sessionId === sessionId) openSession(chat, row.item.session.id); },
     keymap: {
       x: (_event, content) => { const row = content.list.selected(); if (row && row.item.session.origin.type === "child") run(() => client.sessionCancelRun(row.item.session.id, true)); },
-      X: () => run(async () => { const result = await Promise.allSettled(childItems().map((child) => client.sessionCancelRun(child.session.id, true))); notice.show("agents · stopped " + result.filter((r) => r.status === "fulfilled").length + " · failed " + result.filter((r) => r.status === "rejected").length); }),
+      X: () => run(async () => { const result = await Promise.allSettled(childItems().map((child) => client.sessionCancelRun(child.session.id, true))); const refused = result.filter((r) => r.status === "rejected").length; notify(refused > 0 ? "error" : "info", "stopped " + (result.length - refused) + " · failed " + refused, "agents"); }),
     },
   });
   picker.content.list.selectKey(sessionId);

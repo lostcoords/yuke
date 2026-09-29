@@ -3,10 +3,10 @@ import { root } from "yuke:internal/core";
 import { clip } from "yuke:internal/text-input";
 import { ui } from "yuke:internal/ui";
 import { client } from "yuke:internal/client";
-import { notice } from "yuke:internal/notice";
 import { inputSourceLabel } from "yuke:internal/transcript";
 import { currentSession } from "yuke:internal/session";
 import { errorText } from "yuke:internal/format";
+import { notify } from "yuke:internal/kernel";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { InjectContext as Ctx } from "./types/ext.js" */
@@ -87,10 +87,10 @@ export function stripRows(items) {
 // Drop one input. The engine announces the shorter queue, so the strip follows on its own.
 /** @param {string} sessionId @param {Wire.QueuedInput} input @returns {Promise<void>} */
 function cancelOne(sessionId, input) {
-  if (protectedInput(input)) { notice.show("engine reports and notices stay queued"); return Promise.resolve(); }
+  if (protectedInput(input)) { notify("info", "engine reports and notices stay queued", "queue"); return Promise.resolve(); }
   return client.sessionCancelInput(sessionId, input.input_id).then(
-    () => notice.show("dropped · " + clip(queuedText(input), 40)),
-    (e) => notice.show("cannot drop · " + errorText(e)),
+    () => notify("info", "dropped · " + clip(queuedText(input), 40), "queue"),
+    (e) => notify("error", "cannot drop · " + errorText(e), "queue"),
   );
 }
 
@@ -98,7 +98,7 @@ function cancelOne(sessionId, input) {
 function openQueuePicker(ctx, sessionId) {
   const items = queueOf(sessionId);
   if (items.length === 0) {
-    notice.show("nothing queued");
+    notify("info", "nothing queued", "queue");
     return;
   }
   const p = ui.pick({
@@ -156,8 +156,8 @@ export const queuePlugin = {
           const id = currentSession()?.sessionId;
           if (!id) return;
           clearWorkQueue(id).then((result) => {
-            notice.show("queue · removed " + result.removed + " · failed " + result.failed + " · protected " + result.protected);
-          }, (error) => notice.show("cannot clear queue · " + errorText(error)));
+            notify(result.failed > 0 ? "error" : "info", "removed " + result.removed + " · failed " + result.failed + " · protected " + result.protected, "queue");
+          }, (error) => notify("error", "cannot clear queue · " + errorText(error), "queue"));
         },
       });
 

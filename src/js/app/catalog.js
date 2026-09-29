@@ -2,8 +2,8 @@
 import { Refresh } from "yuke:internal/refresh";
 import { root } from "yuke:internal/core";
 import { client } from "yuke:internal/client";
-import { notice } from "yuke:internal/notice";
 import { errorText } from "yuke:internal/format";
+import { notify } from "yuke:internal/kernel";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @typedef {{ rev: Wire.CatalogRev | null, providers: readonly Wire.ProviderInfo[], models: readonly Wire.ModelInfo[] }} CatalogState */
@@ -42,10 +42,13 @@ export function loadCatalog() {
   return refresh.run();
 }
 
-// Read providers.json again, then refresh the catalog. A failed reload still refreshes what the engine holds.
-/** @returns {Promise<CatalogState>} */
+// Read providers.json again, then refresh the catalog. A failed reload tells the user, and the catalog still shows what the engine holds.
+/** @returns {Promise<{ changed: boolean | null, catalog: CatalogState }>} */
 export function reloadCatalog() {
-  return client.catalogReload().catch(() => {}).then(loadCatalog);
+  return client.catalogReload().then((r) => r.changed, (e) => {
+    notify("error", "reload failed · " + errorText(e), "providers");
+    return null;
+  }).then((changed) => loadCatalog().then((catalog) => ({ changed, catalog })));
 }
 
 // The state of one provider, or null when the catalog does not name it.
@@ -93,10 +96,9 @@ export const catalogPlugin = {
       ctx.tui.command.add("catalog:reload", {
         desc: "read providers.json again",
         slash: "reload-providers",
-        run: () => client.catalogReload().then(
-          (r) => { notice.show(r.changed ? "providers reloaded" : "providers unchanged"); return loadCatalog(); },
-          (e) => notice.show("reload failed · " + errorText(e)),
-        ),
+        run: () => reloadCatalog().then(({ changed }) => {
+          if (changed !== null) notify("info", changed ? "providers reloaded" : "providers unchanged", "providers");
+        }),
       });
     });
   },

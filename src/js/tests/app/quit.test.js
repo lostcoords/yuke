@@ -1,13 +1,17 @@
 import { check } from "yuke:internal/test";
 import { command, keymap } from "yuke:internal/core";
 import { client } from "yuke:internal/client";
-import { notice } from "yuke:internal/notice";
+import { events } from "yuke:internal/kernel";
+// The messages posted, as the user saw them. A repeat posts again, so it counts too.
+const posted = [];
+events.on("notify.posted", (n) => posted.push(n.message));
+
 // The stub stands for the native counts, so the guard reads one load shape in the test and in the app.
 let load = { runs: 0, childRuns: 0, continuations: 0 };
 client.load = () => load;
 globalThis.setLoad = (next) => { load = next; };
 globalThis.quitAgain = () => command.perform("quit");
-globalThis.shown = () => notice.text;
+globalThis.shown = () => posted[posted.length - 1] ?? "";
 // The clock is a stub, so the window and a clock step back are exact.
 let now = 100000;
 Date.now = () => now;

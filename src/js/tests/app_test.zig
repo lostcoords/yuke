@@ -40,12 +40,12 @@ test "yuke:internal/defaults boots the shell, seeds the session feed, and wires 
     try support.eval(host, "app/act.test.js");
 }
 
-test "the notice plugin draws and listens only while it is loaded" {
-    const host = support.createHost();
-    defer support.destroyHost(host);
+test "the toasts show the notifications and an engine notice enters the history" {
+    var fixture = try support.PaintedHost.init(24, 80);
+    defer fixture.deinit();
+    const host = fixture.host;
     const native_engine = engine;
-    // The message object outlives the plugin; only the registrations come and go.
-    try support.eval(host, "app/notice.test.js");
+    try support.eval(host, "app/toasts.test.js");
     const event_sink = host.engine.eventSink();
     event_sink.on_event(event_sink.ctx, .{ .method = .notice, .params = .{ .notice = .{
         .level = .@"error",

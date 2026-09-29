@@ -1,9 +1,9 @@
 // /login and /logout: the provider list and the API key prompt.
 import { ui } from "yuke:internal/ui";
 import { client } from "yuke:internal/client";
-import { notice } from "yuke:internal/notice";
 import { errorText } from "yuke:internal/format";
 import { loadCatalog, providerStateLabel, reloadCatalog } from "yuke:internal/catalog";
+import { notify } from "yuke:internal/kernel";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { InjectContext as Ctx } from "./types/ext.js" */
@@ -40,10 +40,10 @@ function pickProvider(ctx, title, verb, rows, right, onAccept) {
 /** @param {ProviderRow} p @param {Wire.AuthLoginOutcome} outcome @returns {void} */
 function finishLogin(p, outcome) {
   if (outcome.type === "succeeded") {
-    notice.show("logged in · " + p.id);
+    notify("info", "logged in · " + p.id, "auth");
     loadCatalog();
-  } else if (outcome.type === "canceled") notice.show("login canceled");
-  else notice.show("login failed · " + outcome.message);
+  } else if (outcome.type === "canceled") notify("info", "login canceled", "auth");
+  else notify("error", "login failed · " + outcome.message, "auth");
 }
 
 // The shared interaction owns the dialog; this call owns the provider login.
@@ -62,10 +62,10 @@ async function deviceLogin(ctx, p) {
     finished = outcome !== undefined;
     if (ctx.alive) {
       if (outcome) finishLogin(p, outcome);
-      else notice.show("login canceled");
+      else notify("info", "login canceled", "auth");
     }
   } catch (error) {
-    if (ctx.alive) notice.show("login failed · " + errorText(error));
+    if (ctx.alive) notify("error", "login failed · " + errorText(error), "auth");
   } finally {
     release();
     if (loginId && !finished) await client.authCancelLogin(loginId).catch(() => {});
@@ -79,11 +79,11 @@ async function keyLogin(ctx, p) {
     if (!key || !ctx.alive) return;
     await client.authSetApiKey(p.id, key);
     if (ctx.alive) {
-      notice.show("key saved · " + p.id);
+      notify("info", "key saved · " + p.id, "auth");
       await loadCatalog();
     }
   } catch (error) {
-    if (ctx.alive) notice.show("key rejected · " + errorText(error));
+    if (ctx.alive) notify("error", "key rejected · " + errorText(error), "auth");
   }
 }
 
@@ -96,15 +96,15 @@ function startLogin(ctx, p) {
 // `/login` lists every provider with its state; `/login codex` starts that one. A reload shows a login from another process.
 /** @param {Ctx} ctx @param {string} [query] @returns {void} */
 function openLogin(ctx, query) {
-  reloadCatalog().then(({ providers: rows }) => {
+  reloadCatalog().then(({ catalog: { providers: rows } }) => {
     if (query) {
       const p = rows.find((x) => x.id === query);
       if (p) startLogin(ctx, p);
-      else notice.show("no provider named " + query);
+      else notify("info", "no provider named " + query, "auth");
       return;
     }
     pickProvider(ctx, "login", "select", rows, stateLabel, (p) => startLogin(ctx, p));
-  }, (e) => notice.show("login failed · " + errorText(e)));
+  }, (e) => notify("error", "login failed · " + errorText(e), "auth"));
 }
 
 // `/logout` lists the providers that hold a credential; `/logout codex` drops that one.
@@ -116,23 +116,23 @@ function openLogout(ctx, query) {
     /** @param {ProviderRow} p */
     const remove = (p) => client.authRemove(p.id).then(
       () => {
-        notice.show("logged out · " + p.id);
+        notify("info", "logged out · " + p.id, "auth");
         return loadCatalog();
       },
-      (e) => notice.show(e.code === "unknown_provider" ? p.id + " has its key in the environment · unset the variable" : "logout failed · " + errorText(e)),
+      (e) => e.code === "unknown_provider" ? notify("warn", p.id + " has its key in the environment · unset the variable", "auth") : notify("error", "logout failed · " + errorText(e), "auth"),
     );
     if (query) {
       const p = rows.find((x) => x.id === query);
       if (p) remove(p);
-      else notice.show("no credential for " + query);
+      else notify("info", "no credential for " + query, "auth");
       return;
     }
     if (rows.length === 0) {
-      notice.show("no credential to remove");
+      notify("info", "no credential to remove", "auth");
       return;
     }
     pickProvider(ctx, "logout", "remove", rows, () => "", remove);
-  }, (e) => notice.show("logout failed · " + errorText(e)));
+  }, (e) => notify("error", "logout failed · " + errorText(e), "auth"));
 }
 
 export const authPlugin = {

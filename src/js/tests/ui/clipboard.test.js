@@ -2,14 +2,15 @@ import { check } from "yuke:internal/test";
 import { Composer } from "yuke:internal/ui";
 import { fs } from "yuke:internal/native/fs";
 import { client } from "yuke:internal/client";
-import { notice } from "yuke:internal/notice";
 import { clipboard } from "yuke:internal/clipboard";
 import { attachClipboard } from "yuke:internal/attach";
+import { events } from "yuke:internal/kernel";
+
 const png = { hash: "c".repeat(64), mime: "image/png", bytes: 4096 };
 
 globalThis.removed = [];
 globalThis.notices = [];
-notice.show = (message) => { globalThis.notices.push(message); };
+events.on("notify.posted", (n) => { globalThis.notices.push(n.message); });
 fs.removeFile = async (path) => { globalThis.removed.push(path); return true; };
 client.blobPut = async (path) => {
   if (path.indexOf("bad") >= 0) throw new Error("the file holds no image");

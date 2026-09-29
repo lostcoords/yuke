@@ -70,12 +70,12 @@ test "the TUI interaction provider answers select and input dialogs" {
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("interactionPending()"));
 }
 
-test "a composition with no answerer refuses every question" {
+test "a composition with no answerer refuses every question and still takes a notification" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "interaction/no-answerer.test.js");
     try host.pump();
-    try support.expectString(host, "result", "InteractionUnavailable:InteractionUnavailable");
+    try support.expectString(host, "result", "posted:InteractionUnavailable");
 }
 
 test "an install replaces the answerer and its disposer restores the last one" {

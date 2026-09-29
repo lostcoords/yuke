@@ -1,15 +1,16 @@
 import { equal } from "yuke:internal/test";
 import { plugins } from "yuke:internal/ext";
 import { interaction } from "yuke:internal/interaction";
-const answerer = (tag) => ({ interactive: false, notify: (owner, m) => { globalThis.heard.push(tag + ":" + m); } });
+// Each answerer records the questions it receives, so the test sees which install answers.
+const answerer = (tag) => ({ interactive: true, open: (request, _ctx, _options, resolve) => { globalThis.heard.push(tag + ":" + request.title); resolve(true); return () => {}; } });
 globalThis.heard = [];
 const first = interaction.install(answerer("first"));
-plugins.use({ name: "reporter", apply(ctx) { globalThis.say = (m) => ctx.interaction.notify(m); } });
-globalThis.say("a");
+plugins.use({ name: "asker", apply(ctx) { globalThis.ask = (m) => ctx.interaction.confirm(m); } });
+globalThis.ask("a");
 const second = interaction.install(answerer("second"));
-globalThis.say("b");
+globalThis.ask("b");
 second();
-globalThis.say("c");
+globalThis.ask("c");
 first();
 equal(globalThis.heard.join(","), "first:a,second:b,first:c");
 
@@ -18,11 +19,11 @@ const base = interaction.install(answerer("base"));
 const older = interaction.install(answerer("older"));
 const newer = interaction.install(answerer("newer"));
 older();
-globalThis.say("d");
+globalThis.ask("d");
 newer();
-globalThis.say("e");
+globalThis.ask("e");
 older(); newer();
-globalThis.say("f");
+globalThis.ask("f");
 equal(globalThis.heard.slice(-3).join(","), "newer:d,base:e,base:f");
 
 // Each install has its own identity, even when the provider object is the same.
@@ -30,11 +31,11 @@ const shared = answerer("shared");
 const one = interaction.install(shared);
 const two = interaction.install(shared);
 one();
-globalThis.say("g");
+globalThis.ask("g");
 two();
-globalThis.say("h");
+globalThis.ask("h");
 equal(globalThis.heard.slice(-2).join(","), "shared:g,base:h");
 base();
 let unavailable = false;
-try { globalThis.say("i"); } catch (e) { unavailable = e.name === "InteractionUnavailable"; }
+await globalThis.ask("i").catch((e) => { unavailable = e.name === "InteractionUnavailable"; });
 equal(unavailable, true);

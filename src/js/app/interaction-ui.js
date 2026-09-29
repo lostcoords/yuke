@@ -7,7 +7,6 @@ import { openUrl } from "yuke:internal/browser";
 import { term } from "yuke:internal/native/term";
 import { Prompt, Window, ui } from "yuke:internal/ui";
 import { interaction, watchCancellation } from "yuke:internal/interaction";
-import { notice } from "yuke:internal/notice";
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { InjectContext } from "./types/ext.js" */
 /** @import { Answerer } from "./types/runtime.js" */
@@ -117,7 +116,6 @@ function createAnswerer(frontend) {
         throw error;
       }
     },
-    notify(owner, message, level) { notice.show(message); },
   };
 }
 

@@ -67,10 +67,12 @@ check("same-count-no-read", queueReads === 1);
 // The picker drops the highlighted input through the engine.
 check("queue-cmd", command.available("queue:drop"));
 command.perform("queue:drop");
-check("picker-open", root.overlays.length === 1);
+// A toast floats over the panes, so only a modal layer counts as an open dialog.
+const dialogs = () => root.overlays.filter((o) => o.modal !== false);
+check("picker-open", dialogs().length === 1);
 root.onEvent(key("enter"));
 await settle();
-check("dropped-first", dropped.length === 1 && dropped[0] === 11 && root.overlays.length === 0);
+check("dropped-first", dropped.length === 1 && dropped[0] === 11 && dialogs().length === 0);
 answer = { ...tool, queued: 1 };
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
 await settle();
@@ -81,10 +83,10 @@ check("strip-folds", many.length === 3 && many[2].text === " ↳ … 2 more queu
 // The breakdown window opens on the command and closes on Escape.
 command.perform("context:show");
 await settle();
-check("context-open", root.overlays.length === 1);
-check("context-instructions", root.overlays[0].content.pager.source.rows(80, 0, 100).some((row) => /^workspace AGENTS +\/work\/AGENTS\.md$/.test(rowText(row))));
+check("context-open", dialogs().length === 1);
+check("context-instructions", dialogs()[0].content.pager.source.rows(80, 0, 100).some((row) => /^workspace AGENTS +\/work\/AGENTS\.md$/.test(rowText(row))));
 root.onEvent(key("esc"));
-check("context-closed", root.overlays.length === 0);
+check("context-closed", dialogs().length === 0);
 // The pure helpers.
 check("elapsed", elapsedLabel(12000) === "12s" && elapsedLabel(65000) === "1m05s" && elapsedLabel(-5) === "0s");
 check("phase", phaseLabel({ type: "retrying", run_id: 1, attempt: 2, max_attempts: 5, next_at_ms: 4000, code: "rate_limited", message: "" }, 0) === "retry 2/5 in 4s · rate_limited");

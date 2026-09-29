@@ -1,4 +1,4 @@
-import { check, textParts } from "yuke:internal/test";
+import { check, textParts, detailSections } from "yuke:internal/test";
 import { root } from "yuke:internal/core";
 import { Transcript } from "yuke:internal/transcript";
 const rowText = (row) => row.text || (row.segments || []).map((segment) => segment.text).join("");
@@ -48,11 +48,11 @@ const reasoningRows = toolRows.filter((row) => row.kind === "reasoning-body");
 check("reasoning-first-ellipsis-last", reasoningRows.length === 3 && rowText(reasoningRows[0]).indexOf("reason-first") >= 0 && rowText(reasoningRows[1]) === "…" && rowText(reasoningRows[2]).indexOf("reason-last") >= 0);
 check("reasoning-source", sourceSpan(t._sourceOf("answer"), reasoningRows, "reason-first") && sourceSpan(t._sourceOf("answer"), reasoningRows, "reason-last"));
 check("rows-visible", rows.some((row) => rowText(row).indexOf("plain-line-0") >= 0));
-check("plain-details", t.openTool("answer", 1) && root.overlays[0].content.sections[0].text === '{"path":"plain.txt"}' && root.overlays[0].content.sections[1].text === plainOutput);
+check("plain-details", t.openTool("answer", 1) && detailSections(root.overlays[0].content)[0].text === '{"path":"plain.txt"}' && detailSections(root.overlays[0].content)[1].text === plainOutput);
 root.popOverlay(root.overlays[0]);
-check("view-details", t.openTool("answer", 2) && root.overlays[0].content.sections[2].text.indexOf("view-first") >= 0 && root.overlays[0].content.sections[2].text.indexOf("view-tail") >= 0);
+check("view-details", t.openTool("answer", 2) && detailSections(root.overlays[0].content)[2].text.indexOf("view-first") >= 0 && detailSections(root.overlays[0].content)[2].text.indexOf("view-tail") >= 0);
 root.popOverlay(root.overlays[0]);
-check("reasoning-details", t.openReasoning("answer", 9) && root.overlays[0].content.sections[0].text === reasoning);
+check("reasoning-details", t.openReasoning("answer", 9) && detailSections(root.overlays[0].content)[0].text === reasoning);
 root.popOverlay(root.overlays[0]);
 
 {

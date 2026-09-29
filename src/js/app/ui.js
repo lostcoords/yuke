@@ -8,9 +8,10 @@ import { fuzzyRank } from "yuke:internal/fzy";
 import { Pager } from "yuke:internal/pager";
 
 /** @import { HostMouseEvent as MouseEvent, Rect, StyleGroup } from "./types/core.js" */
+/** @import { TranscriptRow } from "./types/pager.js" */
 // The composer asks this point for its prompt glyph; the newest listener that answers wins.
 events.declare(["composer.prompt", "composer.changed"]);
-/** @import { BorderSet, ComposerOptions, ComposerSnapshot, ComposerSpan, Dimension, ItemKey, ListItem, ListKey, ListOptions, NavAction, PickerAction, PickOptions, Projection, PromptOptions, TextOptions, WindowContent, WindowOptions, WrapRow } from "./types/ui.js" */
+/** @import { BorderSet, ComposerOptions, ComposerSnapshot, ComposerSpan, ContentHeight, Dimension, ItemKey, ListItem, ListKey, ListOptions, NavAction, PickerAction, PickOptions, Projection, PromptOptions, TextOptions, WindowContent, WindowOptions, WrapRow } from "./types/ui.js" */
 
 // The kit adds only an absent highlight group, so a theme that set one first keeps it and a re-import does not re-seed.
 const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
@@ -101,6 +102,31 @@ export class ScrollView {
     const handled = this.pager.onMouse(event);
     if (handled) root.invalidate();
     return handled;
+  }
+}
+
+/** A scrollable body that builds its rows from its width. It builds them again after a width change or a `refresh`. */
+export class RowsView extends ScrollView {
+  /** @param {(width: number) => TranscriptRow[]} rowsFor @param {() => void} onClose */
+  constructor(rowsFor, onClose) {
+    super(onClose);
+    this.rowsFor = rowsFor;
+    this.width = -1;
+  }
+
+  /** @returns {void} */
+  refresh() {
+    this.width = -1;
+    root.invalidate();
+  }
+
+  /** @param {Rect} bounds @returns {void} */
+  layout(bounds) {
+    super.layout(bounds);
+    if (this.width !== bounds.w) {
+      this.width = bounds.w;
+      this.pager.setRows(this.rowsFor(bounds.w));
+    }
   }
 }
 
@@ -783,6 +809,10 @@ function pasteLabel(id, t) {
 // These strokes add a line instead of a submit; Alt+Enter and Ctrl+J cover a legacy terminal encoding.
 const COMPOSER_NEWLINE = { "shift+enter": true, "alt+enter": true, "ctrl+j": true };
 
+// A dialog keeps two blank columns and one blank row between its border and its content. The inset adds the border cell.
+const DIALOG_INSET = Object.freeze({ x: 3, y: 2 });
+const NO_INSET = Object.freeze({ x: 0, y: 0 });
+
 // Border glyph sets, keyed by name. Extend by adding an entry.
 export const borders = {
   single: { tl: "┌", t: "─", tr: "┐", r: "│", br: "┘", b: "─", bl: "└", l: "│" },
@@ -798,6 +828,10 @@ export class Window {
     this.modal = opts.modal !== false;
     this.border = opts.border === undefined ? "single" : opts.border;
     this.content = opts.content || null;
+    // The layout reads the inset several times per pass, so the window computes it once.
+    const pad = opts.padding;
+    if (pad && !(Number.isSafeInteger(pad.x) && pad.x >= 0 && Number.isSafeInteger(pad.y) && pad.y >= 0)) throw new TypeError("window padding must be non-negative integers");
+    this._borderInset = pad ? Object.freeze({ x: 1 + pad.x, y: 1 + pad.y }) : DIALOG_INSET;
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
     this.inner = { x: 0, y: 0, w: 0, h: 0 };
     if (this.content && (typeof this.content.layout !== "function" || typeof this.content.draw !== "function")) throw new TypeError("window content needs layout and draw methods");
@@ -816,21 +850,27 @@ export class Window {
     return typeof b === "object" ? b : borders[b] || borders.single;
   }
 
+  // The cells between the outer edge and the content on each side. A window without a border has no padding.
+  /** @returns {Readonly<{ x: number, y: number }>} */
+  _inset() {
+    return this._borderSet() ? this._borderInset : NO_INSET;
+  }
+
   /** @param {number} width @returns {number} */
   contentWidth(width) {
-    return Math.max(0, width - (this._borderSet() ? 6 : 0));
+    return Math.max(0, width - 2 * this._inset().x);
   }
 
   /** @param {number} rows @returns {number} */
   heightFor(rows) {
-    return rows + (this._borderSet() ? 4 : 0) + (this.opts.footer ? 1 : 0);
+    return rows + 2 * this._inset().y + (this.opts.footer ? 1 : 0);
   }
 
-  // Resolve a cell count or a callback against a maximum available size.
-  /** @param {Dimension | null | undefined} v @param {number} max @param {number} fallback @returns {number} */
-  _dim(v, max, fallback) {
+  // Resolve a cell count or a callback against a maximum available size. A content height callback also gets the content width.
+  /** @param {Dimension | ContentHeight | null | undefined} v @param {number} max @param {number} fallback @param {number} [width] @returns {number} */
+  _dim(v, max, fallback, width = 0) {
     if (v == null) return fallback;
-    const cells = typeof v === "function" ? v(max) : v;
+    const cells = typeof v === "function" ? v(max, width) : v;
     if (!Number.isSafeInteger(cells) || cells < 0) throw new TypeError("window dimension must be a non-negative integer");
     return cells;
   }
@@ -841,21 +881,25 @@ export class Window {
     const Y = bounds.y;
     const W = bounds.w;
     const H = bounds.h;
-    const pad = this._borderSet() ? 2 : 0;
+    const edge = this._borderSet() ? 2 : 0;
+    const inset = this._inset();
 
     const anchor = this.opts.anchor ? this.opts.anchor() : null;
     const available = anchor ? Math.max(0, Math.min(H, anchor.y - Y)) : H;
-    const w = Math.min(W, Math.max(pad + 1, this._dim(this.opts.width, anchor ? anchor.w : W, anchor ? anchor.w : Math.round(W * 0.6))));
+    const w = Math.min(W, Math.max(edge + 1, this._dim(this.opts.width, anchor ? anchor.w : W, anchor ? anchor.w : Math.round(W * 0.6))));
     const contentHeight = this.opts.contentHeight;
     const desired = this.opts.height != null ? this._dim(this.opts.height, available, 0)
-      : contentHeight != null ? this.heightFor(this._dim(contentHeight, Math.max(0, available - this.heightFor(0)), 0))
+      : contentHeight != null ? this.heightFor(this._dim(contentHeight, Math.max(0, available - this.heightFor(0)), 0, this.contentWidth(w)))
       : Math.round(available * 0.6);
-    const h = Math.min(available, Math.max(pad + 1, desired));
-    const x = anchor ? Math.max(X, Math.min(anchor.x, X + W - w)) : X + Math.max(0, Math.floor((W - w) / 2));
-    const y = anchor ? Y + available - h : Y + Math.max(0, Math.floor((H - h) / 2));
+    const h = Math.min(available, Math.max(edge + 1, desired));
+    const placed = this.opts.place ? this.opts.place(bounds, w, h) : null;
+    const x = placed ? Math.max(X, Math.min(placed.x, X + W - w))
+      : anchor ? Math.max(X, Math.min(anchor.x, X + W - w)) : X + Math.max(0, Math.floor((W - w) / 2));
+    const y = placed ? Math.max(Y, Math.min(placed.y, Y + H - h))
+      : anchor ? Y + available - h : Y + Math.max(0, Math.floor((H - h) / 2));
     this.rect = { x, y, w, h };
-    // The content excludes the border, shared padding, and the footer row.
-    this.inner = { x: x + (pad ? 3 : 0), y: y + pad, w: this.contentWidth(w), h: Math.max(0, h - this.heightFor(0)) };
+    // The content excludes the border, the padding, and the footer row.
+    this.inner = { x: x + inset.x, y: y + inset.y, w: this.contentWidth(w), h: Math.max(0, h - this.heightFor(0)) };
     if (this.content) this.content.layout(this.inner);
   }
 

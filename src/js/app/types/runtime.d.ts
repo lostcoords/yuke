@@ -72,9 +72,7 @@ export interface ScopeEntry {
 }
 
 export type Answerer = {
-  notify(owner: string, message: string, level: "info" | "warn" | "error"): void;
-} & ({
   interactive: true;
   open(request: InteractionRequest, context: Context, options: InteractionOptions | undefined,
     resolve: (value: unknown) => void, reject: (error: unknown) => void): Disposer;
-} | { interactive: false });
+} | { interactive: false };

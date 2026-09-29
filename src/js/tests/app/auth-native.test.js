@@ -10,7 +10,8 @@ client.authLogin = () => Promise.resolve(start("07".repeat(32)));
 command.perform("auth:login", "codex");
 await settle();
 globalThis.resolveLogin = null;
-globalThis.openCount = () => root.overlays.length;
+// A toast floats over the panes, so only a modal layer counts as an open dialog.
+globalThis.openCount = () => root.overlays.filter((o) => o.modal !== false).length;
 globalThis.startPendingLogin = async () => {
   client.authLogin = () => new Promise((resolve) => { globalThis.resolveLogin = () => resolve(start("08".repeat(32))); });
   command.perform("auth:login", "codex");

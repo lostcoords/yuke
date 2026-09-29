@@ -2,9 +2,10 @@ import { check } from "yuke:internal/test";
 import { Composer } from "yuke:internal/ui";
 import { fs } from "yuke:internal/native/fs";
 import { client } from "yuke:internal/client";
-import { notice } from "yuke:internal/notice";
 import { term } from "yuke:internal/native/term";
 import { cleanPath, looksLikeImagePath, pasteAttaches } from "yuke:internal/attach";
+import { events } from "yuke:internal/kernel";
+
 const paste = (t) => ({ type: "paste", text: t });
 const png = { hash: "a".repeat(64), mime: "image/png", bytes: 2048 };
 
@@ -26,7 +27,7 @@ check("gate-bare-extension", looksLikeImagePath(".png") === false);
 
 globalThis.puts = [];
 globalThis.notices = [];
-notice.show = (message) => { globalThis.notices.push(message); };
+events.on("notify.posted", (n) => { globalThis.notices.push(n.message); });
 // The host anchors a relative path at the cwd and answers the whole path.
 fs.stat = async (path) => {
   const full = path[0] === "/" ? path : (term.cwd || "/cwd").replace(/\/+$/, "") + "/" + path;

@@ -1,12 +1,12 @@
 // The chat pane plugin: the chat service the shell asks for panes, the chat pane commands, and the vision warning.
 import { root } from "yuke:internal/core";
-import { notice } from "yuke:internal/notice";
 import { client } from "yuke:internal/client";
 import { modelOf } from "yuke:internal/catalog";
 import { ChatView } from "yuke:internal/chat-view";
 import { registerLabels } from "yuke:internal/transcript";
 import { attachClipboard } from "yuke:internal/attach";
 import { Session, sessions, currentPane, showSession } from "yuke:internal/session";
+import { notify } from "yuke:internal/kernel";
 
 /** @import { Disposer } from "./types/ext.js" */
 /** @import { Context } from "yuke:internal/ext" */
@@ -18,8 +18,7 @@ function checkVision(view, selector = view.session.modelSelector()) {
   const model = selector === "" ? null : modelOf(selector);
   // An unknown model, and one whose catalog entry says nothing, never raise a warning.
   if (!model || model.supports_vision !== false) return;
-  notice.show(model.name + " reads no images");
-  root.invalidate();
+  notify("warn", model.name + " reads no images", "chat");
 }
 
 // One block's view of the chat: the chat features it registers belong to that block.
@@ -76,9 +75,9 @@ export const chatPlugin = {
           const m = client.memoryUsage();
           const mb = (/** @type {number} */ n) => (n / 1048576).toFixed(1) + "MB";
           const k = (/** @type {number} */ n) => Math.round(n / 1000) + "k";
-          notice.show("js heap " + mb(m.heap) + " · str " + mb(m.strings) + "/" + k(m.stringCount) +
+          notify("info", "js heap " + mb(m.heap) + " · str " + mb(m.strings) + "/" + k(m.stringCount) +
             " · obj " + mb(m.objects) + "/" + k(m.objectCount) + " · prop " + mb(m.properties) + "/" + k(m.propertyCount) +
-            " · shape " + mb(m.shapes) + " · arr " + k(m.arrayCount));
+            " · shape " + mb(m.shapes) + " · arr " + k(m.arrayCount), "debug");
         },
       });
       ctx.tui.keymap.add({ "ctrl+n": "chat:new", "ctrl+v": "chat:paste-image" });

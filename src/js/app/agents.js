@@ -3,9 +3,9 @@ import { root } from "yuke:internal/core";
 import { client } from "yuke:internal/client";
 import { native } from "yuke:internal/native/engine";
 import { sessions, currentSession } from "yuke:internal/session";
-import { notice } from "yuke:internal/notice";
 import { errorText, tokenLabel } from "yuke:internal/format";
 import { childState, openAgents } from "yuke:internal/agents-ui";
+import { notify } from "yuke:internal/kernel";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @typedef {{ description?: string, model?: string, prompt?: string, tools?: string[] }} AgentRow */
@@ -269,7 +269,7 @@ export function agents(options) {
                     when: () => currentSession()?.sessionId != null,
                     desc: "open or stop child agents",
                     slash: "agents",
-                    run: () => { const id = currentSession()?.sessionId; if (id) openAgents(ctx, id).catch((error) => notice.show("agents · " + errorText(error))); },
+                    run: () => { const id = currentSession()?.sessionId; if (id) openAgents(ctx, id).catch((error) => notify("error", errorText(error), "agents")); },
                 });
             });
         },

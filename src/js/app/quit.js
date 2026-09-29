@@ -2,8 +2,8 @@
 import { keymap } from "yuke:internal/core";
 import { term } from "yuke:internal/native/term";
 import { client } from "yuke:internal/client";
-import { notice } from "yuke:internal/notice";
 import { agentsLabel } from "yuke:internal/format";
+import { notify } from "yuke:internal/kernel";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { EngineLoad } from "yuke:internal/native/engine" */
@@ -35,7 +35,7 @@ export const quitGuard = {
         return true;
       }
       armedAt = now;
-      notice.show(hint(load));
+      notify("info", hint(load), "quit");
       return true;
     });
   },
