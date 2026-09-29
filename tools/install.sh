@@ -56,6 +56,18 @@ case "$profile_name" in
         ;;
 esac
 
+# Link the agent skill for every harness that reads ~/.agents/skills. That directory is shared, so only the yuke link is replaced.
+skill=$HOME/.agents/skills/yuke
+if { [ ! -e "$skill" ] && [ ! -L "$skill" ]; } || [ "$(readlink "$skill")" = "$lib_dir/skills/yuke" ]; then
+    if mkdir -p "${skill%/*}" && ln -sfn "$lib_dir/skills/yuke" "$skill"; then
+        printf 'linked the yuke skill into %s\n' "$skill"
+    else
+        printf 'warning could not link the yuke skill into %s\n' "$skill"
+    fi
+else
+    printf 'warning %s is not the yuke link, so it stays\n' "$skill"
+fi
+
 case ":${PATH:-}:" in
     *":$bin_dir:"*) ;;
     *)
