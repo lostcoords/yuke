@@ -21,7 +21,6 @@ pub const boot =
 
 /// The status of a run the user stopped, as a shell reports a SIGINT.
 const status_interrupted: u8 = 130;
-const max_prompt_bytes: usize = @intCast(proto.meta.limits.max_message_string_bytes);
 
 /// Run one turn over `extensions` and answer the exit status. `cwd` is the canonical working directory.
 pub fn run(gpa: std.mem.Allocator, io: std.Io, extensions: *Extensions, cwd: []const u8, opts: cli.Print) !u8 {
@@ -34,8 +33,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, extensions: *Extensions, cwd: []c
     var err_buf: [1024]u8 = undefined;
     var err = std.Io.File.stderr().writerStreaming(io, &err_buf);
 
-    const prompt = (try readPrompt(io, arena, &err.interface, opts.prompt)) orelse return 2;
-    const status = try runWith(extensions, arena, &out.interface, &err.interface, cwd, prompt, opts);
+    const status = try runWith(extensions, arena, &out.interface, &err.interface, cwd, opts);
     try out.interface.flush();
     return status;
 }
@@ -46,42 +44,12 @@ fn fail(err: *std.Io.Writer, comptime format: []const u8, args: anytype) !void {
     try err.flush();
 }
 
-/// The prompt from argv, or from stdin when it is not a terminal. Null means a reported refusal.
-fn readPrompt(io: std.Io, arena: std.mem.Allocator, err: *std.Io.Writer, given: ?[]const u8) !?[]const u8 {
-    const text = given orelse blk: {
-        const stdin = std.Io.File.stdin();
-        if (stdin.isTty(io) catch false) {
-            try fail(err, "no prompt; pass one or pipe it on stdin", .{});
-            return null;
-        }
-        var buf: [4096]u8 = undefined;
-        var reader = stdin.readerStreaming(io, &buf);
-        // Two bytes over the bound leave room for a line ending, which the trim below removes.
-        break :blk reader.interface.allocRemaining(arena, .limited(max_prompt_bytes + 2)) catch |e| switch (e) {
-            error.StreamTooLong => {
-                try fail(err, "the prompt exceeds {d} bytes", .{max_prompt_bytes});
-                return null;
-            },
-            else => return e,
-        };
-    };
-    const prompt = std.mem.trimEnd(u8, text, "\r\n");
-    if (prompt.len > max_prompt_bytes) {
-        try fail(err, "the prompt exceeds {d} bytes", .{max_prompt_bytes});
-        return null;
-    }
-    if (prompt.len == 0) {
-        try fail(err, "the prompt is empty", .{});
-        return null;
-    }
-    return prompt;
-}
-
 /// The chosen session and the model it runs. `model` borrows the arena.
 const Pick = struct { id: proto.ids.SessionId, model: []const u8, input: ?proto.session.SessionSendInputResult = null };
 
-fn runWith(extensions: *Extensions, arena: std.mem.Allocator, w: *std.Io.Writer, err: *std.Io.Writer, cwd: []const u8, prompt: []const u8, opts: cli.Print) !u8 {
-    std.debug.assert(prompt.len != 0 and prompt.len <= max_prompt_bytes);
+fn runWith(extensions: *Extensions, arena: std.mem.Allocator, w: *std.Io.Writer, err: *std.Io.Writer, cwd: []const u8, opts: cli.Print) !u8 {
+    const prompt = opts.prompt;
+    std.debug.assert(prompt.len != 0 and prompt.len <= cli.max_prompt_bytes);
     const engine = &extensions.app.engine;
     var waiter: Waiter = .{ .arena = arena, .session_id = null, .wake = &extensions.host.wake, .io = extensions.host.io, .err = if (opts.json) null else err };
     engine.sinks.add(.{ .ctx = @ptrCast(&waiter), .on_event = Waiter.onEvent });
@@ -89,7 +57,7 @@ fn runWith(extensions: *Extensions, arena: std.mem.Allocator, w: *std.Io.Writer,
     // A broken index.js is a warning. The run goes on without its plugins. The fault arrives as a notice.
     try extensions_mod.forwardNotifications(extensions.host);
 
-    const pick = (try pickSession(extensions, arena, err, cwd, prompt, opts)) orelse return 1;
+    const pick = (try pickSession(extensions, arena, err, cwd, opts)) orelse return 1;
     waiter.bind(pick.id);
     const sent: call.Answer(proto.session.SessionSendInputResult) = if (pick.input) |input| .{ .ok = input } else try gated(extensions, arena, proto.session.SessionSendInputParams{
         .session_id = pick.id,
@@ -136,7 +104,7 @@ fn runWith(extensions: *Extensions, arena: std.mem.Allocator, w: *std.Io.Writer,
 }
 
 /// Resolve the target: a fresh session on `cwd`, the newest one there, or the one named by id.
-fn pickSession(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.Writer, cwd: []const u8, prompt: []const u8, opts: cli.Print) !?Pick {
+fn pickSession(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.Writer, cwd: []const u8, opts: cli.Print) !?Pick {
     const engine = &extensions.app.engine;
     switch (opts.target) {
         .new => {
@@ -144,7 +112,7 @@ fn pickSession(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.W
                 try fail(err, "no model; pass --model <provider/model>", .{});
                 return null;
             };
-            const params: proto.misc.CreateSession = .{ .workspace_path = cwd, .model = model, .reasoning = opts.reasoning, .initial_input = .{ .content = .{ .content = &.{.{ .text = .{ .text = prompt } }} } } };
+            const params: proto.misc.CreateSession = .{ .workspace_path = cwd, .model = model, .reasoning = opts.reasoning, .initial_input = .{ .content = .{ .content = &.{.{ .text = .{ .text = opts.prompt } }} } } };
             const created = switch (try gated(extensions, arena, params)) {
                 .ok => |result| result,
                 .failure => |f| {
@@ -403,7 +371,9 @@ const Fixture = struct {
     fn print(self: *Fixture, arena: std.mem.Allocator, prompt: []const u8, opts: cli.Print) !struct { status: u8, out: []const u8, err: []const u8 } {
         var out: std.Io.Writer.Allocating = .init(arena);
         var err: std.Io.Writer.Allocating = .init(arena);
-        const status = try runWith(&self.extensions, arena, &out.writer, &err.writer, self.root, prompt, opts);
+        var given = opts;
+        given.prompt = prompt;
+        const status = try runWith(&self.extensions, arena, &out.writer, &err.writer, self.root, given);
         return .{ .status = status, .out = out.written(), .err = err.written() };
     }
 };

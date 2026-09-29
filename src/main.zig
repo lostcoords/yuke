@@ -234,6 +234,7 @@ fn report(diagnostic: cli.Diagnostic) void {
         .unknown_flag => std.log.err("{s}: unknown option '{s}'", .{ who, diagnostic.arg }),
         .missing_value => std.log.err("{s}: {s} needs a value", .{ who, diagnostic.arg }),
         .invalid_value => std.log.err("{s}: {s} does not accept '{s}'", .{ who, diagnostic.arg, diagnostic.value.? }),
+        .too_long => std.log.err("{s}: {s} takes at most {d} bytes", .{ who, diagnostic.arg, cli.max_prompt_bytes }),
         .duplicate_flag => std.log.err("{s}: {s} appears more than once", .{ who, diagnostic.arg }),
         .missing_argument => std.log.err("{s}: a provider name is needed", .{who}),
         .extra_argument => std.log.err("{s}: unexpected argument '{s}'", .{ who, diagnostic.arg }),

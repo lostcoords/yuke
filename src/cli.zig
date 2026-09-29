@@ -6,7 +6,7 @@ const proto = @import("proto");
 pub const usage =
     \\usage: yuke [--rpc]
     \\       yuke --version
-    \\       yuke -p [prompt] [--json] [--model <m>] [--reasoning <r>] [--session <id> | -c]
+    \\       yuke -p <prompt> [--json] [--model <m>] [--reasoning <r>] [--session <id> | -c]
     \\       yuke login [provider]
     \\       yuke logout <provider>
     \\       yuke types
@@ -45,10 +45,13 @@ pub const Target = union(enum) {
     session: []const u8,
 };
 
+/// A prompt fits one message. Linux with 64 KiB pages admits a 2 MiB argument. The parser enforces this bound.
+pub const max_prompt_bytes: usize = @intCast(proto.meta.limits.max_message_string_bytes);
+
 /// Every slice borrows argv.
 pub const Print = struct {
-    /// The prompt to send. A null value reads it from stdin.
-    prompt: ?[]const u8 = null,
+    /// The prompt to send. The parser admits only a prompt that is not empty and fits one message.
+    prompt: []const u8 = "",
     json: bool = false,
     model: ?[]const u8 = null,
     reasoning: ?[]const u8 = null,
@@ -70,6 +73,8 @@ pub const Failure = enum {
     needs_print,
     /// `arg` and `value` exclude each other.
     conflict,
+    /// The value of `arg` is longer than `max_prompt_bytes`.
+    too_long,
 };
 
 /// `arg` and `value` borrow argv. They stay valid while the process arguments live.
@@ -135,7 +140,7 @@ const Spec = struct { short: u8 = 0, value: bool = false };
 
 const specs: std.EnumArray(RootFlag, Spec) = .init(.{
     .rpc = .{},
-    .print = .{ .short = 'p' },
+    .print = .{ .short = 'p', .value = true },
     .json = .{},
     .model = .{ .value = true },
     .reasoning = .{ .value = true },
@@ -163,21 +168,11 @@ fn shortFlag(arg: []const u8) ?RootFlag {
 fn parseRoot(args: []const []const u8) Result {
     var print: Print = .{};
     var seen: std.EnumSet(RootFlag) = .initEmpty();
-    var prompt: ?[]const u8 = null;
-    var literal = false;
 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (literal or !isFlag(arg)) {
-            if (prompt != null) return fail(.root, .extra_argument, arg);
-            prompt = arg;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--")) {
-            literal = true;
-            continue;
-        }
+        if (!isFlag(arg)) return fail(.root, .extra_argument, arg);
         if (isHelp(arg)) return .{ .help = .root };
         if (std.mem.eql(u8, arg, "--version")) return .version;
 
@@ -201,7 +196,13 @@ fn parseRoot(args: []const []const u8) Result {
         } else if (value != null) return fail(.root, .unknown_flag, arg);
 
         switch (flag) {
-            .rpc, .print => {},
+            .rpc => {},
+            .print => {
+                // An empty prompt is a missing one.
+                if (value.?.len == 0) return fail(.root, .missing_value, name);
+                if (value.?.len > max_prompt_bytes) return fail(.root, .too_long, name);
+                print.prompt = value.?;
+            },
             .json => print.json = true,
             .model => print.model = value.?,
             .reasoning => print.reasoning = value.?,
@@ -211,10 +212,9 @@ fn parseRoot(args: []const []const u8) Result {
     }
 
     if (!seen.contains(.print)) {
-        // Every other flag and the prompt describe a print run.
+        // Every other flag describes a print run.
         var it = seen.iterator();
         while (it.next()) |flag| if (flag != .rpc) return fail(.root, .needs_print, flagName(flag));
-        if (prompt) |p| return fail(.root, .extra_argument, p);
         return .{ .command = if (seen.contains(.rpc)) .rpc else .tui };
     }
     if (seen.contains(.rpc)) return conflict("--rpc", "-p");
@@ -228,7 +228,7 @@ fn parseRoot(args: []const []const u8) Result {
     if (print.target == .session and !proto.ids.SessionId.validText(print.target.session)) {
         return .{ .diagnostic = .{ .scope = .root, .failure = .invalid_value, .arg = "--session", .value = print.target.session } };
     }
-    print.prompt = prompt;
+    std.debug.assert(print.prompt.len != 0); // The print branch rejected an empty value
     return .{ .command = .{ .print = print } };
 }
 
@@ -298,47 +298,57 @@ test "parse reads login with an optional name and logout with a required one" {
 }
 
 test "parse reads a print run with its prompt, flags, and values" {
-    const bare = parse(&.{"-p"}).command.print;
-    try testing.expect(bare.prompt == null); // A null prompt reads from stdin.
+    const bare = parse(&.{ "-p", "hi" }).command.print;
+    try testing.expectEqualStrings("hi", bare.prompt);
     try testing.expect(!bare.json);
     try testing.expect(bare.target == .new);
 
     const full = parse(&.{ "--json", "-p", "hi", "--model=m", "--reasoning", "r" }).command.print;
-    try testing.expectEqualStrings("hi", full.prompt.?);
+    try testing.expectEqualStrings("hi", full.prompt);
     try testing.expect(full.json);
     try testing.expectEqualStrings("m", full.model.?);
     try testing.expectEqualStrings("r", full.reasoning.?);
 
-    // A prompt that starts with a dash follows the terminator.
-    try testing.expectEqualStrings("-x", parse(&.{ "-p", "--", "-x" }).command.print.prompt.?);
-    try testing.expectEqualStrings("--json", parse(&.{ "-p", "--", "--json" }).command.print.prompt.?);
+    // `-p` takes the next argument as its prompt, even one that starts with a dash.
+    try testing.expectEqualStrings("-x", parse(&.{ "-p", "-x" }).command.print.prompt);
+    try testing.expectEqualStrings("-x", parse(&.{"--print=-x"}).command.print.prompt);
 
-    try testing.expectEqual(Scope.root, parse(&.{ "-p", "-h" }).help);
+    try testing.expectEqual(Scope.root, parse(&.{ "-p", "hi", "-h" }).help);
     try testing.expectEqual(Failure.extra_argument, parse(&.{ "--print", "a", "b" }).diagnostic.failure);
-    try testing.expectEqual(Failure.missing_value, parse(&.{ "-p", "--model" }).diagnostic.failure);
-    try testing.expectEqual(Failure.duplicate_flag, parse(&.{ "-p", "--print" }).diagnostic.failure);
-    try testing.expectEqual(Failure.unknown_flag, parse(&.{ "-p", "-x" }).diagnostic.failure);
+    try testing.expectEqual(Failure.missing_value, parse(&.{ "-p", "hi", "--model" }).diagnostic.failure);
+    try testing.expectEqual(Failure.duplicate_flag, parse(&.{ "-p", "a", "--print", "b" }).diagnostic.failure);
+    try testing.expectEqual(Failure.unknown_flag, parse(&.{ "-p", "hi", "-x" }).diagnostic.failure);
+}
+
+test "parse refuses a print run without a prompt that fits one message" {
+    try testing.expectEqual(Failure.missing_value, parse(&.{"-p"}).diagnostic.failure);
+    try testing.expectEqual(Failure.missing_value, parse(&.{ "-p", "" }).diagnostic.failure);
+    const long = try testing.allocator.alloc(u8, max_prompt_bytes + 1);
+    defer testing.allocator.free(long);
+    @memset(long, 'x');
+    try testing.expectEqual(Failure.too_long, parse(&.{ "-p", long }).diagnostic.failure);
+    try testing.expectEqual(max_prompt_bytes, parse(&.{ "-p", long[1..] }).command.print.prompt.len);
 }
 
 test "parse picks the print target and rejects the pairs that exclude each other" {
     const id = "0123456789abcdef0123456789abcdef";
-    try testing.expectEqualStrings(id, parse(&.{ "-p", "--session", id }).command.print.target.session);
-    try testing.expect(parse(&.{ "-c", "-p" }).command.print.target == .@"continue");
+    try testing.expectEqualStrings(id, parse(&.{ "-p", "hi", "--session", id }).command.print.target.session);
+    try testing.expect(parse(&.{ "-c", "-p", "hi" }).command.print.target == .@"continue");
 
-    const bad = parse(&.{ "-p", "--session", "nope" }).diagnostic;
+    const bad = parse(&.{ "-p", "hi", "--session", "nope" }).diagnostic;
     try testing.expectEqual(Failure.invalid_value, bad.failure);
     try testing.expectEqualStrings("nope", bad.value.?);
 
-    const pair = parse(&.{ "-p", "--session", id, "-c" }).diagnostic;
+    const pair = parse(&.{ "-p", "hi", "--session", id, "-c" }).diagnostic;
     try testing.expectEqual(Failure.conflict, pair.failure);
     try testing.expectEqualStrings("--session", pair.arg);
     try testing.expectEqualStrings("-c", pair.value.?);
-    try testing.expectEqual(Failure.conflict, parse(&.{ "-p", "--model", "m", "-c" }).diagnostic.failure);
-    try testing.expectEqual(Failure.conflict, parse(&.{ "-p", "--reasoning", "r", "--session", id }).diagnostic.failure);
-    try testing.expectEqual(Failure.conflict, parse(&.{ "--rpc", "-p" }).diagnostic.failure);
+    try testing.expectEqual(Failure.conflict, parse(&.{ "-p", "hi", "--model", "m", "-c" }).diagnostic.failure);
+    try testing.expectEqual(Failure.conflict, parse(&.{ "-p", "hi", "--reasoning", "r", "--session", id }).diagnostic.failure);
+    try testing.expectEqual(Failure.conflict, parse(&.{ "--rpc", "-p", "hi" }).diagnostic.failure);
 }
 
-test "parse ties the print flags and the prompt to -p" {
+test "parse ties the print flags to -p" {
     const json = parse(&.{"--json"}).diagnostic;
     try testing.expectEqual(Failure.needs_print, json.failure);
     try testing.expectEqualStrings("--json", json.arg);
@@ -347,5 +357,5 @@ test "parse ties the print flags and the prompt to -p" {
     try testing.expectEqual(Failure.extra_argument, parse(&.{ "--rpc", "hi" }).diagnostic.failure);
     // A `-p` in the value of an option is a value, not the print flag.
     try testing.expectEqual(Failure.needs_print, parse(&.{ "--model", "-p" }).diagnostic.failure);
-    try testing.expectEqualStrings("-p", parse(&.{ "-p", "--model", "-p" }).command.print.model.?);
+    try testing.expectEqualStrings("-p", parse(&.{ "-p", "hi", "--model", "-p" }).command.print.model.?);
 }
