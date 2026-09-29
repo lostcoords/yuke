@@ -1,12 +1,11 @@
 // The session layer: the engine sessions the panes show, their pins, the session list, the model a new session takes,
 // the current pane, and the session commands. Any pane that holds a `Session` gets every feature built on this layer.
-import { root, command } from "yuke:internal/core";
+import { root } from "yuke:internal/core";
 import { events, notify } from "yuke:internal/kernel";
 import { term } from "yuke:internal/native/term";
-import { ui } from "yuke:internal/ui";
 import { client } from "yuke:internal/client";
 import { Refresh } from "yuke:internal/refresh";
-import { catalogOf, reloadCatalog, providerState, providerStateLabel } from "yuke:internal/catalog";
+import { openModelPicker, openSessionFinder } from "yuke:internal/session-ui";
 import { errorText } from "yuke:internal/format";
 
 /** @import { Composer } from "yuke:internal/ui" */
@@ -443,116 +442,6 @@ export function currentEntry() {
   return activity ? { session: item.session, activity } : item;
 }
 
-// Load the catalog, then pick a model and its effort. A `query` names the model and skips the picker.
-/** @param {InjectContext} ctx @param {string} [query] */
-function openModelPicker(ctx, query) {
-  const pane = current;
-  if (!pane) return null;
-  const entry = currentEntry();
-  const currentId = entry ? entry.session.model : null;
-  const show = () => {
-    // Code-unit order: localeCompare NFC-normalizes and traps in ReleaseSafe QuickJS.
-    const models = catalogOf().models.slice().sort((a, b) => (a.provider < b.provider ? -1 : a.provider > b.provider ? 1 : 0) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    if (models.length === 0) return notify("info", "no model in the catalog", "model");
-    if (query) {
-      const m = models.find((x) => x.selector === query || x.id === query || x.name === query);
-      if (m) {
-        if (modelAvailable(m)) pane.session.setModel(m, m.default_reasoning || m.reasoning_levels[0] || "");
-      }
-      else notify("info", "no model named " + query, "model");
-      return;
-    }
-    const p = ui.pick({
-      title: "select a model",
-      footer: "type to filter · ↵ select · esc close",
-      border: "none",
-      panelGroup: "UIFloat",
-      anchor: pane.composer ? () => /** @type {Composer} */ (pane.composer).rect : null,
-      maxRows: 6,
-      items: models,
-      // The catalog owns the selector format. The picker keys on it and never builds one.
-      key: (m) => m.selector,
-      filterText: m => m.provider + " " + m.name + " " + m.id,
-      // A model with a provider that cannot serve shows the reason before the user starts a run.
-      format: m => {
-        const label = providerStateLabel(providerState(m.provider));
-        return label ? { text: m.name, right: m.provider + " · " + label, group: "UIDim" } : { text: m.name, right: m.provider };
-      },
-      onAccept: m => {
-        if (modelAvailable(m)) pickReasoning(ctx, m, pane.session);
-      },
-    });
-    ctx.tui.overlay(p.win);
-    p.content.list.selectKey(currentId);
-  };
-  // Reload the file before the picker lists, so a login from another process shows.
-  reloadCatalog().then(show);
-  return null;
-}
-
-/** @param {Wire.ModelInfo} model @returns {boolean} */
-function modelAvailable(model) {
-  const state = providerState(model.provider);
-  if (state === "needs_credential") command.perform("auth:login", model.provider);
-  else if (state === "needs_route") notify("warn", model.provider + " needs a route in providers.json", "model");
-  else return true;
-  return false;
-}
-
-// A model with at most one level needs no second step, so the pick ends there.
-/** @param {InjectContext} ctx @param {Wire.ModelInfo} model @param {Session} session @returns {void} */
-function pickReasoning(ctx, model, session) {
-  const levels = model.reasoning_levels;
-  if (levels.length < 2) {
-    session.setModel(model, model.default_reasoning || levels[0] || "");
-    return;
-  }
-  const composer = current?.composer;
-  const step = ui.pick({
-    title: model.name + " · effort",
-    footer: "↵ select · esc close",
-    border: "none",
-    panelGroup: "UIFloat",
-    anchor: composer ? () => composer.rect : null,
-    maxRows: 6,
-    items: levels.map((id) => ({ id })),
-    key: l => l.id,
-    filterText: l => l.id,
-    format: l => ({ text: l.id }),
-    onAccept: l => session.setModel(model, l.id),
-  });
-  ctx.tui.overlay(step.win);
-  step.content.list.selectKey(model.default_reasoning || levels[0]);
-}
-
-// A session finder reads the sessions, fuzzy-searches them by title, then opens one in the current pane.
-/** @param {InjectContext} ctx @returns {void} */
-function openSessionFinder(ctx) {
-  feed.refresh().then(() => {
-    const rows = feed.rows().filter((row) => row.session.origin.type !== "child").sort((a, b) => (b.session.updated_at_ms || 0) - (a.session.updated_at_ms || 0));
-    if (rows.length === 0) {
-      notify("info", "no sessions yet", "session");
-      return;
-    }
-    const p = ui.pick({
-      title: "sessions",
-      footer: "type to filter · ↵ select · esc close",
-      border: "rounded",
-      width: max => Math.round(max * 0.6),
-      height: max => Math.round(max * 0.5),
-      items: rows,
-      key: r => r.id,
-      filterText: r => r.title,
-      // An open session reads its live activity; the rest shows what the list reported. A working session shows "●".
-      format: r => ({ text: r.title, right: (sessionOf(r.id)?.activity || r.activity).state.type === "idle" ? "" : "●" }),
-      onAccept: r => {
-        if (current) openSession(current, r.id);
-      },
-    });
-    ctx.tui.overlay(p.win);
-  });
-}
-
 export const sessionsPlugin = {
   name: "sessions",
   /** @param {Context} ctx @returns {void} */
@@ -622,8 +511,25 @@ export const sessionsPlugin = {
       });
 
       ctx.tui.command.add("session:interrupt", { when: () => current?.session.sessionId != null, desc: "stop the run", slash: true, run: () => current?.session.interrupt() });
-      ctx.tui.command.add("ui:sessions", { desc: "open a session", slash: true, run: () => openSessionFinder(ctx) });
-      ctx.tui.command.add("model:pick", { desc: "choose the model for the next chat", slash: "model", args: true, run: (/** @type {string | undefined} */ query) => openModelPicker(ctx, query) });
+      ctx.tui.command.add("ui:sessions", {
+        desc: "open a session",
+        slash: true,
+        run: () => feed.refresh().then(() => {
+          const rows = feed.rows().filter((row) => row.session.origin.type !== "child").sort((a, b) => (b.session.updated_at_ms || 0) - (a.session.updated_at_ms || 0));
+          // A pane that holds a session has its live activity, so the finder reads that before the listed one.
+          openSessionFinder(ctx, rows, (id) => sessionOf(id)?.activity, (id) => { if (current) openSession(current, id); });
+        }),
+      });
+      ctx.tui.command.add("model:pick", {
+        desc: "choose the model for the next chat",
+        slash: "model",
+        args: true,
+        run: (/** @type {string | undefined} */ query) => {
+          if (!current) return;
+          const entry = currentEntry();
+          openModelPicker(ctx, current, entry ? entry.session.model : null, query);
+        },
+      });
       ctx.tui.command.add("context:reload", {
         desc: "rescan AGENTS.md and skills for this chat",
         slash: true,
