@@ -112,34 +112,6 @@ export type AgentsOptions = {
     maxDepth?: number;
     maxRounds?: number;
 };
-export type Catalog = {
-    default: string;
-    rows: Record<string, AgentRow>;
-    maxConcurrent?: number;
-    maxDepth?: number;
-    maxRounds?: number;
-};
-export type ToolContext = {
-    sessionId?: string | null;
-    messageId?: number | null;
-    partId?: number | null;
-};
-export type ToolPart = Extract<Wire.AssistantPart, {
-    type: "tool";
-}>;
-export type ChildView = {
-    site: Wire.ToolSite;
-    activity: Wire.SessionActivity;
-    last_run: Wire.RunOutcome | null;
-};
-export type ChildEntry = {
-    view: ChildView | null;
-    reading: boolean;
-    again: boolean;
-};
-/** The live words of a child on its spawn row: the state the picker shows, then the context it holds. */
-/** @param {ChildView} view @returns {string} */
-export function childLabel(view: ChildView): string;
 /** @param {AgentsOptions} options */
 export function agents(options: AgentsOptions): {
     name: string;
@@ -150,16 +122,10 @@ export function agents(options: AgentsOptions): {
 
 declare namespace $attach {
 import Composer = $ui.Composer;
-/** @param {string} raw @returns {string} */
-export function cleanPath(raw: string): string;
-/** @param {string} text @returns {boolean} */
-export function looksLikeImagePath(text: string): boolean;
 /** @param {Composer} composer @param {string} text @param {number} from @returns {Promise<boolean>} */
 export function attachPath(composer: Composer, text: string, from: number): Promise<boolean>;
 /** @param {Composer} composer @returns {Promise<boolean>} */
 export function attachClipboard(composer: Composer): Promise<boolean>;
-/** @param {Composer} composer @param {string} text @param {number} from @returns {boolean} */
-export function pasteAttaches(composer: Composer, text: string, from: number): boolean;
 }
 
 declare namespace $chat_view {
@@ -254,8 +220,6 @@ export class ChatView {
         visible: boolean;
     } | null;
 }
-/** @returns {ChatView | null} */
-export function focusedChat(): ChatView | null;
 }
 
 declare namespace $chat {
@@ -273,11 +237,6 @@ export class ChatSurface {
     /** @param {Parameters<typeof registerLabels>[0]} entries @returns {Disposer} */
     labels(entries: Parameters<typeof registerLabels>[0]): Disposer;
 }
-export const chatPlugin: {
-    name: string;
-    /** @param {Context} ctx @returns {void} */
-    apply(ctx: Context): void;
-};
 }
 
 declare namespace $client {
@@ -289,8 +248,6 @@ import TextCursor = $native_engine.TextCursor;
 function request<M extends keyof Wire.Methods>(method: M, ...args: Wire.Methods[M]["paramsType"]): Promise<Wire.Methods[M]["returnType"]>;
 /** @param {Wire.SessionListParams} [params] @returns {Promise<Wire.SessionListResult>} */
 function sessionList(params?: Wire.SessionListParams): Promise<Wire.SessionListResult>;
-/** @param {string} parentId @returns {Promise<Wire.SessionListItem[]>} */
-export function allChildren(parentId: string): Promise<Wire.SessionListItem[]>;
 /** @param {string} sessionId @returns {SessionOutline | null} */
 function sessionOutline(sessionId: string): SessionOutline | null;
 /** @param {string} sessionId @returns {Wire.SessionActivity | null} */
@@ -392,17 +349,6 @@ export const client: {
 
 declare namespace $composer_vim {
 import Context = $ext.Context;
-import ComposerType = $ui.Composer;
-export type ComposerMode = "insert" | "normal";
-export type ComposerVim = {
-    mode: (c: ComposerType | null) => ComposerMode | null;
-    setMode: (c: ComposerType | null, mode: ComposerMode) => void;
-};
-export type KeyResult = boolean | "insert";
-export type LineBounds = {
-    start: number;
-    end: number;
-};
 export const composerVim: {
     name: string;
     /** @param {Context} ctx @returns {void} */
@@ -412,7 +358,6 @@ export const composerVim: {
 
 declare namespace $core {
 import CommandRegistry = $types_core.CommandRegistry;
-import ContextExpr = $types_core.ContextExpr;
 import ContextFlag = $types_core.ContextFlag;
 import KeymapRegistry = $types_core.KeymapRegistry;
 import NavTarget = $types_core.NavTarget;
@@ -428,10 +373,6 @@ import StyleConfig = $types_core.StyleConfig;
 import Tickable = $types_core.Tickable;
 import TickableEntry = $types_core.TickableEntry;
 import ViewLike = $types_core.ViewLike;
-/** @param {string} button @returns {boolean} */
-export function isWheel(button: string): boolean;
-/** @param {Rect} r @param {number} col @param {number} row @returns {boolean} */
-export const contains: (r: Rect, col: number, row: number) => boolean;
 /** @type {StyleConfig} */
 export const style: StyleConfig;
 /** @param {number} x @param {number} y @param {number} w @param {number} h @param {string} group @returns {void} */
@@ -452,8 +393,6 @@ export const context: {
     /** @returns {string[]} */
     stack(): string[];
 };
-/** @param {string} source @returns {ContextExpr} */
-export function parseContext(source: string): ContextExpr;
 /** @type {KeymapRegistry} */
 export const keymap: KeymapRegistry;
 export const route: {
@@ -467,10 +406,6 @@ export const route: {
 };
 /** @param {string | null | undefined} text @param {string | undefined} what @returns {number} */
 export function copy(text: string | null | undefined, what: string | undefined): number;
-/** @param {object} view @param {object} owner @returns {void} */
-export function claimView(view: object, owner: object): void;
-/** @param {object} view @param {object} owner @returns {void} */
-export function releaseView(view: object, owner: object): void;
 export class View {
     /** @type {Rect} */
     rect: Rect;
@@ -611,10 +546,6 @@ export class RootView {
     onEvent(ev: RootEvent): void;
 }
 export const root: RootView;
-/** A synthetic esc key press. Every dialog cancels when it receives esc. */
-export const ESC_PRESS: Readonly<Extract<HostEvent, {
-    type: "key";
-}>>;
 export function quit(): void;
 }
 
@@ -635,7 +566,6 @@ import Plugin = $types_ext.Plugin;
 import PluginHandle = $types_ext.PluginHandle;
 import Release = $types_ext.Release;
 import ToolDefinition = $types_ext.ToolDefinition;
-import AdviceInfo = $types_runtime.AdviceInfo;
 import PluginAsync = $types_runtime.PluginAsync;
 import ScopeEntry = $types_runtime.ScopeEntry;
 import ScopeLife = $types_runtime.ScopeLife;
@@ -675,34 +605,6 @@ export class Scope {
     /** @param {Release} fn @returns {Promise<void> | undefined} */
     _attempt(fn: Release): Promise<void> | undefined;
 }
-export const advice: {
-    /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
-    advise(obj: object, prop: string, where: AdviceWhere, fn: AdviceFunction, opts?: AdviceOptions | undefined): Disposer;
-    /** @param {object} obj @param {string | undefined} [prop] @returns {AdviceInfo[]} */
-    list(obj: object, prop?: string | undefined): AdviceInfo[];
-};
-export const services: {
-    /** @type {Record<string, Array<{ value: unknown }>>} */
-    _map: Record<string, Array<{
-        value: unknown;
-    }>>;
-    /** @type {Record<string, Set<() => void>>} */
-    _watchers: Record<string, Set<() => void>>;
-    /** @param {string} name @param {unknown} value @returns {Disposer} */
-    provide(name: string, value: unknown): Disposer;
-    /** @param {string} name @returns {unknown} */
-    get(name: string): unknown;
-    /** @param {string} name @returns {boolean} */
-    has(name: string): boolean;
-    /** @param {string} name @param {() => void} fn @returns {Disposer} */
-    watch(name: string, fn: () => void): Disposer;
-    /** @param {string} name @returns {void} */
-    _changed(name: string): void;
-};
-/** @template {keyof Wire.Methods} M @param {M} method @param {Wire.Methods[M]["paramsType"][0]} params @returns {Promise<Wire.Methods[M]["paramsType"][0]>} */
-export function gateInput<M extends keyof Wire.Methods>(method: M, params: Wire.Methods[M]["paramsType"][0]): Promise<Wire.Methods[M]["paramsType"][0]>;
-/** @type {(ctx: Context) => Scope} */
-export let scopeOf: (ctx: Context) => Scope;
 export class Context {
     #private;
     id: string;
@@ -825,24 +727,10 @@ export function fetch(url: string, options?: FetchOptions): Promise<Response>;
 declare namespace $jobs {
 import native = $native_jobs;
 import Job = $native_jobs.Job;
-export const list: typeof native.list, get: typeof native.get, read: typeof native.read;
-/** @param {string} command @param {{ workspaceRoot?: string, sessionId?: string }} [options] @returns {Promise<Job>} */
-export function start(command: string, options?: {
-    workspaceRoot?: string;
-    sessionId?: string;
-}): Promise<Job>;
 /** @param {number} id @returns {Promise<Job | null>} */
 export function stop(id: number): Promise<Job | null>;
 /** @param {number} id @returns {Promise<Job | null>} */
 export function wait(id: number): Promise<Job | null>;
-/** @param {string} command @returns {string} */
-export function shortCommand(command: string): string;
-/** @param {Job} job @returns {string} */
-export function name(job: Job): string;
-/** @param {Job} job @returns {string} */
-export function endLabel(job: Job): string;
-/** @param {number} id @param {number} count @returns {Promise<string>} */
-export function tail(id: number, count: number): Promise<string>;
 export const jobs: {
     list: typeof native.list;
     get: typeof native.get;
@@ -870,58 +758,12 @@ export type ConfigPatch = {
     mouse?: Partial<MouseConfig>;
     keymap?: Partial<KeymapConfig>;
 };
-export type ConfigValidator = (value: unknown) => true | string;
-export type ConfigValidators = {
-    [name: string]: ConfigValidator;
-};
-export type ListenerMap = {
-    [name: string]: Array<(...args: any[]) => unknown>;
-};
 import Bus = $types_ext.Bus;
-import Notification = $types_ext.Notification;
-/** @param {() => void} fn @returns {() => void} */
-export function once(fn: () => void): () => void;
 /** @type {Config} */
 export const config: Config;
 /** @param {ConfigPatch} partial @returns {ConfigPatch} */
 export function defineConfig(partial: ConfigPatch): ConfigPatch;
-/** @param {object | null | undefined} obj @param {string} name @param {...unknown} args @returns {unknown} */
-export function callHook(obj: object | null | undefined, name: string, ...args: unknown[]): unknown;
-export class Emitter {
-    /** @type {ListenerMap} */
-    _listeners: ListenerMap;
-    _names: Set<string>;
-    /** @type {((error: unknown, name: string) => void) | null} */
-    onError: ((error: unknown, name: string) => void) | null;
-    /** @param {Set<string>} names */
-    constructor(names: Set<string>);
-    /** @param {string[]} names @returns {() => void} */
-    declare(names: string[]): () => void;
-    /** @param {string} name @returns {void} */
-    _check(name: string): void;
-    /** @param {string} name @param {(...args: any[]) => unknown} fn @param {{ prepend?: boolean } | undefined} [opts] @returns {() => void} */
-    on(name: string, fn: (...args: any[]) => unknown, opts?: {
-        prepend?: boolean;
-    } | undefined): () => void;
-    /** @param {string} name @param {(...args: any[]) => unknown} fn @returns {() => void} */
-    once(name: string, fn: (...args: any[]) => unknown): () => void;
-    /** @param {string} name @param {...any} args @returns {void} */
-    emit(name: string, ...args: any[]): void;
-    /** @param {unknown} error @param {string} name @returns {void} */
-    _fault(error: unknown, name: string): void;
-    /** @param {string} name @param {...any} args @returns {unknown} */
-    bail(name: string, ...args: any[]): unknown;
-}
 export const events: Bus;
-/** The notifications of this process, oldest first. A repeat of the newest entry increases its count. */
-/** @type {Notification[]} */
-export const notifications: Notification[];
-/** Add one notification. `source` names the plugin or the application part that sent it. A frontend displays the entry. */
-/** @param {Wire.NoticeLevel} level @param {string} message @param {string} source @param {string} [stack] @returns {void} */
-export function notify(level: Wire.NoticeLevel, message: string, source: string, stack?: string): void;
-/** Report a thrown value as an error notification. The report never throws, because a value can fail every read. */
-/** @param {unknown} error @param {string} source @returns {void} */
-export function fault(error: unknown, source: string): void;
 }
 
 declare namespace $keys {
@@ -987,55 +829,15 @@ export function solve(node: LayoutNode, bounds: Rect): LayoutResult;
 }
 
 declare namespace $mcp_oauth {
-import CancellationSignal = $native_cancellation.CancellationSignal;
-export type Client = {
-    client_id: string;
-    client_secret?: string;
-};
-export type Grant = {
-    access_token: string;
-    refresh_token?: string;
-    expires_at?: number;
-    scope?: string;
-    client: Client;
-    token_endpoint: string;
-    issuer: string;
-    resource: string;
-};
 export type OAuthConfig = {
     clientId?: string;
     clientSecret?: string;
     scopes?: string[];
 };
-export type Auth = {
-    header(): Promise<string | null>;
-    renew(sent: string | null): Promise<boolean>;
-};
-/** @param {unknown} value @returns {value is Record<string, unknown>} */
-export const record: (value: unknown) => value is Record<string, unknown>;
-/** @param {string} url @returns {{ origin: string, path: string }} */
-export function split(url: string): {
-    origin: string;
-    path: string;
-};
-/** @param {string} url */
-export function forget(url: string): void;
-/** @param {string} url @param {{ challenge?: string, config?: OAuthConfig, open(url: string): Promise<void> | void, signal?: CancellationSignal }} options @returns {Promise<Grant>} */
-export function signIn(url: string, { challenge, config, open, signal }: {
-    challenge?: string;
-    config?: OAuthConfig;
-    open(url: string): Promise<void> | void;
-    signal?: CancellationSignal;
-}): Promise<Grant>;
-/** @param {string} url @returns {Auth} */
-export function authFor(url: string): Auth;
 }
 
 declare namespace $mcp_transport {
-import fetch = $http.fetch;
-import Auth = $mcp_oauth.Auth;
 import OAuthConfig = $mcp_oauth.OAuthConfig;
-export type HttpResponse = Awaited<ReturnType<typeof fetch>>;
 export type ServerConfig = {
     type?: string;
     command?: string;
@@ -1049,39 +851,6 @@ export type ServerConfig = {
     timeout?: number;
     alwaysLoad?: boolean;
 };
-export type Target = {
-    url: string;
-    headers: Record<string, string>;
-    auth: Auth | null;
-};
-export const LISTEN_RETRY_MS = 1000;
-export const LISTEN_RETRY_MAX_MS = 30000;
-export type Sink = {
-    message(text: string): number | undefined;
-    closed(reason: string, options?: {
-        reconnect?: boolean;
-        signIn?: string;
-    }): void;
-};
-export type Transport = {
-    send(message: Record<string, unknown>, headers?: Record<string, string>): Promise<void>;
-    cancel(id: number, reason: string): void;
-    negotiated(version: string): void;
-    close(): Promise<void>;
-    diagnostics(failed: boolean): string[];
-};
-export type Endpoint = {
-    identity: string;
-    describe: string;
-    mirrorsParams: boolean;
-    url?: string;
-    signsIn?: boolean;
-    open(sink: Sink): Transport;
-};
-/** @param {string} value @returns {string} */
-export function headerValue(value: string): string;
-/** @param {ServerConfig} config @param {string} type @returns {Endpoint} */
-export function endpointFor(config: ServerConfig, type: string): Endpoint;
 }
 
 declare namespace $mcp {
@@ -1091,83 +860,6 @@ export type McpOptions = {
     servers?: Record<string, ServerConfig>;
     startupMs?: number;
     callMs?: number;
-};
-export type Limits = {
-    startupMs: number;
-    callMs: number;
-};
-export type ServerState = "pending" | "untrusted" | "connecting" | "connected" | "needs auth" | "failed" | "disabled" | "stopped";
-export type Waiting = {
-    resolve: (value: unknown) => void;
-    reject: (error: Error) => void;
-    done: () => void;
-    bytes: number;
-    cancelable: boolean;
-    progress?: (value: number, report: Record<string, unknown>) => void;
-};
-export type Incoming = {
-    jsonrpc: "2.0";
-    id?: string | number | null;
-    method: string;
-    params?: Record<string, unknown>;
-};
-export type Reply = {
-    jsonrpc: "2.0";
-    id: string | number | null;
-    result?: Record<string, unknown>;
-    error?: {
-        code: number;
-        message: string;
-        data?: unknown;
-    };
-};
-export type Message = Incoming | Reply;
-export type Content = {
-    type: "text";
-    text: string;
-} | {
-    type: "image" | "audio";
-    data: string;
-    mimeType: string;
-} | {
-    type: "resource_link";
-    uri: string;
-    name: string;
-} | {
-    type: "resource";
-    resource: {
-        uri: string;
-        text?: string;
-        blob?: string;
-        mimeType?: string;
-    };
-};
-export type ServerTool = {
-    name: string;
-    description?: string;
-    title?: string;
-    inputSchema: Record<string, unknown>;
-    outputSchema?: Record<string, unknown>;
-};
-export type Mirrored = {
-    name: string;
-    path: string[];
-};
-/** @param {string} server @param {string} tool @returns {string} */
-export function toolName(server: string, tool: string): string;
-/** @param {string} line @returns {Message} */
-export function decodeMessage(line: string): Message;
-/** @param {unknown} result @param {boolean} [modern] @returns {{ text: string, images: readonly string[] }} */
-export function toolResult(result: unknown, modern?: boolean): {
-    text: string;
-    images: readonly string[];
-};
-/** @param {unknown} schema @returns {Mirrored[] | string} */
-export function mirroredParams(schema: unknown): Mirrored[] | string;
-export type ToolAddition = {
-    name: string;
-    description: string;
-    input_schema: string;
 };
 export type McpPlugin = Plugin & {
     rows(): [string, string][];
@@ -1183,13 +875,7 @@ declare namespace $md {
 import Block = $types_md.Block;
 import BlockSummary = $types_md.BlockSummary;
 import CacheEntry = $types_md.CacheEntry;
-import LinearSegment = $types_md.LinearSegment;
 import Row = $types_md.Row;
-import Segment = $types_md.Segment;
-/** @param {Segment} seg @returns {seg is LinearSegment} */
-export function isLinear(seg: Segment): seg is LinearSegment;
-/** @param {unknown} text @returns {string} */
-export function normalizeSource(text: unknown): string;
 export class Document {
     /** @type {string | null} */
     _src: string | null;
@@ -1277,23 +963,12 @@ export class Pager {
     /** @param {MouseEvent} ev @returns {boolean} */
     onMouse(ev: MouseEvent): boolean;
 }
-/** @param {TranscriptRow} r @returns {string} */
-export function rowText(r: TranscriptRow): string;
-/** @param {TranscriptRow} row @param {number} from @param {number} to @param {number} [base] @returns {{ from: number, to: number } | null} */
-export function rowSourceSpan(row: TranscriptRow, from: number, to: number, base?: number): {
-    from: number;
-    to: number;
-} | null;
-/** @param {TranscriptRow} row @param {number} col @param {number} [base] @returns {number} */
-export function rowSourceAt(row: TranscriptRow, col: number, base?: number): number;
 }
 
 declare namespace $session {
 import Composer = $ui.Composer;
 import Transcript = $transcript.Transcript;
 import ViewLike = $types_core.ViewLike;
-import Context = $ext.Context;
-export type CreateSessionDraft = Wire.CreateSession;
 export type FeedActivity = Wire.SessionActivity | {
     state: {
         type: "idle";
@@ -1306,23 +981,11 @@ export type FeedItem = {
     session: Wire.Session;
     activity: FeedActivity;
 };
-export type SessionRow = {
-    id: string;
-    title: string;
-    activity: FeedActivity;
-    session: Wire.Session;
-};
-export type ModelDefaults = {
-    model: string | null;
-    reasoning: string;
-};
 export type SessionPane = ViewLike & {
     session: Session;
     transcript: Transcript;
     composer?: Composer;
 };
-/** @param {readonly Wire.ContentPart[]} content @returns {string | null} */
-export function soleText(content: readonly Wire.ContentPart[]): string | null;
 export class Session {
     /** @type {string | null} */
     sessionId: string | null;
@@ -1361,8 +1024,6 @@ export class Session {
 }
 /** @type {Session[]} */
 export const sessions: Session[];
-/** @returns {ModelDefaults} */
-export function defaultModel(): ModelDefaults;
 /** @param {SessionPane} view @param {Session} session @returns {void} */
 export function showSession(view: SessionPane, session: Session): void;
 /** @param {SessionPane} view @param {string} id @returns {void} */
@@ -1373,11 +1034,6 @@ export function currentPane(): SessionPane | null;
 export function currentSession(): Session | null;
 /** @returns {FeedItem | null} */
 export function currentEntry(): FeedItem | null;
-export const sessionsPlugin: {
-    name: string;
-    /** @param {Context} ctx @returns {void} */
-    apply(ctx: Context): void;
-};
 }
 
 declare namespace $shell {
@@ -1415,39 +1071,6 @@ export type TextInputOptions = {
     onChange?: (() => void) | null;
     onEdit?: ((from: number, to: number, insertedLength: number) => void) | null;
 };
-export type GraphemeCell = {
-    at: number;
-    cls: number;
-};
-export type WrapRow = {
-    start: number;
-    end: number;
-    soft: boolean;
-};
-/** @param {string} s @param {number} max @param {boolean} [ellipsis] @returns {string} */
-export function clip(s: string, max: number, ellipsis?: boolean, width?: number): string;
-/** @param {string} s @param {number} width @param {number} head @param {number} [tail] @returns {{ rows: WrapRow[], omitted: boolean }} */
-export function wrapPreview(s: string, width: number, head: number, tail?: number): {
-    rows: WrapRow[];
-    omitted: boolean;
-};
-/** @param {string} s @param {WrapRow[]} rows @param {number} caret @returns {{ row: number, col: number }} */
-export function caretRowCol(s: string, rows: WrapRow[], caret: number): {
-    row: number;
-    col: number;
-};
-/** @param {string} s @param {WrapRow} row @param {number} col @returns {number} */
-export function caretAtCol(s: string, row: WrapRow, col: number): number;
-/** @param {string} s @param {number} at @returns {number} */
-export function nextWordStart(s: string, at: number): number;
-/** @param {string} s @param {number} at @returns {number} */
-export function prevWordStart(s: string, at: number): number;
-/** @param {string} s @param {number} at @returns {number} */
-export function nextWordEnd(s: string, at: number): number;
-/** @param {string} s @param {number} at @returns {number} */
-export function prevGrapheme(s: string, at: number): number;
-/** @param {string} s @param {number} at @returns {number} */
-export function nextGrapheme(s: string, at: number): number;
 export class TextInput {
     text: string;
     caret: number;
@@ -1468,41 +1091,10 @@ export class TextInput {
     /** @param {HostEvent} ev @returns {boolean} */
     onKey(ev: HostEvent): boolean;
 }
-/** @param {number} w @param {string} prompt @param {string} before @returns {number} */
-export function caretCol(w: number, prompt: string, before: string): number;
 }
 
 declare namespace $transcript_vim {
 import Context = $ext.Context;
-import ChatView = $chat_view.ChatView;
-export type Transcript = ChatView["transcript"];
-export type Position = {
-    id: number;
-    row: number;
-    col: number;
-};
-export type VimState = {
-    cursor: Position | null;
-    src: number;
-    anchor: Position | null;
-    visual: boolean;
-    goal: number | null;
-};
-export type Cursor = {
-    x: number;
-    y: number;
-    visible: boolean;
-};
-export type WrapRow = {
-    start: number;
-    end: number;
-    soft: boolean;
-};
-export type Block = {
-    kind: string;
-    at: number;
-    end: number;
-};
 export const transcriptVim: {
     name: string;
     /** @param {Context} ctx */
@@ -1536,8 +1128,6 @@ import TextCursor = $native_engine.TextCursor;
 export const ROLE_NONE = 0;
 export const ROLE_ACTION = 1;
 export const ROLE_TEXT = 2;
-/** @param {Wire.InputSource | undefined | null} source @returns {string} */
-export function inputSourceLabel(source: Wire.InputSource | undefined | null): string;
 export type LabelRegistration = {
     tools?: Record<string, Presenter>;
     sources?: SourceLabels;
@@ -1788,19 +1378,12 @@ class Surface {
 export const tui: {
     bindTo: (/** @type {Context} */ ctx: Context) => Surface;
 };
-export const tuiPlugin: {
-    name: string;
-    /** @param {Context} ctx */
-    apply(ctx: Context): void;
-};
 }
 
 declare namespace $ui {
 import TextInput = $text_input.TextInput;
-import Pager = $pager.Pager;
 import MouseEvent = $types_core.HostMouseEvent;
 import Rect = $types_core.Rect;
-import TranscriptRow = $types_pager.TranscriptRow;
 import BorderSet = $types_ui.BorderSet;
 import ComposerOptions = $types_ui.ComposerOptions;
 import ComposerSnapshot = $types_ui.ComposerSnapshot;
@@ -1821,34 +1404,6 @@ import WindowOptions = $types_ui.WindowOptions;
 import WrapRow = $types_ui.WrapRow;
 /** @type {Record<string, NavAction | undefined>} */
 export const NAV_KEYS: Record<string, NavAction | undefined>;
-export class ScrollView {
-    onClose: () => void;
-    pager: Pager;
-    /** @type {Rect} */
-    rect: Rect;
-    /** @param {() => void} onClose */
-    constructor(onClose: () => void);
-    /** @param {Rect} rect */
-    layout(rect: Rect): void;
-    draw(): void;
-    /** @param {string} _stroke @returns {boolean} */
-    onStroke(_stroke: string): boolean;
-    /** @param {HostEvent} event @returns {boolean} */
-    onKey(event: HostEvent): boolean;
-    /** @param {MouseEvent} event @returns {boolean} */
-    onMouse(event: MouseEvent): boolean;
-}
-/** A scrollable body that builds its rows from its width. It builds them again after a width change or a `refresh`. */
-export class RowsView extends ScrollView {
-    rowsFor: (width: number) => TranscriptRow[];
-    width: number;
-    /** @param {(width: number) => TranscriptRow[]} rowsFor @param {() => void} onClose */
-    constructor(rowsFor: (width: number) => TranscriptRow[], onClose: () => void);
-    /** @returns {void} */
-    refresh(): void;
-    /** @param {Rect} bounds @returns {void} */
-    layout(bounds: Rect): void;
-}
 /** @template T */
 export class List<T> {
     format: ((item: T, index: number) => string | ListItem) | ((it: T) => {
@@ -2238,406 +1793,299 @@ export const ui: {
 }
 
 declare namespace $native_cancellation {
-  const brand: unique symbol;
-  export interface CancellationSignal {
-    readonly [brand]: true;
-    readonly aborted: boolean;
-  }
-  export function create(): CancellationSignal;
-  export function cancel(signal: CancellationSignal): void;
-  export function drain(signal: CancellationSignal): Promise<void>;
-  /** Calls `callback` once when the signal is canceled. A canceled signal throws; check `aborted` first. */
-  export function listen(signal: CancellationSignal, callback: () => void): number;
-  /** Removes a listener. A heard or removed id is safe to pass again. */
-  export function unlisten(id: number): void;
+const brand: unique symbol;
+export interface CancellationSignal {
+  readonly [brand]: true;
+  readonly aborted: boolean;
+}
 }
 
 declare namespace $native_diff {
-  interface DiffHunk {
-    /** The start values are 1-based. A side with no line has start 0 and count 0. */
-    oldStart: number;
-    oldLines: number;
-    newStart: number;
-    newLines: number;
-    /** Unified-diff body lines, each with a leading space, `-`, or `+`. */
-    lines: string[];
-  }
+interface DiffHunk {
+  /** The start values are 1-based. A side with no line has start 0 and count 0. */
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  /** Unified-diff body lines, each with a leading space, `-`, or `+`. */
+  lines: string[];
+}
 
-  interface DiffFile {
-    path: string;
-    hunks: DiffHunk[];
-  }
+interface DiffFile {
+  path: string;
+  hunks: DiffHunk[];
+}
 
-  /** Compares two texts. `path` only labels the result. An equal pair, a side above the size cap, and a change too large to describe all answer no hunk. */
-  export function diff(path: string, before: string, after: string): Promise<DiffFile>;
+/** Compares two texts. `path` only labels the result. An equal pair, a side above the size cap, and a change too large to describe all answer no hunk. */
+export function diff(path: string, before: string, after: string): Promise<DiffFile>;
 }
 
 // The `yuke:internal/native/engine` surface: the JavaScript seam onto the one in-process engine.
 declare namespace $native_engine {
-  /** One session's outline: the committed message ids and roles, plus the live draft. */
-  export type SessionOutline = {
-    messages: { id: number; type: "user" | "assistant" | "compaction"; source?: Wire.InputSource; skill_name?: string; error?: Wire.MessageError }[];
-    active: { id: number; type: "assistant" } | null;
-  };
+/** One session's outline: the committed message ids and roles, plus the live draft. */
+export type SessionOutline = {
+  messages: { id: number; type: "user" | "assistant" | "compaction"; source?: Wire.InputSource; skill_name?: string; error?: Wire.MessageError }[];
+  active: { id: number; type: "assistant" } | null;
+};
 
-  /** The digest keeps each auth event whole, because a login outcome carries a message a fact name cannot. */
-  export type AuthNote = { method: "auth.login_finished"; params: Wire.AuthLoginFinishedData };
+/** The digest keeps each auth event whole, because a login outcome carries a message a fact name cannot. */
+export type AuthNote = { method: "auth.login_finished"; params: Wire.AuthLoginFinishedData };
 
-  /** A fact a drain can carry. A job change never reaches a drain; the jobs module reports it. */
-  export type DrainFact = Exclude<Wire.BroadcastName, "job.changed">;
+/** A fact a drain can carry. A job change never reaches a drain; the jobs module reports it. */
+export type DrainFact = Exclude<Wire.BroadcastName, "job.changed">;
 
-  /** A drain names transcript work and broadcast facts; index overflow requires a full refresh for dropped session facts. */
-  export type EngineEvent =
-    | { type: "activity" }
-    | { type: "index"; overflow: boolean; facts: DrainFact[]; auth?: AuthNote[]; notices?: Wire.Notice[] }
-    | { type: "session"; session: string; kind: "quiet" | "active" | "reload" | "gone"; id?: number; part?: number; facts: DrainFact[] };
+/** A drain names transcript work and broadcast facts; index overflow requires a full refresh for dropped session facts. */
+export type EngineEvent =
+  | { type: "activity" }
+  | { type: "index"; overflow: boolean; facts: DrainFact[]; auth?: AuthNote[]; notices?: Wire.Notice[] }
+  | { type: "session"; session: string; kind: "quiet" | "active" | "reload" | "gone"; id?: number; part?: number; facts: DrainFact[] };
 
-  /** One page of text. `next` is the offset to ask for, or null at the end. */
-  export type TextPage = { text: string; next: number | null; bytes: number };
+/** One part of a message. A user content part has no wire id, so its position is the id. */
+export type MessagePart = Wire.AssistantPart | (Wire.ContentPart & { id: number });
 
-  /** One value the projection cut: `field` is the address `partText` takes, `bytes` or `total` is the whole size, and `next` is where a reader resumes. */
-  export type ViewCut = { field: string; bytes?: number; total?: number; next?: number };
+/** The end of a held text: the engine text generation and its UTF-8 length. A read after it returns only the new text. */
+export type TextCursor = { generation: number; bytes: number };
 
-  /** One part of a message. A user content part has no wire id, so its position is the id. */
-  export type MessagePart = Wire.AssistantPart | (Wire.ContentPart & { id: number });
+/** One read of a part. With `tail`, `part.text` is only the text after the cursor of the read, and the holder appends it. `cursor` is the end of the whole text, for the next read. */
+export type PartRead = { part: MessagePart; cursor?: TextCursor | null; tail?: boolean };
 
-  /** The end of a held text: the engine text generation and its UTF-8 length. A read after it returns only the new text. */
-  export type TextCursor = { generation: number; bytes: number };
+/** The QuickJS allocation counters exclude unused memory in the backing allocator. */
+export type MemoryUsage = {
+  heap: number; limit: number;
+  strings: number; stringCount: number;
+  objects: number; objectCount: number;
+  properties: number; propertyCount: number;
+  shapes: number; arrayCount: number; fastArrayElements: number;
+};
 
-  /** One read of a part. With `tail`, `part.text` is only the text after the cursor of the read, and the holder appends it. `cursor` is the end of the whole text, for the next read. */
-  export type PartRead = { part: MessagePart; cursor?: TextCursor | null; tail?: boolean };
+export type EngineLoad = { runs: number; childRuns: number; continuations: number };
 
-  /** One part as the read surface returns it: the wire part plus every value the projection cut. */
-  export type ViewPart = MessagePart & { cut?: readonly ViewCut[]; text_generation?: number; text_bytes?: number; text_offset?: number };
-
-  /** The QuickJS allocation counters exclude unused memory in the backing allocator. */
-  export type MemoryUsage = {
-    heap: number; limit: number;
-    strings: number; stringCount: number;
-    objects: number; objectCount: number;
-    properties: number; propertyCount: number;
-    shapes: number; arrayCount: number; fastArrayElements: number;
-  };
-
-  export type EngineLoad = { runs: number; childRuns: number; continuations: number };
-
-  export const native: {
-    /** Every run this process owns, the child runs among them, and the continuations; all zero before engine attach. */
-    load(): EngineLoad;
-    /** Every fact the engine can publish, so a bus declares them without drift. */
-    factNames(): Wire.BroadcastName[];
-    /** What the JavaScript runtime holds right now, separate from the process footprint. */
-    memoryUsage(): MemoryUsage;
-    /** Set the child run concurrency and nesting depth limits. */
-    /** An undefined limit keeps the engine value; the answer is the pair from before the call. */
-    setAgentLimits(maxConcurrent?: number, maxDepth?: number): [number, number];
-    /** Install the one sink. `drain` calls it on the owner, never from an engine task. */
-    setEventSink(fn: (ev: EngineEvent) => void): void;
-    /** Install the function that adds a script fault to the notification history. The host calls it after the fault. */
-    setFaultSink(fn: (source: string, text: string) => void): void;
-    /** Resolve with the response JSON, or reject with an error that carries the refusal code. */
-    request(method: string, params: string): Promise<string>;
-    /** Pin a session for one open view. Returns false when the engine cannot open it. */
-    sessionOpen(sessionId: string): boolean;
-    /** Drop one view's pin. Every open owes exactly one close. */
-    sessionClose(sessionId: string): void;
-    /** The outline as JSON, or "null" when the session is not open. */
-    sessionOutline(sessionId: string): string;
-    /** The live `SessionActivity` as JSON, or "null" when the session is not open. */
-    sessionActivity(sessionId: string): string;
-    /** The parts of one message as JSON. A user part takes its position as its id. */
-    sessionParts(sessionId: string, messageId: number): string;
-    /** One part as JSON; a draft cursor reads the suffix at a byte offset within the same lifetime. */
-    sessionPart(sessionId: string, messageId: number, partId: number, generation?: number, offset?: number): string;
-    /** One page of one field of a part, as JSON `TextPage`. `field` is the address a `ViewCut` names. */
-    partText(sessionId: string, messageId: number, partId: number, field: string, offset: number, limit: number): string;
-  };
 }
 
 declare namespace $native_env {
-  export const env: {
-    /** Read the effective environment; a missing key returns undefined and an empty value stays empty. */
-    get(name: string): string | undefined;
-  };
+export const env: {
+  /** Read the effective environment; a missing key returns undefined and an empty value stays empty. */
+  get(name: string): string | undefined;
+};
 }
 
 declare namespace $native_exec {
-  import CancellationSignal = $native_cancellation.CancellationSignal;
+import CancellationSignal = $native_cancellation.CancellationSignal;
 
-  interface ExecOptions {
-    /** A relative path resolves against `workspaceRoot`, or the host directory without one. */
-    cwd?: string;
-    /** The default is 120000 and the maximum is 600000. */
-    timeoutMs?: number;
-    /** A native signal cancels the command and refuses work after cancellation; both reject with `code: "CANCELED"`. */
-    signal?: CancellationSignal;
-    /** The cap for each stream. The default and the maximum are 65536. */
-    maxBytes?: number;
-    /** Write both streams to a private log, and keep it when a stream was cut. */
-    log?: boolean;
-    /** An absolute directory; the host directory without one. */
-    workspaceRoot?: string;
-    /** Takes the live text of both streams in arrival order, before the result settles. `maxBytes` does not cut it, and it stops after 1 MiB. */
-    onOutput?: ((text: string) => void) | undefined;
-  }
+interface ExecOptions {
+  /** A relative path resolves against `workspaceRoot`, or the host directory without one. */
+  cwd?: string;
+  /** The default is 120000 and the maximum is 600000. */
+  timeoutMs?: number;
+  /** A native signal cancels the command and refuses work after cancellation; both reject with `code: "CANCELED"`. */
+  signal?: CancellationSignal;
+  /** The cap for each stream. The default and the maximum are 65536. */
+  maxBytes?: number;
+  /** Write both streams to a private log, and keep it when a stream was cut. */
+  log?: boolean;
+  /** An absolute directory; the host directory without one. */
+  workspaceRoot?: string;
+  /** Takes the live text of both streams in arrival order, before the result settles. `maxBytes` does not cut it, and it stops after 1 MiB. */
+  onOutput?: ((text: string) => void) | undefined;
+}
 
-  interface ExecResult {
-    stdout: string;
-    stderr: string;
-    /** The exit code, or null after a signal or a deadline. */
-    code: number | null;
-    /** The signal that ended the command, or null. */
-    signal: number | null;
-    timedOut: boolean;
-    /** The bytes the stream dropped between its head and its tail. */
-    stdoutDropped: number;
-    stderrDropped: number;
-    /** The kept log path, or null. The host deletes the log directory when it closes. */
-    log: string | null;
-  }
+interface ExecResult {
+  stdout: string;
+  stderr: string;
+  /** The exit code, or null after a signal or a deadline. */
+  code: number | null;
+  /** The signal that ended the command, or null. */
+  signal: number | null;
+  timedOut: boolean;
+  /** The bytes the stream dropped between its head and its tail. */
+  stdoutDropped: number;
+  stderrDropped: number;
+  /** The kept log path, or null. The host deletes the log directory when it closes. */
+  log: string | null;
+}
 
-  /** Runs one shell line with stdin closed, and ends its process group at shell exit or the deadline. */
-  export function exec(command: string, options?: ExecOptions): Promise<ExecResult>;
+/** Runs one shell line with stdin closed, and ends its process group at shell exit or the deadline. */
+export function exec(command: string, options?: ExecOptions): Promise<ExecResult>;
 }
 
 declare namespace $native_fs {
-  interface Stat {
-    /** The anchored absolute path, so a caller can hand the same file to the engine. */
-    path: string;
-    isDirectory: boolean;
-    /** The last modification time, in epoch milliseconds. */
-    lastModifiedMs: number;
-  }
+interface Stat {
+  /** The anchored absolute path, so a caller can hand the same file to the engine. */
+  path: string;
+  isDirectory: boolean;
+  /** The last modification time, in epoch milliseconds. */
+  lastModifiedMs: number;
+}
 
-  interface PageEntry {
-    name: string;
-    /** The whole path, so a caller never joins one itself. */
-    path: string;
-    is_git_repo: boolean;
-  }
+interface PageEntry {
+  name: string;
+  /** The whole path, so a caller never joins one itself. */
+  path: string;
+  is_git_repo: boolean;
+}
 
-  interface Page {
-    path: string;
-    /** The parent directory, or null at the file-system root. */
-    parent: string | null;
-    entries: PageEntry[];
-    /** True when the directory holds more names than one page returns. */
-    more: boolean;
-  }
+interface Page {
+  path: string;
+  /** The parent directory, or null at the file-system root. */
+  parent: string | null;
+  entries: PageEntry[];
+  /** True when the directory holds more names than one page returns. */
+  more: boolean;
+}
 
-  /** An absolute directory a relative path anchors at; the host directory without one. */
-  interface RootOptions {
-    workspaceRoot?: string;
-  }
+/** An absolute directory a relative path anchors at; the host directory without one. */
+interface RootOptions {
+  workspaceRoot?: string;
+}
 
-  export const fs: {
-    /** A relative path anchors at the directory the host runs in. Rejects on invalid UTF-8. */
-    readFile(path: string, options?: RootOptions): Promise<string>;
-    /** Returns an image path or bounded text with the next line after a cut. */
-    readRange(path: string, options?: RootOptions & { start?: number | null; end?: number | null }): Promise<RangeRead | { imagePath: string }>;
-    /** Replaces the whole file and resolves the byte count. */
-    writeFile(path: string, contents: string, options?: RootOptions): Promise<number>;
-    /** Resolves null when nothing is at the path. A relative path anchors at the workspace root, or at the cwd. */
-    stat(path?: string | null, options?: RootOptions): Promise<Stat | null>;
-    /** Removes one regular file and resolves false when nothing is there. A directory or a link rejects. A relative path anchors at the workspace root, or at the cwd. */
-    removeFile(path: string, options?: RootOptions): Promise<boolean>;
-    /** Lists the directories of one path. */
-    list(path?: string | null): Promise<Page>;
-  };
+export const fs: {
+  /** A relative path anchors at the directory the host runs in. Rejects on invalid UTF-8. */
+  readFile(path: string, options?: RootOptions): Promise<string>;
+  /** Returns an image path or bounded text with the next line after a cut. */
+  readRange(path: string, options?: RootOptions & { start?: number | null; end?: number | null }): Promise<RangeRead | { imagePath: string }>;
+  /** Replaces the whole file and resolves the byte count. */
+  writeFile(path: string, contents: string, options?: RootOptions): Promise<number>;
+  /** Resolves null when nothing is at the path. A relative path anchors at the workspace root, or at the cwd. */
+  stat(path?: string | null, options?: RootOptions): Promise<Stat | null>;
+  /** Removes one regular file and resolves false when nothing is there. A directory or a link rejects. A relative path anchors at the workspace root, or at the cwd. */
+  removeFile(path: string, options?: RootOptions): Promise<boolean>;
+  /** Lists the directories of one path. */
+  list(path?: string | null): Promise<Page>;
+};
 
-  interface RangeRead {
-    text: string;
-    next: number | null;
-    longLines: number;
-  }
+interface RangeRead {
+  text: string;
+  next: number | null;
+  longLines: number;
+}
 }
 
 declare namespace $native_http {
-  import CancellationSignal = $native_cancellation.CancellationSignal;
+import CancellationSignal = $native_cancellation.CancellationSignal;
 
-  export interface FetchOptions {
-    method?: "GET" | "POST" | "PUT" | "PATCH" | "HEAD" | "DELETE";
-    headers?: Record<string, string>;
-    body?: string;
-    /** The connect and head deadline; default 30000, maximum 600000. */
-    timeoutMs?: number;
-    signal?: CancellationSignal;
-  }
+export interface FetchOptions {
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "HEAD" | "DELETE";
+  headers?: Record<string, string>;
+  body?: string;
+  /** The connect and head deadline; default 30000, maximum 600000. */
+  timeoutMs?: number;
+  signal?: CancellationSignal;
+}
 
-  export interface ReadOptions {
-    /** The deadline of one read; default 30000, maximum 600000. */
-    timeoutMs?: number;
-    signal?: CancellationSignal;
-    /** The largest chunk one read answers; default 65536, from 4 to 1048576. */
-    maxBytes?: number;
-  }
+export interface ReadOptions {
+  /** The deadline of one read; default 30000, maximum 600000. */
+  timeoutMs?: number;
+  signal?: CancellationSignal;
+  /** The largest chunk one read answers; default 65536, from 4 to 1048576. */
+  maxBytes?: number;
+}
 
-  export interface HttpHead {
-    /** A 3xx status answers the head alone; the caller reads `location` and decides whether to follow it. */
-    status: number;
-    /** The parked body, or zero when the response has none. */
-    body: number;
-    /** Lowercase names. A repeated field joins its values with ", ". */
-    headers: Record<string, string>;
-  }
+export interface HttpHead {
+  /** A 3xx status answers the head alone; the caller reads `location` and decides whether to follow it. */
+  status: number;
+  /** The parked body, or zero when the response has none. */
+  body: number;
+  /** Lowercase names. A repeated field joins its values with ", ". */
+  headers: Record<string, string>;
+}
 
-  /** Resolves at the response head. The body waits for reads. */
-  export function fetch(url: string, options?: FetchOptions): Promise<HttpHead>;
-  /** Answers one text chunk cut on a character boundary, or null at the end. A concurrent read rejects. */
-  export function read(id: number, options?: ReadOptions): Promise<string | null>;
-  /** Answers the rest of the body as text, or rejects above 256 KiB. */
-  export function readAll(id: number, options?: ReadOptions): Promise<string>;
-  /** Drops the body and its connection; repeat calls are safe. */
-  export function close(id: number): void;
 }
 
 declare namespace $native_jobs {
-  /** The wire job and the private log that holds both streams without host metadata. */
-  type Job = Wire.Job & { log: string };
+/** The wire job and the private log that holds both streams without host metadata. */
+type Job = Wire.Job & { log: string };
 
-  /** Starts a shell line as a job; `ended` resolves with the final job. */
-  export function start(command: string, sessionId?: string | null, options?: { workspaceRoot?: string }): Promise<{ job: Job; ended: Promise<Job> }>;
-  /** Answers every job, newest first. */
-  export function list(): Job[];
-  export function get(id: number): Job | null;
-  /** Stops a running job and answers it as it is now; the end arrives through `ended`. */
-  export function stop(id: number): Job | null;
-  /** Reads at most `maxBytes` (4 to 262144) of the job log from `offset`, cut at a character boundary. */
-  export function read(id: number, offset: number | null, maxBytes: number): Promise<{ text: string; next: number; size: number; start: number; complete: boolean }>;
+/** Answers every job, newest first. */
+export function list(): Job[];
+export function get(id: number): Job | null;
+/** Reads at most `maxBytes` (4 to 262144) of the job log from `offset`, cut at a character boundary. */
+export function read(id: number, offset: number | null, maxBytes: number): Promise<{ text: string; next: number; size: number; start: number; complete: boolean }>;
 }
 
 declare namespace $native_net {
-  import CancellationSignal = $native_cancellation.CancellationSignal;
+import CancellationSignal = $native_cancellation.CancellationSignal;
 
-  export interface Options {
-    /** Cancellation or timeout closes the connection and interrupts its other operation. */
-    signal?: CancellationSignal;
-    /** The total operation deadline in milliseconds; default 5000, maximum 600000. */
-    timeoutMs?: number;
-  }
-  export interface ConnectOptions extends Options {
-    /** A filesystem Unix socket path; abstract addresses are not supported. */
-    path: string;
-  }
-  export interface ReadOptions extends Options {
-    /** The largest returned chunk; default 65536, maximum 1048576 bytes. */
-    maxBytes?: number;
-  }
-  export interface Socket {
-    /** Return a byte chunk or null at EOF; a concurrent read rejects with code BUSY. */
-    read(options?: ReadOptions): Promise<Uint8Array | null>;
-    /** Copy and send the whole chunk, up to 1048576 bytes; a concurrent write rejects with code BUSY. */
-    write(bytes: Uint8Array, options?: Options): Promise<void>;
-    /** Request closure without a wait; repeat calls are safe. */
-    close(): void;
-  }
-  /** The host permits at most 64 live connections, including pending connects and closes. */
-  export function connect(options: ConnectOptions): Promise<number>;
-  /** One read may run with one write; another read rejects with code BUSY. */
-  export function read(id: number, options?: ReadOptions): Promise<Uint8Array | null>;
-  /** Copy and send the whole chunk, up to 1048576 bytes; another write rejects with code BUSY. */
-  export function write(id: number, bytes: Uint8Array, options?: Options): Promise<void>;
-  /** Close is idempotent; native tasks drain before the descriptor is released. */
-  export function close(id: number): void;
+export interface Options {
+  /** Cancellation or timeout closes the connection and interrupts its other operation. */
+  signal?: CancellationSignal;
+  /** The total operation deadline in milliseconds; default 5000, maximum 600000. */
+  timeoutMs?: number;
+}
+export interface ConnectOptions extends Options {
+  /** A filesystem Unix socket path; abstract addresses are not supported. */
+  path: string;
+}
+export interface ReadOptions extends Options {
+  /** The largest returned chunk; default 65536, maximum 1048576 bytes. */
+  maxBytes?: number;
+}
+export interface Socket {
+  /** Return a byte chunk or null at EOF; a concurrent read rejects with code BUSY. */
+  read(options?: ReadOptions): Promise<Uint8Array | null>;
+  /** Copy and send the whole chunk, up to 1048576 bytes; a concurrent write rejects with code BUSY. */
+  write(bytes: Uint8Array, options?: Options): Promise<void>;
+  /** Request closure without a wait; repeat calls are safe. */
+  close(): void;
+}
 }
 
 declare namespace $native_process {
-  interface SpawnOptions {
-    /** A relative path resolves against `workspaceRoot`, or the host directory without one. */
-    cwd?: string;
-    /** Flat key and value pairs that add to or replace the host environment. */
-    env?: string[];
-    /** An absolute directory; the host directory without one. */
-    workspaceRoot?: string;
-  }
+interface ProcessExit {
+  /** The exit code, or null after a signal. */
+  code: number | null;
+  /** The signal number, or null after a normal exit. */
+  signal: number | null;
+}
 
-  interface ProcessExit {
-    /** The exit code, or null after a signal. */
-    code: number | null;
-    /** The signal number, or null after a normal exit. */
-    signal: number | null;
-  }
-
-  interface NativeProcess {
-    /** Zero when the start failed; `exited` then rejects. */
-    id: number;
-    exited: Promise<ProcessExit>;
-  }
-
-  /** Starts an argument array with no shell in a new process group. */
-  export function spawn(argv: string[], options: SpawnOptions | undefined, onOutput: (stream: 1 | 2, text: string) => void): NativeProcess;
-  /** Resolves after the pipe accepts every byte; rejects above 1 MiB or 1024 queued writes. */
-  export function write(id: number, text: string): Promise<void>;
-  export function closeStdin(id: number): void;
-  /** Sends TERM to the process group, then KILL after a grace period. Answers false when the child already exited. */
-  export function kill(id: number): boolean;
 }
 
 declare namespace $native_term {
-  export interface Style {
-    fg?: Color;
-    bg?: Color;
-    // The underline color does not enable the underline.
-    ul?: Color;
-    bold?: boolean;
-    dim?: boolean;
-    italic?: boolean;
-    reverse?: boolean;
-    underline?: boolean;
-  }
+export interface Style {
+  fg?: Color;
+  bg?: Color;
+  // The underline color does not enable the underline.
+  ul?: Color;
+  bold?: boolean;
+  dim?: boolean;
+  italic?: boolean;
+  reverse?: boolean;
+  underline?: boolean;
+}
 
-  // Native code validates six hex digits and integer indices from 0 to 255.
-  export type RgbColor = `#${string}`;
-  export type Color = number | ColorName | RgbColor;
+// Native code validates six hex digits and integer indices from 0 to 255.
+export type RgbColor = `#${string}`;
+export type Color = number | ColorName | RgbColor;
 
-  export type ColorName =
-    | "reset"
-    | "black"
-    | "red"
-    | "green"
-    | "yellow"
-    | "blue"
-    | "magenta"
-    | "cyan"
-    | "gray"
-    | "grey"
-    | "dark_gray"
-    | "dark_grey"
-    | "light_red"
-    | "light_green"
-    | "light_yellow"
-    | "light_blue"
-    | "light_magenta"
-    | "light_cyan"
-    | "white";
+export type ColorName =
+  | "reset"
+  | "black"
+  | "red"
+  | "green"
+  | "yellow"
+  | "blue"
+  | "magenta"
+  | "cyan"
+  | "gray"
+  | "grey"
+  | "dark_gray"
+  | "dark_grey"
+  | "light_red"
+  | "light_green"
+  | "light_yellow"
+  | "light_blue"
+  | "light_magenta"
+  | "light_cyan"
+  | "white";
 
-  export const term: {
-    beginFrame(): void;
-    endFrame(): void;
-    fill(x: number, y: number, w: number, h: number, style?: Style): void;
-    text(x: number, y: number, s: string, style?: Style): void;
-    measure(s: string): number;
-    graphemes(s: string): Int32Array;
-    wrap(s: string, width: number, head?: number, tail?: number): { rows: Int32Array; omitted: boolean };
-    cursor(x: number, y: number, visible: boolean): void;
-    setNeedsTick(enabled: boolean, periodMs?: number): void;
-    copy(text: string): number;
-    quit(): void;
-    suspend(): void;
-    clipboardMax: number;
-    cwd: string;
-    width: number;
-    height: number;
-  };
 }
 
 declare namespace $native_utf8 {
-  export const utf8: {
-    /** Encode a string as independent UTF-8 bytes; reject lone surrogates with TypeError. */
-    encode(text: string): Uint8Array;
-    /** Decode a complete byte view; reject invalid UTF-8 with TypeError and preserve NUL and BOM. */
-    decode(bytes: Uint8Array): string;
-  };
+export const utf8: {
+  /** Encode a string as independent UTF-8 bytes; reject lone surrogates with TypeError. */
+  encode(text: string): Uint8Array;
+  /** Decode a complete byte view; reject invalid UTF-8 with TypeError and preserve NUL and BOM. */
+  decode(bytes: Uint8Array): string;
+};
 }
 
 declare namespace $types_core {
@@ -2845,7 +2293,6 @@ import DrainFact = $native_engine.DrainFact;
 import EngineEvent = $native_engine.EngineEvent;
 import Job = $native_jobs.Job;
 import Context = $ext.Context;
-import Scope = $ext.Scope;
 import tui = $tui.tui;
 import ChatSurface = $chat.ChatSurface;
 import ChatRegion = $chat_view.ChatRegion;
@@ -3103,14 +2550,6 @@ export interface InteractionSurface {
   notify(message: string, level?: "info" | "warn" | "error"): void;
 }
 
-export type InteractionRequest = Exclude<Wire.InteractionRequest, { type: "select" }>
-  | (Extract<Wire.InteractionRequest, { type: "select" }> & { options: string[] })
-  | {
-    type: "device_login";
-    title: string;
-    start: Wire.AuthLoginResult;
-    outcome: Promise<Wire.AuthLoginOutcome>;
-  };
 }
 
 declare global {
@@ -3239,28 +2678,9 @@ export interface SourceRun {
 
 export type StringList = string[] & { [index: number]: string };
 export type NumberList = number[] & { [index: number]: number };
-export type FenceMatch = [full: string, indent: string, fence: string, lang: string];
-export type FenceCloseMatch = [full: string, indent: string, fence: string];
-export type HeadingMatch = [full: string, indent: string, marks: string, spacing: string | undefined, text: string | undefined];
-export type QuoteMatch = [full: string, indent: string, spacing: string, text: string];
-export type UlItemMatch = [full: string, indent: string, marker: string, spacing: string, text: string];
-export type OlItemMatch = [full: string, indent: string, number: string, delimiter: string, spacing: string, text: string];
-
-export interface InlineSource {
-  text: string;
-  runs: SourceRun[];
-}
-
 export interface TableCell {
   text: string;
   runs: SourceRun[];
-}
-
-export interface Fence {
-  marker: string;
-  length: number;
-  indent: number;
-  lang: string;
 }
 
 export interface ListItem {
@@ -3294,30 +2714,8 @@ export interface BlockSummary {
   end: number;
 }
 
-export type TextNode = { kind: "text"; text: string; at: number; len: number };
-export type StyledNode = { kind: "seg"; text: string; group: string; at: number; len: number };
-export interface DelimiterNode {
-  kind: "delim";
-  text: string;
-  at: number;
-  len: number;
-  marker: string;
-  count: number;
-  canOpen: boolean;
-  canClose: boolean;
-  openStrong?: number;
-  closeStrong?: number;
-  openEm?: number;
-  closeEm?: number;
-}
-export type InlineNode = TextNode | StyledNode | DelimiterNode;
-export type InlinePiece = { text: string; group: string; at: number; len: number };
 export type Segment = { text: string; group: string; src?: number; srcEnd?: number; mark?: boolean };
-export type LinearSegment = { src: number; srcEnd: number; text: string; group: string };
 export type Row = { segments: Segment[]; w?: number };
-export type BreakPiece = { segments: Segment[]; w: number };
-export type Word = { pieces: Segment[]; w: number; spaceGroup: string | null };
-export type WrapOptions = { firstPrefix?: Segment; contPrefix?: Segment; emptyGroup?: string; limit?: number };
 export type CacheEntry = { raw: string; width: number; rows: Row[] };
 }
 
@@ -3356,45 +2754,9 @@ export interface RowSource {
 declare namespace $types_runtime {
 // The plugin runtime's own bookkeeping: scopes, advice, hooks, and the frontend seam. Plugin code never receives these.
 import CancellationSignal = $native_cancellation.CancellationSignal;
-import Context = $ext.Context;
 import Scope = $ext.Scope;
-import AdviceFunction = $types_ext.AdviceFunction;
-import AdviceWhere = $types_ext.AdviceWhere;
 import Disposer = $types_ext.Disposer;
-import HookHandler = $types_ext.HookHandler;
-import InteractionOptions = $types_ext.InteractionOptions;
-import InteractionRequest = $types_ext.InteractionRequest;
 import Release = $types_ext.Release;
-
-export interface AdviceRecord {
-  original: AdviceFunction;
-  descriptor: PropertyDescriptor | undefined;
-  list: AdviceEntry[];
-}
-
-export interface AdviceEntry {
-  owner: string;
-  name: string;
-  where: AdviceWhere;
-  fn: AdviceFunction;
-  order: number;
-}
-
-export interface AdviceInfo {
-  prop: string;
-  owner: string;
-  name: string;
-  where: AdviceWhere;
-  order: number;
-}
-
-/** The chain stores every point's handlers in one shape, so the entry erases the point. */
-export interface HookEntry {
-  owner: string;
-  fn: HookHandler<any>;
-}
-
-export type HookDecision = { type: "block"; reason: string } | { type: "replace"; value: any };
 
 export interface ReleaseEntry {
   release: Release | null;
@@ -3434,11 +2796,6 @@ export interface ScopeEntry {
   child: Scope | null;
 }
 
-export type Answerer = {
-  interactive: true;
-  open(request: InteractionRequest, context: Context, options: InteractionOptions | undefined,
-    resolve: (value: unknown) => void, reject: (error: unknown) => void): Disposer;
-} | { interactive: false };
 }
 
 declare namespace $types_transcript {
@@ -3525,11 +2882,6 @@ export interface ActionPlan {
   joinAfter: number[] | Uint8Array;
 }
 
-export interface ActionEntry {
-  part: number;
-  message: number;
-}
-
 export interface ToolLabel {
   verb: string;
   subject: string;
@@ -3551,7 +2903,6 @@ import HostMouseEvent = $types_core.HostMouseEvent;
 import NavTarget = $types_core.NavTarget;
 import Rect = $types_core.Rect;
 
-export type ItemKey = string | number;
 export type PickerAction = "accept" | "cancel" | "close" | "next" | "prev" | "top" | "bottom";
 export type ListKey = string | number | object;
 
