@@ -33,7 +33,10 @@ pub const Extensions = struct {
         // The prompt plugin loads before the user entry, so a user handler runs after it in every prompt.build chain.
         try host.evalModule("import { plugins } from \"yuke:internal/ext\"; import { prompt } from \"yuke:internal/prompt\"; plugins.use(prompt);", "prompt.js");
         // A broken user entry leaves the app without its plugins. The history tells the user why.
-        evalUserEntry(host, opts.config_dir) catch host.postFault(user_entry);
+        evalUserEntry(host, opts.config_dir) catch |err| switch (err) {
+            error.JavaScriptFault => host.postFault(user_entry),
+            error.OutOfMemory => |e| return e,
+        };
         // Load built-ins last so a user tool with the same name wins.
         try host.evalModule("import { plugins } from \"yuke:internal/ext\"; import { builtins } from \"yuke:internal/builtins\"; plugins.use(builtins);", "builtins.js");
 
@@ -61,9 +64,9 @@ pub fn forwardNotifications(host: *Host) host_mod.Error!void {
 }
 
 /// Evaluate `<config_dir>/index.js`; an absent file is valid.
-pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
+pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) (host_mod.Error || error{OutOfMemory})!void {
     const dir = config_dir orelse return;
-    const path = std.Io.Dir.path.joinZ(host.gpa, &.{ dir, user_entry }) catch unreachable;
+    const path = try std.Io.Dir.path.joinZ(host.gpa, &.{ dir, user_entry });
     defer host.gpa.free(path);
     errdefer {
         const fault = host.fault_text;
@@ -72,7 +75,11 @@ pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
         host.fault_text = fault;
         host.fault_text_len = fault_len;
     }
-    _ = try host.evalFile(path);
+    // An absent entry is a profile with no plugins. Any other failure to read it is a fault.
+    host.evalFile(path) catch |err| switch (err) {
+        error.FileNotFound => return,
+        error.JavaScriptFault, error.OutOfMemory => |e| return e,
+    };
     try host.evalStartup("import { plugins } from \"yuke:internal/ext\"; await plugins.ready();", "plugins-ready.js");
 }
 
@@ -765,6 +772,34 @@ test "entry failure drains partial startup and preserves an independent plugin" 
     try host.evalModule("import { plugins } from 'yuke'; globalThis.remaining = plugins.names().join(',');", "remaining.js");
     try support.expectString(host, "globalThis.remaining", "independent");
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
+}
+
+test "a module that does not load is a fault that names it" {
+    const reactor = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
+    defer reactor.deinit();
+    // Only an absent entry is valid. An entry the loader cannot read is a fault.
+    const oversized = try std.testing.allocator.alloc(u8, @import("loader.zig").default_max_file_bytes + 1);
+    defer std.testing.allocator.free(oversized);
+    @memset(oversized, '/');
+    // A name past the path limit overflows the message space. The cut text still names the failure.
+    const long_name = "import './" ++ "a" ** (2 * std.Io.Dir.max_path_bytes) ++ ".js';";
+    for ([_]struct { entry: []const u8, want: []const u8 }{
+        .{ .entry = "import './nope.js';", .want = "nope.js': the file does not exist" },
+        .{ .entry = "await import('./nope.js');", .want = "nope.js': the file does not exist" },
+        .{ .entry = oversized, .want = "index.js': the file is larger than" },
+        .{ .entry = long_name, .want = "cannot load module '" },
+    }) |case| {
+        errdefer std.debug.print("case: {s}\n", .{case.entry[0..@min(case.entry.len, 40)]});
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = user_entry, .data = case.entry });
+        var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const dir = buf[0..try tmp.dir.realPath(std.testing.io, &buf)];
+        const host = support.createHostWith(reactor.io(), dir);
+        defer support.destroyHost(host);
+        try std.testing.expectError(error.JavaScriptFault, evalUserEntry(host, dir));
+        try std.testing.expect(std.mem.indexOf(u8, host.faultText(), case.want) != null);
+    }
 }
 
 test "entry reports a plugin failure after immediate async cleanup" {

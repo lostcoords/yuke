@@ -524,13 +524,21 @@ pub const Host = struct {
         return error.JavaScriptFault;
     }
 
-    /// Evaluate a module file from disk. Return false when the loader cannot read the file.
-    pub fn evalFile(self: *Host, path: [:0]const u8) Error!bool {
+    /// Evaluate a module file from disk. An absent file fails with `FileNotFound`. The caller decides if absence is valid.
+    /// Any other read failure is a fault. The fault text names the reason.
+    pub fn evalFile(self: *Host, path: [:0]const u8) (Error || error{ FileNotFound, OutOfMemory })!void {
         std.debug.assert(self.phase == .open);
-        const source = self.loader.readModule(path) orelse return false;
+        const source = self.loader.readModule(path) catch |err| switch (err) {
+            error.FileNotFound, error.OutOfMemory => |e| return e,
+            else => |e| {
+                var buf: [loader_mod.message_max]u8 = undefined;
+                self.fault_text_len = 0;
+                self.appendFaultText(self.loader.loadFailure(&buf, path, e));
+                return error.JavaScriptFault;
+            },
+        };
         defer self.gpa.free(source);
         try self.evalModuleSource(source, path, true);
-        return true;
     }
 
     /// Evaluate source and return its result as `i32`. Tests use this helper.
@@ -859,7 +867,7 @@ test "user files can import public entries but cannot import cached internal mod
     });
     const public_path = try std.Io.Dir.path.joinZ(std.testing.allocator, &.{ root, "public.js" });
     defer std.testing.allocator.free(public_path);
-    try std.testing.expect(try host.evalFile(public_path));
+    try host.evalFile(public_path);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.publicOK"));
 
     const private_path = try std.Io.Dir.path.joinZ(std.testing.allocator, &.{ root, "private.js" });
@@ -875,7 +883,7 @@ test "user files can import public entries but cannot import cached internal mod
         \\globalThis.loadPrivate = () => import("yuke:internal/core");
         \\globalThis.evalPrivate = () => eval('import("yuke:internal/core")');
     });
-    try std.testing.expect(try host.evalFile(dynamic_path));
+    try host.evalFile(dynamic_path);
     try std.testing.expectError(error.JavaScriptFault, host.evalModule("await loadPrivate();", "callback.js"));
     try std.testing.expectError(error.JavaScriptFault, host.evalModule("await evalPrivate();", "callback-eval.js"));
 }
