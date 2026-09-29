@@ -66,6 +66,21 @@ export {};
 
 Then `ctx.on("herdr:state", …)` and `events.emit("herdr:state", …)` check their arguments. An event without a declaration takes any arguments.
 
+## Capability types
+
+A plugin shares a service with `ctx.provide(name, value)`, and another plugin reads it with `ctx.inject([name], …)`. To type one, add a `.d.ts` file next to `index.js`:
+
+```ts
+declare module "yuke" {
+  interface Capabilities {
+    herdr: { report(state: string): void };
+  }
+}
+export {};
+```
+
+Then `ctx.provide("herdr", …)` checks the value, and `ctx.inject(["herdr"], (c) => …)` types `c.herdr`. A capability without a declaration is `unknown`.
+
 ## Change the chat
 
 The `sessions` plugin owns the engine sessions: pins, input, activity, the session list, the default model, and the session commands.

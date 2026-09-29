@@ -77,6 +77,7 @@ export import diff = $native_diff.diff;
 export import client = $client.client;
 export type Context = $ext.Context;
 export type InjectContext = $types_ext.InjectContext;
+export interface Capabilities extends $types_ext.CapabilitiesBase {}
 export type ToolContext = $types_ext.ToolContext;
 export type ToolDefinition = $types_ext.ToolDefinition;
 export type ToolExecute = $types_ext.ToolExecute;
@@ -349,6 +350,12 @@ export const client: {
 
 declare namespace $composer_vim {
 import Context = $ext.Context;
+import ComposerType = $ui.Composer;
+export type ComposerMode = "insert" | "normal";
+export type ComposerVim = {
+    mode: (c: ComposerType | null) => ComposerMode | null;
+    setMode: (c: ComposerType | null, mode: ComposerMode) => void;
+};
 export const composerVim: {
     name: string;
     /** @param {Context} ctx @returns {void} */
@@ -551,6 +558,7 @@ export function quit(): void;
 
 declare namespace $ext {
 import cancellation = $native_cancellation;
+import AdviceFor = $types_ext.AdviceFor;
 import AdviceFunction = $types_ext.AdviceFunction;
 import AdviceOptions = $types_ext.AdviceOptions;
 import AdviceWhere = $types_ext.AdviceWhere;
@@ -558,12 +566,15 @@ import Disposer = $types_ext.Disposer;
 import EventName = $types_ext.EventName;
 import EventOptions = $types_ext.EventOptions;
 import Events = $types_ext.Events;
+import FreeName = $types_ext.FreeName;
 import HookHandler = $types_ext.HookHandler;
 import HookPoint = $types_ext.HookPoint;
 import InjectApply = $types_ext.InjectApply;
 import InteractionSurface = $types_ext.InteractionSurface;
+import MethodKey = $types_ext.MethodKey;
 import Plugin = $types_ext.Plugin;
 import PluginHandle = $types_ext.PluginHandle;
+import Provider = $types_ext.Provider;
 import Release = $types_ext.Release;
 import ToolDefinition = $types_ext.ToolDefinition;
 import PluginAsync = $types_runtime.PluginAsync;
@@ -620,10 +631,10 @@ export class Context {
     on<K extends EventName>(name: K, fn: Events[K], opts?: EventOptions): Disposer;
     /** @template {EventName} K @param {K} name @param {Events[K]} fn @returns {Disposer} */
     once<K extends EventName>(name: K, fn: Events[K]): Disposer;
-    /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
-    advise(obj: object, prop: string, where: AdviceWhere, fn: AdviceFunction, opts?: AdviceOptions | undefined): Disposer;
-    /** @param {string} name @param {unknown} value @returns {Disposer} */
-    provide(name: string, value: unknown): Disposer;
+    /** @template {object} T @template {MethodKey<T>} P @template {AdviceWhere} W @param {T} obj @param {P} prop @param {W} where @param {AdviceFor<Extract<T[P], AdviceFunction>, W>} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
+    advise<T extends object, P extends MethodKey<T>, W extends AdviceWhere>(obj: T, prop: P, where: W, fn: AdviceFor<Extract<T[P], AdviceFunction>, W>, opts?: AdviceOptions | undefined): Disposer;
+    /** @template {string} K @param {K & FreeName<K>} name @param {Provider<K>} value @returns {Disposer} */
+    provide<K extends string>(name: K & FreeName<K>, value: Provider<K>): Disposer;
     /** @template {HookPoint} P @param {P} point @param {HookHandler<P>} fn @returns {Disposer} */
     hook<P extends HookPoint>(point: P, fn: HookHandler<P>): Disposer;
     get tools(): {
@@ -632,8 +643,8 @@ export class Context {
     };
     /** @param {Plugin} plugin @returns {PluginHandle} */
     use(plugin: Plugin): PluginHandle;
-    /** @template {string} K @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
-    inject<K extends string>(names: K[], apply: InjectApply<K>): Disposer;
+    /** @template {string} K @param {(K & FreeName<K>)[]} names @param {InjectApply<K>} apply @returns {Disposer} */
+    inject<K extends string>(names: (K & FreeName<K>)[], apply: InjectApply<K>): Disposer;
     /** @returns {InteractionSurface} */
     get interaction(): InteractionSurface;
 }
@@ -2294,6 +2305,7 @@ import Job = $native_jobs.Job;
 import Context = $ext.Context;
 import tui = $tui.tui;
 import ChatSurface = $chat.ChatSurface;
+import ComposerVim = $composer_vim.ComposerVim;
 import ChatRegion = $chat_view.ChatRegion;
 import ChatView = $chat_view.ChatView;
 import StripRow = $chat_view.StripRow;
@@ -2317,6 +2329,15 @@ export interface Notification {
 export type AdviceFunction = (...args: any[]) => any;
 // Advice follows the synchronous call, not promise settlement; a throw skips after and filterReturn.
 export type AdviceWhere = "before" | "after" | "around" | "filterArgs" | "filterReturn";
+/** The keys of `T` that hold a method, so advice cannot name a field, an accessor value, or a missing key. */
+export type MethodKey<T> = { [P in keyof T]-?: T[P] extends AdviceFunction ? P : never }[keyof T] & string;
+/** The advice for one `where` on method `F`, as `applyAdvice` calls it. A falsy `filterArgs` or an undefined `filterReturn` keeps the value. */
+export type AdviceFor<F extends AdviceFunction, W extends AdviceWhere> =
+  W extends "filterArgs" ? (args: Parameters<F>) => Parameters<F> | null | void :
+  W extends "before" | "after" ? (...args: Parameters<F>) => void :
+  W extends "around" ? (next: F, ...args: Parameters<F>) => ReturnType<F> :
+  W extends "filterReturn" ? (result: ReturnType<F>) => ReturnType<F> | void :
+  never;
 
 export interface AdviceOptions {
   owner?: string;
@@ -2419,11 +2440,21 @@ export interface ToolDefinition {
   defer?: boolean;
 }
 
-export interface Capabilities {
+/** The value `inject` gives each capability name. A plugin declares its own through `declare module "yuke"`; an undeclared name is `unknown`. */
+export type Capabilities = import("yuke").Capabilities;
+export interface CapabilitiesBase {
   tui: ReturnType<typeof tui.bindTo>;
   chat: ChatSurface;
+  "composer-vim": ComposerVim;
   [name: string]: unknown;
 }
+
+/** A name that `ctx.<name>` already holds, so `provide` and `inject` refuse it at runtime. */
+export type ContextMember = keyof Context | "constructor";
+/** `unknown` for a free capability name and `never` for a context member, so `K & FreeName<K>` refuses a member. */
+export type FreeName<K extends string> = [Extract<K, ContextMember>] extends [never] ? unknown : never;
+/** A provider is the capability, or an object whose `bindTo` builds the capability for each block. */
+export type Provider<K extends string> = Capabilities[K] | { bindTo(context: Context): Capabilities[K] };
 
 export type InjectContext<K extends string = "tui"> = Context & Pick<Capabilities, K>;
 export type InjectApply<K extends string = string> = (context: InjectContext<K>) => unknown;

@@ -7,7 +7,7 @@ import { focusedChat } from "yuke:internal/chat-view";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { ChatView } from "yuke:internal/chat-view" */
-/** @import { Composer, Picker, Window } from "yuke:internal/ui" */
+/** @import { Picker, Window } from "yuke:internal/ui" */
 /** @import { CommandListing } from "./types/core.js" */
 /** @import { Border, ListItem, PickOptions } from "./types/ui.js" */
 /** @typedef {CommandListing & { hint: string }} Entry */
@@ -161,7 +161,7 @@ export function commandUi(cfg = {}) {
       ctx.on("pane.closed", sync);
 
       // A submitted slash line runs its command with the rest as the argument; any other text is a message.
-      ctx.advise(Session.prototype, "send", "around", /** @param {(content: readonly Wire.ContentPart[], composer: Composer) => boolean} next @param {readonly Wire.ContentPart[]} content @param {Composer} composer */ (next, content, composer) => {
+      ctx.advise(Session.prototype, "send", "around", (next, content, composer) => {
         const text = soleText(content);
         const line = text === null ? null : parseSlash(text);
         const e = line ? slashEntries(entries()).find((c) => c.slash === line.word) : null;

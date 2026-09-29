@@ -14,6 +14,7 @@ export { client } from "yuke:internal/client";
 
 /** @typedef {import("yuke:internal/ext").Context} Context */
 /** @typedef {import("../types/ext.js").InjectContext} InjectContext */
+/** @typedef {import("../types/ext.js").Capabilities} Capabilities */
 /** @typedef {import("../types/ext.js").ToolContext} ToolContext */
 /** @typedef {import("../types/ext.js").ToolDefinition} ToolDefinition */
 /** @typedef {import("../types/ext.js").ToolExecute} ToolExecute */

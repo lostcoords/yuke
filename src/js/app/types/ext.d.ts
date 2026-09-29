@@ -4,6 +4,7 @@ import type { Job } from "yuke:internal/native/jobs";
 import type { Context, Scope } from "../ext.js";
 import type { tui } from "../tui.js";
 import type { ChatSurface } from "../chat.js";
+import type { ComposerVim } from "../composer-vim.js";
 import type { ChatRegion, ChatView, StripRow } from "../chat-view.js";
 import type { Composer } from "../ui.js";
 import type { HostMouseEvent, ViewLike } from "./core.js";
@@ -24,6 +25,15 @@ export interface Notification {
 export type AdviceFunction = (...args: any[]) => any;
 // Advice follows the synchronous call, not promise settlement; a throw skips after and filterReturn.
 export type AdviceWhere = "before" | "after" | "around" | "filterArgs" | "filterReturn";
+/** The keys of `T` that hold a method, so advice cannot name a field, an accessor value, or a missing key. */
+export type MethodKey<T> = { [P in keyof T]-?: T[P] extends AdviceFunction ? P : never }[keyof T] & string;
+/** The advice for one `where` on method `F`, as `applyAdvice` calls it. A falsy `filterArgs` or an undefined `filterReturn` keeps the value. */
+export type AdviceFor<F extends AdviceFunction, W extends AdviceWhere> =
+  W extends "filterArgs" ? (args: Parameters<F>) => Parameters<F> | null | void :
+  W extends "before" | "after" ? (...args: Parameters<F>) => void :
+  W extends "around" ? (next: F, ...args: Parameters<F>) => ReturnType<F> :
+  W extends "filterReturn" ? (result: ReturnType<F>) => ReturnType<F> | void :
+  never;
 
 export interface AdviceOptions {
   owner?: string;
@@ -125,11 +135,20 @@ export interface ToolDefinition {
   defer?: boolean;
 }
 
+/** The value `inject` gives each capability name. A plugin declares its own through `declare module "yuke"`; an undeclared name is `unknown`. */
 export interface Capabilities {
   tui: ReturnType<typeof tui.bindTo>;
   chat: ChatSurface;
+  "composer-vim": ComposerVim;
   [name: string]: unknown;
 }
+
+/** A name that `ctx.<name>` already holds, so `provide` and `inject` refuse it at runtime. */
+export type ContextMember = keyof Context | "constructor";
+/** `unknown` for a free capability name and `never` for a context member, so `K & FreeName<K>` refuses a member. */
+export type FreeName<K extends string> = [Extract<K, ContextMember>] extends [never] ? unknown : never;
+/** A provider is the capability, or an object whose `bindTo` builds the capability for each block. */
+export type Provider<K extends string> = Capabilities[K] | { bindTo(context: Context): Capabilities[K] };
 
 export type InjectContext<K extends string = "tui"> = Context & Pick<Capabilities, K>;
 export type InjectApply<K extends string = string> = (context: InjectContext<K>) => unknown;

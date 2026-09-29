@@ -87,7 +87,7 @@ chunks.push({ text: readFileSync(`${app}/generated/proto.d.ts`, "utf8").trimEnd(
 
 // TypeScript merges an augmentation only into an interface, so a plugin can add to these through `declare module "yuke"`.
 // `yuke` declares each one as an interface over its base, and its home namespace reads the merged interface back.
-const open = ["Events"];
+const open = ["Events", "Capabilities"];
 const root = chunks.find((chunk) => "text" in chunk && chunk.text.startsWith('declare module "yuke" {'));
 if (!root || !("text" in root)) throw new Error("no yuke module");
 for (const name of open) {

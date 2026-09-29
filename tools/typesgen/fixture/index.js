@@ -7,6 +7,11 @@ import { agents } from "yuke:plugins";
 // @ts-expect-error Internal modules stay private; the loader rejects them too.
 import { scopeOf } from "yuke:internal/ext";
 
+const adder = {
+  /** @param {number} n */
+  add: (n) => n + 1,
+};
+
 /** @type {import("yuke").Plugin} */
 const demo = {
   name: "demo",
@@ -18,6 +23,17 @@ const demo = {
       c.tui.command.add("demo:pick", { desc: "pick one", run: () => { c.tui.overlay(ui.pick({ items: ["a"] }).win); } });
     });
     ctx.inject(["chat"], (c) => c.chat.labels({ sources: { engine_interruption: (source) => "run " + source.run_id } }));
+    ctx.provide("counter", { count: () => 1 });
+    ctx.inject(["counter"], (c) => c.counter.count().toFixed());
+    ctx.advise(adder, "add", "filterReturn", (sum) => sum * 2);
+    // @ts-expect-error A declared capability checks its provider.
+    ctx.provide("counter", 1);
+    // @ts-expect-error A context member cannot be a capability name.
+    ctx.inject(["interaction"], () => {});
+    // @ts-expect-error Advice names a method of the target.
+    ctx.advise(adder, "ad", "before", () => {});
+    // @ts-expect-error An around advice takes the parameters of the method.
+    ctx.advise(adder, "add", "around", /** @param {(n: number) => number} next @param {string} n */ (next, n) => next(n.length));
   },
 };
 plugins.use(demo);

@@ -5,7 +5,7 @@ import { bindInteraction } from "yuke:internal/interaction";
 import { defineTool, removeTool } from "yuke:internal/native/tools";
 import { installDispatcher, installLifecycle, setPoints } from "yuke:internal/native/hooks";
 
-/** @import { AdviceFunction, AdviceOptions, AdviceWhere, Disposer, EventName, EventOptions, Events, HookAnswer, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, Plugin, PluginHandle, Release, ToolDefinition } from "./types/ext.js" */
+/** @import { AdviceFor, AdviceFunction, AdviceOptions, AdviceWhere, Disposer, EventName, EventOptions, Events, FreeName, HookAnswer, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, MethodKey, Plugin, PluginHandle, Provider, Release, ToolDefinition } from "./types/ext.js" */
 /** @import { AdviceEntry, AdviceInfo, AdviceRecord, HookDecision, HookEntry, PluginAsync, ReleaseEntry, ScopeEntry, ScopeLife } from "./types/runtime.js" */
 
 const NOOP = () => {};
@@ -306,7 +306,7 @@ function applyAdvice(rec, self, args) {
 
 export const advice = {
   // Install one advice, ordered by `order`. The disposer removes only this advice.
-  /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
+  /** @template {object} T @template {MethodKey<T>} P @template {AdviceWhere} W @param {T} obj @param {P} prop @param {W} where @param {AdviceFor<Extract<T[P], AdviceFunction>, W>} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
   advise(obj, prop, where, fn, opts) {
     if (!Object.hasOwn(WHERE, where)) throw new TypeError("advise: unknown kind " + where);
     if (typeof fn !== "function") throw new TypeError("advise: fn must be a function");
@@ -683,14 +683,14 @@ export class Context {
     return this.#scope.effect(() => events.once(name, fn));
   }
 
-  /** @param {object} obj @param {string} prop @param {AdviceWhere} where @param {AdviceFunction} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
+  /** @template {object} T @template {MethodKey<T>} P @template {AdviceWhere} W @param {T} obj @param {P} prop @param {W} where @param {AdviceFor<Extract<T[P], AdviceFunction>, W>} fn @param {AdviceOptions | undefined} [opts] @returns {Disposer} */
   advise(obj, prop, where, fn, opts) {
     return this.#scope.effect(() =>
       advice.advise(obj, prop, where, fn, Object.assign({}, opts, { owner: this.id })),
     );
   }
 
-  /** @param {string} name @param {unknown} value @returns {Disposer} */
+  /** @template {string} K @param {K & FreeName<K>} name @param {Provider<K>} value @returns {Disposer} */
   provide(name, value) {
     return this.#scope.effect(() => services.provide(name, value));
   }
@@ -730,7 +730,7 @@ export class Context {
   }
 
   // Run `apply` only while every named capability exists, in a child scope a withdrawal reverts.
-  /** @template {string} K @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
+  /** @template {string} K @param {(K & FreeName<K>)[]} names @param {InjectApply<K>} apply @returns {Disposer} */
   inject(names, apply) {
     return injectInto(this, names, apply);
   }
