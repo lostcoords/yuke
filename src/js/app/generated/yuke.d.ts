@@ -3333,7 +3333,7 @@ export interface ChildReportUsage {
   readonly rounds: number;
   readonly tool_calls: number;
   readonly tokens: TokenUsage;
-  readonly duration_ms?: number;
+  readonly duration_ms: number;
 }
 
 export interface ChildInputCanceled {
@@ -3750,9 +3750,9 @@ export interface TranscriptTruncatedData {
   readonly first_removed_id: MessageId;
 }
 
-/** This type records run start and end times. The engine records no start time when a queued run never starts. */
-export interface RunCanceledTiming {
-  readonly started_at_ms?: number;
+/** The start and end times of one run. Every run that ends has started. */
+export interface RunTiming {
+  readonly started_at_ms: number;
   readonly ended_at_ms: number;
 }
 
@@ -3771,7 +3771,7 @@ export interface RunDoneData {
   readonly seq: Seq;
   readonly run_id: RunId;
   readonly kind: RunKind;
-  readonly timing: RunCanceledTiming;
+  readonly timing: RunTiming;
   readonly outcome: RunOutcome;
 }
 
@@ -3941,7 +3941,6 @@ export interface SessionReloadContextResult {
 /** These are the `session.list` input fields. They borrow their data. */
 export interface SessionListParams {
   readonly population?: SessionPopulation;
-  readonly view?: SessionView;
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -4320,13 +4319,7 @@ export type CompactStatus =
   | "queued"
 ;
 
-/** Session list view. */
-export type SessionView =
-  | "active"
-  | "recent"
-  | "active_recent"
-;
-
+/** The reason a compaction runs: the context grew past its limit, or the user asked. */
 export type CompactionReason =
   | "auto"
   | "manual"

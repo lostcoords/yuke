@@ -92,7 +92,7 @@ pub fn owned(ctx: Context, gpa: std.mem.Allocator, value: Value) ?[]u8 {
 pub fn integer(ctx: Context, value: Value, min: u64, max: u64) ?u64 {
     std.debug.assert(min <= max);
     if (!ctx.isNumber(value)) return null;
-    const n = ctx.toFloat64(value) catch return null;
+    const n = ctx.toFloat64(value) catch unreachable; // a checked number converts without a fault
     if (!std.math.isFinite(n) or @floor(n) != n) return null;
     if (n < 0 or n >= 0x1p64) return null;
     const result: u64 = @intFromFloat(n);

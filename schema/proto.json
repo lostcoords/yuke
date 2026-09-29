@@ -1110,7 +1110,7 @@
         {
           "name": "duration_ms",
           "type": "u64",
-          "presence": "optional"
+          "presence": "required"
         }
       ]
     },
@@ -2389,13 +2389,13 @@
       ]
     },
     {
-      "name": "RunCanceledTiming",
-      "doc": "This type records run start and end times. The engine records no start time when a queued run never starts.",
+      "name": "RunTiming",
+      "doc": "The start and end times of one run. Every run that ends has started.",
       "fields": [
         {
           "name": "started_at_ms",
           "type": "u64",
-          "presence": "optional"
+          "presence": "required"
         },
         {
           "name": "ended_at_ms",
@@ -2457,7 +2457,7 @@
         },
         {
           "name": "timing",
-          "type": "RunCanceledTiming",
+          "type": "RunTiming",
           "presence": "required"
         },
         {
@@ -2929,11 +2929,6 @@
         {
           "name": "population",
           "type": "SessionPopulation",
-          "presence": "defaulted"
-        },
-        {
-          "name": "view",
-          "type": "SessionView",
           "presence": "defaulted"
         },
         {
@@ -4568,26 +4563,8 @@
       ]
     },
     {
-      "name": "SessionView",
-      "doc": "Session list view.",
-      "numeric": false,
-      "values": [
-        {
-          "name": "active",
-          "wire": "active"
-        },
-        {
-          "name": "recent",
-          "wire": "recent"
-        },
-        {
-          "name": "active_recent",
-          "wire": "active_recent"
-        }
-      ]
-    },
-    {
       "name": "CompactionReason",
+      "doc": "The reason a compaction runs: the context grew past its limit, or the user asked.",
       "numeric": false,
       "values": [
         {

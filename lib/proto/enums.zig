@@ -140,9 +140,7 @@ pub const StopReason = enum { stop, length, content_filter, refusal, tool_calls,
 
 pub const CompactStatus = enum { started, queued };
 
-/// Session list view.
-pub const SessionView = enum { active, recent, active_recent };
-
+/// The reason a compaction runs: the context grew past its limit, or the user asked.
 pub const CompactionReason = enum { auto, manual };
 
 /// Provider protocol kind.

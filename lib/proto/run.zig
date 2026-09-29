@@ -5,9 +5,9 @@ const ids = @import("ids.zig");
 const enums = @import("enums.zig");
 const tagged = @import("tagged.zig");
 
-/// This type records run start and end times. The engine records no start time when a queued run never starts.
-pub const RunCanceledTiming = struct {
-    started_at_ms: ?u64 = null,
+/// The start and end times of one run. Every run that ends has started.
+pub const RunTiming = struct {
+    started_at_ms: u64,
     ended_at_ms: u64,
 };
 
@@ -26,7 +26,7 @@ pub const RunDoneData = struct {
     seq: ids.Seq,
     run_id: ids.RunId,
     kind: enums.RunKind,
-    timing: RunCanceledTiming,
+    timing: RunTiming,
     outcome: RunOutcome,
 };
 

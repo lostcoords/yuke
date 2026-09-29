@@ -128,7 +128,7 @@ fn deviceLogin(io: std.Io, runtime: *App, arena: std.mem.Allocator, w: *std.Io.W
     // A canceled wait stops the poll too, so the provider never completes a login nobody reads.
     waiter.done.wait(io) catch |err| switch (err) {
         error.Canceled => {
-            _ = commands.authCancelLogin(runtime, arena, .{ .login_id = start.login_id }) catch {};
+            _ = try commands.authCancelLogin(runtime, arena, .{ .login_id = start.login_id });
             return status_interrupted;
         },
     };

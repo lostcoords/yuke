@@ -136,7 +136,6 @@ pub const SessionReloadContextResult = struct {
 /// These are the `session.list` input fields. They borrow their data.
 pub const SessionListParams = struct {
     population: SessionPopulation = .top_level,
-    view: enums.SessionView = .active_recent,
     limit: ?u64 = null,
     cursor: ?[]const u8 = null,
 };

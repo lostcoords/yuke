@@ -47,9 +47,8 @@ export const BAR_CELLS = 6;
 export const BAR_GLYPHS = ["█", "░"];
 
 // A bar of `cells` glyphs in proportion. `glyphs` holds the full glyph, then the empty one.
-/** @param {number} used @param {number} window @param {number} [cells] @param {string | readonly [string, string]} [glyphs] @returns {string} */
+/** @param {number} used @param {number} window @param {number} [cells] @param {readonly [string, string]} [glyphs] @returns {string} */
 export function contextBar(used, window, cells = BAR_CELLS, glyphs = BAR_GLYPHS) {
   const full = window > 0 ? Math.round(Math.min(1, used / window) * cells) : 0;
-  const pair = typeof glyphs === "string" ? Array.from(glyphs) : glyphs;
-  return "[" + String(pair[0]).repeat(full) + String(pair[1]).repeat(cells - full) + "]";
+  return "[" + glyphs[0].repeat(full) + glyphs[1].repeat(cells - full) + "]";
 }

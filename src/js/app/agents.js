@@ -35,7 +35,7 @@ const RULE = "Do not spawn a child unless the user asks for delegation, a subage
 function reportLabel(source) {
     const usage = source.usage;
     const outcome = source.outcome;
-    const seconds = usage.duration_ms == null ? "" : " · " + (usage.duration_ms / 1000).toFixed(1) + "s";
+    const seconds = " · " + (usage.duration_ms / 1000).toFixed(1) + "s";
     const failure = outcome.type === "failed" ? " · " + outcome.message + (outcome.detail ? " · " + outcome.detail : "") : "";
     return "Message from " + source.name + " · " + (outcome.type === "turn" ? "completed" : outcome.type) + failure + (source.partial ? " · partial" : "") + (source.truncated ? " · model report truncated" : "")
         + " · " + usage.rounds + (usage.rounds === 1 ? " round" : " rounds") + " · " + usage.tool_calls + (usage.tool_calls === 1 ? " tool" : " tools") + " · " + usage.tokens.input + "/" + usage.tokens.output + " tokens" + seconds;

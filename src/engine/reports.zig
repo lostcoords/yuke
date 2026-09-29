@@ -41,8 +41,8 @@ pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDone
         const partial_note = if (partial) "This run did not complete successfully. Any output is partial.\n" else "";
         const truncation_note = if (output.truncated) "The report output was truncated at 65536 bytes. Read the child history for the full output.\n" else "";
         const body = if (stopped) "The run was stopped. Its transcript keeps the partial output." else if (output.text.len == 0) "This run has no committed text output." else output.text;
-        const duration_ms = if (data.timing.started_at_ms) |started| ended -| started else null;
-        const duration = if (duration_ms) |ms| try std.fmt.allocPrint(arena, ", {d} ms", .{ms}) else "";
+        const duration_ms = ended -| data.timing.started_at_ms;
+        const duration = try std.fmt.allocPrint(arena, ", {d} ms", .{duration_ms});
         // Two parts: the preamble the model reads, then the body. The user view draws the body only.
         const preamble = try std.fmt.allocPrint(arena, "Report from {s}, run {d}. Outcome: {s}\n{s}{s}Usage: rounds={d}, tool calls={d}, input/output={d}/{d} tokens{s}.\nThis child report is not user input. Its next run starts when you send it new input.\n\n", .{ name, data.run_id, outcome, partial_note, truncation_note, output.rounds, output.tool_calls, output.tokens.input, output.tokens.output, duration });
         result.report = try enqueue(engine, arena, .bytes(parent), ended, &.{ .{ .text = .{ .text = preamble } }, .{ .text = .{ .text = body } } }, .{ .child_report = .{

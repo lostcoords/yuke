@@ -32,7 +32,7 @@ pub fn appendOpenDone(
     data: proto.run.RunDoneData,
 ) !proto.run.RunDoneData {
     std.debug.assert(data.seq == 0);
-    const started_at_ms = data.timing.started_at_ms orelse return error.InvalidRunTiming;
+    const started_at_ms = data.timing.started_at_ms;
     if (data.timing.ended_at_ms < started_at_ms) return error.InvalidRunTiming;
     var stored = data;
     stored.seq = try event.allocSeq(db, arena, data.session_id.raw);
@@ -172,17 +172,6 @@ test "an open-run terminal rejects absent or backwards start timing" {
         .started_at_ms = 150,
     });
     try db.conn.execNoArgs("COMMIT");
-
-    try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    try testing.expectError(error.InvalidRunTiming, appendOpenDone(&db, a, [_]u8{2} ** 16, 175, .{
-        .session_id = .bytes(sid),
-        .seq = 0,
-        .run_id = 1,
-        .kind = .turn,
-        .timing = .{ .started_at_ms = null, .ended_at_ms = 175 },
-        .outcome = .{ .canceled = .{} },
-    }));
-    try db.conn.execNoArgs("ROLLBACK");
 
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     try testing.expectError(error.InvalidRunTiming, appendOpenDone(&db, a, [_]u8{3} ** 16, 149, .{

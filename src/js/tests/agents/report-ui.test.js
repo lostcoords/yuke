@@ -2,7 +2,7 @@ import { textParts } from "yuke:internal/test";
 import { Transcript, inputSourceLabel } from "yuke:internal/transcript";
 import { clearWorkQueue, queuedText } from "yuke:internal/queue";
 (async () => {
-  const source = { type: "child_report", name: "one", outcome: { type: "turn" }, partial: false, truncated: false, usage: { rounds: 1, tool_calls: 0, tokens: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 } } };
+  const source = { type: "child_report", name: "one", outcome: { type: "turn" }, partial: false, truncated: false, usage: { rounds: 1, tool_calls: 0, tokens: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, duration_ms: 1500 } };
   const full = Array.from({ length: 200 }, (_, i) => "line " + i).join("\n");
   const preamble = "Report from one, run 1. Outcome: turn\nThis child report is not user input.\n\n";
   const t = new Transcript({ partsOf: () => [{ type: "text", id: 0, text: preamble }, { type: "text", id: 1, text: full }] });
@@ -10,7 +10,7 @@ import { clearWorkQueue, queuedText } from "yuke:internal/queue";
   const rowText = (row) => row.text || (row.segments || []).map((segment) => segment.text).join("");
   const drawn = () => t.rows(80, 0, t.rowCount(80)).map(rowText).join("\n");
   if (drawn().includes("not user input") || !drawn().includes("line 0")) throw new Error("preamble drawn or body missing");
-  if (!inputSourceLabel(source).includes("1 round · 0 tools · 0/0 tokens")) throw new Error("usage missing from the header");
+  if (!inputSourceLabel(source).includes("1 round · 0 tools · 0/0 tokens · 1.5s")) throw new Error("usage missing from the header");
   if (t.rowCount(80) > 15 || !inputSourceLabel(source).includes("one")) throw new Error("unfolded report");
   const failed = { ...source, outcome: { type: "failed", code: "provider", message: "the provider returned an unexpected status", detail: "invalid_request_error: too long" } };
   if (!inputSourceLabel(failed).includes("failed · the provider returned an unexpected status · invalid_request_error: too long")) throw new Error("failure missing from the header");

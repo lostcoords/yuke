@@ -32,7 +32,6 @@ async function request(method, ...args) {
 function sessionList(params = {}) {
   return request("session.list", {
     population: { type: "top_level" },
-    view: "active_recent",
     ...params,
   });
 }

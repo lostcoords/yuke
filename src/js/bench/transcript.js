@@ -102,7 +102,7 @@ function configurePreview(scale) {
       outcome: { type: "turn", finish: "stop", rounds: 1 },
       partial: false,
       truncated: false,
-      usage: { rounds: 1, tool_calls: 0, tokens: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 } },
+      usage: { rounds: 1, tool_calls: 0, tokens: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, duration_ms: 1500 },
     } });
     parts.set(reportId, [{ type: "text", id: 0, text: previewReport }]);
     const assistantId = outline.length + 1;

@@ -179,7 +179,7 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
     if (ctx.isObject(value) and !ctx.isArray(value)) {
         const marker = ctx.getPropertyStr(value, "__yuke_result");
         defer ctx.freeValue(marker);
-        const marked = ctx.isBool(marker) and (ctx.toBool(marker) catch false);
+        const marked = ctx.isBool(marker) and (ctx.toBool(marker) catch unreachable); // a checked bool converts without a fault
         if (!marked) return stringifyValue(host, call, value);
         const text_value = ctx.getPropertyStr(value, "text");
         defer ctx.freeValue(text_value);

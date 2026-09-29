@@ -94,7 +94,6 @@ test "child reuse reports only the current run and preserves source through prom
     try testing.expectEqual(@as(u64, 1), usage.rounds);
     try testing.expectEqual(@as(u64, 1), usage.tool_calls);
     try testing.expectEqual(@as(u64, 10), usage.tokens.input);
-    try testing.expect(usage.duration_ms != null);
     try testing.expectEqual(@as(usize, 2), first.report.?.input.content.len);
     const first_text = first.report.?.input.content[0].text.text;
     try testing.expect(std.mem.indexOf(u8, first_text, "Usage: rounds=1, tool calls=1, input/output=10/5 tokens, ") != null);

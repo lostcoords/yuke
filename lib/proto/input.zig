@@ -58,7 +58,7 @@ pub const ChildReportUsage = struct {
     rounds: u64,
     tool_calls: u64,
     tokens: message.TokenUsage,
-    duration_ms: ?u64 = null,
+    duration_ms: u64,
 };
 
 pub const ChildInputCanceled = struct {
@@ -118,7 +118,7 @@ test "a skill input needs a name and keeps its arguments optional" {
 test "input sources form a closed union outside public input" {
     const values = [_][]const u8{
         "{\"type\":\"parent_instruction\",\"session_id\":\"01010101010101010101010101010101\",\"message_id\":1,\"part_id\":0}",
-        "{\"type\":\"child_report\",\"session_id\":\"01010101010101010101010101010101\",\"run_id\":2,\"name\":\"research\",\"outcome\":{\"type\":\"canceled\"},\"partial\":true,\"truncated\":false,\"usage\":{\"rounds\":2,\"tool_calls\":1,\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":0,\"cache_read\":0,\"cache_write\":0},\"duration_ms\":null}}",
+        "{\"type\":\"child_report\",\"session_id\":\"01010101010101010101010101010101\",\"run_id\":2,\"name\":\"research\",\"outcome\":{\"type\":\"canceled\"},\"partial\":true,\"truncated\":false,\"usage\":{\"rounds\":2,\"tool_calls\":1,\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":0,\"cache_read\":0,\"cache_write\":0},\"duration_ms\":1500}}",
         "{\"type\":\"child_input_canceled\",\"session_id\":\"01010101010101010101010101010101\",\"name\":\"research\",\"input_ids\":[3,4]}",
         "{\"type\":\"engine_interruption\",\"run_id\":5,\"kind\":\"turn\"}",
     };

@@ -87,11 +87,10 @@ pub const App = struct {
             .route_transport = self.http_transport.transportFor(),
             .execution = context,
         });
+        errdefer self.engine.close();
 
         self.scheduler = .init(self);
-        self.maintenance.concurrent(io, scheduler_mod.Scheduler.run, .{&self.scheduler}) catch |err| {
-            std.log.warn("the scheduler did not start: {t}", .{err});
-        };
+        try self.maintenance.concurrent(io, scheduler_mod.Scheduler.run, .{&self.scheduler});
 
         // The frontend resumes workspace queues after tools and interaction handlers exist.
         std.log.info("engine store at {s}", .{db_path});

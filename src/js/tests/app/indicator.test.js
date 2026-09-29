@@ -123,4 +123,4 @@ land({ items });
 await settle();
 check("late-read-ignored", queueOf("s1").length === 0);
 // The bar glyphs are a plugin config, so a terminal with a font that fits can show another pair.
-check("bar-config", contextBar(500, 1000, 6, "▰▱") === "[▰▰▰▱▱▱]");
+check("bar-config", contextBar(500, 1000, 6, ["▰", "▱"]) === "[▰▰▰▱▱▱]");

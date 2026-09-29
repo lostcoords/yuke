@@ -31,7 +31,7 @@ export function wait(id) {
     const off = events.on("jobs.changed", (/** @type {Job} */ changed) => {
       if (changed.id !== id || changed.state === "running") return;
       off();
-      resolve(native.get(id) ?? changed);
+      resolve(native.get(id));
     });
   });
 }
