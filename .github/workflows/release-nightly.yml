@@ -140,13 +140,21 @@ jobs:
 
       # The asset name is the Zig target triple, the same as a tagged release.
       # ../yuke-cloud/lib/install.sh builds that name; see its install-contract.
+      # The nightly version adds the UTC commit date and the short commit to the next release.
+      # Example: 0.0.1-nightly.20260928+d74a069.
+      # The shallow checkout holds this one commit, so git can read its date.
       - name: Build ${{ matrix.target }}
         run: |
           set -euo pipefail
+          package="$(sed -n 's/^[[:space:]]*\.version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' build.zig.zon)"
+          release="${package%%[-+]*}"
+          [ -n "${release}" ] || { echo "::error::build.zig.zon has no .version"; exit 1; }
+          date="$(TZ=UTC0 git show -s --date=format-local:%Y%m%d --format=%cd HEAD)"
           zig build \
             -Dtarget=${{ matrix.target }} \
             -Doptimize=ReleaseFast \
             -Dstrip=true \
+            -Dversion-string="${release}-nightly.${date}+${NIGHTLY_SHA:0:7}" \
             --prefix out
           tar -czf "yuke-${{ matrix.target }}.tar.gz" -C out/bin yuke
 

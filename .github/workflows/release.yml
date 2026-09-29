@@ -39,6 +39,21 @@ jobs:
             exit 1
           fi
 
+      # The binary reports the build.zig.zon version, so the tag must name that version.
+      # A release commit drops `-dev` from build.zig.zon before it gets the tag.
+      - name: Refuse a tag that does not match build.zig.zon
+        run: |
+          set -euo pipefail
+          package="$(sed -n 's/^[[:space:]]*\.version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' build.zig.zon)"
+          if [ "v${package}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::${GITHUB_REF_NAME} does not match the build.zig.zon version ${package}."
+            exit 1
+          fi
+          case "${package}" in *-dev*)
+            echo "::error::${package} is a development version. Drop -dev in the release commit."
+            exit 1 ;;
+          esac
+
       # The asset name is the Zig target triple, with no version in it.
       # ../yuke-cloud/lib/install.sh builds that name; see its install-contract.
       - name: Build every target

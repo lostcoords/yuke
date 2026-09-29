@@ -1,6 +1,7 @@
 .{
     .name = .yuke,
-    .version = "0.0.1",
+    // The version names the next release. A release commit drops `-dev`. The next commit bumps the version and adds `-dev`.
+    .version = "0.0.1-dev",
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0xde98bd0a1c7b426c,
     .dependencies = .{

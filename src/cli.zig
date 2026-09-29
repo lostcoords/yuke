@@ -5,6 +5,7 @@ const proto = @import("proto");
 
 pub const usage =
     \\usage: yuke [--rpc]
+    \\       yuke --version
     \\       yuke -p [prompt] [--json] [--model <m>] [--reasoning <r>] [--session <id> | -c]
     \\       yuke login [provider]
     \\       yuke logout <provider>
@@ -82,6 +83,8 @@ pub const Diagnostic = struct {
 pub const Result = union(enum) {
     command: Command,
     help: Scope,
+    /// Print the build version. Like help, it runs no command.
+    version,
     diagnostic: Diagnostic,
 };
 
@@ -176,6 +179,7 @@ fn parseRoot(args: []const []const u8) Result {
             continue;
         }
         if (isHelp(arg)) return .{ .help = .root };
+        if (std.mem.eql(u8, arg, "--version")) return .version;
 
         var value: ?[]const u8 = null;
         var name = arg;
@@ -275,6 +279,11 @@ test "parse rejects a duplicate flag, an unknown flag, and an unknown command" {
 test "parse reports help for the root scope" {
     try testing.expectEqual(Scope.root, parse(&.{"--help"}).help);
     try testing.expectEqual(Scope.root, parse(&.{"-h"}).help);
+}
+
+test "parse reports the version before it checks the other root flags" {
+    try testing.expect(parse(&.{"--version"}) == .version);
+    try testing.expect(parse(&.{ "--json", "--version" }) == .version);
 }
 
 test "parse reads login with an optional name and logout with a required one" {

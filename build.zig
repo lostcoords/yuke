@@ -31,9 +31,19 @@ pub fn build(b: *std.Build) void {
     const quickjs_host = b.dependency("quickjs", .{ .target = host, .optimize = dep_optimize });
     const metrics = b.addOptions();
     metrics.addOption(bool, "enabled", b.option(bool, "metrics", "Enable allocation and UI work counters") orelse false);
-    // Pass the package version to the binary, so it names itself on the wire from one copy of the number.
+    // A local build uses the package version as written. CI sets the full string for a nightly.
+    const version = b.option([]const u8, "version-string", "Name the build, such as 0.0.1-nightly.20260928+d74a069") orelse zon.version;
+    const package_version = std.SemanticVersion.parse(zon.version) catch |err|
+        std.debug.panic("build.zig.zon version {s} is not a semantic version: {t}", .{ zon.version, err });
+    const build_version = std.SemanticVersion.parse(version) catch |err|
+        std.debug.panic("-Dversion-string {s} is not a semantic version: {t}", .{ version, err });
+    // The string can change the prerelease and build parts, but not the release number.
+    if (build_version.major != package_version.major or build_version.minor != package_version.minor or build_version.patch != package_version.patch) {
+        std.debug.panic("-Dversion-string {s} does not match the build.zig.zon version {s}", .{ version, zon.version });
+    }
+    // The binary uses this version on the wire and in `--version`.
     const build_info = b.addOptions();
-    build_info.addOption([]const u8, "version", zon.version);
+    build_info.addOption([]const u8, "version", version);
 
     const sql = b.addModule("sql", .{
         .root_source_file = b.path("lib/sql/sql.zig"),

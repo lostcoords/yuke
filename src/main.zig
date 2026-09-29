@@ -13,6 +13,7 @@ const print_cli = @import("app/print_cli.zig");
 const paths = @import("paths.zig");
 const execution = @import("execution.zig");
 const zio = @import("zio");
+const build_info = @import("build_info");
 
 pub const std_options: std.Options = .{ .logFn = logFn };
 
@@ -117,6 +118,13 @@ fn run(init: std.process.Init) !u8 {
         .command => |command| command,
         .help => |scope| {
             try printUsage(init.io, scope);
+            return 0;
+        },
+        .version => {
+            var buf: [64]u8 = undefined;
+            var out = std.Io.File.stdout().writerStreaming(init.io, &buf);
+            try out.interface.writeAll("yuke " ++ build_info.version ++ "\n");
+            try out.interface.flush();
             return 0;
         },
         .diagnostic => |diagnostic| {
