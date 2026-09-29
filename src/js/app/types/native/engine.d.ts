@@ -59,6 +59,8 @@ declare module "yuke:internal/native/engine" {
     setAgentLimits(maxConcurrent?: number, maxDepth?: number): [number, number];
     /** Install the one sink. `drain` calls it on the owner, never from an engine task. */
     setEventSink(fn: (ev: EngineEvent) => void): void;
+    /** Install the function that adds a script fault to the notification history. The host calls it after the fault. */
+    setFaultSink(fn: (source: string, text: string) => void): void;
     /** Resolve with the response JSON, or reject with an error that carries the refusal code. */
     request(method: string, params: string): Promise<string>;
     /** Pin a session for one open view. Returns false when the engine cannot open it. */

@@ -293,3 +293,6 @@ export function fault(error, source) {
 
 // A listener fault enters the history like every other fault.
 events.onError = fault;
+
+// A script fault that JavaScript cannot catch, such as an interrupt or a startup timeout, enters the history through the host.
+native.setFaultSink((source, text) => notify("error", text, source));

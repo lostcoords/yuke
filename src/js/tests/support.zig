@@ -109,6 +109,12 @@ pub fn expectString(host: *Host, comptime property: []const u8, want: []const u8
     try std.testing.expectEqualStrings(want, text);
 }
 
+/// Fail when the history holds an entry. A fault in a fixture entry then fails the test.
+pub fn expectNoNotification(host: *Host) !void {
+    try host.evalModule("import { notifications } from \"yuke:internal/kernel\"; globalThis.notificationCount = notifications.length;", "notification-count.js");
+    try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.notificationCount"));
+}
+
 /// A test that waits this long found work that no task announced.
 const wake_timeout: std.Io.Clock.Duration = .{ .raw = .fromSeconds(10), .clock = .awake };
 

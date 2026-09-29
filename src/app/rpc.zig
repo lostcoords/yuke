@@ -22,7 +22,8 @@ pub const boot =
 const out_buffer_bytes: usize = 1 << 16;
 /// The stdin buffer. It must hold one whole request line, and `send_input` carries a message body.
 const in_buffer_bytes: usize = @intCast(proto.meta.limits.max_message_string_bytes + (1 << 16));
-const queue_slots = 64;
+// One owner turn replays the whole notification history (100 entries in `kernel.js`), so the queue holds more than that.
+const queue_slots = 128;
 
 /// A notification owns a private arena until the owner writes it.
 const OwnedNotification = struct {
@@ -286,10 +287,6 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
     var requests_buf: [queue_slots]Request = undefined;
     var requests: std.Io.Queue(Request) = .init(&requests_buf);
     var notifications = NotificationQueue{};
-    if (extensions.user_entry_fault) {
-        std.log.warn("rpc: JavaScript fault in index.js: {s}", .{extensions.host.faultText()});
-        extensions.host.clearFault();
-    }
     var rpc: Rpc = .{
         .app = application,
         .out = &out_file.interface,
@@ -303,6 +300,7 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
         drainNotifications(gpa, &notifications);
         rpc.deinit();
     }
+    try extensions_mod.forwardNotifications(extensions.host);
 
     application.engine.resumeWorkspace(extensions.host.cwd) catch |err| {
         std.log.warn("cannot resume the workspace: {t}", .{err});
@@ -413,10 +411,7 @@ pub fn drainNotifications(gpa: std.mem.Allocator, notifications: *NotificationQu
 
 /// Keep the RPC stream alive after a script fault. The owner has consumed the exception.
 fn absorbOwnerPump(extensions: *extensions_mod.Extensions) void {
-    extensions.host.pump() catch {
-        std.log.warn("rpc: JavaScript fault: {s}", .{extensions.host.faultText()});
-        extensions.host.clearFault();
-    };
+    extensions.host.pump() catch extensions.host.postFault(Host.script_source);
 }
 
 /// Serve one request line and suppress the response for notifications.

@@ -30,6 +30,7 @@ pub fn install(host: *Host) void {
     module.installObject(host, "yuke:internal/native/engine", "native", &.{
         .{ .name = "setAgentLimits", .arity = 2, .call = jsSetAgentLimits },
         .{ .name = "setEventSink", .arity = 1, .call = jsSetEventSink },
+        .{ .name = "setFaultSink", .arity = 1, .call = jsSetFaultSink },
         .{ .name = "factNames", .arity = 0, .call = jsFactNames },
         .{ .name = "memoryUsage", .arity = 0, .call = jsMemoryUsage },
         .{ .name = "load", .arity = 0, .call = jsLoad },
@@ -107,6 +108,14 @@ fn jsSetEventSink(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len < 1 or !ctx.isFunction(args[0])) return ctx.throwTypeError("setEventSink needs a function");
     ctx.freeValue(engine.sink);
     engine.sink = ctx.dupValue(args[0]);
+    return quickjs.UNDEFINED;
+}
+
+fn jsSetFaultSink(ctx: Context, _: Value, args: []const Value) Value {
+    const engine = Host.fromContext(ctx).engine;
+    if (args.len < 1 or !ctx.isFunction(args[0])) return ctx.throwTypeError("setFaultSink needs a function");
+    ctx.freeValue(engine.fault_sink);
+    engine.fault_sink = ctx.dupValue(args[0]);
     return quickjs.UNDEFINED;
 }
 

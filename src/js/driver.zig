@@ -104,7 +104,6 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
     }
     std.debug.assert(host.paint.output != null);
     host.paint.output.?.tty = &tty;
-    if (extensions.user_entry_fault) report.paintFault(host);
 
     var input: term_pkg.Input = .{ .gpa = gpa };
     defer input.deinit();
@@ -265,10 +264,13 @@ fn earlier(a: ?std.Io.Timestamp, b: std.Io.Timestamp) std.Io.Timestamp {
     return if (b.nanoseconds < first.nanoseconds) b else first;
 }
 
-/// Absorb a `JavaScriptFault`, paint the fault row, and keep the loop.
+/// Absorb a `JavaScriptFault`. Paint the fault row, add the fault to the history, and keep the loop.
 fn absorbScriptFault(host: *Host, result: host_mod.Error!void) host_mod.Error!void {
     result catch |err| switch (err) {
-        error.JavaScriptFault => report.paintFault(host),
+        error.JavaScriptFault => {
+            report.paintFault(host);
+            host.postFault(Host.script_source);
+        },
     };
 }
 

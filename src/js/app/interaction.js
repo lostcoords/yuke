@@ -1,10 +1,10 @@
 // The shared interaction lifecycle owns each request until its answer or cancellation.
-import { events } from "yuke:internal/kernel";
+import { events, notifications } from "yuke:internal/kernel";
 import { native } from "yuke:internal/native/interaction";
 import * as cancellation from "yuke:internal/native/cancellation";
 /** @import { CancellationSignal } from "yuke:internal/native/cancellation" */
 /** @import { Context } from "yuke:internal/ext" */
-/** @import { Disposer, InteractionOptions, InteractionRequest, InteractionSurface } from "./types/ext.js" */
+/** @import { Disposer, InteractionOptions, InteractionRequest, InteractionSurface, Notification } from "./types/ext.js" */
 /** @import { Answerer } from "./types/runtime.js" */
 
 const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
@@ -215,6 +215,20 @@ export const rpcInteractionPlugin = {
   /** @param {Context} ctx */
   apply(ctx) { ctx.effect(() => interaction.install(rpcAnswerer)); },
 };
+
+// True after the first forward. `native.notify` reaches every attached sink, so one subscription serves every later frontend run.
+let forwarding = false;
+
+/** Send each history entry to the engine as a notice. Then send each new entry. A headless frontend calls this function after it attaches its sink. */
+/** @returns {void} */
+export function forwardNotifications() {
+  if (forwarding) return;
+  forwarding = true;
+  /** @param {Readonly<Notification>} n */
+  const send = (n) => native.notify(n.source, n.message, n.level);
+  for (const n of notifications) send(n);
+  events.on("notify.posted", send);
+}
 
 export const printInteractionPlugin = {
   name: "print-interaction",

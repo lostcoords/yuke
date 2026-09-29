@@ -33,6 +33,8 @@ pub const Engine = struct {
     runtime: ?*App = null,
     /// The JavaScript sink, held as a GC root. `drain` calls it on the owner.
     sink: Value,
+    /// The JavaScript function that adds a script fault to the history. The engine holds it as a GC root, and `Host.postFault` calls it.
+    fault_sink: Value,
     ctx: Context,
     /// Sessions that changed since the last drain, and how each changed.
     dirty: std.AutoHashMapUnmanaged(SessionId, Change) = .empty,
@@ -60,13 +62,14 @@ pub const Engine = struct {
 
     pub fn create(gpa: std.mem.Allocator, ctx: Context, io: std.Io, wake: *std.Io.Event) !*Engine {
         const self = try gpa.create(Engine);
-        self.* = .{ .gpa = gpa, .ctx = ctx, .sink = quickjs.UNDEFINED, .wake = wake, .io = io };
+        self.* = .{ .gpa = gpa, .ctx = ctx, .sink = quickjs.UNDEFINED, .fault_sink = quickjs.UNDEFINED, .wake = wake, .io = io };
         return self;
     }
 
     pub fn destroy(self: *Engine) void {
         std.debug.assert(self.runtime == null); // detach must run before the context closes
         self.ctx.freeValue(self.sink);
+        self.ctx.freeValue(self.fault_sink);
         self.dirty.deinit(self.gpa);
         self.removed.deinit(self.gpa);
         freeNotes(self.gpa, &self.index_auth);

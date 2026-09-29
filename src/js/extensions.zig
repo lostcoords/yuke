@@ -18,12 +18,10 @@ pub const Options = struct {
 pub const Extensions = struct {
     app: *App,
     host: *Host,
-    user_entry_fault: bool = false,
 
     /// Create one host, evaluate the common graph and install its tools in the engine.
     pub fn init(self: *Extensions, gpa: std.mem.Allocator, io: std.Io, app: *App, opts: Options) !void {
         self.app = app;
-        self.user_entry_fault = false;
         const host = Host.createWith(gpa, io, opts.host);
         errdefer host.destroy();
         self.host = host;
@@ -34,9 +32,8 @@ pub const Extensions = struct {
         host.interrupt_budget = host_mod.default_interrupt_budget;
         // The prompt plugin loads before the user entry, so a user handler runs after it in every prompt.build chain.
         try host.evalModule("import { plugins } from \"yuke:internal/ext\"; import { prompt } from \"yuke:internal/prompt\"; plugins.use(prompt);", "prompt.js");
-        evalUserEntry(host, opts.config_dir) catch {
-            self.user_entry_fault = true;
-        };
+        // A broken user entry leaves the app without its plugins. The history tells the user why.
+        evalUserEntry(host, opts.config_dir) catch host.postFault(user_entry);
         // Load built-ins last so a user tool with the same name wins.
         try host.evalModule("import { plugins } from \"yuke:internal/ext\"; import { builtins } from \"yuke:internal/builtins\"; plugins.use(builtins);", "builtins.js");
 
@@ -57,6 +54,11 @@ pub const Extensions = struct {
 };
 
 pub const user_entry = "index.js";
+
+/// Send the notification history to the engine as notices, then every new notification. A headless frontend calls this once its sink listens.
+pub fn forwardNotifications(host: *Host) host_mod.Error!void {
+    try host.evalModule("import { forwardNotifications } from \"yuke:internal/interaction\"; forwardNotifications();", "notify-forward.js");
+}
 
 /// Evaluate `<config_dir>/index.js`; an absent file is valid.
 pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) host_mod.Error!void {
@@ -101,7 +103,14 @@ pub const Fixture = struct {
     app: App,
     extensions: Extensions,
 
+    /// Build the fixture. Fail if its history holds an entry.
     pub fn init(self: *Fixture, entry: []const u8, boot: [:0]const u8) !void {
+        try self.open(entry, boot);
+        try support.expectNoNotification(self.extensions.host);
+    }
+
+    /// Build the fixture. A test of a broken user entry calls this directly.
+    pub fn open(self: *Fixture, entry: []const u8, boot: [:0]const u8) !void {
         self.gpa = .init;
         self.tmp = std.testing.tmpDir(.{});
         try self.tmp.dir.writeFile(std.testing.io, .{ .sub_path = user_entry, .data = entry });
@@ -118,7 +127,6 @@ pub const Fixture = struct {
             .boot = boot,
             .config_dir = root,
         });
-        try std.testing.expect(!self.extensions.user_entry_fault);
     }
 
     pub fn deinit(self: *Fixture) void {
@@ -202,6 +210,42 @@ test "the tool port answers the declarations in table order, and a removed tool 
     , "remove.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.removed"));
     try std.testing.expect(host.tools.find("hidden_tool") == null);
+}
+
+test "a user entry fault reaches a frontend that attaches after the load" {
+    var f: Fixture = undefined;
+    try f.open("throw new Error('bad config');\n", rpc.boot);
+    defer f.deinit();
+
+    const Capture = struct {
+        level: proto.enums.NoticeLevel = .info,
+        source: [16]u8 = undefined,
+        source_len: usize = 0,
+        found: bool = false,
+        seen: usize = 0,
+
+        fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (note.method != .notice) return;
+            self.seen += 1;
+            self.level = note.params.notice.level;
+            self.source_len = @min(note.params.notice.source.len, self.source.len);
+            @memcpy(self.source[0..self.source_len], note.params.notice.source[0..self.source_len]);
+            self.found = std.mem.indexOf(u8, note.params.notice.message, "bad config") != null;
+        }
+    };
+    // The frontend attaches after `Extensions.init`, as the RPC and print frontends do.
+    var capture: Capture = .{};
+    f.app.engine.sinks.add(.{ .ctx = @ptrCast(&capture), .on_event = Capture.onEvent });
+    defer f.app.engine.sinks.remove(@ptrCast(&capture));
+    try forwardNotifications(f.extensions.host);
+    // A second frontend run in the same host adds no second copy.
+    try forwardNotifications(f.extensions.host);
+
+    try std.testing.expectEqual(@as(usize, 1), capture.seen);
+    try std.testing.expectEqual(proto.enums.NoticeLevel.@"error", capture.level);
+    try std.testing.expectEqualStrings(user_entry, capture.source[0..capture.source_len]);
+    try std.testing.expect(capture.found);
 }
 
 test "a plugin notice reaches every attached frontend" {

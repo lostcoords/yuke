@@ -34,12 +34,6 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, extensions: *Extensions, cwd: []c
     var err_buf: [1024]u8 = undefined;
     var err = std.Io.File.stderr().writerStreaming(io, &err_buf);
 
-    // A broken index.js is a warning, as in the RPC frontend. The run goes on without its plugins.
-    if (extensions.user_entry_fault) {
-        try err.interface.print("yuke -p: JavaScript fault in index.js: {s}\n", .{extensions.host.faultText()});
-        try err.interface.flush();
-        extensions.host.clearFault();
-    }
     const prompt = (try readPrompt(io, arena, &err.interface, opts.prompt)) orelse return 2;
     const status = try runWith(extensions, arena, &out.interface, &err.interface, cwd, prompt, opts);
     try out.interface.flush();
@@ -92,6 +86,8 @@ fn runWith(extensions: *Extensions, arena: std.mem.Allocator, w: *std.Io.Writer,
     var waiter: Waiter = .{ .arena = arena, .session_id = null, .wake = &extensions.host.wake, .io = extensions.host.io, .err = if (opts.json) null else err };
     engine.sinks.add(.{ .ctx = @ptrCast(&waiter), .on_event = Waiter.onEvent });
     defer engine.sinks.remove(@ptrCast(&waiter));
+    // A broken index.js is a warning. The run goes on without its plugins. The fault arrives as a notice.
+    try extensions_mod.forwardNotifications(extensions.host);
 
     const pick = (try pickSession(extensions, arena, err, cwd, prompt, opts)) orelse return 1;
     waiter.bind(pick.id);
@@ -212,8 +208,7 @@ fn pumpUntil(extensions: *Extensions, context: anytype, comptime done: fn (@Type
     const host = extensions.host;
     while (true) return host.pumpUntil(null, context, done) catch |err| switch (err) {
         error.JavaScriptFault => {
-            std.log.warn("yuke -p: JavaScript fault: {s}", .{host.faultText()});
-            host.clearFault();
+            host.postFault(extensions_mod.Host.script_source);
             continue;
         },
         else => |e| return e,
@@ -358,6 +353,7 @@ fn writeReport(arena: std.mem.Allocator, w: *std.Io.Writer, waiter: *const Waite
 // ---------------------------------------------------------------- tests
 
 const app_fixture = @import("fixture.zig");
+const support = @import("../js/tests/support.zig");
 const testing = std.testing;
 const ai = @import("ai");
 const zio = @import("zio");
@@ -392,7 +388,7 @@ const Fixture = struct {
             .boot = boot,
             .config_dir = self.root,
         });
-        try testing.expect(!self.extensions.user_entry_fault);
+        try support.expectNoNotification(self.extensions.host);
     }
 
     fn deinit(self: *Fixture) void {

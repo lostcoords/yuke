@@ -646,6 +646,30 @@ pub const Host = struct {
         self.fault_text_len = 0;
     }
 
+    /// The source name for a script fault when the host cannot name its owner.
+    pub const script_source = "script";
+
+    /// Add the recorded fault to the history under `source`. Clear the fault text after the call. Without the kernel sink, the log keeps the fault.
+    pub fn postFault(self: *Host, source: []const u8) void {
+        std.debug.assert(self.phase == .open);
+        defer self.clearFault();
+        const text = self.faultText();
+        if (text.len == 0) return;
+        const sink = self.engine.fault_sink;
+        if (!self.ctx.isUndefined(sink)) {
+            const args = [_]quickjs.Value{ self.ctx.newString(source), self.ctx.newString(text) };
+            defer for (args) |arg| self.ctx.freeValue(arg);
+            if (!self.ctx.hasException()) {
+                self.enterSlice();
+                const result = self.ctx.call(sink, quickjs.UNDEFINED, &args);
+                defer self.ctx.freeValue(result);
+                if (!self.ctx.isException(result)) return;
+            }
+            pending.dropException(self.ctx);
+        }
+        std.log.warn("{s}: JavaScript fault: {s}", .{ source, text });
+    }
+
     fn finishDrain(self: *Host) void {
         var n: u32 = 0;
         while (self.runtime.isJobPending() and n < job_budget) : (n += 1) {
