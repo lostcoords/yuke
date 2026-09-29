@@ -5,7 +5,6 @@ const host_mod = @import("host.zig");
 const extensions_mod = @import("extensions.zig");
 const Host = host_mod.Host;
 const tui_loop = @import("loop.zig");
-const report = @import("report.zig");
 
 const Event = term_pkg.Event;
 
@@ -264,13 +263,10 @@ fn earlier(a: ?std.Io.Timestamp, b: std.Io.Timestamp) std.Io.Timestamp {
     return if (b.nanoseconds < first.nanoseconds) b else first;
 }
 
-/// Absorb a `JavaScriptFault`. Paint the fault row, add the fault to the history, and keep the loop.
+/// Absorb a `JavaScriptFault`: add the fault to the history, and keep the loop.
 fn absorbScriptFault(host: *Host, result: host_mod.Error!void) host_mod.Error!void {
     result catch |err| switch (err) {
-        error.JavaScriptFault => {
-            report.paintFault(host);
-            host.postFault(Host.script_source);
-        },
+        error.JavaScriptFault => host.postFault(Host.script_source),
     };
 }
 
@@ -368,12 +364,13 @@ test "a closed queue unblocks serve" {
     try std.testing.expect(!host.paint.quit_requested);
 }
 
-test "serve keeps the loop after onEvent throw" {
+test "serve keeps the loop after onEvent throw and adds the fault to the history" {
     const rt = try zio.Runtime.init(std.testing.allocator, .{ .executors = .exact(1) });
     defer rt.deinit();
     const host = support.createHostWith(rt.io(), "");
     defer support.destroyHost(host);
     try host.evalModule(
+        \\import "yuke:internal/kernel";
         \\import { term } from "yuke:internal/native/term";
         \\globalThis.onEvent = (ev) => {
         \\  if (ev.char === "x") throw new Error("nope");
@@ -387,6 +384,9 @@ test "serve keeps the loop after onEvent throw" {
     try serve(host, &queue);
     try producer.await(host.io);
     try std.testing.expect(host.paint.quit_requested);
+    try host.evalModule("import { notifications } from \"yuke:internal/kernel\"; globalThis.fault = notifications.map((n) => n.level + \":\" + n.source + \":\" + n.message.includes(\"nope\")).join(\",\");", "fault.js");
+    try support.expectString(host, "fault", "error:" ++ Host.script_source ++ ":true");
+    try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
 }
 
 test "tickTask enqueues a tick while armed" {

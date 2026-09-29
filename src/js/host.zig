@@ -75,7 +75,7 @@ pub const Host = struct {
     phase: Phase,
     interrupt_budget: u32,
     interrupt_count: u32,
-    /// Hold the last script fault text. The Host owns these bytes and `report.zig` paints them.
+    /// Hold the last script fault text. The Host owns these bytes. `postFault` hands them to the notification history, or to the log without the kernel sink.
     fault_text: [fault_text_max]u8,
     fault_text_len: usize,
     paint: term_module.Paint,
@@ -640,7 +640,7 @@ pub const Host = struct {
         return self.fault_text[0..self.fault_text_len];
     }
 
-    /// Clear the fault text; the next successful frame calls this.
+    /// Clear the fault text. `postFault` calls this after the handoff.
     pub fn clearFault(self: *Host) void {
         self.fault_text_len = 0;
     }
@@ -1020,7 +1020,6 @@ test "a stack trace from a baked module keeps its line numbers" {
 test {
     _ = @import("loop.zig");
     _ = @import("driver.zig");
-    _ = @import("report.zig");
     _ = @import("native/engine.zig");
     _ = @import("native/fs.zig");
     _ = @import("native/exec.zig");

@@ -350,8 +350,7 @@ fn jsSetNeedsTick(ctx: Context, _: Value, args: []const Value) Value {
 
 pub fn commitFrame(host: *Host) void {
     const output = host.paint.output orelse return;
-    // A successful frame replaces the fault row, so `clearFault` clears the fault text.
-    if (output.render.commitFrame(output.writer) catch return) host.clearFault();
+    _ = output.render.commitFrame(output.writer) catch return;
 }
 
 fn ensureFrame(host: *Host) void {
