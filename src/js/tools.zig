@@ -100,59 +100,83 @@ pub const Tools = struct {
     }
 };
 
-/// What one call asks for. The kind selects the handler the owner runs and the answer it records.
-const Kind = enum { tool, hook };
-
 /// One call in flight; the submitter waits and touches no QuickJS value, so the owner alone frees the Promise and sweeps the record.
 pub const Call = struct {
-    kind: Kind = .tool,
-    /// The tool name or the hook point. The submitter owns these bytes for the whole call.
+    /// The tool name or the hook point. The submitter owns these bytes, and only a start reads them.
     name: []const u8,
-    /// The tool arguments or the hook payload. Raw JSON either way.
+    /// The tool arguments or the hook payload, as raw JSON. The submitter owns these bytes, and only a start reads them.
     arguments: []const u8,
-    /// The workspace a tool runs against. A hook call leaves it empty.
-    workspace_root: []u8,
-    site: ?toolset.Site = null,
-    work: ?*work = null,
-    /// The submitter sleeps on this. The owner sets it once, when the call settles.
-    done: std.Io.Event = .unset,
-    /// A tool submitter waits on this instead. The owner sets it for new output and at the settle.
-    changed: std.Io.Event = .unset,
-    /// Live output the tool wrote and the submitter has not published. The owner and the submitter share one executor.
-    output: std.ArrayList(u8) = .empty,
-    /// The live bytes the call can still take. A cut chunk closes the stream.
-    output_room: u64 = proto.meta.limits.max_tool_output_stream_bytes,
-    /// The answer text, from the host allocator. The submitter copies it before it leaves.
-    text: ?[]u8 = null,
-    /// One JSON object holds the view and the media of a tool result. The submitter decodes it in its turn arena.
-    extra_json: ?[]u8 = null,
-    is_error: bool = false,
-    /// The handler's Promise while it runs. Only the owner touches it.
-    promise: Value = quickjs.UNDEFINED,
-    /// The native signal remains readable after the call leaves the table.
-    signal: Value = quickjs.UNDEFINED,
+    /// What one call asks for. The kind selects the handler the owner runs and the answer it records.
+    kind: union(enum) { tool: Tool, hook },
     state: State = .queued,
-    /// True after the submitter read its answer or left. The record is then the owner's to free.
-    submitter_done: bool = false,
+    /// The submitter sleeps on this. The owner sets it at the settle, and for each output chunk of a tool.
+    wake: std.Io.Event = .unset,
 
-    pub const State = enum { queued, running, settled };
+    /// The part of a call that only a tool has.
+    pub const Tool = struct {
+        /// The workspace the tool runs against. The submitter owns these bytes, and only a start reads them.
+        workspace_root: []const u8,
+        site: toolset.Site,
+        /// The run slot of the turn. A native operation the tool starts retains it.
+        work: *work,
+        /// The owner creates the signal when it starts the call, so a queued call has none.
+        signal: ?Value = null,
+        /// Live output the tool wrote and the submitter has not published. The owner and the submitter share one executor.
+        output: std.ArrayList(u8) = .empty,
+        /// The live bytes the call can still take. A cut chunk closes the stream.
+        output_room: u64 = proto.meta.limits.max_tool_output_stream_bytes,
+    };
 
-    /// Record the answer and wake the submitter. Only the owner calls this. The call takes `text` and `extra_json`.
-    pub fn settle(self: *Call, io: std.Io, text: ?[]u8, extra_json: ?[]u8, is_error: bool) void {
-        std.debug.assert(self.state != .settled); // one call settles one time
-        std.debug.assert(extra_json == null or !is_error); // only a success carries a view
-        self.text = text;
-        self.extra_json = extra_json;
-        self.is_error = is_error;
-        self.state = .settled;
-        self.done.set(io);
-        self.changed.set(io);
+    /// The owner starts and settles a call. The submitter leaves it, and the sweep frees each state that the submitter left.
+    pub const State = union(enum) {
+        queued,
+        /// The handler runs, and the submitter waits. The call holds one reference to the Promise.
+        running: Value,
+        /// The owner answered, and the submitter reads the answer.
+        settled: Answer,
+        /// The submitter left a running call. The Promise is marked handled, so the sweep releases it at once.
+        detached: Value,
+        /// The submitter left with no answer to free. The sweep frees the record.
+        dropped,
+        /// The submitter left after the settle. The sweep frees the record and the answer.
+        left: Answer,
+    };
+
+    /// What the submitter reads. The call owns the bytes, from the host allocator.
+    pub const Answer = union(enum) {
+        ok: Reply,
+        /// The error text. An error carries no view.
+        failed: []u8,
+        /// The host closed before the handler answered.
+        closed,
+    };
+
+    /// The text of a success. One JSON object holds the view and the media of a tool result, and the submitter decodes it in its turn arena.
+    pub const Reply = struct { text: []u8, extra_json: ?[]u8 = null };
+
+    /// Record the answer and wake the submitter. Only the owner calls this. The call takes the bytes of `answer`.
+    pub fn settle(self: *Call, io: std.Io, answer: Answer) void {
+        std.debug.assert(self.state == .queued or self.state == .running); // one call settles one time, and only while the submitter waits
+        self.state = .{ .settled = answer };
+        self.wake.set(io);
     }
 
     /// Leave one call. The submitter calls this, so it frees nothing and enters no JavaScript.
     pub fn finish(self: *Call) void {
-        std.debug.assert(!self.submitter_done); // one submitter leaves one time
-        self.submitter_done = true;
+        self.state = switch (self.state) {
+            .queued => .dropped,
+            .running => |promise| .{ .detached = promise },
+            .settled => |answer| .{ .left = answer },
+            .detached, .dropped, .left => unreachable, // one submitter leaves one time
+        };
+    }
+
+    /// Return the signal of a started tool call, or null for a hook or a queued call.
+    pub fn signal(self: *const Call) ?Value {
+        return switch (self.kind) {
+            .tool => |tool| tool.signal,
+            .hook => null,
+        };
     }
 };
 
@@ -168,30 +192,29 @@ pub const Calls = struct {
         self.* = undefined;
     }
 
-    /// Queue one call. This runs on a turn task, so it enters no JavaScript.
-    pub fn submit(self: *Calls, name: []const u8, arguments: []const u8, workspace_root: []const u8) *Call {
-        return self.submitCall(.tool, name, arguments, workspace_root);
+    /// Queue one tool call. This runs on a turn task, so it enters no JavaScript. The call borrows `context.work`.
+    pub fn submit(self: *Calls, name: []const u8, arguments: []const u8, context: toolset.Context) *Call {
+        return self.add(.{ .name = name, .arguments = arguments, .kind = .{ .tool = .{ .workspace_root = context.workspace_root, .site = context.site, .work = context.work } } });
     }
 
     /// Queue one hook question. The point names it, and the payload is the JSON that point defines.
     pub fn submitHook(self: *Calls, point: []const u8, payload: []const u8) *Call {
-        return self.submitCall(.hook, point, payload, "");
+        return self.add(.{ .name = point, .arguments = payload, .kind = .hook });
     }
 
-    fn submitCall(self: *Calls, kind: Kind, name: []const u8, arguments: []const u8, workspace_root: []const u8) *Call {
+    fn add(self: *Calls, value: Call) *Call {
         const call = self.gpa.create(Call) catch unreachable;
-        const root = self.gpa.dupe(u8, workspace_root) catch unreachable;
-        call.* = .{ .kind = kind, .name = name, .arguments = arguments, .workspace_root = root };
+        call.* = value;
         self.live.append(self.gpa, call) catch unreachable;
         return call;
     }
 
-    /// Free every record the submitter left. Only the owner calls this, because it frees a Promise; a running handler keeps its own references.
+    /// Free every record the submitter left. Only the owner calls this, because it frees a Promise.
     pub fn sweep(self: *Calls, ctx: Context) void {
         var i: usize = 0;
         while (i < self.live.items.len) {
             const call = self.live.items[i];
-            if (!call.submitter_done) {
+            if (call.state == .queued or call.state == .running or call.state == .settled) {
                 i += 1;
                 continue;
             }
@@ -204,8 +227,10 @@ pub const Calls = struct {
     pub fn callForSignal(self: *const Calls, ctx: Context, signal: Value) ?*Call {
         if (!ctx.isObject(signal)) return null;
         for (self.live.items) |call| {
-            if (!ctx.isStrictEqual(call.signal, signal)) continue;
-            if (call.submitter_done or call.state == .settled) return null;
+            const held = call.signal() orelse continue;
+            if (!ctx.isStrictEqual(held, signal)) continue;
+            // A handler can write output before its Promise returns, so a queued call still counts.
+            if (call.state != .queued and call.state != .running) return null;
             const token = cancellation.get(ctx, signal).?;
             return if (token.aborted) null else call;
         }
@@ -214,30 +239,43 @@ pub const Calls = struct {
 
     /// Report whether a call needs the owner: a start, a poll, or a sweep.
     pub fn hasWork(self: *const Calls, ctx: Context) bool {
-        for (self.live.items) |call| {
-            if (call.submitter_done) return true;
-            switch (call.state) {
-                .queued => return true,
-                .running => {
-                    std.debug.assert(ctx.isPromise(call.promise));
-                    // A pump that faults before its last poll can leave a settled Promise.
-                    if (ctx.promiseState(call.promise) != .Pending) return true;
-                },
-                .settled => {},
-            }
-        }
+        for (self.live.items) |call| switch (call.state) {
+            .queued, .detached, .dropped, .left => return true,
+            // A pump that faults before its last poll can leave a settled Promise.
+            .running => |promise| if (ctx.promiseState(promise) != .Pending) return true,
+            .settled => {},
+        };
         return false;
     }
 
     fn free(self: *Calls, ctx: Context, call: *Call) void {
-        ctx.freeValue(call.promise);
-        if (cancellation.get(ctx, call.signal)) |signal| std.debug.assert(signal.aborted);
-        ctx.freeValue(call.signal);
-        if (call.text) |text| self.gpa.free(text);
-        if (call.extra_json) |json| self.gpa.free(json);
-        call.output.deinit(self.gpa);
-        self.gpa.free(call.workspace_root);
+        switch (call.state) {
+            .queued, .dropped => {},
+            .running, .detached => |promise| ctx.freeValue(promise),
+            .settled, .left => |answer| self.freeAnswer(answer),
+        }
+        switch (call.kind) {
+            .tool => |*tool| {
+                if (tool.signal) |held| {
+                    std.debug.assert(cancellation.get(ctx, held).?.aborted);
+                    ctx.freeValue(held);
+                }
+                tool.output.deinit(self.gpa);
+            },
+            .hook => {},
+        }
         self.gpa.destroy(call);
+    }
+
+    fn freeAnswer(self: *Calls, answer: Call.Answer) void {
+        switch (answer) {
+            .ok => |reply| {
+                self.gpa.free(reply.text);
+                if (reply.extra_json) |json| self.gpa.free(json);
+            },
+            .failed => |text| self.gpa.free(text),
+            .closed => {},
+        }
     }
 };
 
@@ -288,11 +326,10 @@ test "a running call needs the owner after its Promise settles" {
     var calls: Calls = .{ .gpa = testing.allocator };
     defer calls.deinit(bare.ctx);
     const call = calls.submitHook("tool.before", "{}");
-    call.state = .running;
-    call.promise = try bare.ctx.eval("new Promise(() => {})", "pending.js", .{});
+    call.state = .{ .running = try bare.ctx.eval("new Promise(() => {})", "pending.js", .{}) };
     try testing.expect(!calls.hasWork(bare.ctx));
-    bare.ctx.freeValue(call.promise);
-    call.promise = try bare.ctx.eval("Promise.resolve(1)", "settled.js", .{});
+    bare.ctx.freeValue(call.state.running);
+    call.state = .{ .running = try bare.ctx.eval("Promise.resolve(1)", "settled.js", .{}) };
     try testing.expect(calls.hasWork(bare.ctx));
 }
 

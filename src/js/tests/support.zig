@@ -7,6 +7,8 @@ const tools_table = @import("../tools.zig");
 const BakedModule = @import("../loader.zig").BakedModule;
 const Paint = @import("paint.zig").Paint;
 const execution = @import("../../execution.zig");
+const toolset = @import("../../engine/toolset.zig");
+const Work = @import("../../session/work.zig");
 
 const modules = host_mod.default_baked ++ [_]BakedModule{
     .{ .name = "yuke:internal/test-markdown", .code = .{ .source = @embedFile("markdown.js") } },
@@ -174,16 +176,39 @@ pub const Answer = struct {
     root: ?[]const u8 = null,
     is_error: bool = false,
     text: union(enum) { contains: []const u8, ends: []const u8, equals: []const u8 },
+    /// Whether the answer carries a view or media. Null skips the check.
+    extra: ?bool = null,
 };
+
+/// The run slot of every test tool call. Each native operation releases it when it ends.
+var test_work: Work = .{};
+
+/// The context of a tool call from session 01…01 against `root`. A test that reads the run slot sets its own `work`.
+pub fn toolContext(root: []const u8) toolset.Context {
+    return .{ .workspace_root = root, .site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 }, .work = &test_work, .output = .discard };
+}
+
+/// What a test reads of a settled answer.
+pub const Reply = struct { text: []const u8, extra_json: ?[]const u8 = null, is_error: bool };
+
+/// The handler answer of a settled call. A closed host or an unsettled call fails the test.
+pub fn reply(call: *const tools_table.Call) Reply {
+    return switch (call.state.settled) {
+        .ok => |ok| .{ .text = ok.text, .extra_json = ok.extra_json, .is_error = false },
+        .failed => |text| .{ .text = text, .is_error = true },
+        .closed => unreachable, // a test that closes the host reads the state itself
+    };
+}
 
 /// Submit one tool call from session 01…01, wait for it, check its answer, and drop it.
 pub fn expectTool(host: *Host, name: []const u8, args: []const u8, want: Answer) !void {
-    const call = host.calls.submit(name, args, want.root orelse host.cwd);
-    call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
+    const call = host.calls.submit(name, args, toolContext(want.root orelse host.cwd));
     try pumpUntilSettled(host, call);
-    errdefer std.debug.print("{s} {s} -> {s}\n", .{ name, args, call.text orelse "" });
-    try std.testing.expectEqual(want.is_error, call.is_error);
-    const text = call.text orelse "";
+    const answer = reply(call);
+    errdefer std.debug.print("{s} {s} -> {s}\n", .{ name, args, answer.text });
+    try std.testing.expectEqual(want.is_error, answer.is_error);
+    if (want.extra) |extra| try std.testing.expectEqual(extra, answer.extra_json != null);
+    const text = answer.text;
     switch (want.text) {
         .contains => |part| try std.testing.expect(std.mem.indexOf(u8, text, part) != null),
         .ends => |part| try std.testing.expect(std.mem.endsWith(u8, text, part)),

@@ -16,20 +16,19 @@ test "child pages return a complete list or refuse" {
 const ToolAnswer = struct { text: []u8, is_error: bool };
 
 fn invokeAgent(host: *Host, name: []const u8, args: []const u8) !ToolAnswer {
-    const call = host.calls.submit(name, args, "/work");
+    const call = host.calls.submit(name, args, support.toolContext("/work"));
     defer call.finish();
-    call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
     for (0..4) |_| try host.pump();
-    try std.testing.expectEqual(tools.Call.State.settled, call.state);
-    return .{ .text = try std.testing.allocator.dupe(u8, call.text orelse ""), .is_error = call.is_error };
+    try std.testing.expect(call.state == .settled);
+    return .{ .text = try std.testing.allocator.dupe(u8, support.reply(call).text), .is_error = support.reply(call).is_error };
 }
 
 fn answerHook(host: *Host, point: []const u8, payload: []const u8) ![]u8 {
     const call = host.calls.submitHook(point, payload);
     defer call.finish();
     try support.pumpUntilSettled(host, call);
-    try std.testing.expect(!call.is_error);
-    return std.testing.allocator.dupe(u8, call.text.?);
+    try std.testing.expect(!support.reply(call).is_error);
+    return std.testing.allocator.dupe(u8, support.reply(call).text);
 }
 
 const tool_fixture =
@@ -99,11 +98,6 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
         defer std.testing.allocator.free(answer.text);
         try std.testing.expect(answer.is_error);
     }
-    // A call with no live parent site is refused before any create.
-    const orphan = host.calls.submit("spawn_agent", "{\"message\":\"task\"}", "/work");
-    for (0..4) |_| try host.pump();
-    try std.testing.expect(orphan.is_error);
-    orphan.finish();
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("stats.creates"));
     const Receipt = struct { session_id: []const u8, agent: []const u8, model: []const u8, state: []const u8 };
     const spawn = try invokeAgent(host, "spawn_agent", "{\"message\":\"task\"}");
@@ -245,9 +239,8 @@ test "TUI tool questions show their owner and device login closes on completion"
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "agents/owner-question.test.js");
-    const call = host.calls.submit("question", "{}", "/work");
+    const call = host.calls.submit("question", "{}", support.toolContext("/work"));
     defer call.finish();
-    call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 };
     try host.pump();
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("root.overlays[0].opts.title.includes('01010101') ? 1 : 0"));
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("root.overlays[0].content.source.length === 2 ? 1 : 0"));

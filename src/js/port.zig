@@ -25,9 +25,8 @@ fn declsFor(ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]cons
 /// Submit one call and wait at the turn cancellation point for the owner to answer it.
 fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: []const u8, context: toolset.Context) toolset.Outcome {
     const host: *Host = @ptrCast(@alignCast(ctx));
-    const call = host.calls.submit(name, arguments, context.workspace_root);
-    call.site = context.site;
-    call.work = context.work;
+    const call = host.calls.submit(name, arguments, context);
+    const tool = &call.kind.tool;
     defer finishCall(host, call);
     host.wake.set(host.io);
     // Each chunk swaps with this empty list, so the owner appends into capacity a chunk already grew.
@@ -35,27 +34,31 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
     defer spare.deinit(host.gpa);
     // Publish each output chunk while the tool runs, and the last one before the result.
     while (true) {
-        call.changed.wait(host.io) catch return fault(out, "cancellation stopped the tool call");
-        call.changed.reset();
-        if (call.output.items.len != 0) {
+        call.wake.wait(host.io) catch return fault(out, "cancellation stopped the tool call");
+        call.wake.reset();
+        if (tool.output.items.len != 0) {
             // Swap the chunk out before the sink publishes it.
-            std.mem.swap(std.ArrayList(u8), &call.output, &spare);
+            std.mem.swap(std.ArrayList(u8), &tool.output, &spare);
             defer spare.clearRetainingCapacity();
             context.output.write(context.output.ctx, spare.items);
         }
         if (call.state == .settled) break;
     }
-    const text = call.text orelse "the tool call did not finish";
-    const extra = if (call.extra_json) |json|
+    const reply = switch (call.state.settled) {
+        .ok => |value| value,
+        .failed => |text| return fault(out, text),
+        .closed => return fault(out, "the tool call did not finish"),
+    };
+    const extra = if (reply.extra_json) |json|
         extraOf(out, json) orelse return fault(out, "the tool answered an invalid view or media list")
     else
         Extra{};
     return .{
-        .output = out.dupe(u8, text) catch unreachable,
+        .output = out.dupe(u8, reply.text) catch unreachable,
         .view = extra.view,
         .media = extra.media,
         .tools_added = extra.tools_added,
-        .is_error = call.is_error,
+        .is_error = false,
     };
 }
 
@@ -82,19 +85,21 @@ fn askFor(ctx: *anyopaque, out: std.mem.Allocator, point: proto.hook.Point, payl
     const call = host.calls.submitHook(point.wireName(), payload);
     defer finishCall(host, call);
     host.wake.set(host.io);
-    call.done.wait(host.io) catch return .canceled;
+    call.wake.wait(host.io) catch return .canceled;
     if (host.phase != .open) return .canceled;
     return answerOf(out, point, call);
 }
 
-/// Read the answer of one settled hook call into `out`. A fault or an unreadable answer blocks.
+/// Read the answer of one settled hook call into `out`. A fault or an unreadable answer blocks, and a closed host cancels.
 pub fn answerOf(out: std.mem.Allocator, point: proto.hook.Point, call: *const tools.Call) hookset.Decision {
-    std.debug.assert(call.state == .settled);
-    const text = call.text orelse return .proceed;
-    if (call.is_error) {
-        std.log.warn("hook {s} faulted: {s}", .{ point.wireName(), text });
-        return .{ .block = "the hook dispatch failed" };
-    }
+    const text = switch (call.state.settled) {
+        .ok => |reply| reply.text,
+        .failed => |text| {
+            std.log.warn("hook {s} faulted: {s}", .{ point.wireName(), text });
+            return .{ .block = "the hook dispatch failed" };
+        },
+        .closed => return .canceled,
+    };
     if (text.len == 0) return .proceed;
     return decisionOf(out, point, text);
 }

@@ -6,6 +6,7 @@ const quickjs = @import("quickjs");
 const term = @import("term");
 const Host = @import("../host.zig").Host;
 const Allocations = @import("../../allocations.zig");
+const Work = @import("../../session/work.zig");
 const native_term = @import("../native/term.zig");
 const native_module = @import("../native/module.zig");
 const Tree = @import("agents.zig");
@@ -125,6 +126,8 @@ pub const Harness = struct {
     colors: Colors = .ansi_raw,
     advice_batch_size: u32 = 1000,
     phase_group: Phase.Group,
+    /// The run slot of the tool phase. The probe tool starts no native operation.
+    work: Work = .{},
 
     /// The benchmark borrows its own environment and runs no command of its own.
     fn context(self: *Harness) execution.Context {
@@ -343,22 +346,22 @@ pub const Harness = struct {
             self.host.calls.sweep(self.host.ctx);
         }
         try self.host.pump();
-        if (held.state != .settled or held.is_error) return error.InvalidToolResult;
-        const text = held.text orelse return error.InvalidToolResult;
+        if (held.state != .settled or held.state.settled != .ok) return error.InvalidToolResult;
+        const text = held.state.settled.ok.text;
         // A replace echoes the request; a pass is the empty answer.
         if (phase == .hook_request_build and text.len < payload.len) return error.InvalidToolResult;
         if (phase == .hook_tool_before and text.len != 0) return error.InvalidToolResult;
     }
 
     fn toolOnce(self: *Harness) !void {
-        const invocation = self.host.calls.submit("probe", "{}", "");
+        const invocation = self.host.calls.submit("probe", "{}", .{ .workspace_root = "", .site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 }, .work = &self.work, .output = .discard });
         defer {
             invocation.finish();
             self.host.calls.sweep(self.host.ctx);
         }
         try self.host.pump();
-        if (invocation.state != .settled or invocation.is_error) return error.InvalidToolResult;
-        if (!std.mem.eql(u8, invocation.text orelse return error.InvalidToolResult, "ok")) return error.InvalidToolResult;
+        if (invocation.state != .settled or invocation.state.settled != .ok) return error.InvalidToolResult;
+        if (!std.mem.eql(u8, invocation.state.settled.ok.text, "ok")) return error.InvalidToolResult;
     }
 
     pub fn step(self: *Harness) !u64 {

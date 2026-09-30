@@ -38,8 +38,7 @@ fn jsValidateSignal(ctx: Context, _: Value, args: []const Value) Value {
 fn jsSessionId(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len != 1) return quickjs.NULL;
     const call = Host.fromContext(ctx).calls.callForSignal(ctx, args[0]) orelse return quickjs.NULL;
-    const site = call.site orelse return quickjs.NULL;
-    const id = std.fmt.bytesToHex(site.session_id.raw, .lower);
+    const id = std.fmt.bytesToHex(call.kind.tool.site.session_id.raw, .lower); // only a tool call holds a signal
     return ctx.newString(&id);
 }
 
@@ -57,8 +56,8 @@ fn jsRequest(ctx: Context, _: Value, args: []const Value) Value {
         else => pending.rejected(ctx, errorMessage(err)),
     };
     if (signal) |s| {
-        const site = if (host.calls.callForSignal(ctx, s)) |call| call.site else null;
-        host.interactions.attribute(ctx, id, if (site) |known| known.session_id else null, s);
+        const call = host.calls.callForSignal(ctx, s);
+        host.interactions.attribute(ctx, id, if (call) |held| held.kind.tool.site.session_id else null, s);
     }
     return promise;
 }

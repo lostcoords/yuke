@@ -11,6 +11,7 @@ Use `ctx.tools.define(definition)`.
 - `args` is any JSON that the model wrote. Validate it before use.
 - `execute` returns a promise. A string reaches the model as is. Another value reaches it as JSON. A throw becomes an error result.
 - `toolCtx.output(text)` streams live output to the user. `toolCtx.workspaceRoot` is the session root.
+- `toolCtx.sessionId`, `toolCtx.messageId`, and `toolCtx.partId` name the transcript part that holds the call.
 - Pass `signal` to `fetch` and `exec`. `spawn` takes no signal, so kill its child when the signal aborts.
 - A tool that `index.js` defines at startup replaces a built-in tool with the same name: `read`, `write`, `edit`, `exec`, `jobs`, or `skill`.
 - `defer: true` waits for a `tool_search` tool to load it. Without a search tool, the engine loads it at once.

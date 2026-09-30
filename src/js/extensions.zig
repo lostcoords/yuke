@@ -177,12 +177,7 @@ test "headless extensions pump an async JavaScript tool" {
         if (std.mem.eql(u8, d.name, "read_note")) break true;
     } else false;
     try std.testing.expect(found);
-    const call = extensions.host.calls.submit("read_note", "{\"path\":\"note.txt\"}", "");
-    try support.pumpUntilSettled(extensions.host, call);
-    try std.testing.expect(!call.is_error);
-    try std.testing.expectEqualStrings("{\"text\":\"from rpc\"}", call.text.?);
-    call.finish();
-    try extensions.host.pump();
+    try support.expectTool(extensions.host, "read_note", "{\"path\":\"note.txt\"}", .{ .root = "", .text = .{ .equals = "{\"text\":\"from rpc\"}" } });
 }
 
 test "the tool port answers the declarations in table order, and a removed tool leaves the table" {
@@ -476,7 +471,7 @@ test "a hook call settles in the pump that starts it" {
     const call = host.calls.submitHook("tool.before", "{\"name\":\"bash\",\"arguments\":\"{}\"}");
     try host.pump();
     try std.testing.expect(call.state == .settled);
-    try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"denied\"}", call.text.?);
+    try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"denied\"}", support.reply(call).text);
     call.finish();
     try host.pump();
     try std.testing.expect(!host.hasPending());
@@ -486,8 +481,8 @@ test "a hook call settles in the pump that starts it" {
 fn settleHook(extensions: *Extensions, point: []const u8, payload: []const u8) ![]u8 {
     const call = extensions.host.calls.submitHook(point, payload);
     try support.pumpUntilSettled(extensions.host, call);
-    try std.testing.expect(!call.is_error);
-    const text = try std.testing.allocator.dupe(u8, call.text.?);
+    try std.testing.expect(!support.reply(call).is_error);
+    const text = try std.testing.allocator.dupe(u8, support.reply(call).text);
     call.finish();
     return text;
 }
@@ -678,21 +673,21 @@ test "the skill tool answers a catalog body through skill.load" {
     const created = try commands.sessionCreate(&f.app.engine, a, .{ .workspace_path = host.cwd, .model = "test/model" });
     try std.testing.expect(try database.session.hasSkills(&f.app.db, a, created.session.id.raw));
 
-    const call = host.calls.submit("skill", "{\"name\":\"pdf\"}", host.cwd);
-    call.site = .{ .session_id = created.session.id, .message_id = 1, .part_id = 0 };
+    var context = support.toolContext(host.cwd);
+    context.site = .{ .session_id = created.session.id, .message_id = 1, .part_id = 0 };
+    const call = host.calls.submit("skill", "{\"name\":\"pdf\"}", context);
     try support.pumpUntilSettled(host, call);
-    try std.testing.expect(!call.is_error);
-    try std.testing.expect(std.mem.startsWith(u8, call.text.?, "<skill_content name=\"pdf\">\nRead the pdf.\n\nSkill directory: "));
-    try std.testing.expect(std.mem.endsWith(u8, call.text.?, ".agents/skills/pdf\nResolve relative paths against this directory.\n</skill_content>"));
+    try std.testing.expect(!support.reply(call).is_error);
+    try std.testing.expect(std.mem.startsWith(u8, support.reply(call).text, "<skill_content name=\"pdf\">\nRead the pdf.\n\nSkill directory: "));
+    try std.testing.expect(std.mem.endsWith(u8, support.reply(call).text, ".agents/skills/pdf\nResolve relative paths against this directory.\n</skill_content>"));
     call.finish();
     try host.pump();
 
     // The catalog decides what a name means, so an unknown name is an error the model can read.
-    const missing = host.calls.submit("skill", "{\"name\":\"nope\"}", host.cwd);
-    missing.site = .{ .session_id = created.session.id, .message_id = 1, .part_id = 0 };
+    const missing = host.calls.submit("skill", "{\"name\":\"nope\"}", context);
     try support.pumpUntilSettled(host, missing);
-    try std.testing.expect(missing.is_error);
-    try std.testing.expect(std.mem.indexOf(u8, missing.text.?, "has no skill with this name") != null);
+    try std.testing.expect(support.reply(missing).is_error);
+    try std.testing.expect(std.mem.indexOf(u8, support.reply(missing).text, "has no skill with this name") != null);
     missing.finish();
     try host.pump();
 }

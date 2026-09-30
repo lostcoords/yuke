@@ -51,7 +51,7 @@ pub fn finish(runtime: *App, host: *Host, arena: std.mem.Allocator, params: anyt
     if (record) |settled| switch (port.answerOf(arena, point, settled)) {
         .proceed => {},
         .block => return .{ .failure = .{ .code = .bad_request, .message = "an extension stopped the input" } },
-        .canceled => unreachable, // Only a waiting submitter reads a cancel; a settled call never does.
+        .canceled => unreachable, // The gate reads a call only while the host is open, and only a stopping host cancels.
         .replace => |value| {
             const replaced = std.json.parseFromValueLeaky(struct { content: []const proto.content.ContentPart }, arena, value, .{ .ignore_unknown_fields = true }) catch
                 return .{ .failure = .{ .code = .bad_request, .message = "the input hook answered an unreadable replacement" } };

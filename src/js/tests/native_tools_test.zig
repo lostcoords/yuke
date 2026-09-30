@@ -84,12 +84,12 @@ test "a canceled live tool signal cannot admit an interaction" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "native_tools/canceled-interaction.test.js");
-    const call = host.calls.submit("probe", "{}", "");
+    const call = host.calls.submit("probe", "{}", support.toolContext(""));
     try host.pump();
     try support.pumpUntilIdle(host);
     try std.testing.expect(call.state == .settled);
-    try std.testing.expect(!call.is_error);
-    try std.testing.expectEqualStrings("refused", call.text.?);
+    try std.testing.expect(!support.reply(call).is_error);
+    try std.testing.expectEqualStrings("refused", support.reply(call).text);
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
     try std.testing.expectEqual(@as(usize, 0), host.interactions.live.items.len);
     try support.dropCall(host, call);
@@ -120,8 +120,8 @@ test "a hook fault fails the point closed before any later handler runs" {
 
     const call = host.calls.submitHook("input.before", "{}");
     try support.pumpUntilSettled(host, call);
-    try std.testing.expect(!call.is_error);
-    try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"the getter plugin failed at input.before\"}", call.text.?);
+    try std.testing.expect(!support.reply(call).is_error);
+    try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"the getter plugin failed at input.before\"}", support.reply(call).text);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt(
         \\globalThis.faults.join(",") === "getter:getter" ? 1 : 0
     ));
@@ -135,34 +135,12 @@ test "the owner runs an async handler and answers its resolved value" {
     try support.eval(host, "native_tools/run.test.js");
 
     // A synchronous callback violates the tool contract.
-    {
-        const call = host.calls.submit("sync", "{\"city\":\"Tokyo\"}", "");
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(call.is_error);
-        try std.testing.expectEqualStrings("the tool execute function must return a Promise", call.text.?);
-        try support.dropCall(host, call);
-    }
+    try support.expectTool(host, "sync", "{\"city\":\"Tokyo\"}", .{ .is_error = true, .text = .{ .equals = "the tool execute function must return a Promise" } });
     // A Promise settles through the job drain, so one pump is still enough.
-    {
-        const call = host.calls.submit("later", "{\"city\":\"Kyoto\"}", "");
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expectEqualStrings("{\"got\":\"Kyoto\",\"async\":true}", call.text.?);
-        try support.dropCall(host, call);
-    }
+    try support.expectTool(host, "later", "{\"city\":\"Kyoto\"}", .{ .text = .{ .equals = "{\"got\":\"Kyoto\",\"async\":true}" } });
     // A string passes through, because a text tool must not gain quotes.
-    {
-        const call = host.calls.submit("text", "{\"city\":\"Osaka\"}", "");
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expectEqualStrings("just text", call.text.?);
-        try support.dropCall(host, call);
-    }
-    {
-        const call = host.calls.submit("nothing", "{\"city\":\"Nara\"}", "");
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(!call.is_error);
-        try std.testing.expectEqualStrings("", call.text.?);
-        try support.dropCall(host, call);
-    }
+    try support.expectTool(host, "text", "{\"city\":\"Osaka\"}", .{ .text = .{ .equals = "just text" } });
+    try support.expectTool(host, "nothing", "{\"city\":\"Nara\"}", .{ .text = .{ .equals = "" } });
     // Every record swept, so the host holds nothing after the calls.
     try std.testing.expectEqual(@as(usize, 0), host.calls.live.items.len);
 }
@@ -177,29 +155,11 @@ test "a failed handler answers the model with an error it can read" {
         .{ .name = "throws", .want = "it broke" },
         .{ .name = "cycles", .want = "the tool answered a value that is not JSON" },
     };
-    for (cases) |case| {
-        const call = host.calls.submit(case.name, "{\"city\":\"Tokyo\"}", "");
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(call.is_error);
-        try std.testing.expectEqualStrings(case.want, call.text.?);
-        try support.dropCall(host, call);
-    }
+    for (cases) |case| try support.expectTool(host, case.name, "{\"city\":\"Tokyo\"}", .{ .is_error = true, .text = .{ .equals = case.want } });
 
     // A name that no tool owns, and arguments that are not JSON, are engine input, not a crash.
-    {
-        const call = host.calls.submit("absent", "{}", "");
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(call.is_error);
-        try std.testing.expectEqualStrings("the tool is not registered", call.text.?);
-        try support.dropCall(host, call);
-    }
-    {
-        const call = host.calls.submit("throws", "not json", "");
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(call.is_error);
-        try std.testing.expectEqualStrings("the arguments are not valid JSON", call.text.?);
-        try support.dropCall(host, call);
-    }
+    try support.expectTool(host, "absent", "{}", .{ .is_error = true, .text = .{ .equals = "the tool is not registered" } });
+    try support.expectTool(host, "throws", "not json", .{ .is_error = true, .text = .{ .equals = "the arguments are not valid JSON" } });
     // A pending exception from any of those must not change the next call.
     try std.testing.expectEqual(@as(i32, 7), try host.evalInt("3 + 4"));
 }
@@ -213,13 +173,13 @@ test "a handler that awaits a primitive answers when the task finishes" {
     try support.eval(host, "native_tools/await.test.js");
 
     // The handler holds a task, not the owner, so the call settles only after the read finishes.
-    const call = host.calls.submit("read_note", "{\"path\":\"note.txt\"}", "");
+    const call = host.calls.submit("read_note", "{\"path\":\"note.txt\"}", support.toolContext(""));
     try host.pump();
-    try std.testing.expectEqual(tools_table.Call.State.running, call.state);
+    try std.testing.expect(call.state == .running);
 
     try support.pumpUntilSettled(host, call);
-    try std.testing.expect(!call.is_error);
-    try std.testing.expectEqualStrings("{\"text\":\"from disk\"}", call.text.?);
+    try std.testing.expect(!support.reply(call).is_error);
+    try std.testing.expectEqualStrings("{\"text\":\"from disk\"}", support.reply(call).text);
     try support.dropCall(host, call);
 }
 
@@ -229,7 +189,7 @@ test "a handler reads the signal after the turn leaves" {
 
     try support.eval(host, "native_tools/signal.test.js");
 
-    const call = host.calls.submit("watch", "{\"city\":\"Tokyo\"}", "");
+    const call = host.calls.submit("watch", "{\"city\":\"Tokyo\"}", support.toolContext(""));
     try host.pump();
     try support.expectString(host, "seen", "live"); // the handler read the flag at its start
     _ = try host.evalInt("globalThis.check(), 0");
@@ -251,15 +211,14 @@ test "closing the host answers a call nobody would settle" {
 
     try support.eval(host, "native_tools/hang.test.js");
 
-    const call = host.calls.submit("hangs", "{\"city\":\"Tokyo\"}", "");
+    const call = host.calls.submit("hangs", "{\"city\":\"Tokyo\"}", support.toolContext(""));
     try host.pump();
-    try std.testing.expectEqual(tools_table.Call.State.running, call.state);
+    try std.testing.expect(call.state == .running);
 
     // A turn task waits on this event. A close that leaves it unset would hang the shutdown.
     try host.close();
-    try std.testing.expectEqual(tools_table.Call.State.settled, call.state);
-    try std.testing.expect(call.is_error);
-    try std.testing.expect(call.done.isSet());
+    try std.testing.expect(call.state.settled == .closed);
+    try std.testing.expect(call.wake.isSet());
 }
 
 test "defineTool registers a tool and states its raw schema" {
@@ -330,11 +289,11 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     try support.expectTool(host, "read", "{\"path\":\"long.txt\"}", .{ .root = root, .text = .{ .contains = "[The tool cut 1 line(s) at 8000 bytes.]" } });
     // An image reads as one media ref. The host anchors the relative path before the engine reads the file.
     {
-        const call = host.calls.submit("read", "{\"path\":\"shot.png\",\"start\":2,\"end\":2}", root);
+        const call = host.calls.submit("read", "{\"path\":\"shot.png\",\"start\":2,\"end\":2}", support.toolContext(root));
         try support.pumpUntilSettled(host, call);
-        try std.testing.expect(!call.is_error);
-        try std.testing.expectEqualStrings("PNG image, 67 B", call.text.?);
-        try std.testing.expect(std.mem.indexOf(u8, call.extra_json.?, "\"media\":[{\"hash\":\"aaaa") != null);
+        try std.testing.expect(!support.reply(call).is_error);
+        try std.testing.expectEqualStrings("PNG image, 67 B", support.reply(call).text);
+        try std.testing.expect(std.mem.indexOf(u8, support.reply(call).extra_json.?, "\"media\":[{\"hash\":\"aaaa") != null);
         try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.putPath.startsWith(\"/\") && globalThis.putPath.endsWith(\"/shot.png\") ? 1 : 0"));
         call.finish();
         try host.pump();
@@ -344,46 +303,17 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     try support.expectTool(host, "read", "{\"path\":\"missing.txt\"}", .{ .root = root, .is_error = true, .text = .{ .contains = "read: the path does not exist" } });
     try support.expectTool(host, "read", "{\"path\":1}", .{ .root = root, .is_error = true, .text = .{ .contains = "read: the argument path must be a string" } });
     try support.expectTool(host, "read", "{\"path\":\"a.txt\",\"file_path\":\"a.txt\"}", .{ .root = root, .is_error = true, .text = .{ .contains = "read: the argument file_path does not exist. The arguments are: path, start, end." } });
-    {
-        const call = host.calls.submit("edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\"}", root);
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(call.is_error);
-        try std.testing.expect(std.mem.indexOf(u8, call.text.?, "more than one") != null);
-        call.finish();
-        try host.pump();
-    }
-    {
-        const call = host.calls.submit("edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\",\"replace_all\":true}", root);
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(!call.is_error);
-        try std.testing.expect(std.mem.indexOf(u8, call.text.?, "replaced 2") != null);
-        try std.testing.expect(call.extra_json != null);
-        call.finish();
-        try host.pump();
-    }
-    {
-        const call = host.calls.submit("write", "{\"path\":\"new.txt\",\"content\":\"fresh\\n\"}", root);
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(!call.is_error);
-        try std.testing.expect(std.mem.indexOf(u8, call.text.?, "wrote 6 bytes") != null);
-        try std.testing.expect(call.extra_json != null);
-        call.finish();
-        try host.pump();
-    }
-    {
-        const call = host.calls.submit("write", "{\"path\":\"a.txt\",\"content\":\"one\\nTWO\\nTWO\\n\"}", root);
-        try support.pumpUntilSettled(host, call);
-        try std.testing.expect(!call.is_error);
-        try std.testing.expect(call.extra_json == null);
-        call.finish();
-        try host.pump();
-    }
+    try support.expectTool(host, "edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\"}", .{ .root = root, .is_error = true, .text = .{ .contains = "more than one" } });
+    try support.expectTool(host, "edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\",\"replace_all\":true}", .{ .root = root, .text = .{ .contains = "replaced 2" }, .extra = true });
+    try support.expectTool(host, "write", "{\"path\":\"new.txt\",\"content\":\"fresh\\n\"}", .{ .root = root, .text = .{ .contains = "wrote 6 bytes" }, .extra = true });
+    // Content that matches the file changes nothing, so the answer carries no diff.
+    try support.expectTool(host, "write", "{\"path\":\"a.txt\",\"content\":\"one\\nTWO\\nTWO\\n\"}", .{ .root = root, .text = .{ .contains = "" }, .extra = false });
     try support.expectTool(host, "exec", "{\"command\":\"echo out; echo err 1>&2; exit 3\"}", .{ .root = root, .text = .{ .contains = "out\n[stderr]\nerr\n[exit code: 3]" } });
     {
-        const call = host.calls.submit("exec", "{\"command\":\"head -c 20000 /dev/zero | tr '\\\\0' x\"}", root);
+        const call = host.calls.submit("exec", "{\"command\":\"head -c 20000 /dev/zero | tr '\\\\0' x\"}", support.toolContext(root));
         try support.pumpUntilSettled(host, call);
-        try std.testing.expect(!call.is_error);
-        const text = call.text.?;
+        try std.testing.expect(!support.reply(call).is_error);
+        const text = support.reply(call).text;
         // The result stays small, and the log it names holds every byte.
         try std.testing.expect(text.len < 2 * 4096 + 512);
         const marker = "Full log: ";
@@ -393,8 +323,8 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         defer std.testing.allocator.free(logged);
         try std.testing.expectEqual(@as(usize, 20000), logged.len);
         // The live output is not cut, so the user sees every byte while the command runs.
-        try std.testing.expectEqual(@as(usize, 20000), call.output.items.len);
-        try std.testing.expect(std.mem.indexOfNone(u8, call.output.items, "x") == null);
+        try std.testing.expectEqual(@as(usize, 20000), call.kind.tool.output.items.len);
+        try std.testing.expect(std.mem.indexOfNone(u8, call.kind.tool.output.items, "x") == null);
         call.finish();
         try host.pump();
     }
@@ -407,10 +337,10 @@ test "a user edit tool overrides the baked edit tool" {
     try support.eval(host, "native_tools/index.test.js");
     try support.eval(host, "native_tools/builtins.test.js");
 
-    const call = host.calls.submit("edit", "{}", "");
+    const call = host.calls.submit("edit", "{}", support.toolContext(""));
     try support.pumpUntilSettled(host, call);
-    try std.testing.expect(!call.is_error);
-    try std.testing.expectEqualStrings("user edit", call.text.?);
+    try std.testing.expect(!support.reply(call).is_error);
+    try std.testing.expectEqualStrings("user edit", support.reply(call).text);
     call.finish();
     try host.pump();
 }
@@ -424,10 +354,10 @@ test "exec call abort ends its process group and preserves unrelated work" {
 
     const canceled = host.calls.submit("exec",
         \\{"command":"sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\""}
-    , root);
+    , support.toolContext(root));
     const survivor = host.calls.submit("exec",
         \\{"command":"sleep 30 & child=$!; trap 'kill \"$child\"; wait \"$child\"; echo survived; exit 0' USR1; echo $$ $child > survivor-started; wait \"$child\""}
-    , root);
+    , support.toolContext(root));
     try host.pump();
     const pids = try waitExecPids(host, fixture.tmp.?.dir, "started");
     const survivor_pids = try waitExecPids(host, fixture.tmp.?.dir, "survivor-started");
@@ -447,8 +377,8 @@ test "exec call abort ends its process group and preserves unrelated work" {
     try std.testing.expect(!processExists(survivor_pids[0]));
     try std.testing.expect(!processExists(survivor_pids[1]));
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
-    try std.testing.expect(!survivor.is_error);
-    try std.testing.expect(std.mem.indexOf(u8, survivor.text.?, "survived") != null);
+    try std.testing.expect(!support.reply(survivor).is_error);
+    try std.testing.expect(std.mem.indexOf(u8, support.reply(survivor).text, "survived") != null);
     try support.dropCall(host, survivor);
 }
 
@@ -460,7 +390,7 @@ test "exec rejects forged and retained signals and aborts before process creatio
     try support.eval(host, "native_tools/exec-signal.test.js");
     try std.testing.expectEqual(@as(i32, 4), try host.evalInt("globalThis.refusals"));
     try std.testing.expectEqual(@as(usize, 0), host.ops.live.items.len);
-    const call = host.calls.submit("probe", "{}", root);
+    const call = host.calls.submit("probe", "{}", support.toolContext(root));
     try host.pump();
     try std.testing.expectEqual(@as(usize, 2), host.ops.live.items.len);
     call.finish();
@@ -480,13 +410,13 @@ test "exec completion detaches before call abort and host close rejects late exe
     const root = fixture.root();
     const host = fixture.host;
     try support.eval(host, "native_tools/exec-complete.test.js");
-    const call = host.calls.submit("probe", "{}", "/tmp");
+    const call = host.calls.submit("probe", "{}", support.toolContext("/tmp"));
     try host.pump();
     try support.pumpUntilIdle(host);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.finished"));
     try std.testing.expect(call.state == .running);
     try support.dropCall(host, call);
-    const race = host.calls.submit("probe", "{}", root);
+    const race = host.calls.submit("probe", "{}", support.toolContext(root));
     try host.pump();
     const ready_deadline = std.Io.Clock.Timestamp.fromNow(host.io, .{ .raw = .fromSeconds(5), .clock = .awake });
     while (!host.ops.anyReady()) {
@@ -753,10 +683,11 @@ test "run cleanup stops signaled exec without another owner pump" {
     const host = fixture.host;
     try host.evalModule("import { plugins } from \"yuke:internal/ext\"; import { builtins } from \"yuke:internal/builtins\"; plugins.use(builtins);", "builtins.js");
     var work: Work = .{};
+    var context = support.toolContext(root);
+    context.work = &work;
     const call = host.calls.submit("exec",
         \\{"command":"sleep 30 & child=$!; trap 'wait \"$child\"; exit 0' TERM; echo $$ $child > started; wait \"$child\""}
-    , root);
-    call.work = &work;
+    , context);
     try host.pump();
     const pids = try waitExecPids(host, fixture.tmp.?.dir, "started");
     try std.testing.expectEqual(@as(usize, 1), work.pending);
@@ -772,8 +703,9 @@ test "tool site attributes a question and call completion cancels it" {
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "native_tools/ask.test.js");
-    const call = host.calls.submit("ask", "{}", "/work");
-    call.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 4, .part_id = 2 };
+    var context = support.toolContext("/work");
+    context.site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 4, .part_id = 2 };
+    const call = host.calls.submit("ask", "{}", context);
     try host.pump();
     const question = host.interactions.takeNext().?;
     try std.testing.expectEqualSlices(u8, &([_]u8{1} ** 16), &question.session_id.?.raw);
@@ -787,18 +719,18 @@ test "a tool writes live output through its context, and a call that ended drops
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "native_tools/output.test.js");
-    const call = host.calls.submit("stream", "{}", "/work");
+    const call = host.calls.submit("stream", "{}", support.toolContext("/work"));
     try support.pumpUntilSettled(host, call);
-    try std.testing.expectEqualStrings("one\ntwo\n", call.output.items);
+    try std.testing.expectEqualStrings("one\ntwo\n", call.kind.tool.output.items);
     // The settled call names no live tool, so a late write is dropped.
     try host.evalModule("globalThis.lateOutput('late');", "output-late.js");
-    try std.testing.expectEqualStrings("one\ntwo\n", call.output.items);
+    try std.testing.expectEqualStrings("one\ntwo\n", call.kind.tool.output.items);
     try support.dropCall(host, call);
 
-    const capped = host.calls.submit("stream-cap", "{}", "/work");
+    const capped = host.calls.submit("stream-cap", "{}", support.toolContext("/work"));
     try support.pumpUntilSettled(host, capped);
-    try std.testing.expectEqual(@as(usize, proto.meta.limits.max_tool_output_stream_bytes - 2), capped.output.items.len);
-    try std.testing.expectEqual(@as(u64, 0), capped.output_room);
+    try std.testing.expectEqual(@as(usize, proto.meta.limits.max_tool_output_stream_bytes - 2), capped.kind.tool.output.items.len);
+    try std.testing.expectEqual(@as(u64, 0), capped.kind.tool.output_room);
     try support.dropCall(host, capped);
 }
 
@@ -832,7 +764,7 @@ test "an abort listener hears the call cancel once and a removed one hears nothi
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "native_tools/wait.test.js");
-    const call = host.calls.submit("wait", "{}", "/work");
+    const call = host.calls.submit("wait", "{}", support.toolContext("/work"));
     try host.pump();
     try std.testing.expect(host.interactions.takeNext() == null);
     try std.testing.expectEqual(@as(usize, 1), host.abort_listeners.items.len);
@@ -1044,11 +976,11 @@ test "an MCP stdio client port over spawn answers a tool call and shuts its serv
     try support.eval(host, "native_tools/mcp-proof.test.js");
 
     for (0..2) |i| {
-        const call = host.calls.submit("mcp_echo", "{}", "/tmp");
+        const call = host.calls.submit("mcp_echo", "{}", support.toolContext("/tmp"));
         try support.pumpUntilSettled(host, call);
         const want = try std.fmt.allocPrint(std.testing.allocator, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"result\":{{\"ok\":true}}}}", .{i + 1});
         defer std.testing.allocator.free(want);
-        try std.testing.expectEqualStrings(want, call.text.?);
+        try std.testing.expectEqualStrings(want, support.reply(call).text);
         try support.dropCall(host, call);
     }
     // The stubborn servers end at TERM (15) and at KILL (9).

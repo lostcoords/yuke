@@ -184,9 +184,9 @@ function endLine(text) {
 }
 
 
-/** @param {string | undefined} sessionId @returns {Job[]} */
+/** @param {string} sessionId @returns {Job[]} */
 function sessionJobs(sessionId) {
-  return listJobs().filter(j => (j.session_id ?? null) === (sessionId ?? null));
+  return listJobs().filter(j => j.session_id === sessionId);
 }
 
 /** @param {Job} job @returns {string} */
@@ -197,10 +197,9 @@ function jobState(job) {
 /** @param {string} command @param {ToolContext} context @returns {Promise<string>} */
 async function startBackground(command, context) {
   const root = context.workspaceRoot;
-  const sessionId = context.sessionId;
-  const same = sessionJobs(sessionId).find(j => j.state === "running" && j.command === command && j.cwd === root);
+  const same = sessionJobs(context.sessionId).find(j => j.state === "running" && j.command === command && j.cwd === root);
   if (same) return `[job ${jobName(same)} already runs this command. Log: ${same.log}]`;
-  const job = await hostCall("exec", startJob(command, { workspaceRoot: root, ...(sessionId !== undefined ? { sessionId } : {}) }));
+  const job = await hostCall("exec", startJob(command, { workspaceRoot: root, sessionId: context.sessionId }));
   return `[job ${jobName(job)} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use jobs with id and stop: true to request its stop.]`;
 }
 
@@ -208,7 +207,7 @@ async function startBackground(command, context) {
 /** @param {string} name @param {string} id @param {ToolContext} context @returns {Job} */
 function jobOf(name, id, context) {
   const job = /^j[1-9][0-9]*$/.test(id) ? getJob(Number(id.slice(1))) : null;
-  if (job && (job.session_id ?? null) === (context.sessionId ?? null)) return job;
+  if (job && job.session_id === context.sessionId) return job;
   const ids = sessionJobs(context.sessionId).map(jobName);
   return invalid(name, `the job ${id} does not exist. ${ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`}`);
 }
@@ -265,7 +264,6 @@ async function exec(args, signal, context) {
 async function skill(args, _signal, context) {
   const name = "skill";
   const skillName = stringArg(name, args, "name");
-  if (!context.sessionId) invalid(name, "the tool has no session");
   const loaded = await hostCall(name, client.skillLoad(context.sessionId, skillName));
   return loaded.content;
 }

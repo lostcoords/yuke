@@ -70,11 +70,11 @@ fn deferred(host: *Host, name: []const u8) bool {
 }
 
 fn expectSearch(host: *Host, args: []const u8, prefix: []const u8, loaded: []const []const u8, not_loaded: []const u8) !void {
-    const call = host.calls.submit("tool_search", args, host.cwd);
+    const call = host.calls.submit("tool_search", args, support.toolContext(host.cwd));
     try support.pumpUntilSettled(host, call);
-    try std.testing.expect(!call.is_error);
-    try std.testing.expect(std.mem.startsWith(u8, call.text orelse "", prefix));
-    const extra = call.extra_json orelse return error.TestExpectedEqual;
+    try std.testing.expect(!support.reply(call).is_error);
+    try std.testing.expect(std.mem.startsWith(u8, support.reply(call).text, prefix));
+    const extra = support.reply(call).extra_json orelse return error.TestExpectedEqual;
     for (loaded) |name| try std.testing.expect(std.mem.indexOf(u8, extra, name) != null);
     try std.testing.expect(std.mem.indexOf(u8, extra, not_loaded) == null);
     try support.dropCall(host, call);
@@ -91,7 +91,7 @@ fn expectState(host: *Host, name: []const u8, want: []const u8) !void {
 fn askSelect(host: *Host) !void {
     const call = host.calls.submitHook("tools.select", "{\"tools\":[],\"context\":{}}");
     try support.pumpUntilSettled(host, call);
-    try std.testing.expect(!call.is_error);
+    try std.testing.expect(!support.reply(call).is_error);
     try support.dropCall(host, call);
 }
 
@@ -119,15 +119,15 @@ test "an MCP call timeout cancels the request and ignores its late reply" {
     try support.pumpUntilTrue(host, "mcpLoaded() && mcpSettled()");
     try expectState(host, "modern", "connected · modern · 3 tools: a.tool, a_tool, echo");
     const start = std.Io.Timestamp.now(host.io, .awake);
-    const call = host.calls.submit("mcp_modern_echo", "{\"text\":\"slow\"}", host.cwd);
+    const call = host.calls.submit("mcp_modern_echo", "{\"text\":\"slow\"}", support.toolContext(host.cwd));
     try support.pumpUntilSettled(host, call);
-    try std.testing.expect(call.is_error);
-    try std.testing.expectEqualStrings("the request timed out", call.text orelse "");
+    try std.testing.expect(support.reply(call).is_error);
+    try std.testing.expectEqualStrings("the request timed out", support.reply(call).text);
     try std.testing.expect(start.durationTo(std.Io.Timestamp.now(host.io, .awake)).toMilliseconds() >= 100);
     // The server exits only after the client reads the late reply and answers the following ping.
     try support.pumpUntilTrue(host, "mcpStates().modern === 'failed · modern · the server exited with code 0'");
-    try std.testing.expect(call.is_error);
-    try std.testing.expectEqualStrings("the request timed out", call.text orelse "");
+    try std.testing.expect(support.reply(call).is_error);
+    try std.testing.expectEqualStrings("the request timed out", support.reply(call).text);
     try support.dropCall(host, call);
     try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpDisposed = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => { globalThis.mcpDisposed = true; });", "mcp-timeout-dispose.js");
     try support.pumpUntilTrue(host, "mcpDisposed === true");
@@ -177,9 +177,9 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"fail\"}", .{ .is_error = true, .text = .{ .equals = "no such thing" } });
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"media\"}", .{ .text = .{ .equals = "[image image/png, 3 bytes]\n[resource file:///x x]\nwhy" } });
     // The image block also attaches as media, beside the line that names it.
-    const media = host.calls.submit("mcp_modern_echo", "{\"text\":\"media\"}", host.cwd);
+    const media = host.calls.submit("mcp_modern_echo", "{\"text\":\"media\"}", support.toolContext(host.cwd));
     try support.pumpUntilSettled(host, media);
-    try std.testing.expect(std.mem.indexOf(u8, media.extra_json orelse "", "\"media\":[{\"hash\":\"abab") != null);
+    try std.testing.expect(std.mem.indexOf(u8, support.reply(media).extra_json orelse "", "\"media\":[{\"hash\":\"abab") != null);
     try support.dropCall(host, media);
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"structured\"}", .{ .text = .{ .equals = "{\"n\":1}" } });
     const marker = "\n[truncated 20000 characters]";
@@ -212,13 +212,13 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try std.testing.expect(!support.hasTool(host, "mcp_dies_echo"));
 
     // A stop answers a pending call at once; it does not wait for the server to exit.
-    const slow = host.calls.submit("mcp_modern_echo", "{\"text\":\"slow\"}", host.cwd);
+    const slow = host.calls.submit("mcp_modern_echo", "{\"text\":\"slow\"}", support.toolContext(host.cwd));
     try host.pump();
     try std.testing.expect(slow.state == .running);
     try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpDisposed = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => { globalThis.mcpDisposed = true; });", "mcp-dispose.js");
     try support.pumpUntilSettled(host, slow);
-    try std.testing.expect(slow.is_error);
-    try std.testing.expectEqualStrings("the MCP server stopped", slow.text orelse "");
+    try std.testing.expect(support.reply(slow).is_error);
+    try std.testing.expectEqualStrings("the MCP server stopped", support.reply(slow).text);
     try support.dropCall(host, slow);
     try support.pumpUntilTrue(host, "mcpDisposed === true");
     try std.testing.expect(!support.hasTool(host, "mcp_legacy_echo"));
@@ -264,11 +264,11 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     try support.expectTool(host, "mcp_modern_region", "{\"region\":\"世界\"}", .{ .text = .{ .equals = "region header: =?base64?5LiW55WM?=" } });
     try support.expectTool(host, "mcp_old_echo", "{\"text\":\"hi\"}", .{ .text = .{ .equals = "old sse: hi" } });
     // Each progress report restarts the 200 ms timer, so a 400 ms call ends with its answer.
-    const progress = host.calls.submit("mcp_modern_echo", "{\"text\":\"progress\"}", host.cwd);
+    const progress = host.calls.submit("mcp_modern_echo", "{\"text\":\"progress\"}", support.toolContext(host.cwd));
     try support.pumpUntilSettled(host, progress);
-    try std.testing.expectEqualStrings("modern http: progress", progress.text orelse "");
+    try std.testing.expectEqualStrings("modern http: progress", support.reply(progress).text);
     // Each report shows as one live line of the tool part.
-    try std.testing.expectEqualStrings("progress 1/5\nprogress 2/5\nprogress 3/5\nprogress 4/5\nprogress 5/5\n", progress.output.items);
+    try std.testing.expectEqualStrings("progress 1/5\nprogress 2/5\nprogress 3/5\nprogress 4/5\nprogress 5/5\n", progress.kind.tool.output.items);
     try support.dropCall(host, progress);
     // A filter without tool changes closes its stream, a dropped stream reconnects, and a graceful end stays closed.
     try support.pumpUntilSet(host, &peer.refuse_closed);
@@ -281,11 +281,7 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     try support.expectTool(host, "mcp_modern_slow", "{}", .{ .is_error = true, .text = .{ .equals = "the request timed out" } });
     try support.pumpUntilSet(host, &peer.cancel_seen);
     // An answer above 256 KiB arrives whole, cut only at the model's result limit.
-    const big = host.calls.submit("mcp_legacy_echo", "{\"text\":\"big\"}", host.cwd);
-    try support.pumpUntilSettled(host, big);
-    try std.testing.expect(!big.is_error);
-    try std.testing.expect(std.mem.endsWith(u8, big.text orelse "", "[truncated 207200 characters]"));
-    try support.dropCall(host, big);
+    try support.expectTool(host, "mcp_legacy_echo", "{\"text\":\"big\"}", .{ .text = .{ .ends = "[truncated 207200 characters]" } });
     // A forgotten session fails the call that finds it, and the server starts a new session.
     try support.expectTool(host, "mcp_legacy_echo", "{\"text\":\"expire\"}", .{ .text = .{ .equals = "legacy http: expire" } });
     try support.expectTool(host, "mcp_legacy_echo", "{\"text\":\"late\"}", .{ .is_error = true, .text = .{ .equals = "the server ended the session" } });

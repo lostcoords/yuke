@@ -3034,12 +3034,12 @@ export type PluginApply = (context: Context) => void | (() => void) | Promise<vo
 export interface ToolContext {
   /** The absolute workspace root of the session that made the call. */
   workspaceRoot: string;
-  /** The session that made the call. It is absent when the call has no transcript site. */
-  sessionId?: string;
-  /** The message that holds the call in the transcript. It is absent together with `sessionId`. */
-  messageId?: number;
-  /** The part that holds the call in its message. It is absent together with `sessionId`. */
-  partId?: number;
+  /** The session that made the call. */
+  sessionId: string;
+  /** The message that holds the call in the transcript. */
+  messageId: number;
+  /** The part that holds the call in its message. */
+  partId: number;
   /** Shows one chunk of live output while the tool runs. The model reads only the result; the stream stops at 1 MiB. */
   output(text: string): void;
 }

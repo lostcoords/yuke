@@ -16,19 +16,22 @@ const Value = quickjs.Value;
 
 /// Abort the signal of every left call before any continuation can read it.
 pub fn abortLeft(host: *Host) void {
-    for (host.calls.live.items) |call| {
-        if (!call.submitter_done or !host.ctx.isObject(call.signal)) continue;
-        cancellation.cancel(host, call.signal);
-    }
+    for (host.calls.live.items) |call| switch (call.state) {
+        .detached, .dropped, .left => if (call.signal()) |signal| cancellation.cancel(host, signal),
+        .queued, .running, .settled => {},
+    };
 }
 
 /// Start queued calls and poll running calls after the owner drains jobs.
 pub fn pump(host: *Host) void {
     // A start can queue nothing new, so one pass over the list visits every call exactly once.
     for (host.calls.live.items) |call| switch (call.state) {
-        .queued => if (!call.submitter_done) start(host, call),
-        .running => if (!call.submitter_done) poll(host, call),
-        .settled => {},
+        .queued => switch (call.kind) {
+            .tool => startTool(host, call),
+            .hook => startHook(host, call),
+        },
+        .running => poll(host, call),
+        .settled, .detached, .dropped, .left => {},
     };
     abortLeft(host);
     host.calls.sweep(host.ctx);
@@ -37,19 +40,13 @@ pub fn pump(host: *Host) void {
 /// Answer every waiting call, so a turn task never sleeps past the host. `Host.close` calls this.
 pub fn abortAll(host: *Host) void {
     for (host.calls.live.items) |call| {
-        if (host.ctx.isObject(call.signal)) {
-            cancellation.cancel(host, call.signal);
+        if (call.signal()) |signal| cancellation.cancel(host, signal);
+        switch (call.state) {
+            .queued => {},
+            .running => |promise| host.ctx.freeValue(promise),
+            .settled, .detached, .dropped, .left => continue,
         }
-        if (call.state == .settled or call.submitter_done) continue;
-        call.settle(host.io, null, null, true);
-    }
-}
-
-/// Invoke the handler this call names and retain its promise until it settles.
-fn start(host: *Host, call: *table.Call) void {
-    switch (call.kind) {
-        .tool => startTool(host, call),
-        .hook => startHook(host, call),
+        call.settle(host.io, .closed);
     }
 }
 
@@ -93,31 +90,31 @@ fn startTool(host: *Host, call: *table.Call) void {
     defer ctx.freeValue(parsed);
 
     // The handler reads `signal.aborted` between its awaits, so a canceled turn can stop early.
-    call.signal = cancellation.create(host);
+    const tool = &call.kind.tool;
+    const signal = cancellation.create(host);
+    tool.signal = signal;
     const context = ctx.newObject();
     if (!ctx.hasException()) {
-        ctx.setPropertyStr(context, "workspaceRoot", ctx.newString(call.workspace_root)) catch {};
-        if (call.site) |site| {
-            const id = std.fmt.bytesToHex(site.session_id.raw, .lower);
-            ctx.setPropertyStr(context, "sessionId", ctx.newString(&id)) catch {};
-            ctx.setPropertyStr(context, "messageId", ctx.newInt64(@intCast(site.message_id))) catch {};
-            ctx.setPropertyStr(context, "partId", ctx.newInt64(@intCast(site.part_id))) catch {};
-        }
+        ctx.setPropertyStr(context, "workspaceRoot", ctx.newString(tool.workspace_root)) catch {};
+        const id = std.fmt.bytesToHex(tool.site.session_id.raw, .lower);
+        ctx.setPropertyStr(context, "sessionId", ctx.newString(&id)) catch {};
+        ctx.setPropertyStr(context, "messageId", ctx.newInt64(@intCast(tool.site.message_id))) catch {};
+        ctx.setPropertyStr(context, "partId", ctx.newInt64(@intCast(tool.site.part_id))) catch {};
         // `output` is bound to this call by its signal, so it still works after a destructure.
-        var data = [_]c.JSValue{call.signal};
+        var data = [_]c.JSValue{signal};
         ctx.setPropertyStr(context, "output", c.JS_NewCFunctionData(ctx.ptr, jsOutput, 1, 0, 1, &data)) catch {};
     }
     // A full QuickJS heap fails the call, not the host, so the two roots go and the call settles.
     if (ctx.hasException()) {
         ctx.freeValue(context);
-        ctx.freeValue(call.signal);
-        call.signal = quickjs.UNDEFINED;
+        ctx.freeValue(signal);
+        tool.signal = null;
         pending.dropException(ctx);
         return settleText(host, call, "out of memory", null, true);
     }
     defer ctx.freeValue(context);
     host.enterSlice();
-    var argv = [_]Value{ parsed, call.signal, context };
+    var argv = [_]Value{ parsed, signal, context };
     const answer = ctx.call(host.tools.entries.items[at].handler, quickjs.UNDEFINED, &argv);
     acceptPromise(host, call, answer);
 }
@@ -137,21 +134,22 @@ fn acceptPromise(host: *Host, call: *table.Call, answer: Value) void {
             .hook => "the hook dispatcher must return a Promise",
         }, null, true);
     }
-    call.promise = answer; // the call holds the root until it settles
-    call.state = .running;
+    // The call owns the Promise, so the rejection tracker never reports it, even after the submitter leaves.
+    c.JS_PromiseMarkAsHandled(ctx.ptr, answer);
+    call.state = .{ .running = answer }; // the call holds the root until it settles
     poll(host, call);
 }
 
 /// Read one Promise. A pending Promise stays.
 fn poll(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
-    const state = ctx.promiseState(call.promise);
+    const promise = call.state.running;
+    const state = ctx.promiseState(promise);
     if (state == .Pending) return;
-    // The call answers the rejection itself, so the rejection tracker must not report it again.
-    if (state == .Rejected) host.forgetRejection(call.promise);
+    defer ctx.freeValue(promise);
     // A settle can run a user `toJSON` or getter, so it starts a fresh interrupt slice.
     host.enterSlice();
-    const result = ctx.promiseResult(call.promise);
+    const result = ctx.promiseResult(promise);
     defer ctx.freeValue(result);
     settleValue(host, call, result, state == .Rejected);
 }
@@ -215,11 +213,12 @@ fn jsOutput(ctx_ptr: ?*c.JSContext, _: c.JSValue, argc: c_int, argv: [*c]c.JSVal
     defer ctx.freeCString(text.ptr);
     const host = Host.fromContext(ctx);
     const call = host.calls.callForSignal(ctx, data[0]) orelse return quickjs.UNDEFINED;
-    const kept = utf8.floor(text, call.output_room);
-    call.output_room = if (kept < text.len) 0 else call.output_room - kept;
+    const tool = &call.kind.tool; // only a tool call holds a signal
+    const kept = utf8.floor(text, tool.output_room);
+    tool.output_room = if (kept < text.len) 0 else tool.output_room - kept;
     if (kept == 0) return quickjs.UNDEFINED;
-    call.output.appendSlice(host.gpa, text[0..kept]) catch unreachable;
-    call.changed.set(host.io);
+    tool.output.appendSlice(host.gpa, text[0..kept]) catch unreachable;
+    call.wake.set(host.io);
     return quickjs.UNDEFINED;
 }
 
@@ -257,9 +256,12 @@ fn cstring(ctx: Context, value: Value) ?[:0]const u8 {
 
 /// Sanitize the answer and its extra JSON as UTF-8 and wake the submitter.
 fn settleText(host: *Host, call: *table.Call, text: []const u8, extra_json: ?[]const u8, is_error: bool) void {
-    if (host.ctx.isObject(call.signal)) cancellation.cancel(host, call.signal);
+    std.debug.assert(extra_json == null or !is_error); // only a success carries a view
+    if (call.signal()) |signal| cancellation.cancel(host, signal);
+    const owned = utf8.sanitize(host.gpa, text) catch unreachable;
+    if (is_error) return call.settle(host.io, .{ .failed = owned });
     const extra = if (extra_json) |json| utf8.sanitize(host.gpa, json) catch unreachable else null;
-    call.settle(host.io, utf8.sanitize(host.gpa, text) catch unreachable, extra, is_error);
+    call.settle(host.io, .{ .ok = .{ .text = owned, .extra_json = extra } });
 }
 
 const support = @import("tests/support.zig");
@@ -268,16 +270,14 @@ test "a settle after a spent interrupt slice still reads the answer" {
     const host = support.createHost();
     defer support.destroyHost(host);
     const call = host.calls.submitHook("tool.before", "{}");
-    call.state = .running;
-    call.promise = try host.ctx.eval(
+    call.state = .{ .running = try host.ctx.eval(
         \\Promise.resolve({ toJSON() { let n = 0; for (let i = 0; i < 100000; i += 1) n += i; return { ok: n > 0 }; } })
-    , "answer.js", .{});
+    , "answer.js", .{}) };
     // The last job of a drain can spend the slice right before the poll.
     host.interrupt_count = host.interrupt_budget;
     pump(host);
-    try std.testing.expect(call.state == .settled);
-    try std.testing.expect(!call.is_error);
-    try std.testing.expectEqualStrings("{\"ok\":true}", call.text.?);
+    try std.testing.expect(!support.reply(call).is_error);
+    try std.testing.expectEqualStrings("{\"ok\":true}", support.reply(call).text);
     call.finish();
     try host.pump();
 }
@@ -289,10 +289,9 @@ test "a tool signal aborts at settlement before its submitter leaves" {
         \\import { defineTool } from "yuke:internal/native/tools";
         \\defineTool("probe", { description: "Probe", parameters: { type: "object", properties: {} }, execute: async (_, signal) => { await 0; globalThis.signal = signal; return "ok"; } });
     , "settled-signal.js");
-    const invocation = host.calls.submit("probe", "{}", "");
+    const invocation = host.calls.submit("probe", "{}", support.toolContext(""));
     try host.pump();
     try std.testing.expect(invocation.state == .settled);
-    try std.testing.expect(!invocation.submitter_done);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.signal.aborted"));
     try support.dropCall(host, invocation);
 }

@@ -233,10 +233,10 @@ pub const Host = struct {
         started.op.signal = self.ctx.dupValue(signal);
         started.op.on_text = self.ctx.dupValue(options.on_text);
         if (token) |held| held.retain();
-        if (self.calls.callForSignal(self.ctx, signal)) |call| if (call.work) |work| {
-            work.retain(&started.op.operation);
-            started.op.work = work;
-        };
+        if (self.calls.callForSignal(self.ctx, signal)) |call| { // only a tool call holds a signal
+            call.kind.tool.work.retain(&started.op.operation);
+            started.op.work = call.kind.tool.work;
+        }
         self.tasks.concurrent(self.io, task, .{ self, started.op, payload }) catch {
             payload.free(self.gpa);
             started.op.finish(.{ .failed = .{ .message = "the host cannot start another operation" } });
@@ -853,6 +853,7 @@ test "an unhandled rejection is reported once after the jobs run, and a late han
         \\Promise.resolve().then(() => late.catch(() => {}));
         \\plugins.use({ name: "tool-owner", apply(ctx) {
         \\  ctx.tools.define({ name: "failing", description: "Fail.", parameters: { type: "object", properties: {} }, execute: async () => { throw new Error("tool broke"); } });
+        \\  ctx.tools.define({ name: "late", description: "Fail late.", parameters: { type: "object", properties: {} }, execute: () => new Promise((_, reject) => { globalThis.rejectLate = reject; }) });
         \\} });
     , "rejections.js");
     // A rejection waits for the next pump, so the owner must not sleep past it.
@@ -863,6 +864,14 @@ test "an unhandled rejection is reported once after the jobs run, and a late han
     try support.expectString(host, "reports()", "script:Error: async listener");
     // The host answers a failed tool and a rejected module itself, so the tracker stays silent about both.
     try support.expectTool(host, "failing", "{}", .{ .is_error = true, .text = .{ .contains = "tool broke" } });
+    // A canceled turn leaves its tool running. The host frees the call at once, and the late rejection is no fault.
+    const left = host.calls.submit("late", "{}", support.toolContext(host.cwd));
+    try host.pump();
+    left.finish();
+    try host.pump();
+    try std.testing.expectEqual(@as(usize, 0), host.calls.live.items.len);
+    try host.eval("globalThis.rejectLate(new Error('late tool'))", "reject-late.js");
+    try host.pump();
     try std.testing.expectError(error.JavaScriptFault, host.evalModule("await Promise.reject(new Error('module'));", "module-reject.js"));
     try host.pump();
     try support.expectString(host, "reports()", "script:Error: async listener");

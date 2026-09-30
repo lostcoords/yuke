@@ -10,7 +10,7 @@ import { notify } from "yuke:internal/kernel";
 /** @typedef {{ description?: string, model?: string, prompt?: string, tools?: string[] }} AgentRow */
 /** @typedef {{ default?: string, catalog: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} AgentsOptions */
 /** @typedef {{ default: string, rows: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} Catalog */
-/** @typedef {{ sessionId?: string | null, messageId?: number | null, partId?: number | null }} ToolContext */
+/** @import { ToolContext } from "./types/ext.js" */
 /** @typedef {Extract<Wire.AssistantPart, { type: "tool" }>} ToolPart */
 /** What a spawn row draws of its child. `session.get` also answers the instruction sources and the skills, which the row never reads. */
 /** @typedef {{ site: Wire.ToolSite, activity: Wire.SessionActivity, last_run: Wire.RunOutcome | null }} ChildView */
@@ -114,8 +114,6 @@ function required(args, key) {
 }
 /** @param {ToolContext} context */
 function site(context) {
-    if (!context.sessionId) throw failure("bad_request", "The tool has no parent session.");
-    if (context.messageId == null || context.partId == null) throw failure("bad_request", "The tool has no live parent site.");
     return { session_id: context.sessionId, message_id: context.messageId, part_id: context.partId };
 }
 /** @param {string} parentId @param {string} target @returns {Promise<Wire.SessionListItem>} */

@@ -35,9 +35,10 @@ fn run(mode: Mode, options: struct { cleanup: Cleanup = .none, pool: ?PoolCase =
     if (second) |other| try host.ctx.setPropertyStr(global, "httpSecondUrl", host.ctx.newString(other.url));
     if (cleanup == .none) try support.eval(host, "native_tools/http.test.js") else try support.eval(host, "native_tools/http-lifecycle.test.js");
     var work: Work = .{};
-    const call = if (cleanup == .tool) host.calls.submit("fetch_probe", "{}", "/") else null;
+    var context = support.toolContext("/");
+    context.work = &work;
+    const call = if (cleanup == .tool) host.calls.submit("fetch_probe", "{}", context) else null;
     defer if (call) |held| held.finish();
-    if (call) |held| held.work = &work;
     if (options.pool == .concurrent) {
         try support.pumpUntil(host, peer, struct {
             fn all(p: *Peer) bool {
