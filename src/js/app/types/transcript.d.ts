@@ -102,7 +102,7 @@ export type ToolPart = Extract<Wire.AssistantPart, { type: "tool" }>;
 /** A reasoning part. */
 export type ReasoningPart = Extract<Wire.AssistantPart, { type: "reasoning" }>;
 
-/** The words and raw input behind one tool header. Flattening the line feeds of a nonempty `input` must equal `subject`; an empty `input` means that the header has no hidden input. */
+/** The words and raw input behind one tool header. A nonempty `input` with each line feed replaced by a space equals `subject`. An empty `input` means no hidden input. */
 export interface ToolHeading {
   verb: string;
   subject: string;

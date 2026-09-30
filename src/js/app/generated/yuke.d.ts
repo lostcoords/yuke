@@ -1482,7 +1482,8 @@ export function toolHead(part: ToolPart, tools: Record<string, ToolHead>): ToolH
  */
 export function wrapRows(text: string, width: number, group: string, indent: number, limit?: number, tail?: number): TranscriptRow[];
 /**
- * The rows of tool-result views. A one-file diff omits its path label; a multi-file or mixed view keeps file paths. `limit` bounds rows; the source retains each view chunk that starts before the limit so row offsets stay stable.
+ * The rows of tool-result views. A one-file diff omits its path. A multi-file or mixed view keeps file paths.
+ * `limit` bounds rows. The source keeps each chunk that starts before the limit.
  */
 export function viewRows(views: readonly Wire.View[], width: number, indent: number, limit?: number): Rendered;
 /**
@@ -3618,7 +3619,7 @@ export type ToolPart = Extract<Wire.AssistantPart, { type: "tool" }>;
 /** A reasoning part. */
 export type ReasoningPart = Extract<Wire.AssistantPart, { type: "reasoning" }>;
 
-/** The words and raw input behind one tool header. Flattening the line feeds of a nonempty `input` must equal `subject`; an empty `input` means that the header has no hidden input. */
+/** The words and raw input behind one tool header. A nonempty `input` with each line feed replaced by a space equals `subject`. An empty `input` means no hidden input. */
 export interface ToolHeading {
   verb: string;
   subject: string;

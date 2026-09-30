@@ -45,9 +45,8 @@ let styleMasks = Object.create(null);
 let rowStyles = Object.create(null);
 /** @type {Record<string, Record<string, string>>} */
 let overlayGroups = Object.create(null);
-/** Fields that an overlay keeps above a row's authoritative background. */
-/** @type {Map<string, number>} */
-let topStyleMasks = new Map();
+/** Overlay groups whose explicit background wins over a row background. @type {Set<string>} */
+let topBgGroups = new Set();
 let overlayGroupId = 0;
 
 /**
@@ -146,7 +145,7 @@ export const style = {
     styleMasks = Object.create(null);
     rowStyles = Object.create(null);
     overlayGroups = Object.create(null);
-    topStyleMasks = new Map();
+    topBgGroups = new Set();
     overlayGroupId = 0;
     root.invalidatePaint();
   },
@@ -221,7 +220,7 @@ function buildRowStyle(name, baseGroup) {
   const base = style.resolve(baseGroup);
   const out = { ...base };
   applyStyle(out, style.resolve(name), maskOf(name));
-  if ((maskOf(baseGroup) & style_bg) && !((topStyleMasks.get(name) || 0) & style_bg)) out.bg = /** @type {Color} */ (base.bg);
+  if ((maskOf(baseGroup) & style_bg) && !topBgGroups.has(name)) out.bg = /** @type {Color} */ (base.bg);
   byName[name] = out;
   return out;
 }
@@ -249,7 +248,7 @@ function buildOverlayStyleGroup(name, overlay) {
   const out = { ...style.resolve(name) };
   applyStyle(out, style.resolve(overlay), overlayMask);
   styleMasks[composite] = maskOf(name) | overlayMask;
-  topStyleMasks.set(composite, (topStyleMasks.get(name) || 0) | overlayMask);
+  if ((overlayMask & style_bg) !== 0 || topBgGroups.has(name)) topBgGroups.add(composite);
   style._cache[composite] = out;
   byName[name] = composite;
   return composite;

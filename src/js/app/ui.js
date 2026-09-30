@@ -761,8 +761,9 @@ export class Composer {
     const pw = w - tw;
     // The prompt marks the first row only. A later row aligns under it.
     if (this.scroll === 0) {
-      if (w > 2) text(x, y, this._prompt(), focused ? "UIComposerPrompt" : "UIComposerPromptInactive");
-      else if (pw > 0) text(x, y, clip(this._prompt(), pw, false), focused ? "UIComposerPrompt" : "UIComposerPromptInactive");
+      const group = focused ? "UIComposerPrompt" : "UIComposerPromptInactive";
+      if (w > 2) text(x, y, this._prompt(), group);
+      else if (pw > 0) text(x, y, clip(this._prompt(), pw, false), group);
     }
     for (let i = 0; i < h && this.scroll + i < rows.length; i++) {
       const r = /** @type {WrapRow} */ (rows[this.scroll + i]);

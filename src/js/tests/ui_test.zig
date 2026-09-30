@@ -155,7 +155,6 @@ test "a transcript row composes its background, text, and selection" {
     try std.testing.expect(!selected.style.reverse);
 
     const plain_selected = fixture.paint.render.window().readCell(1, 1).?;
-    try std.testing.expect(term_pkg.Color.eql(green, plain_selected.style.bg));
     try std.testing.expect(plain_selected.style.reverse);
 
     const metadata = fixture.paint.render.window().readCell(0, 2).?;

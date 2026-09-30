@@ -127,7 +127,8 @@ const owner = plugins.use({ name: "test-head", apply(ctx) {
 } });
 const over = new Transcript({ partsOf: (id) => parts[id] || [] });
 over.setOutline([{ id: "pres", type: "assistant" }], null);
-check("override-head", rowsHave(over.rows(60, 0, 4), "custom") && over._sourceOf("pres") === "run custom\nok");
+const overRows = over.rows(60, 0, 4);
+check("override-head", rowsHave(overRows, "custom") && rowsHave(overRows, "Took 0.0s") && over._sourceOf("pres") === "run custom\nok");
 check("cached-rows-change", rowsHave(pres.rows(60, 0, 4), "custom"));
 const faulty = plugins.use({ name: "test-faulty-head", apply(ctx) {
   ctx.inject(["chat"], (ctx) => { ctx.chat.render({ tools: { exec: () => { throw new Error("bad"); } }, sources: { engine_interruption: () => "second" } }); });

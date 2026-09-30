@@ -129,10 +129,7 @@ const treeLook = {
     read: (o) => ({ verb: "Read", subject: displayPath(o.path) + (typeof o.start === "number" ? " (" + o.start + "-" + (typeof o.end === "number" ? o.end : "") + ")" : ""), category: "read", input: "" }),
     write: (o) => ({ verb: "Write", subject: displayPath(o.path), category: "write", input: "" }),
     edit: (o) => ({ verb: "Edit", subject: displayPath(o.path) + (o.replace_all ? " (all)" : ""), category: "write", input: "" }),
-    exec: (o) => {
-      const command = String(o.command || "");
-      return { verb: "Run", subject: displayCommand(command), category: "run", input: "" };
-    },
+    exec: (o) => ({ verb: "Run", subject: displayCommand(o.command), category: "run", input: "" }),
     skill: (o) => ({ verb: "Skill", subject: String(o.name || ""), category: "other", input: "" }),
   },
   // Tool calls and thoughts group as actions, and text closes the group.

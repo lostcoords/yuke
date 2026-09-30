@@ -2,7 +2,7 @@ import { style } from "yuke:internal/core";
 import { term } from "yuke:internal/native/term";
 import { Composer } from "yuke:internal/ui";
 
-style.set({ UIComposer: { bg: "#112233" } });
+style.setPalette({ bg: "#112233" });
 
 const c = new Composer();
 c.rect = { x: 0, y: 0, w: 7, h: 2 };

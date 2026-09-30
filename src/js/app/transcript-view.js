@@ -61,9 +61,7 @@ export function toolHead(part, tools) {
   const head = tools[verb];
   if (head) {
     const out = head(args, part);
-    const subject = String(out.subject || "");
-    const input = String(out.input || "");
-    return { verb: String(out.verb || verb), subject, category: String(out.category || "other"), input: displayCommand(input) === subject ? input : "" };
+    return { verb: out.verb, subject: out.subject, category: out.category, input: displayCommand(out.input) === out.subject ? out.input : "" };
   }
   if (typeof args.path === "string") return { verb, subject: displayPath(args.path), category: "other", input: "" };
   if (typeof args.command === "string") return { verb, subject: displayCommand(args.command), category: "other", input: args.command };
@@ -103,7 +101,8 @@ function moveSrc(rows, base) {
 }
 
 /**
- * The rows of tool-result views. A one-file diff omits its path label; a multi-file or mixed view keeps file paths. `limit` bounds rows; the source retains each view chunk that starts before the limit so row offsets stay stable.
+ * The rows of tool-result views. A one-file diff omits its path. A multi-file or mixed view keeps file paths.
+ * `limit` bounds rows. The source keeps each chunk that starts before the limit.
  * @param {readonly Wire.View[]} views @param {number} width @param {number} indent @param {number} [limit] @returns {Rendered}
  */
 export function viewRows(views, width, indent, limit = Infinity) {
@@ -233,7 +232,8 @@ function addShown(rows, shown, body, source) {
   return source + "\n" + body.slice(from, end);
 }
 
-// The body of a tool block is the tail of a shell output, the whole diff of an edit, or the head of any other output. Plain folded output keeps only shown text; view sources retain accepted chunks for stable offsets.
+// The body of a tool block is the tail of a shell output, the whole diff of an edit, or the head of any other output.
+// Folded plain output keeps shown text. View output keeps each chunk that starts before the limit.
 /** @param {ToolPart} part @param {number} width @param {boolean} expanded @param {TranscriptRow[]} rows @param {string} source @returns {string} */
 function toolBody(part, width, expanded, rows, source) {
   const state = part.state;
@@ -309,13 +309,11 @@ export const defaultRender = {
     const head = toolHead(part, env.tools);
     const title = head.verb;
     const input = head.input;
-    const hasInput = input.length !== 0;
-    const source = hasInput ? title + " " + input : head.subject ? title + " " + head.subject : title;
+    const source = input ? title + " " + input : head.subject ? title + " " + head.subject : title;
     /** @type {Segment[]} */
     const segments = [{ text: title, group: "TxToolTitle", src: 0, srcEnd: title.length }];
     const shown = head.subject ? clip(head.subject, Math.max(1, width - term.measure(title) - 1)) : "";
-    const lineFeed = hasInput ? input.indexOf("\n") : -1;
-    const revealInput = env.expanded && hasInput && (lineFeed >= 0 || shown !== head.subject);
+    const revealInput = env.expanded && input !== "" && (shown !== head.subject || input.indexOf("\n") >= 0);
     // The header clips here and not in the draw, so a frame allocates no cut string for a long command.
     if (head.subject) {
       if (revealInput) segments.push({ text: " " + shown, group: "TxToolArg" });
@@ -324,7 +322,7 @@ export const defaultRender = {
     /** @type {TranscriptRow[]} */
     const rows = [{ segments, indent: PAD, header: true, stop: true }];
     if (revealInput) {
-      const inputRows = wrapRows(/** @type {string} */ (input), width, "TxToolArg", PAD);
+      const inputRows = wrapRows(input, width, "TxToolArg", PAD);
       moveSrc(inputRows, title.length + 1);
       for (let i = 0; i < inputRows.length; i++) rows.push(/** @type {TranscriptRow} */ (inputRows[i]));
     }
