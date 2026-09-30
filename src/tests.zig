@@ -33,6 +33,7 @@ test {
     _ = @import("session/session.zig");
     _ = @import("session/draft.zig");
     _ = @import("session/transcript.zig");
+    _ = @import("session/tokens.zig");
     _ = @import("diff/diff.zig");
     _ = @import("provider/provider.zig");
     _ = @import("store/store.zig");

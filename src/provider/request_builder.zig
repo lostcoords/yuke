@@ -200,7 +200,11 @@ fn omittedNote(kind: ai.Modality) []const u8 {
     };
 }
 
-const interrupted_marker = "<turn_interrupted>The user stopped the previous run. Tool calls may have partially executed.</turn_interrupted>";
+/// The result of a canceled tool call. The context estimate charges it too.
+pub const canceled_tool_note = "The tool call was canceled. It may have produced side effects before it stopped.";
+
+/// The user block after a canceled run. The context estimate charges it too.
+pub const interrupted_marker = "<turn_interrupted>The user stopped the previous run. Tool calls may have partially executed.</turn_interrupted>";
 
 /// The user block that follows a failed or canceled assistant message. Any other finish adds nothing.
 fn outcomeMarker(gpa: std.mem.Allocator, msg: proto.message.AssistantMessage) Error!?[]const u8 {
@@ -222,7 +226,7 @@ fn terminalToolResult(gpa: std.mem.Allocator, call_id: []const u8, state: proto.
     return switch (state) {
         .completed => |c| completedResult(gpa, call_id, c, options, images),
         .@"error" => |e| .{ .call_id = call_id, .content = e.@"error", .is_error = true },
-        .canceled => .{ .call_id = call_id, .content = "The tool call was canceled. It may have produced side effects before it stopped.", .is_error = true },
+        .canceled => .{ .call_id = call_id, .content = canceled_tool_note, .is_error = true },
         // A committed transcript holds only terminal tools.
         .pending, .running => error.InvalidTranscript,
     };
@@ -497,7 +501,7 @@ test "a canceled tool becomes an error provider result that names the side effec
     const request = (try build(testing.allocator, &messages, .{})).blocks;
     defer testing.allocator.free(request);
     try testing.expect(request[1].value.tool_result.is_error);
-    try testing.expectEqualStrings("The tool call was canceled. It may have produced side effects before it stopped.", request[1].value.tool_result.content);
+    try testing.expectEqualStrings(canceled_tool_note, request[1].value.tool_result.content);
 }
 
 test "a compaction summary arrives wrapped, and the wrapper refuses it authority" {

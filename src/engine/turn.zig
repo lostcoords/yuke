@@ -277,11 +277,7 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, diagn
         error.ContextHistoryTooLarge => try compactAndProject(engine, arena, slot, held, diagnostics),
         else => return err,
     };
-    return round_request.prepare(arena, engine, slot, held, projected) catch |err| switch (err) {
-        // The loaded definitions in the history pushed the request over, so one compaction drops the oldest of them.
-        error.ContextHistoryTooLarge => try round_request.prepare(arena, engine, slot, held, try compactAndProject(engine, arena, slot, held, diagnostics)),
-        else => return err,
-    };
+    return round_request.prepare(arena, engine, slot, held, projected);
 }
 
 /// Summarize the oldest history, then project the request again under the same budget.
@@ -1329,10 +1325,11 @@ test "the final build hook obeys prompt and context limits without a new floor" 
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     try std.testing.expectError(error.PromptTooLarge, round_request.snapshot(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));
-    state.size = 400_000;
+    // The default window compacts at 111,616 tokens, and this prompt alone reaches 120,000.
+    state.size = 480_000;
     try std.testing.expectError(error.ContextTooLarge, round_request.snapshot(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));
     state.size = 0;
-    state.output = 128_000;
+    state.output = 0;
     try std.testing.expectError(error.ContextTooLarge, round_request.snapshot(arena.allocator(), &f.engine, f.slot, .{ .provider = &row, .model = &model }));
 }
 

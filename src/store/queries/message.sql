@@ -16,13 +16,14 @@
 -- tokens_cache_write: ?u64!
 -- cost: ?f64!
 -- created_at_ms: u64!
--- images: u64!
+-- tokens_estimate: u64!
+-- reasoning_estimate: u64!
 INSERT INTO messages(
     session_id, message_id, seq, role, run_id, config_rev, model, protocol, finish,
-    tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, cost, created_at_ms, images
+    tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, cost, created_at_ms, tokens_estimate, reasoning_estimate
 ) VALUES (
     :session_id, :message_id, :seq, :role, :run_id, :config_rev, :model, :protocol, :finish,
-    :tokens_input, :tokens_output, :tokens_reasoning, :tokens_cache_read, :tokens_cache_write, :cost, :created_at_ms, :images
+    :tokens_input, :tokens_output, :tokens_reasoning, :tokens_cache_read, :tokens_cache_write, :cost, :created_at_ms, :tokens_estimate, :reasoning_estimate
 );
 
 -- name: AdvanceMessage :one
@@ -100,17 +101,39 @@ WHERE m.session_id = :session_id AND m.run_id = :run_id AND m.role = 'assistant'
 ORDER BY m.message_id DESC;
 
 -- name: ContextSizes :many
--- Inspect committed sizes before any body enters the request arena.
+-- Read the token estimate of each committed message, newest first, before any body enters the request arena. Another model drops the reasoning share.
 -- session_id: [16]u8!
+-- model: []const u8!
 -- first_message_id: u64!
 -- message_id: u64!
 -- role: []const u8!
--- bytes: u64!
--- images: u64!
-SELECT m.message_id, m.role, length(CAST(e.payload AS BLOB)) AS bytes, m.images
-FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
-WHERE m.session_id = :session_id AND m.message_id >= :first_message_id
-ORDER BY m.message_id DESC;
+-- tokens: u64!
+SELECT message_id, role, tokens_estimate - CASE WHEN model IS :model THEN 0 ELSE reasoning_estimate END AS tokens
+FROM messages
+WHERE session_id = :session_id AND message_id >= :first_message_id AND role <> 'compaction'
+ORDER BY message_id DESC;
+
+-- name: ContextCount :one
+-- Read the parts of the next request count. The anchor is the newest nonzero provider input after the checkpoint, when the session model gave it.
+-- A provider that omits usage records zero, so zero anchors nothing. The sum starts at the anchor, or at the first kept message with no anchor.
+-- session_id: [16]u8!
+-- model: []const u8!
+-- checkpoint_id: u64!
+-- first_message_id: u64!
+-- anchor_input: ?u64!
+-- tokens: u64!
+WITH newest AS (
+    SELECT message_id, tokens_input, model IS :model AS own
+    FROM messages
+    WHERE session_id = :session_id AND role = 'assistant' AND tokens_input > 0 AND message_id > :checkpoint_id
+    ORDER BY message_id DESC
+    LIMIT 1
+), anchor AS (SELECT message_id, tokens_input FROM newest WHERE own)
+SELECT (SELECT tokens_input FROM anchor) AS anchor_input,
+    COALESCE(SUM(tokens_estimate - CASE WHEN model IS :model THEN 0 ELSE reasoning_estimate END), 0) AS tokens
+FROM messages
+WHERE session_id = :session_id AND role <> 'compaction'
+    AND message_id >= COALESCE((SELECT message_id FROM anchor), :first_message_id);
 
 -- name: ContextMessages :many
 -- row-from: MessagePage

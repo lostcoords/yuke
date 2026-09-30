@@ -35,7 +35,7 @@ pub fn snapshot(
 
     const build = try config.buildConfig(engine, arena, slot, &model);
 
-    const budget = try context.Budget.forRequest(model.limits.context_window, build.max_output_tokens, build.system, build.tools);
+    const budget = try context.Budget.forRequest(model.limits.context_window, slot.config.model, build.max_output_tokens, build.system, build.tools);
     return .{ .route = route, .model = model, .build = build, .budget = budget };
 }
 
@@ -52,9 +52,8 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
         .modalities = model.modalities,
         .blobs = blobs.lookup(),
     });
-    // A definition from history enters the request, so it counts against the same ceiling.
-    if (built.added.len != 0 and context.tokensFor(try context.jsonBytes(built.added)) > held.budget.input_ceiling - projected.tokens) return error.ContextHistoryTooLarge;
     const tools = try provider.request_builder.declared(arena, build.tools, built.added);
+    const max_output = held.budget.clampOutput(build.max_output_tokens, projected.tokens);
 
     // The serializer and the header builder both copy this, so it only has to outlive `prepare`.
     const session_hex = std.fmt.bytesToHex(slot.sessionId().raw, .lower);
@@ -63,9 +62,9 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
         .system = build.system,
         .tools = tools,
         .options = .{
-            .max_output_tokens = build.max_output_tokens,
+            .max_output_tokens = max_output,
             // The budget shares the ceiling, so it follows whatever the chain left there.
-            .reasoning = try config.reasoningFor(&model, slot.config.reasoning, build.max_output_tokens),
+            .reasoning = try config.reasoningFor(&model, slot.config.reasoning, max_output),
             // Every round of one session repeats a prefix, so the session id keeps them on one cache and one upstream.
             .session_id = &session_hex,
         },

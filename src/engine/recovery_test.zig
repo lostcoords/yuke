@@ -103,7 +103,7 @@ test "skill input survives admission teardown and recovery through another conne
     try testing.expectEqual(@as(usize, 1), page.messages.len);
     try testing.expectEqualStrings("pdf", page.messages[0].user.skill_name.?);
     try testing.expectEqualStrings(text, page.messages[0].user.content[0].text.text);
-    const projected = try context.project(std.testing.allocator, arena.allocator(), &f.db, sid, .{ .input_ceiling = 40_000 });
+    const projected = try context.project(std.testing.allocator, arena.allocator(), &f.db, sid, .{ .window = 40_000, .fixed = 0, .compact_at = 40_000, .model = "" });
     try testing.expectEqualStrings("pdf", projected.messages[0].user.skill_name.?);
     try testing.expectEqualStrings(text, projected.messages[0].user.content[0].text.text);
 }

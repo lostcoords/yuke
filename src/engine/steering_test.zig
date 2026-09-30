@@ -337,7 +337,8 @@ test "input during automatic compaction waits for the next round and keeps messa
     {
         var tx = try f.base.db.begin();
         defer tx.deinit();
-        for ([_]usize{ 300, 30_000, 300, 7000 }, 0..) |len, i| {
+        // The history passes the compaction point at 15,000. The newest turn passes the tail target at 2,000.
+        for ([_]usize{ 300, 52_000, 300, 9000 }, 0..) |len, i| {
             const id = try database.event.allocMessageId(&f.base.db, a, Fixture.id.raw);
             const text = try a.alloc(u8, len);
             @memset(text, 'x');

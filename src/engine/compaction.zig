@@ -13,6 +13,7 @@ const session_mod = @import("../session/session.zig");
 const runs = @import("run.zig");
 const session_events = @import("events.zig");
 const provider = @import("../provider/provider.zig");
+const token_estimate = @import("../session/tokens.zig");
 const Session = session_mod.Session;
 const RunSlot = session_mod.RunSlot;
 
@@ -30,9 +31,9 @@ pub const Cut = struct {
 };
 
 /// Cut at the start of the turn that holds the tail target. Null means no earlier turn to summarize.
-pub fn selectCut(gpa: std.mem.Allocator, db: *database.Database, session_id: [16]u8, from_id: u64, target: u64) !?Cut {
+pub fn selectCut(gpa: std.mem.Allocator, db: *database.Database, session_id: [16]u8, model: []const u8, from_id: u64, target: u64) !?Cut {
     std.debug.assert(target > 0);
-    var rows = try db.queries.context_sizes.rows(.{ .session_id = session_id, .first_message_id = from_id });
+    var rows = try db.queries.context_sizes.rows(.{ .session_id = session_id, .model = model, .first_message_id = from_id });
     defer rows.deinit();
 
     var total: u64 = 0;
@@ -49,11 +50,10 @@ pub fn selectCut(gpa: std.mem.Allocator, db: *database.Database, session_id: [16
         defer _ = scratch.reset(.retain_capacity);
         var row = owned;
         defer row.deinit();
-        if (std.mem.eql(u8, row.value.role, "compaction")) continue;
-        const tokens = context.messageTokens(row.value.bytes, row.value.images);
-        total += tokens;
+        const estimate = row.value.tokens;
+        total += estimate;
         if (cut == null) {
-            tail += tokens;
+            tail += estimate;
             if (std.mem.eql(u8, row.value.role, "user")) {
                 // An older user message extends the same turn, so the run start moves back.
                 pending = row.value.message_id;
@@ -137,13 +137,17 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: ro
     try slot.cancel.check(engine.deps.io);
     const sid = slot.sessionId().raw;
     const db = engine.deps.db;
-    const window = held.model.limits.context_window orelse context.default_context_window;
+    const budget = held.budget;
     const head = try context.readHead(engine.deps.gpa, arena, db, sid);
-    var cut = (try selectCut(engine.deps.gpa, db, sid, if (head) |h| h.from_id else 0, tailTarget(window))) orelse
+    // A small window takes a small tail, so one compaction always reclaims a useful share of it.
+    const tail_target = @max(1, @min(default_keep_recent_tokens, budget.window / 10));
+    var cut = (try selectCut(engine.deps.gpa, db, sid, budget.model, if (head) |h| h.from_id else 0, tail_target)) orelse
         return .{ .skipped = .{ .reason = .too_few_messages } };
-    if (head) |h| cut.tokens_before += context.summaryTokens(h.message.compaction.summary);
-    if (cut.tokens_kept >= held.budget.input_ceiling) return error.TurnTooLarge;
-    // `context.project` refuses a history above the budget, and a compaction runs only above it.
+    if (head) |h| cut.tokens_before += token_estimate.ofSummary(h.message.compaction.summary);
+    // A tail that alone reaches the compaction point would compact again at once.
+    if (budget.fixed + cut.tokens_kept >= budget.compact_at) return error.TurnTooLarge;
+    // The record states the count that the gauge showed before the summary.
+    const count_before = try context.count(engine.deps.gpa, db, sid, head, budget);
     const covered = try context.collect(engine.deps.gpa, arena, db, sid, head, cut.first_kept_id);
     // The summary reads no blob, so a text-only modality set turns every attachment into its note.
     const built = (try provider.request_builder.build(arena, covered, .{
@@ -152,10 +156,8 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: ro
     })).blocks;
     if (built.len == 0) return .{ .skipped = .{ .reason = .nothing_to_summarize } };
 
-    // The summary repeats the system prompt and the tools of the turn, so it reuses the cached prefix.
-    const budget = try context.Budget.forRequest(window, summary_output_tokens, held.build.system, held.build.tools);
-    // No chunked summary exists, so a range above the window fails and never covers a part.
-    if (cut.tokens_before > budget.input_ceiling) return error.CompactionSourceTooLarge;
+    // The summary request sends the turn prefix, the covered range, and the answer. A range above the window fails, because no chunked summary exists.
+    if (budget.fixed + (cut.tokens_before - cut.tokens_kept) + summary_output_tokens > budget.window) return error.CompactionSourceTooLarge;
 
     // The instruction trails the covered range, so every block above it repeats the turn prefix.
     const blocks = try arena.alloc(ai.ir.Block, built.len + 1);
@@ -163,10 +165,10 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: ro
     blocks[built.len] = .{ .role = .user, .value = .{ .text = try instruction(engine, arena, slot, if (head != null) .merge else .summarize) } };
 
     const summary = try summaryCall(engine, arena, slot, held, blocks, diagnostics);
-    const after = cut.tokens_kept + context.summaryTokens(summary);
-    if (after > held.budget.input_ceiling or after >= cut.tokens_before) return error.CompactionDidNotFit;
+    const kept = cut.tokens_kept + token_estimate.ofSummary(summary);
+    if (budget.fixed + kept > budget.compact_at or kept >= cut.tokens_before) return error.CompactionDidNotFit;
     try slot.cancel.check(engine.deps.io);
-    return commit(engine, arena, slot, cut, summary);
+    return commit(engine, arena, slot, cut, summary, .{ .before = count_before, .after = budget.fixed + kept });
 }
 
 /// Ask the session model for the summary text with the system prompt and the tools of the turn, so the call reuses the cached prefix.
@@ -199,13 +201,8 @@ fn summaryCall(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: 
     return arena.dupe(u8, result.text);
 }
 
-/// A small window takes a small tail, so one compaction always reclaims a useful share of it.
-fn tailTarget(window: u64) u64 {
-    return @max(1, @min(default_keep_recent_tokens, window / 10));
-}
-
 /// Commit the checkpoint, then publish it. The run terminal follows in the run task.
-fn commit(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, cut: Cut, summary: []const u8) !proto.run.RunOutcome {
+fn commit(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, cut: Cut, summary: []const u8, counts: struct { before: u64, after: u64 }) !proto.run.RunOutcome {
     std.debug.assert(summary.len != 0);
     const session_id = slot.sessionId();
     const rt = engine.sessions.get(session_id) orelse return error.UnknownSession;
@@ -224,8 +221,8 @@ fn commit(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, cut: Cut, s
         .reason = slot.handle.started.reason orelse .auto,
         .summary = summary,
         .first_kept_id = cut.first_kept_id,
-        .tokens_before = cut.tokens_before,
-        .tokens_after = cut.tokens_kept + context.summaryTokens(summary),
+        .tokens_before = counts.before,
+        .tokens_after = counts.after,
         .time = .{ .created_at_ms = now },
     } };
     const stored = try database.message.appendCommittedMessage(engine.deps.db, arena, session_id.raw, engine.newId(), now, message);
@@ -258,9 +255,9 @@ test "the cut lands on the start of the turn that holds the tail target" {
         try seedMessage(&db, a, sid, 3, .user, 300);
         try seedMessage(&db, a, sid, 4, .assistant, 3000);
 
-        const cut = (try selectCut(testing.allocator, &db, sid, 0, 100)).?;
+        const cut = (try selectCut(testing.allocator, &db, sid, "mock/m", 0, 100)).?;
         try testing.expectEqual(@as(u64, 3), cut.first_kept_id);
-        try testing.expect(cut.tokens_kept > context.tokensFor(3300));
+        try testing.expectEqual(token_estimate.ofBytes(300) + token_estimate.ofBytes(3000), cut.tokens_kept);
         try testing.expect(cut.tokens_before > cut.tokens_kept);
     }
     {
@@ -275,7 +272,7 @@ test "the cut lands on the start of the turn that holds the tail target" {
         try seedMessage(&db, a, sid, 4, .user, 300);
         try seedMessage(&db, a, sid, 5, .assistant, 3000);
 
-        const cut = (try selectCut(testing.allocator, &db, sid, 0, 100)).?;
+        const cut = (try selectCut(testing.allocator, &db, sid, "mock/m", 0, 100)).?;
         try testing.expectEqual(@as(u64, 3), cut.first_kept_id);
     }
 }
@@ -291,12 +288,12 @@ test "a history with no earlier turn is a skip" {
     try seedMessage(&db, arena.allocator(), sid, 2, .assistant, 30_000);
 
     // The target is inside the only turn, so a cut would summarize nothing.
-    try testing.expectEqual(@as(?Cut, null), try selectCut(testing.allocator, &db, sid, 0, 100));
+    try testing.expectEqual(@as(?Cut, null), try selectCut(testing.allocator, &db, sid, "mock/m", 0, 100));
     // A history under the target needs no compaction either.
-    try testing.expectEqual(@as(?Cut, null), try selectCut(testing.allocator, &db, sid, 0, 1_000_000));
+    try testing.expectEqual(@as(?Cut, null), try selectCut(testing.allocator, &db, sid, "mock/m", 0, 1_000_000));
 }
 
-test "the estimate charges each image a fixed cost above its payload bytes" {
+test "the stored estimate charges each image, and the cut reads the same rows" {
     var db = try database.Database.openTest();
     defer db.deinit();
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
@@ -305,24 +302,26 @@ test "the estimate charges each image a fixed cost above its payload bytes" {
     const sid = [_]u8{10} ** 16;
     try Resources.seedSession(&db, sid, .{ .model = "mock", .title = "t" });
     try seedMessage(&db, a, sid, 1, .user, 300);
-    const before = try context.estimate(testing.allocator, a, &db, sid);
+    const before = try context.count(testing.allocator, &db, sid, null, unmeasured);
     const blob: proto.content.MediaBlob = .{ .hash = .bytes(@splat(0x5a)), .mime = "image/png", .bytes = 64 };
     const message: proto.message.Message = .{ .user = .{ .id = 2, .input_id = 2, .content = &.{ .{ .image = .{ .source = blob } }, .{ .image = .{ .source = blob } } }, .time = .{ .created_at_ms = 2 } } };
     try seedCommitted(&db, a, sid, 2, message);
-    const payload = try std.json.Stringify.valueAlloc(a, message, .{ .emit_null_optional_fields = false });
-    const after = try context.estimate(testing.allocator, a, &db, sid);
-    try testing.expectEqual(before + context.tokensFor(payload.len) + 2 * context.image_tokens, after);
+    const after = try context.count(testing.allocator, &db, sid, null, unmeasured);
+    try testing.expectEqual(before + 2 * token_estimate.media_tokens, after);
     // The cut charges the same rows the same way, so the covered range carries the image cost.
     try seedMessage(&db, a, sid, 3, .assistant, 300);
     try seedMessage(&db, a, sid, 4, .user, 300);
     try seedMessage(&db, a, sid, 5, .assistant, 3000);
-    const cut = (try selectCut(testing.allocator, &db, sid, 0, 100)).?;
+    const cut = (try selectCut(testing.allocator, &db, sid, "mock/m", 0, 100)).?;
     try testing.expectEqual(@as(u64, 4), cut.first_kept_id);
-    try testing.expectEqual(try context.estimate(testing.allocator, a, &db, sid), cut.tokens_before);
+    try testing.expectEqual(try context.count(testing.allocator, &db, sid, null, unmeasured), cut.tokens_before);
     try testing.expect(cut.tokens_before - cut.tokens_kept >= after);
 }
 
-/// Commit one message of about `bytes` payload bytes, so a scan test states its own sizes.
+/// A budget with no prompt, so a count states the stored estimate alone.
+const unmeasured: context.Budget = .{ .window = 1_000_000, .fixed = 0, .compact_at = 1_000_000, .model = "mock/m" };
+
+/// Commit one message with `bytes` text bytes. A scan test then states its own sizes.
 fn seedMessage(db: *database.Database, arena: std.mem.Allocator, id: [16]u8, message_id: u64, role: enum { user, assistant }, bytes: usize) !void {
     const filler = try arena.alloc(u8, bytes);
     @memset(filler, 'x');
@@ -430,11 +429,37 @@ test "a compaction commits one checkpoint and ends its run" {
     try testing.expectEqual(@as(?u64, null), snapshot.open_run_id);
 
     // The next request reads the checkpoint first, then the tail the cut kept.
-    const projected = try context.project(testing.allocator, a, &f.db, TaskFixture.sid, .{ .input_ceiling = 400_000 });
+    const projected = try context.project(testing.allocator, a, &f.db, TaskFixture.sid, unmeasured);
     try testing.expectEqual(@as(usize, 3), projected.messages.len);
     try testing.expectEqual(@as(u64, 5), projected.messages[0].compaction.id);
     try testing.expectEqual(@as(u64, 3), projected.messages[1].id());
     try testing.expectEqual(@as(u64, 4), projected.messages[2].id());
+}
+
+test "the compaction record starts from the provider count of the session model" {
+    var f: TaskFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 2000);
+    try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 2000);
+    try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
+    const answer: proto.message.Message = .{ .assistant = .{
+        .id = 4,
+        .run_id = 1,
+        .config_rev = 0,
+        .time = .{ .created_at_ms = 4 },
+        .provenance = .{ .protocol = .anthropic_messages, .model = "mock/m" },
+        .tokens = .{ .input = 50_000, .output = 10, .reasoning = 0, .cache_read = 0, .cache_write = 0 },
+        .content = &.{.{ .text = .{ .id = 0, .text = "x" ** 90_000 } }},
+    } };
+    try seedCommitted(&f.db, a, TaskFixture.sid, 4, answer);
+    try testing.expect(try f.run(.manual) == .compacted);
+    // The provider input holds messages 1 to 3 and the prompt, so only the answer adds to it.
+    const head = (try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid)).?;
+    try testing.expectEqual(50_000 + token_estimate.ofMessage(answer).tokens, head.message.compaction.tokens_before);
 }
 
 test "a history with no earlier turn skips instead of a model call" {
@@ -568,7 +593,7 @@ test "a request inside its budget reads the checkpoint and context sizes once" {
     const c = zqlite.c;
     const statements = .{
         f.db.queries.newest_compaction.statement.statement.stmt,
-        f.db.queries.context_sizes.statement.statement.stmt,
+        f.db.queries.context_count.statement.statement.stmt,
         f.db.queries.context_messages.statement.statement.stmt,
     };
     inline for (statements) |stmt| _ = c.sqlite3_stmt_status(stmt, c.SQLITE_STMTSTATUS_RUN, 1);
@@ -586,10 +611,11 @@ test "automatic compaction preserves the exact tail and the next assistant id" {
     defer arena.deinit();
     const a = arena.allocator();
     f.models[0].limits.context_window = 20_000;
+    // The history passes the compaction point at 15,000. The newest turn passes the tail target at 2,000.
     try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 30_000);
+    try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 52_000);
     try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 7000);
+    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 9000);
     var capture: Resources.Capture = .{ .arena = a, .replies = &.{ ai.testing.canned_reply, ai.testing.canned_reply } };
     f.engine.deps.route_transport = capture.transport();
     try sendAndWait(&f, a, "keep the exact tail");
@@ -604,17 +630,18 @@ test "automatic compaction preserves the exact tail and the next assistant id" {
     try testing.expectEqual(@as(u64, 7), page.messages[6].assistant.id);
     try testing.expectEqual(page.messages[5].compaction.run_id, page.messages[6].assistant.run_id);
     try testing.expectEqual(@as(?u64, null), (try database.session.snapshot(&f.db, a, TaskFixture.sid)).?.open_run_id);
-    const projected = try context.project(testing.allocator, a, &f.db, TaskFixture.sid, .{ .input_ceiling = 11_000 });
+    const projected = try context.project(testing.allocator, a, &f.db, TaskFixture.sid, .{ .window = 20_000, .fixed = 0, .compact_at = 11_000, .model = "mock/m" });
     try testing.expectEqual(@as(usize, 5), projected.messages.len);
     try testing.expectEqualSlices(u8, page.messages[3].assistant.content[0].text.text, projected.messages[2].assistant.content[0].text.text);
 }
 
 /// Seed a history large enough that one compaction reaches the model instead of skipping.
 fn seedCompactableHistory(db: *database.Database, arena: std.mem.Allocator) !void {
-    try seedMessage(db, arena, TaskFixture.sid, 1, .user, 300);
-    try seedMessage(db, arena, TaskFixture.sid, 2, .assistant, 300);
+    // The newest turn passes the tail target at 20,000. The covered turn is larger than a short summary.
+    try seedMessage(db, arena, TaskFixture.sid, 1, .user, 2000);
+    try seedMessage(db, arena, TaskFixture.sid, 2, .assistant, 2000);
     try seedMessage(db, arena, TaskFixture.sid, 3, .user, 300);
-    try seedMessage(db, arena, TaskFixture.sid, 4, .assistant, 70_000);
+    try seedMessage(db, arena, TaskFixture.sid, 4, .assistant, 90_000);
 }
 
 test "the summary call repeats the prefix of the turn and refuses a tool" {
@@ -669,7 +696,7 @@ test "the summary call omits an image on a vision model and never reads the stor
     } });
     try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 70_000);
+    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 90_000);
     var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.testing.canned_reply} };
     f.engine.deps.route_transport = capture.transport();
 
@@ -730,7 +757,7 @@ test "an incomplete or empty summary leaves the checkpoint unchanged" {
         _ = try f.run(.manual);
         f.session = try f.engine.activate(.bytes(TaskFixture.sid));
         try seedMessage(&f.db, a, TaskFixture.sid, 6, .user, 300);
-        try seedMessage(&f.db, a, TaskFixture.sid, 7, .assistant, 70_000);
+        try seedMessage(&f.db, a, TaskFixture.sid, 7, .assistant, 90_000);
         const changed = try std.mem.replaceOwned(u8, a, ai.testing.canned_reply, "end_turn", stop);
         f.resources.transport.bytes = if (std.mem.eql(u8, stop, "end_turn"))
             try std.mem.replaceOwned(u8, a, changed, "Hello from the mock provider.", "   ")
@@ -757,7 +784,7 @@ test "oversized summary sources and tails fail before a model request" {
         try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
         try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, if (large_tail) 300 else 70_000);
         try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
-        try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, if (large_tail) 70_000 else 7000);
+        try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, if (large_tail) 70_000 else 9000);
         var capture: Resources.Capture = .{ .arena = a, .replies = &.{} };
         f.engine.deps.route_transport = capture.transport();
         const outcome = try f.run(.manual);
@@ -777,10 +804,11 @@ test "a tool round can compact and resume within the same run" {
     const a = arena.allocator();
     f.models[0].limits.context_window = 20_000;
     try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 24_000);
+    // The first round stays under the compaction point at 15,000. The tool result passes it.
+    try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 48_000);
     const Tool = struct {
         fn run(_: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
-            return .{ .output = "EXACT_TOOL_OUTPUT" ** 625, .is_error = false };
+            return .{ .output = "EXACT_TOOL_OUTPUT" ** 1000, .is_error = false };
         }
     };
     f.engine.installTools(.{ .decls = Resources.serveTools(&.{"unknown"}), .run = Tool.run });
@@ -790,7 +818,7 @@ test "a tool round can compact and resume within the same run" {
     try testing.expectEqual(@as(usize, 3), capture.requests.items.len);
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[0], "context_summary") == null);
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "context checkpoint") != null);
-    try testing.expect(std.mem.indexOf(u8, capture.requests.items[2], "EXACT_TOOL_OUTPUT" ** 625) != null);
+    try testing.expect(std.mem.indexOf(u8, capture.requests.items[2], "EXACT_TOOL_OUTPUT" ** 1000) != null);
     const page = try database.message.historyPage(&f.db, a, TaskFixture.sid, 0, 20);
     try testing.expectEqual(@as(usize, 6), page.messages.len);
     try testing.expectEqual(@as(u64, 4), page.messages[3].assistant.id);
@@ -882,19 +910,21 @@ test "repeated compaction merges the prior summary and charges only the active c
     try testing.expect(try f.run(.manual) == .compacted);
     f.session = try f.engine.activate(.bytes(TaskFixture.sid));
     try seedMessage(&f.db, a, TaskFixture.sid, 6, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 7, .assistant, 70_000);
-    const before = try context.estimate(testing.allocator, a, &f.db, TaskFixture.sid);
+    try seedMessage(&f.db, a, TaskFixture.sid, 7, .assistant, 90_000);
+    const first = try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid);
+    const before = try context.count(testing.allocator, &f.db, TaskFixture.sid, first, unmeasured);
     try testing.expect(try f.run(.manual) == .compacted);
     const head = (try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid)).?;
     try testing.expectEqual(@as(u64, 8), head.id);
     try testing.expectEqual(@as(u64, 6), head.from_id);
-    try testing.expectEqual(before, head.message.compaction.tokens_before);
-    try testing.expectEqual(try context.estimate(testing.allocator, a, &f.db, TaskFixture.sid), head.message.compaction.tokens_after);
+    // The record and the count share one scale: the record drops what the new checkpoint removed.
+    const after = try context.count(testing.allocator, &f.db, TaskFixture.sid, head, unmeasured);
+    try testing.expectEqual(before - after, head.message.compaction.tokens_before - head.message.compaction.tokens_after);
     // The merge call carries the wrapped earlier summary and the merge instruction the stub answered.
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "<context_summary>") != null);
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "Merge the context summary") != null);
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "Hello from the mock provider.") != null);
-    const projected = try context.project(testing.allocator, a, &f.db, TaskFixture.sid, .{ .input_ceiling = 100_000 });
+    const projected = try context.project(testing.allocator, a, &f.db, TaskFixture.sid, unmeasured);
     try testing.expectEqual(@as(usize, 3), projected.messages.len);
     try testing.expectEqual(@as(u64, 6), projected.messages[1].id());
     try testing.expectEqual(@as(u64, 7), projected.messages[2].id());
@@ -910,11 +940,11 @@ test "an oversized single turn fails without a summary request or a context trim
     f.models[0].limits.context_window = 20_000;
     var capture: Resources.Capture = .{ .arena = a, .replies = &.{} };
     f.engine.deps.route_transport = capture.transport();
-    try sendAndWait(&f, a, "x" ** 40_000);
+    try sendAndWait(&f, a, "x" ** 64_000);
     try testing.expectEqual(@as(usize, 0), capture.requests.items.len);
     const page = try database.message.historyPage(&f.db, a, TaskFixture.sid, 0, 10);
     try testing.expectEqual(@as(usize, 1), page.messages.len);
-    try testing.expectEqualStrings("x" ** 40_000, page.messages[0].user.content[0].text.text);
+    try testing.expectEqualStrings("x" ** 64_000, page.messages[0].user.content[0].text.text);
     const outcome = (try database.run.latestOutcome(&f.db, a, TaskFixture.sid)).?;
     try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, outcome.failed.code);
 }
@@ -926,11 +956,12 @@ test "a smaller summary that still exceeds the request budget does not commit" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    f.models[0].limits = .{ .context_window = 20_000, .max_output_tokens = 16_000 };
+    f.models[0].limits.context_window = 20_000;
+    // The tail sits just under the compaction point at 15,000, so the 1,800-byte summary pushes it over.
     try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 30_000);
     try seedMessage(&f.db, a, TaskFixture.sid, 3, .user, 300);
-    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 7000);
+    try seedMessage(&f.db, a, TaskFixture.sid, 4, .assistant, 58_400);
     const reply = try std.mem.replaceOwned(u8, a, ai.testing.canned_reply, "Hello from the mock provider.", "x" ** 1800);
     var capture: Resources.Capture = .{ .arena = a, .replies = &.{reply} };
     f.engine.deps.route_transport = capture.transport();

@@ -8,6 +8,7 @@ const event = @import("event.zig");
 const blob = @import("blob.zig");
 const queries_gen = @import("queries_gen.zig");
 const transcript = @import("../session/transcript.zig");
+const token_estimate = @import("../session/tokens.zig");
 
 /// The metadata that a committed message adds for its role.
 const Meta = struct {
@@ -25,8 +26,6 @@ const Meta = struct {
     tokens_cache_write: ?u64 = null,
     cost: ?f64 = null,
     created_at_ms: u64,
-    /// The context estimate charges an image by count and not by bytes, so the row keeps the count.
-    images: u64,
     // Add the session usage totals. Use zero when the message carries no tokens.
     add_input: u64 = 0,
     add_output: u64 = 0,
@@ -61,6 +60,8 @@ pub fn appendCommittedMessage(
     }
 
     const m = metaOf(message);
+    // The context count reads this estimate, so it reads no body.
+    const estimate = token_estimate.ofMessage(message);
     try db.queries.insert_message.exec(.{
         .session_id = session_id,
         .message_id = m.message_id,
@@ -78,7 +79,8 @@ pub fn appendCommittedMessage(
         .tokens_cache_write = m.tokens_cache_write,
         .cost = m.cost,
         .created_at_ms = m.created_at_ms,
-        .images = m.images,
+        .tokens_estimate = estimate.tokens,
+        .reasoning_estimate = estimate.reasoning,
     });
     _ = try db.queries.advance_message.one(arena, .{
         .id = session_id,
@@ -94,20 +96,6 @@ pub fn appendCommittedMessage(
     return .{ .data = .{ .session_id = .bytes(session_id), .seq = seq, .message = message }, .bytes = payload.len };
 }
 
-fn imagesOf(content: []const proto.content.ContentPart) u64 {
-    var count: u64 = 0;
-    for (content) |part| count += @intFromBool(part == .image);
-    return count;
-}
-
-fn toolImagesOf(content: []const proto.message.AssistantPart) u64 {
-    var count: u64 = 0;
-    for (content) |part| if (part == .tool) {
-        count += part.tool.state.media().len;
-    };
-    return count;
-}
-
 /// Extract the projection metadata from one message. Only an assistant turn carries tokens.
 fn metaOf(message: proto.message.Message) Meta {
     return switch (message) {
@@ -115,7 +103,6 @@ fn metaOf(message: proto.message.Message) Meta {
             .message_id = u.id,
             .role = "user",
             .created_at_ms = u.time.created_at_ms,
-            .images = imagesOf(u.content),
         },
         .assistant => |a| .{
             .message_id = a.id,
@@ -132,7 +119,6 @@ fn metaOf(message: proto.message.Message) Meta {
             .tokens_cache_write = if (a.tokens) |t| t.cache_write else null,
             .cost = a.cost,
             .created_at_ms = a.time.created_at_ms,
-            .images = toolImagesOf(a.content),
             .add_input = if (a.tokens) |t| t.input else 0,
             .add_output = if (a.tokens) |t| t.output else 0,
             .add_reasoning = if (a.tokens) |t| t.reasoning else 0,
@@ -144,7 +130,6 @@ fn metaOf(message: proto.message.Message) Meta {
             .role = "compaction",
             .run_id = c.run_id,
             .created_at_ms = c.time.created_at_ms,
-            .images = 0,
         },
     };
 }

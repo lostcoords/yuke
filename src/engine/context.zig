@@ -8,28 +8,44 @@ const ai = @import("ai");
 const transcript = @import("../session/transcript.zig");
 const zqlite = @import("zqlite");
 const allocations = @import("../allocations.zig");
+const token_estimate = @import("../session/tokens.zig");
 
 pub const default_context_window: u64 = 128_000;
-/// One image costs about this many tokens after a provider resize, whatever its byte size.
-pub const image_tokens: u64 = 1600;
 pub const default_max_output: u32 = 8192;
 
+/// The limits of one request. The history compacts above `compact_at`. The rest of the window holds the answer and the estimate error.
 pub const Budget = struct {
-    input_ceiling: u64,
+    window: u64,
+    /// The estimate of the system prompt and the tool declarations. A provider count already holds them.
+    fixed: u64,
+    compact_at: u64,
+    /// The session model. Only its provider count anchors the next count. Another model can use another tokenizer.
+    model: []const u8,
 
-    /// Reserve the final build-hook prompt, tools, output, and a framing margin.
-    pub fn forRequest(window_limit: ?u64, output: u32, system: []const u8, tools: []const ai.ir.Tool) !Budget {
+    /// Fail when the prompt and tools alone reach the compaction point, because no compaction can make room.
+    pub fn forRequest(window_limit: ?u64, model: []const u8, max_output: u32, system: []const u8, tools: []const ai.ir.Tool) !Budget {
         const window = window_limit orelse default_context_window;
-        const fixed = tokensFor(system.len) + tokensFor(try jsonBytes(tools)) + 1024;
-        if (output == 0 or output >= window or fixed >= window - output) return error.ContextTooLarge;
-        const ceiling = window - output - fixed;
-        return .{ .input_ceiling = ceiling };
+        // Reserve a tenth of the window. A small window reserves up to a quarter.
+        const reserve = @max(window / 10, @min(16_384, window / 4));
+        var tools_json = std.Io.Writer.Discarding.init(&.{});
+        try std.json.Stringify.value(tools, .{ .emit_null_optional_fields = false }, &tools_json.writer);
+        const fixed = token_estimate.ofBytes(system.len) + token_estimate.ofBytes(tools_json.fullCount());
+        // A zero reserve leaves no room for the answer.
+        if (max_output == 0 or reserve == 0 or fixed >= window - reserve) return error.ContextTooLarge;
+        return .{ .window = window, .fixed = fixed, .compact_at = window - reserve, .model = model };
+    }
+
+    /// Clamp the answer ceiling to the room that the count leaves. The input and the answer then fit the window.
+    pub fn clampOutput(self: Budget, max_output: u32, tokens: u64) u32 {
+        std.debug.assert(tokens <= self.compact_at); // `project` refuses a larger history.
+        std.debug.assert(max_output > 0); // `forRequest` refuses a zero answer ceiling.
+        return @intCast(@min(max_output, self.window - tokens));
     }
 };
 
 pub const Projection = struct {
     messages: []const proto.message.Message,
-    /// The ceiling uses this estimate. A definition from history adds to this estimate.
+    /// The count that `project` held under the budget.
     tokens: u64,
 };
 
@@ -50,35 +66,26 @@ pub fn readHead(gpa: std.mem.Allocator, arena: std.mem.Allocator, db: *database.
     return .{ .message = message, .id = row.value.message_id, .from_id = message.compaction.first_kept_id orelse 0 };
 }
 
-/// Charge the summary text and its provider wrapper once.
-pub fn summaryTokens(summary: []const u8) u64 {
-    return tokensFor(summary.len) + 128;
+/// Count the tokens of the next request. The newest provider count after the checkpoint anchors the count. The estimate covers the rest.
+pub fn count(gpa: std.mem.Allocator, db: *database.Database, session_id: [16]u8, head: ?Head, budget: Budget) !u64 {
+    var row = try db.queries.context_count.one(gpa, .{
+        .session_id = session_id,
+        .model = budget.model,
+        .checkpoint_id = if (head) |h| h.id else 0,
+        .first_message_id = if (head) |h| h.from_id else 0,
+    });
+    defer row.deinit();
+    // The anchor holds the prompt and every message before it. The sum starts at the anchor message.
+    if (row.value.anchor_input) |input| return input + row.value.tokens;
+    const summary = if (head) |h| token_estimate.ofSummary(h.message.compaction.summary) else 0;
+    return budget.fixed + summary + row.value.tokens;
 }
 
-/// Estimate the complete checkpoint and tail without a body copy.
-pub fn estimate(gpa: std.mem.Allocator, arena: std.mem.Allocator, db: *database.Database, session_id: [16]u8) !u64 {
-    return estimateWithHead(arena, db, session_id, try readHead(gpa, arena, db, session_id));
-}
-
-fn estimateWithHead(arena: std.mem.Allocator, db: *database.Database, session_id: [16]u8, head: ?Head) !u64 {
-    var total: u64 = if (head) |h| summaryTokens(h.message.compaction.summary) else 0;
-    var rows = try db.queries.context_sizes.rows(.{ .session_id = session_id, .first_message_id = if (head) |h| h.from_id else 0 });
-    defer rows.deinit();
-    while (try rows.next(arena)) |owned| {
-        var row = owned;
-        defer row.deinit();
-        if (std.mem.eql(u8, row.value.role, "compaction")) continue;
-        total += messageTokens(row.value.bytes, row.value.images);
-    }
-    return total;
-}
-
-/// Return the newest checkpoint and every retained message, or refuse the request.
+/// Return the newest checkpoint and every retained message, or refuse a count above the compaction point.
 pub fn project(gpa: std.mem.Allocator, arena: std.mem.Allocator, db: *database.Database, session_id: [16]u8, budget: Budget) !Projection {
-    std.debug.assert(budget.input_ceiling > 0);
     const head = try readHead(gpa, arena, db, session_id);
-    const tokens = try estimateWithHead(arena, db, session_id, head);
-    if (tokens > budget.input_ceiling) return error.ContextHistoryTooLarge;
+    const tokens = try count(gpa, db, session_id, head, budget);
+    if (tokens > budget.compact_at) return error.ContextHistoryTooLarge;
     return .{ .messages = try collect(gpa, arena, db, session_id, head, null), .tokens = tokens };
 }
 
@@ -112,35 +119,55 @@ pub fn collect(
     return messages.items;
 }
 
-/// Charge one committed message from its size row: the payload bytes and a fixed cost per image.
-pub fn messageTokens(bytes: u64, images: u64) u64 {
-    return tokensFor(bytes) + images * image_tokens;
-}
-
-/// JSON byte counts are an estimate and do not replace a provider tokenizer.
-pub fn tokensFor(bytes: u64) u64 {
-    return bytes / 3 + @intFromBool(bytes % 3 != 0);
-}
-
-pub fn jsonBytes(value: anytype) !u64 {
-    var buffer: [0]u8 = .{};
-    var out = std.Io.Writer.Discarding.init(&buffer);
-    try std.json.Stringify.value(value, .{ .emit_null_optional_fields = false }, &out.writer);
-    return out.fullCount();
-}
-
-test "the budget charges the final prompt tools and output reserve" {
+test "the budget reserves room and clamps the answer" {
     const t = std.testing;
-    const plain = try Budget.forRequest(20_000, 1000, "", &.{});
-    const prompt = try Budget.forRequest(20_000, 1000, "x" ** 3000, &.{});
-    try t.expectEqual(plain.input_ceiling - 1000, prompt.input_ceiling);
-    const tool = try Budget.forRequest(20_000, 1000, "", &.{.{ .name = "read", .description = "x" ** 3000, .input_schema = "{}" }});
-    try t.expect(tool.input_ceiling < prompt.input_ceiling);
-    const output = try Budget.forRequest(20_000, 2000, "", &.{});
-    try t.expectEqual(plain.input_ceiling - 1000, output.input_ceiling);
-    try t.expectError(error.ContextTooLarge, Budget.forRequest(1000, 2000, "", &.{}));
-    try t.expectError(error.ContextTooLarge, Budget.forRequest(2000, 1000, "", &.{}));
-    try t.expectError(error.ContextTooLarge, Budget.forRequest(null, 0, "", &.{}));
+    try t.expectEqual(@as(u64, 945_000), (try Budget.forRequest(1_050_000, "m", 128_000, "", &.{})).compact_at);
+    // A small window keeps a quarter of itself, up to 16,384 tokens.
+    try t.expectEqual(@as(u64, 15_000), (try Budget.forRequest(20_000, "m", 1000, "", &.{})).compact_at);
+    const tool = try Budget.forRequest(20_000, "m", 1000, "x" ** 3000, &.{.{ .name = "read", .description = "x" ** 3000, .input_schema = "{}" }});
+    try t.expect(tool.fixed > token_estimate.ofBytes(6000));
+    try t.expectEqual(@as(u32, 6000), tool.clampOutput(8192, 14_000));
+    try t.expectEqual(@as(u32, 1000), tool.clampOutput(1000, 14_000));
+    try t.expectError(error.ContextTooLarge, Budget.forRequest(3, "m", 1, "", &.{}));
+    try t.expectError(error.ContextTooLarge, Budget.forRequest(20_000, "m", 1000, "x" ** 60_000, &.{}));
+    try t.expectError(error.ContextTooLarge, Budget.forRequest(null, "m", 0, "", &.{}));
+}
+
+test "only a provider count of the session model anchors the count" {
+    const t = std.testing;
+    var db = try database.Database.openTest();
+    defer db.deinit();
+    var arena: std.heap.ArenaAllocator = .init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const sid = [_]u8{43} ** 16;
+    try Resources.seedSession(&db, sid, .{ .model = "p/m", .title = "", .created_at_ms = 0, .updated_at_ms = 0 });
+    const signature = "A" ** 40_000;
+    const messages = [_]proto.message.Message{
+        .{ .user = .{ .id = 1, .input_id = 1, .content = &.{.{ .text = .{ .text = "u" ** 4000 } }}, .time = .{ .created_at_ms = 1 } } },
+        .{ .assistant = .{ .id = 2, .run_id = 1, .config_rev = 0, .time = .{ .created_at_ms = 2 }, .provenance = .{ .protocol = .openai_responses, .model = "p/m" }, .tokens = .{ .input = 5000, .output = 50, .reasoning = 0, .cache_read = 0, .cache_write = 0 }, .content = &.{
+            .{ .reasoning = .{ .id = 0, .text = "", .signature = signature } },
+            .{ .text = .{ .id = 1, .text = "a" ** 400 } },
+        } } },
+        .{ .user = .{ .id = 3, .input_id = 2, .content = &.{.{ .text = .{ .text = "v" ** 800 } }}, .time = .{ .created_at_ms = 3 } } },
+    };
+    {
+        var tx = try db.begin();
+        defer tx.deinit();
+        for (messages, 1..) |m, n| _ = try database.message.appendCommittedMessage(&db, a, sid, @splat(@intCast(n)), n, m);
+        try tx.commit();
+    }
+    const budget: Budget = .{ .window = 100_000, .fixed = 700, .compact_at = 90_000, .model = "p/m" };
+    // The provider input holds message 1 and the prompt, so only message 2 and the later message add to it.
+    const answer = token_estimate.ofMessage(messages[1]);
+    const later = token_estimate.ofMessage(messages[2]).tokens;
+    try t.expectEqual(5000 + answer.tokens + later, try count(t.allocator, &db, sid, null, budget));
+    // Another model has no anchor and gets no replayed reasoning, so the prompt and the rest of each message are estimated.
+    var switched = budget;
+    switched.model = "p/other";
+    try t.expect(answer.reasoning > 0);
+    const rest = token_estimate.ofMessage(messages[0]).tokens + answer.tokens - answer.reasoning + later;
+    try t.expectEqual(700 + rest, try count(t.allocator, &db, sid, null, switched));
 }
 
 test "model history survives cache eviction and an insufficient budget drops nothing" {
@@ -170,12 +197,12 @@ test "model history survives cache eviction and an insufficient budget drops not
         try tx.commit();
     }
     try t.expectEqual(@as(u64, 8), cache.list.items[0].message.id());
-    const wide = try project(t.allocator, a, &db, sid, .{ .input_ceiling = 40_000 });
+    const wide = try project(t.allocator, a, &db, sid, .{ .window = 40_000, .fixed = 0, .compact_at = 40_000, .model = "test/model" });
     try t.expectEqual(@as(usize, 9), wide.messages.len);
     try t.expectEqual(@as(u64, 1), wide.messages[0].id());
     try t.expectEqual(@as(usize, 2), cache.list.items.len);
-    try t.expectError(error.ContextHistoryTooLarge, project(t.allocator, a, &db, sid, .{ .input_ceiling = 100 }));
-    const again = try project(t.allocator, a, &db, sid, .{ .input_ceiling = 40_000 });
+    try t.expectError(error.ContextHistoryTooLarge, project(t.allocator, a, &db, sid, .{ .window = 40_000, .fixed = 0, .compact_at = 1, .model = "test/model" }));
+    const again = try project(t.allocator, a, &db, sid, .{ .window = 40_000, .fixed = 0, .compact_at = 40_000, .model = "test/model" });
     try t.expectEqual(@as(usize, 9), again.messages.len);
 }
 
@@ -206,7 +233,7 @@ test "the newest checkpoint leads the request and an older one drops out" {
         try tx.commit();
     }
 
-    const projected = try project(t.allocator, a, &db, sid, .{ .input_ceiling = 40_000 });
+    const projected = try project(t.allocator, a, &db, sid, .{ .window = 40_000, .fixed = 0, .compact_at = 40_000, .model = "test/model" });
     try t.expectEqual(@as(usize, 2), projected.messages.len);
     try t.expectEqualStrings("second summary", projected.messages[0].compaction.summary);
     try t.expectEqual(@as(u64, 4), projected.messages[1].id());
@@ -292,7 +319,7 @@ test "projected text outlives temporary SQL rows" {
             var result: std.heap.ArenaAllocator = .init(gpa);
             defer result.deinit();
             var temporary: allocations = .{ .backing = gpa };
-            const projected = try project(temporary.allocator(), result.allocator(), store, session_id, .{ .input_ceiling = 4_000_000 });
+            const projected = try project(temporary.allocator(), result.allocator(), store, session_id, .{ .window = 4_000_000, .fixed = 0, .compact_at = 4_000_000, .model = "" });
             try t.expectEqual(@as(usize, 0), temporary.liveBytes());
             try t.expectEqual(@as(usize, 0), temporary.liveCount());
             try t.expectEqual(@as(usize, 5), projected.messages.len);
