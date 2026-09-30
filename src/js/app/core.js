@@ -37,11 +37,12 @@ const style_dim = 1 << 4;
 const style_italic = 1 << 5;
 const style_reverse = 1 << 6;
 const style_underline = 1 << 7;
+const internal_style_prefix = "\x00";
 // A style change drops the field masks and every composed pair.
 /** @type {Record<string, number>} */
 let styleMasks = Object.create(null);
 /** @type {Record<string, Record<string, Style>>} */
-let stylesOn = Object.create(null);
+let rowStyles = Object.create(null);
 /** @type {Record<string, Record<string, string>>} */
 let overlayGroups = Object.create(null);
 let overlayGroupId = 0;
@@ -61,6 +62,7 @@ export const style = {
   _cache: Object.create(null),
 
   set(groups, options) {
+    for (const name in groups) if (name.startsWith(internal_style_prefix)) throw new TypeError("style.set: a NUL-prefixed name is reserved");
     if (!options?.default) return this._layer({ groups });
     // A default is the base of a group, so a second default for one name is a conflict and not a silent loss.
     for (const name in groups) if (this._base.has(name)) throw new TypeError("style.set: " + name + " has a default; change it without { default: true }");
@@ -139,7 +141,7 @@ export const style = {
   _changed() {
     this._cache = Object.create(null);
     styleMasks = Object.create(null);
-    stylesOn = Object.create(null);
+    rowStyles = Object.create(null);
     overlayGroups = Object.create(null);
     overlayGroupId = 0;
     root.invalidatePaint();
@@ -202,20 +204,20 @@ export const style = {
  * Resolve a text group over a row group. The text's explicit fields win, and the row's explicit background remains authoritative.
  * The cache owns the returned composite until any style change.
  * @param {string} name
- * @param {string} background
+ * @param {string} baseGroup
  * @returns {Style}
  */
-export function resolveStyleOn(name, background) {
-  return stylesOn[background]?.[name] || buildStyleOn(name, background);
+export function resolveRowStyle(name, baseGroup) {
+  return rowStyles[baseGroup]?.[name] || buildRowStyle(name, baseGroup);
 }
 
-/** @param {string} name @param {string} background @returns {Style} */
-function buildStyleOn(name, background) {
-  const byName = stylesOn[background] || (stylesOn[background] = Object.create(null));
-  const row = style.resolve(background);
-  const out = { ...row };
+/** @param {string} name @param {string} baseGroup @returns {Style} */
+function buildRowStyle(name, baseGroup) {
+  const byName = rowStyles[baseGroup] || (rowStyles[baseGroup] = Object.create(null));
+  const base = style.resolve(baseGroup);
+  const out = { ...base };
   applyStyle(out, style.resolve(name), maskOf(name));
-  if (maskOf(background) & style_bg) out.bg = /** @type {Color} */ (row.bg);
+  if (maskOf(baseGroup) & style_bg) out.bg = /** @type {Color} */ (base.bg);
   byName[name] = out;
   return out;
 }
@@ -239,7 +241,7 @@ function buildOverlayStyleGroup(name, overlay) {
     byName[name] = name;
     return name;
   }
-  const composite = "\x00" + overlayGroupId++;
+  const composite = internal_style_prefix + overlayGroupId++;
   const out = { ...style.resolve(name) };
   applyStyle(out, style.resolve(overlay), overlayMask);
   styleMasks[composite] = maskOf(name) | overlayMask;

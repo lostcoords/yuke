@@ -51,3 +51,7 @@ equal(style.resolve("Normal").fg, "reset");
   off();
   palette();
 }
+
+let reserved = false;
+try { style.set({ "\0internal": { bold: true } }); } catch (error) { reserved = error instanceof TypeError; }
+check("internal-style-name-is-reserved", reserved && !("\0internal" in style.groups));

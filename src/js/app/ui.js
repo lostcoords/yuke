@@ -737,7 +737,13 @@ export class Composer {
     fill(x, y, w, h, "UIComposer");
     if (this.input.text === "") {
       this.scroll = 0;
-      text(x, y, clip(this._prompt() + this.placeholder, w), "UIDim");
+      if (w > 2) text(x, y, clip(this._prompt() + this.placeholder, w), "UIDim");
+      else {
+        const tw = this._textWidth(w);
+        const pw = w - tw;
+        if (pw > 0) text(x, y, clip(this._prompt(), pw, false), "UIDim");
+        text(x + pw, y, clip(this.placeholder, tw), "UIDim");
+      }
       return;
     }
 
@@ -751,7 +757,10 @@ export class Composer {
     else if (caretRow >= this.scroll + h) this.scroll = caretRow - h + 1;
     const pw = w - tw;
     // The prompt marks the first row only. A later row aligns under it.
-    if (this.scroll === 0) text(x, y, this._prompt(), "UIComposer");
+    if (this.scroll === 0) {
+      if (w > 2) text(x, y, this._prompt(), "UIComposer");
+      else if (pw > 0) text(x, y, clip(this._prompt(), pw, false), "UIComposer");
+    }
     for (let i = 0; i < h && this.scroll + i < rows.length; i++) {
       const r = /** @type {WrapRow} */ (rows[this.scroll + i]);
       text(x + pw, y + i, clip(proj.slice(r.start, r.end), tw, false), "UIComposer");

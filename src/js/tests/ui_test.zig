@@ -199,6 +199,8 @@ test "yuke:internal/ui Composer draws a wrapped row whole and puts the caret on 
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "hello") != null);
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "world") != null);
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "…") == null);
+    const narrow = fixture.paint.render.window().readCell(0, 0).?;
+    try std.testing.expectEqualStrings("x", narrow.char.grapheme);
 
     try support.expectString(host, "result", "ok");
 }

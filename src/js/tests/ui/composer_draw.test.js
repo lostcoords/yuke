@@ -8,3 +8,9 @@ c.draw(true);
 const cur = c.cursor();
 term.endFrame();
 globalThis.result = cur.x === 2 + 5 - 1 && cur.y === 1 && cur.visible ? "ok" : "x=" + cur.x + " y=" + cur.y;
+
+const narrow = new Composer({ placeholder: "x" });
+narrow.rect = { x: 0, y: 0, w: 1, h: 1 };
+term.beginFrame();
+narrow.draw(true);
+term.endFrame();
