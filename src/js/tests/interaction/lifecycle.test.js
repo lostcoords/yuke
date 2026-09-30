@@ -55,7 +55,7 @@ const denied = interaction.install({ interactive: false });
 const before = changes.length;
 equal(await b.interaction.confirm("Denied"), false);
 equal(await b.interaction.input("Denied"), undefined);
-for (const ask of [() => b.interaction.confirm(""), () => b.interaction.select("Bad", ["x", "x"]), () => b.interaction.input(12), () => b.interaction.confirm("Bad", "", { signal: { aborted: false } }), () => b.interaction.confirm("Bad", "", null)]) {
+for (const ask of [() => b.interaction.confirm(""), () => b.interaction.select("Bad", ["x", "x"]), () => b.interaction.input(12), () => b.interaction.confirm("Bad", "", { signal: { aborted: false } })]) {
   let error;
   try { await ask(); } catch (e) { error = e; }
   check("invalid requests reject", error instanceof TypeError);

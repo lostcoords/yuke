@@ -53,7 +53,7 @@ export class JobOutput extends ScrollView {
         const shown = [];
         for (let i = top; i < Math.min(top + height, end + (this.complete ? 1 : 0)); i++) {
           if (i < count) shown.push(/** @type {TranscriptRow} */ (this.rows[(this.first + skip + i) % this.rows.length]));
-          else shown.push({ text: i < end ? this.partial ?? "" : `[${endLabel(this.job)}]`, group: "TxToolBody" });
+          else shown.push({ text: i < end ? this.partial ?? "" : `[${endLabel(this.job)}]`, group: "UIDim" });
         }
         return shown;
       },
@@ -103,7 +103,7 @@ export class JobOutput extends ScrollView {
     }
     this.partial = /** @type {string} */ (parts.pop()).slice(0, LINE_CHARS);
     for (const line of parts) {
-      const row = { text: line.slice(0, LINE_CHARS), group: "TxToolBody" };
+      const row = { text: line.slice(0, LINE_CHARS), group: "UIDim" };
       if (this.rows.length < OUTPUT_LINES) this.rows.push(row);
       else {
         this.rows[this.first] = row;

@@ -1,7 +1,10 @@
 import { check, textParts } from "yuke:internal/test";
 import { term } from "yuke:internal/native/term";
-import { Transcript } from "yuke:internal/transcript";
+import { Transcript, registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
 import { rowText } from "yuke:internal/pager";
+
+registerRender(defaultRender);
 const at = (col, row, event) => ({ type: "mouse", col, row, button: "left", event, mods: 0 });
 
 const body = { u1: "plain user text", a1: "hello **bold** and `code`", a2: "- alpha" };

@@ -1,210 +1,117 @@
-import { Pager, rowText, rowSourceSpan, rowSourceAt } from "yuke:internal/pager";
-// The chat transcript, its row rendering, and the pane that holds it.
+// The chat transcript core: the readers, the render caches, the selection, and the stack of renderers that decide every row.
+import { rowText, rowSourceSpan, rowSourceAt, segmentsOf, Pager } from "yuke:internal/pager";
 import { term } from "yuke:internal/native/term";
 import { root, isWheel } from "yuke:internal/core";
-import { clip, caretAtCol, wrapPreview, nextGrapheme } from "yuke:internal/text-input";
-import { Document, isLinear, normalizeSource } from "yuke:internal/md";
-import { RowsView, Window } from "yuke:internal/ui";
-import { byteLabel } from "yuke:internal/format";
+import { fault, once } from "yuke:internal/kernel";
+import { caretAtCol, nextGrapheme } from "yuke:internal/text-input";
+import { Document, isLinear } from "yuke:internal/md";
 
 /** @import { HostMouseEvent as MouseEvent, Rect } from "./types/core.js" */
-/** @import { ItemKey, Segment, TranscriptRow } from "./types/pager.js" */
-/** @import { ActionEntry, ActionPlan, MessageDescriptor, PartCache, PartHit, PartOf, PartState, Position, Presenter, RowCache, Selection, SelectionAnchors, SelectionRange, ToolLabel, TranscriptOptions, SourceLabels } from "./types/transcript.js" */
+/** @import { TranscriptRow } from "./types/pager.js" */
+/** @import { GroupEntry, GroupPlan, MessageDescriptor, MessageEnv, PartCache, PartEnv, PartHit, PartState, Position, Render, Rendered, RowCache, Selection, SelectionAnchors, SelectionRange, SourceLabels, ToolHead, TranscriptOptions } from "./types/transcript.js" */
 /** @import { MessagePart, PartRead, TextCursor } from "yuke:internal/native/engine" */
 /** @import { Block } from "./types/md.js" */
+/** @import { Disposer } from "./types/ext.js" */
 
-// Left gutter for a transcript row marker; the body indents past it.
-const TX_GUTTER = 2;
-
-// Keep the transcript preview short; the detail window reads the complete fields on demand.
-const ACTION_PREVIEW_ROWS = 3;
-const REPORT_PREVIEW_LINES = 8;
-const ACTION_INDENT = TX_GUTTER + 3;
-const ACTION_MARKER_PAD = " ".repeat(TX_GUTTER);
-// A preview body reserves one label column, so it wraps inside the space the label leaves.
-const ACTION_LABEL_W = 7;
-const ACTION_LABEL_INPUT = "input".padEnd(ACTION_LABEL_W);
-const ACTION_LABEL_OUTPUT = "output".padEnd(ACTION_LABEL_W);
-const ACTION_LABEL_NONE = " ".repeat(ACTION_LABEL_W);
-// One action packs its group size and its place in that group into a single number, so the plan retains no objects; the low two bits mark the first and last action of a group, and the count scales above them.
-const ACTION_FIRST = 1;
-const ACTION_LAST = 2;
-const ACTION_SCALE = 4;
-// A part joins the run of actions, closes it, or passes through it. Tools and reasoning group alike.
-/** A `labels.role` answer: the part passes through the current group of actions and takes no place in it. */
-export const ROLE_NONE = 0;
-/** A `labels.role` answer: the part joins the current group of actions. Tool calls and reasoning are actions. */
-export const ROLE_ACTION = 1;
-/** A `labels.role` answer: the part closes the current group of actions. */
-export const ROLE_TEXT = 2;
-
-// The label a reader sees above an input with an engine source.
-/** @type {SourceLabels} */
-let sources = { engine_interruption: (source) => "Engine notice · run " + source.run_id + " interrupted" };
-
-/** @param {Wire.InputSource | undefined | null} source @returns {string} */
-export function inputSourceLabel(source) {
-  if (!source) return "";
-  // The table keys each label by its source type, so the label reads the source it names.
-  const label = /** @type {((source: Wire.InputSource) => string) | undefined} */ (sources[source.type]);
-  return label ? label(source) : source.type.replaceAll("_", " ");
-}
+// One part in a group packs the group size and its place into one number, so the plan retains no objects; the low two bits mark the first and last part, and the count scales above them.
+const GROUP_FIRST = 1;
+const GROUP_LAST = 2;
+const GROUP_SCALE = 4;
 
 // Rendered messages beyond this count leave the cache oldest first; the viewport and live anchors never leave.
 const CACHE_MESSAGES = 16;
+
+const FIELD_UNREAD = "\n[the remaining field could not be read]";
 
 /** @param {unknown} a @param {unknown} b @returns {boolean} */
 function sameId(a, b) {
   return a != null && b != null && String(a) === String(b);
 }
 
-// The process directory. A path under it drops this prefix.
-const CWD = String(term.cwd || "");
-const CWD_PREFIX = CWD + "/";
-// Bound the command scan. The header clips to the pane width, so a longer pipeline carries nothing.
-const COMMAND_MAX = 160;
-// Bound a reasoning title, so a prose summary with no line break cannot build a long string.
-const TITLE_MAX = 72;
-
-/** @param {unknown} path @returns {string} */
-function shortPath(path) {
-  const s = String(path || "");
-  if (s.length === 0 || s.charCodeAt(0) !== 47) return s;
-  if (CWD.length !== 0 && s.length > CWD_PREFIX.length && s.charCodeAt(CWD.length) === 47 && s.startsWith(CWD)) return s.slice(CWD_PREFIX.length);
-  return s.slice(s.lastIndexOf("/") + 1);
-}
-
-// True for a space, a tab, or a line feed.
-/** @param {number} code @returns {boolean} */
-function blank(code) {
-  return code === 32 || code === 9 || code === 10;
-}
-
-// Skip a leading run of blank lines and `#` comments, so a script header shows its first real command.
-/** @param {string} s @returns {number} */
-function skipComments(s) {
-  let i = 0;
-  for (;;) {
-    while (i < s.length && blank(s.charCodeAt(i))) i++;
-    if (s.charCodeAt(i) !== 35) return i;
-    const nl = s.indexOf("\n", i);
-    if (nl < 0) return i;
-    i = nl + 1;
-  }
-}
-
-// Skip a leading run of `NAME=value` assignments, because they are the environment and not the command.
-/** @param {string} s @param {number} from @returns {number} */
-function skipAssignments(s, from) {
-  let i = from;
-  for (;;) {
-    while (i < s.length && blank(s.charCodeAt(i))) i++;
-    let j = i;
-    let eq = -1;
-    while (j < s.length && !blank(s.charCodeAt(j))) {
-      if (eq < 0 && s.charCodeAt(j) === 61) eq = j;
-      j++;
-    }
-    // A name holds no separator, so `bin/x=y` is a path and closes the run.
-    if (eq <= i || s.lastIndexOf("/", eq) >= i) return i;
-    i = j;
-  }
-}
-
-// Reduce a shell command to its program basename and its arguments on one line.
-/** @param {unknown} raw @returns {string} */
-function shortCommand(raw) {
-  const s = String(raw || "");
-  const start = skipAssignments(s, skipComments(s));
-  const cut = s.slice(start, start + COMMAND_MAX);
-  const line = cut.indexOf("\n") < 0 ? cut : cut.split("\n").join(" ");
-  // A path under the process directory reads relative to it, as it does on its own header.
-  const flat = CWD.length !== 0 && line.indexOf(CWD_PREFIX) >= 0 ? line.split(CWD_PREFIX).join("") : line;
-  let end = 0;
-  while (end < flat.length && !blank(flat.charCodeAt(end))) end++;
-  const program = flat.slice(0, end);
-  return program.slice(program.lastIndexOf("/") + 1) + flat.slice(end) + (s.length > start + COMMAND_MAX ? "…" : "");
-}
-
-/** @param {unknown} start @param {unknown} end @returns {string} */
-function lineRange(start, end) {
-  if (typeof start !== "number") return "";
-  return " (" + start + "-" + (typeof end === "number" ? end : "") + ")";
-}
-
-// A presenter names one tool call. It must not walk tool output and must not scan a whole text.
-/** @type {Record<string, Presenter>} */
-let presenters = Object.create(null);
-
-presenters.read = { category: "read", present: (o) => ({ verb: "Read", subject: shortPath(o.path) + lineRange(o.start, o.end) }) };
-presenters.write = { category: "write", present: (o) => ({ verb: "Write", subject: shortPath(o.path) }) };
-presenters.edit = { category: "write", present: (o) => ({ verb: "Edit", subject: shortPath(o.path) + (o.replace_all ? " (all)" : "") }) };
-presenters.exec = { category: "run", present: (o) => ({ verb: "Run", subject: shortCommand(o.command) }) };
-presenters.skill = { category: "other", present: (o) => ({ verb: "Skill", subject: String(o.name || "") }) };
+// The hooks of a renderer. The newest registration that answers a value other than undefined wins.
+const HOOKS = /** @type {const} */ (["part", "message", "error", "groupKey", "groupHeader", "fold", "sameVisible", "activate"]);
 
 /**
- * `tools` maps a tool name to its presenter. `sources` maps an input source type to its label.
- * @typedef {{ tools?: Record<string, Presenter>, sources?: SourceLabels }} LabelRegistration
+ * @typedef {{ [K in typeof HOOKS[number]]: Render[] } & { tools: Record<string, ToolHead>, sources: SourceLabels, indent: number, gap: number }} Merged
  */
-/** @type {LabelRegistration[]} */
-const registrations = [{ tools: presenters, sources }];
-let labelRevision = 0;
 
-// Resolve ownership on registration changes, not on each rendered label.
-function refreshLabels() {
-  presenters = Object.create(null);
-  sources = {};
-  for (const entry of registrations) {
-    Object.assign(presenters, entry.tools);
-    Object.assign(sources, entry.sources);
+/** @type {Render[]} */
+const renders = [];
+/** @type {Merged} */
+let merged = mergeRenders();
+// A transcript compares these with the values of its last build, so a registration or a ctrl+o rebuilds every row.
+let renderRevision = 0;
+let expandAll = false;
+let expandEpoch = 0;
+
+/** @returns {Merged} */
+function mergeRenders() {
+  const out = /** @type {Merged} */ ({ tools: Object.create(null), sources: { engine_interruption: (source) => "Engine notice · run " + source.run_id + " interrupted" }, indent: 0, gap: 0 });
+  for (const name of HOOKS) out[name] = [];
+  for (const r of renders) {
+    for (const name of HOOKS) if (r[name]) out[name].push(r);
+    Object.assign(out.tools, r.tools);
+    Object.assign(out.sources, r.sources);
+    if (r.indent !== undefined) out.indent = r.indent;
+    if (r.gap !== undefined) out.gap = r.gap;
   }
-  labelRevision++;
+  return out;
+}
+
+// Ask the renderers newest first. A throw reports a fault and asks the next one, so one bad plugin cannot break a frame.
+/** @param {typeof HOOKS[number]} name @param {unknown} a @param {unknown} [b] @param {unknown} [c] @returns {any} */
+function hook(name, a, b, c) {
+  const list = merged[name];
+  for (let i = list.length - 1; i >= 0; i--) {
+    try {
+      const out = /** @type {(a: unknown, b: unknown, c: unknown) => unknown} */ (/** @type {Render} */ (list[i])[name]).call(list[i], a, b, c);
+      if (out !== undefined) return out;
+    } catch (e) {
+      fault(e, "chat.render");
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Add a renderer to every transcript. A hook that answers undefined passes to the renderer below; `tools` and `sources` merge by name, and the newest wins.
+ * The call copies the top level of `render`. A plugin uses `ctx.chat.render`, which removes the registration when the block unloads.
+ * @param {Render} render @returns {Disposer} Removes only this registration.
+ */
+export function registerRender(render) {
+  const entry = { ...render };
+  renders.push(entry);
+  changed();
+  return once(() => {
+    renders.splice(renders.indexOf(entry), 1);
+    changed();
+  });
+}
+
+function changed() {
+  merged = mergeRenders();
+  renderRevision++;
+  root.invalidate();
+}
+
+/** Open every foldable part in every transcript, or fold them all again. It drops each open or fold the user chose one by one. */
+export function toggleExpandAll() {
+  expandAll = !expandAll;
+  expandEpoch++;
+  renderRevision++;
   root.invalidate();
 }
 
 /**
- * Add tool presenters and input source labels to every transcript. For each tool name and source type, the newest registration wins.
- * The call copies `entries`, so a later change to them has no effect. A plugin uses `ctx.chat.labels`, which removes the registration when the block unloads.
- * @param {LabelRegistration} entries @returns {() => void} Removes only this registration.
+ * The label of an input from an engine source: the `sources` entry of the renderers, else the source type with spaces.
+ * @param {Wire.InputSource | undefined | null} source @returns {string}
  */
-export function registerLabels(entries) {
-  const entry = { tools: { ...entries.tools }, sources: { ...entries.sources } };
-  registrations.push(entry);
-  refreshLabels();
-  return () => {
-    const index = registrations.indexOf(entry);
-    if (index < 0) return;
-    registrations.splice(index, 1);
-    refreshLabels();
-  };
+export function inputSourceLabel(source) {
+  if (!source) return "";
+  // The table keys each label by its source type, so the label reads the source it names.
+  const label = /** @type {((source: Wire.InputSource) => string) | undefined} */ (merged.sources[source.type]);
+  return label ? label(source) : source.type.replaceAll("_", " ");
 }
-
-/** The words and the grouping that a transcript gives a part. Plugins change them with method advice through `ctx.advise`. */
-export const labels = {
-  /**
-   * The label of a tool call with no presenter: the tool name, then its `path`, its `command`, or the raw arguments cut to 48 characters.
-   * `args` holds the parsed JSON arguments, or `{}` when they do not parse.
-   * @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {Record<string, any>} args @param {string} raw @returns {ToolLabel}
-   */
-  fallback(part, args, raw) {
-    const verb = String(part.name || "tool");
-    if (typeof args.path === "string") return { verb, subject: shortPath(args.path), category: "other" };
-    if (typeof args.command === "string") return { verb, subject: shortCommand(args.command), category: "other" };
-    return { verb, subject: raw.length > 48 ? raw.slice(0, 47) + "…" : raw, category: "other" };
-  },
-
-  /**
-   * The group role of a part: `ROLE_ACTION` joins the run of actions, `ROLE_TEXT` closes it, and `ROLE_NONE` passes through it.
-   * Tool calls and reasoning are actions, text closes the run, and empty reasoning takes no place.
-   * @param {Wire.AssistantPart} part @returns {number}
-   */
-  role(part) {
-    if (part.type === "tool") return ROLE_ACTION;
-    if (part.type === "reasoning") return emptyPart(part) ? ROLE_NONE : ROLE_ACTION;
-    if (part.type === "text" && part.text) return ROLE_TEXT;
-    return ROLE_NONE;
-  },
-};
 
 // A part with no content renders nothing, so it takes no row and no place in its group.
 /** @param {Wire.AssistantPart} part @returns {boolean} */
@@ -212,83 +119,7 @@ function emptyPart(part) {
   return part.type === "reasoning" && !part.text;
 }
 
-// A category names a style group, so a theme separates a read from a run with no renderer change.
-const CATEGORY_GROUPS = Object.assign(Object.create(null), { read: "TxToolRead", write: "TxToolWrite", run: "TxToolRun", agent: "TxToolAgent" });
-
-/** @param {number} tree @returns {number} */
-function actionCount(tree) {
-  return Math.floor(tree / ACTION_SCALE);
-}
-
-/** @param {number} tree @returns {boolean} */
-function actionFirst(tree) {
-  return (tree & ACTION_FIRST) !== 0;
-}
-
-/** @param {number} tree @returns {boolean} */
-function actionLast(tree) {
-  return (tree & ACTION_LAST) !== 0;
-}
-
-/** @param {number} count @param {number} index @returns {number} */
-function actionTree(count, index) {
-  return count * ACTION_SCALE + (index === 0 ? ACTION_FIRST : 0) + (index + 1 === count ? ACTION_LAST : 0);
-}
-
-/** @param {number} tree @param {boolean} expanded @returns {{ indent: number, marker: string | null }} */
-function actionHeaderAttrs(tree, expanded) {
-  if (!tree) return { indent: TX_GUTTER, marker: expanded ? "▾" : "▸" };
-  return { indent: ACTION_INDENT, marker: ACTION_MARKER_PAD + (actionLast(tree) ? "└─" : "├─") };
-}
-
-/** @param {number} tree @returns {{ indent: number, marker: string | null }} */
-function actionBodyAttrs(tree) {
-  return { indent: tree ? ACTION_INDENT : TX_GUTTER, marker: tree && !actionLast(tree) ? ACTION_MARKER_PAD + "│" : null };
-}
-
-// Report a part that names a blob; the set is closed, so every other user part is text.
-/** @param {MessagePart} part @returns {part is Extract<MessagePart, { type: "image" | "audio" | "file" }>} */
-function isMedia(part) {
-  return part.type === "image" || part.type === "audio" || part.type === "file";
-}
-
-// Return the cuts that the projection recorded on a part, or none for a whole part.
-/** @param {unknown} part @returns {readonly { field?: string, next?: number | null }[]} */
-function cutsOf(part) {
-  return /** @type {{ cut?: readonly { field?: string, next?: number | null }[] }} */ (part).cut || [];
-}
-
-// `[PNG #1 · 2 KiB]`: the type comes from the mime, because an image part carries no file name on the wire.
-/** @param {Wire.MediaBlob} blob @param {number} n @returns {string} */
-function mediaLabel(blob, n) {
-  const mime = blob.mime;
-  const slash = mime.indexOf("/");
-  const kind = (slash < 0 ? mime : mime.slice(slash + 1)).toUpperCase();
-  return "[" + kind + (n > 0 ? " #" + n : "") + " · " + byteLabel(blob.bytes) + "]";
-}
-
-// Plain message variants share the same wrap and source-offset rules.
-/** @param {ItemKey} id @param {string} body @param {number} width @param {"user" | "compaction" | "error"} kind @param {number} [base] @returns {TranscriptRow[]} */
-function messageRows(id, body, width, kind, base = 0) {
-  body = body || "";
-  const group = kind === "user" ? "TxUser" : kind === "error" ? "TxError" : "TxThought";
-  /** @type {TranscriptRow[]} */
-  const rows = wrapPreview(body, Math.max(1, width - TX_GUTTER), 0).rows.map((row, i) => {
-    const segments = [{ text: body.slice(row.start, row.end), group, src: base + row.start, srcEnd: base + row.end }];
-    return kind === "user" ? {
-      segments,
-      bg: "TxUser",
-      indent: TX_GUTTER,
-      marker: i === 0 ? "⟩" : null,
-      markerGroup: "TxUserMarker",
-      key: id,
-    } : { segments, indent: TX_GUTTER, key: id, kind };
-  });
-  rows.push({ text: "", key: id });
-  return rows;
-}
-
-/** @param {Segment[] | undefined} segments @param {number} base @returns {Segment[] | undefined} */
+/** @param {import("./types/pager.js").Segment[] | undefined} segments @param {number} base @returns {import("./types/pager.js").Segment[] | undefined} */
 function shiftSrc(segments, base) {
   if (!segments || !base) return segments;
   return segments.map((seg) => (seg.src == null ? seg : { ...seg, src: seg.src + base, srcEnd: /** @type {number} */ (seg.srcEnd) + base }));
@@ -302,7 +133,9 @@ function stale(c) {
 
 /** @param {TranscriptRow} row @param {number} base @returns {TranscriptRow} */
 function rowAtBase(row, base) {
-  return base && row.segments ? { ...row, segments: shiftSrc(row.segments, base) } : row;
+  if (!base) return row;
+  if (row.segments) return { ...row, segments: shiftSrc(row.segments, base) };
+  return row.src != null ? { ...row, src: row.src + base } : row;
 }
 
 /** @param {RowCache | null | undefined} cache @param {TranscriptRow} row @returns {number} */
@@ -311,365 +144,11 @@ function rowSourceBase(cache, row) {
   return cache.partBases.get(String(row.partId)) || 0;
 }
 
-/** @param {string} src @param {number} width @param {string} group @param {number} [limit] @param {number} [tail] @returns {TranscriptRow[]} */
-function wrapBody(src, width, group, limit = Infinity, tail = 0) {
-  src = src || "";
-  const contentW = Math.max(1, width);
-  if (limit === 0) return [];
-  return wrapPreview(src, contentW, limit === Infinity ? 0 : limit, tail).rows.map((r) => ({
-    segments: [{ text: src.slice(r.start, r.end), group, src: r.start, srcEnd: r.end }],
-    indent: TX_GUTTER,
-  }));
-}
-
-// Parse the arguments once, then answer through the table. A presenter is user input, so a fault falls back.
-/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @returns {ToolLabel} */
-function describe(part) {
-  const raw = String(part.arguments || "");
-  let args = {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") args = parsed;
-  } catch (_) {}
-  const presenter = presenters[String(part.name || "")];
-  try {
-    // A presenter states its category beside the label it returns, so both branches answer one shape.
-    const out = presenter
-      ? { ...presenter.present(args, raw, part), category: presenter.category }
-      : labels.fallback(part, args, raw);
-    if (out && typeof out.verb === "string" && typeof out.subject === "string") {
-      return { verb: out.verb, subject: out.subject, category: typeof out.category === "string" ? out.category : "other" };
-    }
-  } catch (_) {}
-  return { verb: String(part.name || "tool"), subject: "", category: "other" };
-}
-
-// Report a duration only over one second. A sub-second value is not a fact a reader acts on.
-/** @param {Wire.ToolState} state @returns {string} */
-function rightLabel(state) {
-  // A completed call needs no word, because the absence of an error already says it.
-  const label = state.type === "completed" ? "" : state.type;
-  const ms = /** @type {{ duration_ms?: number }} */ (state).duration_ms;
-  const took = typeof ms === "number" && ms >= 1000 ? (ms / 1000).toFixed(1) + "s" : "";
-  if (label && took) return label + " · " + took;
-  return label || took;
-}
-
-/** @param {ToolLabel} label @returns {string} */
-function toolHeaderSource(label) {
-  return label.subject ? label.verb + " " + label.subject : label.verb;
-}
-
-/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {boolean} expanded @param {number} width @param {ToolLabel} label @param {number} tree @returns {TranscriptRow} */
-function toolHeaderRow(part, expanded, width, label, tree) {
-  const name = label.verb;
-  const summary = label.subject;
-  const state = part.state;
-  const kind = state.type;
-  const right = rightLabel(state);
-  const err = kind === "error";
-  const contentW = Math.max(1, width);
-  const rightW = term.measure(right);
-  const leftW = Math.max(1, contentW - (rightW > 0 ? rightW + 1 : 0));
-  const segs = /** @type {Segment[]} */ ([]);
-  const nameW = term.measure(name);
-  const nameT = nameW <= leftW ? name : clip(name, leftW, true, nameW);
-  segs.push({ text: nameT, group: CATEGORY_GROUPS[label.category] || "TxToolName", src: 0, srcEnd: name.length });
-  let used = nameT === name ? nameW : term.measure(nameT);
-  if (summary && used + 1 < leftW) {
-    const t = clip(summary, leftW - used - 1);
-    segs.push({ text: " " + t, group: "TxToolMeta", src: name.length, srcEnd: name.length + 1 + summary.length });
-    used += 1 + term.measure(t);
-  }
-  if (rightW > 0 && used + 1 + rightW <= contentW) {
-    segs.push({ text: " ".repeat(contentW - used - rightW), group: "TxToolMeta" });
-    segs.push({ text: right, group: err ? "TxToolError" : "TxToolMeta" });
-  }
-  return {
-    segments: segs,
-    ...actionHeaderAttrs(tree, expanded),
-    markerGroup: "TxToolMeta",
-    kind: "tool-header",
-    partId: part.id,
-  };
-}
-
-// QuickJS builds a new RegExp each time a literal runs, so the per-row fold holds one.
-const SPACE_RUN = /\s+/g;
-
-/** @param {string} value @returns {string} */
-function compactField(value) {
-  return String(value || "").replace(SPACE_RUN, " ").trim();
-}
-
-// A collapsed tool row shows only these fields, so a delta that leaves them alone changes nothing on screen.
-/** @param {Wire.AssistantPart} before @param {Wire.AssistantPart} fresh @returns {boolean} */
-function toolHeaderSame(before, fresh) {
-  if (before.type !== "tool" || fresh.type !== "tool") return false;
-  const was = /** @type {{ duration_ms?: number } | null} */ (before.state);
-  const now = /** @type {{ duration_ms?: number } | null} */ (fresh.state);
-  return before.name === fresh.name && before.arguments === fresh.arguments
-    && before.state.type === fresh.state.type && was?.duration_ms === now?.duration_ms;
-}
-
-/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @returns {string} */
-function toolBodyText(part) {
-  const s = part.state;
-  if (s.type === "error") return s.error || "";
-  const output = /** @type {{ output?: string }} */ (s);
-  if (output.output) return output.output;
-  return "";
-}
-
-/** @param {Extract<Wire.View, { type: "diff" }>} view @param {number} width @param {number} [limit] @returns {{ rows: TranscriptRow[], source: string }} */
-function diffRows(view, width, limit = Infinity) {
-  const rows = /** @type {TranscriptRow[]} */ ([]);
-  let source = "";
-  for (const f of view.files) {
-    if (f.path) {
-      if (source) source += "\n";
-      const base = source.length;
-      source += f.path;
-      if (rows.length < limit) rows.push({
-        segments: [{ text: f.path, group: "TxToolName", src: base, srcEnd: base + f.path.length }],
-        indent: TX_GUTTER,
-      });
-    }
-    for (const h of f.hunks) {
-      for (const line of h.lines) {
-        if (source) source += "\n";
-        const base = source.length;
-        source += line;
-        const mark = line[0];
-        const group = mark === "+" ? "TxToolAdd" : mark === "-" ? "TxToolDel" : "TxToolContext";
-        for (const r of wrapBody(line, width, group, limit - rows.length)) rows.push(rowAtBase(r, base));
-      }
-    }
-  }
-  return { rows, source };
-}
-
-/** @param {readonly Wire.View[]} views @param {number} width @param {number} [limit] @returns {{ rows: TranscriptRow[], source: string }} */
-function viewRows(views, width, limit = Infinity) {
-  const rows = /** @type {TranscriptRow[]} */ ([]);
-  let source = "";
-  for (const v of views) {
-    if (source) source += "\n";
-    const base = source.length;
-    const t = v.type;
-    if (t === "diff") {
-      const built = diffRows(/** @type {Extract<Wire.View, { type: "diff" }>} */ (v), width, limit - rows.length);
-      source += built.source;
-      for (const r of built.rows) rows.push({ ...r, segments: r.segments ? shiftSrc(r.segments, base) : r.segments });
-    } else if (t === "markdown") {
-      const chunk = normalizeSource(/** @type {Extract<Wire.View, { type: "markdown" }>} */ (v).text || "");
-      source += chunk;
-      if (rows.length >= limit) continue;
-      const doc = new Document();
-      doc.setText(chunk);
-      for (const r of doc.rows(Math.max(1, width), limit - rows.length)) {
-        rows.push({ segments: shiftSrc(r.segments, base), indent: TX_GUTTER });
-      }
-    } else {
-      const view = /** @type {{ text?: string }} */ (v);
-      const body = view.text ?? "";
-      source += body;
-      for (const r of wrapBody(body, width, "TxToolBody", limit - rows.length)) rows.push(rowAtBase(r, base));
-    }
-  }
-  return { rows, source };
-}
-
-/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {number} width @param {number} [limit] @returns {{ rows: TranscriptRow[], source: string }} */
-function toolBody(part, width, limit = Infinity) {
-  const views = /** @type {{ view?: readonly Wire.View[] }} */ (part.state).view;
-  const body = views && views.length ? viewRows(views, width, limit) : textBody(part, width, limit);
-  const media = part.state.type === "completed" ? part.state.media : undefined;
-  if (!media || media.length === 0) return body;
-  // An image has no text, so one label per image follows the output, numbered like a user attachment.
-  media.forEach((blob, i) => {
-    const label = mediaLabel(blob, i + 1);
-    if (body.source) body.source += "\n";
-    const base = body.source.length;
-    body.source += label;
-    if (body.rows.length < limit) body.rows.push({ segments: [{ text: label, group: "TxToolMeta", src: base, srcEnd: base + label.length }], indent: TX_GUTTER });
-  });
-  return body;
-}
-
-/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {number} width @param {number} limit @returns {{ rows: TranscriptRow[], source: string }} */
-function textBody(part, width, limit) {
-  const text = toolBodyText(part);
-  const kind = part.state.type;
-  const group = kind === "error" ? "TxToolError" : "TxToolBody";
-  return { rows: wrapBody(text, width, group, limit), source: text };
-}
-
-// A summary on the OpenAI Responses protocol opens with a bold title; prose falls back to its first line.
-/** @param {string} text @returns {string} */
-function reasoningTitle(text) {
-  let i = 0;
-  while (i < text.length && (text.charCodeAt(i) === 32 || text.charCodeAt(i) === 10)) i++;
-  // Search one bounded window, so a long summary never scans past the title.
-  const head = text.slice(i, i + TITLE_MAX + 4);
-  let from = 0;
-  let end = -1;
-  if (head.charCodeAt(0) === 42 && head.charCodeAt(1) === 42) {
-    const close = head.indexOf("**", 2);
-    if (close > 2) {
-      from = 2;
-      end = close;
-    }
-  }
-  if (end < 0) {
-    const nl = head.indexOf("\n", from);
-    end = nl < 0 ? head.length : nl;
-  }
-  if (end - from > TITLE_MAX) return head.slice(from, from + TITLE_MAX) + "…";
-  return head.slice(from, end);
-}
-
-/** @param {Extract<Wire.AssistantPart, { type: "reasoning" }>} part @param {number} width @param {boolean} expanded @param {boolean} live @param {number} tree @returns {{ rows: TranscriptRow[], source: string }} */
-function reasoningRows(part, width, expanded, live, tree) {
-  const name = live ? "thinking" : "thought";
-  const text = part.text || "";
-  // The collapsed row carries the title, because two thirds of the stored summaries hold nothing else.
-  const title = reasoningTitle(text);
-  const headerSrc = title ? name + " · " + title : name;
-  const segments = /** @type {Segment[]} */ ([{ text: name, group: "TxThought", src: 0, srcEnd: name.length }]);
-  if (title) segments.push({ text: " · " + title, group: "TxThought", src: name.length, srcEnd: headerSrc.length });
-  const header = {
-    segments,
-    ...actionHeaderAttrs(tree, expanded),
-    markerGroup: "TxThought",
-    kind: "reasoning-header",
-    partId: part.id,
-  };
-  const rows = /** @type {TranscriptRow[]} */ ([header]);
-  let source = headerSrc;
-  if (!expanded) return { rows, source };
-  source += "\n" + text;
-  const base = headerSrc.length + 1;
-  const body = wrapBody(text, width, "TxThought", ACTION_PREVIEW_ROWS, 1);
-  /** @param {TranscriptRow} row @returns {TranscriptRow} */
-  const decorate = (row) => ({
-    ...row,
-    ...actionBodyAttrs(tree),
-    markerGroup: "TxThought",
-    kind: "reasoning-body",
-    partId: part.id,
-    segments: shiftSrc(row.segments, base),
-  });
-  if (body.length <= ACTION_PREVIEW_ROWS) {
-    for (const row of body) rows.push(decorate(row));
-  } else {
-    const first = decorate(/** @type {TranscriptRow} */ (body[0]));
-    rows.push(first);
-    rows.push({ ...first, segments: undefined, text: "…", group: "TxToolMeta" });
-    rows.push(decorate(/** @type {TranscriptRow} */ (body[body.length - 1])));
-  }
-  return { rows, source };
-}
-
-/** @param {Extract<Wire.AssistantPart, { type: "tool" }>} part @param {number} width @param {boolean} expanded @param {number} tree @returns {{ rows: TranscriptRow[], source: string }} */
-function toolRows(part, width, expanded, tree) {
-  // `describe` parses the arguments, so the row and the source share one result.
-  const label = describe(part);
-  const header = toolHeaderRow(part, expanded, width, label, tree);
-  const headerSrc = toolHeaderSource(label);
-  const rows = /** @type {TranscriptRow[]} */ ([header]);
-  let source = headerSrc;
-  if (!expanded) return { rows, source };
-  const args = String(part.arguments || "");
-  const input = compactField(part.arguments);
-  source += "\n" + args;
-  rows.push({
-    segments: [{ text: ACTION_LABEL_INPUT, group: "TxToolMeta" }, { text: input || "(empty)", group: "TxToolBody" }],
-    ...actionBodyAttrs(tree),
-    markerGroup: "TxToolMeta",
-    kind: "tool-detail",
-    partId: part.id,
-  });
-  const body = toolBody(part, Math.max(1, width - ACTION_LABEL_W), ACTION_PREVIEW_ROWS + 1);
-  const shown = body.rows.slice(0, ACTION_PREVIEW_ROWS);
-  if (body.source) {
-    source += "\n" + body.source;
-    const base = headerSrc.length + 2 + args.length;
-    for (let i = 0; i < shown.length; i++) {
-      const r = /** @type {TranscriptRow} */ (shown[i]);
-      const body = r.segments || [{ text: r.text || "", group: r.group || "TxToolBody" }];
-      rows.push({
-        ...actionBodyAttrs(tree),
-        markerGroup: "TxToolMeta",
-        kind: "tool-body",
-        partId: part.id,
-        segments: shiftSrc([{ text: i === 0 ? ACTION_LABEL_OUTPUT : ACTION_LABEL_NONE, group: "TxToolMeta" }, ...body], base),
-      });
-    }
-  }
-  const cut = cutsOf(part);
-  const field = part.state.type === "error" ? "error" : "output";
-  if (body.rows.length > shown.length || cut.some((c) => c.field === field && c.next != null) || args.indexOf("\n") >= 0) {
-    rows.push({ text: "… Enter or click to view all", group: "TxToolMeta", ...actionBodyAttrs(tree), markerGroup: "TxToolMeta", kind: "tool-detail", partId: part.id });
-  }
-  return { rows, source };
-}
-
-// A scrolling overlay over labelled sections, so a tool and a reasoning part share one detail window.
-// The rows of a details window: each section label, then its wrapped text.
-/** @param {readonly { label: string, text: string, empty: string }[]} sections @param {number} width @returns {TranscriptRow[]} */
-function detailRows(sections, width) {
-  const bodyWidth = Math.max(1, width - TX_GUTTER);
-  const rows = /** @type {TranscriptRow[]} */ ([]);
-  for (const section of sections) {
-    if (rows.length) rows.push({ text: "" });
-    rows.push({ text: section.label, group: "TxToolName" });
-    for (const row of wrapBody(section.text || section.empty, bodyWidth, "TxToolBody")) rows.push(row);
-  }
-  return rows;
-}
-
-/** @param {string} title @param {readonly { label: string, text: string, empty: string }[]} sections @returns {void} */
-function openDetails(title, sections) {
-  const content = new RowsView((width) => detailRows(sections, width), () => root.popOverlay(win));
-  const win = new Window({ title, footer: "j/k scroll · pgup/pgdn · esc close", border: "rounded", width: max => Math.round(max * 0.9), height: max => Math.round(max * 0.85), content });
-  root.pushOverlay(win);
-}
-
-const FIELD_UNREAD = "\n[the remaining field could not be read]";
-
-/** @param {Wire.MessageError | null | undefined} error @returns {string} */
-function errorLabel(error) {
-  const parts = [(error && error.message) || (error && error.type) || "run failed"];
-  if (error?.status != null) parts.push("HTTP " + error.status);
-  if (error?.detail) parts.push(error.detail);
-  if (error?.request_id) parts.push("request " + error.request_id);
-  return "⚠ " + parts.join(" · ");
-}
-
-// Join the text parts of a user or compaction message; a single part returns its string without a copy.
-/** @param {readonly MessagePart[]} parts @returns {string} */
-function textOfParts(parts) {
-  /** @type {string | null} */
-  let text = null;
-  for (const part of parts) if (part.type === "text") text = text === null ? part.text : text + part.text;
-  return text ?? "";
-}
-
-// A child report has two text parts, and the rows show only the body, not the preamble of the model.
-/** @param {readonly MessagePart[]} parts @param {string} text @returns {string} */
-function reportBody(parts, text) {
-  const texts = parts.filter((part) => part.type === "text");
-  return texts.length >= 2 ? /** @type {Extract<MessagePart, { type: "text" }>} */ (texts[texts.length - 1]).text : text;
-}
-
-// Put each attachment label of a user message at the position of its part.
-/** @param {readonly MessagePart[]} parts @param {string} text @returns {string} */
-function userBody(parts, text) {
-  if (!parts.some(isMedia)) return text;
-  // One pass builds every label, so the number counts media alone and stays the number the composer drew.
-  let image = 0;
-  return parts.map((part) => (isMedia(part) ? mediaLabel(part.source, part.type === "image" ? ++image : 0) : part.type === "text" ? part.text : "")).join("");
+// The group key of a part: undefined for a part with no content, which passes through a group; null for a part that closes a group.
+/** @param {Wire.AssistantPart} part @returns {string | null | undefined} */
+function partKey(part) {
+  if (emptyPart(part) || (part.type === "text" && !part.text)) return undefined;
+  return hook("groupKey", part) ?? null;
 }
 
 /**
@@ -693,7 +172,8 @@ export class Transcript {
     /** @type {MessageDescriptor | null} */
     this._active = null; // the streaming draft descriptor, or null
     this._width = -1;
-    this._labelRevision = labelRevision;
+    this._revision = renderRevision;
+    this._expandEpoch = expandEpoch;
     /** @type {Map<string, number>} */
     this._positions = new Map();
     /** @type {Map<string, number>} */
@@ -707,8 +187,8 @@ export class Transcript {
     this._parts = new Map(); // id -> the part list and one render per part, for the partsOf path
     /** @type {WeakMap<Wire.AssistantPart, TextCursor>} */
     this._cursors = new WeakMap(); // held part -> the end of its text, so a list read again holds no cursor
-    /** @type {ActionPlan | null} */
-    this._actionPlanCache = null;
+    /** @type {GroupPlan | null} */
+    this._planCache = null;
     /** @type {Map<string, boolean>} */
     this._expand = new Map(); // id:partId -> user override
     /**
@@ -788,7 +268,7 @@ export class Transcript {
    * @param {MessageDescriptor[]} messages @param {MessageDescriptor | null} active @returns {void}
    */
   setOutline(messages, active) {
-    const oldPlan = this._actionPlanCache;
+    const oldPlan = this._planCache;
     const oldMessages = oldPlan ? this.messages() : [];
     const keep = new Set();
     for (const m of messages) if (!sameId(m.id, this._active?.id)) keep.add(String(m.id));
@@ -797,8 +277,8 @@ export class Transcript {
     this._messages = messages;
     this._active = active || null;
     this._resetOrder();
-    this._actionPlanCache = null;
-    this._refreshActionRows(oldPlan, oldMessages);
+    this._planCache = null;
+    this._refreshGroupRows(oldPlan, oldMessages);
     // `_positions` now holds every live id, the draft included; an override key is "id:partId".
     for (const k of this._expand.keys()) if (!this._positions.has(k.slice(0, k.indexOf(":")))) this._expand.delete(k);
     this.clearSelection();
@@ -849,8 +329,8 @@ export class Transcript {
   // A missing count renders its message once and lets the cache drop the rows; later reads use the counts alone.
   /** @param {number} last @returns {void} */
   _indexRowsThrough(last) {
-    if (!this._actionPlanCache && this._prefix.length === 1) {
-      this._buildActionPlan(
+    if (merged.groupKey.length && !this._planCache && this._prefix.length === 1) {
+      this._buildPlan(
         (m) => this._partState(m.id).list,
         this._indexRowsThrough,
       );
@@ -890,7 +370,7 @@ export class Transcript {
    * @param {number} id @param {number} [partId] @returns {void}
    */
   setActive(id, partId) {
-    const oldPlan = this._actionPlanCache;
+    const oldPlan = this._planCache;
     const adopted = !this._active || !sameId(this._active.id, id);
     const oldMessages = adopted && oldPlan ? this.messages() : undefined;
     if (adopted) {
@@ -905,14 +385,14 @@ export class Transcript {
     const sel = this.selection;
     const touches = !!sel && (sameId(sel.anchor.id, id) || sameId(sel.cursor.id, id));
     const anchors = touches ? this._anchors() : null;
-    if (groupingChanged) this._actionPlanCache = null;
+    if (groupingChanged) this._planCache = null;
     if (adopted || refreshed.rowsChanged) this._markStale(id);
-    if (groupingChanged) this._refreshActionRows(oldPlan, oldMessages);
+    if (groupingChanged) this._refreshGroupRows(oldPlan, oldMessages);
     if (touches) this._reanchor(anchors);
   }
 
   /**
-   * Rebuild one tool row whose presenter reads state outside the part, so a child's activity reaches its spawn row. Nothing happens when the row has no render.
+   * Rebuild the rows of part `partId`, because its renderer reads state outside the part, such as the activity of a child agent. Nothing happens when the part has no render.
    * @param {number} id @param {number} partId @returns {void}
    */
   refreshRow(id, partId) {
@@ -955,8 +435,9 @@ export class Transcript {
       } else if (text) text.part = null;
       state.list[at] = fresh;
       if (read.cursor) this._cursors.set(fresh, read.cursor);
-      const groupingChanged = labels.role(before) !== labels.role(fresh);
-      const rowsChanged = !c || c.expanded || !toolHeaderSame(before, fresh);
+      const groupingChanged = merged.groupKey.length !== 0 && partKey(before) !== partKey(fresh);
+      // A delta asks the hook only when a renderer has one, so the default look pays no call per delta.
+      const rowsChanged = !c || merged.sameVisible.length === 0 || hook("sameVisible", before, fresh, c.expanded) !== true;
       if (c && rowsChanged) stale(c);
       return { groupingChanged, rowsChanged };
     }
@@ -968,19 +449,54 @@ export class Transcript {
     return { groupingChanged: true, rowsChanged: true };
   }
 
-  // A width or label change rebuilds rows and moves the selection back to the same source offsets.
+  // Each read calls this, and the width and renderer rarely change, so the rebuild and its locals live in `_rebuild`.
   /** @param {number} width @returns {void} */
   _invalidate(width) {
-    const changed = this._labelRevision !== labelRevision;
-    if (width === this._width && !changed) return;
+    if (width !== this._width || this._revision !== renderRevision) this._rebuild(width);
+  }
+
+  // A width or renderer change rebuilds rows and moves the selection back to the same source offsets.
+  /** @param {number} width @returns {void} */
+  _rebuild(width) {
+    const changed = this._revision !== renderRevision;
     const anchors = this._anchors();
+    const top = this._topAnchor();
     this._width = width;
-    this._labelRevision = labelRevision;
-    if (changed) for (const state of this._parts.values()) for (const c of state.rows.values()) stale(c);
+    this._revision = renderRevision;
+    // A ctrl+o opens or folds every part, so each choice the user made one by one ends.
+    if (this._expandEpoch !== expandEpoch) {
+      this._expandEpoch = expandEpoch;
+      this._expand.clear();
+    }
+    if (changed) {
+      for (const state of this._parts.values()) for (const c of state.rows.values()) stale(c);
+      this._planCache = null;
+    }
     for (const c of this._rows.values()) stale(c);
     this._counts.clear();
     this._prefix = [0];
     if (this.selection) this._reanchor(anchors);
+    if (top) this._keepTop(top);
+  }
+
+  // The first drawn row as a source offset, so a rebuild keeps the same text at the top of the pane. A pane at the tail follows the tail.
+  /** @returns {{ pos: Position, off: number } | null} */
+  _topAnchor() {
+    if (this._width <= 0 || this.pager.stuck || this._prefix.length === 1) return null;
+    const i = this._messageAtRow(this.pager.scroll);
+    const m = this._at(i);
+    if (!m) return null;
+    const pos = { id: m.id, row: this.pager.scroll - this._offset(i), col: 0 };
+    return { pos, off: this.sourceAt(pos) };
+  }
+
+  // A row with no source, such as a separator, keeps its row in its message instead.
+  /** @param {{ pos: Position, off: number }} top @returns {void} */
+  _keepTop(top) {
+    const { id, row } = top.pos;
+    const pos = (top.off >= 0 ? this.posAtSource(id, top.off) : null) ?? { id, row: Math.min(row, Math.max(0, this.rowCountOf(id) - 1)), col: 0 };
+    const g = this._globalRow(pos);
+    if (g >= 0) this.pager.scroll = g;
   }
 
   /** @param {number} id @returns {string} */
@@ -1131,7 +647,7 @@ export class Transcript {
     for (let k = 0; k < rows.length; k++) {
       const row = /** @type {TranscriptRow} */ (rows[k]);
       const base = rowSourceBase(cache, row);
-      const segments = row.segments;
+      const segments = segmentsOf(row);
       if (!segments) continue;
       let at = 0;
       for (const seg of segments) {
@@ -1179,6 +695,7 @@ export class Transcript {
     this.pager.scrollIntoView(this._globalRow(pos));
   }
 
+  // Each drawn message reads here and most hit the cache, so the build and its locals live in `_buildRows`.
   /** @param {MessageDescriptor} m @param {number} width @param {number} index @returns {TranscriptRow[]} */
   _rowsOf(m, width, index) {
     const key = String(m.id);
@@ -1188,46 +705,53 @@ export class Transcript {
       this._rows.set(key, c);
       return c.rows;
     }
+    return this._buildRows(m, width, index, key, c);
+  }
+
+  /** @param {MessageDescriptor} m @param {number} width @param {number} index @param {string} key @param {RowCache | undefined} c @returns {TranscriptRow[]} */
+  _buildRows(m, width, index, key, c) {
     // The stale render leaves first, so a fault cannot keep rows a build half wrote.
     if (c) this._rows.delete(key);
     // A viewport read trims once after the range; an individual read trims before its new entry exists.
     if (!this._viewport.has(key)) this._trimCaches();
 
+    /** @type {TranscriptRow[]} */
     let rows;
     let source;
-    let partBases = new Map();
-    if (m.type === "user") {
-      const parts = this._allParts(m.id);
-      source = textOfParts(parts);
-      if (m.skill_name || (m.source && m.source.type !== "parent_instruction")) {
-        if (m.source?.type === "child_report") source = reportBody(parts, source);
-        const expanded = this._expand.get(this._expandKey(m.id, -1)) === true;
-        const body = wrapBody(source, Math.max(1, width - TX_GUTTER), "TxToolBody", expanded ? Infinity : REPORT_PREVIEW_LINES + 1);
-        const shown = expanded ? body : body.slice(0, m.skill_name ? 0 : REPORT_PREVIEW_LINES);
-        rows = [{ text: m.skill_name ? "Skill · " + m.skill_name : inputSourceLabel(m.source), group: "TxToolMeta", marker: expanded ? "▾" : "▸", markerGroup: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id },
-          ...shown.map((row) => ({ ...row, kind: "report-body", partId: -1, key: m.id })),
-          ...(!expanded && body.length > shown.length ? [{ text: "… click the header to expand", group: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id }] : []), { text: "", key: m.id }];
-      } else {
-        source = userBody(parts, source);
-        rows = messageRows(m.id, source, width, "user");
-        // A parent-sent task reads like user input, so one meta row says where it came from.
-        if (m.source?.type === "parent_instruction") rows.unshift({ text: inputSourceLabel(m.source), group: "TxToolMeta", indent: TX_GUTTER, kind: "report-header", partId: -1, key: m.id });
-      }
-    } else if (m.type === "compaction") {
-      source = textOfParts(this._allParts(m.id));
-      rows = messageRows(m.id, source, width, "compaction");
-    } else {
+    /** @type {Map<string, number>} */
+    let partBases;
+    if (m.type === "assistant") {
       const built = this._partRows(m, width, index, c && c.rows);
       rows = built.rows;
       source = built.source;
       partBases = built.partBases;
+    } else {
+      /** @type {MessageEnv} */
+      const env = { messageId: m.id, width, expanded: this._isExpanded(m.id, -1, null) };
+      /** @type {Rendered | undefined} */
+      const out = hook("message", m, this._allParts(m.id), env);
+      rows = out ? out.rows : [];
+      source = out ? out.source : "";
+      // The rows of a message form one part, so a fold key and a source base of -1 name the whole message.
+      for (const r of rows) {
+        r.key = m.id;
+        r.partId = -1;
+      }
+      partBases = new Map([["-1", 0]]);
     }
     if (m.error) {
-      const base = source.length ? source.length + 1 : 0;
-      const error = errorLabel(m.error);
-      source = source.length ? source + "\n" + error : error;
-      rows = rows.concat(messageRows(m.id, error, width, "error", base));
+      /** @type {Rendered | undefined} */
+      const out = hook("error", m.error, { messageId: m.id, width, expanded: false });
+      if (out) {
+        const base = source.length ? source.length + 1 : 0;
+        source = source.length ? source + "\n" + out.source : out.source;
+        for (const r of out.rows) {
+          r.key = m.id;
+          rows.push(rowAtBase(r, base));
+        }
+      }
     }
+    if (!this._planCache || !this._planCache.joinAfter[index]) rows.push({ text: "", key: m.id });
     this._rows.set(key, { w: width, rows, source, partBases });
     this._counts.set(key, rows.length);
     return rows;
@@ -1261,35 +785,38 @@ export class Transcript {
   }
 
   // The plan holds one tree value per filtered part, so a lookup is the message start plus the part index.
-  /** @returns {ActionPlan} */
-  _actionPlan() {
-    if (this._actionPlanCache) return this._actionPlanCache;
-    return this._buildActionPlan((m) => {
+  /** @returns {GroupPlan} */
+  _plan() {
+    if (this._planCache) return this._planCache;
+    return this._buildPlan((m) => {
       const held = this._parts.get(String(m.id));
       return held && held.list ? held.list : this._readParts(m.id);
     });
   }
 
-  // Walk the outline once and record every action group. `ready` reports the last message whose groups have closed, so a caller can index its rows before the walk ends.
-  /** @param {(message: MessageDescriptor) => readonly Wire.AssistantPart[]} readParts @param {((last: number) => void) | null} [ready] @returns {ActionPlan} */
-  _buildActionPlan(readParts, ready = null) {
+  // Walk the outline once and record each group of consecutive parts that share a `groupKey`. `ready` reports the last message whose groups have closed, so a caller can index its rows before the walk ends.
+  /** @param {(message: MessageDescriptor) => readonly Wire.AssistantPart[]} readParts @param {((last: number) => void) | null} [ready] @returns {GroupPlan} */
+  _buildPlan(readParts, ready = null) {
     // One flat part list avoids retaining a JS array object for every assistant message.
     /** @type {number[]} */
     const trees = [];
     const starts = [0];
     /** @type {number[]} */
     const joinAfter = [];
-    /** @type {ActionEntry[]} */
+    /** @type {GroupEntry[]} */
     const segment = [];
-    /** @type {ActionPlan} */
+    /** @type {GroupPlan} */
     const plan = { trees, starts, joinAfter };
-    this._actionPlanCache = plan;
-    // A group closes here: every action learns its place, and the messages it spans render without a separator.
+    this._planCache = plan;
+    /** @type {string | null} */
+    let openKey = null;
+    // A group closes here: each part in it learns its place, and the messages it spans render without a separator.
     const flush = () => {
       if (segment.length === 0) return;
-      for (let i = 0; i < segment.length; i++) trees[/** @type {ActionEntry} */ (segment[i]).part] = actionTree(segment.length, i);
-      const first = /** @type {ActionEntry} */ (segment[0]);
-      const last = /** @type {ActionEntry} */ (segment[segment.length - 1]);
+      const count = segment.length;
+      for (let i = 0; i < count; i++) trees[/** @type {GroupEntry} */ (segment[i]).part] = count * GROUP_SCALE + (i === 0 ? GROUP_FIRST : 0) + (i + 1 === count ? GROUP_LAST : 0);
+      const first = /** @type {GroupEntry} */ (segment[0]);
+      const last = /** @type {GroupEntry} */ (segment[segment.length - 1]);
       for (let i = first.message; i < last.message; i++) joinAfter[i] = 1;
       segment.length = 0;
     };
@@ -1300,6 +827,7 @@ export class Transcript {
       if (m.type !== "assistant") {
         starts.push(trees.length);
         flush();
+        openKey = null;
         if (ready) ready.call(this, message);
         continue;
       }
@@ -1308,13 +836,16 @@ export class Transcript {
       for (let index = 0; index < messageParts.length; index++) trees.push(0);
       starts.push(trees.length);
       for (let index = 0; index < messageParts.length; index++) {
-        const part = /** @type {Wire.AssistantPart} */ (messageParts[index]);
-        const role = labels.role(part);
-        if (role === ROLE_TEXT) flush();
-        if (role !== ROLE_ACTION) continue;
-        segment.push({ part: start + index, message });
+        const key = partKey(/** @type {Wire.AssistantPart} */ (messageParts[index]));
+        if (key === undefined) continue;
+        if (key !== openKey) flush();
+        openKey = key;
+        if (key !== null) segment.push({ part: start + index, message });
       }
-      if (m.error) flush();
+      if (m.error) {
+        flush();
+        openKey = null;
+      }
       if (ready && segment.length === 0) ready.call(this, message);
     }
     flush();
@@ -1326,11 +857,11 @@ export class Transcript {
     return plan;
   }
 
-  // Mark stale every message whose action group changed. Walk the old outline, because a message that left it still holds rows drawn against the old plan.
-  /** @param {ActionPlan | null} oldPlan @param {MessageDescriptor[]} [oldMessages] @returns {void} */
-  _refreshActionRows(oldPlan, oldMessages) {
+  // Mark stale every message whose `groupKey` group changed. Walk the old outline, because a message that left it still holds rows drawn against the old plan.
+  /** @param {GroupPlan | null} oldPlan @param {MessageDescriptor[]} [oldMessages] @returns {void} */
+  _refreshGroupRows(oldPlan, oldMessages) {
     if (!oldPlan) return;
-    const next = this._actionPlan();
+    const next = this._plan();
     // Without a new order the live list is the old one, so a streamed part copies no message.
     for (let i = 0, m; (m = oldMessages ? oldMessages[i] : this._at(i)); i++) {
       const index = this.messageIndex(m.id);
@@ -1352,7 +883,7 @@ export class Transcript {
     }
   }
 
-  /** @param {ItemKey} id @param {ItemKey} partId @returns {string} */
+  /** @param {number} id @param {number} partId @returns {string} */
   _expandKey(id, partId) {
     return String(id) + ":" + String(partId);
   }
@@ -1365,44 +896,46 @@ export class Transcript {
     return !!last && last.type === "reasoning" && sameId(last.id, partId);
   }
 
-  /** @param {number} id @param {number} partId @param {Wire.AssistantPart | null | undefined} part @returns {boolean} */
+  // The choice of the user wins, then ctrl+o, then the `fold` hook of the renderers. A whole message (`partId` -1) has no `fold`.
+  /** @param {number} id @param {number} partId @param {Wire.AssistantPart | null} part @returns {boolean} */
   _isExpanded(id, partId, part) {
-    const k = this._expandKey(id, partId);
-    if (this._expand.has(k)) return /** @type {boolean} */ (this._expand.get(k));
-    if (part && part.type === "reasoning") return this._reasoningLive(id, partId);
-    if (part?.type !== "tool") return false;
-    const t = part.state.type;
-    return t === "running" || t === "error" || t === "canceled";
+    const choice = this._expand.get(this._expandKey(id, partId));
+    if (choice !== undefined) return choice;
+    if (expandAll) return true;
+    return !!part && merged.fold.length !== 0 && hook("fold", part, part.type === "reasoning" && this._reasoningLive(id, partId)) === true;
   }
 
   /**
-   * Open a folded part or fold an open part, and redraw.
+   * Open a folded part or fold an open part, and redraw. `partId` -1 names a whole message.
    * @param {number} id @param {number} partId @returns {void}
    */
   togglePart(id, partId) {
-    const k = this._expandKey(id, partId);
     let part = null;
-    if (partId !== -1) {
-      for (const p of this._partState(id).list) if (sameId(p.id, partId)) part = p;
-    }
-    this._expand.set(k, !(partId === -1 ? this._expand.get(k) === true : this._isExpanded(id, partId, part)));
+    if (partId !== -1) for (const p of this._partState(id).list) if (sameId(p.id, partId)) part = p;
+    this._expand.set(this._expandKey(id, partId), !this._isExpanded(id, partId, part));
     this._markStale(id);
     root.invalidate();
   }
 
-  // Page the rest of a cut field from the host. A page that fails or does not advance ends the read, so a stalled host cannot spin here.
-  /** @param {number} id @param {number} partId @param {Wire.AssistantPart} part @param {string} field @param {string} prefix @returns {string} */
-  _wholePartField(id, partId, part, field, prefix) {
-    const cuts = cutsOf(part);
+  /**
+   * The whole text of field `field` of part `partId`: "arguments", "text", or a field of the tool state such as "output" or "error".
+   * The engine cuts a long field, so this reads the rest page by page. A page that fails or does not advance ends the read with a note.
+   * @param {number} id @param {number} partId @param {string} field @returns {string}
+   */
+  readField(id, partId, field) {
+    const part = this._partState(id).list.find((entry) => sameId(entry.id, partId));
+    if (!part) return "";
+    const own = /** @type {Record<string, unknown>} */ (field === "arguments" || field === "text" ? part : /** @type {{ state?: object }} */ (part).state || {});
+    let text = String(own[field] ?? "");
+    const cuts = /** @type {{ cut?: readonly { field?: string, next?: number | null }[] }} */ (part).cut || [];
     const cut = cuts.find((entry) => entry.field === field && entry.next != null);
-    if (!cut || !this.partTextPage) return prefix;
-    let text = prefix;
+    if (!cut || !this.partTextPage) return text;
     let offset = /** @type {number} */ (cut.next);
     if (!Number.isSafeInteger(offset) || offset < 0) return text + FIELD_UNREAD;
     while (true) {
       let page = null;
       try {
-        page = this.partTextPage(id, partId, field, offset, 0);
+        page = this.partTextPage(id, part.id, field, offset, 0);
       } catch (_) {}
       if (!page || typeof page.text !== "string") return text + FIELD_UNREAD;
       text += page.text;
@@ -1413,104 +946,51 @@ export class Transcript {
   }
 
   /**
-   * Open a window with the full input and output of tool part `partId`. It first reads the rest of a cut field from the host. False when the part is not a tool.
-   * @param {number} id @param {number} partId @returns {boolean}
-   */
-  openTool(id, partId) {
-    const part = this._partState(id).list.find((entry) => sameId(entry.id, partId));
-    if (!part || part.type !== "tool") return false;
-    const state = part.state;
-    const field = state.type === "error" ? "error" : "output";
-    const output = state.type === "error" ? state.error || "" : String(/** @type {{ output?: string }} */ (state).output || "");
-    const input = this._wholePartField(id, part.id, part, "arguments", String(part.arguments || ""));
-    const completeOutput = this._wholePartField(id, part.id, part, field, output);
-    const sections = [{ label: "input", text: input, empty: "(empty)" }, { label: "output", text: completeOutput, empty: "(no output)" }];
-    const views = /** @type {{ view?: readonly Wire.View[] }} */ (state).view;
-    if (!completeOutput && views && views.length) sections.push({ label: "view preview", text: toolBody(part, 80, 0).source, empty: "(empty)" });
-    openDetails(String(part.name || "tool") + " · tool details", sections);
-    return true;
-  }
-
-  /**
-   * Open a window with the full text of reasoning part `partId`. False when the part is not reasoning.
-   * @param {number} id @param {number} partId @returns {boolean}
-   */
-  openReasoning(id, partId) {
-    const part = this._partState(id).list.find((entry) => sameId(entry.id, partId));
-    if (!part || part.type !== "reasoning") return false;
-    openDetails("thought · reasoning details", [{ label: "reasoning", text: String(part.text || ""), empty: "(empty)" }]);
-    return true;
-  }
-
-  /**
-   * The part under a logical position, or null on a gutter or separator row.
+   * The part under a logical position, or null on a row of no part, such as a separator.
    * @param {Position | null} pos @returns {PartHit | null}
    */
   partAt(pos) {
     if (!pos) return null;
     const rows = this._rowsFor(pos.id);
     const row = pos.row >= 0 && pos.row < rows.length ? rows[pos.row] : null;
-    if (!row || row.partId == null || !row.kind) return null;
-    return { id: pos.id, partId: row.partId, kind: row.kind };
+    if (!row || row.partId == null) return null;
+    return { id: pos.id, partId: row.partId, row };
   }
 
   /**
-   * Open the tool or thought under `pos`, or fold its group. It answers where the reader lands, or null when no part acts.
+   * Act on the part under `pos`: the `activate` hook of the renderers first, else a fold toggle when the part has a header row.
+   * It answers where the reader lands, or null when no part acts.
    * @param {Position} pos @returns {Position | null}
    */
   activate(pos) {
     const hit = this.partAt(pos);
     if (!hit) return null;
-    if (hit.kind === "tool-detail" || hit.kind === "tool-body") this.openTool(hit.id, hit.partId);
-    else if (hit.kind === "reasoning-body") this.openReasoning(hit.id, hit.partId);
-    else if (hit.kind === "tool-header" || hit.kind === "reasoning-header" || hit.kind === "report-header" || hit.kind === "report-body") {
-      this.togglePart(hit.id, hit.partId);
-      const header = this.partHeader(hit.id, hit.partId) ?? pos;
-      this.ensureVisible(header);
-      return header;
-    } else return null;
-    return pos;
+    /** @type {Position | null | undefined} */
+    const out = hook("activate", hit, this);
+    if (out !== undefined) return out;
+    if (!this.partHeader(hit.id, hit.partId)) return null;
+    this.togglePart(hit.id, hit.partId);
+    const header = this.partHeader(hit.id, hit.partId) ?? pos;
+    this.ensureVisible(header);
+    return header;
   }
 
   /**
-   * The header position of a foldable part, or null when it is gone.
+   * The position of the header row of a part, or null when the part has none.
    * @param {number} id @param {number} partId @returns {Position | null}
    */
   partHeader(id, partId) {
     const rows = this._rowsFor(id);
     for (let row = 0; row < rows.length; row++) {
       const r = /** @type {TranscriptRow} */ (rows[row]);
-      const kind = r.kind || "";
-      if (r.partId === partId && kind.endsWith("-header")) return { id, row, col: 0 };
+      if (r.partId === partId && r.header) return { id, row, col: 0 };
     }
     return null;
   }
 
-  /** @param {MessageDescriptor} m @returns {Position[]} */
-  _partStopsOf(m) {
-    const rows = this._rowsFor(m.id);
-    if (m.type === "user" || m.type === "compaction") {
-      return rows.length ? [{ id: m.id, row: 0, col: 0 }] : [];
-    }
-    const out = [];
-    let lastPart = null;
-    for (let row = 0; row < rows.length; row++) {
-      const r = /** @type {TranscriptRow} */ (rows[row]);
-      const kind = r.kind;
-      if (kind === "tool-header" || kind === "reasoning-header" || kind === "error") {
-        out.push({ id: m.id, row, col: 0 });
-        lastPart = r.partId;
-      } else if (kind === "text" && r.partId !== lastPart) {
-        out.push({ id: m.id, row, col: 0 });
-        lastPart = r.partId;
-      }
-    }
-    return out;
-  }
-
   /**
    * The next part stop after `pos` when `dir` is above 0, else the previous one. Null when `pos` is null or no stop is left.
-   * A stop is a tool or reasoning header, an error, the first row of a text part, or the first row of a user or compaction message.
+   * A stop is a row with `stop` set: the renderers set it, and the first row of a text part has it.
    * @param {Position | null} pos @param {number} dir @returns {Position | null}
    */
   partStep(pos, dir) {
@@ -1519,9 +999,10 @@ export class Transcript {
     for (let i = this.messageIndex(pos.id); i >= 0; i += step) {
       const m = this._at(i);
       if (!m) break;
-      const stops = this._partStopsOf(m);
-      for (let n = step > 0 ? 0 : stops.length - 1; n >= 0 && n < stops.length; n += step) {
-        const stop = /** @type {Position} */ (stops[n]);
+      const rows = this._rowsFor(m.id);
+      for (let n = step > 0 ? 0 : rows.length - 1; n >= 0 && n < rows.length; n += step) {
+        if (!(/** @type {TranscriptRow} */ (rows[n]).stop)) continue;
+        const stop = { id: m.id, row: n, col: 0 };
         if (this.comparePos(stop, pos) * step > 0) return stop;
       }
     }
@@ -1533,21 +1014,23 @@ export class Transcript {
   /** @param {MessageDescriptor} m @param {number} width @param {number} messageIndex @param {TranscriptRow[] | undefined} old @returns {{ rows: TranscriptRow[], source: string, partBases: Map<string, number> }} */
   _partRows(m, width, messageIndex, old) {
     const state = this._partState(m.id);
-    const plan = this._actionPlan();
-    const start = plan.starts[messageIndex] || 0;
+    const plan = merged.groupKey.length ? this._plan() : null;
+    const start = plan ? plan.starts[messageIndex] || 0 : 0;
     const seen = new Set();
     // The old rows stay in place up to the first row a build changed.
     const rows = old || [];
     let reuse = !!old;
     let n = 0;
+    let shown = 0;
     const partBases = new Map();
     let source = "";
     const list = state.list;
     for (let index = 0; index < list.length; index++) {
       const part = /** @type {Wire.AssistantPart} */ (list[index]);
       if (emptyPart(part)) continue;
-      const tree = plan.trees[start + index] || 0;
-      const head = tree !== 0 && actionFirst(tree);
+      const tree = plan ? plan.trees[start + index] || 0 : 0;
+      const head = tree !== 0 && (tree & GROUP_FIRST) !== 0;
+      const gap = shown++ === 0 ? 0 : merged.gap;
       if (source) source += "\n";
       const base = source.length;
       const key = String(part.id);
@@ -1563,17 +1046,24 @@ export class Transcript {
       }
       partBases.set(key, base);
       source += c.source;
-      const at = n + (head ? 1 : 0);
-      // A row belongs to one part build, so an old row at `at` that is this part's first row places the part where it was.
-      // A rebuilt part keeps only the rows its text kept, and writes its group header again.
-      if (reuse && (!c.rows.length || rows[at] !== c.rows[0] || built && head)) {
+      // A row belongs to one part build, so an old first row places the part where it was; a rebuilt part keeps only the rows its text kept and writes its group header again.
+      if (reuse && (built && head || !c.rows.length || rows[n + gap + (head ? c.lead : 0)] !== c.rows[0])) {
         rows.length = n;
         reuse = false;
       }
-      if (!reuse && head) {
-        const count = actionCount(tree);
-        rows.push({ text: count + (count === 1 ? " action" : " actions"), group: "TxToolMeta", indent: TX_GUTTER, kind: "action-group-header", key: m.id });
+      if (!reuse) {
+        for (let g = 0; g < gap; g++) rows.push({ text: "", key: m.id });
+        if (head) {
+          /** @type {TranscriptRow[]} */
+          const header = hook("groupHeader", { key: partKey(part), count: Math.floor(tree / GROUP_SCALE) }, { messageId: m.id, width, expanded: false }) || [];
+          c.lead = header.length;
+          for (const r of header) {
+            r.key = m.id;
+            rows.push(r);
+          }
+        }
       }
+      const at = n + gap + (head ? c.lead : 0);
       const own = c.rows;
       const end = own.length;
       const from = !reuse ? 0 : !built ? end : c.text ? c.text.kept : 0;
@@ -1586,15 +1076,15 @@ export class Transcript {
     }
     for (const key of state.rows.keys()) if (!seen.has(key)) state.rows.delete(key);
     if (reuse) rows.length = n;
-    if (!plan.joinAfter[messageIndex]) rows.push({ text: "", key: m.id });
     return { rows, source, partBases };
   }
 
   // Render one part at source base 0; retain rows before the last two markdown blocks.
   /** @param {number} id @param {Wire.AssistantPart} part @param {number} width @param {boolean} expanded @param {boolean} live @param {number} tree @param {PartCache | undefined} previous @returns {PartCache} */
   _buildPart(id, part, width, expanded, live, tree, previous) {
-    const contentW = Math.max(1, width - (tree ? ACTION_INDENT : TX_GUTTER));
     if (part.type === "text") {
+      const indent = merged.indent;
+      const contentW = Math.max(1, width - indent);
       const text = previous?.text || { doc: new Document(), part: null, width: contentW, ends: [], kept: 0 };
       const { doc, ends } = text;
       // A tail read already appended to the document, so only a new part object sets the whole text.
@@ -1607,18 +1097,30 @@ export class Transcript {
       rows.length = ends.at(-1) || 0;
       text.kept = rows.length;
       for (let i = ends.length; i < doc._blocks.length; i++) {
-        if (i) rows.push({ segments: [{ text: "", group: "MdText" }], indent: TX_GUTTER, key: id, partId: part.id, kind: "text" });
+        if (i) rows.push({ segments: [{ text: "", group: "MdText" }], indent, key: id, partId: part.id, kind: "text" });
         const block = /** @type {Block} */ (doc._blocks[i]);
-        for (const r of doc._blockRows(block, contentW)) rows.push({ segments: r.segments, indent: TX_GUTTER, key: id, partId: part.id, kind: "text" });
+        for (const r of doc._blockRows(block, contentW)) {
+          // Only the first row of a part is a stop, so the other rows keep one shape and copy one field less.
+          /** @type {TranscriptRow} */
+          const row = { segments: r.segments, indent, key: id, partId: part.id, kind: "text" };
+          if (rows.length === 0) row.stop = true;
+          rows.push(row);
+        }
         ends.push(rows.length);
       }
-      return { w: width, expanded, live, shape: tree, rows, source: doc.sourceText(), text };
+      return { w: width, expanded, live, shape: tree, lead: 0, rows, source: doc.sourceText(), text };
     }
-    const built = part.type === "tool"
-      ? toolRows(part, contentW, expanded, tree)
-      : reasoningRows(/** @type {Extract<Wire.AssistantPart, { type: "reasoning" }>} */ (part), contentW, expanded, live, tree);
-    const rows = built.rows.map((r) => ({ ...r, key: id, partId: part.id }));
-    return { w: width, expanded, live, shape: tree, rows, source: built.source, text: null };
+    /** @type {PartEnv} */
+    const env = { messageId: id, width, expanded, live, group: tree ? { count: Math.floor(tree / GROUP_SCALE), first: (tree & GROUP_FIRST) !== 0, last: (tree & GROUP_LAST) !== 0 } : null, tools: merged.tools };
+    /** @type {Rendered | undefined} */
+    const out = hook("part", part, env);
+    const rows = out ? out.rows : [];
+    // The renderer answers new rows, so the core writes the owner of each one in place.
+    for (const r of rows) {
+      r.key = id;
+      r.partId = part.id;
+    }
+    return { w: width, expanded, live, shape: tree, lead: 0, rows, source: out ? out.source : "", text: null };
   }
 
   /** @param {number} i @returns {MessageDescriptor | null} */

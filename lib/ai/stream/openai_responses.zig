@@ -42,6 +42,8 @@ const Output = struct {
     text: ?event.BlockId = null,
     reasoning: ?event.BlockId = null,
     tool: ?event.BlockId = null,
+    /// The `summary_index` of the last summary delta, so a new summary section starts on its own paragraph.
+    summary: ?i64 = null,
 };
 
 const PartSlot = struct {
@@ -113,7 +115,8 @@ pub const Reducer = struct {
             .@"response.content_part.added" => try self.onContentPartAdded(root, out),
             .@"response.output_text.delta" => try self.onTextDelta(root, out),
             .@"response.refusal.delta" => try self.onRefusalDelta(root, out),
-            .@"response.reasoning_summary_text.delta", .@"response.reasoning_text.delta" => try self.onReasoningDelta(root, out),
+            .@"response.reasoning_summary_text.delta" => try self.onReasoningDelta(root, out, json.fieldInt(root, "summary_index")),
+            .@"response.reasoning_text.delta" => try self.onReasoningDelta(root, out, null),
             .@"response.function_call_arguments.delta" => try self.onToolDelta(root, out),
             .@"response.output_text.done", .@"response.refusal.done" => try self.onTextDone(root, out),
             .@"response.content_part.done" => try self.onContentPartDone(root, out),
@@ -182,7 +185,7 @@ pub const Reducer = struct {
         return self.onTextDelta(root, out);
     }
 
-    fn onReasoningDelta(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
+    fn onReasoningDelta(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent), summary: ?i64) Error!void {
         const output = try self.outputFor(root);
         const id = output.reasoning orelse blk: {
             const new_id = try self.startBlock(.reasoning, out);
@@ -191,6 +194,11 @@ pub const Reducer = struct {
         };
         _ = try self.openBlock(id);
         const delta = json.fieldStr(root, "delta") orelse return error.Protocol;
+        // Each summary section opens with a bold title, so sections joined without a break read as one run of titles.
+        if (summary) |index| {
+            if (output.summary) |last| if (last != index) try out.append(self.gpa, .{ .reasoning_delta = .{ .block = id, .text = "\n\n" } });
+            output.summary = index;
+        }
         try out.append(self.gpa, .{ .reasoning_delta = .{ .block = id, .text = delta } });
     }
 
@@ -651,6 +659,24 @@ test "a reasoning output item streams a block and captures encrypted content" {
     try testing.expectEqualStrings("pondering", h.out.items[1].reasoning_delta.text);
     try testing.expectEqualStrings("gAAAAsig", h.out.items[2].block_stopped.result.reasoning.signature);
     try testing.expect(h.out.items[3] == .done);
+}
+
+test "a new summary section starts a paragraph" {
+    var h = Harness.init();
+    defer h.deinit();
+    try h.feed(&.{
+        \\{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}
+        ,
+        \\{"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":0,"delta":"**One**"}
+        ,
+        \\{"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":0,"delta":" body"}
+        ,
+        \\{"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":1,"delta":"**Two**"}
+    });
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(testing.allocator);
+    for (h.out.items[1..]) |item| try text.appendSlice(testing.allocator, item.reasoning_delta.text);
+    try testing.expectEqualStrings("**One** body\n\n**Two**", text.items);
 }
 
 test "encrypted reasoning with no summary delta still emits a block" {

@@ -10,3 +10,13 @@ declare function setInterval<A extends unknown[]>(callback: (...args: A) => void
 declare function clearTimeout(id: number | undefined): void;
 /** Stops a timer. It shares one id space with `clearTimeout`. */
 declare function clearInterval(id: number | undefined): void;
+/** Posts the values as one `debug` notification from the source "console". A debug line never toasts: it shows in the notification history, in `yuke check`, and in `yuke.log`. */
+declare function print(...values: unknown[]): void;
+/** Posts the values as one notification from the source "console". `log` and `debug` post at the `debug` level; `info`, `warn`, and `error` post at their own level. */
+declare var console: {
+  log(...values: unknown[]): void;
+  debug(...values: unknown[]): void;
+  info(...values: unknown[]): void;
+  warn(...values: unknown[]): void;
+  error(...values: unknown[]): void;
+};

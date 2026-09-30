@@ -8,14 +8,13 @@ description: Customizes the yuke coding agent through its profile. Use when the 
 ## Gotchas
 
 - yuke runs `index.js` only at startup. After a change, tell the user to restart yuke. `/reload` does not read the profile again.
-- There is no `console` and no `print`. To see a value, call `c.interaction.notify(text, "warn")`: `yuke check` prints it, and the TUI shows it as a toast.
+- To see a value, call `print(value)` or `ctx.print(value)`: `yuke check` prints it, and `~/.local/state/yuke/yuke.log` keeps it. A debug line never toasts.
 - `yuke.d.ts` is large. Search it with `grep -n`, and read about 40 lines around a match.
-- A callback that is not written inline in the call has no inferred types, and the strict editor options reject it. Annotate it, for example `/** @type {import("yuke:chat").Presenter} */`.
+- A callback that is not written inline in the call has no inferred types, and the strict editor options reject it. Annotate it, for example `/** @type {import("yuke:chat").Render} */`.
 - Listen with `ctx.on`, not `events.on`: `ctx.on` removes the listener when the plugin unloads.
 - An engine event (`run.started`, `run.done`, `message.*`, `tool.*`) passes the whole drain, not one fact. When `ev.type === "session"`, `ev.session` is the session id and `ev.facts` lists the facts.
 - TUI code goes in `ctx.inject(["tui"], (c) => …)`. That block does not run in `yuke -p` or `yuke --rpc`.
-- `style.add` adds new groups only. It does not change a built-in group such as `YukeStatus` or `TxToolRead`.
-- yuke has labels for its own tools. A label for `read`, `edit`, or `exec` replaces the built-in one and its short path format.
+- The transcript look is a stack of renderers (`c.chat.render`). A new look stacks on the default; a hook that answers `undefined` passes to the one below.
 - `providers.json` can hold API keys inline. Read and edit it as needed, but do not print a key. Keep the mode `0600`. `yuke check` validates it, `yuke login` shows the state of each provider, and `/reload-providers` applies an edit without a restart.
 
 ## Workflow
@@ -47,7 +46,7 @@ The guides are in `~/.local/lib/yuke/docs/`, the version of the installed yuke. 
 - `profile.md`: files, modules, debugging, the check.
 - `providers.md`: `providers.json`, API keys, login, local servers, custom models.
 - `plugins.md`: lifecycle, events, capabilities, advice, bundled plugins, the chat pane.
-- `ui.md`: commands, keys, the status bar, styles, dialogs, tool labels.
+- `ui.md`: commands, keys, the status bar, styles, dialogs, the transcript.
 - `engine.md`: model tools, engine hooks, config, the prompt, subagents, MCP.
 - `types.md`: types for your own events and capabilities.
 - `examples/plugin.js`: a complete plugin to copy from.

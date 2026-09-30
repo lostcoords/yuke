@@ -20,6 +20,9 @@ const starts = new Map();
 // The moment the child count last rose from zero, so the aggregate reads how long the agents have worked.
 let agentsSince = 0;
 
+// The child runs at the last `needsTick`. The frame loop asks it once per frame, so a pane rule reads this and makes no load object.
+let childRuns = 0;
+
 /** @param {Wire.SessionActivity | null} activity @returns {boolean} */
 function isWorking(activity) {
   return activity != null && activity.state.type !== "idle";
@@ -57,13 +60,16 @@ export function indicatorLine(sessionId, activity, now, childRuns = 0) {
   const held = starts.get(sessionId);
   const at = held && held.run_id === run_id ? held.at : "started_at_ms" in state ? state.started_at_ms : now;
   if (!held || held.run_id !== run_id) starts.set(sessionId, { run_id, at });
-  const queued = /** @type {Wire.SessionActivity} */ (activity).queued;
-  return " " + spinner + " " + phaseLabel(state, now) + " · " + elapsedLabel(now - at) + (queued > 0 ? " · " + queued + " queued" : "") + suffix + " ";
+  return " " + spinner + " " + phaseLabel(state, now) + " · " + elapsedLabel(now - at) + suffix + " ";
 }
 
 /** @returns {boolean} */
 function anyWorking() {
-  if (client.load().childRuns > 0) return true;
+  const runs = client.load().childRuns;
+  // A draw paints the count of the last check, so a changed count takes one more tick to paint the new one.
+  const changed = runs !== childRuns;
+  childRuns = runs;
+  if (runs > 0 || changed) return true;
   // The frame loop asks this every frame, so the walk is by index and allocates no iterator.
   for (let i = 0; i < sessions.length; i++) if (isWorking(/** @type {Session} */ (sessions[i]).activity)) return true;
   return false;
@@ -77,7 +83,7 @@ export const indicatorPlugin = {
       ctx.on("chat.rule", (view) => {
         const id = view.session.sessionId;
         if (!id) return null;
-        const line = indicatorLine(id, view.session.activity, Date.now(), client.load().childRuns);
+        const line = indicatorLine(id, view.session.activity, Date.now(), childRuns);
         return line ? { text: line, group: "YukeStatus" } : null;
       });
       // The frame loop runs only while a pane or a child run works, so an idle screen costs no wakeups.
@@ -87,7 +93,7 @@ export const indicatorPlugin = {
           frame++;
         },
       });
-      ctx.effect(() => () => { starts.clear(); agentsSince = 0; });
+      ctx.effect(() => () => { starts.clear(); agentsSince = 0; childRuns = 0; });
     });
   },
 };

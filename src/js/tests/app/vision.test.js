@@ -1,6 +1,6 @@
 import { check, listSessions } from "yuke:internal/test";
 import { events } from "yuke:internal/kernel";
-import { catalogOf } from "yuke:internal/catalog";
+import { catalog } from "yuke:internal/catalog";
 import { client } from "yuke:internal/client";
 import { currentPane } from "yuke:internal/session";
 import { Composer } from "yuke:internal/ui";
@@ -15,7 +15,7 @@ const png = { hash: "a".repeat(64), mime: "image/png", bytes: 2048 };
 const blind = { id: "m1", provider: "p", selector: "p/blind", name: "Blind", reasoning_levels: [], default_reasoning: "", supports_vision: false, cost: {} };
 const seeing = { id: "m2", provider: "p", selector: "p/seeing", name: "Seeing", reasoning_levels: [], default_reasoning: "", supports_vision: true, cost: {} };
 const quiet = { id: "m3", provider: "p", selector: "p/quiet", name: "Quiet", reasoning_levels: [], default_reasoning: "", cost: {} };
-catalogOf().models = [blind, seeing, quiet];
+catalog.models = [blind, seeing, quiet];
 
 const attach = () => { chat.composer.spans = [{ start: 0, end: 6, blob: png }]; };
 const clear = () => { chat.composer.spans = []; chat.composer.text = ""; shown.length = 0; };

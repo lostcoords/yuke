@@ -3,7 +3,7 @@ import { style } from "yuke:internal/core";
 /** @import { Block, BlockSummary, BreakPiece, CacheEntry, CodeBlock, DelimiterNode, Fence, FenceCloseMatch, FenceMatch, HeadingBlock, HeadingMatch, InlineNode, InlinePiece, InlineSource, LinearSegment, ListBlock, ListItem, NumberList, OlItemMatch, ParagraphBlock, QuoteBlock, QuoteMatch, Row, RuleBlock, Segment, SourceRun, StringList, TableBlock, TableCell, UlItemMatch, Word, WrapOptions } from "./types/md.js" */
 
 // Register the Markdown groups once.
-style.add({
+style.set({
   MdText: { link: "Normal" },
   MdStrong: { fg: "fg", bold: true },
   MdEm: { fg: "fg", italic: true },
@@ -15,7 +15,7 @@ style.add({
   MdRule: { fg: "fg", dim: true },
   MdListMark: { fg: "fg", dim: true },
   MdTableBorder: { fg: "fg", dim: true },
-});
+}, { default: true });
 
 const FENCE = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 const FENCE_CLOSE = /^( {0,3})(`{3,}|~{3,})[ \t]*$/;
@@ -91,8 +91,8 @@ function srcAt(runs, i, end) {
 }
 
 // Split `text`, the source from the line start `base`, into blocks with absolute `at`/`end` offsets. A stream re-reads only its tail.
-/** @param {string} text @param {number} [base] @returns {Block[]} */
-function segment(text, base = 0) {
+/** @param {string} text @param {number} base @returns {Block[]} */
+function segment(text, base) {
   const lines = /** @type {StringList} */ (text.split("\n"));
   const starts = /** @type {NumberList} */ (new Array(lines.length + 1));
   {
@@ -694,8 +694,8 @@ function segmentsToWords(segments) {
 // A blank run or a word, so a wrap walks a segment in runs instead of characters.
 const RUNS = /[ \t\n]+|[^ \t\n]+/g;
 
-/** @param {Segment[]} pieces @param {number} width @param {number} [limit] @returns {BreakPiece[]} */
-function hardBreakPieces(pieces, width, limit = Infinity) {
+/** @param {Segment[]} pieces @param {number} width @param {number} limit @returns {BreakPiece[]} */
+function hardBreakPieces(pieces, width, limit) {
   const out = /** @type {BreakPiece[]} */ ([]);
   let segments = /** @type {Segment[]} */ ([]);
   let lineW = 0;
@@ -790,14 +790,6 @@ function plainRow(text, group) {
   return { segments: [{ text, group: group || "MdText" }] };
 }
 
-/** @param {number} width @returns {string} */
-function ruleText(width) {
-  const glyph = "─";
-  const glyphW = term.measure(glyph);
-  const count = Math.max(1, Math.floor(Math.max(1, width) / glyphW));
-  return glyph.repeat(count);
-}
-
 // A rendered segment carries its source span: a `mark` takes the span of the markup it hides, and a separator carries none.
 /** @param {Block} block @param {number} width @param {number} [limit] @returns {Row[]} */
 function renderBlock(block, width, limit = Infinity) {
@@ -830,7 +822,7 @@ function renderBlock(block, width, limit = Infinity) {
       return wrapSegments(segs, width, { firstPrefix: bar, contPrefix: cont, emptyGroup: "MdQuote", limit });
     }
     case "hr":
-      return limit > 0 ? [{ segments: [{ text: ruleText(width), group: "MdRule", src: block.at, srcEnd: block.end, mark: true }] }] : [];
+      return limit > 0 ? [{ segments: [{ text: "─".repeat(Math.max(1, width)), group: "MdRule", src: block.at, srcEnd: block.end, mark: true }] }] : [];
     case "list": {
       const rows = /** @type {Row[]} */ ([]);
       for (const item of block.items) {
@@ -874,8 +866,6 @@ function renderBlock(block, width, limit = Infinity) {
       }
       return rows;
     }
-    default:
-      return [plainRow("")];
   }
 }
 

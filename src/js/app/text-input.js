@@ -1,49 +1,34 @@
 // Edit text and map its UTF-16 offsets to terminal cells.
 import { term } from "yuke:internal/native/term";
-import { callHook } from "yuke:internal/kernel";
 import { strokeOf, textOf } from "yuke:internal/keys";
 
 /** @typedef {{ onChange?: (() => void) | null, onEdit?: ((from: number, to: number, insertedLength: number) => void) | null }} TextInputOptions */
 /** @typedef {{ at: number, cls: number }} GraphemeCell */
 /** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
-// Limit `s` to `max` cells. Add an ellipsis when one cell remains and `ellipsis` is true.
-/** @param {string} s @param {number} max @param {boolean} [ellipsis] @returns {string} */
+/**
+ * Limit `s` to `max` terminal cells. With `ellipsis`, a cut ends in "…". Pass `width`, the cell width of `s`, when you already have it.
+ * @param {string} s @param {number} max @param {boolean} [ellipsis] @param {number} [width] @returns {string}
+ */
 export function clip(s, max, ellipsis = true, width = -1) {
   if (max <= 0) return "";
-  s = String(s);
   // A caller that measured `s` passes the width, so a fitted string costs no second measure.
   if ((width >= 0 ? width : term.measure(s)) <= max) return s;
-
   const ell = ellipsis && max > 1 ? 1 : 0;
-  const budget = max - ell;
-  const gs = term.graphemes(s);
-  let cut = 0;
-  let w = 0;
-  for (let k = 0; k < gs.length; k += 3) {
-    const width = /** @type {number} */ (gs[k + 2]);
-    if (w + width > budget) break;
-    const offset = /** @type {number} */ (gs[k]);
-    const length = /** @type {number} */ (gs[k + 1]);
-    w += width;
-    cut = offset + length;
-  }
-
-  return s.slice(0, cut) + (ell ? "…" : "");
+  return s.slice(0, term.fit(s, max - ell)) + (ell ? "…" : "");
 }
 
 // Wrap `s` and keep its UTF-16 offsets as [start, end) plus a soft flag, because a plain wrap drops the space runs.
-// A zero head returns all rows; a positive head keeps that prefix and an optional tail.
-/** @param {string} s @param {number} width @param {number} head @param {number} [tail] @returns {{ rows: WrapRow[], omitted: boolean }} */
-export function wrapPreview(s, width, head, tail = 0) {
-  const wrapped = term.wrap(String(s), width, head, tail);
+/** @param {string} s @param {number} width @returns {WrapRow[]} */
+export function wrapText(s, width) {
+  const wrapped = term.wrap(s, width).rows;
   const rows = /** @type {WrapRow[]} */ ([]);
-  for (let i = 0; i < wrapped.rows.length; i += 3) {
-    rows.push({ start: /** @type {number} */ (wrapped.rows[i]), end: /** @type {number} */ (wrapped.rows[i + 1]), soft: wrapped.rows[i + 2] !== 0 });
+  for (let i = 0; i < wrapped.length; i += 3) {
+    rows.push({ start: /** @type {number} */ (wrapped[i]), end: /** @type {number} */ (wrapped[i + 1]), soft: wrapped[i + 2] !== 0 });
   }
-  return { rows, omitted: wrapped.omitted };
+  return rows;
 }
 
-// Place `caret` in the rows of `wrapPreview`; a soft break takes the next row, so the caret stays on the screen.
+// Place `caret` in the rows of `wrapText`; a soft break takes the next row, so the caret stays on the screen.
 /** @param {string} s @param {WrapRow[]} rows @param {number} caret @returns {{ row: number, col: number }} */
 export function caretRowCol(s, rows, caret) {
   for (let i = 0; i < rows.length; i++) {
@@ -191,8 +176,8 @@ export class TextInput {
     const had = this.text.length;
     this.text = String(s);
     this.caret = this.text.length;
-    callHook(this, "onEdit", 0, had, this.text.length);
-    callHook(this, "onChange");
+    this.onEdit?.(0, had, this.text.length);
+    this.onChange?.();
   }
 
   /**
@@ -214,8 +199,8 @@ export class TextInput {
     s = String(s);
     this.text = this.text.slice(0, from) + s + this.text.slice(to);
     this.caret = from + s.length;
-    callHook(this, "onEdit", from, to, s.length);
-    callHook(this, "onChange");
+    this.onEdit?.(from, to, s.length);
+    this.onChange?.();
   }
 
   /**

@@ -129,7 +129,7 @@ pub const MethodName = enum {
 };
 
 /// Notice severity level.
-pub const NoticeLevel = enum { info, warn, @"error" };
+pub const NoticeLevel = enum { debug, info, warn, @"error" };
 
 pub const RunKind = enum { turn, compaction };
 

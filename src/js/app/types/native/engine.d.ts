@@ -61,6 +61,8 @@ declare module "yuke:internal/native/engine" {
     setEventSink(fn: (ev: EngineEvent) => void): void;
     /** Install the function that adds a script fault to the notification history. The host calls it after the fault. */
     setFaultSink(fn: (source: string, text: string) => void): void;
+    /** Append one notice to the process log. It does nothing when the process keeps no log. */
+    log(level: Wire.NoticeLevel, source: string, message: string): void;
     /** Resolve with the response JSON, or reject with an error that carries the refusal code. */
     request(method: string, params: string): Promise<string>;
     /** Pin a session for one open view. Returns false when the engine cannot open it. */

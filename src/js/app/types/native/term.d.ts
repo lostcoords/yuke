@@ -43,6 +43,8 @@ declare module "yuke:internal/native/term" {
     text(x: number, y: number, s: string, style?: Style): void;
     measure(s: string): number;
     graphemes(s: string): Int32Array;
+    /** The UTF-16 length of the longest grapheme prefix of `s` that fits in `cells`. */
+    fit(s: string, cells: number): number;
     wrap(s: string, width: number, head?: number, tail?: number): { rows: Int32Array; omitted: boolean };
     cursor(x: number, y: number, visible: boolean): void;
     setNeedsTick(enabled: boolean, periodMs?: number): void;

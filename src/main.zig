@@ -1,7 +1,6 @@
 //! The yuke process entry. Default mode is the TUI.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const cli = @import("cli.zig");
 const rpc = @import("app/rpc.zig");
 const app = @import("app/app.zig");
@@ -11,32 +10,41 @@ const auth_cli = @import("app/auth_cli.zig");
 const check_cli = @import("app/check_cli.zig");
 const print_cli = @import("app/print_cli.zig");
 const paths = @import("paths.zig");
+const engine_native = @import("js/native/engine.zig");
+const proto = @import("proto");
 const execution = @import("execution.zig");
 const zio = @import("zio");
 const build_info = @import("build_info");
 
 pub const std_options: std.Options = .{ .logFn = logFn };
 
-/// The TUI owns the screen, so a log line must never reach stderr; `tui_log_mutex` guards the file, because a log can come from any task. Every TUI log step runs on `std.Options.debug_io`, as `logFn` must.
+/// The TUI owns the screen, so a log line never reaches stderr there. `log_mutex` guards the log file, because a log can come from any task. Every log step runs on `std.Options.debug_io`, as `logFn` must.
 var tui_mode: std.atomic.Value(bool) = .init(false);
-/// `yuke check` prints only warnings and errors, so an info line never mixes with its report.
+/// `yuke check` drops each info log line, so an info line never mixes with its report.
 var quiet_info: std.atomic.Value(bool) = .init(false);
-var tui_log_mutex: std.Io.Mutex = .init;
-var tui_log: ?std.Io.File = null;
+var log_mutex: std.Io.Mutex = .init;
+var log_file: ?std.Io.File = null;
 
-/// Write to the TUI log file in TUI mode, and to stderr otherwise; a TUI without a log file drops the line, because stderr would damage the frame.
+/// Append every line to the process log, and outside the TUI also to stderr. The pid on each line tells two processes apart in the one file.
 fn logFn(
     comptime level: std.log.Level,
     comptime scope: @EnumLiteral(),
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (level == .info and quiet_info.load(.acquire)) return;
-    if (!tui_mode.load(.acquire)) return std.log.defaultLog(level, scope, format, args);
-    tui_log_mutex.lockUncancelable(std.Options.debug_io);
-    defer tui_log_mutex.unlock(std.Options.debug_io);
-    const file = tui_log orelse return;
-    appendLog(file, "[" ++ level.asText() ++ "] (" ++ @tagName(scope) ++ "): " ++ format ++ "\n", args);
+    if (!tui_mode.load(.acquire) and !(level == .info and quiet_info.load(.acquire))) std.log.defaultLog(level, scope, format, args);
+    log_mutex.lockUncancelable(std.Options.debug_io);
+    defer log_mutex.unlock(std.Options.debug_io);
+    const file = log_file orelse return;
+    appendLog(file, "{d} [" ++ level.asText() ++ "] (" ++ @tagName(scope) ++ "): " ++ format ++ "\n", .{std.c.getpid()} ++ args);
+}
+
+/// Append one notice of the JavaScript host to the process log. Its frontend already shows it, so it never reaches stderr.
+fn logNotice(level: proto.enums.NoticeLevel, source: []const u8, message: []const u8) void {
+    log_mutex.lockUncancelable(std.Options.debug_io);
+    defer log_mutex.unlock(std.Options.debug_io);
+    const file = log_file orelse return;
+    appendLog(file, "{d} [{t}] ({s}): {s}\n", .{ std.c.getpid(), level, source, message });
 }
 
 /// Append one line to `file`; a streaming writer holds the file position, so a line never lands on the line before it, and a failed write drops the rest of the line since the log is best effort.
@@ -50,35 +58,36 @@ fn appendLog(file: std.Io.File, comptime format: []const u8, args: anytype) void
     fw.interface.flush() catch {};
 }
 
-/// Route the TUI log to `<data>/tui.log`. A failed open discards every later TUI log message.
-fn startTuiLog(gpa: std.mem.Allocator, env: *const std.process.Environ.Map) void {
-    tui_log = openTuiLog(gpa, std.Options.debug_io, env) catch null;
-    tui_mode.store(true, .release);
+/// Open `<state>/yuke.log` for every mode. A failed open drops every later log line from the file, and stderr still gets them outside the TUI.
+fn startLog(gpa: std.mem.Allocator, env: *const std.process.Environ.Map, tui: bool) void {
+    log_file = openLog(gpa, std.Options.debug_io, env) catch null;
+    tui_mode.store(tui, .release);
+    engine_native.notice_log = logNotice;
 }
 
-/// Stop the TUI log and close the file. A later log message reaches stderr again.
-fn stopTuiLog() void {
+/// Close the log. A later log line reaches stderr again.
+fn stopLog() void {
     const io = std.Options.debug_io;
+    engine_native.notice_log = null;
     tui_mode.store(false, .release);
-    tui_log_mutex.lockUncancelable(io);
-    defer tui_log_mutex.unlock(io);
-    if (tui_log) |f| f.close(io);
-    tui_log = null;
+    log_mutex.lockUncancelable(io);
+    defer log_mutex.unlock(io);
+    if (log_file) |f| f.close(io);
+    log_file = null;
 }
 
 /// The log holds prompt and session text, so the file stays private to the user.
-fn openTuiLog(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) !?std.Io.File {
-    const dir = (try paths.dataDir(gpa, env)) orelse return null;
+/// Every process appends with `O_APPEND`, so two processes never write over each other's lines. There is no rotation.
+fn openLog(gpa: std.mem.Allocator, io: std.Io, env: *const std.process.Environ.Map) !?std.Io.File {
+    const dir = (try paths.stateDir(gpa, env)) orelse return null;
     defer gpa.free(dir);
     try app.ensureDataDir(io, dir);
-    const cwd = std.Io.Dir.cwd();
-    const path = try std.Io.Dir.path.join(gpa, &.{ dir, "tui.log" });
+    const path = try std.Io.Dir.path.joinZ(gpa, &.{ dir, "yuke.log" });
     defer gpa.free(path);
-    const file_private = std.Io.File.Permissions.fromMode(0o600);
-    const file = try std.Io.Dir.createFileAbsolute(io, path, .{ .truncate = true, .permissions = file_private });
-    // Tighten a file that already existed, because `createFileAbsolute` keeps its old mode.
-    if (builtin.os.tag != .windows) cwd.setFilePermissions(io, path, file_private, .{}) catch {};
-    return file;
+    const fd = try std.posix.openatZ(std.posix.AT.FDCWD, path, .{ .ACCMODE = .WRONLY, .CREAT = true, .APPEND = true, .CLOEXEC = true }, 0o600);
+    // Tighten a file that already existed, because the mode applies only at creation.
+    std.Io.Dir.cwd().setFilePermissions(io, path, .fromMode(0o600), .{}) catch {};
+    return .{ .handle = fd, .flags = .{ .nonblocking = false } };
 }
 
 test "appendLog keeps every line and a line over the buffer" {
@@ -154,8 +163,8 @@ fn run(init: std.process.Init) !u8 {
 
     const tui = command == .tui;
     if (command == .check) quiet_info.store(true, .release);
-    if (tui) startTuiLog(init.gpa, context.env);
-    defer if (tui) stopTuiLog();
+    startLog(init.gpa, context.env, tui);
+    defer stopLog();
 
     // A null directory is not an error. The baked UI still runs without a config file.
     const config_dir = try paths.configDir(init.gpa, context.env);

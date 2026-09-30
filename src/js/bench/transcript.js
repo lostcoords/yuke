@@ -1,11 +1,16 @@
-import { Transcript } from "yuke:internal/transcript";
+import { Transcript, registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
 import { term } from "yuke:internal/native/term";
 import { client } from "yuke:internal/client";
 import { route } from "yuke:internal/core";
+import { rowText, segmentsOf } from "yuke:internal/pager";
 
 /** @import { MessagePart, SessionOutline } from "yuke:internal/native/engine" */
 /** @import { TranscriptRow } from "../app/types/pager.js" */
 /** @import { MessageDescriptor, TranscriptOptions } from "../app/types/transcript.js" */
+// The bench renders with the default look, as a chat pane does.
+registerRender(defaultRender);
+
 /** @typedef {{ type: MessageDescriptor["type"], text?: string, parts?: Wire.AssistantPart[] }} FixtureMessage */
 /** @type {FixtureMessage[]} */
 const sample = [
@@ -139,11 +144,6 @@ function fresh() {
   const active = phase === "stream" ? { id: activeId, type: "assistant" }
     : nativeStream() ? { id: draftId(), type: "assistant" } : null;
   t.setOutline(outline, active);
-  if (phase === "preview") {
-    for (const message of outline) if (message.type === "assistant") {
-      for (const part of parts.get(message.id) || []) t.togglePart(message.id, part.id);
-    }
-  }
   return t;
 }
 
@@ -312,62 +312,40 @@ function verifyStreamSuffix() {
     throw new Error("stream suffix span changed");
 }
 
+// The folded look is the preview: a report shows ten lines, a tool its first ten output rows, and a thought its whole text.
 function verifyPreview() {
   const reportRows = publicRowsFor(PREVIEW_REPORT_ID);
-  if (reportRows.length !== 11) throw new Error("preview report row cap changed");
-  if (!reportRows.slice(1, 9).every((row, i) => rowText(row) === "report-line-" + i + " with stable context"))
+  if (reportRows.length !== 13) throw new Error("preview report row cap changed");
+  if (!reportRows.slice(1, 11).every((row, i) => rowText(row) === "report-line-" + i + " with stable context"))
     throw new Error("preview report content changed");
-  const reportFooter = reportRows[9];
-  if (!reportFooter || rowText(reportFooter).indexOf("click the header") < 0) throw new Error("preview report footer missing");
-  const reportSource = transcript._sourceOf(PREVIEW_REPORT_ID);
-  const reportBodyRow = reportRows[1];
-  const reportBody = reportBodyRow?.segments?.find((segment) => segment.src != null);
-  if (!reportBody || reportSource.slice(reportBody.src, reportBody.srcEnd) !== reportBody.text)
-    throw new Error("preview report source span changed");
+  if (rowText(/** @type {TranscriptRow} */ (reportRows[11])).indexOf("expands") < 0) throw new Error("preview report hint missing");
+  if (!spanMatches(transcript._sourceOf(PREVIEW_REPORT_ID), reportRows, "report-line-0")) throw new Error("preview report source span changed");
 
   const toolRows = publicRowsFor(PREVIEW_ASSISTANT_ID);
-  if (toolRows.filter((row) => row.kind === "tool-header").length !== 8)
-    throw new Error("preview tool count changed");
-  for (const part of parts.get(PREVIEW_ASSISTANT_ID) || []) if (part.type === "tool") {
-    const bodyRows = toolRows.filter((row) => row.kind === "tool-body" && row.partId === part.id);
-    if (bodyRows.length !== 3) throw new Error("preview tool body cap changed");
+  if (toolRows.filter((row) => row.header).length !== 8) throw new Error("preview tool count changed");
+  for (const part of parts.get(PREVIEW_ASSISTANT_ID) || []) if (part.type === "tool" && part.name !== "view") {
+    const body = toolRows.filter((row) => row.partId === part.id && !row.header && row.src != null);
+    if (body.length !== 10) throw new Error("preview tool body cap changed");
   }
-  const plain = toolRows.find((row) => row.kind === "tool-body" && row.segments?.some((segment) => segment.text.indexOf("plain-0-line-0") >= 0));
-  if (!plain) throw new Error("preview plain tool content changed");
-  const viewed = toolRows.find((row) => row.kind === "tool-body" && row.segments?.some((segment) => segment.text.indexOf("view-first") >= 0));
-  if (!viewed) throw new Error("preview structured view content changed");
-  const toolSource = transcript._sourceOf(PREVIEW_ASSISTANT_ID);
-  const toolBody = plain?.segments?.find((segment) => segment.text.indexOf("plain-0-line-0") >= 0);
-  if (!toolBody || toolSource.slice(toolBody.src, toolBody.srcEnd) !== toolBody.text)
-    throw new Error("preview tool source span changed");
-  const viewBody = viewed?.segments?.find((segment) => segment.text === "view-first");
-  if (!viewBody || toolSource.slice(viewBody.src, viewBody.srcEnd) !== viewBody.text)
-    throw new Error("preview view source span changed");
+  const source = transcript._sourceOf(PREVIEW_ASSISTANT_ID);
+  for (const needle of ["plain-0-line-0", "view-first", "reason-first", "reason-last"])
+    if (!spanMatches(source, toolRows, needle)) throw new Error("preview source span changed: " + needle);
+}
 
-  const reasoningRows = toolRows.filter((row) => row.kind === "reasoning-body");
-  if (reasoningRows.length !== 3) throw new Error("preview reasoning cap changed");
-  const firstReasoning = reasoningRows[0];
-  const ellipsisReasoning = reasoningRows[1];
-  const lastReasoning = reasoningRows[2];
-  if (!firstReasoning || !ellipsisReasoning || !lastReasoning
-    || rowText(firstReasoning).indexOf("reason-first") < 0 || rowText(ellipsisReasoning) !== "…" || rowText(lastReasoning).indexOf("reason-last") < 0)
-    throw new Error("preview reasoning content changed");
-  const reasoningSource = transcript._sourceOf(PREVIEW_ASSISTANT_ID);
-  const first = firstReasoning?.segments?.find((segment) => segment.src != null);
-  const last = lastReasoning?.segments?.find((segment) => segment.src != null);
-  if (!first || !last || reasoningSource.slice(first.src, first.srcEnd) !== first.text || reasoningSource.slice(last.src, last.srcEnd) !== last.text)
-    throw new Error("preview reasoning source spans changed");
+// A segment or a wrapped text row that shows `needle` maps back to the same source text.
+/** @param {string} source @param {TranscriptRow[]} rows @param {string} needle @returns {boolean} */
+function spanMatches(source, rows, needle) {
+  for (const row of rows) {
+    const segment = segmentsOf(row)?.find((entry) => entry.src != null && entry.text.indexOf(needle) >= 0);
+    if (segment) return source.slice(segment.src, segment.srcEnd) === segment.text;
+  }
+  return false;
 }
 
 /** @param {number} id @returns {TranscriptRow[]} */
 function publicRowsFor(id) {
   const rows = transcript.rows(width, 0, transcript.rowCount(width));
   return rows.filter((row) => String(row.key) === String(id));
-}
-
-/** @param {TranscriptRow} row */
-function rowText(row) {
-  return row.text || (row.segments || []).map((segment) => segment.text).join("");
 }
 
 /** @param {string} encoded */

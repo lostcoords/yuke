@@ -46,7 +46,7 @@ export function soleText(content) {
 
 /**
  * One engine session in the TUI: its id, its pin, and the panes that show it. A draft has a null `sessionId` until its first input creates the session.
- * Panes on the same id share one `Session`. `showSession` and `openSession` move one pane; `open` moves every pane of this session.
+ * Panes on the same id share one `Session`. `showSession` moves one pane to a `Session` or a session id; `open` moves every pane of this session.
  */
 export class Session {
   constructor() {
@@ -367,7 +367,7 @@ const feed = new SessionFeed();
 
 // The listed entry for one session, or null.
 /** @param {string} sessionId @returns {FeedItem | null} */
-function feedItem(sessionId) {
+export function feedItem(sessionId) {
   // A status draw reads this each frame, so the staleness check stays inline.
   if (feed.stale) feed.refresh();
   return feed.items.get(sessionId) || null;
@@ -417,11 +417,21 @@ function isSessionPane(view) {
 }
 
 /**
- * Show `session` in `view`. The pane leaves its old session, and the last pane of that session releases it.
- * Nothing happens when the pane already shows `session`.
- * @param {SessionPane} view @param {Session} session @returns {void}
+ * Show `session` in `view`: a `Session`, or the id of an engine session. The pane leaves its old session, and the last pane of that session releases it.
+ * An id that a pane already shows shares that `Session` and its pin. When the engine refuses an id, the pane stays as it is and an error notification shows.
+ * Nothing happens when the pane already shows the session.
+ * @param {SessionPane} view @param {Session | string} session @returns {void}
  */
 export function showSession(view, session) {
+  if (typeof session === "string") {
+    const held = sessionOf(session);
+    if (held) session = held;
+    else {
+      const opened = new Session();
+      if (!opened.open(session)) return;
+      session = opened;
+    }
+  }
   if (view.session === session) return;
   view.session.leave(view);
   view.session = session;
@@ -432,18 +442,6 @@ export function showSession(view, session) {
   session.reload([view]);
   root.invalidate();
   notifyCurrent();
-}
-
-/**
- * Open engine session `id` in `view`. When a pane already shows `id`, the two panes share one `Session` and one pin.
- * When the engine refuses `id`, the pane stays as it is and an error notification shows.
- * @param {SessionPane} view @param {string} id @returns {void}
- */
-export function openSession(view, id) {
-  const held = sessionOf(id);
-  if (held) return showSession(view, held);
-  const session = new Session();
-  if (session.open(id)) showSession(view, session);
 }
 
 // The current pane: the pane that holds a session and had focus last, while it stays in the tree. Session commands,
@@ -564,11 +562,7 @@ export const sessionsPlugin = {
       ctx.tui.status.add({
         side: "right",
         order: 10,
-        render: () => {
-          const e = currentEntry();
-          if (e && e.session.model) return e.session.model;
-          return defaultModel().model || "";
-        },
+        render: () => (current ? current.session.modelSelector() : defaultModel().model || ""),
       });
 
       ctx.tui.command.add("session:interrupt", { when: () => current?.session.sessionId != null, desc: "stop the run", slash: true, run: () => current?.session.interrupt() });
@@ -578,7 +572,7 @@ export const sessionsPlugin = {
         run: () => feed.refresh().then(() => {
           const rows = feed.rows().filter((row) => row.session.origin.type !== "child").sort((a, b) => (b.session.updated_at_ms || 0) - (a.session.updated_at_ms || 0));
           // A pane that holds a session has its live activity, so the finder reads that before the listed one.
-          openSessionFinder(ctx, rows, (id) => sessionOf(id)?.activity, (id) => { if (current) openSession(current, id); });
+          openSessionFinder(ctx, rows, (id) => sessionOf(id)?.activity, (id) => { if (current) showSession(current, id); });
         }),
       });
       ctx.tui.command.add("model:pick", {

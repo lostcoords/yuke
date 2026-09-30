@@ -25,12 +25,16 @@ const SessionId = proto.ids.SessionId;
 pub const Engine = digest.Engine;
 pub const drain = digest.drain;
 
+/// Appends one notice to the process log, or null when the process keeps no log, as in a test. `main` sets it before any host starts.
+pub var notice_log: ?*const fn (level: proto.enums.NoticeLevel, source: []const u8, message: []const u8) void = null;
+
 /// Register `yuke:internal/native/engine` and its one `native` object.
 pub fn install(host: *Host) void {
     module.installObject(host, "yuke:internal/native/engine", "native", &.{
         .{ .name = "setAgentLimits", .arity = 2, .call = jsSetAgentLimits },
         .{ .name = "setEventSink", .arity = 1, .call = jsSetEventSink },
         .{ .name = "setFaultSink", .arity = 1, .call = jsSetFaultSink },
+        .{ .name = "log", .arity = 3, .call = jsLog },
         .{ .name = "factNames", .arity = 0, .call = jsFactNames },
         .{ .name = "memoryUsage", .arity = 0, .call = jsMemoryUsage },
         .{ .name = "load", .arity = 0, .call = jsLoad },
@@ -108,6 +112,22 @@ fn jsSetEventSink(ctx: Context, _: Value, args: []const Value) Value {
     if (args.len < 1 or !ctx.isFunction(args[0])) return ctx.throwTypeError("setEventSink needs a function");
     ctx.freeValue(engine.sink);
     engine.sink = ctx.dupValue(args[0]);
+    return quickjs.UNDEFINED;
+}
+
+/// Append one notice to the process log. A frontend shows the notice, so the log keeps only its record.
+fn jsLog(ctx: Context, _: Value, args: []const Value) Value {
+    if (args.len < 3) return ctx.throwTypeError("log needs a level, a source and a message");
+    const level_text = module.string(ctx, args[0]) orelse return ctx.throwTypeError("the log level must be a string");
+    defer ctx.freeCString(level_text.ptr);
+    const level = std.meta.stringToEnum(proto.enums.NoticeLevel, level_text) orelse return ctx.throwTypeError("the log level is unknown");
+    const source = module.string(ctx, args[1]) orelse return ctx.throwTypeError("the log source must be a string");
+    defer ctx.freeCString(source.ptr);
+    const message = module.string(ctx, args[2]) orelse return ctx.throwTypeError("the log message must be a string");
+    defer ctx.freeCString(message.ptr);
+    // A host without a log file checks the arguments too, so a test sees the same faults as the app.
+    const write = notice_log orelse return quickjs.UNDEFINED;
+    write(level, source, message);
     return quickjs.UNDEFINED;
 }
 

@@ -59,17 +59,17 @@ Advice changes a method of a yuke object.
 
 ## Replace a bundled plugin
 
-`plugins.dispose("<name>")`, then `plugins.use(yourPlugin)`. Bundled names: `keys`, `toasts`, `command-ui`, `catalog`, `auth`, `jobs-ui`, `sessions`, `chat`, `indicator`, `queue`, `context`, `cache`, `quit-guard`, `shell`. Prefer the smallest change: advice first, then events, then a replacement.
+`plugins.dispose("<name>")`, then `plugins.use(yourPlugin)`. Bundled names: `keys`, `toasts`, `command-ui`, `catalog`, `auth`, `jobs-ui`, `sessions`, `transcript`, `chat`, `indicator`, `queue`, `context`, `cache`, `quit-guard`, `shell`. Prefer the smallest change: advice first, then events, then a replacement.
 
 ## Change the chat
 
-The `sessions` plugin owns the engine sessions: pins, input, activity, the session list, the default model, and the session commands. The `chat` plugin owns only the chat pane: the shell asks the `chat` capability for each new pane.
+The `sessions` plugin owns the engine sessions: pins, input, activity, the session list, the default model, and the session commands. The `chat` plugin owns the chat pane and the renderer stack: the shell asks the `chat` capability for each new pane, and a look registers with `chat.render`.
 
 Use the smallest level that does the job:
 
 1. Advice. Change one method of `ChatView` or `Session` with `ctx.advise`.
-2. Events and labels. Answer `chat.rule`, `chat.strip`, `chat.cursor`, or `chat.press`. Name tool calls with a label (see [UI](ui.md#tool-labels)).
-3. Your own pane. Replace the `chat` capability with an object that has `create(session)` and `labels(entries)`. A pane holds a `Session`, a `Transcript`, and a `Composer`. It calls `session.join(this)` one time, and the session layer calls `leave` when the pane closes. The bundled `chat` plugin also owns `chat:new`, `chat:paste-image`, and the vision warning, so a replacement brings its own.
+2. Events and renderers. Answer `chat.rule`, `chat.strip`, `chat.cursor`, or `chat.press`. Change the transcript with a renderer (see [UI](ui.md#transcript)).
+3. Your own pane. Replace the `chat` capability: extend `ChatSurface` from `yuke:chat` and override `create(session)`. A pane holds a `Session`, a `Transcript`, and a `Composer`. It calls `session.join(this)` one time, and the session layer calls `leave` when the pane closes. The bundled `chat` plugin also owns `chat:new` (ctrl+n), `chat:paste-image` (ctrl+v), `chat:expand-all` (ctrl+o), and the vision warning, so a replacement brings its own.
 4. Your own window layout. Replace the `shell` plugin.
 
 [`examples/roomy-chat.js`](examples/roomy-chat.js) replaces the chat pane with one that keeps a margin.

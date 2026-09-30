@@ -1,10 +1,13 @@
-import { check, textParts, detailSections } from "yuke:internal/test";
-import { root } from "yuke:internal/core";
-import { Transcript } from "yuke:internal/transcript";
+import { check, textParts } from "yuke:internal/test";
+import { Transcript, registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
+
+registerRender(defaultRender);
 const rowText = (row) => row.text || (row.segments || []).map((segment) => segment.text).join("");
+// A wrapped row carries its source offset, and its text is the source text.
 const sourceSpan = (source, rows, needle) => {
-  const segment = rows.flatMap((row) => row.segments || []).find((entry) => entry.text.indexOf(needle) >= 0);
-  return !!segment && segment.src >= 0 && segment.srcEnd > segment.src && source.slice(segment.src, segment.srcEnd) === segment.text;
+  const row = rows.find((entry) => entry.src != null && entry.text.indexOf(needle) >= 0);
+  return !!row && source.slice(row.src, row.src + row.text.length) === row.text;
 };
 const report = Array.from({ length: 256 }, (_, i) => "report-line-" + i + " with stable context").join("\n");
 const reasoning = ["reason-first", ...Array.from({ length: 254 }, (_, i) => "reason-middle-" + i), "reason-last"].join("\n");
@@ -27,33 +30,26 @@ const width = 100;
 t.rowCount(width);
 const publicRows = (id) => t.rows(width, 0, t.rowCount(width)).filter((row) => String(row.key) === String(id));
 const reportRows = publicRows("report");
-check("report-row-cap", reportRows.length === 11);
-check("report-first-eight", reportRows.slice(1, 9).every((row, i) => rowText(row) === "report-line-" + i + " with stable context"));
-check("report-footer", rowText(reportRows[9]).indexOf("click the header") >= 0);
+// A folded report shows its label, ten lines, and a hint; the separator row closes the message.
+check("report-row-cap", reportRows.length === 13 && reportRows[0].header === true);
+check("report-first-ten", reportRows.slice(1, 11).every((row, i) => rowText(row) === "report-line-" + i + " with stable context"));
+check("report-hint", rowText(reportRows[11]).indexOf("expands") >= 0);
 check("report-source", sourceSpan(t._sourceOf("report"), reportRows, "report-line-0"));
-for (const part of parts) t.togglePart("answer", part.id);
-const rows = t.rows(width, 0, t.rowCount(width));
-const toolRows = publicRows("answer");
-check("eight-tools", toolRows.filter((row) => row.kind === "tool-header").length === 8);
-for (const part of tools) {
-  const bodyRows = toolRows.filter((row) => row.kind === "tool-body" && row.partId === part.id);
-  check("tool-preview-cap-" + part.id, bodyRows.length === 3);
-}
-const plainRows = toolRows.filter((row) => row.kind === "tool-body" && row.partId === 1);
-check("plain-first-three", plainRows.length === 3 && plainRows.every((row, i) => row.segments?.some((segment) => segment.text === "plain-line-" + i)));
-const viewRows = toolRows.filter((row) => row.kind === "tool-body" && row.partId === 2);
-check("view-first-three", viewRows.length === 3 && viewRows.some((row) => row.segments?.some((segment) => segment.text === "view-first")));
-check("plain-source", sourceSpan(t._sourceOf("answer"), toolRows, "plain-line-0"));
-const reasoningRows = toolRows.filter((row) => row.kind === "reasoning-body");
-check("reasoning-first-ellipsis-last", reasoningRows.length === 3 && rowText(reasoningRows[0]).indexOf("reason-first") >= 0 && rowText(reasoningRows[1]) === "…" && rowText(reasoningRows[2]).indexOf("reason-last") >= 0);
-check("reasoning-source", sourceSpan(t._sourceOf("answer"), reasoningRows, "reason-first") && sourceSpan(t._sourceOf("answer"), reasoningRows, "reason-last"));
-check("rows-visible", rows.some((row) => rowText(row).indexOf("plain-line-0") >= 0));
-check("plain-details", t.openTool("answer", 1) && detailSections(root.overlays[0].content)[0].text === '{"path":"plain.txt"}' && detailSections(root.overlays[0].content)[1].text === plainOutput);
-root.popOverlay(root.overlays[0]);
-check("view-details", t.openTool("answer", 2) && detailSections(root.overlays[0].content)[2].text.indexOf("view-first") >= 0 && detailSections(root.overlays[0].content)[2].text.indexOf("view-tail") >= 0);
-root.popOverlay(root.overlays[0]);
-check("reasoning-details", t.openReasoning("answer", 9) && detailSections(root.overlays[0].content)[0].text === reasoning);
-root.popOverlay(root.overlays[0]);
+// A folded tool shows its first ten output rows and a count of the rest; a thought shows in full.
+const folded = publicRows("answer");
+check("eight-tools", folded.filter((row) => row.header).length === 8);
+const bodyOf = (rows, id) => rows.filter((row) => row.partId === id && !row.header && row.src != null);
+check("plain-first-ten", bodyOf(folded, 1).length === 10 && bodyOf(folded, 1).every((row, i) => rowText(row) === "plain-line-" + i));
+check("plain-hint", folded.some((row) => row.partId === 1 && rowText(row) === "… (more lines, ctrl+o to expand)"));
+check("view-cap", bodyOf(folded, 2).length <= 10 && folded.some((row) => row.partId === 2 && rowText(row) === "view-first"));
+check("plain-source", sourceSpan(t._sourceOf("answer"), folded, "plain-line-0"));
+check("reasoning-whole", folded.some((row) => rowText(row) === "reason-first") && folded.some((row) => rowText(row) === "reason-last"));
+check("reasoning-source", sourceSpan(t._sourceOf("answer"), folded, "reason-first") && sourceSpan(t._sourceOf("answer"), folded, "reason-last"));
+// An open tool shows its whole output.
+for (const part of tools) t.togglePart("answer", part.id);
+const open = publicRows("answer");
+check("plain-open", bodyOf(open, 1).length === 128 && rowText(bodyOf(open, 1)[127]) === "plain-line-127");
+check("view-open", open.some((row) => rowText(row) === "view-tail"));
 
 {
   const rowsOf = (error) => { const e = new Transcript({}); e.setOutline([{ id: 1, type: "assistant", error }], null); return e.rows(160, 0, e.rowCount(160)).map(rowText).join("\n"); };

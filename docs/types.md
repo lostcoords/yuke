@@ -6,7 +6,7 @@ The `declare module "yuke..."` blocks at the top map each export to its definiti
 
 ## Editor
 
-`jsconfig.json` in the profile extends `yuke.jsconfig.json`, so an editor checks `index.js` with the options of this release. The options are strict: a parameter with no type is an error. A callback written inline in a call gets its types from the call. A callback that you declare apart needs a type: `/** @type {import("yuke:chat").Presenter} */`, `/** @type {import("yuke").ToolDefinition} */`, or `@param`. The engine wire types are in the global `Wire` namespace, for example `Wire.Session`. Put a JSDoc comment on its own line above a property: a comment on the line of the `{` does not attach, and the property becomes `any`.
+`jsconfig.json` in the profile extends `yuke.jsconfig.json`, so an editor checks `index.js` with the options of this release. The options are strict: a parameter with no type is an error. A callback written inline in a call gets its types from the call. A callback that you declare apart needs a type: `/** @type {import("yuke:chat").Render} */`, `/** @type {import("yuke").ToolDefinition} */`, or `@param`. The engine wire types are in the global `Wire` namespace, for example `Wire.Session`. Put a JSDoc comment on its own line above a property: a comment on the line of the `{` does not attach, and the property becomes `any`.
 
 ## Your own events
 

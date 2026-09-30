@@ -1,20 +1,22 @@
-import { check, detailSections } from "yuke:internal/test";
+import { check, equal } from "yuke:internal/test";
 import { ChatView } from "yuke:internal/chat-view";
 import { term } from "yuke:internal/native/term";
 import { root, Node } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
-import { Transcript, inputSourceLabel } from "yuke:internal/transcript";
+import { Transcript, inputSourceLabel, registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
 import { chatPlugin } from "yuke:internal/chat";
 import { Session, sessionsPlugin } from "yuke:internal/session";
 import { transcriptVim } from "yuke:internal/transcript-vim";
 import { tuiPlugin } from "yuke:internal/tui";
+
+registerRender(defaultRender);
 plugins.use(tuiPlugin);
 // The chat plugin tracks the current chat, which the vim layers and the chat commands read.
 plugins.use(sessionsPlugin);
 plugins.use(chatPlugin);
 const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
 const rowsGroup = (rs, group) => rs.some((r) => (r.segments || []).some((sg) => sg.group === group) || r.group === group);
-const markerOf = (rs) => ((rs.find((r) => r.kind === "tool-header") || {}).marker || "").trimStart();
 const at = (col, row, event) => ({ type: "mouse", col, row, button: "left", event, mods: 0 });
 const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: "", event: "press", mods: 0 });
 
@@ -32,60 +34,43 @@ paint();
 t.pager.toTop();
 paint();
 
-const done = t.rows(40, 0, 4);
-check("done-name", rowsHave(done, "Read"));
-check("done-path", rowsHave(done, "a.zig"));
-check("done-state", !rowsHave(done, "done") && !rowsHave(done, "12ms"));
-check("done-collapsed", markerOf(done) === "└─" && !rowsHave(done, "alpha"));
+// A folded read shows its header alone; a running command shows the tail of its output; an error shows its text.
+const done = t.rows(40, 0, 2);
+check("done-header", rowsHave(done, "read") && rowsHave(done, "a.zig") && !rowsHave(done, "alpha") && done[0].header === true);
+const run = t.rows(40, t._globalRow({ id: "run", row: 0, col: 0 }), 4);
+check("run-preview", rowsHave(run, "$") && rowsHave(run, "zig build test") && rowsHave(run, "compiling") && run[0].bg === "TxToolPendingBg");
+const err = t.rows(40, t._globalRow({ id: "err", row: 0, col: 0 }), 4);
+check("err-shows", rowsHave(err, "no match") && rowsGroup(err, "TxToolError") && err[0].bg === "TxToolErrorBg");
 
-const runStart = t._globalRow({ id: "run", row: 0, col: 0 });
-const run = t.rows(40, runStart, 6);
-check("run-name", rowsHave(run, "Run") && rowsHave(run, "zig build test"));
-check("run-expanded", markerOf(run) === "└─" && rowsHave(run, "compiling"));
+// A click on any row of a block toggles it. A drag does not.
+t.onMouse(at(4, 0, "press"));
+t.onMouse(at(4, 0, "release"));
+check("click-open", rowsHave(t.rows(40, 0, 4), "alpha"));
+t.onMouse(at(4, 0, "press"));
+t.onMouse(at(6, 0, "drag"));
+t.onMouse(at(6, 0, "release"));
+check("drag-keeps", rowsHave(t.rows(40, 0, 4), "alpha"));
+t.onMouse(at(4, 1, "press"));
+t.onMouse(at(4, 1, "release"));
+check("body-click-folds", !rowsHave(t.rows(40, 0, 4), "alpha"));
 
-const errStart = t._globalRow({ id: "err", row: 0, col: 0 });
-const err = t.rows(40, errStart, 6);
-check("err-expanded", rowsHave(err, "no match") && rowsGroup(err, "TxToolError"));
-
-// A click on a collapsed header expands it. A drag does not.
-t.onMouse(at(6, 1, "press"));
-t.onMouse(at(6, 1, "release"));
-const doneOpen = t.rows(40, 0, 6);
-check("click-open", markerOf(doneOpen) === "└─" && rowsHave(doneOpen, "alpha"));
-t.onMouse(at(6, 2, "press"));
-t.onMouse(at(6, 2, "release"));
-check("body-opens-details", root.overlays.length === 1 && detailSections(root.overlays[0].content)[1].text === "alpha\\nbeta");
-root.popOverlay(root.overlays[0]);
-t.onMouse(at(6, 1, "press"));
-t.onMouse(at(8, 1, "drag"));
-t.onMouse(at(8, 1, "release"));
-check("drag-keeps", rowsHave(t.rows(40, 0, 6), "alpha"));
-t.onMouse(at(6, 1, "press"));
-t.onMouse(at(6, 1, "release"));
-check("click-close", !rowsHave(t.rows(40, 0, 6), "alpha"));
-
+// Markdown text and a tool block copy their source together.
 const mix = new Transcript({ partsOf: (id) => parts[id] || [] });
 mix.setOutline([{ id: "mix", type: "assistant" }], null);
-term.beginFrame(); mix.draw({ x: 0, y: 0, w: 40, h: 8 }); term.endFrame();
-const mixRows = mix.rows(40, 0, 8);
-check("mix-text", rowsHave(mixRows, "hi") && rowsHave(mixRows, "there"));
-check("mix-tool", rowsHave(mixRows, "Read") && rowsHave(mixRows, "c.zig"));
+mix.rows(40, 0, 8);
 const srcEnd = mix._sourceOf("mix").length;
 mix.select(mix.posAtSource("mix", 0), mix.posAtSource("mix", srcEnd));
 const src = mix.selectedText(true);
-check("mix-source-md", src.indexOf("hi") >= 0 && src.indexOf("there") >= 0);
-check("mix-source-tool", src.indexOf("Read") >= 0 && src.indexOf("c.zig") >= 0);
+equal(src, "hi** there\nread c.zig");
 
+// An edit shows its whole diff while folded.
 const dt = new Transcript({ partsOf: (id) => parts[id] || [] });
 dt.setOutline([{ id: "diff", type: "assistant" }], null);
-dt.togglePart("diff", 0);
 const diffRows = dt.rows(40, 0, 10);
-check("diff-path", rowsHave(diffRows, "d.zig"));
-check("diff-del", rowsHave(diffRows, "-old") && rowsGroup(diffRows, "TxToolDel"));
-check("diff-add", rowsHave(diffRows, "+new") && rowsGroup(diffRows, "TxToolAdd"));
+check("diff", rowsHave(diffRows, "-old") && rowsGroup(diffRows, "TxDiffDel") && rowsHave(diffRows, "+new") && rowsGroup(diffRows, "TxDiffAdd"));
 
+// Enter toggles the block under the transcript cursor.
 const v = new ChatView(new Session());
-
 v.transcript.partsOf = (id) => parts[id] || [];
 v.transcript.setOutline([{ id: "done", type: "assistant" }], null);
 root.setRoot(Node.leaf(v));
@@ -97,71 +82,51 @@ v.focusRegion("transcript");
 vpaint();
 check("enter-closed", !rowsHave(v.transcript.rows(40, 0, 4), "alpha"));
 root.onEvent(key("enter"));
-check("enter-preview", root.overlays.length === 0 && rowsHave(v.transcript.rows(40, 0, 8), "alpha"));
+check("enter-opens", root.overlays.length === 0 && rowsHave(v.transcript.rows(40, 0, 8), "alpha"));
 root.onEvent(key("down"));
 root.onEvent(key("enter"));
-check("enter-details", root.overlays.length === 1 && detailSections(root.overlays[0].content)[0].text.indexOf("a.zig") >= 0 && detailSections(root.overlays[0].content)[1].text === "alpha\\nbeta");
-root.onEvent(key("esc"));
-check("details-close", root.overlays.length === 0 && rowsHave(v.transcript.rows(40, 0, 8), "alpha"));
-const vr = v.transcript.pager.rect();
-v.onMouse({ type: "mouse", col: vr.x + 6, row: vr.y + 1, button: "left", event: "press", mods: 0 });
-v.onMouse({ type: "mouse", col: vr.x + 6, row: vr.y + 1, button: "left", event: "release", mods: 0 });
-check("plugin-click-close", !rowsHave(v.transcript.rows(40, 0, 8), "alpha"));
+check("enter-body-folds", !rowsHave(v.transcript.rows(40, 0, 8), "alpha"));
 
+// A long shell output folds to its last five lines, and a click on the tail keeps the header on the screen.
 const longOut = Array.from({ length: 80 }, (_, i) => "line" + i).join("\n");
-parts.long = [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"seq"}', state: { type: "completed", output: longOut, duration_ms: 1 } }];
+parts.long = [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"seq"}', state: { type: "completed", output: longOut, duration_ms: 1500 } }];
 const longT = new Transcript({ partsOf: (id) => parts[id] || [] });
 longT.setOutline([{ id: "long", type: "assistant" }], null);
+const folded = longT.rows(40, 0, longT.rowCount(40));
+check("exec-tail", rowsHave(folded, "earlier lines") && rowsHave(folded, "line75") && rowsHave(folded, "line79") && !rowsHave(folded, "line74") && rowsHave(folded, "Took 1.5s"));
 term.beginFrame(); longT.draw({ x: 0, y: 0, w: 40, h: 4 }); term.endFrame();
-longT.onMouse(at(6, 1, "press"));
-longT.onMouse(at(6, 1, "release"));
+longT.onMouse(at(4, 0, "press"));
+longT.onMouse(at(4, 0, "release"));
 term.beginFrame(); longT.draw({ x: 0, y: 0, w: 40, h: 4 }); term.endFrame();
 const headerAt = longT.screenAt({ id: "long", row: 0, col: 0 });
 check("header-on-screen", !!headerAt && headerAt.y >= 0 && headerAt.y < 4);
-check("preview-cap", longT.rowCountOf("long") === 8 && longT.rows(40, 0, 20).filter((r) => r.kind === "tool-body").length === 3);
-check("unfold-unstuck", longT.pager.stuck === false);
+check("expanded-all", rowsHave(longT.rows(40, 0, longT.rowCount(40)), "line0") && longT.pager.stuck === false);
 
-parts.thought = [{ type: "reasoning", id: 0, text: "one two three four five six seven eight" }];
-const thought = new Transcript({ partsOf: (id) => parts[id] || [] });
-thought.setOutline([], { id: "thought", type: "assistant" });
-term.beginFrame(); thought.draw({ x: 0, y: 0, w: 20, h: 8 }); term.endFrame();
-thought.onMouse(at(6, 2, "press"));
-thought.onMouse(at(6, 2, "release"));
-check("reasoning-body-details", root.overlays.length === 1 && detailSections(root.overlays[0].content)[0].text === parts.thought[0].text);
-root.popOverlay(root.overlays[0]);
-
-// A scoped presenter changes both the row and its source; a faulty presenter falls back.
+// A header names the program of a command, and an unknown tool shows its name and its path.
 parts.pres = [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"MISE_SHELL=bash /usr/bin/zig build test-js"}', state: { type: "completed", output: "ok", duration_ms: 1 } }];
 const pres = new Transcript({ partsOf: (id) => parts[id] || [] });
 pres.setOutline([{ id: "pres", type: "assistant" }], null);
-const presRows = pres.rows(60, 0, 4);
-check("exec-label", rowsHave(presRows, "Run") && rowsHave(presRows, "zig build test-js"));
-
+pres.rows(60, 0, 4);
+check("exec-head", pres._sourceOf("pres").indexOf("$ zig build test-js") === 0);
 parts.unknown = [{ type: "tool", id: 0, name: "mcp_thing", arguments: '{"path":"/tmp/x.txt"}', state: { type: "completed", output: "ok", duration_ms: 1 } }];
 const unknown = new Transcript({ partsOf: (id) => parts[id] || [] });
 unknown.setOutline([{ id: "unknown", type: "assistant" }], null);
-const unknownRows = unknown.rows(60, 0, 4);
-check("fallback-name", rowsHave(unknownRows, "mcp_thing") && rowsHave(unknownRows, "x.txt"));
+check("fallback-head", rowsHave(unknown.rows(60, 0, 4), "mcp_thing") && rowsHave(unknown.rows(60, 0, 4), "x.txt"));
 
-const presenterOwner = plugins.use({ name: "test-presenter", apply(ctx) {
-  ctx.inject(["chat"], (ctx) => { ctx.chat.labels({ tools: { exec: { category: "run", present: () => ({ verb: "$", subject: "custom" }) } }, sources: { engine_interruption: () => "first" } }); });
+// A plugin renderer stacks on the look: its tool head wins, a faulty head leaves the part without rows, and an unload restores the one below.
+const owner = plugins.use({ name: "test-head", apply(ctx) {
+  ctx.inject(["chat"], (ctx) => { ctx.chat.render({ tools: { exec: () => ({ verb: "run", subject: "custom" }) }, sources: { engine_interruption: () => "first" } }); });
 } });
 const over = new Transcript({ partsOf: (id) => parts[id] || [] });
 over.setOutline([{ id: "pres", type: "assistant" }], null);
-const overRows = over.rows(60, 0, 4);
-check("override-row", rowsHave(overRows, "$") && rowsHave(overRows, "custom"));
-check("override-source", over._sourceOf("pres").indexOf("$ custom") === 0);
-check("cached-presenter-changes", rowsHave(pres.rows(60, 0, 4), "custom"));
-
-const faultyOwner = plugins.use({ name: "test-faulty-presenter", apply(ctx) {
-  ctx.inject(["chat"], (ctx) => { ctx.chat.labels({ tools: { exec: { category: "run", present: () => { throw new Error("bad"); } } }, sources: { engine_interruption: () => "second" } }); });
+check("override-head", rowsHave(over.rows(60, 0, 4), "custom") && over._sourceOf("pres").indexOf("run custom") === 0);
+check("cached-rows-change", rowsHave(pres.rows(60, 0, 4), "custom"));
+const faulty = plugins.use({ name: "test-faulty-head", apply(ctx) {
+  ctx.inject(["chat"], (ctx) => { ctx.chat.render({ tools: { exec: () => { throw new Error("bad"); } }, sources: { engine_interruption: () => "second" } }); });
 } });
-presenterOwner.dispose();
-check("hidden-source-owner-leaves", inputSourceLabel({ type: "engine_interruption", run_id: 1, kind: "turn" }) === "second");
-const faulty = new Transcript({ partsOf: (id) => parts[id] || [] });
-faulty.setOutline([{ id: "pres", type: "assistant" }], null);
-check("presenter-fault-falls-back", rowsHave(faulty.rows(60, 0, 4), "exec"));
-faultyOwner.dispose();
-faultyOwner.dispose();
-check("source-owner-restores-default", inputSourceLabel({ type: "engine_interruption", run_id: 1, kind: "turn" }) === "Engine notice · run 1 interrupted");
-check("cached-presenter-restores-default", rowsHave(over.rows(60, 0, 4), "Run"));
+owner.dispose();
+check("lower-source-leaves", inputSourceLabel({ type: "engine_interruption", run_id: 1, kind: "turn" }) === "second");
+check("head-fault-empties", !rowsHave(over.rows(60, 0, 4), "custom") && over.rowCountOf("pres") === 1);
+faulty.dispose();
+check("source-restores-default", inputSourceLabel({ type: "engine_interruption", run_id: 1, kind: "turn" }) === "Engine notice · run 1 interrupted");
+check("head-restores-default", rowsHave(over.rows(60, 0, 4), "$"));

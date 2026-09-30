@@ -4,7 +4,7 @@ import { plugins } from "yuke:internal/ext";
 import { commandUi } from "yuke:internal/command-ui";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
-plugins.use(commandUi());
+plugins.use(commandUi);
 
 const offCmds = ["test:plain", "test:hidden", "test:shadowed", "test:winner"].map((name) => command.add(name, { desc: "d", run: () => {} }));
 const offCmd = () => { for (const off of offCmds) off(); };

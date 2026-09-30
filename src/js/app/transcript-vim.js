@@ -33,15 +33,10 @@ function stateOf(view) {
   return s;
 }
 
-/** @param {Transcript} t @param {Position} pos @returns {string} */
-function rowOf(t, pos) {
-  return t.rowTextAt(pos.id, pos.row);
-}
-
 /** @param {Transcript} t @param {VimState} s @returns {void} */
 function holdCol(t, s) {
   const cursor = /** @type {Position} */ (s.cursor);
-  const body = rowOf(t, cursor);
+  const body = t.rowTextAt(cursor.id, cursor.row);
   if (body.length === 0) return;
   if (cursor.col >= body.length) s.cursor = { ...cursor, col: prevGrapheme(body, body.length) };
 }
@@ -59,11 +54,34 @@ function place(view, s) {
   return true;
 }
 
-/** @param {Transcript} t @param {VimState} s @returns {void} */
+// A rebuild moves rows under the cursor, so the cursor goes back to its source text. True when it moved.
+/** @param {Transcript} t @param {VimState} s @returns {boolean} */
 function reanchor(t, s) {
-  if (!s.cursor || s.src < 0 || t.sourceAt(s.cursor) === s.src) return;
+  if (!s.cursor || s.src < 0 || t.sourceAt(s.cursor) === s.src) return false;
   const pos = t.posAtSource(s.cursor.id, s.src);
-  if (pos) s.cursor = pos;
+  if (!pos) return false;
+  s.cursor = pos;
+  // The new position can map to other source text, so the anchor moves with it and the next draw finds no change.
+  anchor(t, s);
+  return true;
+}
+
+// The cursor stays on the screen, as in vim: a scroll that leaves it behind carries it to the nearest drawn row.
+/** @param {Transcript} t @param {VimState} s @returns {boolean} */
+function keepOnScreen(t, s) {
+  const cursor = /** @type {Position} */ (s.cursor);
+  const r = t.pager.rect();
+  const top = r && t.posAt(r.x, r.y, false);
+  const bottom = r && t.posAt(r.x, r.y + r.h - 1, false);
+  if (!top || !bottom) return false;
+  const at = { id: cursor.id, row: cursor.row, col: 0 };
+  const edge = t.comparePos(at, top) < 0 ? top : t.comparePos(at, bottom) > 0 ? bottom : null;
+  if (!edge) return false;
+  s.cursor = { id: edge.id, row: edge.row, col: cursor.col };
+  holdCol(t, s);
+  anchor(t, s);
+  syncSelection(t, s);
+  return true;
 }
 
 // Every caller seeds only a state with no cursor.
@@ -73,7 +91,7 @@ function seed(view, s) {
   const r = t.pager.rect();
   for (let y = r ? r.y + r.h - 1 : -1; r && y >= r.y; y--) {
     const pos = t.posAt(r.x, y, false);
-    if (pos && rowOf(t, pos) !== "") {
+    if (pos && t.rowTextAt(pos.id, pos.row) !== "") {
       s.cursor = pos;
       anchor(t, s);
       return;
@@ -93,7 +111,7 @@ function cursorOf(t, pos) {
 /** @param {Transcript} t @param {VimState} s @param {number} d @returns {boolean} */
 function stepCol(t, s, d) {
   const cursor = /** @type {Position} */ (s.cursor);
-  const body = rowOf(t, cursor);
+  const body = t.rowTextAt(cursor.id, cursor.row);
   const col = d < 0 ? prevGrapheme(body, cursor.col) : nextGrapheme(body, cursor.col);
   if (col === cursor.col) return false;
   s.cursor = { id: cursor.id, row: cursor.row, col: Math.min(col, body.length) };
@@ -122,7 +140,7 @@ function stepRow(t, s, d) {
     }
   }
 
-  const goal = s.goal == null ? term.measure(rowOf(t, cursor).slice(0, cursor.col)) : s.goal;
+  const goal = s.goal == null ? term.measure(t.rowTextAt(cursor.id, cursor.row).slice(0, cursor.col)) : s.goal;
   const body = t.rowTextAt(id, r);
   const row = /** @type {WrapRow} */ ({ start: 0, end: body.length });
   s.cursor = { id, row: r, col: caretAtCol(body, row, goal) };
@@ -133,7 +151,7 @@ function stepRow(t, s, d) {
 /** @param {Transcript} t @param {VimState} s @param {(text: string, at: number) => number} find @param {number} edge @returns {boolean} */
 function wordStep(t, s, find, edge) {
   const cursor = /** @type {Position} */ (s.cursor);
-  const body = rowOf(t, cursor);
+  const body = t.rowTextAt(cursor.id, cursor.row);
   const col = find(body, cursor.col);
   if (col !== cursor.col) {
     s.cursor = { ...cursor, col };
@@ -141,7 +159,7 @@ function wordStep(t, s, find, edge) {
   }
   if (!stepRow(t, s, edge)) return false;
   const next = /** @type {Position} */ (s.cursor);
-  s.cursor = { ...next, col: edge > 0 ? 0 : rowOf(t, next).length };
+  s.cursor = { ...next, col: edge > 0 ? 0 : t.rowTextAt(next.id, next.row).length };
   return true;
 }
 
@@ -212,7 +230,7 @@ function move(t, s, k) {
       return true;
     case "$":
     case "end":
-      s.cursor = { ...s.cursor, col: rowOf(t, s.cursor).length };
+      s.cursor = { ...s.cursor, col: t.rowTextAt(s.cursor.id, s.cursor.row).length };
       return true;
     case "G":
       return toEnd(t, s, true);
@@ -244,14 +262,14 @@ function expandLines(t, s) {
   const after = t.comparePos(s.cursor, s.anchor) >= 0;
   const lo = after ? s.anchor : s.cursor;
   const hi = after ? s.cursor : s.anchor;
-  t.select({ ...lo, col: 0 }, { ...hi, col: rowOf(t, hi).length });
+  t.select({ ...lo, col: 0 }, { ...hi, col: t.rowTextAt(hi.id, hi.row).length });
 }
 
 /** @param {Transcript} t @param {VimState} s @param {boolean} source @param {boolean | undefined} [linewise] @returns {void} */
 function yank(t, s, source, linewise) {
   if (!s.cursor) return;
   if (!s.visual) {
-    const body = rowOf(t, s.cursor);
+    const body = t.rowTextAt(s.cursor.id, s.cursor.row);
     t.select({ ...s.cursor, col: 0 }, { ...s.cursor, col: body.length });
   }
   const text = t.selectedText(source);
@@ -416,8 +434,14 @@ export const transcriptVim = {
         if (view.focus !== "transcript") return null;
         const s = stateOf(view);
         if (!s.cursor) seed(view, s);
-        reanchor(view.transcript, s);
-        return cursorOf(view.transcript, s.cursor);
+        const t = view.transcript;
+        // Moved text takes the view along, and a scroll takes the cursor along. Either change shows on the next frame.
+        if (reanchor(t, s)) {
+          t.ensureVisible(/** @type {Position} */ (s.cursor));
+          syncSelection(t, s);
+          root.invalidatePaint();
+        } else if (keepOnScreen(t, s)) root.invalidatePaint();
+        return cursorOf(t, s.cursor);
       });
 
       // A click is the plugin's own way into the region, so it moves the focus itself.

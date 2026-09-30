@@ -1,6 +1,6 @@
 import { check } from "yuke:internal/test";
 import { ChatView } from "yuke:internal/chat-view";
-import { Session, openSession } from "yuke:internal/session";
+import { Session, showSession } from "yuke:internal/session";
 import { client } from "yuke:internal/client";
 import { events } from "yuke:internal/kernel";
 // The messages posted since the last reset, as the user saw them. A repeat posts again, so it counts too.
@@ -14,14 +14,14 @@ client.sessionClose = id => { closed.push(id); };
 client.sessionActivity = () => null;
 client.sessionOutline = () => ({ messages: [{ id: 1, type: "user" }], active: null });
 const chat = new ChatView(new Session());
-openSession(chat, "missing");
+showSession(chat, "missing");
 check("failed-first-open", chat.session.sessionId === null && closed.length === 0 && lastShown().includes("open failed"));
-openSession(chat, "old");
-openSession(chat, "missing");
+showSession(chat, "old");
+showSession(chat, "missing");
 check("failed-replacement-keeps-pin", chat.session.sessionId === "old" && closed.length === 0 && chat.transcript.messages().length === 1);
-openSession(chat, "next");
+showSession(chat, "next");
 check("replacement-releases-once", chat.session.sessionId === "next" && closed.join(",") === "old");
-openSession(chat, "next");
+showSession(chat, "next");
 check("same-session-reuses-pin", opened.join(",") === "missing,old,missing,next");
 chat.session.leave(chat);
 check("dispose-releases-owned-pin", closed.join(",") === "old,next");

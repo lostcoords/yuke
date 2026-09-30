@@ -24,11 +24,11 @@ export interface Selection {
   cursor: Position;
 }
 
-/** The part under a position: message `id`, part `partId`, and the row `kind`, such as "tool-header" or "reasoning-body". */
+/** The part under a position: message `id`, part `partId` (-1 for a whole message), and the row under the position. */
 export interface PartHit {
   id: number;
   partId: number;
-  kind: string;
+  row: TranscriptRow;
 }
 
 export interface SelectionAnchors {
@@ -55,6 +55,8 @@ export interface PartCache {
   expanded: boolean;
   live: boolean;
   shape: number;
+  /** The group header rows that the last build wrote before this part. */
+  lead: number;
   rows: TranscriptRow[];
   source: string;
   /** `part` is the part object `doc` holds the text of; `kept` counts the leading rows the last build left in place. */
@@ -81,35 +83,87 @@ export interface TranscriptOptions {
   onSelect?: ((text: string) => void) | null | undefined;
 }
 
-export interface ActionPlan {
+export interface GroupPlan {
   trees: number[] | Float64Array;
   starts: number[] | Float64Array;
   joinAfter: number[] | Uint8Array;
 }
 
-export interface ActionEntry {
+export interface GroupEntry {
   part: number;
   message: number;
 }
 
-/** The header words of a tool call: `verb` first, then `subject`. `category` picks the style group, as in `Presenter`. */
-export interface ToolLabel {
-  verb: string;
-  subject: string;
-  category: string;
-}
-
-/** Names one tool call in its transcript header. It must not walk the tool output and must not scan a whole text, because it runs when the row builds. */
-export interface Presenter {
-  /** The style group of the header. "read", "write", "run", and "agent" use TxToolRead, TxToolWrite, TxToolRun, and TxToolAgent; any other value uses TxToolName. */
-  category: string;
-  /**
-   * Answer the header words: `verb` first, then `subject`. A throw shows the tool name with no subject.
-   * @param args - The parsed JSON arguments, or `{}` when they do not parse.
-   * @param raw - The argument text before the parse.
-   */
-  present(args: Record<string, unknown>, raw: string, part: Extract<Wire.AssistantPart, { type: "tool" }>): { verb: string; subject: string };
-}
-
 /** The label above an input from each engine source; a missing source shows its type name. */
 export type SourceLabels = { [K in Wire.InputSource["type"]]?: (source: Extract<Wire.InputSource, { type: K }>) => string };
+
+/** A tool call part. */
+export type ToolPart = Extract<Wire.AssistantPart, { type: "tool" }>;
+/** A reasoning part. */
+export type ReasoningPart = Extract<Wire.AssistantPart, { type: "reasoning" }>;
+
+/**
+ * The header words of one tool call, for any look: `verb` first, then `subject`. `category` names the kind of work, such as "read", "write", "run", or "agent"; a look picks a style from it.
+ * It runs when the row builds, so it must not walk the tool output or scan a whole text. `args` holds the parsed JSON arguments, or `{}` when they do not parse.
+ */
+export type ToolHead = (args: Record<string, any>, part: ToolPart) => { verb: string; subject: string; category?: string };
+
+/** The rows of a render and the text they show. The `src` and `srcEnd` of each segment index `source`, so a selection copies the source text. */
+export interface Rendered {
+  rows: TranscriptRow[];
+  source: string;
+}
+
+/** The facts of one part render. The core builds a new one for each call. */
+export interface PartEnv {
+  /** The message that holds the part. */
+  messageId: number;
+  /** The columns of the rows. A row indent counts inside them. */
+  width: number;
+  /** True when the part shows open: the choice of the user, else ctrl+o, else the `fold` hook. */
+  expanded: boolean;
+  /** True while the part is the last reasoning of the streaming draft. */
+  live: boolean;
+  /** The place of the part in its group, or null outside a group. */
+  group: { count: number; first: boolean; last: boolean } | null;
+  /** The `tools` of every renderer, merged by tool name. */
+  tools: Record<string, ToolHead>;
+}
+
+/** The facts of one message, error, or group header render. `expanded` is the fold state of the whole message. */
+export interface MessageEnv {
+  messageId: number;
+  width: number;
+  expanded: boolean;
+}
+
+/**
+ * A transcript renderer. Every member is optional. A hook that answers undefined passes to the renderer below it, so a plugin can own one tool or one message source.
+ * The core writes `key` and `partId` on each row a hook answers. A hook runs when the rows build: at a change, a new width, or a fold, never on each frame.
+ */
+export interface Render {
+  /** The rows of one tool or reasoning part. The core builds text parts itself as markdown. */
+  part?(part: ToolPart | ReasoningPart, env: PartEnv): Rendered | undefined;
+  /** The rows of one user or compaction message. `parts` holds its text and media parts. */
+  message?(message: MessageDescriptor, parts: readonly MessagePart[], env: MessageEnv): Rendered | undefined;
+  /** The rows under a message that failed. */
+  error?(error: Wire.MessageError, env: MessageEnv): Rendered | undefined;
+  /** The group of a part. Consecutive parts with one key form a group, and null closes the group. Without this hook, no part groups. */
+  groupKey?(part: Wire.AssistantPart): string | null | undefined;
+  /** The rows above a group. */
+  groupHeader?(group: { key: string | null; count: number }, env: MessageEnv): TranscriptRow[] | undefined;
+  /** True to show a part open until the user or ctrl+o folds it. `live` is true for the reasoning that still streams. */
+  fold?(part: Wire.AssistantPart, live: boolean): boolean | undefined;
+  /** True when a folded or open part shows the same rows for `fresh` as for `before`, so a streamed delta skips the rebuild. */
+  sameVisible?(before: Wire.AssistantPart, fresh: Wire.AssistantPart, expanded: boolean): boolean | undefined;
+  /** Act on a click or an Enter on a part. Answer where the reader lands, or null. Without an answer, a part with a header row toggles its fold. */
+  activate?(hit: PartHit, transcript: import("../transcript.js").Transcript): Position | null | undefined;
+  /** Header words by tool name, for any look. */
+  tools?: Record<string, ToolHead>;
+  /** Labels by input source type. */
+  sources?: SourceLabels;
+  /** The indent of the text rows of an assistant message. */
+  indent?: number;
+  /** The blank rows between two parts of one message. */
+  gap?: number;
+}

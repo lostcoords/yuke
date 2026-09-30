@@ -1210,6 +1210,7 @@ export type MethodName =
 
 /** Notice severity level. */
 export type NoticeLevel =
+  | "debug"
   | "info"
   | "warn"
   | "error"

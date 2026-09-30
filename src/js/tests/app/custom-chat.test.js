@@ -4,10 +4,13 @@ import { plugins, services } from "yuke:internal/ext";
 import { client } from "yuke:internal/client";
 import { tuiPlugin } from "yuke:internal/tui";
 import { Composer } from "yuke:internal/ui";
-import { Transcript } from "yuke:internal/transcript";
-import { Session, currentPane, currentSession, openSession, sessionsPlugin } from "yuke:internal/session";
+import { Transcript, registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
+import { Session, currentPane, currentSession, showSession, sessionsPlugin } from "yuke:internal/session";
 import { composerVim } from "yuke:internal/composer-vim";
 import { shell } from "yuke:internal/shell";
+
+registerRender(defaultRender);
 
 const cancels = [];
 client.sessionOpen = () => true;
@@ -40,7 +43,7 @@ const pane = /** @type {Plain} */ (root.active);
 check("shell-shows-the-user-pane", pane instanceof Plain && currentPane() === pane && currentSession() === pane.session);
 
 // The features read parts, not the bundled chat: the session commands reach its session and composer-vim its composer.
-openSession(pane, "s1");
+showSession(pane, "s1");
 command.perform("session:interrupt");
 check("session-command-reaches-pane", cancels.join(",") === "s1");
 const vim = /** @type {{ mode: (c: Composer) => string | null }} */ (services.get("composer-vim"));

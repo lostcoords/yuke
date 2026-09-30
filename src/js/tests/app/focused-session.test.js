@@ -4,7 +4,7 @@ import { client } from "yuke";
 import { Context, Scope, scopeOf } from "yuke:internal/ext";
 import { currentPane } from "yuke:session";
 import { chatPlugin } from "yuke:internal/chat";
-import { currentPane as internalQuery, Session, openSession, showSession, sessionsPlugin } from "yuke:internal/session";
+import { currentPane as internalQuery, Session, showSession, sessionsPlugin } from "yuke:internal/session";
 import { plugins } from "yuke:internal/ext";
 import { tuiPlugin } from "yuke:internal/tui";
 import { root, Node } from "yuke:internal/core";
@@ -29,18 +29,18 @@ observer.on("session.current.changed", (...args) => {
 });
 const a = new ChatView(new Session()), b = new ChatView(new Session());
 equal(currentSessionId(), null);
-openSession(a, "a");
-openSession(b, "b");
+showSession(a, "a");
+showSession(b, "b");
 equal(seen.length, 0);
 root.setRoot(Node.leaf(a));
 equal(currentSessionId(), "a");
 root.split("h", b);
 equal(currentSessionId(), "b");
-openSession(b, "c");
-openSession(b, "c");
-openSession(b, "missing");
+showSession(b, "c");
+showSession(b, "c");
+showSession(b, "missing");
 equal(seen.join(","), "a,b,c");
-openSession(a, "background");
+showSession(a, "background");
 equal(seen.length, 3);
 
 const overlay = { layout() {}, draw() {} };
@@ -60,10 +60,10 @@ equal(currentSessionId(), "c");
 equal(seen.length, 3);
 showSession(b, new Session());
 equal(currentSessionId(), null);
-openSession(b, "gone");
+showSession(b, "gone");
 b.session.sessionGone();
 equal(currentSessionId(), null);
-openSession(b, "background");
+showSession(b, "background");
 const beforeClose = seen.length;
 root.close();
 equal(currentSessionId(), "background");
@@ -71,9 +71,9 @@ equal(seen.length, beforeClose);
 
 // A listener can replace the session after the first open has completed.
 const stop = observer.on("session.current.changed", () => {
-  if (currentSessionId() === "replace") openSession(a, "replacement");
+  if (currentSessionId() === "replace") showSession(a, "replacement");
 });
-openSession(a, "replace");
+showSession(a, "replace");
 equal(currentSessionId(), "replacement");
 equal(seen.slice(-2).join(","), "replace,replacement");
 stop();
@@ -83,7 +83,7 @@ const beforeDispose = seen.length;
 scopeOf(observer).dispose();
 // The closed pane left its session, so a new pane opens it again.
 const c = new ChatView(new Session());
-openSession(c, "replacement");
+showSession(c, "replacement");
 root.setRoot(Node.leaf(c));
 equal(currentSessionId(), "replacement");
 equal(seen.length, beforeDispose);

@@ -28,11 +28,20 @@ No regressions in time, memory, or allocations. A slower hot path is a defect, i
 
 Hot paths: draw, input, stream delivery, per-frame, per-row. Do not add allocation, closure, call, or `await`. QuickJS: each object, closure, and private field costs time.
 
+QuickJS on a hot path:
+- `for...of` allocates one iterator per loop. Over a short array, use an index loop (27% faster in a probe).
+- `for (const [k, v] of map)` allocates one array per entry (10× slower). Use `map.forEach`, `map.values()`, or `map.keys()`.
+- A call sets up every local of the function before the first statement, also when the function returns early. Keep a common early exit, such as a cache hit, in a function with few locals. Move the rare path into its own method (`style.resolve` and `_build`: 11% faster).
+- An object gets its shape from its fields and their order. Give objects of one kind the same fields in the same order. Do not add a field that most objects do not need (`stop` on each text row: +1.4% on `rows()`).
+- Two dictionary objects that get the same keys in the same order share one shape. Then each new key copies the whole shape. Use a `Map` for a private dictionary (`style._base`).
+
 When you change the JS host, engine, or renderer, measure vs base:
 `zig build bench -Doptimize=ReleaseFast -- --fixture bench/transcript-fixture.json`
 Add `-Dmetrics=true` for allocs (separate run). One phase: `--phase <name> --iterations 3000`.
 
 Time noise ~20%: 5+ runs each side, alternate, lowest quartile. Alloc count and live/peak bytes are exact. If a phase is worse, stop and say why.
+
+For a small delta, count instructions with callgrind (build with `-Dcpu=baseline`). Compare the slope between two iteration counts, not the totals: setup fills a short run. GC and heap layout move one window, so check a second window before you call a delta real.
 
 ## Memory
 

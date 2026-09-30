@@ -37,7 +37,7 @@ plugins.use({
 |---|---|
 | `yuke` | `plugins`, `defineConfig`, `config`, `events`, `fs`, `env`, `fetch`, `exec`, `spawn`, `lines`, `net`, `jobs`, `client`, `utf8`, `diff`, and the plugin types |
 | `yuke:ui` | views and widgets, `ui.pick`, `ui.select`, `keys` |
-| `yuke:chat` | `ChatView`, `Transcript`, `labels`, `registerLabels`, `attachPath`, `attachClipboard` |
+| `yuke:chat` | `ChatView`, `ChatSurface`, `Transcript`, and helpers for a renderer: `toolHead`, `wrapRows`, `viewRows`, `openDetails`; `attachPath`, `attachClipboard` |
 | `yuke:session` | `Session`, `sessions`, `currentSession()`, `currentPane()`, `currentEntry()`, `showSession` |
 | `yuke:plugins` | optional plugins: `composerVim`, `transcriptVim`, `agents(options)`, `mcp(options)`; and `shell`, the bundled window layout, for a replacement |
 
@@ -48,16 +48,16 @@ yuke runs ES2025 JavaScript (QuickJS-ng), with no Node or browser API: use the `
 ## Check a change
 
 1. Type-check the profile, when `tsc` exists: `tsc -p <profile>/jsconfig.json`.
-2. Run `yuke check`. It loads the profile as the TUI does, without a terminal, and prints each warning and error to stderr. It exits with 1 on an error. It runs your plugins and opens the session store, so it is not read-only.
+2. Run `yuke check`. It loads the profile as the TUI does, without a terminal, and prints each debug line, warning, and error to stderr. It counts only warnings and errors. It exits with 1 on an error. It runs your plugins and opens the session store, so it is not read-only.
 3. Restart yuke. yuke runs `index.js` only at startup. `/reload` reads `AGENTS.md` and the skills again, not the profile.
 
 ## Debug a plugin
 
-There is no `console` and no `print`. Call `c.interaction.notify(text, "warn")` to see a value.
+`print(...values)` and `console.log` post a `debug` line; `console.info`, `console.warn`, and `console.error` post at their own level. `ctx.print` names your plugin as the source. A string prints as it is, an error as its message, and any other value as JSON.
 
-- `yuke check` prints each warning and error as `source · level: message`.
-- In the TUI, a warning or a plugin fault shows as a toast. `notify:history` (`/messages`) lists the newest 100.
-- While the TUI runs, yuke writes its own log to `tui.log` in the data directory. Each start empties the file, so copy it before a restart. A panic prints to stderr.
+- `yuke check` prints each line as `source · level: message`.
+- In the TUI, a warning, an error, or a plugin fault shows as a toast; a debug line never does. `notify:history` (`/messages`) lists the newest 100.
+- Every mode appends each line, and yuke's own log, to `yuke.log` in the state directory (`$XDG_STATE_HOME/yuke`, by default `~/.local/state/yuke`). Each line starts with the process id. The file never rotates. A panic prints to stderr.
 
 ## Install links
 

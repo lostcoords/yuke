@@ -4,7 +4,7 @@ import type { Job } from "yuke:internal/native/jobs";
 import type { Context, Scope } from "../ext.js";
 import type { tui } from "../tui.js";
 import type { Session } from "../session.js";
-import type { LabelRegistration } from "../transcript.js";
+import type { Render } from "./transcript.js";
 import type { ComposerVim } from "../composer-vim.js";
 import type { ChatRegion, ChatView, StripRow } from "../chat-view.js";
 import type { Composer } from "../ui.js";
@@ -160,18 +160,20 @@ export interface ToolDefinition {
 }
 
 /** The value `inject` gives each capability name. A plugin declares its own through `declare module "yuke"`; an undeclared name is `unknown`. */
-/** The `chat` capability. The shell asks it for each new pane, and tools name their calls through it. */
+/** The `chat` capability. The shell asks it for each new pane, and plugins render the transcript through it. */
 export interface ChatService {
   /** A new chat pane. Without `session`, the pane shows a new draft. */
   create(session?: Session): ChatView;
-  /** Register tool and source labels. The disposer removes them, and an unload of the block removes them too. */
-  labels(entries: LabelRegistration): Disposer;
+  /** Add a renderer to every transcript. It stacks on the renderers before it. The disposer removes it, and an unload of the block removes it too. */
+  render(render: Render): Disposer;
+  /** Rebuild the rows of one part in every pane, because its renderer reads state outside the part. */
+  refresh(messageId: number, partId: number): void;
 }
 
 export interface Capabilities {
   /** The terminal UI of one block. An unload of the block removes what the block adds. The shell provides it. */
   tui: ReturnType<typeof tui.bindTo>;
-  /** The chat panes and their transcript labels. The `chat` plugin provides it, and a plugin that replaces the chat pane provides its own. */
+  /** The chat panes and their transcript renderers. The `chat` plugin provides it, and a plugin that replaces the chat pane provides its own. */
   chat: ChatService;
   /** The composer mode service. It exists only while the `composerVim` plugin runs. */
   "composer-vim": ComposerVim;

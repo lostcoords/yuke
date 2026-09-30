@@ -4,7 +4,7 @@ import { root, Node } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { plugins } from "yuke:internal/ext";
 import { chatPlugin } from "yuke:internal/chat";
-import { sessions, currentPane, openSession, showSession, Session, sessionsPlugin } from "yuke:internal/session";
+import { sessions, currentPane, showSession, Session, sessionsPlugin } from "yuke:internal/session";
 import { tuiPlugin } from "yuke:internal/tui";
 import { client } from "yuke:internal/client";
 plugins.use(tuiPlugin);
@@ -58,7 +58,7 @@ a.transcript.selection = { anchor: { id: "u2", row: 0, col: 0 }, cursor: { id: "
 const outline = client.sessionOutline;
 client.sessionOutline = () => ({ messages: [{ id: "u2", type: "user" }], active: null });
 const joiner = new ChatView(new Session());
-openSession(joiner, "s2");
+showSession(joiner, "s2");
 client.sessionOutline = outline;
 check("open-shares-a-shown-session", joiner.session === shared && shared.views.length === 2);
 check("join-keeps-the-other-selection", a.transcript.selection !== null);

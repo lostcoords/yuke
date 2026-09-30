@@ -1,8 +1,11 @@
 import { check, textParts } from "yuke:internal/test";
 import { term } from "yuke:internal/native/term";
-import { Transcript } from "yuke:internal/transcript";
+import { Transcript, registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
 import { Document } from "yuke:internal/md";
 import { prevGrapheme, nextGrapheme } from "yuke:internal/text-input";
+
+registerRender(defaultRender);
 
 const body = { a1: "alpha bravo charlie delta echo foxtrot golf hotel india" };
 const t = new Transcript({ partsOf: textParts((id) => body[id] || "") });
@@ -34,8 +37,8 @@ check("no-source", t.sourceAt({ id: "a1", row: count + 5, col: 0 }) === -1);
 t.pager.toTop();
 paint();
 const head = t.screenAt({ id: "a1", row: 0, col: 3 });
-// The assistant gutter is two columns wide.
-check("screen-at", head && head.y === 0 && head.x === 2 + 3);
+// The assistant gutter is one column wide.
+check("screen-at", head && head.y === 0 && head.x === 1 + 3);
 const last = { id: "a1", row: count - 1, col: 0 };
 check("hidden-before", t.screenAt(last) === null);
 t.ensureVisible(last);

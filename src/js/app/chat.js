@@ -2,12 +2,13 @@
 import { root } from "yuke:internal/core";
 import { modelOf } from "yuke:internal/catalog";
 import { ChatView } from "yuke:internal/chat-view";
-import { registerLabels } from "yuke:internal/transcript";
+import { registerRender, toggleExpandAll } from "yuke:internal/transcript";
 import { attachClipboard } from "yuke:internal/attach";
 import { Session, sessions, currentPane, showSession } from "yuke:internal/session";
 import { notify } from "yuke:internal/kernel";
 
 /** @import { Disposer } from "./types/ext.js" */
+/** @import { Render } from "./types/transcript.js" */
 /** @import { Context } from "yuke:internal/ext" */
 
 // Warn when the images in a view's composer will not reach the model its next input goes to.
@@ -40,11 +41,20 @@ export class ChatSurface {
   }
 
   /**
-   * Name tool calls and input sources in every transcript for the life of this block. The newest registration wins. See `registerLabels`.
-   * @param {Parameters<typeof registerLabels>[0]} entries @returns {Disposer} Removes the registration before the block unloads.
+   * Add a renderer to every transcript for the life of this block. It stacks on the renderers before it: see `Render`.
+   * @param {Render} render @returns {Disposer} Removes the renderer before the block unloads.
    */
-  labels(entries) {
-    return this._ctx.effect(() => registerLabels(entries));
+  render(render) {
+    return this._ctx.effect(() => registerRender(render));
+  }
+
+  /**
+   * Rebuild the rows of part `partId` of message `messageId` in every pane, because its renderer reads state outside the part.
+   * @param {number} messageId @param {number} partId @returns {void}
+   */
+  refresh(messageId, partId) {
+    for (const session of sessions) for (const view of session.views) if (view instanceof ChatView) view.transcript.refreshRow(messageId, partId);
+    root.invalidate();
   }
 }
 
@@ -74,7 +84,8 @@ export const chatPlugin = {
         },
       });
       ctx.tui.command.add("chat:paste-image", { desc: "attach the image on the clipboard", run: () => { const composer = currentPane()?.composer; if (composer) attachClipboard(composer); } });
-      ctx.tui.keymap.add({ "ctrl+n": "chat:new", "ctrl+v": "chat:paste-image" });
+      ctx.tui.command.add("chat:expand-all", { desc: "open or fold every tool and report", run: toggleExpandAll });
+      ctx.tui.keymap.add({ "ctrl+n": "chat:new", "ctrl+v": "chat:paste-image", "ctrl+o": "chat:expand-all" });
 
       // Provided last, so an unload withdraws the service first and the shell closes the panes while the block still runs.
       ctx.provide("chat", { bindTo: (/** @type {Context} */ c) => new ChatSurface(c) });

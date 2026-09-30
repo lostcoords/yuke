@@ -12,6 +12,8 @@ export interface TranscriptRow {
   segments?: Segment[] | undefined;
   text?: string | undefined;
   group?: string | undefined;
+  /** The source offset of `text` in a row with no `segments`. The row shows its source text as it is, so the source ends at `src + text.length`. */
+  src?: number | undefined;
   bg?: string | undefined;
   marker?: string | null | undefined;
   markerGroup?: string | undefined;
@@ -19,6 +21,10 @@ export interface TranscriptRow {
   key?: ItemKey | undefined;
   kind?: string | undefined;
   partId?: number | undefined;
+  /** The fold header of its part: a click or Enter toggles the part, and the reader lands here. */
+  header?: boolean | undefined;
+  /** A stop of the part motion, such as the first row of a part. */
+  stop?: boolean | undefined;
   sel?: { from: number; to: number } | undefined;
   selGroup?: string | undefined;
 }

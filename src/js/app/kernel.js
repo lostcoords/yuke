@@ -112,19 +112,11 @@ function applyConfigPatch(section, fields, src, label) {
 // The kernel declares only the events that neutral code emits. Each tier declares its own names.
 const CORE_EVENTS = new Set(["notify.posted","engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", "quit.request", ...native.factNames()]);
 
-// True for an `owner:event` name. A plugin owns such a name, so no declaration can enumerate it.
-/** @param {string} name @returns {boolean} */
-function isNamespaced(name) {
-  const at = name.indexOf(":");
-  return at > 0 && at < name.length - 1;
-}
-
-// A layer implements only the hooks it needs.
-/** @param {object | null | undefined} obj @param {string} name @param {...unknown} args @returns {unknown} */
-export function callHook(obj, name, ...args) {
+// A layer implements only the hooks it needs. Every hook takes at most two arguments, so a call on a frame path allocates no argument list.
+/** @param {object | null | undefined} obj @param {string} name @param {unknown} [a] @param {unknown} [b] @returns {unknown} */
+export function callHook(obj, name, a, b) {
   const fn = obj && /** @type {Record<string, unknown>} */ (obj)[name];
-  // `Reflect.apply` keeps the receiver even when the hook shadows `Function.prototype.apply`.
-  return typeof fn === "function" ? Reflect.apply(fn, obj, args) : undefined;
+  return typeof fn === "function" ? fn.call(obj, a, b) : undefined;
 }
 
 export class Emitter {
@@ -154,7 +146,8 @@ export class Emitter {
   _check(name) {
     if (this._names.has(name)) return;
     // An `owner:event` name belongs to its owner, so the core set never declares it.
-    if (isNamespaced(name)) return;
+    const at = name.indexOf(":");
+    if (at > 0 && at < name.length - 1) return;
     throw new TypeError("unknown event: " + name);
   }
 
@@ -267,6 +260,8 @@ export function notify(level, message, source, stack = "") {
   const text = capText(message);
   const from = capText(source);
   const trace = capText(stack);
+  // The process log keeps every notification, a repeat included, in every mode.
+  native.log(level, from, text);
   const last = notifications[notifications.length - 1];
   /** @type {Notification} */
   let entry;
@@ -286,6 +281,36 @@ export function notify(level, message, source, stack = "") {
     posting = false;
   }
 }
+
+/**
+ * The values as one line: a string as it is, an error as its message, and any other value as JSON, or as its string form when it has no JSON form.
+ * @param {readonly unknown[]} values @returns {string}
+ */
+export function printText(values) {
+  let out = "";
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    let text;
+    if (typeof value === "string") text = value;
+    else if (value instanceof Error) text = errorText(value);
+    else {
+      try {
+        text = JSON.stringify(value) ?? String(value);
+      } catch {
+        // A cycle or a BigInt has no JSON form.
+        text = String(value);
+      }
+    }
+    out += i === 0 ? text : " " + text;
+  }
+  return out;
+}
+
+/** @param {Wire.NoticeLevel} level @returns {(...values: unknown[]) => void} */
+const consoleAt = (level) => (...values) => notify(level, printText(values), "console");
+// A profile prints the way a script does, and each line enters the one notification channel.
+globalThis.print = consoleAt("debug");
+globalThis.console = { log: consoleAt("debug"), debug: consoleAt("debug"), info: consoleAt("info"), warn: consoleAt("warn"), error: consoleAt("error") };
 
 /** Report a thrown value as an error notification. The report never throws, because a value can fail every read. */
 /** @param {unknown} error @param {string} source @returns {void} */

@@ -169,9 +169,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = app_imports,
     });
-    // The skill lives outside src/, so a test reads it through this path.
+    // The skill and the examples live outside src/, so a test reads them through these paths.
     const test_paths = b.addOptions();
     test_paths.addOptionPath("yuke_skill", b.path(".agents/skills/yuke/SKILL.md"));
+    test_paths.addOptionPath("tree_transcript", b.path("docs/examples/tree-transcript.js"));
     tests.addImport("test_paths", test_paths.createModule());
     // One compile serves every shard; each shard is a process that runs every n-th test.
     const src_tests = b.addTest(.{

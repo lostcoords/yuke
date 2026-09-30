@@ -1,13 +1,12 @@
 // The context reading on the status bar and the `/context` breakdown window.
 import { client } from "yuke:internal/client";
 import { showInfo } from "yuke:internal/info-panel";
-import { currentEntry, defaultModel } from "yuke:internal/session";
-import { modelOf, contextWindowOf, sessionCost } from "yuke:internal/catalog";
-import { BAR_CELLS, BAR_GLYPHS, contextBar, money, tokenLabel } from "yuke:internal/format";
+import { currentEntry, currentSession, defaultModel, feedItem } from "yuke:internal/session";
+import { modelOf, sessionCost } from "yuke:internal/catalog";
+import { contextBar, money, tokenLabel } from "yuke:internal/format";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @typedef {{ model: string, count: number, usage: Wire.TokenUsage, total: Wire.TokenUsage, queued: number, compaction: boolean }} Reading */
-/** @typedef {{ bar?: string }} ContextConfig */
 
 /** @type {Wire.TokenUsage} */
 const NO_TOKENS = { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 };
@@ -28,12 +27,14 @@ function reading() {
   };
 }
 
-// The status words: the bar and the share of the window, or a token count for a model with no known window.
-/** @param {Reading} r @param {readonly [string, string]} [glyphs] @returns {string} */
-function contextLine(r, glyphs = BAR_GLYPHS) {
-  const used = r.usage.input;
-  const window = contextWindowOf(r.model);
-  if (window > 0) return contextBar(used, window, BAR_CELLS, glyphs) + " " + Math.round((used / window) * 100) + "% context";
+// The status words (the bar and the window share, or a token count with no known window) run on each frame, so they read only the two drawn numbers from the list item.
+/** @returns {string} */
+function contextLine() {
+  const session = currentSession();
+  const item = session?.sessionId ? feedItem(session.sessionId) : null;
+  const used = item ? (session?.activity ?? item.activity).context_usage.input : 0;
+  const window = modelOf(item ? item.session.model : defaultModel().model)?.context_window ?? 0;
+  if (window > 0) return contextBar(used, window) + " " + Math.round((used / window) * 100) + "% context";
   return tokenLabel(used) + " context";
 }
 
@@ -70,18 +71,12 @@ function contextRows(r, sources = [], skills = []) {
 }
 
 
-/** @param {ContextConfig} [cfg] */
-export function contextUsage(cfg = {}) {
-  return {
+export const contextUsage = {
   name: "context",
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
-    // Two glyphs, or the default. A user with a font that fits the parallelograms passes "▰▱" from index.js.
-    // Normalize the pair once here, so a status render allocates nothing for it.
-    const custom = typeof cfg.bar === "string" ? Array.from(cfg.bar) : null;
-    const glyphs = custom && custom.length === 2 ? /** @type {[string, string]} */ ([custom[0], custom[1]]) : BAR_GLYPHS;
     ctx.inject(["tui"], (ctx) => {
-      ctx.tui.status.add({ side: "right", order: 20, render: () => contextLine(reading(), glyphs) });
+      ctx.tui.status.add({ side: "right", order: 20, render: contextLine });
 
       ctx.tui.command.add("context:show", {
         desc: "show the context and usage of this chat",
@@ -95,5 +90,4 @@ export function contextUsage(cfg = {}) {
       });
     });
   },
-  };
-}
+};

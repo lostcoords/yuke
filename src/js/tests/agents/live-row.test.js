@@ -4,6 +4,7 @@ import { events } from "yuke:internal/kernel";
 import { plugins } from "yuke:internal/ext";
 import { tuiPlugin } from "yuke:internal/tui";
 import { chatPlugin } from "yuke:internal/chat";
+import { transcriptView } from "yuke:internal/transcript-view";
 import { Session, sessionsPlugin } from "yuke:internal/session";
 import { client } from "yuke:internal/client";
 import { agents, childLabel } from "yuke:internal/agents";
@@ -12,6 +13,7 @@ const check = (ok, why) => { if (!ok) throw new Error(why); };
 plugins.use(tuiPlugin);
 plugins.use(sessionsPlugin);
 plugins.use(chatPlugin);
+plugins.use(transcriptView);
 plugins.use(agents({ catalog: { explore: {} } }));
 (async () => {
   const parent = "01".repeat(16), childId = "02".repeat(16);
@@ -31,10 +33,10 @@ plugins.use(agents({ catalog: { explore: {} } }));
   const t = chat.transcript;
   const text = () => t.rows(80, 0, t.rowCount(80)).map((row) => row.text || (row.segments || []).map((segment) => segment.text).join("")).join("\n");
   // The first render names the agent alone and starts one read; the read rebuilds the row with the live words.
-  check(text().includes("Agent explore") && !text().includes("read"), "first render must be plain: " + text());
+  check(text().includes("agent explore") && !text().includes("read"), "first render must be plain: " + text());
   await settle();
   check(gets === 1, "one read on first sight");
-  check(text().includes("Agent explore · tool · read · 8.2k ctx"), "live row after the read: " + text());
+  check(text().includes("agent explore · tool · read · 8.2k ctx"), "live row after the read: " + text());
   // A burst of facts coalesces into the read in flight and one more.
   gets = 0;
   for (let i = 0; i < 20; i++) events.emit("session.changed", { type: "session", session: childId, kind: "quiet", facts: ["session.activity_changed"] });
@@ -43,7 +45,7 @@ plugins.use(agents({ catalog: { explore: {} } }));
   item.activity.state = { type: "idle" }; item.last_run = { type: "turn", finish: "end_turn", rounds: 2 };
   events.emit("session.changed", { type: "session", session: childId, kind: "quiet", facts: ["run.done"] });
   await settle();
-  check(text().includes("Agent explore · completed · 8.2k ctx"), "done row: " + text());
+  check(text().includes("agent explore · completed · 8.2k ctx"), "done row: " + text());
   check(childLabel({ ...item, activity: { ...item.activity, context_usage: { ...usage, input: 0 } } }) === "completed", "no context words at zero");
   // A fact the row does not draw costs no read.
   gets = 0;
@@ -54,7 +56,7 @@ plugins.use(agents({ catalog: { explore: {} } }));
   client.sessionGet = async () => { gets++; throw new Error("gone away"); };
   events.emit("session.changed", { type: "session", session: childId, kind: "quiet", facts: ["session.activity_changed"] });
   await settle();
-  check(gets === 1 && text().includes("Agent explore · completed · 8.2k ctx"), "rejected read must keep the row: " + text());
+  check(gets === 1 && text().includes("agent explore · completed · 8.2k ctx"), "rejected read must keep the row: " + text());
   client.sessionGet = async () => { gets++; return JSON.parse(JSON.stringify(item)); };
   // A removed child leaves the plain row.
   events.emit("session.changed", { type: "session", session: childId, kind: "gone", facts: ["session.removed"] });

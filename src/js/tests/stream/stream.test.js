@@ -1,5 +1,8 @@
 import { check } from "yuke:internal/test";
-import { Transcript } from "yuke:internal/transcript";
+import { Transcript, registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
+
+registerRender(defaultRender);
 const rowText = (row) => (row.segments || []).map((segment) => segment.text).join("");
 const parts = [
   { type: "text", id: 1, text: "head" },

@@ -4,7 +4,7 @@ import { term } from "yuke:internal/native/term";
 import { callHook, config, events, fault, notify, once } from "yuke:internal/kernel";
 
 /** @import { Color, Style } from "yuke:internal/native/term" */
-/** @import { CommandAction, CommandEntry, CommandListing, CommandRegistry, CommandSpec, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, StatusEntry, StatusSegment, StyleConfig, StyleGroup, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
+/** @import { CommandAction, CommandEntry, CommandListing, CommandRegistry, CommandSpec, ContextExpr, ContextFlag, ContextNode, KeyBinding, KeyEntry, KeymapRegistry, NavTarget, NodeShape, Overlay, Pending, Rect, RootEvent, RouteEntry, RouteWhere, StatusEntry, StatusSegment, StyleConfig, StyleGroup, StyleLayer, Tickable, TickableEntry, ViewLike } from "./types/core.js" */
 
 /**
  * True for a wheel button of a mouse event. The wheel scrolls a pane but never moves the focus.
@@ -27,100 +27,156 @@ export const contains = (r, col, row) => col >= r.x && col < r.x + r.w && row >=
 // Bound a link chain, so a cycle falls back instead of looping for ever.
 const link_depth_max = 100;
 
+/** @type {Record<string, Color>} */
+const CORE_PALETTE = { fg: "reset", bg: "reset", danger: "red" };
+
 /**
- * The highlight groups. The built-in groups are monochrome: emphasis is weight and inversion, `Normal` is `reset`, and `danger` is the only color.
+ * The highlight groups and the palette. A group merges its default (from `set` with `{ default: true }`), then the active theme, then each other `set` in call order.
+ * The core groups are monochrome: emphasis is weight and inversion, `Normal` is `reset`, and `danger` is the only color.
  * @type {StyleConfig}
  */
 export const style = {
-  palette: {
-    fg: "reset",
-    bg: "reset",
-    danger: "red",
-  },
-  groups: Object.assign(Object.create(null), {
-    Normal: { fg: "fg", bg: "bg" },
-    Comment: { fg: "fg", dim: true },
-    YukeBrand: { fg: "fg", bold: true },
-    YukeHeader: { link: "Comment" },
-    YukeFooter: { link: "Comment" },
-    YukeStatus: { fg: "fg", dim: true },
-    YukeRule: { fg: "fg", dim: true },
-    YukeSession: { link: "Normal" },
-    YukeSessionSel: { reverse: true },
-    YukeSessionMeta: { fg: "fg", dim: true },
-    YukeSessionMetaSel: { reverse: true },
-    YukeEmpty: { fg: "fg", dim: true },
-    YukeHint: { fg: "fg", dim: true },
-    YukeBar: { fg: "fg", dim: true },
-  }),
-  /** @type {Record<string, number>} */
-  _refs: Object.create(null),
+  palette: { ...CORE_PALETTE },
+  groups: Object.create(null),
+  // A Map, because a dictionary object that grows in step with `groups` shares its shape, and each add then copies the shape.
+  _base: new Map(),
+  // Slot 0 holds the theme, or an empty layer, so the theme merges before every other change.
+  _patches: [{}],
   _cache: Object.create(null),
 
-  // Register absent groups and return a disposer that drops each group after its last reference.
-  /** @param {Record<string, StyleGroup>} groups @returns {() => void} */
-  add(groups) {
-    /** @type {string[]} */
-    const held = [];
+  set(groups, options) {
+    if (!options?.default) return this._layer({ groups });
+    // A default is the base of a group, so a second default for one name is a conflict and not a silent loss.
+    for (const name in groups) if (this._base.has(name)) throw new TypeError("style.set: " + name + " has a default; change it without { default: true }");
     for (const name in groups) {
-      const refs = this._refs[name];
-      if (!(name in this.groups)) {
-        this.groups[name] = /** @type {StyleGroup} */ (groups[name]);
-        this._refs[name] = 1;
-        held.push(name);
-      } else if (refs !== undefined) {
-        // A group the map held before any `add`, such as a built-in, takes no reference.
-        this._refs[name] = refs + 1;
-        held.push(name);
-      }
+      this._base.set(name, /** @type {StyleGroup} */ (groups[name]));
+      this._group(name);
     }
-    if (held.length === 0) return () => {};
-    this.invalidate();
-
+    this._changed();
     return once(() => {
-      for (const name of held) {
-        const refs = this._refs[name];
-        if (refs !== undefined && refs > 1) {
-          this._refs[name] = refs - 1;
-          continue;
-        }
-        delete this._refs[name];
-        delete this.groups[name];
-      }
-      this.invalidate();
+      // A key added to `groups` after the call names no default of this call, so it stays.
+      for (const name in groups) if (this._base.get(name) === groups[name]) this._base.delete(name);
+      this._apply({ groups });
     });
   },
 
-  resolve(name) {
-    const cached = this._cache[name];
-    if (cached) return cached;
+  setPalette(colors) {
+    return this._layer({ palette: colors });
+  },
 
-    /** @type {StyleGroup | undefined | null} */
+  theme(theme) {
+    // A fresh layer per call, so the disposer of an earlier call with the same object cannot remove this one.
+    const layer = { ...theme };
+    const previous = /** @type {StyleLayer} */ (this._patches[0]);
+    this._patches[0] = layer;
+    this._apply(previous);
+    this._apply(layer);
+    return once(() => {
+      if (this._patches[0] !== layer) return;
+      this._patches[0] = {};
+      this._apply(layer);
+    });
+  },
+
+  /** @param {StyleLayer} layer @returns {() => void} */
+  _layer(layer) {
+    this._patches.push(layer);
+    this._apply(layer);
+    return once(() => {
+      const at = this._patches.indexOf(layer);
+      // `once` runs this one time, and only this disposer removes the layer.
+      if (at < 1) throw new Error("style: the layer is gone");
+      this._patches.splice(at, 1);
+      this._apply(layer);
+    });
+  },
+
+  // Merge again what one layer touches, then drop every cached style and repaint.
+  /** @param {StyleLayer} layer */
+  _apply(layer) {
+    if (layer.palette) {
+      const palette = { ...CORE_PALETTE };
+      for (const each of this._patches) if (each.palette) patch(palette, each.palette);
+      this.palette = /** @type {Record<string, Color>} */ (palette);
+    }
+    if (layer.groups) for (const name in layer.groups) this._group(name);
+    this._changed();
+  },
+
+  // Merge one group. An unchanged group shares its base object, so the merged view costs nothing until a change.
+  /** @param {string} name */
+  _group(name) {
+    const base = this._base.get(name);
+    /** @type {StyleGroup | undefined} */
+    let out = base;
+    const patches = this._patches;
+    for (let i = 0; i < patches.length; i++) {
+      const change = /** @type {StyleLayer} */ (patches[i]).groups?.[name];
+      if (change === undefined) continue;
+      if (out === base) out = { ...base };
+      patch(/** @type {StyleGroup} */ (out), change);
+    }
+    if (out) this.groups[name] = out;
+    else delete this.groups[name];
+  },
+
+  _changed() {
+    this._cache = Object.create(null);
+    root.invalidatePaint();
+  },
+
+  // A hit reads only the cache: QuickJS sets up every local of a function on each call, so the locals of a miss live in `_build`.
+  resolve(name) {
+    return this._cache[name] || this._build(name);
+  },
+
+  /** @param {string} name @returns {Style} */
+  _build(name) {
+    // A group's own fields win over the fields of the group it links to, and a link cycle gives the default style; locals keep a cache miss to one allocation.
+    let fg, bg, ul, bold, dim, italic, reverse, underline;
     let def = this.groups[name];
-    for (let i = 0; def && def.link && i < link_depth_max; i++) def = this.groups[def.link];
-    if (def && def.link) def = null;
+    for (let depth = 0; def; depth++) {
+      if (depth === link_depth_max) {
+        fg = bg = ul = bold = dim = italic = reverse = underline = undefined;
+        break;
+      }
+      fg ??= def.fg;
+      bg ??= def.bg;
+      ul ??= def.ul;
+      bold ??= def.bold;
+      dim ??= def.dim;
+      italic ??= def.italic;
+      reverse ??= def.reverse;
+      underline ??= def.underline;
+      def = def.link === undefined ? undefined : this.groups[def.link];
+    }
 
     /** @type {Style} */
     const out = {};
-    if (def) {
-      if (def.bg !== undefined) out.bg = resolveColor(this.palette, def.bg);
-      if (def.ul !== undefined) out.ul = resolveColor(this.palette, def.ul);
-      if (def.bold) out.bold = true;
-      if (def.dim) out.dim = true;
-      if (def.italic) out.italic = true;
-      if (def.underline) out.underline = true;
-      if (def.reverse) out.reverse = true;
-    }
-    const fg = def && def.fg !== undefined ? def.fg : "fg";
-    out.fg = resolveColor(this.palette, fg);
+    if (bg !== undefined) out.bg = resolveColor(this.palette, bg);
+    if (ul !== undefined) out.ul = resolveColor(this.palette, ul);
+    if (bold) out.bold = true;
+    if (dim) out.dim = true;
+    if (italic) out.italic = true;
+    if (underline) out.underline = true;
+    if (reverse) out.reverse = true;
+    out.fg = resolveColor(this.palette, fg ?? "fg");
 
     this._cache[name] = out;
     return out;
   },
-  invalidate() {
-    this._cache = Object.create(null);
-  },
 };
+
+// Apply one patch in place: a null field deletes the field.
+/** @param {object} out @param {object} change @returns {void} */
+function patch(out, change) {
+  const into = /** @type {Record<string, unknown>} */ (out);
+  const from = /** @type {Record<string, unknown>} */ (change);
+  for (const key in from) {
+    if (from[key] === null) delete into[key];
+    else into[key] = from[key];
+  }
+}
 
 /** @param {Record<string, Color>} palette @param {Color | string} color @returns {Color} */
 function resolveColor(palette, color) {
@@ -966,7 +1022,8 @@ export const status = {
    * @returns {string}
    */
   side(which) {
-    const out = [];
+    // The frame asks each side on every draw, so the text grows in place and no array holds the parts.
+    let out = "";
     for (const seg of this._list) {
       if (seg.side !== which) continue;
       // One bad provider must not take the frame with it.
@@ -977,15 +1034,14 @@ export const status = {
       } catch (e) {
         fault(e, "status");
       }
-      if (t) out.push(String(t));
+      if (t) out = out ? out + " · " + t : String(t);
     }
-    return out.join(" · ");
+    return out;
   },
 
   // The right side keeps the width it needs, so a long message never pushes it off the row.
-  /** @param {Rect} rect @returns {void} */
-  draw(rect) {
-    const { x, y, w } = rect;
+  /** @param {number} x @param {number} y @param {number} w @returns {void} */
+  draw(x, y, w) {
     if (w <= 0) return;
     fill(x, y, w, 1, "YukeBar");
     const right = this.side("right");
@@ -1396,7 +1452,7 @@ export class RootView {
       }
     }
     if (this.root_node) this.root_node.draw(this.activeLeaf);
-    if (barY >= 0) status.draw({ x: 0, y: barY, w: term.width, h: 1 });
+    if (barY >= 0) status.draw(0, barY, term.width);
     const focused = this.focused;
     for (const layer of this.overlays) {
       callHook(layer, "draw", layer === focused);
@@ -1442,6 +1498,24 @@ export class RootView {
     return ticked;
   }
 
+  // A modal overlay consumes the event even when the overlay has no requested hook.
+  /** @param {"onKey" | "onMouse"} method @param {RootEvent} ev @returns {boolean} */
+  _consumedByOverlay(method, ev) {
+    let i = this.overlays.length - 1;
+    while (i >= 0) {
+      const layer = /** @type {Overlay} */ (this.overlays[i]);
+      // A float yields to a pending chord, so its own Tab never cuts a sequence short.
+      if (layer.modal === false && method === "onKey" && keymap.owns()) { i--; continue; }
+      const modal = layer.modal !== false;
+      const handled = callHook(layer, method, ev);
+      if (modal || handled) return true;
+      // A hook can remove layers, so resume below its current position.
+      const at = this.overlays.indexOf(layer);
+      i = at < 0 ? Math.min(i - 1, this.overlays.length - 1) : at - 1;
+    }
+    return false;
+  }
+
   /** @param {RootEvent} ev @returns {void} */
   onEvent(ev) {
     const name = HOST_TO_CORE_EVENT[ev.type];
@@ -1465,9 +1539,9 @@ export class RootView {
       this.invalidate();
       return;
     }
-    // A pulse that ticks no layer changes no view, so it draws nothing.
+    // A pulse that ticks no layer changes no view, so it draws nothing. A tick that changes a size asks for the layout itself.
     if (ev.type === "tick") {
-      if (this.tickLayers()) this.invalidate();
+      if (this.tickLayers()) this.invalidatePaint();
       return;
     }
     // Redraw on focus gain. A focus loss changes no view state.
@@ -1475,36 +1549,20 @@ export class RootView {
       if (ev.focused) this.invalidate();
       return;
     }
-    // A modal overlay consumes the event even when the overlay has no requested hook.
-    const consumedByOverlay = /** @type {(method: string) => boolean} */ ((method) => {
-      let i = this.overlays.length - 1;
-      while (i >= 0) {
-        const layer = /** @type {Overlay} */ (this.overlays[i]);
-        // A float yields to a pending chord, so its own Tab never cuts a sequence short.
-        if (layer.modal === false && method === "onKey" && keymap.owns()) { i--; continue; }
-        const modal = layer.modal !== false;
-        const handled = callHook(layer, method, ev);
-        if (modal || handled) return true;
-        // A hook can remove layers, so resume below its current position.
-        const at = this.overlays.indexOf(layer);
-        i = at < 0 ? Math.min(i - 1, this.overlays.length - 1) : at - 1;
-      }
-      return false;
-    });
     if (ev.type === "key" || ev.type === "paste") {
       if (ev.type === "key" && ev.event === "release") return;
       // A paste completes no sequence, so it ends the wait rather than leaving it armed.
       if (ev.type === "paste" && keymap.owns()) keymap.pending = null;
       // A command such as quit runs before an open dialog takes its key.
       const aboveModal = ev.type === "key" && this.overlays.length !== 0 && this.focused !== this.active && !keymap.owns() && keymap.performAboveModal(ev);
-      if (!aboveModal && !consumedByOverlay("onKey")) {
+      if (!aboveModal && !this._consumedByOverlay("onKey", ev)) {
         // The keymap reads a key first while it waits for a sequence, or where a route skips the view.
         const keymapFirst = keymap.owns() || route.reader() === "keymap";
         const viewTakes = !keymapFirst && callHook(this.active, "onKey", ev);
         if (!viewTakes && ev.type === "key") keymap.onKey(ev);
       }
     } else {
-      if (!consumedByOverlay("onMouse")) this.routeMouse(ev);
+      if (!this._consumedByOverlay("onMouse", ev)) this.routeMouse(ev);
     }
     this.invalidate();
   }
@@ -1512,6 +1570,16 @@ export class RootView {
 
 /** The one root view of the process. */
 export const root = new RootView();
+
+// Each style change repaints `root`, so the core defaults register after it exists.
+style.set({
+  Normal: { fg: "fg", bg: "bg" },
+  YukeBrand: { fg: "fg", bold: true },
+  YukeStatus: { fg: "fg", dim: true },
+  YukeRule: { fg: "fg", dim: true },
+  YukeEmpty: { fg: "fg", dim: true },
+  YukeBar: { fg: "fg", dim: true },
+}, { default: true });
 
 /** A synthetic esc key press. Every dialog cancels when it receives esc. */
 export const ESC_PRESS = /** @type {Readonly<Extract<HostEvent, { type: "key" }>>} */ (Object.freeze({ type: "key", code: "esc", char: "", shifted: "", baseLayout: "", text: "", event: "press", mods: 0 }));

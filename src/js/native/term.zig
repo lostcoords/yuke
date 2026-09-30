@@ -103,6 +103,7 @@ pub fn install(host: *Host) void {
         .{ .name = "text", .arity = 3, .call = jsText },
         .{ .name = "measure", .arity = 1, .call = jsMeasure },
         .{ .name = "graphemes", .arity = 1, .call = jsGraphemes },
+        .{ .name = "fit", .arity = 2, .call = jsFit },
         .{ .name = "wrap", .arity = 2, .call = jsWrap },
         .{ .name = "cursor", .arity = 3, .call = jsCursor },
         .{ .name = "setNeedsTick", .arity = 2, .call = jsSetNeedsTick },
@@ -220,19 +221,39 @@ fn jsGraphemes(ctx: Context, _: Value, args: []const Value) Value {
         host.paint.counters.grapheme_bytes += s.len;
     }
 
-    var triples: std.ArrayList(i32) = .empty;
+    // A grapheme holds at least one byte, so one reservation holds every triple and the loop never grows the list.
+    var triples = std.ArrayList(i32).initCapacity(host.gpa, s.len * 3) catch return ctx.throwOutOfMemory();
     defer triples.deinit(host.gpa);
 
     var u16_off: i32 = 0;
-    var it = term_pkg.unicode.graphemeIterator(s);
-    while (it.next()) |g| {
-        const bytes = g.bytes(s);
-        const n = utf16Len(bytes);
-        const w: i32 = @intCast(term_pkg.gwidth.gwidth(bytes, .unicode));
-        triples.appendSlice(host.gpa, &.{ u16_off, n, w }) catch unreachable;
+    var i: usize = 0;
+    while (i < s.len) {
+        const g = wrapping.graphemeAt(s, i);
+        const n = utf16Len(s[i .. i + g.len]);
+        i += g.len;
+        triples.appendSliceAssumeCapacity(&.{ u16_off, n, g.width });
         u16_off += n;
     }
     return int32Array(ctx, std.mem.sliceAsBytes(triples.items));
+}
+
+/// The UTF-16 length of the longest grapheme prefix of `s` that fits in `cells`. It allocates nothing, so a clip on a draw path costs no array.
+fn jsFit(ctx: Context, _: Value, args: []const Value) Value {
+    if (args.len < 2) return ctx.throwTypeError("term.fit(s, cells)");
+    const s = module.string(ctx, args[0]) orelse return ctx.throwTypeError("term.fit: s must be a string");
+    defer ctx.freeCString(s.ptr);
+    const cells = ctx.toInt32(args[1]) catch return rethrow(ctx);
+    var used: i32 = 0;
+    var units: i32 = 0;
+    var i: usize = 0;
+    while (i < s.len) {
+        const g = wrapping.graphemeAt(s, i);
+        if (used + g.width > cells) break;
+        used += g.width;
+        units += utf16Len(s[i .. i + g.len]);
+        i += g.len;
+    }
+    return ctx.newInt32(units);
 }
 
 fn jsWrap(ctx: Context, _: Value, args: []const Value) Value {
@@ -359,22 +380,14 @@ fn ensureFrame(host: *Host) void {
 }
 
 fn measureUtf8(s: []const u8) i32 {
-    // Printable ASCII has one cell per byte.
-    if (isSingleCellAscii(s)) return @intCast(s.len);
     var total: i32 = 0;
-    var it = term_pkg.unicode.graphemeIterator(s);
-    while (it.next()) |g| {
-        total +|= @intCast(term_pkg.gwidth.gwidth(g.bytes(s), .unicode));
+    var i: usize = 0;
+    while (i < s.len) {
+        const g = wrapping.graphemeAt(s, i);
+        total +|= g.width;
+        i += g.len;
     }
     return total;
-}
-
-/// Return true when every byte is printable ASCII, which spans `0x20` through `0x7e`.
-fn isSingleCellAscii(s: []const u8) bool {
-    for (s) |c| {
-        if (!std.ascii.isPrint(c)) return false;
-    }
-    return true;
 }
 
 const utf16Len = wrapping.utf16Len;
@@ -546,14 +559,12 @@ test "RGB styles reach all paint paths and preserve frame diffs" {
         try host.evalModule(
             \\import { term } from 'yuke:internal/native/term';
             \\import { style, text, fill } from 'yuke:internal/core';
-            \\style.palette.rgbFg = '#123456';
-            \\style.palette.rgbBg = '#789abc';
-            \\style.palette.rgbUl = '#def012';
-            \\style.add({
+            \\style.setPalette({ rgbFg: '#123456', rgbBg: '#789abc', rgbUl: '#def012' });
+            \\style.set({
             \\  RgbLiteral: { fg: '#123456', bg: '#789abc', ul: '#def012', underline: true },
             \\  RgbPalette: { fg: 'rgbFg', bg: 'rgbBg', ul: 'rgbUl', underline: true },
             \\  RgbLinked: { link: 'RgbPalette' },
-            \\});
+            \\}, { default: true });
             \\globalThis.drawRgb = () => {
             \\  term.beginFrame();
             \\  const raw = { fg: '#123456', bg: '#789abc', ul: '#def012', underline: true };
@@ -657,19 +668,14 @@ test "measure and graphemes use cell width and UTF-16 offsets" {
     const host = support.createHost();
     defer support.destroyHost(host);
 
-    // Printable ASCII takes the byte-length path, so both ends of the range must measure as one.
     try std.testing.expectEqual(@as(i32, 1), try evalOk(host,
         \\import { term } from "yuke:internal/native/term";
-        \\let ascii = "";
-        \\for (let c = 0x20; c <= 0x7e; c++) ascii += String.fromCharCode(c);
         \\globalThis.result = (
         \\  term.measure("") === 0 &&
         \\  term.measure("a") === 1 &&
         \\  term.measure(" ") === 1 &&
         \\  term.measure("~") === 1 &&
-        \\  term.measure("hello world") === 11 &&
-        \\  term.measure(ascii) === ascii.length &&
-        \\  ascii.length === 95
+        \\  term.measure("hello world") === 11
         \\) ? 1 : 0;
     ));
 

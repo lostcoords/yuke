@@ -76,6 +76,11 @@ pub fn dataDir(alloc: std.mem.Allocator, env: *const Map) !?[]u8 {
     return platformDir(alloc, env, "LOCALAPPDATA", "XDG_DATA_HOME", &.{ ".local", "share" });
 }
 
+/// Return the state directory from `LOCALAPPDATA` on Windows, `XDG_STATE_HOME` elsewhere, or `~/.local/state` under home; return null without a base, return an error for an invalid profile, and let the caller free the result.
+pub fn stateDir(alloc: std.mem.Allocator, env: *const Map) !?[]u8 {
+    return platformDir(alloc, env, "LOCALAPPDATA", "XDG_STATE_HOME", &.{ ".local", "state" });
+}
+
 fn platformDir(alloc: std.mem.Allocator, env: *const Map, comptime windows_key: []const u8, comptime xdg_key: []const u8, comptime home_mid: []const []const u8) !?[]u8 {
     if (builtin.os.tag == .windows) {
         const base = envBasePath(env, windows_key) orelse return null;

@@ -139,17 +139,19 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     defer std.testing.allocator.free(foreign.text);
     try std.testing.expect(foreign.is_error);
     try host.evalModule(
-        \\import { Transcript } from "yuke:internal/transcript";
+        \\import { Transcript, registerRender } from "yuke:internal/transcript";
+        \\import { defaultRender } from "yuke:internal/transcript-view";
+        \\registerRender(defaultRender);
         \\globalThis.toolSource = (name, args) => {
         \\  const view = new Transcript({ partsOf: () => [{ type: "tool", id: 0, name, arguments: JSON.stringify(args), state: { type: "pending" } }] });
         \\  view.setOutline([{ id: 1, type: "assistant" }], null);
         \\  view.rows(80, 0, 4);
         \\  return view._sourceOf(1);
         \\};
-        \\globalThis.presented = toolSource("spawn_agent", { agent: "review" }).startsWith("Agent review") && toolSource("spawn_agent", {}).startsWith("Agent small") && toolSource("send_agent_input", { child: "abc" }).startsWith("Send abc") ? 1 : 0;
+        \\globalThis.presented = toolSource("spawn_agent", { agent: "review" }).startsWith("agent review") && toolSource("spawn_agent", {}).startsWith("agent small") && toolSource("send_agent_input", { child: "abc" }).startsWith("send abc") ? 1 : 0;
     , "present.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("presented"));
-    // A dispose withdraws the tools and the presenters it installed.
+    // A dispose withdraws the tools and the tool heads it installed.
     try host.evalModule(
         \\import { plugins } from "yuke:internal/ext";
         \\plugins.dispose("agents");

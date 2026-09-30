@@ -1,5 +1,8 @@
 import { check } from "yuke:internal/test";
-import { Transcript } from "yuke:internal/transcript";
+import { Transcript, registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
+
+registerRender(defaultRender);
 let source = "# Prefix\n\nstable 世界 é 👩‍💻\n\n```txt\nbody\n```\n\nTail";
 const part = () => ({ type: "text", id: 0, text: source });
 const make = () => {

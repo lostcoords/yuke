@@ -8,6 +8,7 @@ import { catalogPlugin } from "yuke:internal/catalog";
 import { jobsUiPlugin } from "yuke:internal/jobs-ui";
 import { authPlugin } from "yuke:internal/auth";
 import { chatPlugin } from "yuke:internal/chat";
+import { transcriptView } from "yuke:internal/transcript-view";
 import { sessionsPlugin } from "yuke:internal/session";
 import { indicatorPlugin } from "yuke:internal/indicator";
 import { queuePlugin } from "yuke:internal/queue";
@@ -48,15 +49,16 @@ const keysPlugin = {
 
 plugins.use(keysPlugin);
 plugins.use(toastsPlugin);
-plugins.use(commandUi());
+plugins.use(commandUi);
 plugins.use(catalogPlugin);
 plugins.use(authPlugin);
 plugins.use(jobsUiPlugin);
 plugins.use(sessionsPlugin);
+plugins.use(transcriptView);
 plugins.use(chatPlugin);
 plugins.use(indicatorPlugin);
 plugins.use(queuePlugin);
-plugins.use(contextUsage());
+plugins.use(contextUsage);
 plugins.use(cachePlugin);
 plugins.use(quitGuard);
 plugins.use(shell);

@@ -1,6 +1,6 @@
 // The plugin runtime: a Scope owns effects and releases, a Context registers, and `advice` wraps methods.
 import * as cancellation from "yuke:internal/native/cancellation";
-import { events, fault, notify, once } from "yuke:internal/kernel";
+import { events, fault, notify, once, printText } from "yuke:internal/kernel";
 import { bindInteraction } from "yuke:internal/interaction";
 import { defineTool, removeTool } from "yuke:internal/native/tools";
 import { installDispatcher, installLifecycle, setPoints } from "yuke:internal/native/hooks";
@@ -428,116 +428,6 @@ export const services = {
 // The passes one `inject` build takes before the runtime calls the dependency set unsettled.
 const inject_max_passes = 8;
 
-// `inject` holds a block for the capabilities it needs. A change of a named capability rebuilds the child scope of the block.
-/** @template {string} K @param {Context} parentContext @param {K[]} names @param {InjectApply<K>} apply @returns {Disposer} */
-function injectInto(parentContext, names, apply) {
-  const parent = scopeOf(parentContext);
-  const id = parentContext.id;
-  if (!Array.isArray(names) || names.length === 0) throw new TypeError("inject needs at least one capability name");
-  for (const n of names) {
-    if (typeof n !== "string" || n === "") throw new TypeError("inject: a capability name must be a non-empty string");
-    if (RESERVED.has(n)) throw new TypeError("inject: `" + n + "` is a plugin context member");
-  }
-  if (typeof apply !== "function") throw new TypeError("inject needs an apply function");
-  // One watcher per name, so a name repeated in `names` still builds the block one time per change.
-  const deps = Array.from(new Set(names));
-
-  /** @type {Scope | null} */
-  let live = null;
-  // The providers the live block bound, so a watcher that reports no new provider builds nothing.
-  /** @type {unknown[]} */
-  let bound = [];
-  let building = false;
-  let stopped = false;
-  let dirty = false;
-
-  const satisfied = () => deps.every((n) => services.has(n));
-
-  const drop = () => {
-    const held = live;
-    live = null;
-    if (held) held.dispose();
-  };
-
-  // Build the block once. Answer false when a retry must not follow.
-  /** @returns {boolean} */
-  const buildOnce = () => {
-    if (!satisfied()) {
-      drop();
-      return false;
-    }
-    // A nested provide can report one change to two watchers of this block.
-    if (live && deps.every((n, i) => services.get(n) === bound[i])) return false;
-    // The old block leaves before the new one starts, so the two never hold a resource at the same time.
-    drop();
-    // The old cleanup can withdraw a dependency.
-    if (!satisfied()) return false;
-
-    // The injection owns this child scope until its dependencies change.
-    const child = parent.child("inject:" + deps.join("+"));
-    try {
-      const ctx = new Context(child, id);
-      // Each build reads the live provider, and a later change builds the block again.
-      const members = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (ctx));
-      const values = deps.map((n) => services.get(n));
-      // A capability that registers effects answers `bindTo`, so the block it serves owns what it adds.
-      let i = 0;
-      for (const n of deps) {
-        const value = /** @type {{ bindTo?: (ctx: Context) => unknown } | null | undefined} */ (values[i++]);
-        members[n] = typeof value?.bindTo === "function" ? value.bindTo(ctx) : value;
-      }
-      child.effect(() => apply(/** @type {InjectContext<K>} */ (ctx)));
-      // The block can drop its own dependency, so confirm the requirement before the block commits.
-      if (satisfied() && !stopped && parent.alive && child.alive) {
-        live = child;
-        bound = values;
-      } else child.dispose();
-      return true;
-    } catch (e) {
-      child.dispose();
-      // A throwing block keeps its plugin alive, so the runtime reports the fault and stays inactive.
-      fault(e, id);
-      return false;
-    }
-  };
-
-  const build = () => {
-    // One change can dispose this injection while a copied watcher list still holds `build`.
-    if (stopped || !parent.alive) return;
-    // A change during a build must not vanish, so record it and build again after this pass.
-    if (building) {
-      dirty = true;
-      return;
-    }
-
-    building = true;
-    try {
-      var passes = 0;
-      do {
-        dirty = false;
-        if (!buildOnce()) break;
-        passes += 1;
-      } while (dirty && passes < inject_max_passes && !stopped && parent.alive);
-      // A block that changes its own dependency every pass never settles, so report it once.
-      if (dirty) notify("error", "inject: `" + deps.join("+") + "` does not settle", id);
-    } finally {
-      building = false;
-      dirty = false;
-    }
-  };
-
-  // The parent owns the watchers and the effects of the last build.
-  return parent.effect(() => {
-    const unwatch = deps.map((n) => services.watch(n, build));
-    build();
-    return () => {
-      stopped = true;
-      for (const off of unwatch) off();
-      drop();
-    };
-  });
-}
-
 // --- hooks: the points a plugin answers --- A fact reads as `x.verbed` and needs no answer; a point reads as `x.verb` and the runtime waits.
 // Each chain is replaced, never mutated, so a fold walks the chain it started with and copies nothing.
 /** @type {Record<string, readonly HookEntry[]>} */
@@ -773,7 +663,119 @@ export class Context {
    * @template {string} K @param {(K & FreeName<K>)[]} names @param {InjectApply<K>} apply @returns {Disposer} A disposer that stops the injection and reverts the live block.
    */
   inject(names, apply) {
-    return injectInto(this, names, apply);
+    const parent = this.#scope;
+    const id = this.id;
+    if (!Array.isArray(names) || names.length === 0) throw new TypeError("inject needs at least one capability name");
+    for (const n of names) {
+      if (typeof n !== "string" || n === "") throw new TypeError("inject: a capability name must be a non-empty string");
+      if (RESERVED.has(n)) throw new TypeError("inject: `" + n + "` is a plugin context member");
+    }
+    if (typeof apply !== "function") throw new TypeError("inject needs an apply function");
+    // One watcher per name, so a name repeated in `names` still builds the block one time per change.
+    const deps = Array.from(new Set(names));
+
+    /** @type {Scope | null} */
+    let live = null;
+    // The providers the live block bound, so a watcher that reports no new provider builds nothing.
+    /** @type {unknown[]} */
+    let bound = [];
+    let building = false;
+    let stopped = false;
+    let dirty = false;
+
+    const satisfied = () => deps.every((n) => services.has(n));
+
+    const drop = () => {
+      const held = live;
+      live = null;
+      if (held) held.dispose();
+    };
+
+    // Build the block once. Answer false when a retry must not follow.
+    /** @returns {boolean} */
+    const buildOnce = () => {
+      if (!satisfied()) {
+        drop();
+        return false;
+      }
+      // A nested provide can report one change to two watchers of this block.
+      if (live && deps.every((n, i) => services.get(n) === bound[i])) return false;
+      // The old block leaves before the new one starts, so the two never hold a resource at the same time.
+      drop();
+      // The old cleanup can withdraw a dependency.
+      if (!satisfied()) return false;
+
+      // The injection owns this child scope until its dependencies change.
+      const child = parent.child("inject:" + deps.join("+"));
+      try {
+        const ctx = new Context(child, id);
+        // Each build reads the live provider, and a later change builds the block again.
+        const members = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (ctx));
+        const values = deps.map((n) => services.get(n));
+        // A capability that registers effects answers `bindTo`, so the block it serves owns what it adds.
+        let i = 0;
+        for (const n of deps) {
+          const value = /** @type {{ bindTo?: (ctx: Context) => unknown } | null | undefined} */ (values[i++]);
+          members[n] = typeof value?.bindTo === "function" ? value.bindTo(ctx) : value;
+        }
+        child.effect(() => apply(/** @type {InjectContext<K>} */ (ctx)));
+        // The block can drop its own dependency, so confirm the requirement before the block commits.
+        if (satisfied() && !stopped && parent.alive && child.alive) {
+          live = child;
+          bound = values;
+        } else child.dispose();
+        return true;
+      } catch (e) {
+        child.dispose();
+        // A throwing block keeps its plugin alive, so the runtime reports the fault and stays inactive.
+        fault(e, id);
+        return false;
+      }
+    };
+
+    const build = () => {
+      // One change can dispose this injection while a copied watcher list still holds `build`.
+      if (stopped || !parent.alive) return;
+      // A change during a build must not vanish, so record it and build again after this pass.
+      if (building) {
+        dirty = true;
+        return;
+      }
+
+      building = true;
+      try {
+        var passes = 0;
+        do {
+          dirty = false;
+          if (!buildOnce()) break;
+          passes += 1;
+        } while (dirty && passes < inject_max_passes && !stopped && parent.alive);
+        // A block that changes its own dependency every pass never settles, so report it once.
+        if (dirty) notify("error", "inject: `" + deps.join("+") + "` does not settle", id);
+      } finally {
+        building = false;
+        dirty = false;
+      }
+    };
+
+    // The parent owns the watchers and the effects of the last build.
+    return parent.effect(() => {
+      const unwatch = deps.map((n) => services.watch(n, build));
+      build();
+      return () => {
+        stopped = true;
+        for (const off of unwatch) off();
+        drop();
+      };
+    });
+  }
+
+  /**
+   * Post the values as one `debug` notification with this plugin as the source, as the global `print` does. A debug line never toasts.
+   * @param {...unknown} values @returns {void}
+   */
+  print(...values) {
+    notify("debug", printText(values), this.id);
   }
 
   /** Prompts and notifications through the frontend. It needs no `inject`. @returns {InteractionSurface} */

@@ -59,13 +59,6 @@ export function endLabel(job) {
   return job.signal !== undefined ? "signal " + job.signal : "exit code " + job.exit_code;
 }
 
-// The last lines of a job log; the read covers the last 8 KiB.
-/** @param {number} id @param {number} count @returns {Promise<string>} */
-export async function tail(id, count) {
-  const { text } = await read(id, null, 8192);
-  return text.split("\n").filter((line, i, all) => line !== "" || i < all.length - 1).slice(-count).join("\n");
-}
-
 // Only the exec tool starts a job.
 /** The background jobs of the exec tool. A plugin lists, reads, stops, and waits for them. Each start and end emits `jobs.changed`. */
 export const jobs = { list, get, stop, wait, read };

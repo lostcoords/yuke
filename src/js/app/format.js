@@ -41,14 +41,9 @@ export function money(n) {
   return "$" + n.toFixed(n < 1 ? 3 : 2);
 }
 
-export const BAR_CELLS = 6;
-// The full and the empty glyph. Block Elements by default, because the terminal draws them and a font glyph can bleed.
-/** @type {readonly [string, string]} */
-export const BAR_GLYPHS = ["█", "░"];
-
-// A bar of `cells` glyphs in proportion. `glyphs` holds the full glyph, then the empty one.
-/** @param {number} used @param {number} window @param {number} [cells] @param {readonly [string, string]} [glyphs] @returns {string} */
-export function contextBar(used, window, cells = BAR_CELLS, glyphs = BAR_GLYPHS) {
+// A bar of `cells` glyphs in proportion. Block Elements, because the terminal draws them and a font glyph can bleed.
+/** @param {number} used @param {number} window @param {number} [cells] @returns {string} */
+export function contextBar(used, window, cells = 6) {
   const full = window > 0 ? Math.round(Math.min(1, used / window) * cells) : 0;
-  return "[" + glyphs[0].repeat(full) + glyphs[1].repeat(cells - full) + "]";
+  return "[" + "█".repeat(full) + "░".repeat(cells - full) + "]";
 }

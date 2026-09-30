@@ -15,12 +15,11 @@ function start(_name, _scale, w, h, colorMode = "ansi_raw") {
   colorStyle = colors.startsWith("rgb")
     ? { fg: "#80a0c0", bg: "#182028", ul: "#e06060", underline: true }
     : { fg: "white", bg: "black", ul: "red", underline: true };
-  style.palette.benchFg = colorStyle.fg;
-  style.palette.benchBg = colorStyle.bg;
-  style.palette.benchUl = colorStyle.ul;
-  style.groups.BenchLiteral = { ...colorStyle };
-  style.groups.BenchPalette = { fg: "benchFg", bg: "benchBg", ul: "benchUl", underline: true };
-  style.invalidate();
+  // A theme replaces the theme before it, so each start replaces the colors of the repeat before it.
+  style.theme({
+    palette: { benchFg: colorStyle.fg, benchBg: colorStyle.bg, benchUl: colorStyle.ul },
+    groups: { BenchLiteral: { ...colorStyle }, BenchPalette: { fg: "benchFg", bg: "benchBg", ul: "benchUl", underline: true } },
+  });
   return step();
 }
 

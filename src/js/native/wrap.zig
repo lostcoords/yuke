@@ -24,9 +24,11 @@ pub fn wrap(gpa: std.mem.Allocator, source: []const u8, width: i32, head: usize,
     var cells: i64 = 0;
     var break_at: i32 = -1;
     var break_cells: i64 = 0;
-    var it = term.unicode.graphemeIterator(source);
-    while (it.next()) |g| {
-        const bytes = g.bytes(source);
+    var i: usize = 0;
+    while (i < source.len) {
+        const g = graphemeAt(source, i);
+        const bytes = source[i .. i + g.len];
+        i += g.len;
         const len = utf16Len(bytes);
         result.graphemes += 1;
         if (std.mem.eql(u8, bytes, "\n")) {
@@ -36,7 +38,7 @@ pub fn wrap(gpa: std.mem.Allocator, source: []const u8, width: i32, head: usize,
             break_at = -1;
         } else {
             const space = std.mem.eql(u8, bytes, " ");
-            const cell_width = term.gwidth.gwidth(bytes, .unicode);
+            const cell_width = g.width;
             if (!space and cells + cell_width > width and offset > start) {
                 const end = if (break_at > start) break_at else offset;
                 if (!try emit(gpa, &result, .{ .start = start, .end = end, .soft = 1 }, head, tail, &tail_index)) return result;
@@ -73,6 +75,22 @@ fn emit(gpa: std.mem.Allocator, result: *Result, row: Row, head: usize, tail: us
     return true;
 }
 
+/// One grapheme: its length in bytes and its width in terminal cells.
+pub const Grapheme = struct { len: usize, width: u16 };
+
+/// The grapheme that starts at byte `i` of `source`. The caller keeps `i` on a grapheme boundary.
+/// Printable ASCII before an ASCII byte or the end is a grapheme of one cell, because no rule joins two ASCII bytes but CR LF, so it skips the Unicode tables.
+pub fn graphemeAt(source: []const u8, i: usize) Grapheme {
+    std.debug.assert(i < source.len);
+    const c = source[i];
+    if (c >= 0x20 and c < 0x7f and (i + 1 == source.len or source[i + 1] < 0x80)) return .{ .len = 1, .width = 1 };
+    const rest = source[i..];
+    var it = term.unicode.graphemeIterator(rest);
+    // A text that is not empty starts with a grapheme.
+    const g = it.next() orelse unreachable;
+    return .{ .len = g.len, .width = term.gwidth.gwidth(g.bytes(rest), .unicode) };
+}
+
 pub fn utf16Len(source: []const u8) i32 {
     var len: i32 = 0;
     var it: std.unicode.Utf8Iterator = .{ .bytes = source, .i = 0 };
@@ -99,5 +117,22 @@ test "prefix and tail wraps preserve full row offsets with bounded storage" {
                 }
             }
         }
+    }
+}
+
+test "the ASCII fast path finds the graphemes and widths of the Unicode rules" {
+    var ascii: [0x5f]u8 = undefined;
+    for (&ascii, 0..) |*c, k| c.* = @intCast(0x20 + k);
+    for ([_][]const u8{ &ascii, "a\r\nb\tc", "e\u{301}x", "x\u{200d}y", "ab 世界 é 👩‍💻.", "A\u{1f1ef}\u{1f1f5}B", "\x1b[0mz" }) |source| {
+        var it = term.unicode.graphemeIterator(source);
+        var i: usize = 0;
+        while (it.next()) |want| {
+            const got = graphemeAt(source, i);
+            try std.testing.expectEqual(want.start, i);
+            try std.testing.expectEqual(want.len, got.len);
+            try std.testing.expectEqual(term.gwidth.gwidth(want.bytes(source), .unicode), got.width);
+            i += got.len;
+        }
+        try std.testing.expectEqual(source.len, i);
     }
 }

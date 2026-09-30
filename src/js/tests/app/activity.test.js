@@ -3,7 +3,7 @@ import { root } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { client } from "yuke:internal/client";
 import { plugins } from "yuke:internal/ext";
-import { currentEntry, openSession, currentPane } from "yuke:internal/session";
+import { currentEntry, showSession, currentPane } from "yuke:internal/session";
 // The shell built the first chat pane at boot.
 const chat = currentPane();
 const idle = { state: { type: "idle" }, queued: 0, context_usage: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, pending_compaction: null };
@@ -18,7 +18,7 @@ await listSessions([{ session: { id: "s1", model: "m", updated_at_ms: 1 }, activ
 const seen = [];
 events.on("activity.changed", (id, a) => seen.push(id + ":" + (a ? a.state.type : "null")));
 root.focusView(chat);
-openSession(chat, "s1");
+showSession(chat, "s1");
 check("open-reads", reads === 1 && chat.session.activity === streaming && chat.session.activity.queued === 2);
 check("entry-overlays", currentEntry().activity === streaming && currentEntry().session.model === "m");
 // A quiet digest without the fact costs no read; one with the fact reads once.

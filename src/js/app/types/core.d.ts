@@ -1,5 +1,6 @@
 import type { Node } from "../core.js";
 import type { Color, Style } from "yuke:internal/native/term";
+import type { Disposer } from "./ext.js";
 
 export interface Rect {
   x: number;
@@ -15,7 +16,7 @@ export interface StyleGroup {
   bg?: Color | string;
   /** The underline color. */
   ul?: Color | string;
-  /** The name of another group. This group then takes that style and ignores its other fields. A link cycle gives the default style. */
+  /** The name of another group. This group takes that style, and its own fields win. A link cycle gives the default style. */
   link?: string;
   bold?: boolean;
   dim?: boolean;
@@ -24,23 +25,42 @@ export interface StyleGroup {
   underline?: boolean;
 }
 
+/** A change to a group: the fields to set. A field set to null removes that field from the merged group. */
+export type StylePatch = { [K in keyof StyleGroup]?: StyleGroup[K] | null };
+
+/** A set of changes: to groups, to palette colors, or both. A theme is one of these. */
+export interface StyleLayer {
+  groups?: Record<string, StylePatch>;
+  palette?: Record<string, Color | null>;
+}
+
 /** The highlight groups and the palette. A draw call names a group, and `resolve` gives its terminal style. */
 export interface StyleConfig {
-  /** The named colors that a group can use. After a change, call `invalidate`. */
+  /** The merged palette: the core colors, then the theme, then each `setPalette`. Read it; change it with `setPalette` or `theme`. */
   palette: Record<string, Color>;
-  /** The groups by name. After a direct change, call `invalidate`. */
+  /** The merged groups. Read them; change them with `set` or `theme`. */
   groups: Record<string, StyleGroup>;
-  _refs: Record<string, number>;
+  _base: Map<string, StyleGroup>;
+  _patches: StyleLayer[];
   _cache: Record<string, Style>;
   /**
-   * Add each group that has no definition yet, and return a disposer.
-   * A group that a theme or the core set first keeps its definition. The disposer removes a group after the last `add` of it goes away.
+   * Set the default of groups that your plugin owns, below the theme and every other `set`, and return a disposer that removes them.
+   * A name that has a default, core or from another plugin, throws a TypeError: change it without `{ default: true }`.
    */
-  add: (groups: Record<string, StyleGroup>) => () => void;
-  /** The terminal style of a group after its links. An unknown group gets the default text color. The result stays cached until `invalidate`. */
-  resolve: (name: string) => Style;
-  /** Clear the cached styles, so the next `resolve` reads the palette and the groups again. It does not request a frame. */
-  invalidate: () => void;
+  set(groups: Record<string, StyleGroup>, options: { default: true }): Disposer;
+  /** Change fields of any group, and return a disposer that restores the value before. A later `set` wins. A change before the default applies when the default appears. */
+  set(groups: Record<string, StylePatch>, options?: { default?: false }): Disposer;
+  /** Change palette colors, and return a disposer that restores the value before. */
+  setPalette(colors: Record<string, Color | null>): Disposer;
+  /** Make `theme` the one active theme: above the defaults and below every other `set`. A new call replaces it. The disposer removes it, if it is still active. */
+  theme(theme: StyleLayer): Disposer;
+  _layer(layer: StyleLayer): Disposer;
+  _apply(layer: StyleLayer): void;
+  _group(name: string): void;
+  _changed(): void;
+  _build(name: string): Style;
+  /** The terminal style of a group after its links. An unknown group gets the default text color. Each change repaints, so the result is always current. */
+  resolve(name: string): Style;
 }
 
 export interface NavTarget {

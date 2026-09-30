@@ -1,17 +1,16 @@
 // Show each notification as a toast at the top right, and show the notification history on request.
 import { contains, root } from "yuke:internal/core";
 import { notifications, notify } from "yuke:internal/kernel";
-import { clip, wrapPreview } from "yuke:internal/text-input";
+import { clip, wrapText } from "yuke:internal/text-input";
 import { RowsView, Text, Window } from "yuke:internal/ui";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { HostMouseEvent, Rect } from "./types/core.js" */
 /** @import { TranscriptRow } from "./types/pager.js" */
 /** @import { Notification } from "./types/ext.js" */
-/** @import { WindowOptions } from "./types/ui.js" */
 
 /** @type {Record<Wire.NoticeLevel, string>} */
-const LEVEL_GROUP = { info: "NotifyInfo", warn: "NotifyWarn", error: "NotifyError" };
+const LEVEL_GROUP = { debug: "NotifyInfo", info: "NotifyInfo", warn: "NotifyWarn", error: "NotifyError" };
 // An info toast leaves after this time. A warning and an error stay until the user dismisses them.
 const INFO_MS = 4000;
 // The history keeps up to 100 entries, so the screen shows only the newest few toasts.
@@ -29,16 +28,10 @@ function titleOf(n) {
 
 // A toast floats over the panes and takes no key. A click anywhere on it dismisses it.
 class ToastWindow extends Window {
-  /** @param {WindowOptions} opts @param {() => void} onDismiss */
-  constructor(opts, onDismiss) {
-    super(opts);
-    this.onDismiss = onDismiss;
-  }
-
   /** @param {HostMouseEvent} ev @returns {boolean} */
   onMouse(ev) {
     if (ev.event !== "press" || !contains(this.rect, ev.col, ev.row)) return false;
-    this.onDismiss();
+    root.popOverlay(this);
     return true;
   }
 }
@@ -54,7 +47,7 @@ function historyRows(width) {
     const n = /** @type {Notification} */ (notifications[i]);
     if (rows.length) rows.push({ text: "" });
     rows.push({ text: n.level + " · " + titleOf(n), group: LEVEL_GROUP[n.level] });
-    for (const row of wrapPreview(n.message, width, 0).rows) rows.push({ text: n.message.slice(row.start, row.end), group: "UIBody" });
+    for (const row of wrapText(n.message, width)) rows.push({ text: n.message.slice(row.start, row.end), group: "UIBody" });
     for (const line of n.stack.split("\n")) if (line.trim() !== "") rows.push({ text: clip(line.trim(), width), group: "UIDim" });
   }
   if (rows.length === 0) rows.push({ text: "no notifications", group: "UIDim" });
@@ -67,11 +60,11 @@ export const toastsPlugin = {
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       // An unload removes the groups with the toasts that use them.
-      ctx.tui.style.add({
+      ctx.tui.style.set({
         NotifyInfo: { fg: "fg", dim: true },
         NotifyWarn: { fg: "fg", bold: true },
         NotifyError: { fg: "danger", bold: true },
-      });
+      }, { default: true });
 
       // The toasts in screen order, oldest first. The newest toast shows at the bottom of the stack.
       /** @type {Toast[]} */
@@ -96,6 +89,8 @@ export const toastsPlugin = {
 
       /** @param {Readonly<Notification>} entry @returns {void} */
       const show = (entry) => {
+        // A debug line is for the log and the history, so it never takes screen space.
+        if (entry.level === "debug") return;
         // A repeat of a shown entry increases its count, so its toast stays and shows the new count.
         const held = shown.find((t) => t.entry === entry);
         if (held) {
@@ -122,7 +117,7 @@ export const toastsPlugin = {
           contentHeight: (_max, width) => Math.min(TOAST_ROWS, body.measure(width).h),
           place: (bounds, w) => place(toast, bounds, w),
           content: body,
-        }, () => root.popOverlay(toast.win));
+        });
         shown.push(toast);
         // Any close of the overlay, by a click, a timer, ctrl+l, or an unload, drops the toast and its timer.
         ctx.tui.overlay(toast.win, () => {
@@ -133,7 +128,7 @@ export const toastsPlugin = {
       };
 
       // A fault before the TUI started, such as a broken index.js, still shows. An old info entry stays in the history only.
-      for (const n of notifications) if (n.level !== "info") show(n);
+      for (const n of notifications) if (n.level === "warn" || n.level === "error") show(n);
       ctx.on("notify.posted", show);
       // An engine notice names no plugin of this host, so the TUI adds it to the history here. A headless frontend gets it on the wire.
       ctx.on("notice", (ev) => {

@@ -39,7 +39,7 @@ export class ChatView {
    */
   constructor(session) {
     this.rect = { x: 0, y: 0, w: 0, h: 0 };
-    /** The session that this pane reads and sends through. To move the pane to another session, use `showSession` or `openSession`. */
+    /** The session that this pane reads and sends through. To move the pane to another session, use `showSession`. */
     this.session = session;
     session.join(this);
     /** The messages of the shown session. It reads parts straight from the engine for the current `session`; a draft has none. */

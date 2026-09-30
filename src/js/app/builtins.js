@@ -2,7 +2,7 @@
 
 import { fs } from "yuke:internal/native/fs";
 import { exec as runCommand } from "yuke:internal/native/exec";
-import { start as startJob, stop as stopJob, list as listJobs, get as getJob, name as jobName, endLabel, tail as jobTail, shortCommand } from "yuke:internal/jobs";
+import { start as startJob, stop as stopJob, list as listJobs, get as getJob, name as jobName, endLabel, read as readJob, shortCommand } from "yuke:internal/jobs";
 import { diff } from "yuke:internal/native/diff";
 import { hasTool } from "yuke:internal/native/tools";
 import { client } from "yuke:internal/client";
@@ -280,7 +280,10 @@ export const builtins = {
     ctx.on("jobs.changed", (job) => {
       const sessionId = job.session_id;
       if (job.state === "running" || job.stop_requested || sessionId === undefined) return;
-      const tail = jobTail(job.id, 20).catch(() => "");
+      // The last 20 lines of the log; the read covers its last 8 KiB.
+      const tail = readJob(job.id, null, 8192)
+        .then(({ text }) => text.split("\n").filter((line, i, all) => line !== "" || i < all.length - 1).slice(-20).join("\n"))
+        .catch(() => "");
       exitMessages = exitMessages
         .then(() => tail)
         .then(out => client.sessionSendInput(sessionId, client.textContent(`[job ${jobState(job)}. Log: ${job.log}]\n${out === "" ? "[no output]" : out}`)))

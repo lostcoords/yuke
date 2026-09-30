@@ -9,12 +9,15 @@ import { command, keymap, route, context, status, style, root } from "yuke:inter
 
 const NOOP = () => {};
 
-// A registry as one block sees it: the shared registry, with an `add` the block owns. Reads and advice reach the shared object.
-/** @template {{ add(...args: any[]): Disposer }} R @param {Context} ctx @param {R} registry @returns {R} */
-function owned(ctx, registry) {
-  const bound = /** @type {R} */ (Object.create(registry));
-  bound.add = /** @type {R["add"]} */ ((/** @type {Parameters<R["add"]>} */ ...args) => ctx.effect(() => registry.add(...args)));
-  return bound;
+// A registry as one block sees it: the shared registry, with registering methods the block owns. Reads and advice reach the shared object.
+/** @template {object} R @param {Context} ctx @param {R} registry @param {Array<keyof R & string>} methods @returns {R} */
+function owned(ctx, registry, methods) {
+  const bound = /** @type {Record<string, unknown>} */ (Object.create(registry));
+  for (const method of methods) {
+    const register = /** @type {(...args: unknown[]) => Disposer} */ (registry[method]);
+    bound[method] = (/** @type {unknown[]} */ ...args) => ctx.effect(() => register.apply(registry, args));
+  }
+  return /** @type {R} */ (bound);
 }
 
 // The methods live on the class, so a block builds one small object and each registry only on first use.
@@ -54,31 +57,31 @@ class Surface {
    * The other members read the shared registry. After the block stops, `add` throws a TypeError.
    * @returns {typeof keymap}
    */
-  get keymap() { return this._settle("keymap", owned(this._ctx, keymap)); }
+  get keymap() { return this._settle("keymap", owned(this._ctx, keymap, ["add"])); }
   /**
    * The key route registry. `add` registers for this block and returns a disposer.
    * The other members read the shared registry. After the block stops, `add` throws a TypeError.
    * @returns {typeof route}
    */
-  get route() { return this._settle("route", owned(this._ctx, route)); }
+  get route() { return this._settle("route", owned(this._ctx, route, ["add"])); }
   /**
    * The context flag registry. `add` registers for this block and returns a disposer.
    * The other members read the shared registry. After the block stops, `add` throws a TypeError.
    * @returns {typeof context}
    */
-  get context() { return this._settle("context", owned(this._ctx, context)); }
+  get context() { return this._settle("context", owned(this._ctx, context, ["add"])); }
   /**
    * The status bar segment registry. `add` registers for this block and returns a disposer.
    * The other members read the shared registry. After the block stops, `add` throws a TypeError.
    * @returns {typeof status}
    */
-  get status() { return this._settle("status", owned(this._ctx, status)); }
+  get status() { return this._settle("status", owned(this._ctx, status, ["add"])); }
   /**
-   * The highlight group registry. `add` registers for this block and returns a disposer.
-   * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+   * The highlight groups. `set`, `setPalette`, and `theme` register for this block and return a disposer.
+   * The other members read the shared registry. After the block stops, `set`, `setPalette`, and `theme` throw a TypeError.
    * @returns {typeof style}
    */
-  get style() { return this._settle("style", owned(this._ctx, style)); }
+  get style() { return this._settle("style", owned(this._ctx, style, ["set", "setPalette", "theme"])); }
 
   /**
    * Show `layer` above the panes until it closes. The disposer, a pop of the layer, or the block stop closes it.

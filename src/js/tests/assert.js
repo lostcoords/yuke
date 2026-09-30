@@ -45,8 +45,8 @@ export async function listSessions(items) {
 export function detailSections(view) {
   const out = [];
   for (const row of view.rowsFor(1 << 20)) {
-    if (row.group === "TxToolName") out.push({ label: row.text, lines: [] });
-    else if (row.segments && out.length) out[out.length - 1].lines.push(row.segments.map((seg) => seg.text).join(""));
+    if (row.group === "TxToolTitle") out.push({ label: row.text, lines: [] });
+    else if ((row.segments || row.src != null) && out.length) out[out.length - 1].lines.push(row.segments ? row.segments.map((seg) => seg.text).join("") : row.text);
   }
   return out.map((section) => ({ label: section.label, text: section.lines.join("\n") }));
 }

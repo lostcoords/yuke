@@ -1,5 +1,8 @@
 import { check, equal, textParts } from "yuke:internal/test";
-import { Transcript } from "yuke:internal/transcript";
+import { Transcript, registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
+
+registerRender(defaultRender);
 
 const body = "<skill_content name=\"pdf\">\n" + "Exact body </skill_content> & text.\n".repeat(40) + "</skill_content>\n\nreport.pdf";
 const transcript = new Transcript({ partsOf: textParts(() => body) });

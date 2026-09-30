@@ -1,8 +1,11 @@
 import { check } from "yuke:internal/test";
 import { term } from "yuke:internal/native/term";
 import { plugins } from "yuke:internal/ext";
-import { Transcript } from "yuke:internal/transcript";
+import { Transcript, registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
 import { tuiPlugin } from "yuke:internal/tui";
+
+registerRender(defaultRender);
 plugins.use(tuiPlugin);
 const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
 const png = { hash: "a".repeat(64), mime: "image/png", bytes: 2048 };
@@ -23,4 +26,4 @@ const rows = t.rows(60, 0, 12);
 check("output", rowsHave(rows, "PNG image, 2 KiB"));
 check("png-label", rowsHave(rows, "[PNG #1 · 2 KiB]"));
 check("jpeg-label", rowsHave(rows, "[JPEG #2 · 3.0 MiB]"));
-check("bare-label", rows.filter((r) => (r.segments || []).some((sg) => sg.text === "[PNG #1 · 2 KiB]")).length === 2);
+check("bare-label", rows.filter((r) => r.text === "[PNG #1 · 2 KiB]" && r.src != null).length === 2);

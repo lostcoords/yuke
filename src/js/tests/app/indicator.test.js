@@ -1,9 +1,9 @@
 import { check, listSessions } from "yuke:internal/test";
-import { Session, openSession, showSession, currentPane } from "yuke:internal/session";
+import { Session, showSession, currentPane } from "yuke:internal/session";
 import { root, command, status } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { client } from "yuke:internal/client";
-import { loadCatalog, sessionCost } from "yuke:internal/catalog";
+import { catalogRefresh, sessionCost } from "yuke:internal/catalog";
 import { phaseLabel, indicatorLine } from "yuke:internal/indicator";
 import { elapsedLabel, contextBar } from "yuke:internal/format";
 import { stripRows, queuedText, queueOf } from "yuke:internal/queue";
@@ -31,31 +31,38 @@ const dropped = [];
 client.sessionCancelInput = (id, input) => { dropped.push(input); return Promise.resolve({ canceled_input: input }); };
 client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r1", providers: [],
   models: [{ id: "m", provider: "p", selector: "p/m", name: "m", context_window: 1000, reasoning_levels: [], default_reasoning: "", cost: { input: 10, output: 50 } }] });
-await loadCatalog();
+await catalogRefresh.run();
 await listSessions([{ session: { id: "s1", model: "p/m", message_count: 19, updated_at_ms: 1, usage_total: { input: 1000000, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 } }, activity: idle }]);
 root.focusView(chat);
-openSession(chat, "s1");
+showSession(chat, "s1");
 await settle();
 // Idle: no rule line, no strip, and no queue command.
 check("idle-rule", events.bail("chat.rule", chat) === undefined);
 check("idle-strip", stripRows([]).length === 0 && events.bail("chat.strip", chat).length === 0);
 check("idle-status", status.side("right").indexOf("[█░░░░░] 20% context") >= 0);
 check("idle-no-queue-cmd", !command.available("queue:drop"));
-// A resting pane still shows the child runs, and the time counts from the moment the count rose from zero.
+// A resting pane still shows the child runs from the moment the count rose from zero; a tick reads the load once, and each pane rule reads that count.
 load = { runs: 2, childRuns: 2, continuations: 0 };
+root.tickLayers();
 const agentsLine = events.bail("chat.rule", chat);
 check("agents-rule", agentsLine && agentsLine.text.indexOf("2 agents working · 0s") > 0);
+// The last child run ends: the loop asks one more tick, so a draw paints the zero count, and then the loop stops.
+const ticker = root.tickables.find((e) => e.tickable.needsTick() !== null).tickable;
 load = { runs: 0, childRuns: 0, continuations: 0 };
+check("agents-end-ticks", ticker.needsTick() !== null);
 check("agents-gone", events.bail("chat.rule", chat) === undefined);
-// Working with two queued: the rule names the tool and the elapsed time, and the strip reads the queue once.
+check("agents-end-stops", ticker.needsTick() === null);
+// Working with two queued: the rule names the tool and the elapsed time, the queue shows in the strip alone, and the strip reads the queue once.
 answer = tool;
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
 await settle();
 const line = events.bail("chat.rule", chat);
-check("rule-line", line && line.text.indexOf("bash · 1m05s · 2 queued") > 0 && line.text.indexOf("agent") < 0);
+check("rule-line", line && line.text.indexOf("bash · 1m05s ") > 0 && line.text.indexOf("queued") < 0 && line.text.indexOf("agent") < 0);
 load = { runs: 3, childRuns: 1, continuations: 0 };
-check("rule-line-agents", events.bail("chat.rule", chat).text.indexOf("bash · 1m05s · 2 queued · 1 agent ") > 0);
+root.tickLayers();
+check("rule-line-agents", events.bail("chat.rule", chat).text.indexOf("bash · 1m05s · 1 agent ") > 0);
 load = { runs: 0, childRuns: 0, continuations: 0 };
+root.tickLayers();
 check("queue-read-once", queueReads === 1);
 const strip = events.bail("chat.strip", chat);
 check("strip-rows", strip.length === 2 && strip[0].text === " ↳ first line…" && strip[1].text === " ↳ [image] look");
@@ -113,7 +120,7 @@ check("agents-elapsed", indicatorLine("s1", idle, 66000, 3).indexOf("3 agents wo
 // A queue read that lands after the pane let the session go stays out, and the close clears both points.
 let land = null;
 client.sessionQueue = () => new Promise((resolve) => { land = resolve; });
-openSession(chat, "s1");
+showSession(chat, "s1");
 answer = { ...tool, queued: 3 };
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
 answer = null;
@@ -122,5 +129,3 @@ check("close-forgets", events.bail("chat.strip", chat) === undefined && events.b
 land({ items });
 await settle();
 check("late-read-ignored", queueOf("s1").length === 0);
-// The bar glyphs are a plugin config, so a terminal with a font that fits can show another pair.
-check("bar-config", contextBar(500, 1000, 6, ["▰", "▱"]) === "[▰▰▰▱▱▱]");

@@ -66,14 +66,6 @@ function refreshQueue(sessionId) {
     .then(() => root.invalidate());
 }
 
-// Drop the queue of a session no pane holds. A read still in flight lands on a stale generation and is ignored.
-/** @param {string} sessionId @returns {void} */
-function forget(sessionId) {
-  held.delete(sessionId);
-  gens.delete(sessionId);
-  root.invalidate();
-}
-
 // The rows a pane shows: the oldest inputs first, then one row for the rest.
 /** @param {readonly Wire.QueuedInput[]} items @returns {{ text: string, group: string }[]} */
 export function stripRows(items) {
@@ -82,16 +74,6 @@ export function stripRows(items) {
   for (let i = 0; i < shown; i++) rows.push({ text: " ↳ " + queuedText(/** @type {Wire.QueuedInput} */ (items[i])), group: "UIDim" });
   if (items.length > shown) rows.push({ text: " ↳ … " + (items.length - shown) + " more queued", group: "UIDim" });
   return rows;
-}
-
-// Drop one input. The engine announces the shorter queue, so the strip follows on its own.
-/** @param {string} sessionId @param {Wire.QueuedInput} input @returns {Promise<void>} */
-function cancelOne(sessionId, input) {
-  if (protectedInput(input)) { notify("info", "engine reports and notices stay queued", "queue"); return Promise.resolve(); }
-  return client.sessionCancelInput(sessionId, input.input_id).then(
-    () => notify("info", "dropped · " + clip(queuedText(input), 40), "queue"),
-    (e) => notify("error", "cannot drop · " + errorText(e), "queue"),
-  );
 }
 
 /** @param {Ctx} ctx @param {string} sessionId @returns {void} */
@@ -112,8 +94,12 @@ function openQueuePicker(ctx, sessionId) {
     key: (q) => String(q.input_id),
     filterText: queuedText,
     format: (q) => ({ text: queuedText(q) }),
+    // Drop one input. The picker selects no protected input, and the engine announces the shorter queue, so the strip follows on its own.
     onAccept: (q) => {
-      cancelOne(sessionId, q);
+      client.sessionCancelInput(sessionId, q.input_id).then(
+        () => notify("info", "dropped · " + clip(queuedText(q), 40), "queue"),
+        (e) => notify("error", "cannot drop · " + errorText(e), "queue"),
+      );
     },
   });
   ctx.tui.overlay(p.win);
@@ -126,8 +112,12 @@ export const queuePlugin = {
     ctx.inject(["tui"], (ctx) => {
       // The engine announces the activity on every queue change, so the count is the one trigger to read again.
       ctx.on("activity.changed", (id, a) => {
-        if (!a) forget(id);
-        else if (a.queued !== queueOf(id).length) refreshQueue(id);
+        // A session no pane holds drops its queue. A read still in flight lands on a stale generation and is ignored.
+        if (!a) {
+          held.delete(id);
+          gens.delete(id);
+          root.invalidate();
+        } else if (a.queued !== queueOf(id).length) refreshQueue(id);
       });
 
       ctx.on("chat.strip", (view) => {

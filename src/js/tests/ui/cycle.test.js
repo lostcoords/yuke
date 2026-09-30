@@ -1,14 +1,10 @@
 import { style } from "yuke:internal/core";
-style.groups.Cycle = { link: "Pong" };
-style.groups.Pong = { link: "Cycle" };
-style.groups.Selfie = { link: "Selfie" };
-style.groups.Dangling = { link: "Missing" };
-style.invalidate();
+style.set({ Cycle: { link: "Pong" }, Pong: { link: "Cycle" }, Selfie: { link: "Selfie" }, Dangling: { link: "Missing" }, Linked: { link: "YukeStatus" } }, { default: true });
 const normal = style.resolve("Normal");
 globalThis.result = (
   style.resolve("Cycle").fg === normal.fg &&
   style.resolve("Selfie").fg === normal.fg &&
   style.resolve("Dangling").fg === normal.fg &&
-  style.resolve("YukeHeader").fg === "reset" &&
-  style.resolve("YukeHeader").dim === true
+  style.resolve("Linked").fg === "reset" &&
+  style.resolve("Linked").dim === true
 ) ? 1 : 0;

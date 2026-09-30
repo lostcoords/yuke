@@ -1,7 +1,10 @@
 import { check, textParts } from "yuke:internal/test";
 import { List } from "yuke:internal/ui";
-import { Transcript } from "yuke:internal/transcript";
+import { Transcript, registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
 import { fuzzyRank } from "yuke:internal/fzy";
+
+registerRender(defaultRender);
 
 // A two-line list shows floor(h / itemHeight) items and scrolls in item units.
 const l = new List({ items: [0, 1, 2, 3, 4, 5], itemHeight: 2 });
@@ -28,12 +31,12 @@ const before = fuzzyRank(shorts, "ab", String).join(",");
 fuzzyRank(["ab".repeat(300) + "_ab"], "ab", String);
 check("rows-reused", fuzzyRank(shorts, "ab", String).join(",") === before);
 
-// A user turn is a tinted band with a gutter marker; an assistant turn renders markdown.
+// A user turn is a shaded block; an assistant turn renders markdown.
 const texts = { u1: "hello world", a1: "**bold** text" };
 const t = new Transcript({ partsOf: textParts((id) => texts[id] || "") });
 t.setOutline([{ id: "u1", type: "user" }, { id: "a1", type: "assistant" }], null);
 const rows = t.rows(40, 0, 100);
-check("user-band", rows.some((r) => r.marker === "⟩" && r.bg === "TxUser"));
+check("user-band", rows.some((r) => r.bg === "TxUser" && r.text === "hello world"));
 check("assistant-md", rows.some((r) => r.segments && r.segments.some((s) => s.group === "MdStrong" && s.text === "bold")));
 
 // A draft delta re-renders the assistant turn through yuke:internal/md.

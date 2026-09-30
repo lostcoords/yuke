@@ -56,6 +56,7 @@ Do not bind these unless the user asks you to replace one.
 | `ctrl+c` | `session:interrupt`; `modal:cancel` in a dialog |
 | `ctrl+l` | `notify:dismiss` |
 | `ctrl+v` | `chat:paste-image` |
+| `ctrl+o` | `chat:expand-all` |
 | `ctrl+q`, `ctrl+z` | `quit`, `suspend` |
 | `ctrl+k` then `h j k l w v s c` or an arrow | window focus, split, and close |
 | `j` `k`, arrows, `ctrl+d` `ctrl+u`, page keys, `home` `end`, `g g`, `G` | scroll; the composer takes plain letters first |
@@ -66,7 +67,13 @@ Do not bind these unless the user asks you to replace one.
 
 ## Styles
 
-`c.tui.style.add({ Name: { fg, bg, bold, dim, italic, reverse, underline, link } })` defines new groups, and the disposer removes them. It does not change a group that exists. To change a built-in group such as `YukeStatus` or `TxToolRead`, set `c.tui.style.groups.Name` and call `c.tui.style.invalidate()`. That change stays after the plugin unloads. The palette colors are `fg`, `bg`, and `danger`; a color can also be a literal such as `"#88c0d0"`.
+`c.tui.style` holds the highlight groups and the palette. Each change repaints, and its disposer (or the plugin unload) removes it.
+
+- `set({ Name: { fg: "danger" } })` changes fields of any group. `null` removes a field. A later `set` wins.
+- `set({ MyGroup: { fg, bg, ul, bold, dim, italic, reverse, underline, link } }, { default: true })` sets the default of a group that your plugin owns. It sits below the theme and every other `set`, so it never undoes a change of the user. A second default for one name, such as `YukeStatus`, throws; Neovim keeps the first one silently.
+- `setPalette({ accent: "#88c0d0" })` changes palette colors. The core colors are `fg`, `bg`, and `danger`. A color can also be a literal, such as `"#88c0d0"`.
+- `theme({ groups, palette })` makes one theme active, above the defaults and below every other `set`. A new call replaces it, so a theme switcher calls it again at runtime. The disposer of a replaced theme does nothing.
+- A `link` takes the fields of the linked group, and the group's own fields win.
 
 ## Dialogs and pickers
 
@@ -81,17 +88,27 @@ c.tui.overlay(win); // nothing shows until overlay
 - For a short message, use `c.interaction.notify(message, level?)`. It shows a toast.
 - To change the draft, use `currentPane()?.composer?.input` (`yuke:session`): `insert(text)` types at the caret, and `setText(text)` replaces the draft.
 - `c.tui.split("row" | "col", view)` adds a pane. `c.tui.root` is the window tree.
+- `layout` (`yuke:ui`) solves a row or a column of `fixed`, `fit`, and `grow` cells into rects. [`examples/sidebar.js`](examples/sidebar.js) keeps a right column in each chat pane with it.
+- `List` is a scrollable list inside your own view; `Window` frames a view, and `borders` names its glyph sets.
+- `attachPath(composer, text, from)` (`yuke:chat`) attaches the image file that a pasted path names.
 
-## Tool labels
+## Transcript
 
-A label sets the words of a tool call row in the transcript: `verb`, then `subject`.
+The `transcript` plugin draws every chat transcript. A renderer changes it through `c.chat.render`. Renderers stack: a hook that answers `undefined` passes to the renderer below, and `tools` and `sources` merge by name. The disposer, or the plugin unload, removes the renderer.
 
 ```js
 ctx.inject(["chat"], (c) => {
-  c.chat.labels({ tools: { web_search: { category: "run", present: (args) => ({ verb: "search", subject: String(args.query) }) } } });
+  c.chat.render({ tools: { web_search: (args) => ({ verb: "search", subject: String(args.query) }) } });
 });
 ```
 
-- yuke has labels for its own tools. A label for `read`, `edit`, or `exec` replaces the built-in one, and with it the short path format.
-- A presenter outside the call has no inferred types: annotate it with `/** @type {import("yuke:chat").Presenter} */`.
-- `category` picks the style group of the row. Search `interface Presenter` in `yuke.d.ts` for the values.
+- `tools` sets the header words of a tool call in any look: `verb`, then `subject`, and an optional `category` ("read", "write", "run", "agent"; default "other") that a look styles. The default names `read`, `write`, `edit`, `exec`, and `skill`.
+- `sources` sets the label of an input from an engine source, such as a child report.
+- `part(part, env)` answers `{ rows, source }` for one tool or reasoning part. The core builds text parts as markdown, indented by `indent`. `gap` blank rows separate two parts.
+- `message`, `error`, `fold`, `activate`, `sameVisible`, `groupKey`, and `groupHeader` change the rest. Search `interface Render` in `yuke.d.ts`.
+- A row sets `header` on the row that a click folds, and `stop` on each row where part motion lands (J and K in `transcriptVim`). A segment `src`/`srcEnd` indexes `source`, so a copy takes the source text.
+- ctrl+o (`chat:expand-all`) opens or folds every part. A click on a block toggles it.
+- A tool block row has the background `TxToolPendingBg`, `TxToolSuccessBg`, or `TxToolErrorBg`, and a user message `TxUser`. The tool backgrounds have no color by default, so a theme sets them. `TxUser` defaults to reverse video.
+
+[`examples/tree-transcript.js`](examples/tree-transcript.js) stacks a whole look: tool calls grouped under "N actions" in a tree, a three-row preview, and a details window.
+

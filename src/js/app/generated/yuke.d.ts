@@ -5,16 +5,26 @@ export {};
 
 declare module "yuke:chat" {
 export import ChatView = $chat_view.ChatView;
+export import ChatSurface = $chat.ChatSurface;
 export import Transcript = $transcript.Transcript;
-export import labels = $transcript.labels;
-export import registerLabels = $transcript.registerLabels;
-export import ROLE_NONE = $transcript.ROLE_NONE;
-export import ROLE_ACTION = $transcript.ROLE_ACTION;
-export import ROLE_TEXT = $transcript.ROLE_TEXT;
+export import inputSourceLabel = $transcript.inputSourceLabel;
+export import shortPath = $transcript_view.shortPath;
+export import shortCommand = $transcript_view.shortCommand;
+export import toolHead = $transcript_view.toolHead;
+export import wrapRows = $transcript_view.wrapRows;
+export import viewRows = $transcript_view.viewRows;
+export import mediaLabel = $transcript_view.mediaLabel;
+export import errorLabel = $transcript_view.errorLabel;
+export import isCut = $transcript_view.isCut;
+export import openDetails = $transcript_view.openDetails;
 export import attachPath = $attach.attachPath;
 export import attachClipboard = $attach.attachClipboard;
-export type Presenter = $types_transcript.Presenter;
-export type LabelRegistration = $transcript.LabelRegistration;
+export type Render = $types_transcript.Render;
+export type ToolHead = $types_transcript.ToolHead;
+export type PartEnv = $types_transcript.PartEnv;
+export type MessageEnv = $types_transcript.MessageEnv;
+export type Rendered = $types_transcript.Rendered;
+export type PartHit = $types_transcript.PartHit;
 }
 
 declare module "yuke:plugins" {
@@ -32,7 +42,6 @@ export import currentPane = $session.currentPane;
 export import currentSession = $session.currentSession;
 export import currentEntry = $session.currentEntry;
 export import showSession = $session.showSession;
-export import openSession = $session.openSession;
 }
 
 declare module "yuke:ui" {
@@ -51,10 +60,13 @@ export import Prompt = $ui.Prompt;
 export import borders = $ui.borders;
 export import NAV_KEYS = $ui.NAV_KEYS;
 export import TextInput = $text_input.TextInput;
+export import clip = $text_input.clip;
 export import Pager = $pager.Pager;
 export import Document = $md.Document;
 export import layout = $layout;
 export import keys = $keys;
+/** The terminal cell width of a string. */
+export const measure: (s: string) => number;
 export type Rect = $types_core.Rect;
 export type ViewLike = $types_core.ViewLike;
 export type LayoutNode = $types_layout.LayoutNode;
@@ -167,7 +179,7 @@ export class ChatView {
         w: number;
         h: number;
     };
-    /** The session that this pane reads and sends through. To move the pane to another session, use `showSession` or `openSession`. */
+    /** The session that this pane reads and sends through. To move the pane to another session, use `showSession`. */
     session: Session;
     /** The messages of the shown session. It reads parts straight from the engine for the current `session`; a draft has none. */
     transcript: Transcript;
@@ -269,6 +281,33 @@ export class ChatView {
         y: number;
         visible: boolean;
     } | null;
+}
+}
+
+declare namespace $chat {
+import ChatView = $chat_view.ChatView;
+import Session = $session.Session;
+import Disposer = $types_ext.Disposer;
+import Render = $types_transcript.Render;
+import Context = $ext.Context;
+/** The `chat` capability, bound to one plugin block. What the block registers through it ends when the block unloads. */
+export class ChatSurface {
+    _ctx: Context;
+    constructor(ctx: Context);
+    /**
+     * A new chat pane on `session`, or on a new draft when `session` is absent. A pane on an open session shows its history at once.
+     * The caller puts the pane in the tree.
+     */
+    create(session?: Session): ChatView;
+    /**
+     * Add a renderer to every transcript for the life of this block. It stacks on the renderers before it: see `Render`.
+     * @returns Removes the renderer before the block unloads.
+     */
+    render(render: Render): Disposer;
+    /**
+     * Rebuild the rows of part `partId` of message `messageId` in every pane, because its renderer reads state outside the part.
+     */
+    refresh(messageId: number, partId: number): void;
 }
 }
 
@@ -480,7 +519,8 @@ import Tickable = $types_core.Tickable;
 import TickableEntry = $types_core.TickableEntry;
 import ViewLike = $types_core.ViewLike;
 /**
- * The highlight groups. The built-in groups are monochrome: emphasis is weight and inversion, `Normal` is `reset`, and `danger` is the only color.
+ * The highlight groups and the palette. A group merges its default (from `set` with `{ default: true }`), then the active theme, then each other `set` in call order.
+ * The core groups are monochrome: emphasis is weight and inversion, `Normal` is `reset`, and `danger` is the only color.
  */
 export const style: StyleConfig;
 /**
@@ -587,7 +627,7 @@ export const status: {
      * The text of one side now. A segment that renders nothing drops out of the join.
      */
     side(which: "left" | "right"): string;
-    draw(rect: Rect): void;
+    draw(x: number, y: number, w: number): void;
 };
 /** The screen: the pane tree, the overlay stack, the status bar, and the frame loop. `root` is the one instance. */
 export class RootView {
@@ -686,6 +726,7 @@ export class RootView {
     draw(): void;
     syncTick(): void;
     tickLayers(): boolean;
+    _consumedByOverlay(method: "onKey" | "onMouse", ev: RootEvent): boolean;
     onEvent(ev: RootEvent): void;
 }
 /** The one root view of the process. */
@@ -812,6 +853,10 @@ export class Context {
      * @returns A disposer that stops the injection and reverts the live block.
      */
     inject<K extends string>(names: (K & FreeName<K>)[], apply: InjectApply<K>): Disposer;
+    /**
+     * Post the values as one `debug` notification with this plugin as the source, as the global `print` does. A debug line never toasts.
+     */
+    print(...values: unknown[]): void;
     /** Prompts and notifications through the frontend. It needs no `inject`. */
     get interaction(): InteractionSurface;
 }
@@ -1210,7 +1255,7 @@ export type SessionPane = ViewLike & {
 };
 /**
  * One engine session in the TUI: its id, its pin, and the panes that show it. A draft has a null `sessionId` until its first input creates the session.
- * Panes on the same id share one `Session`. `showSession` and `openSession` move one pane; `open` moves every pane of this session.
+ * Panes on the same id share one `Session`. `showSession` moves one pane to a `Session` or a session id; `open` moves every pane of this session.
  */
 export class Session {
     /**
@@ -1294,15 +1339,11 @@ export class Session {
  */
 export const sessions: Session[];
 /**
- * Show `session` in `view`. The pane leaves its old session, and the last pane of that session releases it.
- * Nothing happens when the pane already shows `session`.
+ * Show `session` in `view`: a `Session`, or the id of an engine session. The pane leaves its old session, and the last pane of that session releases it.
+ * An id that a pane already shows shares that `Session` and its pin. When the engine refuses an id, the pane stays as it is and an error notification shows.
+ * Nothing happens when the pane already shows the session.
  */
-export function showSession(view: SessionPane, session: Session): void;
-/**
- * Open engine session `id` in `view`. When a pane already shows `id`, the two panes share one `Session` and one pin.
- * When the engine refuses `id`, the pane stays as it is and an error notification shows.
- */
-export function openSession(view: SessionPane, id: string): void;
+export function showSession(view: SessionPane, session: Session | string): void;
 /**
  * The pane that holds a session and had focus last, or null when no pane holds a session.
  * A focused pane with no session does not change it. `session.current.changed` announces a change of its session id.
@@ -1364,6 +1405,10 @@ export type TextInputOptions = {
     onEdit?: ((from: number, to: number, insertedLength: number) => void) | null;
 };
 /**
+ * Limit `s` to `max` terminal cells. With `ellipsis`, a cut ends in "…". Pass `width`, the cell width of `s`, when you already have it.
+ */
+export function clip(s: string, max: number, ellipsis?: boolean, width?: number): string;
+/**
  * A text buffer with a caret: the edit state of a query line, a prompt, or a composer.
  * Each offset is a UTF-16 index into `text`. `onKey` applies the common line keys.
  */
@@ -1405,6 +1450,58 @@ export class TextInput {
 }
 }
 
+declare namespace $transcript_view {
+import TranscriptRow = $types_pager.TranscriptRow;
+import Rendered = $types_transcript.Rendered;
+import ToolHead = $types_transcript.ToolHead;
+import ToolPart = $types_transcript.ToolPart;
+/**
+ * A path for a header: relative under the process directory, else its base name.
+ */
+export function shortPath(path: unknown): string;
+/**
+ * A shell command for a header: the program base name and its arguments on one line, without leading comments and environment assignments.
+ */
+export function shortCommand(raw: unknown): string;
+/**
+ * The header words of a tool call from `tools`, else the tool name and its `path`, its `command`, or its raw arguments cut to 48 characters.
+ * `args` holds the parsed JSON arguments, or `{}` when they do not parse.
+ */
+export function toolHead(part: ToolPart, tools: Record<string, ToolHead>): {
+    verb: string;
+    subject: string;
+    category: string;
+};
+/**
+ * Wrap `text` to `width` columns as rows of one segment in `group`. Each segment indexes `text`, so a selection copies the text.
+ * `limit` keeps that many rows from the head, and `tail` also keeps that many rows from the end.
+ */
+export function wrapRows(text: string, width: number, group: string, indent: number, limit?: number, tail?: number): TranscriptRow[];
+/**
+ * The rows of the views of a tool result: a diff, markdown, or plain text. `limit` bounds the row count, and the source holds only the text of the rows it answers.
+ */
+export function viewRows(views: readonly Wire.View[], width: number, indent: number, limit?: number): Rendered;
+/**
+ * `[PNG #1 · 2 KiB]`: the type comes from the mime, because an image part carries no file name on the wire. `n` 0 leaves out the number.
+ */
+export function mediaLabel(blob: Wire.MediaBlob, n: number): string;
+/**
+ * The one-line text of a failed message: the message, the HTTP status, the detail, and the request id.
+ */
+export function errorLabel(error: Wire.MessageError): string;
+/**
+ * True when the engine cut field `field` of `part`, so its whole text needs `transcript.readField`.
+ */
+export function isCut(part: Wire.AssistantPart, field: string): boolean;
+/**
+ * Open a scrolling window over labeled sections of text, such as the whole input and output of a tool.
+ */
+export function openDetails(title: string, sections: readonly {
+    label: string;
+    text: string;
+}[]): void;
+}
+
 declare namespace $transcript_vim {
 import Context = $ext.Context;
 /**
@@ -1421,70 +1518,39 @@ declare namespace $transcript {
 import Pager = $pager.Pager;
 import MouseEvent = $types_core.HostMouseEvent;
 import Rect = $types_core.Rect;
-import ItemKey = $types_pager.ItemKey;
 import TranscriptRow = $types_pager.TranscriptRow;
-import ActionPlan = $types_transcript.ActionPlan;
+import GroupPlan = $types_transcript.GroupPlan;
 import MessageDescriptor = $types_transcript.MessageDescriptor;
 import PartCache = $types_transcript.PartCache;
 import PartHit = $types_transcript.PartHit;
-import PartOf = $types_transcript.PartOf;
 import PartState = $types_transcript.PartState;
 import Position = $types_transcript.Position;
-import Presenter = $types_transcript.Presenter;
 import RowCache = $types_transcript.RowCache;
 import Selection = $types_transcript.Selection;
 import SelectionAnchors = $types_transcript.SelectionAnchors;
 import SelectionRange = $types_transcript.SelectionRange;
-import ToolLabel = $types_transcript.ToolLabel;
 import TranscriptOptions = $types_transcript.TranscriptOptions;
-import SourceLabels = $types_transcript.SourceLabels;
 import MessagePart = $native_engine.MessagePart;
 import TextCursor = $native_engine.TextCursor;
-/** A `labels.role` answer: the part passes through the current group of actions and takes no place in it. */
-export const ROLE_NONE = 0;
-/** A `labels.role` answer: the part joins the current group of actions. Tool calls and reasoning are actions. */
-export const ROLE_ACTION = 1;
-/** A `labels.role` answer: the part closes the current group of actions. */
-export const ROLE_TEXT = 2;
-export type LabelRegistration = {
-    tools?: Record<string, Presenter>;
-    sources?: SourceLabels;
-};
 /**
- * Add tool presenters and input source labels to every transcript. For each tool name and source type, the newest registration wins.
- * The call copies `entries`, so a later change to them has no effect. A plugin uses `ctx.chat.labels`, which removes the registration when the block unloads.
- * @returns Removes only this registration.
+ * The label of an input from an engine source: the `sources` entry of the renderers, else the source type with spaces.
  */
-export function registerLabels(entries: LabelRegistration): () => void;
-/** The words and the grouping that a transcript gives a part. Plugins change them with method advice through `ctx.advise`. */
-export const labels: {
-    /**
-     * The label of a tool call with no presenter: the tool name, then its `path`, its `command`, or the raw arguments cut to 48 characters.
-     * `args` holds the parsed JSON arguments, or `{}` when they do not parse.
-     */
-    fallback(part: Extract<Wire.AssistantPart, {
-        type: "tool";
-    }>, args: Record<string, any>, raw: string): ToolLabel;
-    /**
-     * The group role of a part: `ROLE_ACTION` joins the run of actions, `ROLE_TEXT` closes it, and `ROLE_NONE` passes through it.
-     * Tool calls and reasoning are actions, text closes the run, and empty reasoning takes no place.
-     */
-    role(part: Wire.AssistantPart): number;
-};
+export function inputSourceLabel(source: Wire.InputSource | undefined | null): string;
 /**
  * The transcript of one chat pane: the message outline, exact row counts, and a bounded cache of rendered rows.
  * The owner feeds it with `setOutline` and `setActive`. The `pager` scrolls and draws it.
  */
 export class Transcript {
     partsOf: $types_transcript.PartsOf;
-    partOf: PartOf | null;
+    partOf: $types_transcript.PartOf | null;
     partTextPage: $types_transcript.PartTextPage | null;
     /** The scroll state and the drawn rect. Nav bindings drive it. */
     pager: Pager;
     _messages: MessageDescriptor[];
     _active: MessageDescriptor | null;
     _width: number;
-    _labelRevision: number;
+    _revision: number;
+    _expandEpoch: number;
     _positions: Map<string, number>;
     _counts: Map<string, number>;
     _prefix: number[];
@@ -1492,7 +1558,7 @@ export class Transcript {
     _rows: Map<string, RowCache>;
     _parts: Map<string, PartState>;
     _cursors: WeakMap<Wire.AssistantPart, TextCursor>;
-    _actionPlanCache: ActionPlan | null;
+    _planCache: GroupPlan | null;
     _expand: Map<string, boolean>;
     /**
      * The selection, or null. It holds two `{ id, row, col }` positions, where `row` counts rendered rows and `col` indexes the row text.
@@ -1541,7 +1607,7 @@ export class Transcript {
      */
     setActive(id: number, partId?: number): void;
     /**
-     * Rebuild one tool row whose presenter reads state outside the part, so a child's activity reaches its spawn row. Nothing happens when the row has no render.
+     * Rebuild the rows of part `partId`, because its renderer reads state outside the part, such as the activity of a child agent. Nothing happens when the part has no render.
      */
     refreshRow(id: number, partId: number): void;
     _refreshParts(id: number, partId?: number): {
@@ -1549,6 +1615,15 @@ export class Transcript {
         rowsChanged: boolean;
     };
     _invalidate(width: number): void;
+    _rebuild(width: number): void;
+    _topAnchor(): {
+        pos: Position;
+        off: number;
+    } | null;
+    _keepTop(top: {
+        pos: Position;
+        off: number;
+    }): void;
     _sourceOf(id: number): string;
     _anchors(): SelectionAnchors | null;
     _posAtAnchor(a: {
@@ -1597,46 +1672,43 @@ export class Transcript {
      */
     ensureVisible(pos: Position): void;
     _rowsOf(m: MessageDescriptor, width: number, index: number): TranscriptRow[];
+    _buildRows(m: MessageDescriptor, width: number, index: number, key: string, c: RowCache | undefined): TranscriptRow[];
     _allParts(id: number): readonly MessagePart[];
     _readParts(id: number): Wire.AssistantPart[];
     _partState(id: number): PartState & {
         list: Wire.AssistantPart[];
     };
-    _actionPlan(): ActionPlan;
-    _buildActionPlan(readParts: (message: MessageDescriptor) => readonly Wire.AssistantPart[], ready?: ((last: number) => void) | null): ActionPlan;
-    _refreshActionRows(oldPlan: ActionPlan | null, oldMessages?: MessageDescriptor[]): void;
-    _expandKey(id: ItemKey, partId: ItemKey): string;
+    _plan(): GroupPlan;
+    _buildPlan(readParts: (message: MessageDescriptor) => readonly Wire.AssistantPart[], ready?: ((last: number) => void) | null): GroupPlan;
+    _refreshGroupRows(oldPlan: GroupPlan | null, oldMessages?: MessageDescriptor[]): void;
+    _expandKey(id: number, partId: number): string;
     _reasoningLive(id: number, partId: number): boolean;
-    _isExpanded(id: number, partId: number, part: Wire.AssistantPart | null | undefined): boolean;
+    _isExpanded(id: number, partId: number, part: Wire.AssistantPart | null): boolean;
     /**
-     * Open a folded part or fold an open part, and redraw.
+     * Open a folded part or fold an open part, and redraw. `partId` -1 names a whole message.
      */
     togglePart(id: number, partId: number): void;
-    _wholePartField(id: number, partId: number, part: Wire.AssistantPart, field: string, prefix: string): string;
     /**
-     * Open a window with the full input and output of tool part `partId`. It first reads the rest of a cut field from the host. False when the part is not a tool.
+     * The whole text of field `field` of part `partId`: "arguments", "text", or a field of the tool state such as "output" or "error".
+     * The engine cuts a long field, so this reads the rest page by page. A page that fails or does not advance ends the read with a note.
      */
-    openTool(id: number, partId: number): boolean;
+    readField(id: number, partId: number, field: string): string;
     /**
-     * Open a window with the full text of reasoning part `partId`. False when the part is not reasoning.
-     */
-    openReasoning(id: number, partId: number): boolean;
-    /**
-     * The part under a logical position, or null on a gutter or separator row.
+     * The part under a logical position, or null on a row of no part, such as a separator.
      */
     partAt(pos: Position | null): PartHit | null;
     /**
-     * Open the tool or thought under `pos`, or fold its group. It answers where the reader lands, or null when no part acts.
+     * Act on the part under `pos`: the `activate` hook of the renderers first, else a fold toggle when the part has a header row.
+     * It answers where the reader lands, or null when no part acts.
      */
     activate(pos: Position): Position | null;
     /**
-     * The header position of a foldable part, or null when it is gone.
+     * The position of the header row of a part, or null when the part has none.
      */
     partHeader(id: number, partId: number): Position | null;
-    _partStopsOf(m: MessageDescriptor): Position[];
     /**
      * The next part stop after `pos` when `dir` is above 0, else the previous one. Null when `pos` is null or no stop is left.
-     * A stop is a tool or reasoning header, an error, the first row of a text part, or the first row of a user or compaction message.
+     * A stop is a row with `stop` set: the renderers set it, and the first row of a text part has it.
      */
     partStep(pos: Position | null, dir: number): Position | null;
     _partRows(m: MessageDescriptor, width: number, messageIndex: number, old: TranscriptRow[] | undefined): {
@@ -1747,8 +1819,8 @@ class Surface {
      */
     get status(): typeof status;
     /**
-     * The highlight group registry. `add` registers for this block and returns a disposer.
-     * The other members read the shared registry. After the block stops, `add` throws a TypeError.
+     * The highlight groups. `set`, `setPalette`, and `theme` register for this block and return a disposer.
+     * The other members read the shared registry. After the block stops, `set`, `setPalette`, and `theme` throw a TypeError.
      */
     get style(): typeof style;
     /**
@@ -1889,10 +1961,15 @@ export class Composer {
     };
     /** The text buffer and the caret. An edit through it emits `composer.changed`. */
     input: TextInput;
+    /** The glyph before the first row. A `composer.prompt` listener can replace it. */
     prompt: string;
     placeholder: string;
     onSubmit: ((content: Wire.ContentPart[]) => boolean | void) | null;
+    /**
+     * Answer true to claim a paste, for example a path the owner attaches. A claimed paste never collapses.
+     */
     onPaste: ((text: string, from: number) => boolean) | null;
+    /** The most rows that the composer grows to. */
     maxRows: number;
     scroll: number;
     goalCol: number | null;
@@ -1919,7 +1996,6 @@ export class Composer {
      * The screen rows the text needs at width `w`, at most `maxRows`. The caller caps this against the space it has.
      */
     height(w: number): number;
-    get name(): string;
     layout(rect: Rect): void;
     /** The buffer text. A set replaces it and puts the caret at the end. */
     get text(): string;
@@ -2544,6 +2620,7 @@ declare namespace $types_core {
 import Node = $core.Node;
 import Color = $native_term.Color;
 import Style = $native_term.Style;
+import Disposer = $types_ext.Disposer;
 
 export interface Rect {
   x: number;
@@ -2559,7 +2636,7 @@ export interface StyleGroup {
   bg?: Color | string;
   /** The underline color. */
   ul?: Color | string;
-  /** The name of another group. This group then takes that style and ignores its other fields. A link cycle gives the default style. */
+  /** The name of another group. This group takes that style, and its own fields win. A link cycle gives the default style. */
   link?: string;
   bold?: boolean;
   dim?: boolean;
@@ -2568,23 +2645,42 @@ export interface StyleGroup {
   underline?: boolean;
 }
 
+/** A change to a group: the fields to set. A field set to null removes that field from the merged group. */
+export type StylePatch = { [K in keyof StyleGroup]?: StyleGroup[K] | null };
+
+/** A set of changes: to groups, to palette colors, or both. A theme is one of these. */
+export interface StyleLayer {
+  groups?: Record<string, StylePatch>;
+  palette?: Record<string, Color | null>;
+}
+
 /** The highlight groups and the palette. A draw call names a group, and `resolve` gives its terminal style. */
 export interface StyleConfig {
-  /** The named colors that a group can use. After a change, call `invalidate`. */
+  /** The merged palette: the core colors, then the theme, then each `setPalette`. Read it; change it with `setPalette` or `theme`. */
   palette: Record<string, Color>;
-  /** The groups by name. After a direct change, call `invalidate`. */
+  /** The merged groups. Read them; change them with `set` or `theme`. */
   groups: Record<string, StyleGroup>;
-  _refs: Record<string, number>;
+  _base: Map<string, StyleGroup>;
+  _patches: StyleLayer[];
   _cache: Record<string, Style>;
   /**
-   * Add each group that has no definition yet, and return a disposer.
-   * A group that a theme or the core set first keeps its definition. The disposer removes a group after the last `add` of it goes away.
+   * Set the default of groups that your plugin owns, below the theme and every other `set`, and return a disposer that removes them.
+   * A name that has a default, core or from another plugin, throws a TypeError: change it without `{ default: true }`.
    */
-  add: (groups: Record<string, StyleGroup>) => () => void;
-  /** The terminal style of a group after its links. An unknown group gets the default text color. The result stays cached until `invalidate`. */
-  resolve: (name: string) => Style;
-  /** Clear the cached styles, so the next `resolve` reads the palette and the groups again. It does not request a frame. */
-  invalidate: () => void;
+  set(groups: Record<string, StyleGroup>, options: { default: true }): Disposer;
+  /** Change fields of any group, and return a disposer that restores the value before. A later `set` wins. A change before the default applies when the default appears. */
+  set(groups: Record<string, StylePatch>, options?: { default?: false }): Disposer;
+  /** Change palette colors, and return a disposer that restores the value before. */
+  setPalette(colors: Record<string, Color | null>): Disposer;
+  /** Make `theme` the one active theme: above the defaults and below every other `set`. A new call replaces it. The disposer removes it, if it is still active. */
+  theme(theme: StyleLayer): Disposer;
+  _layer(layer: StyleLayer): Disposer;
+  _apply(layer: StyleLayer): void;
+  _group(name: string): void;
+  _changed(): void;
+  _build(name: string): Style;
+  /** The terminal style of a group after its links. An unknown group gets the default text color. Each change repaints, so the result is always current. */
+  resolve(name: string): Style;
 }
 
 export interface NavTarget {
@@ -2814,7 +2910,7 @@ import Job = $native_jobs.Job;
 import Context = $ext.Context;
 import tui = $tui.tui;
 import Session = $session.Session;
-import LabelRegistration = $transcript.LabelRegistration;
+import Render = $types_transcript.Render;
 import ComposerVim = $composer_vim.ComposerVim;
 import ChatRegion = $chat_view.ChatRegion;
 import ChatView = $chat_view.ChatView;
@@ -2974,19 +3070,21 @@ export interface ToolDefinition {
 }
 
 /** The value `inject` gives each capability name. A plugin declares its own through `declare module "yuke"`; an undeclared name is `unknown`. */
-/** The `chat` capability. The shell asks it for each new pane, and tools name their calls through it. */
+/** The `chat` capability. The shell asks it for each new pane, and plugins render the transcript through it. */
 export interface ChatService {
   /** A new chat pane. Without `session`, the pane shows a new draft. */
   create(session?: Session): ChatView;
-  /** Register tool and source labels. The disposer removes them, and an unload of the block removes them too. */
-  labels(entries: LabelRegistration): Disposer;
+  /** Add a renderer to every transcript. It stacks on the renderers before it. The disposer removes it, and an unload of the block removes it too. */
+  render(render: Render): Disposer;
+  /** Rebuild the rows of one part in every pane, because its renderer reads state outside the part. */
+  refresh(messageId: number, partId: number): void;
 }
 
 export type Capabilities = import("yuke").Capabilities;
 export interface CapabilitiesBase {
   /** The terminal UI of one block. An unload of the block removes what the block adds. The shell provides it. */
   tui: ReturnType<typeof tui.bindTo>;
-  /** The chat panes and their transcript labels. The `chat` plugin provides it, and a plugin that replaces the chat pane provides its own. */
+  /** The chat panes and their transcript renderers. The `chat` plugin provides it, and a plugin that replaces the chat pane provides its own. */
   chat: ChatService;
   /** The composer mode service. It exists only while the `composerVim` plugin runs. */
   "composer-vim": ComposerVim;
@@ -3159,6 +3257,16 @@ function setInterval<A extends unknown[]>(callback: (...args: A) => void, ms?: n
 function clearTimeout(id: number | undefined): void;
 /** Stops a timer. It shares one id space with `clearTimeout`. */
 function clearInterval(id: number | undefined): void;
+/** Posts the values as one `debug` notification from the source "console". A debug line never toasts: it shows in the notification history, in `yuke check`, and in `yuke.log`. */
+function print(...values: unknown[]): void;
+/** Posts the values as one notification from the source "console". `log` and `debug` post at the `debug` level; `info`, `warn`, and `error` post at their own level. */
+var console: {
+  log(...values: unknown[]): void;
+  debug(...values: unknown[]): void;
+  info(...values: unknown[]): void;
+  warn(...values: unknown[]): void;
+  error(...values: unknown[]): void;
+};
 }
 
 type KeyCode =
@@ -3328,6 +3436,8 @@ export interface TranscriptRow {
   segments?: Segment[] | undefined;
   text?: string | undefined;
   group?: string | undefined;
+  /** The source offset of `text` in a row with no `segments`. The row shows its source text as it is, so the source ends at `src + text.length`. */
+  src?: number | undefined;
   bg?: string | undefined;
   marker?: string | null | undefined;
   markerGroup?: string | undefined;
@@ -3335,6 +3445,10 @@ export interface TranscriptRow {
   key?: ItemKey | undefined;
   kind?: string | undefined;
   partId?: number | undefined;
+  /** The fold header of its part: a click or Enter toggles the part, and the reader lands here. */
+  header?: boolean | undefined;
+  /** A stop of the part motion, such as the first row of a part. */
+  stop?: boolean | undefined;
   sel?: { from: number; to: number } | undefined;
   selGroup?: string | undefined;
 }
@@ -3418,11 +3532,11 @@ export interface Selection {
   cursor: Position;
 }
 
-/** The part under a position: message `id`, part `partId`, and the row `kind`, such as "tool-header" or "reasoning-body". */
+/** The part under a position: message `id`, part `partId` (-1 for a whole message), and the row under the position. */
 export interface PartHit {
   id: number;
   partId: number;
-  kind: string;
+  row: TranscriptRow;
 }
 
 export interface SelectionAnchors {
@@ -3449,6 +3563,8 @@ export interface PartCache {
   expanded: boolean;
   live: boolean;
   shape: number;
+  /** The group header rows that the last build wrote before this part. */
+  lead: number;
   rows: TranscriptRow[];
   source: string;
   /** `part` is the part object `doc` holds the text of; `kept` counts the leading rows the last build left in place. */
@@ -3475,33 +3591,85 @@ export interface TranscriptOptions {
   onSelect?: ((text: string) => void) | null | undefined;
 }
 
-export interface ActionPlan {
+export interface GroupPlan {
   trees: number[] | Float64Array;
   starts: number[] | Float64Array;
   joinAfter: number[] | Uint8Array;
 }
 
-/** The header words of a tool call: `verb` first, then `subject`. `category` picks the style group, as in `Presenter`. */
-export interface ToolLabel {
-  verb: string;
-  subject: string;
-  category: string;
-}
-
-/** Names one tool call in its transcript header. It must not walk the tool output and must not scan a whole text, because it runs when the row builds. */
-export interface Presenter {
-  /** The style group of the header. "read", "write", "run", and "agent" use TxToolRead, TxToolWrite, TxToolRun, and TxToolAgent; any other value uses TxToolName. */
-  category: string;
-  /**
-   * Answer the header words: `verb` first, then `subject`. A throw shows the tool name with no subject.
-   * @param args - The parsed JSON arguments, or `{}` when they do not parse.
-   * @param raw - The argument text before the parse.
-   */
-  present(args: Record<string, unknown>, raw: string, part: Extract<Wire.AssistantPart, { type: "tool" }>): { verb: string; subject: string };
-}
-
 /** The label above an input from each engine source; a missing source shows its type name. */
 export type SourceLabels = { [K in Wire.InputSource["type"]]?: (source: Extract<Wire.InputSource, { type: K }>) => string };
+
+/** A tool call part. */
+export type ToolPart = Extract<Wire.AssistantPart, { type: "tool" }>;
+/** A reasoning part. */
+export type ReasoningPart = Extract<Wire.AssistantPart, { type: "reasoning" }>;
+
+/**
+ * The header words of one tool call, for any look: `verb` first, then `subject`. `category` names the kind of work, such as "read", "write", "run", or "agent"; a look picks a style from it.
+ * It runs when the row builds, so it must not walk the tool output or scan a whole text. `args` holds the parsed JSON arguments, or `{}` when they do not parse.
+ */
+export type ToolHead = (args: Record<string, any>, part: ToolPart) => { verb: string; subject: string; category?: string };
+
+/** The rows of a render and the text they show. The `src` and `srcEnd` of each segment index `source`, so a selection copies the source text. */
+export interface Rendered {
+  rows: TranscriptRow[];
+  source: string;
+}
+
+/** The facts of one part render. The core builds a new one for each call. */
+export interface PartEnv {
+  /** The message that holds the part. */
+  messageId: number;
+  /** The columns of the rows. A row indent counts inside them. */
+  width: number;
+  /** True when the part shows open: the choice of the user, else ctrl+o, else the `fold` hook. */
+  expanded: boolean;
+  /** True while the part is the last reasoning of the streaming draft. */
+  live: boolean;
+  /** The place of the part in its group, or null outside a group. */
+  group: { count: number; first: boolean; last: boolean } | null;
+  /** The `tools` of every renderer, merged by tool name. */
+  tools: Record<string, ToolHead>;
+}
+
+/** The facts of one message, error, or group header render. `expanded` is the fold state of the whole message. */
+export interface MessageEnv {
+  messageId: number;
+  width: number;
+  expanded: boolean;
+}
+
+/**
+ * A transcript renderer. Every member is optional. A hook that answers undefined passes to the renderer below it, so a plugin can own one tool or one message source.
+ * The core writes `key` and `partId` on each row a hook answers. A hook runs when the rows build: at a change, a new width, or a fold, never on each frame.
+ */
+export interface Render {
+  /** The rows of one tool or reasoning part. The core builds text parts itself as markdown. */
+  part?(part: ToolPart | ReasoningPart, env: PartEnv): Rendered | undefined;
+  /** The rows of one user or compaction message. `parts` holds its text and media parts. */
+  message?(message: MessageDescriptor, parts: readonly MessagePart[], env: MessageEnv): Rendered | undefined;
+  /** The rows under a message that failed. */
+  error?(error: Wire.MessageError, env: MessageEnv): Rendered | undefined;
+  /** The group of a part. Consecutive parts with one key form a group, and null closes the group. Without this hook, no part groups. */
+  groupKey?(part: Wire.AssistantPart): string | null | undefined;
+  /** The rows above a group. */
+  groupHeader?(group: { key: string | null; count: number }, env: MessageEnv): TranscriptRow[] | undefined;
+  /** True to show a part open until the user or ctrl+o folds it. `live` is true for the reasoning that still streams. */
+  fold?(part: Wire.AssistantPart, live: boolean): boolean | undefined;
+  /** True when a folded or open part shows the same rows for `fresh` as for `before`, so a streamed delta skips the rebuild. */
+  sameVisible?(before: Wire.AssistantPart, fresh: Wire.AssistantPart, expanded: boolean): boolean | undefined;
+  /** Act on a click or an Enter on a part. Answer where the reader lands, or null. Without an answer, a part with a header row toggles its fold. */
+  activate?(hit: PartHit, transcript: $transcript.Transcript): Position | null | undefined;
+  /** Header words by tool name, for any look. */
+  tools?: Record<string, ToolHead>;
+  /** Labels by input source type. */
+  sources?: SourceLabels;
+  /** The indent of the text rows of an assistant message. */
+  indent?: number;
+  /** The blank rows between two parts of one message. */
+  gap?: number;
+}
 }
 
 declare namespace $types_ui {
@@ -3571,16 +3739,10 @@ export interface WrapRow {
 
 /** The options of a `Composer`. */
 export interface ComposerOptions {
-  /** The glyph before the first row. The default is "› ". A `composer.prompt` listener can replace it. */
-  prompt?: string | undefined;
   /** The dim text that shows while the buffer is empty. */
   placeholder?: string | undefined;
   /** Gets the content on enter. A result of false keeps the buffer; any other result clears it. */
   onSubmit?: ((content: Wire.ContentPart[]) => boolean | void) | null | undefined;
-  /** Answer true to claim a paste, for example a path the owner attaches. A claimed paste never collapses. */
-  onPaste?: ((text: string, from: number) => boolean) | null | undefined;
-  /** The most rows that the composer grows to. The default is 10. */
-  maxRows?: number | undefined;
 }
 
 /** The glyphs of a border: the corners tl, tr, br, bl and the edges t, r, b, l. */
@@ -4935,6 +5097,7 @@ export type MethodName =
 
 /** Notice severity level. */
 export type NoticeLevel =
+  | "debug"
   | "info"
   | "warn"
   | "error"

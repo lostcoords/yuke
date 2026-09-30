@@ -1,7 +1,7 @@
 // A plugin as a user writes it, checked against the generated yuke.d.ts alone.
 import { defineConfig, plugins, fs, exec, events } from "yuke";
 import { ui } from "yuke:ui";
-import { labels } from "yuke:chat";
+import { inputSourceLabel } from "yuke:chat";
 import { currentSession } from "yuke:session";
 import { agents } from "yuke:plugins";
 // @ts-expect-error Internal modules stay private; the loader rejects them too.
@@ -23,7 +23,7 @@ const demo = {
     ctx.inject(["tui"], (c) => {
       c.tui.command.add("demo:pick", { desc: "pick one", run: () => { c.tui.overlay(ui.pick({ items: ["a"] }).win); } });
     });
-    ctx.inject(["chat"], (c) => c.chat.labels({ sources: { engine_interruption: (source) => "run " + source.run_id } }));
+    ctx.inject(["chat"], (c) => c.chat.render({ sources: { engine_interruption: (source) => "run " + source.run_id } }));
     ctx.provide("counter", { count: () => 1 });
     ctx.inject(["counter"], (c) => c.counter.count().toFixed());
     ctx.advise(adder, "add", "filterReturn", (sum) => sum * 2);
@@ -43,14 +43,14 @@ plugins.use(agents({ catalog: { research: { tools: ["read"] } }, maxDepth: 2 }))
 fs.readFile("x", { workspaceRoot: "/tmp" }).then((text) => text.toUpperCase());
 exec("true", { workspaceRoot: "/tmp" }).then((result) => result.code);
 new Promise((resolve) => setTimeout(resolve, 1));
-labels.role;
+inputSourceLabel(null).length;
 currentSession()?.sessionId;
 // @ts-expect-error A merged event checks its arguments.
 events.emit("demo:ping", "one");
 // @ts-expect-error The root is an option, not a positional argument.
 fs.readFile("x", "/tmp");
 // @ts-expect-error A label names an engine source type.
-plugins.use({ name: "x", apply(ctx) { ctx.inject(["chat"], (c) => c.chat.labels({ sources: { run_interrupted: () => "" } })); } });
+plugins.use({ name: "x", apply(ctx) { ctx.inject(["chat"], (c) => c.chat.render({ sources: { run_interrupted: () => "" } })); } });
 // @ts-expect-error The host owns the event entry point.
 onEvent;
 // @ts-expect-error An internal namespace is not a global.

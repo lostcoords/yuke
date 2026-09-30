@@ -3,51 +3,56 @@ import { style } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import { tui } from "yuke:internal/tui";
 
-// style.add seeds only an absent name, invalidates a cached miss, and reverts on dispose.
+// A set wins over the default in either order, and its dispose restores the default.
 {
-  const missed = style.resolve("TestSeed").bold === undefined;
-  const off = style.add({ TestSeed: { fg: "fg", bold: true }, Normal: { fg: "danger" } });
-  const seeded = style.resolve("TestSeed").bold === true;
-  const kept = style.groups.Normal.fg === "fg";
-  off();
-  const reverted = !("TestSeed" in style.groups) && style.resolve("TestSeed").bold === undefined;
-  check("style-add", missed && seeded && kept && reverted && style.groups.Normal.fg === "fg");
+  const setFirst = style.set({ Layered: { fg: "danger" } });
+  const offDefault = style.set({ Layered: { fg: "fg", bold: true } }, { default: true });
+  const early = style.resolve("Layered").fg === "red" && style.resolve("Layered").bold === true;
+  setFirst();
+  const restored = style.resolve("Layered").fg === "reset";
+  const setLater = style.set({ Layered: { bold: null } });
+  const cleared = style.resolve("Layered").bold === undefined;
+  setLater();
+  offDefault();
+  check("style-set-over-default", early && restored && cleared && !("Layered" in style.groups));
 }
 
-// A plugin's highlight groups unload with the plugin.
+// The one theme sits below every set, a new theme replaces it, and a replaced theme's dispose does nothing, even for the same object.
 {
-  const stop = plugins.use({ name: "theme", apply: (c) => { tui.bindTo(c).style.add({ PluginGroup: { fg: "fg", bold: true } }); } });
-  const on = style.resolve("PluginGroup").bold === true;
+  const user = style.set({ Normal: { bold: true } });
+  const DARK = { groups: { Normal: { fg: "#101010", bold: false } }, palette: { danger: "#ff0000" } };
+  const first = style.theme(DARK);
+  const themed = style.resolve("Normal").fg === "#101010" && style.resolve("Normal").bold === true && style.palette.danger === "#ff0000";
+  const light = style.theme({ groups: { Normal: { fg: "#f0f0f0" } } });
+  const switched = style.resolve("Normal").fg === "#f0f0f0" && style.palette.danger === "red";
+  const again = style.theme(DARK);
+  first();
+  light();
+  const kept = style.resolve("Normal").fg === "#101010";
+  again();
+  user();
+  check("style-theme", themed && switched && kept && style.resolve("Normal").fg === "reset" && style.resolve("Normal").bold === undefined);
+}
+
+// A link gives its fields, and the group's own fields win.
+{
+  const off = style.set({ LinkBase: { fg: "danger", bold: true, underline: true }, LinkChild: { link: "LinkBase", bold: false } }, { default: true });
+  const child = style.resolve("LinkChild");
+  off();
+  check("style-link-inherits", child.fg === "red" && child.underline === true && child.bold === undefined);
+}
+
+// A second default for a name, core or not, throws and changes nothing.
+{
+  let refused = false;
+  try { style.set({ Fresh: { bold: true }, Normal: { fg: "danger" } }, { default: true }); } catch (e) { refused = e instanceof TypeError; }
+  check("style-default-conflict", refused && !("Fresh" in style.groups) && style.resolve("Normal").fg === "reset");
+}
+
+// A plugin's groups and changes unload with the plugin.
+{
+  const stop = plugins.use({ name: "theme", apply: (c) => { const s = tui.bindTo(c).style; s.set({ toString: { bold: true } }, { default: true }); s.set({ Normal: { bold: true } }); } });
+  const on = style.resolve("toString").bold === true && style.resolve("Normal").bold === true;
   stop.dispose();
-  check("style-plugin", on && !("PluginGroup" in style.groups) && style.resolve("PluginGroup").bold === undefined);
-}
-
-// Two plugins want one group name: the first owns it and an unload cannot strip the second.
-{
-  const first = { fg: "fg", bold: true };
-  const stopA = plugins.use({ name: "thA", apply: (c) => { tui.bindTo(c).style.add({ Shared: first }); } });
-  const stopB = plugins.use({ name: "thB", apply: (c) => { tui.bindTo(c).style.add({ Shared: { fg: "danger" } }); } });
-  stopA.dispose();
-  check("style-collision", style.groups.Shared === first && style.resolve("Shared").bold === true);
-  stopB.dispose();
-  check("style-collision-clean", !("Shared" in style.groups));
-}
-
-// An inherited property name is not an existing group.
-{
-  const off = style.add({ toString: { fg: "danger", bold: true } });
-  const seeded = style.resolve("toString").bold === true;
-  off();
-  check("style-own-property", seeded && !("toString" in style.groups) && style.groups.Normal.fg === "fg");
-}
-
-// A disposer runs once, so a repeat call cannot strip a live holder.
-{
-  const offA = style.add({ Held: { fg: "fg", bold: true } });
-  const offB = style.add({ Held: { fg: "danger" } });
-  offA();
-  offA();
-  check("style-dispose-once", style.resolve("Held").bold === true);
-  offB();
-  check("style-dispose-last", !("Held" in style.groups));
+  check("style-plugin-unload", on && !("toString" in style.groups) && style.resolve("Normal").bold === undefined);
 }

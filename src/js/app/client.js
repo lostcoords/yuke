@@ -20,14 +20,7 @@ events.on("engine.drained", (ev) => {
  */
 async function request(method, ...args) {
   const params = await gateInput(method, args[0] ?? /** @type {Wire.Methods[M]["paramsType"][0]} */ ({}));
-  const text = await native.request(method, JSON.stringify(params));
-  try {
-    return JSON.parse(text);
-  } catch {
-    const error = new Error("malformed engine result");
-    error.name = "EngineError";
-    throw error;
-  }
+  return JSON.parse(await native.request(method, JSON.stringify(params)));
 }
 
 /**

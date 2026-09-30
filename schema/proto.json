@@ -4464,6 +4464,10 @@
       "numeric": false,
       "values": [
         {
+          "name": "debug",
+          "wire": "debug"
+        },
+        {
           "name": "info",
           "wire": "info"
         },

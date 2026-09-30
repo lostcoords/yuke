@@ -144,7 +144,7 @@ export class Pager {
       if (r.bg) fill(x, sy, w, 1, r.bg);
       if (r.marker) text(x, sy, r.marker, /** @type {string} */ (r.markerGroup));
       const ind = r.indent || 0;
-      let segs = r.segments || (r.text ? [{ text: r.text, group: /** @type {string} */ (r.group) }] : null);
+      let segs = r.segments || (r.text ? segmentsOf(r) : undefined);
       if (segs && r.sel) segs = markSelection(segs, r.sel.from, r.sel.to, r.selGroup || "TxSelect");
       if (segs) drawSegments(x + ind, sy, Math.max(0, w - ind), segs);
     }
@@ -188,6 +188,36 @@ export class Pager {
   }
 }
 
+// The one segment of a text row, with a source or without one. A draw and a source read fill it, so neither allocates for a text row.
+/** @type {Segment} */
+const PLAIN = { text: "", group: "" };
+/** @type {Required<Pick<Segment, "text" | "group" | "src" | "srcEnd">>} */
+const SOURCED = { text: "", group: "", src: 0, srcEnd: 0 };
+const PLAIN_ROW = [PLAIN];
+const SOURCED_ROW = [SOURCED];
+
+/**
+ * The segments of a row. A text row answers one held segment that the next call fills again, so use the answer at once and do not keep it.
+ * A text row with `src` shows its source as it is, so its one segment is linear.
+ * @param {TranscriptRow} r @returns {Segment[] | undefined}
+ */
+export function segmentsOf(r) {
+  if (r.segments) return r.segments;
+  if (r.text === undefined && r.src === undefined) return undefined;
+  const text = r.text || "";
+  const group = r.group || "";
+  if (r.src === undefined) {
+    PLAIN.text = text;
+    PLAIN.group = group;
+    return PLAIN_ROW;
+  }
+  SOURCED.text = text;
+  SOURCED.group = group;
+  SOURCED.src = r.src;
+  SOURCED.srcEnd = r.src + text.length;
+  return SOURCED_ROW;
+}
+
 // The plain text of a row, without the indent. A selection indexes into this string.
 /** @param {TranscriptRow} r @returns {string} */
 export function rowText(r) {
@@ -202,7 +232,7 @@ export function rowText(r) {
 // The source span under the rendered range [from, to), or null when the range maps to no source at all.
 /** @param {TranscriptRow} row @param {number} from @param {number} to @param {number} [base] @returns {{ from: number, to: number } | null} */
 export function rowSourceSpan(row, from, to, base = 0) {
-  const segments = row.segments;
+  const segments = segmentsOf(row);
   if (!segments) return null;
   let at = 0;
   let lo = -1;
@@ -226,7 +256,7 @@ export function rowSourceSpan(row, from, to, base = 0) {
 // The source offset at caret column `col`, where a gap takes the source end before it, or -1 when the row has none.
 /** @param {TranscriptRow} row @param {number} col @param {number} [base] @returns {number} */
 export function rowSourceAt(row, col, base = 0) {
-  const segments = row.segments;
+  const segments = segmentsOf(row);
   if (!segments) return -1;
   let at = 0;
   let last = -1;

@@ -2,7 +2,7 @@
 import { ui } from "yuke:internal/ui";
 import { client } from "yuke:internal/client";
 import { errorText } from "yuke:internal/format";
-import { loadCatalog, providerStateLabel, reloadCatalog } from "yuke:internal/catalog";
+import { catalogRefresh, providerStateLabel, reloadCatalog } from "yuke:internal/catalog";
 import { notify } from "yuke:internal/kernel";
 
 /** @import { Context } from "yuke:internal/ext" */
@@ -41,7 +41,7 @@ function pickProvider(ctx, title, verb, rows, right, onAccept) {
 function finishLogin(p, outcome) {
   if (outcome.type === "succeeded") {
     notify("info", "logged in · " + p.id, "auth");
-    loadCatalog();
+    catalogRefresh.run();
   } else if (outcome.type === "canceled") notify("info", "login canceled", "auth");
   else notify("error", "login failed · " + outcome.message, "auth");
 }
@@ -80,7 +80,7 @@ async function keyLogin(ctx, p) {
     await client.authSetApiKey(p.id, key);
     if (ctx.alive) {
       notify("info", "key saved · " + p.id, "auth");
-      await loadCatalog();
+      await catalogRefresh.run();
     }
   } catch (error) {
     if (ctx.alive) notify("error", "key rejected · " + errorText(error), "auth");
@@ -110,14 +110,14 @@ function openLogin(ctx, query) {
 // `/logout` lists the providers that hold a credential; `/logout codex` drops that one.
 /** @param {Ctx} ctx @param {string} [query] @returns {void} */
 function openLogout(ctx, query) {
-  loadCatalog().then((catalog) => {
+  catalogRefresh.run().then((catalog) => {
     const rows = catalog.providers.filter((p) => p.credential_kind != null);
     // A key the environment supplies is not in the file, so the engine cannot remove it and says so.
     /** @param {ProviderRow} p */
     const remove = (p) => client.authRemove(p.id).then(
       () => {
         notify("info", "logged out · " + p.id, "auth");
-        return loadCatalog();
+        return catalogRefresh.run();
       },
       (e) => e.code === "unknown_provider" ? notify("warn", p.id + " has its key in the environment · unset the variable", "auth") : notify("error", "logout failed · " + errorText(e), "auth"),
     );

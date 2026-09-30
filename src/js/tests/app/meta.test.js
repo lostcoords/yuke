@@ -4,7 +4,7 @@ import { plugins } from "yuke:internal/ext";
 import { commandUi } from "yuke:internal/command-ui";
 import { tuiPlugin } from "yuke:internal/tui";
 plugins.use(tuiPlugin);
-plugins.use(commandUi());
+plugins.use(commandUi);
 
 // The palette shows the slash word, or the name, so the list sorts by that word and a prefix sorts before a longer word.
 // A bare name sorts by its first character against "/", and a name that starts with "/" sorts among the slash words.

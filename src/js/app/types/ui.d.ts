@@ -63,16 +63,10 @@ export interface WrapRow {
 
 /** The options of a `Composer`. */
 export interface ComposerOptions {
-  /** The glyph before the first row. The default is "› ". A `composer.prompt` listener can replace it. */
-  prompt?: string | undefined;
   /** The dim text that shows while the buffer is empty. */
   placeholder?: string | undefined;
   /** Gets the content on enter. A result of false keeps the buffer; any other result clears it. */
   onSubmit?: ((content: Wire.ContentPart[]) => boolean | void) | null | undefined;
-  /** Answer true to claim a paste, for example a path the owner attaches. A claimed paste never collapses. */
-  onPaste?: ((text: string, from: number) => boolean) | null | undefined;
-  /** The most rows that the composer grows to. The default is 10. */
-  maxRows?: number | undefined;
 }
 
 /** The glyphs of a border: the corners tl, tr, br, bl and the edges t, r, b, l. */

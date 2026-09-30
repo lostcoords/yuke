@@ -1,7 +1,7 @@
 import { check, listSessions } from "yuke:internal/test";
 import { status, root } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
-import { catalogOf, contextWindowOf } from "yuke:internal/catalog";
+import { catalog, modelOf } from "yuke:internal/catalog";
 import { tokenLabel } from "yuke:internal/format";
 import { chatPlugin } from "yuke:internal/chat";
 import { client } from "yuke:internal/client";
@@ -50,9 +50,9 @@ chat.session.sessionId = null;
 await listSessions([]);
 
 // The window of a model the catalog names, and zero for the rest.
-catalogOf().models = [{ selector: "session-model", context_window: 10000 }];
-check("known-window", contextWindowOf("session-model") === 10000 && contextWindowOf("other") === 0);
-catalogOf().models = [];
+catalog.models = [{ selector: "session-model", context_window: 10000 }];
+check("known-window", modelOf("session-model")?.context_window === 10000 && modelOf("other") === null);
+catalog.models = [];
 check("token-label", tokenLabel(999) === "999" && tokenLabel(2500) === "2.5k" && tokenLabel(20000) === "20k");
 
 // The session layer owns the reading, so its unload takes the reading away.

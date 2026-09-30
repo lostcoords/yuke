@@ -2,7 +2,7 @@
 import { term } from "yuke:internal/native/term";
 import { text, fill, root, claimView, style, isWheel, contains, ESC_PRESS } from "yuke:internal/core";
 import { config, events } from "yuke:internal/kernel";
-import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapPreview, nextGrapheme } from "yuke:internal/text-input";
+import { clip, TextInput, caretCol, caretAtCol, caretRowCol, wrapText, nextGrapheme } from "yuke:internal/text-input";
 import { strokeOf } from "yuke:internal/keys";
 import { fuzzyRank } from "yuke:internal/fzy";
 import { Pager } from "yuke:internal/pager";
@@ -29,25 +29,9 @@ const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
   UIComposer: { fg: "fg" },
   UIDim: { fg: "fg", dim: true },
   UIDimSel: { reverse: true },
-  TxUser: { reverse: true },
-  TxUserMarker: { reverse: true, bold: true },
-  TxError: { fg: "danger", bold: true },
   TxSelect: { reverse: true },
-  TxToolName: { fg: "fg", bold: true },
-  // One group per tool category. Each starts as the plain name group, so the default stays monochrome and a theme separates them.
-  TxToolRead: { fg: "fg", bold: true },
-  TxToolWrite: { fg: "fg", bold: true },
-  TxToolRun: { fg: "fg", bold: true },
-  TxToolAgent: { fg: "fg", bold: true },
-  TxToolMeta: { fg: "fg", dim: true },
-  TxToolError: { fg: "danger", bold: true },
-  TxToolBody: { fg: "fg", dim: true },
-  TxToolAdd: { fg: "fg", bold: true },
-  TxToolDel: { fg: "fg", dim: true },
-  TxToolContext: { fg: "fg", dim: true },
-  TxThought: { fg: "fg", dim: true, italic: true },
 });
-style.add(UI_GROUPS);
+style.set(UI_GROUPS, { default: true });
 
 // Default page jump before a draw sets the real page height.
 const PAGE_FALLBACK = 10;
@@ -353,9 +337,8 @@ export class List {
     const { x, y, w, h } = rect;
     if (w <= 0 || h <= 0) return this.clearRect();
     this._rect = rect;
-    const vis = this._visible(h);
-    this._page = vis;
-    this._scrollToVisible(vis);
+    this.ensureVisible(h);
+    const vis = this._page;
 
     for (let row = 0; row < vis; row++) {
       const i = this.scroll + row;
@@ -428,12 +411,17 @@ export class Composer {
       },
       onEdit: (from, to, ins) => this._shiftSpans(from, to, ins),
     });
-    this.prompt = opts.prompt != null ? opts.prompt : "› ";
+    /** The glyph before the first row. A `composer.prompt` listener can replace it. */
+    this.prompt = "› ";
     this.placeholder = opts.placeholder || "";
     this.onSubmit = opts.onSubmit || null;
-    /** @type {((text: string, from: number) => boolean) | null} */
-    this.onPaste = opts.onPaste || null;
-    this.maxRows = opts.maxRows || COMPOSER_ROWS_MAX;
+    /**
+     * Answer true to claim a paste, for example a path the owner attaches. A claimed paste never collapses.
+     * @type {((text: string, from: number) => boolean) | null}
+     */
+    this.onPaste = null;
+    /** The most rows that the composer grows to. */
+    this.maxRows = COMPOSER_ROWS_MAX;
     this.scroll = 0;
     /** @type {number | null} */
     this.goalCol = null; // the column a vertical move holds across a short row
@@ -547,7 +535,7 @@ export class Composer {
   _rowsAt(width) {
     if (this._rows && this._rowsW === width) return this._rows;
     this._rowsW = width;
-    this._rows = wrapPreview(this._projection().text, width, 0).rows;
+    this._rows = wrapText(this._projection().text, width);
     return this._rows;
   }
 
@@ -560,10 +548,6 @@ export class Composer {
     if (w <= 0) return 0;
     if (this.input.text === "") return 1;
     return Math.min(this.maxRows, this._rowsAt(this._textWidth(w)).length);
-  }
-
-  get name() {
-    return "composer";
   }
 
   /** @param {Rect} rect @returns {void} */
@@ -821,7 +805,7 @@ export class Text {
     width = Math.max(0, Math.floor(width));
     const cache = this._measurement;
     if (cache.width === width && cache.text === this.text) return cache.size;
-    const rows = width > 0 ? wrapPreview(this.text, width, 0).rows : [];
+    const rows = width > 0 ? wrapText(this.text, width) : [];
     const widths = rows.map((row) => term.measure(this.text.slice(row.start, row.end)));
     let w = 0;
     for (const rw of widths) w = Math.max(w, rw);
@@ -837,7 +821,7 @@ export class Text {
     if (cache.text === this.text && cache.width === rect.w && cache.height === rect.h) return;
     // Reuse the measured rows at the same width. Measure the rows again when the width changes.
     const m = this._measurement.text === this.text && this._measurement.width === rect.w ? this._measurement : null;
-    const rows = rect.w > 0 && rect.h > 0 ? (m ? m.rows : wrapPreview(this.text, rect.w, 0).rows).slice(0, rect.h) : [];
+    const rows = rect.w > 0 && rect.h > 0 ? (m ? m.rows : wrapText(this.text, rect.w)).slice(0, rect.h) : [];
     this._layoutCache = { text: this.text, width: rect.w, height: rect.h, rows: rows.map((row, i) => {
       const line = this.text.slice(row.start, row.end);
       const lw = m ? /** @type {number} */ (m.widths[i]) : term.measure(line);
@@ -1134,7 +1118,7 @@ export class Picker {
     if (this._bodyWidth !== width || this._bodyText !== this.body) {
       this._bodyWidth = width;
       this._bodyText = this.body;
-      this._bodyRows = this.body ? wrapPreview(this.body, width, 0).rows : [];
+      this._bodyRows = this.body ? wrapText(this.body, width) : [];
     }
     return this._bodyRows.length;
   }
@@ -1217,7 +1201,7 @@ export class Picker {
       this.list.clearRect();
       return;
     }
-    const layout = this._bodyLayout({ x, y, w, h });
+    const layout = this._bodyLayout(this._layoutRect);
     const { height: bodyHeight, gap } = layout;
     this._bodyScroll = Math.min(this._bodyScroll, Math.max(0, this._bodyRows.length - bodyHeight));
     for (let i = 0; i < bodyHeight; i++) {
@@ -1263,7 +1247,7 @@ export class Picker {
     if (!this.input) return null; // a menu edits no query, so it places no cursor
     const { x, y, w, h } = this._layoutRect;
     if (w <= 0 || h <= 0) return null; // an empty interior places no cursor
-    const { height: bodyHeight, gap } = this._bodyLayout({ x, y, w, h });
+    const { height: bodyHeight, gap } = this._bodyLayout(this._layoutRect);
     const rowY = y + bodyHeight + gap;
     const col = caretCol(w, PICKER_PROMPT, this.input.beforeCaret());
     return { x: Math.min(x + Math.max(0, col), x + Math.max(0, w - 1)), y: Math.min(rowY, y + Math.max(0, h - 1)), visible: true };

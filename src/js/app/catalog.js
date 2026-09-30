@@ -8,25 +8,27 @@ import { notify } from "yuke:internal/kernel";
 /** @import { Context } from "yuke:internal/ext" */
 /** @typedef {{ rev: Wire.CatalogRev | null, providers: readonly Wire.ProviderInfo[], models: readonly Wire.ModelInfo[] }} CatalogState */
 
+/** The model catalog the engine last answered. A refresh replaces its lists, so a reader holds the object and not a list. */
 /** @type {CatalogState} */
-const catalog = {
+export const catalog = {
   rev: null,
   providers: [],
   models: [],
 };
 
-/** @returns {CatalogState} */
-export function catalogOf() {
-  return catalog;
-}
+// The status bar asks on each frame, so the answer stays until the selector or the model list changes.
+/** @type {{ selector: string, models: readonly Wire.ModelInfo[] | null, model: Wire.ModelInfo | null }} */
+let last = { selector: "", models: null, model: null };
 
 /** @param {string | null | undefined} selector @returns {Wire.ModelInfo | null} */
 export function modelOf(selector) {
   if (!selector) return null;
-  return catalog.models.find((x) => x.selector === selector) || null;
+  if (last.selector !== selector || last.models !== catalog.models) last = { selector, models: catalog.models, model: catalog.models.find((x) => x.selector === selector) || null };
+  return last.model;
 }
 
-const refresh = new Refresh(
+/** Reads the catalog from the engine. `run()` coalesces concurrent calls and answers the catalog. */
+export const catalogRefresh = new Refresh(
   () => client.catalogList(catalog.rev).then((r) => {
     if (r.type === "full") {
       catalog.rev = r.catalog_rev;
@@ -37,18 +39,13 @@ const refresh = new Refresh(
   () => { root.invalidate(); return catalog; },
 );
 
-/** @returns {Promise<CatalogState>} */
-export function loadCatalog() {
-  return refresh.run();
-}
-
 // Read providers.json again, then refresh the catalog. A failed reload tells the user, and the catalog still shows what the engine holds.
 /** @returns {Promise<{ changed: boolean | null, catalog: CatalogState }>} */
 export function reloadCatalog() {
   return client.catalogReload().then((r) => r.changed, (e) => {
     notify("error", "reload failed · " + errorText(e), "providers");
     return null;
-  }).then((changed) => loadCatalog().then((catalog) => ({ changed, catalog })));
+  }).then((changed) => catalogRefresh.run().then((catalog) => ({ changed, catalog })));
 }
 
 // The state of one provider, or null when the catalog does not name it.
@@ -68,13 +65,6 @@ export function providerStateLabel(state, canLogin = true) {
   }
 }
 
-// The context window of one model, or 0 when the catalog does not name it.
-/** @param {string | null | undefined} modelId @returns {number} */
-export function contextWindowOf(modelId) {
-  const m = modelOf(modelId);
-  return m && m.context_window ? m.context_window : 0;
-}
-
 // The cost of the tokens at the catalog prices in dollars per million. An unpriced kind costs nothing.
 /** @param {Wire.TokenUsage} total @param {Wire.ModelCost} cost @returns {number} */
 export function sessionCost(total, cost) {
@@ -91,7 +81,7 @@ export const catalogPlugin = {
   apply(ctx) {
     ctx.inject(["tui"], (ctx) => {
       // The engine is in this process, so the catalog is readable at once and needs no connect event.
-      loadCatalog();
+      catalogRefresh.run();
 
       ctx.tui.command.add("catalog:reload", {
         desc: "read providers.json again",

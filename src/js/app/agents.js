@@ -1,8 +1,7 @@
 // Child sessions from a user catalog. Native stays policy-free; this plugin owns every rule.
-import { root } from "yuke:internal/core";
 import { client } from "yuke:internal/client";
 import { native } from "yuke:internal/native/engine";
-import { sessions, currentSession } from "yuke:internal/session";
+import { currentSession } from "yuke:internal/session";
 import { errorText, tokenLabel } from "yuke:internal/format";
 import { childState, openAgents } from "yuke:internal/agents-ui";
 import { notify } from "yuke:internal/kernel";
@@ -215,12 +214,13 @@ export function agents(options) {
             // The spawn row reads its child from this cache. A first sight starts one read, and the read rebuilds the row.
             /** @type {Map<string, ChildEntry>} */
             const children = new Map();
+            // The chat capability rebuilds the spawn row; without a chat pane, no row shows the child.
+            /** @type {import("./types/ext.js").ChatService | null} */
+            let chat = null;
             /** @param {ChildEntry} entry */
             function rebuild(entry) {
                 const site = entry.view?.site;
-                if (!site) return;
-                for (const session of sessions) if (session.sessionId === site.session_id) for (const view of session.views) view.transcript.refreshRow(site.message_id, site.part_id);
-                root.invalidate();
+                if (site && chat) chat.refresh(site.message_id, site.part_id);
             }
             /** @param {string} id */
             function read(id) {
@@ -258,12 +258,14 @@ export function agents(options) {
             });
             ctx.effect(() => () => children.clear());
 
-            // The labels name agent calls in the chat transcript, so they live as long as the chat service does.
+            // The header words name agent calls in any transcript look, so they live as long as the chat service does.
             ctx.inject(["chat"], (ctx) => {
-                ctx.chat.labels({ tools: {
-                    spawn_agent: { category: "agent", present: (o, _raw, part) => ({ verb: "Agent", subject: String(o.agent || catalog.default) + liveSuffix(part) }) },
-                    send_agent_input: { category: "agent", present: (o) => ({ verb: "Send", subject: String(o.child || "") }) },
-                    stop_agent: { category: "agent", present: (o) => ({ verb: "Stop", subject: String(o.child || "") }) },
+                chat = ctx.chat;
+                ctx.effect(() => () => { chat = null; });
+                ctx.chat.render({ tools: {
+                    spawn_agent: (o, part) => ({ verb: "agent", subject: String(o.agent || catalog.default) + liveSuffix(part), category: "agent" }),
+                    send_agent_input: (o) => ({ verb: "send", subject: String(o.child || ""), category: "agent" }),
+                    stop_agent: (o) => ({ verb: "stop", subject: String(o.child || ""), category: "agent" }),
                 }, sources: {
                     parent_instruction: () => "From the parent session",
                     child_report: reportLabel,

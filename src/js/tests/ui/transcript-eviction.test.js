@@ -1,6 +1,9 @@
 import { check } from "yuke:internal/test";
 import { term } from "yuke:internal/native/term";
-import { Transcript } from "yuke:internal/transcript";
+import { Transcript, registerRender, toggleExpandAll } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
+
+registerRender(defaultRender);
 const messages = [];
 const parts = {};
 for (let i = 0; i < 40; i++) {
@@ -9,7 +12,7 @@ for (let i = 0; i < 40; i++) {
   parts[id] = [{ type: "text", id: 0, text: "alpha " + i + " bravo charlie delta ".repeat(4) + "\n```zig\nconst x = " + i + ";\n```" }];
 }
 parts.m0 = [{ type: "reasoning", id: 1, text: "old thought" }, { type: "text", id: 2, text: "old answer" }];
-parts.m20 = [{ type: "reasoning", id: 1, text: "middle thought" }, { type: "text", id: 2, text: "middle answer" }];
+parts.m20 = [{ type: "reasoning", id: 1, text: "middle thought" }, { type: "text", id: 2, text: "middle answer" }, { type: "tool", id: 4, name: "exec", arguments: '{"command":"seq"}', state: { type: "completed", output: Array.from({ length: 12 }, (_, i) => "line-" + i).join("\n") } }];
 parts.m39 = [{ type: "tool", id: 3, name: "exec", arguments: '{"command":"old"}', state: { type: "completed", output: "old output" } }];
 const make = () => new Transcript({ partsOf: (id) => parts[id] || [] });
 const t = make();
@@ -58,9 +61,9 @@ t.clearSelection();
 t.rows(18, narrow.length - 8, 8);
 check("middle-evicted", !t._rows.has("m20"));
 const before = t.rowCount(18);
-t.togglePart("m20", 1);
+t.togglePart("m20", 4);
 check("fold-count", t.rowCount(18) > before);
-check("fold-marker", t.rows(18, t._globalRow({ id: "m20", row: 0, col: 0 }), 4).some((r) => r.kind === "reasoning-body"));
+check("fold-shows", t.rows(18, t._globalRow({ id: "m20", row: 0, col: 0 }), t.rowCountOf("m20")).some((r) => r.text === "line-0"));
 
 // The viewport stays cached whole, and a part motion reads only its neighbours.
 t.rows(18, 0, 8);
@@ -71,6 +74,19 @@ builds = 0;
 const next = t.partStep({ id: "m25", row: 0, col: 0 }, 1);
 const previous = t.partStep(next, -1);
 check("part-motion-local", next?.id === "m26" && previous?.id === "m25" && builds <= 4);
+
+// ctrl+o opens a part above the pane, and the text at the top of the pane stays at the top.
+const firstText = (row) => (row.text ?? (row.segments || []).map((s) => s.text).join(""));
+t.togglePart("m20", 4);
+t.rowCount(18);
+t.pager.stuck = false;
+t.pager.scroll = t._globalRow({ id: "m25", row: 0, col: 0 });
+const scrolled = t.pager.scroll;
+const topText = firstText(t.rows(18, scrolled, 1)[0]);
+toggleExpandAll();
+t.rowCount(18);
+check("expand-keeps-top", t.pager.scroll > scrolled && firstText(t.rows(18, t.pager.scroll, 1)[0]) === topText);
+toggleExpandAll();
 
 // Message ids repeat across sessions, so an empty outline clears even a message whose fold moved after its eviction.
 parts.m20 = [{ type: "text", id: 2, text: "other session" }];

@@ -9,10 +9,8 @@ import { focusedChat } from "yuke:internal/chat-view";
 /** @import { ChatView } from "yuke:internal/chat-view" */
 /** @import { Picker, Window } from "yuke:internal/ui" */
 /** @import { CommandListing } from "./types/core.js" */
-/** @import { Border, ListItem, PickOptions } from "./types/ui.js" */
+/** @import { ListItem } from "./types/ui.js" */
 /** @typedef {CommandListing & { hint: string }} Entry */
-/** @typedef {PickOptions<Entry>["keymap"]} FloatKeymap */
-/** @typedef {{ rows?: number, border?: Border, format?: (entry: Entry, column: number) => string | ListItem, filterText?: (entry: Entry) => string, keymap?: FloatKeymap }} CommandUiConfig */
 /** @typedef {{ word: string, rest: string, complete: boolean }} SlashLine */
 
 /** @returns {Entry[]} */
@@ -69,16 +67,10 @@ function run(e, rest) {
   return command.perform(e.name, ...(rest ? [rest] : []));
 }
 
-/** @param {CommandUiConfig} [cfg] */
-export function commandUi(cfg = {}) {
-  return {
+export const commandUi = {
   name: "command-ui",
   /** @param {Context} ctx @returns {void} */
   apply(ctx) {
-    const rows = cfg.rows || 6;
-    const border = cfg.border || "none";
-    const format = cfg.format || formatRow;
-
     ctx.inject(["tui"], (ctx) => {
       // One float, for the composer that has the focus.
       /** @type {{ chat: ChatView, picker: Picker<Entry>, win: Window, query: string } | null} */
@@ -104,19 +96,18 @@ export function commandUi(cfg = {}) {
         const p = ui.select(ranked, {
           name: "slash",
           modal: false,
-          border,
+          border: "none",
           panelGroup: "UIFloat",
           anchor: () => chat.composer.rect,
-          maxRows: rows,
+          maxRows: 6,
           key: (e) => e.name,
-          format: (e) => format(e, col),
+          format: (e) => formatRow(e, col),
           keymap: {
             up: "prev",
             "ctrl+p": "prev",
             down: "next",
             "ctrl+n": "next",
             tab: (_ev, content) => complete(chat, content.list.selected()),
-            ...(cfg.keymap || {}),
           },
           // The picker closes its own window on accept and cancel, so the handle drops here.
           onAccept: (e) => {
@@ -176,14 +167,14 @@ export function commandUi(cfg = {}) {
         const chat = focusedChat();
         const p = ui.pick({
           name: "commands",
-          border,
+          border: "none",
           panelGroup: "UIFloat",
           anchor: chat ? () => chat.composer.rect : null,
-          maxRows: rows,
+          maxRows: 6,
           items: all,
           key: (e) => e.name,
-          filterText: cfg.filterText || ((e) => wordOf(e) + " " + e.desc),
-          format: (e) => format(e, col),
+          filterText: (e) => wordOf(e) + " " + e.desc,
+          format: (e) => formatRow(e, col),
           onAccept: (e) => run(e, ""),
         });
         ctx.tui.overlay(p.win);
@@ -194,5 +185,4 @@ export function commandUi(cfg = {}) {
       ctx.tui.keymap.add({ "ctrl+p": "ui:palette" });
     });
   },
-  };
-}
+};

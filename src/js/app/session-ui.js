@@ -2,7 +2,7 @@
 import { command } from "yuke:internal/core";
 import { notify } from "yuke:internal/kernel";
 import { ui } from "yuke:internal/ui";
-import { catalogOf, reloadCatalog, providerState, providerStateLabel } from "yuke:internal/catalog";
+import { catalog, reloadCatalog, providerState, providerStateLabel } from "yuke:internal/catalog";
 
 /** @import { Composer } from "yuke:internal/ui" */
 /** @import { InjectContext } from "./types/ext.js" */
@@ -13,7 +13,7 @@ import { catalogOf, reloadCatalog, providerState, providerStateLabel } from "yuk
 export function openModelPicker(ctx, pane, currentId, query) {
   const show = () => {
     // Code-unit order: localeCompare NFC-normalizes and traps in ReleaseSafe QuickJS.
-    const models = catalogOf().models.slice().sort((a, b) => (a.provider < b.provider ? -1 : a.provider > b.provider ? 1 : 0) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    const models = catalog.models.slice().sort((a, b) => (a.provider < b.provider ? -1 : a.provider > b.provider ? 1 : 0) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     if (models.length === 0) return notify("info", "no model in the catalog", "model");
     if (query) {
       const m = models.find((x) => x.selector === query || x.id === query || x.name === query);

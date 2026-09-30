@@ -8,6 +8,10 @@ import { Session, sessionsPlugin } from "yuke:internal/session";
 import { transcriptVim } from "yuke:internal/transcript-vim";
 import { register } from "yuke:internal/vim";
 import { tuiPlugin } from "yuke:internal/tui";
+import { registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
+
+registerRender(defaultRender);
 plugins.use(tuiPlugin);
 // The chat plugin tracks the current chat, which the vim layers and the chat commands read.
 plugins.use(sessionsPlugin);
@@ -67,7 +71,7 @@ check("row-start", v.cursor().x === c0.x);
 root.onEvent(key("char", "g"));
 root.onEvent(key("char", "g"));
 root.onEvent(key("char", "$"));
-check("transcript-dollar", v.cursor().x === 2 + v.transcript.rowTextAt("a1", 0).length - 1);
+check("transcript-dollar", v.cursor().x === 1 + v.transcript.rowTextAt("a1", 0).length - 1);
 
 // "gg" reaches the first row and "G" the last. A shifted letter keeps its case.
 root.onEvent(key("char", "g"));
@@ -178,6 +182,34 @@ check("region-clears-selection", v.transcript.selection === null);
 v.focusRegion("transcript");
 root.onEvent(key("char", "l"));
 check("region-clears-visual", v.transcript.selection === null);
+
+// A scroll that leaves the cursor behind carries it to the nearest drawn row, as in vim.
+body.long = Array.from({ length: 40 }, (_, i) => "line " + i).join("\n\n");
+v.transcript.setOutline([{ id: "long", type: "assistant" }], null);
+paint();
+root.onEvent(key("char", "g"));
+root.onEvent(key("char", "g"));
+v.transcript.pager.scrollBy(30);
+paint();
+const carried = v.cursor();
+const pane = v.transcript.pager.rect();
+check("scroll-carries-cursor", !!carried && !!pane && carried.visible && carried.y >= pane.y && carried.y < pane.y + pane.h);
+
+// A rebuild can put the cursor source under markup, so the cursor takes the next drawn text, and a later scroll stays.
+root.onEvent(key("char", "g"));
+root.onEvent(key("char", "g"));
+body.long = "*" + body.long.replace("\n", "*\n");
+v.transcript.setOutline([], null);
+v.transcript.setOutline([{ id: "long", type: "assistant" }], null);
+paint();
+v.cursor();
+v.transcript.pager.scrollBy(30);
+const scrolled = v.transcript.pager.scroll;
+paint();
+v.cursor();
+check("rebuild-scroll-holds", scrolled > 0 && v.transcript.pager.scroll === scrolled);
+v.transcript.setOutline([{ id: "a1", type: "assistant" }], null);
+paint();
 
 // A focus jump from another pane hands the keyboard back to the composer.
 const side = { name: "sessions", layout() {}, draw() {}, onKey() { return false; } };

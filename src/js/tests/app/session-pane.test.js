@@ -4,8 +4,11 @@ import { events } from "yuke:internal/kernel";
 import { plugins } from "yuke:internal/ext";
 import { client } from "yuke:internal/client";
 import { tuiPlugin } from "yuke:internal/tui";
-import { Transcript } from "yuke:internal/transcript";
-import { Session, sessions, currentPane, currentSession, openSession, sessionsPlugin } from "yuke:internal/session";
+import { Transcript, registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
+import { Session, sessions, currentPane, currentSession, showSession, sessionsPlugin } from "yuke:internal/session";
+
+registerRender(defaultRender);
 
 const closed = [];
 client.sessionOpen = () => true;
@@ -24,7 +27,7 @@ session.join(pane);
 root.setRoot(Node.leaf(pane));
 check("focus-makes-current", currentPane() === pane && currentSession() === session);
 
-openSession(pane, "s1");
+showSession(pane, "s1");
 let actives = 0;
 pane.transcript.setActive = () => { actives++; };
 events.emit("session.changed", { type: "session", session: "s1", kind: "active", id: 3, facts: [] });

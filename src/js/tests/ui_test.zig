@@ -87,19 +87,18 @@ test "yuke:internal/ui tool parts render, collapse, copy, and toggle" {
     try support.runPainted(12, 40, "ui/ui-components.test.js");
 }
 
-test "yuke:internal/ui action groups cross reasoning and full tool fields stay available" {
-    try support.run("ui/action-groups.test.js");
+test "the tree example rebuilds the grouped transcript through the render API" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try host.evalModule("import { treeLook } from \"" ++ @import("test_paths").tree_transcript ++ "\";\nglobalThis.treeLook = treeLook;\n", "tree-import.js");
+    try support.eval(host, "ui/tree-transcript.test.js");
 }
 
-test "yuke:internal/ui hidden tool deltas keep rows stable and details fresh" {
+test "yuke:internal/ui hidden tool deltas keep rows stable and the output field reads fresh" {
     try support.run("ui/hidden-deltas.test.js");
 }
 
-test "yuke:internal/ui action plans stay aligned after eviction and outline changes" {
-    try support.run("ui/action-plan-order.test.js");
-}
-
-test "yuke:internal/ui reasoning auto-collapses when assistant text starts and J/K walks parts" {
+test "yuke:internal/ui reasoning shows in full, a fold choice holds, and J/K walks parts" {
     try support.runPainted(12, 40, "ui/reason.test.js");
 }
 

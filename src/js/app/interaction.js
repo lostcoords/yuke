@@ -59,19 +59,6 @@ function inputRequest(title, placeholder, secret = false) {
   return request;
 }
 
-/** @param {unknown} level @returns {"info" | "warn" | "error"} */
-function noticeLevel(level) {
-  if (level !== "info" && level !== "warn" && level !== "error") throw new TypeError("notify level is invalid");
-  return level;
-}
-
-// A wrap reuses an id the host may still hold, and the host answers `Duplicate` if it does.
-function allocateId() {
-  const id = nextId;
-  nextId = nextId === MAX_SAFE_ID ? 1 : nextId + 1;
-  return id;
-}
-
 /** @param {CancellationSignal | undefined} signal @param {() => void} canceled @returns {() => void} */
 export function watchCancellation(signal, canceled) {
   if (!signal) return () => {};
@@ -85,16 +72,9 @@ export function watchCancellation(signal, canceled) {
 const answerers = [];
 let pending = 0;
 
-function unavailable() {
-  return Object.assign(new Error("no interaction answerer is installed"), { name: "InteractionUnavailable" });
-}
-
 export const interaction = {
   /** @param {Answerer} answerer @returns {Disposer} */
   install(answerer) {
-    if (!answerer || typeof answerer.interactive !== "boolean" || (answerer.interactive && typeof answerer.open !== "function")) {
-      throw new TypeError("an answerer needs interactive and an open method for prompts");
-    }
     /** @type {Registration} */
     const entry = { answerer, requests: new Set() };
     answerers.push(entry);
@@ -110,11 +90,10 @@ export const interaction = {
 /** @param {Context} ctx @param {InteractionRequest} request @param {InteractionOptions} [options] @returns {Promise<any>} */
 function ask(ctx, request, options) {
   return new Promise((resolve, reject) => {
-    if (options !== undefined && (options === null || typeof options !== "object" || Array.isArray(options))) throw new TypeError("interaction options must be an object");
     if (options?.signal !== undefined) native.validateSignal(options.signal);
     if (!ctx.alive || options?.signal?.aborted) { resolve(undefined); return; }
     const entry = answerers[answerers.length - 1];
-    if (!entry) { reject(unavailable()); return; }
+    if (!entry) { reject(Object.assign(new Error("no interaction answerer is installed"), { name: "InteractionUnavailable" })); return; }
     if (!entry.answerer.interactive) {
       notify("warn", "denied: " + request.title, ctx.id);
       resolve(request.type === "confirm" ? false : undefined);
@@ -180,13 +159,11 @@ export function bindInteraction(ctx) {
     deviceLogin(start, outcome, options) {
       text(start?.verification_url, "verification URL");
       text(start?.user_code, "user code");
-      if (!(outcome instanceof Promise)) throw new TypeError("the login outcome must be a promise");
       return ask(ctx, { type: "device_login", title: "Provider login", start, outcome }, options);
     },
     // A notification needs no answerer, so a plugin can notify before any frontend starts.
     notify(message, level = "info") {
       text(message, "notify message");
-      noticeLevel(level);
       if (ctx.alive) notify(level, message, ctx.id);
     },
   };
@@ -201,7 +178,9 @@ const rpcAnswerer = {
       request.outcome.then(resolve, reject);
       return watchCancellation(options?.signal, () => resolve(undefined));
     }
-    const id = allocateId();
+    // A wrap reuses an id the host may still hold, and the host answers `Duplicate` if it does.
+    const id = nextId;
+    nextId = nextId === MAX_SAFE_ID ? 1 : nextId + 1;
     native.request(id, JSON.stringify(request), options?.signal).then(resolve, reject);
     return () => { native.cancel(id); };
   },

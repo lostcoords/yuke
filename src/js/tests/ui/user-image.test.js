@@ -1,5 +1,8 @@
 import { check } from "yuke:internal/test";
-import { Transcript } from "yuke:internal/transcript";
+import { Transcript, registerRender } from "yuke:internal/transcript";
+import { defaultRender } from "yuke:internal/transcript-view";
+
+registerRender(defaultRender);
 const png = { hash: "a".repeat(64), mime: "image/png", bytes: 12288 };
 const jpg = { hash: "b".repeat(64), mime: "image/jpeg", bytes: 2200000 };
 const tiny = { hash: "c".repeat(64), mime: "image/gif", bytes: 900 };
