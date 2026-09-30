@@ -86,11 +86,12 @@ c.tui.overlay(win); // nothing shows until overlay
 
 - For a one-line question, use `c.interaction.confirm`, `select`, or `input`. They return a promise, which resolves to `undefined` when the user cancels.
 - For a short message, use `c.interaction.notify(message, level?)`. It shows a toast.
-- To change the draft, use `currentPane()?.composer?.input` (`yuke:session`): `insert(text)` types at the caret, and `setText(text)` replaces the draft.
+- To change the draft, use `currentPane()?.composer?.input` (`yuke:session`): `insert(text)` types at the caret, and `setText(text)` replaces the draft. See [Chat and editing APIs](plugins.md#chat-and-editing-apis).
 - `c.tui.split("row" | "col", view)` adds a pane. `c.tui.root` is the window tree.
 - `layout` (`yuke:ui`) solves a row or a column of `fixed`, `fit`, and `grow` cells into rects. [`examples/sidebar.js`](examples/sidebar.js) keeps a right column in each chat pane with it.
 - `List` is a scrollable list inside your own view; `Window` frames a view, and `borders` names its glyph sets.
 - `attachPath(composer, text, from)` (`yuke:chat`) attaches the image file that a pasted path names.
+- For modal composer and transcript keys, see [Vim plugins](vim.md).
 
 ## Transcript
 

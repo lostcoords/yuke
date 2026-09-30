@@ -29,7 +29,7 @@ plugins.use({
 });
 ```
 
-[`examples/plugin.js`](examples/plugin.js) adds a command, a key, a status bar item, a tool, and a hook.
+[`examples/plugin.js`](examples/plugin.js) adds a command, a key, a status item, a model tool, an event listener, and a hook.
 
 ## Modules
 
@@ -45,11 +45,24 @@ An import of `yuke:internal/*` throws. A relative import works. yuke has no pack
 
 yuke runs ES2025 JavaScript (QuickJS-ng), with no Node or browser API: use the `yuke` modules for files, processes, and the network. A plugin runs with your user rights, so it can read and write any file and run any command.
 
+## Modes
+
+The TUI and `yuke check` load the [bundled plugins](plugins.md#bundled-plugins) and provide the `tui` capability. `yuke -p` and `yuke --rpc` do neither. Put every command, key, status item, dialog, and other TUI call inside `ctx.inject(["tui"], ...)`. Put model tools and engine hooks outside that block when all modes need them.
+
 ## Check a change
 
-1. Type-check the profile, when `tsc` exists: `tsc -p <profile>/jsconfig.json`.
-2. Run `yuke check`. It loads the profile as the TUI does, without a terminal, and prints each debug line, warning, and error to stderr. It counts only warnings and errors. It exits with 1 on an error. It runs your plugins and opens the session store, so it is not read-only.
-3. Restart yuke. yuke runs `index.js` only at startup. `/reload` reads `AGENTS.md` and the skills again, not the profile.
+Use the full workflow:
+
+```sh
+tsc -p <profile>/jsconfig.json
+yuke check
+# Restart yuke.
+```
+
+- `tsc` checks the profile against the declarations of the installed release.
+- `yuke check` loads the TUI composition without a terminal. It runs TUI injection blocks and prints debug lines, warnings, and errors to stderr. It counts only warnings and errors. It exits with status 1 on an error.
+- `yuke check` runs plugins and opens the session store. It is not read-only.
+- yuke runs `index.js` only at startup. `/reload` reloads `AGENTS.md` and skills. It does not reload the profile.
 
 ## Debug a plugin
 

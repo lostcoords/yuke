@@ -33,7 +33,9 @@ A client can call it before other methods to check compatibility. The server has
 
 ## Customize yuke
 
-A profile (`~/.config/yuke/index.js`) changes yuke: commands, keys, tools, hooks, plugins, and config. The guides are in [`docs/`](docs/index.md), and the installer ships them in `~/.local/lib/yuke/docs`. The installer also links the `yuke` agent skill into `~/.agents/skills/yuke`, so a coding agent can change a profile without the yuke source.
+A profile (`~/.config/yuke/index.js`) changes yuke: commands, keys, tools, hooks, plugins, and config. The [Markdown guides](docs/index.md) explain concepts and recipes. The generated `yuke.d.ts` is the exact public API reference. [`docs/examples/`](docs/examples/) contains checked patterns. Source inspection is only for undocumented behavior or implementation details.
+
+The installer ships the guides in `~/.local/lib/yuke/docs`. It also links the `yuke` agent skill into `~/.agents/skills/yuke`, so a coding agent can change a profile without the yuke source.
 
 ## License
 

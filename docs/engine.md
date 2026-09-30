@@ -1,86 +1,254 @@
-# Engine: tools, hooks, config, prompt, subagents, MCP
+# Engine
 
-These parts run in every mode: the TUI, `yuke -p`, and `yuke --rpc`. Do not put them in an `inject(["tui"])` block.
+Model tools, hooks, config, subagents, and MCP can run in every mode. Register them outside `ctx.inject(["tui"], ...)`. Only their commands and dialogs need the TUI.
 
 ## Model tools
 
-`ctx.tools.define(definition)`
+Use `ctx.tools.define(definition)`.
 
-- `definition` is `ToolDefinition`: `name`, `description`, `parameters` (a JSON Schema object), `execute(args, signal, toolCtx)`, and `defer?`.
-- `args` is any JSON that the model wrote. Check it before use.
-- `execute` returns a promise. A string goes to the model as is, and another value goes as JSON. A throw becomes an error result.
+- `definition` is `ToolDefinition`: `name`, `description`, `parameters`, `execute(args, signal, toolCtx)`, and optional `defer`.
+- `parameters` is a JSON Schema object. It needs `type: "object"` and `properties`.
+- `args` is any JSON that the model wrote. Validate it before use.
+- `execute` returns a promise. A string reaches the model as is. Another value reaches it as JSON. A throw becomes an error result.
 - `toolCtx.output(text)` streams live output to the user. `toolCtx.workspaceRoot` is the session root.
-- Pass `signal` to `fetch` and `exec`, so an interrupt stops the work. `spawn` takes no signal: call `child.kill()` when the signal aborts.
-- A tool that `index.js` defines at startup, outside `inject`, replaces a built-in tool with the same name (`read`, `write`, `edit`, `exec`, `jobs`, `skill`). A later definition of a taken name throws.
-- `defer: true` loads the tool only after a tool search names it. It needs a `tool_search` tool in the run, such as the one the `mcp` plugin adds while a server is connected. Without one, the tool loads at once.
+- Pass `signal` to `fetch` and `exec`. `spawn` takes no signal, so kill its child when the signal aborts.
+- A tool that `index.js` defines at startup replaces a built-in tool with the same name: `read`, `write`, `edit`, `exec`, `jobs`, or `skill`.
+- `defer: true` waits for a `tool_search` tool to load it. Without a search tool, the engine loads it at once.
+
+[`examples/plugin.js`](examples/plugin.js) defines a complete model tool.
 
 ## Engine hooks
 
-`ctx.hook(point, handler)`
+Use `ctx.hook(point, handler)`. Search `HookPayloads` and `HookReplacements` in `yuke.d.ts` before you write a handler.
 
-A handler returns `{ block: reason }` to stop the action, `{ replace: value }` to change it, or nothing to continue. The value is the whole new payload, not a patch. Handlers run in registration order, and each handler reads the value of the one before it. So spread the payload and change only the fields in the table, for example `{ replace: { ...payload, tools } }`: a later handler, such as a built-in one, can read `context`. A throw blocks the action. Search `HookPayloads` and `HookReplacements` in `yuke.d.ts`.
+A handler can:
 
-| Point | When | `replace` value |
+```js
+// Continue.
+ctx.hook("input.before", () => undefined);
+
+// Block.
+ctx.hook("tool.before", (call) => {
+  if (call.name === "exec" && call.arguments.includes("rm -rf /")) {
+    return { block: "refused by the profile" };
+  }
+});
+
+// Replace the complete replacement value, not a patch.
+ctx.hook("tools.select", (payload) => ({
+  replace: { tools: payload.tools.filter((name) => name !== "exec") },
+}));
+
+// Await an approval before the action continues.
+ctx.hook("tool.before", async (call) => {
+  if (call.name !== "exec") return undefined;
+  const ok = await ctx.interaction.confirm("Allow exec?", call.arguments);
+  return ok ? undefined : { block: "exec was not approved" };
+});
+```
+
+Handlers run in registration order. Each handler reads the changes from earlier handlers. A handler can be async, and the engine waits for it. A throw blocks the action and reports a fault.
+
+A payload can contain context that its replacement omits. Return the full shape from `HookReplacements`, not the full payload and not one changed field. For example, a `request.build` replacement must include `model`, `system`, `tools`, and `max_output_tokens`.
+
+| Point | When | Complete `replace` value |
 |---|---|---|
-| `tools.select` | a run chooses its tools | `{ tools }` |
+| `tools.select` | a run chooses tools | `{ tools }` |
 | `tool.before` | before a tool call; `arguments` is JSON text | `{ name, arguments }` |
-| `tool.after` | after a tool call | the tool result |
+| `tool.after` | after a tool call | `ToolOutcome` |
 | `prompt.build` | the system prompt builds | `{ sections }` |
 | `request.build` | before a model request | `{ model, system, tools, max_output_tokens }` |
-| `request.send` | the raw HTTP request | `{ url, headers, body }` |
+| `request.send` | before the raw HTTP request | `{ url, headers, body }` |
 | `compaction.prompt` | a compaction starts | `{ prompt }` |
-| `input.before` | the user sends input | `{ content }` |
+| `input.before` | input enters a session | `{ content }` |
 
-The payloads of `tools.select`, `tool.before`, `request.build`, `prompt.build`, and `compaction.prompt` have `context` (`session_id`, `depth`, `agent_name`, `workspace`), so a handler can act for one agent or one project only.
+`tools.select`, `tool.before`, `request.build`, `prompt.build`, and `compaction.prompt` include context such as `session_id`, `depth`, `agent_name`, and `workspace`. Use it to scope a hook. Hooks run in the TUI, `yuke -p`, and `yuke --rpc` when the profile registers them outside a TUI injection.
 
-## Config
+## Config and prompt
 
-`defineConfig(patch)`
-
-Call it in `index.js`. An unknown key throws.
+Call `defineConfig(patch)` in `index.js`. An unknown key throws.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `systemPrompt` | `null` (the built-in prompt) | Replaces the base prompt. `${workspace}`, `${session_id}`, and `${agent_name}` expand. |
+| `systemPrompt` | `null` | Replace the base prompt. `${workspace}`, `${session_id}`, and `${agent_name}` expand. |
 | `mouse.copyOnSelect` | `true` | Copy a mouse selection. |
 | `mouse.scrollLines` | `3` | Lines per wheel step, 1 to 20. |
-| `keymap.chordMs` | `1000` | The wait for the next key of a chord, 1 to 10000. |
+| `keymap.chordMs` | `1000` | Milliseconds to wait for the next chord key, 1 to 10000. |
 
-To add text to the prompt and keep the rest, use the `prompt.build` hook. The section keys are `base` (or `system_prompt`), `instructions`, `skills`, and `environment`.
+Use `prompt.build` to add text while you keep the built-in prompt. Search `PromptBuild` and `PromptSection` for the exact shape.
 
 ## Subagents
 
-`agents(options)` from `yuke:plugins`:
+The optional `agents` plugin adds child sessions and three model tools. This is a complete `index.js`:
 
 ```js
+import { plugins } from "yuke";
+import { agents } from "yuke:plugins";
+
 plugins.use(agents({
   catalog: {
-    research: { description: "Narrow research and simple edits.", tools: ["read", "exec"] },
-    review: { description: "Broader work and review.", model: "provider/model" },
+    research: {
+      description: "Inspect the requested area and report evidence.",
+      model: "provider/model", // Replace this selector, or omit it to inherit the parent model.
+      prompt: "Do not edit files.",
+      tools: ["read", "exec", "skill"],
+    },
+    edit: {
+      description: "Make one focused code change and verify it.",
+      tools: ["read", "write", "edit", "exec", "skill"],
+    },
   },
   default: "research",
   maxDepth: 2,
+  maxConcurrent: 4,
+  maxRounds: 30,
 }));
 ```
 
-- Each catalog key names one kind of child. A key matches `^[a-z][a-z0-9_-]{0,63}$`, and `root` is reserved.
-- A row sets `description`, `model`, `prompt`, and `tools`. A row without `model` runs on the model of its parent session.
-- `tools` is a subset of `read`, `write`, `edit`, `exec`, `skill`.
-- `default` names the row that a spawn uses when it names none. A catalog with one row needs no `default`.
-- `maxDepth` (default `1`, direct children only) caps the depth below the root. At the limit, the spawn tools are absent.
-- `maxConcurrent` (default `8`) caps the active descendants of the whole tree. Extra work waits in a durable queue.
-- `maxRounds` caps each child run. A capped run reports its partial output.
-- The three limits are positive 32-bit integers. `/agents` shows the agent tree of the current session, switches to an agent, and stops agent work.
+Each catalog key names a child kind. It matches `^[a-z][a-z0-9_-]{0,63}$`; `root` is reserved.
+
+| Row field | Meaning |
+|---|---|
+| `description` | Tells the parent model when to choose this kind. |
+| `model` | Selects the child model. Without it, the child uses the parent model. |
+| `prompt` | Appends instructions after the fixed child policy. |
+| `tools` | Restricts the child to a nonempty unique subset of `read`, `write`, `edit`, `exec`, and `skill`. |
+
+A restricted `tools` row also removes the spawn tools from that child. Omit `tools` to keep the normal loadout. `default` selects the row when `spawn_agent` omits `agent`. A one-row catalog needs no `default`.
+
+| Limit | Behavior |
+|---|---|
+| `maxDepth` | Defaults to `1`. The root is depth zero. At the limit, spawn tools are absent. |
+| `maxConcurrent` | Defaults to `8`. It counts active descendants across the tree, not the root. Extra runs wait in the durable queue. |
+| `maxRounds` | Caps each child run. Without it, the plugin sets no child round cap. A capped run reports partial output. |
+
+All three values are positive 32-bit integers.
+
+### Spawn tools
+
+| Tool | Arguments | Result and behavior |
+|---|---|---|
+| `spawn_agent` | `{ message, agent? }` | Starts a new child and returns its session ID, kind, model, and initial state. It does not wait for completion. |
+| `send_agent_input` | `{ child, message }` | Sends a follow-up to the child session ID. The child keeps its transcript. |
+| `stop_agent` | `{ child }` | Stops the current child run and drops its queued input. It keeps the transcript. Completed side effects remain. |
+
+`message` must be nonempty. `agent` must name a catalog row. `child` must be the 32-character session ID of a direct child of the calling parent.
+
+A child uses the parent workspace in a separate session and transcript. It reports completion, cancellation, and failure to the parent. A failed or capped run marks its output as partial. A report waits while its parent is busy. It starts a parent follow-up after the parent becomes idle and capacity is available. A follow-up creates a new run in the same child transcript and produces another report.
+
+`/agents` shows the root and all descendants of the current session. It can switch to a child or stop its work. Disposing the plugin removes its tools and restores the previous depth and concurrency limits. Existing sessions and durable queued records remain.
+
+See [`examples/agents.js`](examples/agents.js) and search `AgentRow` and `AgentsOptions` for exact types.
 
 ## MCP servers
 
-`mcp(options)` from `yuke:plugins`:
+The optional `mcp` plugin connects local stdio and remote HTTP servers. Search `ServerConfig`, `OAuthConfig`, and `McpOptions` in `yuke.d.ts` for exact fields.
+
+### Local server in `index.js`
 
 ```js
-plugins.use(mcp({ servers: { docs: { command: "docs-mcp", args: ["--stdio"] } } }));
+import { plugins } from "yuke";
+import { mcp } from "yuke:plugins";
+
+plugins.use(mcp({
+  servers: {
+    docs: {
+      type: "stdio",
+      command: "docs-mcp",
+      args: ["--stdio"],
+      env: { DOCS_ROOT: "${HOME}/docs" },
+      cwd: "${HOME}",
+    },
+  },
+}));
 ```
 
-- A server is local (`command`, `args`, `env`, `cwd`) or remote (`url`, `headers`, `oauth`).
-- yuke also reads `<profile>/.mcp.json` and `<workspace>/.mcp.json`. The first definition of a name wins: `index.js`, then the profile file, then the workspace file.
-- yuke asks the user before it trusts a workspace `.mcp.json`. Do not bypass that question.
-- Commands: `mcp:show` (`/mcp`), `mcp:login` (`/mcp-login`), `mcp:logout` (`/mcp-logout`), `mcp:reset-trust` (`/mcp-reset-trust`).
+The command starts directly from its argument array. It does not use a shell. `env` adds or replaces child environment values.
+
+### Profile `.mcp.json`
+
+Place this file next to profile `index.js`:
+
+```json
+{
+  "mcpServers": {
+    "docs": {
+      "type": "stdio",
+      "command": "docs-mcp",
+      "args": ["--stdio"],
+      "env": { "DOCS_ROOT": "${HOME}/docs" }
+    }
+  }
+}
+```
+
+### Workspace `.mcp.json`
+
+A workspace file uses the same envelope. Commit only commands that are safe for every user of the workspace:
+
+```json
+{
+  "mcpServers": {
+    "project": {
+      "type": "stdio",
+      "command": "project-mcp",
+      "args": ["--root", "."]
+    }
+  }
+}
+```
+
+yuke asks the user before it starts each workspace server. The decision belongs to that workspace, server name, and command or URL identity. A changed identity asks again. Do not bypass this prompt. `/mcp-reset-trust` forgets workspace decisions and stops those servers until the user trusts them again. A frontend that cannot ask does not start an untrusted server.
+
+### Remote server, headers, and OAuth
+
+```json
+{
+  "mcpServers": {
+    "remote-docs": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "X-Tenant": "${MCP_TENANT}" },
+      "oauth": {
+        "clientId": "yuke-profile",
+        "scopes": ["mcp:tools"]
+      }
+    }
+  }
+}
+```
+
+Remote `type` can be `http` for Streamable HTTP or `sse` for the legacy transport. Yuke uses OAuth by default unless `oauth` is `false` or the headers set `Authorization`. `oauth` can set `clientId`, `clientSecret`, and `scopes`. Do not put a client secret in a workspace file or in git.
+
+For a fixed bearer token, keep the value in the process environment:
+
+```json
+{
+  "url": "https://mcp.example.com/mcp",
+  "headers": { "Authorization": "Bearer ${MCP_TOKEN}" },
+  "oauth": false
+}
+```
+
+`command`, `args`, `env` values, `cwd`, `url`, and header values expand `${NAME}` and `${NAME:-default}`. A missing variable without a default fails that server. The config file contains the variable name, not its credential value.
+
+### Loading and observable states
+
+Sources have first-name precedence:
+
+1. `servers` in `index.js`;
+2. profile `.mcp.json`;
+3. workspace `.mcp.json`.
+
+Trusted servers connect when the plugin loads. `/mcp` shows each server state, transport era, tool list, and public failure text. A bad entry or failed server does not stop other servers. An HTTP 401 can put a server in `needs auth`; use `/mcp-login [name]`. `/mcp-logout <name>` forgets its grant and reconnects. OAuth grants and trust records live in yuke's private data directory, not in `.mcp.json`.
+
+A connected tool is named `mcp_<server>_<tool>`. Unsupported name characters become `_`; long names get a stable suffix. `/mcp` shows the server's original tool names. MCP tools are deferred by default. The plugin exposes `tool_search` while at least one server is connected, and a search loads matching tools. Set `alwaysLoad: true` on a server to make its tools eager.
+
+| Command | Purpose |
+|---|---|
+| `/mcp` | Show server states and tools. |
+| `/mcp-login [name]` | Start browser OAuth for one remote server. Without a name, use the first server that needs auth. |
+| `/mcp-logout <name>` | Forget one remote grant and reconnect. |
+| `/mcp-reset-trust` | Forget workspace trust decisions. |
+
+`enabled: false` disables one server. `startupMs` and `callMs` set plugin defaults in milliseconds. A server `timeout` replaces the call timeout. See [`examples/mcp.js`](examples/mcp.js) for a complete profile example.

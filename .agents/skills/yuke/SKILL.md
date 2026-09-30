@@ -46,7 +46,8 @@ The guides are in `~/.local/lib/yuke/docs/`, the version of the installed yuke. 
 - `profile.md`: files, modules, debugging, the check.
 - `providers.md`: `providers.json`, API keys, login, local servers, custom models.
 - `plugins.md`: lifecycle, events, capabilities, advice, bundled plugins, the chat pane.
-- `ui.md`: commands, keys, the status bar, styles, dialogs, the transcript.
+- `ui.md`: commands, keys, the status bar, styles, dialogs, and transcript renderers.
+- `vim.md`: composer Vim and transcript Vim modes and keys.
 - `engine.md`: model tools, engine hooks, config, the prompt, subagents, MCP.
 - `types.md`: types for your own events and capabilities.
 - `examples/plugin.js`: a complete plugin to copy from.

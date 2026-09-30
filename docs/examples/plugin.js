@@ -3,6 +3,7 @@
 import { plugins } from "yuke";
 
 let sent = 0;
+let completed = 0;
 
 plugins.use({
   name: "example",
@@ -24,15 +25,19 @@ plugins.use({
       return undefined;
     });
 
-    // An engine event can hold many facts, so count in the hook that each input passes.
     ctx.hook("input.before", () => { sent++; return undefined; });
+
+    // An engine fact event passes the whole drain. This listener exists in every mode.
+    ctx.on("run.done", (drain) => {
+      if (drain.type === "session") completed++;
+    });
 
     // The TUI parts. This block runs only while the TUI exists, so `yuke -p` and `yuke --rpc` skip it.
     ctx.inject(["tui"], (c) => {
       // A bare name becomes `example:hello`. A `desc` lists it in the ctrl+p palette, and `slash` adds /hello.
       c.tui.command.add("hello", { desc: "Say hello", slash: true, run: () => { c.interaction.notify("hello from example"); } });
       c.tui.keymap.add({ "ctrl+g": "example:hello" });
-      c.tui.status.add({ side: "right", render: () => (sent > 0 ? "sent " + sent : null) });
+      c.tui.status.add({ side: "right", render: () => (sent > 0 ? "sent " + sent + " · done " + completed : null) });
     });
   },
 });
