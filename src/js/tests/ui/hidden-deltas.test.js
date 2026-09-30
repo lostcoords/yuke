@@ -3,7 +3,7 @@ import { Transcript, registerRender } from "yuke:internal/transcript";
 import { defaultRender } from "yuke:internal/transcript-view";
 
 registerRender(defaultRender);
-// A folded read shows only its header, so an output delta keeps the rows and the selection, and the field still reads fresh.
+// A folded read shows only its header, so an output delta keeps the rows, and the source and the field still read fresh.
 let part = { type: "tool", id: 7, name: "read", arguments: '{"path":"a.txt"}', state: { type: "completed", duration_ms: 1, output: "old" } };
 const copy = (p) => JSON.parse(JSON.stringify(p));
 const t = new Transcript({ partsOf: () => [copy(part)], partOf: () => ({ part: copy(part) }) });
@@ -11,13 +11,11 @@ t.setOutline([], { id: 1, type: "assistant" });
 const rows = () => t.rows(80, 0, t.rowCount(80));
 const text = () => rows().map((r) => r.text || (r.segments || []).map((s) => s.text).join("")).join("\n");
 rows();
-const source = t._sourceOf(1);
-t.select(t.posAtSource(1, 0), t.posAtSource(1, source.length));
 const initial = JSON.stringify(rows());
 part.state.output = "fresh hidden output";
 t.setActive(1, 7);
 check("hidden-rows", JSON.stringify(rows()) === initial);
-check("hidden-selection", t.selectedText(true) === source);
+check("hidden-source", t._sourceOf(1).includes("fresh hidden output"));
 check("hidden-field", t.readField(1, 7, "output") === "fresh hidden output");
 t.togglePart(1, 7);
 check("expand-fresh", text().includes("fresh hidden output"));

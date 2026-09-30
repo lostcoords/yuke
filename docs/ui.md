@@ -122,7 +122,7 @@ ctx.inject(["chat"], (c) => {
 - `sources` sets the label of an input from an engine source, such as a child report.
 - `part(part, env)` answers `{ rows, source }` for one tool or reasoning part. The core builds text parts as markdown, indented by `indent`. `gap` blank rows separate two parts.
 - `message`, `error`, `fold`, `activate`, `sameVisible`, `groupKey`, and `groupHeader` change the rest. Search `interface Render` in `yuke.d.ts`.
-- A row sets `header` on the row that a click folds, and `stop` on each row where part motion lands (J and K in `transcriptVim`). A segment `src`/`srcEnd` indexes `source`, so a copy takes the source text.
+- A row sets `header` on the row that a click folds, and `stop` on each row where part motion lands (J and K in `transcriptVim`). A segment `src`/`srcEnd` indexes `source`, so a copy takes the source text. Answer the same `source` folded and open: a fold changes the rows alone, so the cursor and a selection keep their text across ctrl+o.
 - ctrl+o (`chat:expand-all`) opens or folds every part. A click on a block toggles it. The default exec renderer shows the original command below its header when the header clipped it or flattened a line feed.
 - A row `bg` group is the base style of the complete row. Its background wins over ordinary text backgrounds. An overlay with an explicit background, such as `TxSelect`, wins over the row. A selection keeps every content field that it does not set. A tool block uses `TxToolPendingBg`, `TxToolSuccessBg`, or `TxToolErrorBg`, and a user message uses `TxUser`. The tool backgrounds have no color by default, so a theme sets them. `TxUser` defaults to reverse video and has two cells of horizontal padding when the pane has room.
 

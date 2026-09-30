@@ -102,7 +102,7 @@ function moveSrc(rows, base) {
 
 /**
  * The rows of tool-result views. A one-file diff omits its path. A multi-file or mixed view keeps file paths.
- * `limit` bounds rows. The source keeps each chunk that starts before the limit.
+ * `limit` bounds the rows alone. The source keeps every chunk, so a fold never moves a source offset.
  * @param {readonly Wire.View[]} views @param {number} width @param {number} indent @param {number} [limit] @returns {Rendered}
  */
 export function viewRows(views, width, indent, limit = Infinity) {
@@ -111,12 +111,13 @@ export function viewRows(views, width, indent, limit = Infinity) {
   let source = "";
   /** @param {string} text @param {string} group @returns {void} */
   const add = (text, group) => {
-    if (rows.length >= limit) return;
     if (source) source += "\n";
-    const shown = wrapRows(text, width, group, indent, limit - rows.length);
-    moveSrc(shown, source.length);
+    if (rows.length < limit) {
+      const shown = wrapRows(text, width, group, indent, limit - rows.length);
+      moveSrc(shown, source.length);
+      for (const r of shown) rows.push(r);
+    }
     source += text;
-    for (const r of shown) rows.push(r);
   };
   for (const v of views) {
     if (v.type === "diff") {
@@ -125,11 +126,11 @@ export function viewRows(views, width, indent, limit = Infinity) {
         for (const h of f.hunks) for (const line of h.lines) add(line, line[0] === "+" ? "TxDiffAdd" : line[0] === "-" ? "TxDiffDel" : "TxDiffContext");
       }
     } else if (v.type === "markdown") {
-      if (rows.length >= limit) continue;
       if (source) source += "\n";
       const base = source.length;
       const chunk = normalizeSource(v.text || "");
       source += chunk;
+      if (rows.length >= limit) continue;
       const doc = new Document();
       doc.setText(chunk);
       // The document is new, so its rows belong to this call alone.
@@ -220,20 +221,16 @@ function hint(rows, line) {
   rows.push({ text: line, group: "TxToolHint", indent: PAD });
 }
 
-// The rows of `wrapRows` show `body` in order, so the first and the last row bound the text they show.
-/** @param {TranscriptRow[]} rows @param {TranscriptRow[]} shown @param {string} body @param {string} source @returns {string} The source with the shown text. */
-function addShown(rows, shown, body, source) {
-  const first = shown[0], last = shown[shown.length - 1];
-  if (!first || !last) return source;
-  const from = /** @type {number} */ (first.src);
-  const end = /** @type {number} */ (last.src) + /** @type {string} */ (last.text).length;
-  moveSrc(shown, source.length + 1 - from);
+// The source keeps all of `body` whatever the rows show, so a fold never moves a source offset. `shown` wraps `body` from offset `from`.
+/** @param {TranscriptRow[]} rows @param {TranscriptRow[]} shown @param {string} body @param {number} from @param {string} source @returns {string} The source with `body`. */
+function addBody(rows, shown, body, from, source) {
+  moveSrc(shown, source.length + 1 + from);
   for (const r of shown) rows.push(r);
-  return source + "\n" + body.slice(from, end);
+  return source + "\n" + body;
 }
 
-// The body of a tool block is the tail of a shell output, the whole diff of an edit, or the head of any other output.
-// Folded plain output keeps shown text. View output keeps each chunk that starts before the limit.
+// The body of a tool block is the tail of a shell output, the whole diff of an edit, or the head of any other output. A folded read shows no body.
+// The source is the same folded and open, so a cursor and a selection keep their text across a fold.
 /** @param {ToolPart} part @param {number} width @param {boolean} expanded @param {TranscriptRow[]} rows @param {string} source @returns {string} */
 function toolBody(part, width, expanded, rows, source) {
   const state = part.state;
@@ -241,28 +238,27 @@ function toolBody(part, width, expanded, rows, source) {
   const views = /** @type {{ view?: readonly Wire.View[] }} */ (state).view;
   const text = state.type === "error" ? state.error || "" : String(/** @type {{ output?: string }} */ (state).output || "");
   const group = state.type === "error" ? "TxToolError" : "TxToolOutput";
-  if (name === "read" && !expanded && state.type !== "error") return source;
+  const cap = expanded ? Infinity : name === "read" && state.type !== "error" ? 0 : PREVIEW_LINES;
   if (views && views.length && state.type !== "error") {
-    const all = expanded || name === "edit";
-    const built = viewRows(views, width, PAD, all ? Infinity : PREVIEW_LINES + 1);
-    const more = built.rows.length > PREVIEW_LINES && !all;
-    if (more) built.rows.length = PREVIEW_LINES;
-    moveSrc(built.rows, source.length + 1);
-    source += "\n" + built.source;
-    for (const r of built.rows) rows.push(r);
+    const limit = name === "edit" ? Infinity : cap;
+    // One row past the limit tells whether more rows exist, and a zero limit wraps nothing.
+    const built = viewRows(views, width, PAD, limit && limit + 1);
+    const more = built.rows.length > limit;
+    if (more) built.rows.length = limit;
+    source = addBody(rows, built.rows, built.source, 0, source);
     if (more) hint(rows, "… (more lines, ctrl+o to expand)");
   } else if (name === "exec" && !expanded && text) {
     // The tail lines wrap into rows, and a long last line can fill the preview alone.
-    const lines = text.slice(tailStart(text, EXEC_PREVIEW_LINES));
-    const tail = wrapRows(lines, width, group, PAD);
+    const from = tailStart(text, EXEC_PREVIEW_LINES);
+    const tail = wrapRows(text.slice(from), width, group, PAD);
     const kept = tail.slice(-EXEC_PREVIEW_LINES);
-    if (lines.length < text.length || kept.length < tail.length) hint(rows, "… (earlier lines, ctrl+o to expand)");
-    source = addShown(rows, kept, lines, source);
+    if (from > 0 || kept.length < tail.length) hint(rows, "… (earlier lines, ctrl+o to expand)");
+    source = addBody(rows, kept, text, from, source);
   } else if (text) {
-    const shown = wrapRows(text, width, group, PAD, expanded ? Infinity : PREVIEW_LINES + 1);
-    const more = !expanded && shown.length > PREVIEW_LINES;
-    if (more) shown.length = PREVIEW_LINES;
-    source = addShown(rows, shown, text, source);
+    const shown = wrapRows(text, width, group, PAD, cap && cap + 1);
+    const more = shown.length > cap;
+    if (more) shown.length = cap;
+    source = addBody(rows, shown, text, 0, source);
     if (more) hint(rows, "… (more lines, ctrl+o to expand)");
   }
   const field = state.type === "error" ? "error" : "output";
@@ -270,7 +266,7 @@ function toolBody(part, width, expanded, rows, source) {
   const media = state.type === "completed" ? state.media : undefined;
   if (media) media.forEach((blob, i) => {
     const label = mediaLabel(blob, i + 1);
-    source = addShown(rows, wrapRows(label, width, "TxToolHint", PAD), label, source);
+    source = addBody(rows, cap === 0 ? [] : wrapRows(label, width, "TxToolHint", PAD), label, 0, source);
   });
   const ms = /** @type {{ duration_ms?: number }} */ (state).duration_ms;
   if (name === "exec" && typeof ms === "number" && state.type !== "running") hint(rows, "Took " + (ms / 1000).toFixed(1) + "s");

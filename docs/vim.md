@@ -70,7 +70,7 @@ ctx.inject(["composer-vim"], (c) => {
 | `y` | Copy the visual selection. |
 | `Y` | Copy whole rendered lines. |
 | `y y` | Copy the current rendered row. This operator chord does not time out. |
-| `g y` | Copy the underlying message source for the current row or selection. |
+| `g y` | Copy the underlying message source for the current row or selection. A selection across a folded block copies its hidden output too. |
 
 The normal `transcript` context atom is active while this region has focus. Visual mode adds the flag `transcript_visual == on`. Transcript Vim has no public mode event or capability. Composer and transcript Vim share one yank register, so transcript yanks can be put with composer `p` or `P`.
 

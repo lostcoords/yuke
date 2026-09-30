@@ -15,6 +15,8 @@ Each point below has evidence: a line in the vendored engine (`zig-pkg/*/quickjs
 - QuickJS-ng is a bytecode interpreter with computed-goto dispatch. It has no JIT.
 - It has no inline caches. QuickJS-ng removed them in 0.9.0 ([PR #884](https://github.com/quickjs-ng/quickjs/pull/884)). Each property read is a shape hash lookup (`find_own_property`).
 - callgrind shows interpreted JS only as `JS_CallInternal` self cost, and property reads as `JS_GetPropertyInternal`. Use regions or `fndiff.py --opcodes` to see further.
+- `a + b` copies both strings when `b` has at most 512 characters and `a` at most 8192 (`JS_STRING_ROPE_SHORT_LEN`, `JS_STRING_ROPE_SHORT2_LEN`). Otherwise it makes a rope node and copies nothing. A rope whose left side is short copies the string before it when you append the rope, so a join of many ropes can copy the joined string again at each step.
+- `term.wrap` converts the whole JS string to UTF-8 before it applies the row limit. A wrap for one row of a large text costs a copy of the whole text.
 
 ## Call cost: locals
 
@@ -54,3 +56,5 @@ Add a finding here with its evidence: the phase, the region, the numbers, and th
 | 2026-09-30 | a field most rows lack | `rows()` +1.4% | `stop` only on the first row |
 | 2026-09-30 | parallel dictionaries share a shape | style registration 45.6M → 39.2M | `_base` as a `Map` |
 | 2026-09-30 | long-lived empty `{}` | `stream` +0.2%, bench only | none; the app keeps such objects |
+| 2026-09-30 | a one-row wrap of a whole file | folded `read` source: `build` +52 MB allocated per 300 iterations | a zero row cap passes limit 0, so `wrapRows` returns before the native wrap |
+| 2026-09-30 | the message source joined on each build | `build` 909 → 805 allocs/it, `preview` 30.7 → 21.2, `reflow` 550 → 498 (with the fix above) | `partBases` from a running length; `_sourceOf` joins on the first read |

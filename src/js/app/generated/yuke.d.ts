@@ -1483,7 +1483,7 @@ export function toolHead(part: ToolPart, tools: Record<string, ToolHead>): ToolH
 export function wrapRows(text: string, width: number, group: string, indent: number, limit?: number, tail?: number): TranscriptRow[];
 /**
  * The rows of tool-result views. A one-file diff omits its path. A multi-file or mixed view keeps file paths.
- * `limit` bounds rows. The source keeps each chunk that starts before the limit.
+ * `limit` bounds the rows alone. The source keeps every chunk, so a fold never moves a source offset.
  */
 export function viewRows(views: readonly Wire.View[], width: number, indent: number, limit?: number): Rendered;
 /**
@@ -1630,6 +1630,7 @@ export class Transcript {
         off: number;
     }): void;
     _sourceOf(id: number): string;
+    _joinParts(id: number, partBases: Map<string, number>): string;
     _anchors(): SelectionAnchors | null;
     _posAtAnchor(a: {
         id: number;
@@ -1718,7 +1719,6 @@ export class Transcript {
     partStep(pos: Position | null, dir: number): Position | null;
     _partRows(m: MessageDescriptor, width: number, messageIndex: number, old: TranscriptRow[] | undefined): {
         rows: TranscriptRow[];
-        source: string;
         partBases: Map<string, number>;
     };
     _buildPart(id: number, part: Wire.AssistantPart, width: number, expanded: boolean, live: boolean, tree: number, previous: PartCache | undefined): PartCache;
@@ -3575,7 +3575,8 @@ export interface SelectionRange {
 export interface RowCache {
   w: number;
   rows: TranscriptRow[];
-  source: string;
+  /** The message source. Null until a read joins the part sources, so a build concatenates no strings. */
+  source: string | null;
   partBases: Map<string, number>;
 }
 
@@ -3686,7 +3687,7 @@ export interface Render {
   groupHeader?(group: { key: string | null; count: number }, env: MessageEnv): TranscriptRow[] | undefined;
   /** True to show a part open until the user or ctrl+o folds it. `live` is true for the reasoning that still streams. */
   fold?(part: Wire.AssistantPart, live: boolean): boolean | undefined;
-  /** True when a folded or open part shows the same rows for `fresh` as for `before`, so a streamed delta skips the rebuild. */
+  /** True when `fresh` gives the same rows and the same source as `before`, so a streamed delta skips the rebuild. A folded part keeps its whole source, so a hidden output change is not the same. */
   sameVisible?(before: Wire.AssistantPart, fresh: Wire.AssistantPart, expanded: boolean): boolean | undefined;
   /** Act on a click or an Enter on a part. Answer where the reader lands, or null. Without an answer, a part with a header row toggles its fold. */
   activate?(hit: PartHit, transcript: $transcript.Transcript): Position | null | undefined;

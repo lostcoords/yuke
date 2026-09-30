@@ -69,19 +69,20 @@ function toolRows(part, env) {
   }
   /** @type {Row[]} */
   const rows = [{ segments, ...headerAttrs(env.group, env.expanded), kind: "tool-header" }];
-  let source = headerSrc;
-  if (!env.expanded) return { rows, source };
   const args = String(part.arguments || "");
-  source += "\n" + args;
-  rows.push({ segments: [{ text: "input".padEnd(LABEL_W), group: "TxMeta" }, { text: args.replace(/\s+/g, " ").trim() || "(empty)", group: "TxToolOutput" }], ...bodyAttrs(env.group), kind: "tool-detail" });
   const state = part.state;
   const views = /** @type {{ view?: readonly Wire.View[] }} */ (state).view;
   const text = state.type === "error" ? state.error || "" : String(/** @type {{ output?: string }} */ (state).output || "");
-  const body = views && views.length ? viewRows(views, width - LABEL_W, 0, PREVIEW_ROWS + 1) : { rows: wrapRows(text, width - LABEL_W, state.type === "error" ? "TxError" : "TxToolOutput", 0, PREVIEW_ROWS + 1), source: text };
-  const media = state.type === "completed" ? state.media || [] : [];
-  for (let i = 0; i < media.length && body.rows.length <= PREVIEW_ROWS; i++) body.rows.push({ text: mediaLabel(/** @type {Wire.MediaBlob} */ (media[i]), i + 1), group: "TxMeta" });
+  // A folded block builds no body rows, but its source keeps the body, so a fold never moves a source offset.
+  const limit = env.expanded ? PREVIEW_ROWS + 1 : 0;
+  const body = views && views.length ? viewRows(views, width - LABEL_W, 0, limit) : { rows: wrapRows(text, width - LABEL_W, state.type === "error" ? "TxError" : "TxToolOutput", 0, limit), source: text };
+  let source = headerSrc + "\n" + args;
   const base = source.length + 1;
   if (body.source) source += "\n" + body.source;
+  if (!env.expanded) return { rows, source };
+  rows.push({ segments: [{ text: "input".padEnd(LABEL_W), group: "TxMeta" }, { text: args.replace(/\s+/g, " ").trim() || "(empty)", group: "TxToolOutput" }], ...bodyAttrs(env.group), kind: "tool-detail" });
+  const media = state.type === "completed" ? state.media || [] : [];
+  for (let i = 0; i < media.length && body.rows.length <= PREVIEW_ROWS; i++) body.rows.push({ text: mediaLabel(/** @type {Wire.MediaBlob} */ (media[i]), i + 1), group: "TxMeta" });
   body.rows.slice(0, PREVIEW_ROWS).forEach((r, i) => {
     rows.push({ segments: [{ text: (i === 0 ? "output" : "").padEnd(LABEL_W), group: "TxMeta" }, ...segmentsAt(r, base)], ...bodyAttrs(env.group), kind: "tool-body" });
   });
@@ -108,7 +109,9 @@ function reasoningRows(part, env) {
   const headerSrc = title ? name + " · " + title : name;
   /** @type {Row[]} */
   const rows = [{ segments: [{ text: headerSrc, group: "TxThought", src: 0, srcEnd: headerSrc.length }], ...headerAttrs(env.group, env.expanded), markerGroup: "TxThought", kind: "reasoning-header" }];
-  if (!env.expanded) return { rows, source: headerSrc };
+  // The source keeps the text while folded, so a fold never moves a source offset.
+  const source = headerSrc + "\n" + text;
+  if (!env.expanded) return { rows, source };
   const base = headerSrc.length + 1;
   const body = wrapRows(text, env.width - (env.group ? TREE_INDENT : GUTTER), "TxThought", 0, PREVIEW_ROWS, 1);
   /** @param {Row} r @returns {Row} */
@@ -118,7 +121,7 @@ function reasoningRows(part, env) {
     rows.push(decorate(r));
     if (i === 0 && shown.length < body.length) rows.push({ ...bodyAttrs(env.group), text: "…", group: "TxMeta", kind: "reasoning-body" });
   });
-  return { rows, source: headerSrc + "\n" + text };
+  return { rows, source };
 }
 
 /** @type {Render} */
@@ -137,12 +140,6 @@ const treeLook = {
   groupHeader: (group) => [{ text: group.count + (group.count === 1 ? " action" : " actions"), group: "TxMeta", indent: GUTTER }],
   // A call that runs or fails shows open, and so does the thought that still streams.
   fold: (part, live) => (part.type === "tool" ? ["running", "error", "canceled"].includes(part.state.type) : live),
-  // A folded call shows only its name, arguments, state, and time, so an output delta changes nothing on screen.
-  sameVisible(before, fresh, expanded) {
-    if (expanded || before.type !== "tool" || fresh.type !== "tool") return undefined;
-    const ms = (/** @type {ToolPart} */ p) => /** @type {{ duration_ms?: number }} */ (p.state).duration_ms;
-    return before.name === fresh.name && before.arguments === fresh.arguments && before.state.type === fresh.state.type && ms(before) === ms(fresh);
-  },
   part: (part, env) => (part.type === "tool" ? toolRows(part, env) : reasoningRows(part, env)),
 
   message(m, parts, env) {

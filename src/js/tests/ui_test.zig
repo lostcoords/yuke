@@ -433,6 +433,10 @@ test "yuke:internal/ui transcript renders evicted history exactly" {
     try support.runPainted(12, 32, "ui/transcript-eviction.test.js");
 }
 
+test "yuke:internal/ui transcript keeps each part source across a fold, so the cursor keeps its text across ctrl+o" {
+    try support.run("ui/fold-source.test.js");
+}
+
 test "yuke:internal/ui transcript keeps committed renders across a reload" {
     try support.runPainted(12, 40, "ui/transcript-reload-reuse.test.js");
 }

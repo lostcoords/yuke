@@ -503,7 +503,22 @@ export class Transcript {
   _sourceOf(id) {
     this._rowsFor(id);
     const c = this._rows.get(String(id));
-    return c ? c.source : "";
+    if (!c) return "";
+    if (c.source === null) c.source = this._joinParts(id, c.partBases);
+    return c.source;
+  }
+
+  // One line feed joins two part sources, as `partBases` counts them. A part source changes only in a build of its message, so it matches the bases.
+  /** @param {number} id @param {Map<string, number>} partBases @returns {string} */
+  _joinParts(id, partBases) {
+    // The build of the message made this state, and an eviction removes it with the message rows.
+    const parts = /** @type {PartState} */ (this._parts.get(String(id))).rows;
+    let source = "";
+    for (const key of partBases.keys()) {
+      if (source) source += "\n";
+      source += /** @type {PartCache} */ (parts.get(key)).source;
+    }
+    return source;
   }
 
   // The selection as source offsets. Return null when either end carries no source.
@@ -549,7 +564,7 @@ export class Transcript {
     return this.posAtSource(a.id, a.off);
   }
 
-  // Put the selection back on the same source text, and clear it on a missing end rather than move it.
+  // Put the selection back on the same source text. An end on hidden text moves to the next shown row, and an end whose text changed clears the selection.
   /** @param {SelectionAnchors | null} anchors @returns {void} */
   _reanchor(anchors) {
     const anchor = anchors && this._posAtAnchor(anchors.a);
@@ -717,13 +732,13 @@ export class Transcript {
 
     /** @type {TranscriptRow[]} */
     let rows;
-    let source;
+    /** @type {string | null} */
+    let source = null;
     /** @type {Map<string, number>} */
     let partBases;
     if (m.type === "assistant") {
       const built = this._partRows(m, width, index, c && c.rows);
       rows = built.rows;
-      source = built.source;
       partBases = built.partBases;
     } else {
       /** @type {MessageEnv} */
@@ -743,8 +758,10 @@ export class Transcript {
       /** @type {Rendered | undefined} */
       const out = hook("error", m.error, { messageId: m.id, width, expanded: false });
       if (out) {
-        const base = source.length ? source.length + 1 : 0;
-        source = source.length ? source + "\n" + out.source : out.source;
+        // A failed message is rare, so it joins its parts at once.
+        const text = source ?? this._joinParts(m.id, partBases);
+        const base = text.length ? text.length + 1 : 0;
+        source = text.length ? text + "\n" + out.source : out.source;
         for (const r of out.rows) {
           r.key = m.id;
           rows.push(rowAtBase(r, base));
@@ -1011,7 +1028,7 @@ export class Transcript {
 
   // Each part renders once per width, fold, and live state, so a delta rebuilds only the changed part.
   // `old` is the stale render's rows, which the caller already removed from the cache, so this build writes them in place.
-  /** @param {MessageDescriptor} m @param {number} width @param {number} messageIndex @param {TranscriptRow[] | undefined} old @returns {{ rows: TranscriptRow[], source: string, partBases: Map<string, number> }} */
+  /** @param {MessageDescriptor} m @param {number} width @param {number} messageIndex @param {TranscriptRow[] | undefined} old @returns {{ rows: TranscriptRow[], partBases: Map<string, number> }} */
   _partRows(m, width, messageIndex, old) {
     const state = this._partState(m.id);
     const plan = merged.groupKey.length ? this._plan() : null;
@@ -1023,7 +1040,8 @@ export class Transcript {
     let n = 0;
     let shown = 0;
     const partBases = new Map();
-    let source = "";
+    // The length of the joined part sources, so a build places each part without the joined string.
+    let length = 0;
     const list = state.list;
     for (let index = 0; index < list.length; index++) {
       const part = /** @type {Wire.AssistantPart} */ (list[index]);
@@ -1031,8 +1049,8 @@ export class Transcript {
       const tree = plan ? plan.trees[start + index] || 0 : 0;
       const head = tree !== 0 && (tree & GROUP_FIRST) !== 0;
       const gap = shown++ === 0 ? 0 : merged.gap;
-      if (source) source += "\n";
-      const base = source.length;
+      if (length) length++;
+      const base = length;
       const key = String(part.id);
       seen.add(key);
       const expanded = part.type === "text" || this._isExpanded(m.id, part.id, part);
@@ -1045,7 +1063,7 @@ export class Transcript {
         built = true;
       }
       partBases.set(key, base);
-      source += c.source;
+      length = base + c.source.length;
       // A row belongs to one part build, so an old first row places the part where it was; a rebuilt part keeps only the rows its text kept and writes its group header again.
       if (reuse && (built && head || !c.rows.length || rows[n + gap + (head ? c.lead : 0)] !== c.rows[0])) {
         rows.length = n;
@@ -1076,7 +1094,7 @@ export class Transcript {
     }
     for (const key of state.rows.keys()) if (!seen.has(key)) state.rows.delete(key);
     if (reuse) rows.length = n;
-    return { rows, source, partBases };
+    return { rows, partBases };
   }
 
   // Render one part at source base 0; retain rows before the last two markdown blocks.
