@@ -31,6 +31,8 @@ pub fn main(init: std.process.Init) !void {
             tree_shape = std.meta.stringToEnum(bench.TreeShape, value) orelse return error.InvalidTreeShape;
         } else if (std.mem.eql(u8, arg, "--colors")) {
             colors = std.meta.stringToEnum(bench.Colors, value) orelse return error.InvalidColors;
+        } else if (std.mem.eql(u8, arg, "--region")) {
+            bench.region = value;
         } else return error.UnknownArgument;
     }
     if (scale == 0 or iterations == 0) return error.InvalidCount;

@@ -41,7 +41,7 @@ Add `-Dmetrics=true` for allocs (separate run). One phase: `--phase <name> --ite
 
 Time noise ~20%: 5+ runs each side, alternate, lowest quartile. Alloc count and live/peak bytes are exact. If a phase is worse, stop and say why.
 
-For a small delta, count instructions with callgrind (build with `-Dcpu=baseline`). Compare the slope between two iteration counts, not the totals: setup fills a short run. GC and heap layout move one window, so check a second window before you call a delta real.
+For a small delta, count instructions with callgrind. Compare the slope between two iteration counts, not the totals: setup fills a short run. GC and heap layout move one window, so check a second window before you call a delta real. The `bench-profiling` skill (`.agents/skills/bench-profiling/`) runs this comparison and finds the cause of a worse phase.
 
 ## Memory
 

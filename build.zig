@@ -260,6 +260,8 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run yuke (TUI by default)");
     run_step.dependOn(&run_exe.step);
 
+    // Client requests reach std only through the root module, so the option sets it there.
+    const bench_valgrind = b.option(bool, "valgrind", "Keep valgrind client requests in yuke-bench, so `--region` can steer callgrind") orelse false;
     const bench_exe = b.addExecutable(.{
         .name = "yuke-bench",
         .root_module = b.createModule(.{
@@ -267,8 +269,10 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = app_imports,
+            .valgrind = if (bench_valgrind) true else null,
         }),
     });
+    b.step("bench-install", "Install yuke-bench without a run").dependOn(&b.addInstallArtifact(bench_exe, .{}).step);
     const run_bench = b.addRunArtifact(bench_exe);
     if (b.args) |args| run_bench.addArgs(args);
     const bench_step = b.step("bench", "Run the benchmark (use -Doptimize=ReleaseFast)");

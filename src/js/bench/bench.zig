@@ -7,6 +7,7 @@ const term = @import("term");
 const Host = @import("../host.zig").Host;
 const Allocations = @import("../../allocations.zig");
 const native_term = @import("../native/term.zig");
+const native_module = @import("../native/module.zig");
 const Tree = @import("agents.zig");
 pub const TreeShape = Tree.Shape;
 const Commit = @import("commit.zig");
@@ -16,6 +17,9 @@ const HttpPeer = @import("../http_peer.zig").Peer;
 const builtin = @import("builtin");
 const metrics = @import("metrics");
 pub const metrics_enabled = builtin.is_test or metrics.enabled;
+
+/// The label of the one region that callgrind counts, from `--region`. The bytes live for the process; the empty label matches no probe.
+pub var region: []const u8 = "";
 
 pub const Phase = enum {
     build,
@@ -156,6 +160,7 @@ pub const Harness = struct {
         const global = ctx.getGlobalObject();
         defer ctx.freeValue(global);
         try ctx.setPropertyStr(global, "FIXTURE", ctx.newString(fixture));
+        try installRegion(ctx);
         if (self.phase_group == .net) {
             self.socket_peer = try SocketPeer.create(gpa, io, .echo);
         }
@@ -278,6 +283,7 @@ pub const Harness = struct {
         const host = Host.createWith(self.host.gpa, self.host.io, .{ .cwd = "", .execution = self.context() });
         defer host.destroy();
         host.interrupt_budget = std.math.maxInt(u32);
+        try installRegion(host.ctx);
         try host.evalModule(boot_source, "boot.js");
     }
 
@@ -607,4 +613,20 @@ test "native part refresh validates the draft cursor across replacement and remo
         \\import { equal } from "yuke:internal/test";
         \\equal(client.sessionPart(globalThis.PROJECTION_SESSION, 2, 0, globalThis.previousCursor), null);
     , "removal.js");
+}
+
+/// Install `benchRegion(label)` on a host. A probe calls it before and after the code it measures; the calls with the `--region` label toggle callgrind collection. A build without `-Dvalgrind` installs nothing. It fails when QuickJS cannot set the global.
+fn installRegion(ctx: quickjs.Context) error{Exception}!void {
+    if (!builtin.valgrind_support) return;
+    const global = ctx.getGlobalObject();
+    defer ctx.freeValue(global);
+    try ctx.setPropertyStr(global, "benchRegion", ctx.newFunction("benchRegion", 1, jsRegion));
+}
+
+fn jsRegion(ctx: quickjs.Context, _: quickjs.Value, args: []const quickjs.Value) quickjs.Value {
+    if (args.len < 1) return ctx.throwTypeError("benchRegion(label)");
+    const label = native_module.string(ctx, args[0]) orelse return ctx.throwTypeError("benchRegion: the label must be a string");
+    defer ctx.freeCString(label.ptr);
+    if (std.mem.eql(u8, label, region)) std.valgrind.callgrind.toggleCollect();
+    return quickjs.UNDEFINED;
 }
