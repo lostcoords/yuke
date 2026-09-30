@@ -89,7 +89,7 @@ fn startTool(host: *Host, call: *table.Call) void {
     const parsed = parseArguments(host, call) orelse return;
     defer ctx.freeValue(parsed);
 
-    // The handler reads `signal.aborted` between its awaits, so a canceled turn can stop early.
+    // The handler can read `signal.aborted` between its awaits, so a canceled turn can stop early.
     const tool = &call.kind.tool;
     const signal = cancellation.create(host);
     tool.signal = signal;
@@ -136,7 +136,7 @@ fn acceptPromise(host: *Host, call: *table.Call, answer: Value) void {
     }
     // The call owns the Promise, so the rejection tracker never reports it, even after the submitter leaves.
     c.JS_PromiseMarkAsHandled(ctx.ptr, answer);
-    call.state = .{ .running = answer }; // the call holds the root until it settles
+    call.state = .{ .running = answer }; // the call holds the root until it settles or the sweep frees it
     poll(host, call);
 }
 

@@ -13,7 +13,7 @@ const cancellation = @import("native/cancellation.zig");
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
-/// The longest name a provider accepts: Anthropic states `^[a-zA-Z0-9_-]{1,64}$` and OpenAI accepts the same shape.
+/// The longest name that every provider accepts. OpenAI caps a tool name at 64 bytes, and Anthropic caps it at 128.
 const max_name_bytes: usize = 64;
 
 /// Why one registration was refused. Each case answers one sentence to the script.
@@ -106,7 +106,7 @@ pub const Call = struct {
     name: []const u8,
     /// The tool arguments or the hook payload, as raw JSON. The submitter owns these bytes, and only a start reads them.
     arguments: []const u8,
-    /// What one call asks for. The kind selects the handler the owner runs and the answer it records.
+    /// What one call asks for. The kind selects the tool handler or the hook dispatcher.
     kind: union(enum) { tool: Tool, hook },
     state: State = .queued,
     /// The submitter sleeps on this. The owner sets it at the settle, and for each output chunk of a tool.
@@ -119,7 +119,7 @@ pub const Call = struct {
         site: toolset.Site,
         /// The run slot of the turn. A native operation the tool starts retains it.
         work: *work,
-        /// The owner creates the signal when it starts the call, so a queued call has none.
+        /// The owner sets the signal before it calls the handler. A call that fails before the handler has none.
         signal: ?Value = null,
         /// Live output the tool wrote and the submitter has not published. The owner and the submitter share one executor.
         output: std.ArrayList(u8) = .empty,
@@ -130,7 +130,7 @@ pub const Call = struct {
     /// The owner starts and settles a call. The submitter leaves it, and the sweep frees each state that the submitter left.
     pub const State = union(enum) {
         queued,
-        /// The handler runs, and the submitter waits. The call holds one reference to the Promise.
+        /// The handler returned a Promise, and the submitter waits. The call holds one reference to the Promise.
         running: Value,
         /// The owner answered, and the submitter reads the answer.
         settled: Answer,
@@ -171,7 +171,7 @@ pub const Call = struct {
         };
     }
 
-    /// Return the signal of a started tool call, or null for a hook or a queued call.
+    /// Return the signal of a tool call. A hook, or a tool call that has not reached its handler, has none.
     pub fn signal(self: *const Call) ?Value {
         return switch (self.kind) {
             .tool => |tool| tool.signal,
@@ -192,7 +192,7 @@ pub const Calls = struct {
         self.* = undefined;
     }
 
-    /// Queue one tool call. This runs on a turn task, so it enters no JavaScript. The call borrows `context.work`.
+    /// Queue one tool call. This runs on a turn task, so it enters no JavaScript. The call borrows `name`, `arguments`, `context.workspace_root`, and `context.work`.
     pub fn submit(self: *Calls, name: []const u8, arguments: []const u8, context: toolset.Context) *Call {
         return self.add(.{ .name = name, .arguments = arguments, .kind = .{ .tool = .{ .workspace_root = context.workspace_root, .site = context.site, .work = context.work } } });
     }
@@ -224,6 +224,7 @@ pub const Calls = struct {
         }
     }
 
+    /// Return the queued or running call that holds `signal`, or null when no such call exists or the signal is aborted.
     pub fn callForSignal(self: *const Calls, ctx: Context, signal: Value) ?*Call {
         if (!ctx.isObject(signal)) return null;
         for (self.live.items) |call| {
@@ -279,7 +280,7 @@ pub const Calls = struct {
     }
 };
 
-/// Answer whether a provider accepts this name. Both providers state `^[a-zA-Z0-9_-]{1,64}$`.
+/// Answer whether every provider accepts this name: 1 to `max_name_bytes` ASCII letters, digits, `_`, or `-`.
 fn validName(name: []const u8) bool {
     if (name.len == 0 or name.len > max_name_bytes) return false;
     for (name) |c| {
