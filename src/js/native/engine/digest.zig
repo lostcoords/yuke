@@ -449,6 +449,7 @@ test "a summary change reaches its own session as a quiet fact" {
             .title = "t",
             .message_count = 0,
             .usage_total = .zero,
+            .cost = .zero,
             .created_at_ms = 0,
             .updated_at_ms = 0,
             .origin = .{ .root = .{} },

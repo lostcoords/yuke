@@ -25,6 +25,7 @@ const Meta = struct {
     tokens_cache_read: ?u64 = null,
     tokens_cache_write: ?u64 = null,
     cost: ?f64 = null,
+    cost_without_cache: ?f64 = null,
     created_at_ms: u64,
 };
 
@@ -86,6 +87,8 @@ pub fn appendCommittedMessage(
         .tokens_reasoning = m.tokens_reasoning,
         .tokens_cache_read = m.tokens_cache_read,
         .tokens_cache_write = m.tokens_cache_write,
+        .cost = m.cost,
+        .cost_without_cache = m.cost_without_cache,
         .updated_at_ms = committed_at_ms,
     });
     return .{ .data = .{ .session_id = .bytes(session_id), .seq = seq, .message = message }, .bytes = payload.len };
@@ -112,8 +115,9 @@ fn metaOf(message: proto.message.Message) Meta {
             .tokens_reasoning = if (a.tokens) |t| t.reasoning else null,
             .tokens_cache_read = if (a.tokens) |t| t.cache_read else null,
             .tokens_cache_write = if (a.tokens) |t| t.cache_write else null,
-            .cost = a.cost,
+            .cost = if (a.cost) |c| c.total else null,
             .created_at_ms = a.time.created_at_ms,
+            .cost_without_cache = if (a.cost) |c| c.without_cache else null,
         },
         .compaction => |c| .{
             .message_id = c.id,
@@ -308,6 +312,32 @@ test "each committed turn updates the session usage" {
     try testing.expectEqual(@as(u64, 300), snap.usage_last_input);
     try testing.expectEqual(@as(u64, 50), snap.usage_last_output);
     try testing.expectEqual(@as(u64, 150), snap.usage_last_cache_read);
+}
+
+test "a committed turn adds its known cost, and a turn with tokens and no cost is unpriced" {
+    var db = try Database.openTest();
+    defer db.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const sid = [_]u8{12} ** 16;
+    try session.seedSession(&db, sid);
+
+    const usage: proto.message.TokenUsage = .{ .input = 10, .output = 1, .reasoning = 0, .cache_read = 0, .cache_write = 0 };
+    var priced = assistantTurn(1, 400, usage);
+    priced.assistant.cost = .{ .total = 0.25, .without_cache = 0.5 };
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    _ = try appendCommittedMessage(&db, a, sid, [_]u8{1} ** 16, 400, priced);
+    _ = try appendCommittedMessage(&db, a, sid, [_]u8{2} ** 16, 410, assistantTurn(2, 410, usage));
+    // A round that reported no tokens has no cost to know, so it is not unpriced.
+    _ = try appendCommittedMessage(&db, a, sid, [_]u8{3} ** 16, 420, assistantTurn(3, 420, null));
+    try db.conn.execNoArgs("COMMIT");
+
+    const snap = (try session.snapshot(&db, a, sid)).?;
+    try testing.expectEqual(@as(f64, 0.25), snap.cost_total);
+    try testing.expectEqual(@as(f64, 0.5), snap.cost_without_cache_total);
+    try testing.expectEqual(@as(u64, 1), snap.unpriced_count);
 }
 
 test "the last usage skips a turn that reported no usage" {

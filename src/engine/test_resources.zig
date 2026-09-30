@@ -236,6 +236,7 @@ pub const Fixture = struct {
 
     pub const Options = struct {
         modalities: ai.Modalities = .{},
+        cost: []const ai.model.PriceBand = ai.model.unknown_cost,
         replies: []const []const u8 = &.{ai.testing.canned_reply},
     };
 
@@ -244,7 +245,7 @@ pub const Fixture = struct {
         try self.resources.init();
         self.db = try Database.openTest();
         self.engine = self.resources.makeEngine(&self.db);
-        self.models = .{.{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tools = true }, .modalities = options.modalities }};
+        self.models = .{.{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tools = true }, .modalities = options.modalities, .cost = options.cost }};
         self.rows = .{mockProvider(&self.models, .{})};
         self.resources.providers.merged.rows = &self.rows;
         self.capture = .{ .arena = self.arena.allocator(), .replies = options.replies };

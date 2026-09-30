@@ -4041,10 +4041,14 @@ export interface CatalogReloadResult {
   readonly changed: boolean;
 }
 
-/** These costs use United States dollars per million tokens. */
-export interface ModelCost {
+/** This type gives the prices of one band in US dollars per million tokens. An absent price is unknown, and never zero. */
+export interface PriceBand {
+  /** The smallest prompt that this band prices. The prompt counts every input token, and the cached tokens too. */
+  readonly min_prompt_tokens: number;
   readonly input?: number;
   readonly output?: number;
+  /** A reasoning token is also an output token. This price replaces the output price for that token. */
+  readonly reasoning?: number;
   readonly cache_read?: number;
   readonly cache_write?: number;
 }
@@ -4063,7 +4067,8 @@ export interface ModelInfo {
   readonly supports_vision?: boolean;
   readonly supports_tools?: boolean;
   readonly supports_tool_search?: boolean;
-  readonly cost: ModelCost;
+  /** The price bands in threshold order. The first band starts at 0. The last band that a prompt reaches prices the whole request. */
+  readonly cost: ReadonlyArray<PriceBand>;
 }
 
 /** This type carries an RPC request. */
@@ -4344,7 +4349,8 @@ export interface AssistantMessage {
   readonly content: ReadonlyArray<AssistantPart>;
   readonly finish?: StopReason;
   readonly tokens?: TokenUsage;
-  readonly cost?: number;
+  /** What the tokens of this message cost. Null when a token count met an unknown price, or when no count arrived. */
+  readonly cost?: MessageCost;
   readonly time: MessageTime;
   readonly error?: MessageError;
   readonly provenance?: TurnProvenance;
@@ -4453,6 +4459,23 @@ export interface RedactedReasoningPart {
 export interface TextPart {
   readonly id: PartId;
   readonly text: string;
+}
+
+/** This type gives the cost of one assistant message in US dollars, at the prices of the request. */
+export interface MessageCost {
+  readonly total: number;
+  /** The cost of the same tokens with no cache read and no cache write. The saving is this value minus `total`. */
+  readonly without_cache: number;
+}
+
+/** This type sums the message costs of one session in US dollars. */
+export interface SessionCost {
+  /** The sum of the known message costs. */
+  readonly total: number;
+  /** The sum of `without_cache` over the same messages. */
+  readonly without_cache: number;
+  /** The count of assistant messages with tokens and no known cost. Zero means that `total` is the whole cost. */
+  readonly unpriced: number;
 }
 
 /** This type records token counts for one assistant message. */
@@ -4569,6 +4592,7 @@ export interface Session {
   readonly title: string;
   readonly message_count: number;
   readonly usage_total: TokenUsage;
+  readonly cost: SessionCost;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
   readonly created_by?: Client;

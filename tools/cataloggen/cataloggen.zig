@@ -208,7 +208,7 @@ fn emitModel(run: *Run, spec: std.json.ObjectMap, protocol: []const u8) !void {
     const w = run.w;
     const flags = try object(try member(spec, "flags"));
     const limits = try object(try member(spec, "limits"));
-    const cost = try object(try member(spec, "cost"));
+    const cost = try priceBands(run.arena, try member(spec, "cost"));
 
     try w.print("            .{{\n                .id = \"{f}\",\n                .upstream_id = \"{f}\",\n                .name = \"{f}\",\n                .protocol = .{s},\n", .{
         std.zig.fmtString(try string(spec, "id")),
@@ -220,11 +220,9 @@ fn emitModel(run: *Run, spec: std.json.ObjectMap, protocol: []const u8) !void {
     try w.writeAll("                .limits = .{");
     try emitOptionalInt(w, limits, "context_window");
     try emitOptionalInt(w, limits, "max_output_tokens");
-    try w.writeAll(" },\n                .cost = .{");
-    for ([_][]const u8{ "input", "output", "cache_read", "cache_write" }) |name| {
-        try emitOptionalFloat(w, cost, name);
-    }
-    try w.print(" }},\n                .caps = .{{ .tools = {}, .vision = {}", .{
+    try w.writeAll(" },\n");
+    try emitCost(w, cost);
+    try w.print("                .caps = .{{ .tools = {}, .vision = {}", .{
         try boolean(flags, "supports_tools"),
         try boolean(flags, "supports_vision"),
     });
@@ -332,14 +330,26 @@ fn emitOptionalInt(w: *std.Io.Writer, map: std.json.ObjectMap, key: []const u8) 
     try w.print(" .{s} = {d},", .{ key, count });
 }
 
-fn emitOptionalFloat(w: *std.Io.Writer, map: std.json.ObjectMap, key: []const u8) !void {
-    const value = map.get(key) orelse return Error.InvalidDocument;
-    if (value == .null) return; // A null price is not a zero price.
-    try w.print(" .{s} = {d},", .{ key, switch (value) {
-        .float => |f| f,
-        .integer => |i| @as(f64, @floatFromInt(i)),
-        else => return Error.InvalidDocument,
-    } });
+/// Read the price bands. A list that is not a cost fails the run, so the table prices each request one way.
+fn priceBands(arena: std.mem.Allocator, value: std.json.Value) ![]const vocab.model.PriceBand {
+    const bands = std.json.parseFromValueLeaky([]const vocab.model.PriceBand, arena, value, .{}) catch return Error.InvalidDocument;
+    if (!vocab.model.validCost(bands)) return Error.InvalidDocument;
+    return bands;
+}
+
+/// Write the bands. One band of unknown prices is the field default, so it writes nothing.
+fn emitCost(w: *std.Io.Writer, bands: []const vocab.model.PriceBand) !void {
+    if (bands.len == 1 and std.meta.eql(bands[0], vocab.model.PriceBand{})) return;
+    try w.writeAll("                .cost = &.{");
+    for (bands) |band| {
+        try w.print(" .{{ .min_prompt_tokens = {d},", .{band.min_prompt_tokens});
+        inline for (.{ "input", "output", "reasoning", "cache_read", "cache_write" }) |name| {
+            // A null price is not a zero price, so the member stays absent and the default holds.
+            if (@field(band, name)) |price| try w.print(" .{s} = {d},", .{ name, price });
+        }
+        try w.writeAll(" },");
+    }
+    try w.writeAll(" },\n");
 }
 
 /// Name the tag `name` selects, or fail: these decide the route, so they have no working default.
@@ -389,7 +399,7 @@ const one_provider =
     \\  "headers":[{"name":"anthropic-version","value":"2023-06-01"}],
     \\  "models":[{"id":"claude","upstream_id":"claude","name":"Claude","protocol":"anthropic_messages",
     \\   "limits":{"context_window":200000,"max_output_tokens":64000},
-    \\   "cost":{"input":3,"output":15,"cache_read":0.3,"cache_write":null},
+    \\   "cost":[{"min_prompt_tokens":0,"input":3,"output":15,"reasoning":15,"cache_read":0.3,"cache_write":null},{"min_prompt_tokens":200001,"input":6,"output":22.5,"reasoning":22.5,"cache_read":0.6,"cache_write":null}],
     \\   "flags":{"supports_tools":true,"supports_vision":true,"reasoning_budget_min":1024},
     \\   "modalities":{"input":["text","image"],"output":["text"]},
     \\   "reasoning":true,"reasoning_levels":["low","high"],"status":"beta"}]}]}
@@ -406,10 +416,10 @@ const gateway =
     \\   {"protocol":"openai_responses","key_header":"authorization_bearer","cache":null,"responses_dialect":"standard"}],
     \\  "models":[
     \\   {"id":"qwen","upstream_id":"qwen","name":"Qwen","protocol":"anthropic_messages","limits":{"context_window":1,"max_output_tokens":1},
-    \\    "cost":{"input":null,"output":null,"cache_read":null,"cache_write":null},"flags":{"supports_tools":true,"supports_vision":false},
+    \\    "cost":[{"min_prompt_tokens":0,"input":null,"output":null,"reasoning":null,"cache_read":null,"cache_write":null}],"flags":{"supports_tools":true,"supports_vision":false},
     \\    "modalities":{"input":["text"],"output":["text"]},"reasoning":false,"reasoning_levels":[],"status":null},
     \\   {"id":"glm","upstream_id":"glm","name":"GLM","protocol":"openai_chat","limits":{"context_window":1,"max_output_tokens":1},
-    \\    "cost":{"input":null,"output":null,"cache_read":null,"cache_write":null},"flags":{"supports_tools":true,"supports_vision":false,"thinking_format":"deepseek"},
+    \\    "cost":[{"min_prompt_tokens":0,"input":null,"output":null,"reasoning":null,"cache_read":null,"cache_write":null}],"flags":{"supports_tools":true,"supports_vision":false,"thinking_format":"deepseek"},
     \\    "modalities":{"input":["text"],"output":["text"]},"reasoning":false,"reasoning_levels":[],"status":null}]}]}
 ;
 
@@ -439,7 +449,20 @@ test "a provider and its model reach the generated table" {
 
     // A null price is not a zero price, so the member stays absent and the field default holds.
     try testing.expect(std.mem.indexOf(u8, out, ".cache_write") == null);
-    try testing.expect(std.mem.indexOf(u8, out, ".cache_read = 0.3,") != null);
+    // Both bands reach the table in order.
+    const base = std.mem.indexOf(u8, out, ".cache_read = 0.3,").?;
+    const tier = std.mem.indexOf(u8, out, ".min_prompt_tokens = 200001,").?;
+    try testing.expect(base < tier and std.mem.indexOf(u8, out[tier..], ".cache_read = 0.6,") != null);
+}
+
+test "a price list that is not a cost fails the run" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // The bands parse but do not rise, so only the cost check can fail the run.
+    const source = try std.mem.replaceOwned(u8, a, one_provider, "\"min_prompt_tokens\":200001", "\"min_prompt_tokens\":0");
+    try testing.expect(!std.mem.eql(u8, source, one_provider));
+    try testing.expectError(Error.InvalidDocument, generate(a, source));
 }
 
 test "a gateway keeps one endpoint per path and each model names its own" {

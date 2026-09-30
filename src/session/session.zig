@@ -6,6 +6,7 @@ const draftmod = @import("draft.zig");
 const transcriptmod = @import("transcript.zig");
 const transport = @import("ai").transport;
 const transport_ir = @import("ai").ir;
+const ai_model = @import("ai").model;
 const cancelmod = @import("../cancel.zig");
 const work = @import("work.zig");
 
@@ -56,6 +57,8 @@ pub const RunHandle = struct {
 pub const RoundState = struct {
     message_id: ids.MessageId,
     created_at_ms: u64 = 0,
+    /// The price bands of the model that this round asked. They borrow the arena of the run loop, which the commit outlives.
+    cost: []const ai_model.PriceBand = ai_model.unknown_cost,
 };
 
 pub const RunProgress = struct {

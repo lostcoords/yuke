@@ -24,6 +24,8 @@ pub const Error = error{
     BadHeaderName,
     BadHeaderValue,
     BadReasoningLevel,
+    /// The price bands do not start at 0, do not rise, or hold a negative price.
+    BadCost,
     HeaderConflict,
     /// Two endpoints name one protocol, so a model could not pick one.
     DuplicateEndpoint,
@@ -73,8 +75,8 @@ pub const FileModel = struct {
     protocol: ?ai.route.Protocol = null,
     /// A limit the file omits stays unknown, and the run falls back to its own ceiling.
     limits: ai.model.Limits = .{},
-    /// A price the file omits stays unknown. A local endpoint publishes none.
-    cost: ai.model.Cost = .{},
+    /// The price bands in threshold order. A price the file omits stays unknown. A local endpoint publishes none.
+    cost: []const ai.model.PriceBand = ai.model.unknown_cost,
     /// A null level means the model takes no effort at all.
     reasoning_levels: []const ?[]const u8 = &.{},
     flags: FileFlags = .{},
@@ -361,6 +363,7 @@ fn resolveProvider(fp: FileProvider) Error!LocalProvider {
         }
         // The catalog can name the endpoints, so only a declared list is checked here; the merge checks the rest.
         if (fp.endpoints) |endpoints| _ = try modelProtocol(fm, endpoints) else try validateSearchCapability(fm, fm.protocol);
+        if (!ai.model.validCost(fm.cost)) return error.BadCost;
         if (fm.reasoning_levels.len > proto.meta.limits.max_reasoning_levels) return error.BadReasoningLevel;
         for (fm.reasoning_levels, 0..) |level, level_i| {
             if (level) |name| {
@@ -583,6 +586,18 @@ test "the endpoint list names each path once, and a model must name one of them"
     }));
 }
 
+test "a file cost is price bands that start at 0 and rise" {
+    var loaded = try loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"p","models":[{"id":"m","upstream_id":"m","cost":[{"input":3},{"min_prompt_tokens":200001,"input":6}]}]}
+    ));
+    defer loaded.deinit();
+    // The first band may leave its threshold out, because a cost always starts at 0.
+    try testing.expectEqual(@as(u64, 0), loaded.providers[0].models[0].cost[0].min_prompt_tokens);
+    try testing.expectError(error.BadCost, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"p","models":[{"id":"m","upstream_id":"m","cost":[{"input":3},{"min_prompt_tokens":0,"input":6}]}]}
+    )));
+}
+
 test "reasoning levels use the closed effort set without duplicates" {
     try testing.expectError(error.BadReasoningLevel, loadBytes(testing.allocator, wrapProvider(
         \\{"id":"p","models":[{"id":"m","upstream_id":"m","limits":{"context_window":1,"max_output_tokens":1},
@@ -780,7 +795,7 @@ test "a file model decodes its flags and projects onto the library shape" {
     try testing.expectEqualStrings("high", spec.reasoning_levels[1].named);
 
     // A price the file omits is unknown, not zero. A local endpoint publishes none.
-    try testing.expect(spec.cost.input == null);
+    try testing.expect(spec.cost.len == 1 and spec.cost[0].input == null);
 }
 
 test "a file model may omit its limits entirely" {

@@ -80,7 +80,7 @@ The selector is `provider/model`, for example `gateway/big`. A local server, suc
 | `id`, `upstream_id` | Required. The selector name, and the name the host receives. |
 | `protocol` | The endpoint. Required when the provider has more than one endpoint. |
 | `limits` | `context_window`, `max_output_tokens`. Omitted means unknown. |
-| `cost` | `input`, `output`, `cache_read`, `cache_write`, in USD per million tokens. Omitted means unknown, not zero. |
+| `cost` | A list of price bands, in USD per million tokens. See below. Omitted means unknown, not zero. |
 | `reasoning_levels` | Some of `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `null` turns reasoning off. |
 | `flags` | See below. |
 
@@ -94,6 +94,24 @@ The selector is `provider/model`, for example `gateway/big`. A local server, suc
 | `anthropic_adaptive` | `false` | Adaptive thinking in place of a token budget. |
 | `reasoning_budget_min`, `reasoning_budget_max` | none | The thinking-token budget. |
 | `max_tokens_field` | `max_tokens` | `max_completion_tokens` |
+
+`cost` is a list of price bands. A vendor can bill a long prompt at a higher price. Each band holds the prices from one prompt size up. Each band has these fields:
+
+| Band field | Meaning |
+|---|---|
+| `min_prompt_tokens` | The smallest prompt that the band prices. The first band starts at `0`, and you can omit it there. Each next band starts higher. |
+| `input`, `output` | The price of an uncached input token and of an output token. |
+| `reasoning` | The price of a reasoning token. When the vendor bills a reasoning token as an output token, write the `output` price. |
+| `cache_read`, `cache_write` | The price of a cached input token, and of an input token that the request writes to the cache. |
+
+The prompt size counts every input token of a request, the cached tokens too. The last band that the prompt reaches prices the whole request. A price that you omit is unknown, and yuke then shows the cost of that request as unknown. For example, this model doubles its input price above 272,000 tokens:
+
+```json
+"cost": [
+  { "input": 4, "output": 20, "reasoning": 20, "cache_read": 0.4, "cache_write": 5 },
+  { "min_prompt_tokens": 272001, "input": 8, "output": 30, "reasoning": 30, "cache_read": 0.8, "cache_write": 10 }
+]
+```
 
 ## Change a built-in provider
 

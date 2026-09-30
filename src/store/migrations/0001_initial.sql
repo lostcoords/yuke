@@ -42,6 +42,12 @@ CREATE TABLE sessions (
     -- Store the token estimate of the system prompt and the tools of the last built request. The context count adds it when no provider count anchors it.
     prompt_tokens INTEGER NOT NULL DEFAULT 0 CHECK (prompt_tokens BETWEEN 0 AND 9007199254740991), -- u64
 
+    -- Sum the known costs of the committed assistant messages in US dollars. A truncation does not change these totals.
+    cost_total               REAL NOT NULL DEFAULT 0 CHECK (cost_total >= 0),
+    cost_without_cache_total REAL NOT NULL DEFAULT 0 CHECK (cost_without_cache_total >= 0),
+    -- Count the assistant messages with tokens and no known cost. A reader then does not take a partial sum as the whole cost.
+    unpriced_count INTEGER NOT NULL DEFAULT 0 CHECK (unpriced_count BETWEEN 0 AND 9007199254740991), -- u64
+
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND 9007199254740991), -- u64
     updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms BETWEEN 0 AND 9007199254740991), -- u64
 

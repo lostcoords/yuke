@@ -687,6 +687,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
         .title = title,
         .message_count = if (started != null) 1 else 0,
         .usage_total = .zero,
+        .cost = .zero,
         .created_at_ms = now,
         .updated_at_ms = now,
         .origin = if (params.child) |child| .{ .child = .{ .site = child.site } } else .{ .root = .{} },

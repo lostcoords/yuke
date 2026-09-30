@@ -38,6 +38,8 @@ INSERT INTO messages(
 -- tokens_reasoning: ?u64!
 -- tokens_cache_read: ?u64!
 -- tokens_cache_write: ?u64!
+-- cost: ?f64!
+-- cost_without_cache: ?f64!
 -- updated_at_ms: u64!
 -- advanced: i64!
 UPDATE sessions SET
@@ -53,6 +55,10 @@ UPDATE sessions SET
     usage_last_reasoning    = COALESCE(:tokens_reasoning, usage_last_reasoning),
     usage_last_cache_read   = COALESCE(:tokens_cache_read, usage_last_cache_read),
     usage_last_cache_write  = COALESCE(:tokens_cache_write, usage_last_cache_write),
+    cost_total               = cost_total               + COALESCE(:cost, 0),
+    cost_without_cache_total = cost_without_cache_total + COALESCE(:cost_without_cache, 0),
+    -- A message with tokens and no known cost is unpriced. A message without tokens is not unpriced.
+    unpriced_count           = unpriced_count           + (:tokens_input IS NOT NULL AND :cost IS NULL),
     projection_seq          = :seq,
     updated_at_ms           = MAX(updated_at_ms, :updated_at_ms)
 WHERE id = :id RETURNING 1 AS advanced;

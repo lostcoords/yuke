@@ -34,7 +34,7 @@ pub fn find(id: []const u8) ?*const Provider {
 }
 
 /// The catalog revision these rows come from.
-pub const revision = "358dca4eb00a8d7e0ce84d9d30c8c06b811ac351fd463cbf5cdfd2715d4649fdfb3c9d805a52df11f531fc714092bb8694eddcd4a7508115bee319b34e2096ce";
+pub const revision = "1f127ae63fe7b2aba5d2571ab1410b372f969d6c5294c242d81da70124542b09560f2f273fd60d9db0dc3749fcdf9f01536f555609910c1e6585e26f5396d724";
 
 pub const providers = [_]Provider{
     .{
@@ -57,11 +57,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 50,
-                    .cache_read = 1,
-                    .cache_write = 12.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 50,
+                        .reasoning = 50,
+                        .cache_read = 1,
+                        .cache_write = 12.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -80,11 +84,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 50,
-                    .cache_read = 0.25,
-                    .cache_write = 12.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 50,
+                        .reasoning = 50,
+                        .cache_read = 0.25,
+                        .cache_write = 12.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -103,11 +111,15 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 5,
-                    .cache_read = 0.1,
-                    .cache_write = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.1,
+                        .cache_write = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -130,11 +142,15 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 5,
-                    .cache_read = 0.1,
-                    .cache_write = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.1,
+                        .cache_write = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -157,11 +173,15 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -180,11 +200,15 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -203,11 +227,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -226,11 +254,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -249,11 +281,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -272,11 +308,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -295,11 +335,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 20,
-                    .cache_read = 0.2,
-                    .cache_write = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 20,
+                        .reasoning = 20,
+                        .cache_read = 0.2,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -318,11 +362,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
-                    .cache_write = 3.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                        .cache_write = 3.75,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -345,11 +393,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
-                    .cache_write = 3.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                        .cache_write = 3.75,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -372,11 +424,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
-                    .cache_write = 3.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                        .cache_write = 3.75,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -395,11 +451,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -418,11 +478,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -454,7 +518,6 @@ pub const providers = [_]Provider{
                     .context_window = 0,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
@@ -472,10 +535,14 @@ pub const providers = [_]Provider{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 8,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 8,
+                        .reasoning = 8,
+                        .cache_read = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -494,10 +561,14 @@ pub const providers = [_]Provider{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 1.6,
-                    .cache_read = 0.1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 1.6,
+                        .reasoning = 1.6,
+                        .cache_read = 0.1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -516,10 +587,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 10,
-                    .cache_read = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -538,10 +613,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 10,
-                    .cache_read = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -560,10 +639,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 10,
-                    .cache_read = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -582,10 +665,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.075,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.075,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -604,10 +691,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 10,
-                    .cache_read = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.125,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -626,10 +717,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 2,
-                    .cache_read = 0.025,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 2,
+                        .reasoning = 2,
+                        .cache_read = 0.025,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -648,10 +743,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.4,
-                    .cache_read = 0.005,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.4,
+                        .reasoning = 0.4,
+                        .cache_read = 0.005,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -670,9 +769,13 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 272000,
                 },
-                .cost = .{
-                    .input = 15,
-                    .output = 120,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 15,
+                        .output = 120,
+                        .reasoning = 120,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -691,10 +794,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 10,
-                    .cache_read = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.125,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -713,10 +820,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -735,9 +846,13 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 21,
-                    .output = 168,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 21,
+                        .output = 168,
+                        .reasoning = 168,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -756,10 +871,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -778,10 +897,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 32000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -800,10 +923,21 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 15,
-                    .cache_read = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.25,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 5,
+                        .output = 22.5,
+                        .reasoning = 22.5,
+                        .cache_read = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
                 .modalities = .{
@@ -822,10 +956,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.75,
-                    .output = 4.5,
-                    .cache_read = 0.075,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.75,
+                        .output = 4.5,
+                        .reasoning = 4.5,
+                        .cache_read = 0.075,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
                 .modalities = .{
@@ -844,10 +982,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 1.25,
-                    .cache_read = 0.02,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 1.25,
+                        .reasoning = 1.25,
+                        .cache_read = 0.02,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = false, .disable_reasoning = true },
                 .modalities = .{
@@ -866,9 +1008,19 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 30,
-                    .output = 180,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 30,
+                        .output = 180,
+                        .reasoning = 180,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 60,
+                        .output = 270,
+                        .reasoning = 270,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false },
                 .modalities = .{
@@ -887,10 +1039,21 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 30,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 10,
+                        .output = 45,
+                        .reasoning = 45,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
                 .modalities = .{
@@ -909,9 +1072,19 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 30,
-                    .output = 180,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 30,
+                        .output = 180,
+                        .reasoning = 180,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 60,
+                        .output = 270,
+                        .reasoning = 270,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = false, .disable_reasoning = false },
                 .modalities = .{
@@ -930,11 +1103,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 20,
-                    .cache_read = 0.4,
-                    .cache_write = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 20,
+                        .reasoning = 20,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 8,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.8,
+                        .cache_write = 10,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -953,11 +1138,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 1.2,
-                    .cache_read = 0.02,
-                    .cache_write = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 0.4,
+                        .output = 1.8,
+                        .reasoning = 1.8,
+                        .cache_read = 0.04,
+                        .cache_write = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -976,11 +1173,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 20,
-                    .cache_read = 0.4,
-                    .cache_write = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 20,
+                        .reasoning = 20,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 8,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.8,
+                        .cache_write = 10,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -999,11 +1208,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 12,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 18,
+                        .reasoning = 18,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -1022,11 +1243,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 50,
-                    .cache_read = 1,
-                    .cache_write = 12.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 50,
+                        .reasoning = 50,
+                        .cache_read = 1,
+                        .cache_write = 12.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 20,
+                        .output = 75,
+                        .reasoning = 75,
+                        .cache_read = 2,
+                        .cache_write = 25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -1045,11 +1278,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.5,
-                    .cache_read = 0.01,
-                    .cache_write = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.01,
+                        .cache_write = 0.125,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 0.2,
+                        .output = 0.75,
+                        .reasoning = 0.75,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -1068,11 +1313,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -1091,11 +1348,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.1,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.1,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.2,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -1114,11 +1383,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 20,
-                    .cache_read = 0.4,
-                    .cache_write = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 20,
+                        .reasoning = 20,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 8,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.8,
+                        .cache_write = 10,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -1137,11 +1418,15 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 12.5,
-                    .output = 75,
-                    .cache_read = 1.25,
-                    .cache_write = 15.625,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 12.5,
+                        .output = 75,
+                        .reasoning = 75,
+                        .cache_read = 1.25,
+                        .cache_write = 15.625,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -1160,7 +1445,6 @@ pub const providers = [_]Provider{
                     .context_window = 0,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
@@ -1178,7 +1462,6 @@ pub const providers = [_]Provider{
                     .context_window = 0,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
@@ -1196,10 +1479,14 @@ pub const providers = [_]Provider{
                     .context_window = 0,
                     .max_output_tokens = 0,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 30,
-                    .cache_read = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 1.25,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -1218,10 +1505,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 32000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 24,
-                    .cache_read = 0.4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 24,
+                        .reasoning = 24,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -1240,10 +1531,14 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 8,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 8,
+                        .reasoning = 8,
+                        .cache_read = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -1262,9 +1557,13 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
                 },
-                .cost = .{
-                    .input = 20,
-                    .output = 80,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 20,
+                        .output = 80,
+                        .reasoning = 80,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -1283,9 +1582,13 @@ pub const providers = [_]Provider{
                     .context_window = 8191,
                     .max_output_tokens = 3072,
                 },
-                .cost = .{
-                    .input = 0.13,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.13,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -1304,9 +1607,13 @@ pub const providers = [_]Provider{
                     .context_window = 8191,
                     .max_output_tokens = 1536,
                 },
-                .cost = .{
-                    .input = 0.02,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.02,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -1325,9 +1632,13 @@ pub const providers = [_]Provider{
                     .context_window = 8192,
                     .max_output_tokens = 1536,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -1359,7 +1670,6 @@ pub const providers = [_]Provider{
                     .context_window = 0,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
@@ -1377,10 +1687,14 @@ pub const providers = [_]Provider{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 8,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 8,
+                        .reasoning = 8,
+                        .cache_read = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -1399,10 +1713,14 @@ pub const providers = [_]Provider{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 1.6,
-                    .cache_read = 0.1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 1.6,
+                        .reasoning = 1.6,
+                        .cache_read = 0.1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -1421,10 +1739,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 10,
-                    .cache_read = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -1443,10 +1765,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 10,
-                    .cache_read = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -1465,10 +1791,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 10,
-                    .cache_read = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -1487,10 +1817,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.075,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.075,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -1509,10 +1843,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 10,
-                    .cache_read = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.125,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -1531,10 +1869,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 2,
-                    .cache_read = 0.025,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 2,
+                        .reasoning = 2,
+                        .cache_read = 0.025,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -1553,10 +1895,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.4,
-                    .cache_read = 0.005,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.4,
+                        .reasoning = 0.4,
+                        .cache_read = 0.005,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -1575,9 +1921,13 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 272000,
                 },
-                .cost = .{
-                    .input = 15,
-                    .output = 120,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 15,
+                        .output = 120,
+                        .reasoning = 120,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -1596,10 +1946,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 10,
-                    .cache_read = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.125,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -1618,10 +1972,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -1640,9 +1998,13 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 21,
-                    .output = 168,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 21,
+                        .output = 168,
+                        .reasoning = 168,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -1661,10 +2023,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -1683,10 +2049,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 32000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -1705,10 +2075,21 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 15,
-                    .cache_read = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.25,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 5,
+                        .output = 22.5,
+                        .reasoning = 22.5,
+                        .cache_read = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
                 .modalities = .{
@@ -1727,10 +2108,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.75,
-                    .output = 4.5,
-                    .cache_read = 0.075,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.75,
+                        .output = 4.5,
+                        .reasoning = 4.5,
+                        .cache_read = 0.075,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
                 .modalities = .{
@@ -1749,10 +2134,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 1.25,
-                    .cache_read = 0.02,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 1.25,
+                        .reasoning = 1.25,
+                        .cache_read = 0.02,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = false, .disable_reasoning = true },
                 .modalities = .{
@@ -1771,9 +2160,19 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 30,
-                    .output = 180,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 30,
+                        .output = 180,
+                        .reasoning = 180,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 60,
+                        .output = 270,
+                        .reasoning = 270,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false },
                 .modalities = .{
@@ -1792,10 +2191,21 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 30,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 10,
+                        .output = 45,
+                        .reasoning = 45,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
                 .modalities = .{
@@ -1814,9 +2224,19 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 30,
-                    .output = 180,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 30,
+                        .output = 180,
+                        .reasoning = 180,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 60,
+                        .output = 270,
+                        .reasoning = 270,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = false, .disable_reasoning = false },
                 .modalities = .{
@@ -1835,11 +2255,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 20,
-                    .cache_read = 0.4,
-                    .cache_write = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 20,
+                        .reasoning = 20,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 8,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.8,
+                        .cache_write = 10,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -1858,11 +2290,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 1.2,
-                    .cache_read = 0.02,
-                    .cache_write = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 0.4,
+                        .output = 1.8,
+                        .reasoning = 1.8,
+                        .cache_read = 0.04,
+                        .cache_write = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -1881,11 +2325,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 20,
-                    .cache_read = 0.4,
-                    .cache_write = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 20,
+                        .reasoning = 20,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 8,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.8,
+                        .cache_write = 10,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -1904,11 +2360,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 12,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 18,
+                        .reasoning = 18,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -1927,11 +2395,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 50,
-                    .cache_read = 1,
-                    .cache_write = 12.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 50,
+                        .reasoning = 50,
+                        .cache_read = 1,
+                        .cache_write = 12.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 20,
+                        .output = 75,
+                        .reasoning = 75,
+                        .cache_read = 2,
+                        .cache_write = 25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -1950,11 +2430,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.5,
-                    .cache_read = 0.01,
-                    .cache_write = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.01,
+                        .cache_write = 0.125,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 0.2,
+                        .output = 0.75,
+                        .reasoning = 0.75,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -1973,11 +2465,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -1996,11 +2500,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.1,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.1,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.2,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -2019,11 +2535,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 20,
-                    .cache_read = 0.4,
-                    .cache_write = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 20,
+                        .reasoning = 20,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 8,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.8,
+                        .cache_write = 10,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -2042,11 +2570,15 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 12.5,
-                    .output = 75,
-                    .cache_read = 1.25,
-                    .cache_write = 15.625,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 12.5,
+                        .output = 75,
+                        .reasoning = 75,
+                        .cache_read = 1.25,
+                        .cache_write = 15.625,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -2065,7 +2597,6 @@ pub const providers = [_]Provider{
                     .context_window = 0,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
@@ -2083,7 +2614,6 @@ pub const providers = [_]Provider{
                     .context_window = 0,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .text },
@@ -2101,10 +2631,14 @@ pub const providers = [_]Provider{
                     .context_window = 0,
                     .max_output_tokens = 0,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 30,
-                    .cache_read = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 1.25,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -2123,10 +2657,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 32000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 24,
-                    .cache_read = 0.4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 24,
+                        .reasoning = 24,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -2145,10 +2683,14 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 8,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 8,
+                        .reasoning = 8,
+                        .cache_read = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -2167,9 +2709,13 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
                 },
-                .cost = .{
-                    .input = 20,
-                    .output = 80,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 20,
+                        .output = 80,
+                        .reasoning = 80,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -2188,9 +2734,13 @@ pub const providers = [_]Provider{
                     .context_window = 8191,
                     .max_output_tokens = 3072,
                 },
-                .cost = .{
-                    .input = 0.13,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.13,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -2209,9 +2759,13 @@ pub const providers = [_]Provider{
                     .context_window = 8191,
                     .max_output_tokens = 1536,
                 },
-                .cost = .{
-                    .input = 0.02,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.02,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -2230,9 +2784,13 @@ pub const providers = [_]Provider{
                     .context_window = 8192,
                     .max_output_tokens = 1536,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -2264,10 +2822,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.8,
-                    .output = 1.6,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.8,
+                        .output = 1.6,
+                        .reasoning = 1.6,
+                        .cache_read = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -2286,10 +2848,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 6,
-                    .cache_read = 0.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.75,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -2308,10 +2874,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.7,
-                    .output = 1.4,
-                    .cache_read = 0.18,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.7,
+                        .output = 1.4,
+                        .reasoning = 1.4,
+                        .cache_read = 0.18,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -2330,10 +2900,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 6,
-                    .cache_read = 0.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.75,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -2354,10 +2928,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.7,
-                    .output = 1.4,
-                    .cache_read = 0.18,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.7,
+                        .output = 1.4,
+                        .reasoning = 1.4,
+                        .cache_read = 0.18,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -2378,9 +2956,13 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 29491,
                 },
-                .cost = .{
-                    .input = 0.8,
-                    .output = 1.6,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.8,
+                        .output = 1.6,
+                        .reasoning = 1.6,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -2399,9 +2981,13 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 65535,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -2422,9 +3008,13 @@ pub const providers = [_]Provider{
                     .context_window = 300000,
                     .max_output_tokens = 5120,
                 },
-                .cost = .{
-                    .input = 0.06,
-                    .output = 0.24,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.06,
+                        .output = 0.24,
+                        .reasoning = 0.24,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -2443,9 +3033,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 5120,
                 },
-                .cost = .{
-                    .input = 0.035,
-                    .output = 0.14,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.035,
+                        .output = 0.14,
+                        .reasoning = 0.14,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -2464,10 +3058,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 32000,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 12.5,
-                    .cache_read = 0.625,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 12.5,
+                        .reasoning = 12.5,
+                        .cache_read = 0.625,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -2486,9 +3084,13 @@ pub const providers = [_]Provider{
                     .context_window = 300000,
                     .max_output_tokens = 5120,
                 },
-                .cost = .{
-                    .input = 0.8,
-                    .output = 3.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.8,
+                        .output = 3.2,
+                        .reasoning = 3.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -2507,9 +3109,13 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 4096,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 5,
+                        .reasoning = 5,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -2528,11 +3134,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 50,
-                    .cache_read = 1,
-                    .cache_write = 12.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 50,
+                        .reasoning = 50,
+                        .cache_read = 1,
+                        .cache_write = 12.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -2553,11 +3163,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 50,
-                    .cache_read = 0.25,
-                    .cache_write = 12.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 50,
+                        .reasoning = 50,
+                        .cache_read = 0.25,
+                        .cache_write = 12.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -2578,11 +3192,15 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 5,
-                    .cache_read = 0.1,
-                    .cache_write = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.1,
+                        .cache_write = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -2603,11 +3221,15 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 32000,
                 },
-                .cost = .{
-                    .input = 15,
-                    .output = 75,
-                    .cache_read = 1.5,
-                    .cache_write = 18.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 15,
+                        .output = 75,
+                        .reasoning = 75,
+                        .cache_read = 1.5,
+                        .cache_write = 18.75,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -2628,11 +3250,15 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -2653,11 +3279,23 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 10,
+                        .output = 37.5,
+                        .reasoning = 37.5,
+                        .cache_read = 1,
+                        .cache_write = 12.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -2678,11 +3316,23 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 10,
+                        .output = 37.5,
+                        .reasoning = 37.5,
+                        .cache_read = 1,
+                        .cache_write = 12.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -2703,11 +3353,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -2728,11 +3382,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -2753,11 +3411,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 20,
-                    .cache_read = 0.2,
-                    .cache_write = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 20,
+                        .reasoning = 20,
+                        .cache_read = 0.2,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -2778,11 +3440,23 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
-                    .cache_write = 3.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                        .cache_write = 3.75,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 6,
+                        .output = 22.5,
+                        .reasoning = 22.5,
+                        .cache_read = 0.6,
+                        .cache_write = 7.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -2803,11 +3477,23 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
-                    .cache_write = 3.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                        .cache_write = 3.75,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 6,
+                        .output = 22.5,
+                        .reasoning = 22.5,
+                        .cache_read = 0.6,
+                        .cache_write = 7.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -2828,11 +3514,23 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
-                    .cache_write = 3.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                        .cache_write = 3.75,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 6,
+                        .output = 22.5,
+                        .reasoning = 22.5,
+                        .cache_read = 0.6,
+                        .cache_write = 7.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -2853,11 +3551,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -2878,11 +3580,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -2903,10 +3609,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 80000,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 0.8,
-                    .cache_read = 0.06,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 0.8,
+                        .reasoning = 0.8,
+                        .cache_read = 0.06,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -2925,9 +3635,13 @@ pub const providers = [_]Provider{
                     .context_window = 123000,
                     .max_output_tokens = 16000,
                 },
-                .cost = .{
-                    .input = 0.42,
-                    .output = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.42,
+                        .output = 1.25,
+                        .reasoning = 1.25,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -2948,9 +3662,19 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 2,
+                        .reasoning = 2,
+                    },
+                    .{
+                        .min_prompt_tokens = 128001,
+                        .input = 0.5,
+                        .output = 4,
+                        .reasoning = 4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -2971,9 +3695,19 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.075,
-                    .output = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.075,
+                        .output = 0.3,
+                        .reasoning = 0.3,
+                    },
+                    .{
+                        .min_prompt_tokens = 128001,
+                        .input = 0.1,
+                        .output = 0.8,
+                        .reasoning = 0.8,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -2994,9 +3728,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.5,
-                    .output = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.5,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -3017,9 +3755,19 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.5,
-                    .output = 3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.5,
+                        .output = 3,
+                        .reasoning = 3,
+                    },
+                    .{
+                        .min_prompt_tokens = 128001,
+                        .input = 1,
+                        .output = 6,
+                        .reasoning = 6,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -3040,9 +3788,19 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 2,
+                        .reasoning = 2,
+                    },
+                    .{
+                        .min_prompt_tokens = 128001,
+                        .input = 0.5,
+                        .output = 4,
+                        .reasoning = 4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -3063,9 +3821,19 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.4,
+                        .reasoning = 0.4,
+                    },
+                    .{
+                        .min_prompt_tokens = 128001,
+                        .input = 0.2,
+                        .output = 0.8,
+                        .reasoning = 0.8,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -3086,10 +3854,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 2048,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.2,
-                    .cache_read = 0.1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.2,
+                        .reasoning = 0.2,
+                        .cache_read = 0.1,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -3108,9 +3880,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 0.9,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 0.9,
+                        .reasoning = 0.9,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -3129,9 +3905,13 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 10,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 10,
+                        .reasoning = 10,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -3150,10 +3930,14 @@ pub const providers = [_]Provider{
                     .context_window = 192000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.5,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.5,
+                        .reasoning = 1.5,
+                        .cache_read = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -3174,9 +3958,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 4000,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -3195,9 +3983,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 4000,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 10,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 10,
+                        .reasoning = 10,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -3216,9 +4008,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 4000,
                 },
-                .cost = .{
-                    .input = 0.0375,
-                    .output = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.0375,
+                        .output = 0.15,
+                        .reasoning = 0.15,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -3237,9 +4033,13 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -3260,9 +4060,13 @@ pub const providers = [_]Provider{
                     .context_window = 163840,
                     .max_output_tokens = 16000,
                 },
-                .cost = .{
-                    .input = 0.2574,
-                    .output = 1.0287,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2574,
+                        .output = 1.0287,
+                        .reasoning = 1.0287,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -3281,10 +4085,14 @@ pub const providers = [_]Provider{
                     .context_window = 163840,
                     .max_output_tokens = 147456,
                 },
-                .cost = .{
-                    .input = 0.29,
-                    .output = 1.14,
-                    .cache_read = 0.11,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.29,
+                        .output = 1.14,
+                        .reasoning = 1.14,
+                        .cache_read = 0.11,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -3303,10 +4111,14 @@ pub const providers = [_]Provider{
                     .context_window = 163840,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 0.95,
-                    .cache_read = 0.13,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 0.95,
+                        .reasoning = 0.95,
+                        .cache_read = 0.13,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -3327,9 +4139,13 @@ pub const providers = [_]Provider{
                     .context_window = 64000,
                     .max_output_tokens = 16000,
                 },
-                .cost = .{
-                    .input = 0.7,
-                    .output = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.7,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -3348,10 +4164,14 @@ pub const providers = [_]Provider{
                     .context_window = 163840,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.5,
-                    .output = 2.15,
-                    .cache_read = 0.35,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.5,
+                        .output = 2.15,
+                        .reasoning = 2.15,
+                        .cache_read = 0.35,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -3370,10 +4190,14 @@ pub const providers = [_]Provider{
                     .context_window = 163840,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1,
-                    .cache_read = 0.135,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1,
+                        .reasoning = 1,
+                        .cache_read = 0.135,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -3394,10 +4218,14 @@ pub const providers = [_]Provider{
                     .context_window = 163840,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.28,
-                    .output = 0.42,
-                    .cache_read = 0.028,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.28,
+                        .output = 0.42,
+                        .reasoning = 0.42,
+                        .cache_read = 0.028,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -3418,9 +4246,13 @@ pub const providers = [_]Provider{
                     .context_window = 163840,
                     .max_output_tokens = 147456,
                 },
-                .cost = .{
-                    .input = 0.27,
-                    .output = 0.41,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.27,
+                        .output = 0.41,
+                        .reasoning = 0.41,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -3441,10 +4273,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.14,
-                    .output = 0.28,
-                    .cache_read = 0.028,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.14,
+                        .output = 0.28,
+                        .reasoning = 0.28,
+                        .cache_read = 0.028,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -3466,10 +4302,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 0.018,
-                    .output = 0.32,
-                    .cache_read = 0.018,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.01,
+                        .output = 1.28,
+                        .reasoning = 1.28,
+                        .cache_read = 0.01,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -3490,10 +4330,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 0.2156,
-                    .output = 0.6468,
-                    .cache_read = 0.00686,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2156,
+                        .output = 0.6468,
+                        .reasoning = 0.6468,
+                        .cache_read = 0.00686,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -3514,10 +4358,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 0.95526,
-                    .output = 1.91052,
-                    .cache_read = 0.079605,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.95526,
+                        .output = 1.91052,
+                        .reasoning = 1.91052,
+                        .cache_read = 0.079605,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -3539,10 +4387,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 393216,
                 },
-                .cost = .{
-                    .input = 1.32,
-                    .output = 3.96,
-                    .cache_read = 0.044,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.32,
+                        .output = 3.96,
+                        .reasoning = 3.96,
+                        .cache_read = 0.044,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -3563,10 +4415,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.006,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.006,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -3587,9 +4443,13 @@ pub const providers = [_]Provider{
                     .context_window = 512000,
                     .max_output_tokens = 460800,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -3610,10 +4470,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -3634,11 +4498,15 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65535,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 2.5,
-                    .cache_read = 0.03,
-                    .cache_write = 0.083333,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.03,
+                        .cache_write = 0.083333,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -3659,11 +4527,15 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 2.5,
-                    .cache_read = 0.03,
-                    .cache_write = 0.083333,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.03,
+                        .cache_write = 0.083333,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -3682,11 +4554,15 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65535,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.4,
-                    .cache_read = 0.01,
-                    .cache_write = 0.083333,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.4,
+                        .reasoning = 0.4,
+                        .cache_read = 0.01,
+                        .cache_write = 0.083333,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -3707,11 +4583,22 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 10,
-                    .cache_read = 0.125,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.125,
+                        .cache_write = 0.375,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2.5,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -3730,11 +4617,22 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 10,
-                    .cache_read = 0.125,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.125,
+                        .cache_write = 0.375,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2.5,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -3753,11 +4651,15 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.5,
-                    .output = 3,
-                    .cache_read = 0.05,
-                    .cache_write = 0.083333,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.5,
+                        .output = 3,
+                        .reasoning = 3,
+                        .cache_read = 0.05,
+                        .cache_write = 0.083333,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -3779,11 +4681,15 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 12,
-                    .cache_read = 0.2,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.2,
+                        .cache_write = 0.375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -3802,11 +4708,15 @@ pub const providers = [_]Provider{
                     .context_window = 65536,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 12,
-                    .cache_read = 0.2,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.2,
+                        .cache_write = 0.375,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -3825,9 +4735,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.5,
-                    .output = 3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.5,
+                        .output = 3,
+                        .reasoning = 3,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -3848,9 +4762,13 @@ pub const providers = [_]Provider{
                     .context_window = 65536,
                     .max_output_tokens = 58982,
                 },
-                .cost = .{
-                    .input = 0.5,
-                    .output = 3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.5,
+                        .output = 3,
+                        .reasoning = 3,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -3871,11 +4789,15 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 1.5,
-                    .cache_read = 0.025,
-                    .cache_write = 0.083333,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 1.5,
+                        .reasoning = 1.5,
+                        .cache_read = 0.025,
+                        .cache_write = 0.083333,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -3896,9 +4818,13 @@ pub const providers = [_]Provider{
                     .context_window = 65536,
                     .max_output_tokens = 58982,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 1.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 1.5,
+                        .reasoning = 1.5,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -3919,11 +4845,15 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 1.5,
-                    .cache_read = 0.025,
-                    .cache_write = 0.083333,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 1.5,
+                        .reasoning = 1.5,
+                        .cache_read = 0.025,
+                        .cache_write = 0.083333,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -3944,11 +4874,22 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 12,
-                    .cache_read = 0.2,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.2,
+                        .cache_write = 0.375,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 18,
+                        .reasoning = 18,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -3970,11 +4911,22 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 12,
-                    .cache_read = 0.2,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.2,
+                        .cache_write = 0.375,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 18,
+                        .reasoning = 18,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -3996,11 +4948,15 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 1.5,
-                    .output = 9,
-                    .cache_read = 0.15,
-                    .cache_write = 0.083333,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.5,
+                        .output = 9,
+                        .reasoning = 9,
+                        .cache_read = 0.15,
+                        .cache_write = 0.083333,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -4021,11 +4977,15 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 2.5,
-                    .cache_read = 0.03,
-                    .cache_write = 0.083333,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.03,
+                        .cache_write = 0.083333,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -4046,11 +5006,15 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.75,
-                    .output = 3.75,
-                    .cache_read = 0.075,
-                    .cache_write = 0.041667,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.75,
+                        .output = 3.75,
+                        .reasoning = 3.75,
+                        .cache_read = 0.075,
+                        .cache_write = 0.041667,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -4071,11 +5035,15 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.75,
-                    .output = 3.75,
-                    .cache_read = 0.075,
-                    .cache_write = 0.041667,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.75,
+                        .output = 3.75,
+                        .reasoning = 3.75,
+                        .cache_read = 0.075,
+                        .cache_write = 0.041667,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -4096,11 +5064,15 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.75,
-                    .output = 3.75,
-                    .cache_read = 0.075,
-                    .cache_write = 0.041667,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.75,
+                        .output = 3.75,
+                        .reasoning = 3.75,
+                        .cache_read = 0.075,
+                        .cache_write = 0.041667,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -4121,9 +5093,13 @@ pub const providers = [_]Provider{
                     .context_window = 8192,
                     .max_output_tokens = 2048,
                 },
-                .cost = .{
-                    .input = 0.65,
-                    .output = 0.65,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.65,
+                        .output = 0.65,
+                        .reasoning = 0.65,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -4142,9 +5118,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.15,
+                        .reasoning = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -4163,10 +5143,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
-                .cost = .{
-                    .input = 0.08,
-                    .output = 0.45,
-                    .cache_read = 0.04,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.08,
+                        .output = 0.45,
+                        .reasoning = 0.45,
+                        .cache_read = 0.04,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -4185,9 +5169,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.1,
+                        .reasoning = 0.1,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -4206,10 +5194,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.0765,
-                    .output = 0.255,
-                    .cache_read = 0.0425,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.09,
+                        .output = 0.3,
+                        .reasoning = 0.3,
+                        .cache_read = 0.05,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -4230,9 +5222,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -4253,10 +5249,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.09,
-                    .output = 0.34,
-                    .cache_read = 0.05,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.09,
+                        .output = 0.34,
+                        .reasoning = 0.34,
+                        .cache_read = 0.05,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -4277,9 +5277,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -4300,9 +5304,13 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -4321,9 +5329,13 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -4342,9 +5354,13 @@ pub const providers = [_]Provider{
                     .context_window = 8192,
                     .max_output_tokens = 3686,
                 },
-                .cost = .{
-                    .input = 0.08,
-                    .output = 0.11,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.08,
+                        .output = 0.11,
+                        .reasoning = 0.11,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -4363,9 +5379,13 @@ pub const providers = [_]Provider{
                     .context_window = 131000,
                     .max_output_tokens = 117900,
                 },
-                .cost = .{
-                    .input = 0.017,
-                    .output = 0.112,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.017,
+                        .output = 0.112,
+                        .reasoning = 0.112,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -4384,10 +5404,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
-                .cost = .{
-                    .input = 0.06,
-                    .output = 0.25,
-                    .cache_read = 0.015,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.06,
+                        .output = 0.25,
+                        .reasoning = 0.25,
+                        .cache_read = 0.015,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -4408,10 +5432,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 50000,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 0.75,
-                    .cache_read = 0.025,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 0.75,
+                        .reasoning = 0.75,
+                        .cache_read = 0.025,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -4432,10 +5460,14 @@ pub const providers = [_]Provider{
                     .context_window = 260000,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.04,
-                    .output = 0.15,
-                    .cache_read = 0.004,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.04,
+                        .output = 0.15,
+                        .reasoning = 0.15,
+                        .cache_read = 0.004,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -4456,10 +5488,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.021,
-                    .output = 0.063,
-                    .cache_read = 0.0042,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.021,
+                        .output = 0.063,
+                        .reasoning = 0.063,
+                        .cache_read = 0.0042,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -4480,10 +5516,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.06,
-                    .output = 0.18,
-                    .cache_read = 0.012,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.06,
+                        .output = 0.18,
+                        .reasoning = 0.18,
+                        .cache_read = 0.012,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -4504,9 +5544,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -4527,10 +5571,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.021,
-                    .output = 0.0616,
-                    .cache_read = 0.0042,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.021,
+                        .output = 0.0616,
+                        .reasoning = 0.0616,
+                        .cache_read = 0.0042,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -4551,10 +5599,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 4096,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.23,
-                    .cache_read = 0.05,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.23,
+                        .reasoning = 0.23,
+                        .cache_read = 0.05,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -4573,10 +5625,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{
-                    .input = 0.03,
-                    .output = 0.15,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.03,
+                        .output = 0.15,
+                        .reasoning = 0.15,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -4595,10 +5651,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.74,
-                    .output = 2.96,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.74,
+                        .output = 2.96,
+                        .reasoning = 2.96,
+                        .cache_read = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -4617,9 +5677,13 @@ pub const providers = [_]Provider{
                     .context_window = 65536,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -4638,9 +5702,13 @@ pub const providers = [_]Provider{
                     .context_window = 8000,
                     .max_output_tokens = 6000,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 0.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 0.75,
+                        .reasoning = 0.75,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -4659,10 +5727,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048756,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.006,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.006,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -4683,9 +5755,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 0.4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 0.4,
+                        .reasoning = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -4704,10 +5780,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.08,
-                    .cache_read = 0.025,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.08,
+                        .reasoning = 0.08,
+                        .cache_read = 0.025,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -4726,9 +5806,13 @@ pub const providers = [_]Provider{
                     .context_window = 60000,
                     .max_output_tokens = 54000,
                 },
-                .cost = .{
-                    .input = 0.027,
-                    .output = 0.201,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.027,
+                        .output = 0.201,
+                        .reasoning = 0.201,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -4747,9 +5831,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.33,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.33,
+                        .reasoning = 0.33,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -4768,9 +5856,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.32,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.32,
+                        .reasoning = 0.32,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -4789,9 +5881,13 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.1875,
-                    .output = 0.6525,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1875,
+                        .output = 0.6525,
+                        .reasoning = 0.6525,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -4810,9 +5906,13 @@ pub const providers = [_]Provider{
                     .context_window = 1310720,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.3,
+                        .reasoning = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -4831,9 +5931,13 @@ pub const providers = [_]Provider{
                     .context_window = 163840,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.18,
-                    .output = 0.18,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.18,
+                        .output = 0.18,
+                        .reasoning = 0.18,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -4852,10 +5956,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
-                .cost = .{
-                    .input = 0.35,
-                    .output = 1.5,
-                    .cache_read = 0.04,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.35,
+                        .output = 1.5,
+                        .reasoning = 1.5,
+                        .cache_read = 0.04,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -4876,10 +5984,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 4.25,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 4.25,
+                        .reasoning = 4.25,
+                        .cache_read = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -4900,10 +6012,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 4.25,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 4.25,
+                        .reasoning = 4.25,
+                        .cache_read = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -4924,10 +6040,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.2,
-                    .cache_read = 0.002,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.2,
+                        .reasoning = 0.2,
+                        .cache_read = 0.002,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -4948,10 +6068,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 4.25,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 4.25,
+                        .reasoning = 4.25,
+                        .cache_read = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -4972,10 +6096,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.2,
-                    .cache_read = 0.002,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.2,
+                        .reasoning = 0.2,
+                        .cache_read = 0.002,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -4996,9 +6124,13 @@ pub const providers = [_]Provider{
                     .context_window = 16384,
                     .max_output_tokens = 14745,
                 },
-                .cost = .{
-                    .input = 0.07,
-                    .output = 0.14,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.07,
+                        .output = 0.14,
+                        .reasoning = 0.14,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -5017,9 +6149,13 @@ pub const providers = [_]Provider{
                     .context_window = 65535,
                     .max_output_tokens = 8000,
                 },
-                .cost = .{
-                    .input = 0.62,
-                    .output = 0.62,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.62,
+                        .output = 0.62,
+                        .reasoning = 0.62,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -5038,9 +6174,13 @@ pub const providers = [_]Provider{
                     .context_window = 1000192,
                     .max_output_tokens = 40000,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 1.1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 1.1,
+                        .reasoning = 1.1,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -5059,9 +6199,13 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 40000,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 2.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 2.2,
+                        .reasoning = 2.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -5082,9 +6226,13 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 176947,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -5103,10 +6251,14 @@ pub const providers = [_]Provider{
                     .context_window = 65536,
                     .max_output_tokens = 2048,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -5125,10 +6277,14 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -5147,10 +6303,14 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.27,
-                    .output = 1.08,
-                    .cache_read = 0.027,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.27,
+                        .output = 1.08,
+                        .reasoning = 1.08,
+                        .cache_read = 0.027,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -5169,10 +6329,14 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 176947,
                 },
-                .cost = .{
-                    .input = 0.21,
-                    .output = 0.84,
-                    .cache_read = 0.042,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.21,
+                        .output = 0.84,
+                        .reasoning = 0.84,
+                        .cache_read = 0.042,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -5191,10 +6355,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 512000,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.06,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.06,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -5215,10 +6383,14 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 204800,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 0.9,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 0.9,
+                        .reasoning = 0.9,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5237,10 +6409,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 209715,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 2,
-                    .cache_read = 0.04,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 2,
+                        .reasoning = 2,
+                        .cache_read = 0.04,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5259,10 +6435,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 209715,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 0.2,
-                    .cache_read = 0.02,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 0.2,
+                        .reasoning = 0.2,
+                        .cache_read = 0.02,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5281,10 +6461,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 104857,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.1,
-                    .cache_read = 0.01,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.1,
+                        .reasoning = 0.1,
+                        .cache_read = 0.01,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5303,10 +6487,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 209715,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.15,
-                    .cache_read = 0.015,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.15,
+                        .reasoning = 0.15,
+                        .cache_read = 0.015,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5325,10 +6513,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 102400,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5347,10 +6539,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 104857,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5369,10 +6565,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 209715,
                 },
-                .cost = .{
-                    .input = 0.5,
-                    .output = 1.5,
-                    .cache_read = 0.05,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.5,
+                        .output = 1.5,
+                        .reasoning = 1.5,
+                        .cache_read = 0.05,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5391,10 +6591,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 104857,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 2,
-                    .cache_read = 0.04,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 2,
+                        .reasoning = 2,
+                        .cache_read = 0.04,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5413,9 +6617,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 209715,
                 },
-                .cost = .{
-                    .input = 1.5,
-                    .output = 7.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.5,
+                        .output = 7.5,
+                        .reasoning = 7.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -5436,10 +6644,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 104857,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 2,
-                    .cache_read = 0.04,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 2,
+                        .reasoning = 2,
+                        .cache_read = 0.04,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5458,9 +6670,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.019,
-                    .output = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.019,
+                        .output = 0.03,
+                        .reasoning = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -5479,10 +6695,14 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 26214,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 0.6,
-                    .cache_read = 0.02,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.02,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5501,9 +6721,13 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.08,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.08,
+                        .reasoning = 0.08,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -5522,10 +6746,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 209715,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.015,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.015,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -5546,9 +6774,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 102400,
                 },
-                .cost = .{
-                    .input = 0.351,
-                    .output = 0.555,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.351,
+                        .output = 0.555,
+                        .reasoning = 0.555,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5567,9 +6799,13 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.09375,
-                    .output = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.09375,
+                        .output = 0.25,
+                        .reasoning = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5588,10 +6824,14 @@ pub const providers = [_]Provider{
                     .context_window = 65536,
                     .max_output_tokens = 52428,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5610,10 +6850,14 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 26214,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.3,
-                    .cache_read = 0.01,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.3,
+                        .reasoning = 0.3,
+                        .cache_read = 0.01,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5632,9 +6876,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 98304,
                 },
-                .cost = .{
-                    .input = 0.57,
-                    .output = 2.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.57,
+                        .output = 2.3,
+                        .reasoning = 2.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -5653,9 +6901,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 98304,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -5674,10 +6926,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 98304,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 2.5,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -5696,10 +6952,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.45,
-                    .output = 2.25,
-                    .cache_read = 0.07,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.45,
+                        .output = 2.25,
+                        .reasoning = 2.25,
+                        .cache_read = 0.07,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -5721,10 +6981,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.65,
-                    .output = 3.41,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.65,
+                        .output = 3.41,
+                        .reasoning = 3.41,
+                        .cache_read = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -5746,10 +7010,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.6562,
-                    .output = 3.3,
-                    .cache_read = 0.18,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6712,
+                        .output = 3.35,
+                        .reasoning = 3.35,
+                        .cache_read = 0.18,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -5768,10 +7036,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -5792,9 +7064,13 @@ pub const providers = [_]Provider{
                     .context_window = 81920,
                     .max_output_tokens = 38000,
                 },
-                .cost = .{
-                    .input = 0.8,
-                    .output = 1.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.8,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -5813,9 +7089,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.9,
-                    .output = 1.9,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.9,
+                        .output = 1.9,
+                        .reasoning = 1.9,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -5834,10 +7114,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.025,
-                    .output = 0.1,
-                    .cache_read = 0.0025,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.025,
+                        .output = 0.1,
+                        .reasoning = 0.1,
+                        .cache_read = 0.0025,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -5858,10 +7142,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.075,
-                    .output = 0.25,
-                    .cache_read = 0.015,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.075,
+                        .output = 0.25,
+                        .reasoning = 0.25,
+                        .cache_read = 0.015,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -5882,9 +7170,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 1,
+                        .reasoning = 1,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -5903,9 +7195,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.7,
-                    .output = 0.7,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.7,
+                        .output = 0.7,
+                        .reasoning = 0.7,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -5924,9 +7220,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 3,
+                        .reasoning = 3,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -5947,10 +7247,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.2,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.2,
+                        .reasoning = 0.2,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -5971,9 +7275,13 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -5994,9 +7302,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.08,
-                    .output = 0.45,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.08,
+                        .output = 0.45,
+                        .reasoning = 0.45,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -6017,9 +7329,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -6040,10 +7356,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 182520,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 2.4,
-                    .cache_read = 0.12,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 2.4,
+                        .reasoning = 2.4,
+                        .cache_read = 0.12,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -6064,9 +7384,13 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -6087,9 +7411,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 0.2,
+                        .reasoning = 0.2,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -6110,9 +7438,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -6133,10 +7465,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.06,
-                    .output = 0.16,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.06,
+                        .output = 0.16,
+                        .reasoning = 0.16,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -6157,9 +7493,13 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -6180,9 +7520,13 @@ pub const providers = [_]Provider{
                     .context_window = 16385,
                     .max_output_tokens = 4096,
                 },
-                .cost = .{
-                    .input = 0.5,
-                    .output = 1.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.5,
+                        .output = 1.5,
+                        .reasoning = 1.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -6201,9 +7545,13 @@ pub const providers = [_]Provider{
                     .context_window = 4095,
                     .max_output_tokens = 3685,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 2,
+                        .reasoning = 2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -6222,9 +7570,13 @@ pub const providers = [_]Provider{
                     .context_window = 16385,
                     .max_output_tokens = 4096,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 4,
+                        .reasoning = 4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -6243,9 +7595,13 @@ pub const providers = [_]Provider{
                     .context_window = 4095,
                     .max_output_tokens = 3685,
                 },
-                .cost = .{
-                    .input = 1.5,
-                    .output = 2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.5,
+                        .output = 2,
+                        .reasoning = 2,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -6264,9 +7620,13 @@ pub const providers = [_]Provider{
                     .context_window = 8191,
                     .max_output_tokens = 4096,
                 },
-                .cost = .{
-                    .input = 30,
-                    .output = 60,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 30,
+                        .output = 60,
+                        .reasoning = 60,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -6285,9 +7645,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 4096,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 30,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 30,
+                        .reasoning = 30,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -6306,10 +7670,14 @@ pub const providers = [_]Provider{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 8,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 8,
+                        .reasoning = 8,
+                        .cache_read = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -6328,10 +7696,14 @@ pub const providers = [_]Provider{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 1.6,
-                    .cache_read = 0.1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 1.6,
+                        .reasoning = 1.6,
+                        .cache_read = 0.1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -6350,10 +7722,14 @@ pub const providers = [_]Provider{
                     .context_window = 1047576,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.4,
-                    .cache_read = 0.025,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.4,
+                        .reasoning = 0.4,
+                        .cache_read = 0.025,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -6372,10 +7748,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 10,
-                    .cache_read = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -6394,9 +7774,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 4096,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 15,
+                        .reasoning = 15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -6415,10 +7799,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 10,
-                    .cache_read = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -6437,10 +7825,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 10,
-                    .cache_read = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -6459,10 +7851,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.075,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.075,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -6481,10 +7877,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.075,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.075,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -6503,10 +7903,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 10,
-                    .cache_read = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.125,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -6527,10 +7931,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 10,
-                    .cache_read = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 1.25,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -6549,10 +7957,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 2,
-                    .cache_read = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 2,
+                        .reasoning = 2,
+                        .cache_read = 0.25,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -6571,10 +7983,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 2,
-                    .cache_read = 0.025,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 2,
+                        .reasoning = 2,
+                        .cache_read = 0.025,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -6595,10 +8011,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.4,
-                    .cache_read = 0.005,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.4,
+                        .reasoning = 0.4,
+                        .cache_read = 0.005,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -6619,9 +8039,13 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 15,
-                    .output = 120,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 15,
+                        .output = 120,
+                        .reasoning = 120,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -6642,10 +8066,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 10,
-                    .cache_read = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.125,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -6666,10 +8094,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 10,
-                    .cache_read = 0.13,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.13,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -6690,10 +8122,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 10,
-                    .cache_read = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.125,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -6714,10 +8150,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 2,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 2,
+                        .reasoning = 2,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -6738,10 +8178,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -6762,10 +8206,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 32000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -6784,10 +8232,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -6808,9 +8260,13 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 21,
-                    .output = 168,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 21,
+                        .output = 168,
+                        .reasoning = 168,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -6831,10 +8287,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -6855,10 +8315,21 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 15,
-                    .cache_read = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.25,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 5,
+                        .output = 22.5,
+                        .reasoning = 22.5,
+                        .cache_read = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -6879,10 +8350,14 @@ pub const providers = [_]Provider{
                     .context_window = 272000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 8,
-                    .output = 15,
-                    .cache_read = 2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 8,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 2,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -6903,10 +8378,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.75,
-                    .output = 4.5,
-                    .cache_read = 0.075,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.75,
+                        .output = 4.5,
+                        .reasoning = 4.5,
+                        .cache_read = 0.075,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -6927,10 +8406,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 1.25,
-                    .cache_read = 0.02,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 1.25,
+                        .reasoning = 1.25,
+                        .cache_read = 0.02,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -6951,9 +8434,19 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 30,
-                    .output = 180,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 30,
+                        .output = 180,
+                        .reasoning = 180,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 60,
+                        .output = 270,
+                        .reasoning = 270,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -6974,10 +8467,21 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 30,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 10,
+                        .output = 45,
+                        .reasoning = 45,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -6998,9 +8502,19 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 30,
-                    .output = 180,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 30,
+                        .output = 180,
+                        .reasoning = 180,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 60,
+                        .output = 270,
+                        .reasoning = 270,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -7021,11 +8535,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 1.2,
-                    .cache_read = 0.02,
-                    .cache_write = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 0.4,
+                        .output = 1.8,
+                        .reasoning = 1.8,
+                        .cache_read = 0.04,
+                        .cache_write = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -7046,11 +8572,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 1.2,
-                    .cache_read = 0.02,
-                    .cache_write = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 0.4,
+                        .output = 1.8,
+                        .reasoning = 1.8,
+                        .cache_read = 0.04,
+                        .cache_write = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -7071,11 +8609,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -7096,11 +8646,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 20,
-                    .cache_read = 0.4,
-                    .cache_write = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 20,
+                        .reasoning = 20,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 8,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.8,
+                        .cache_write = 10,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -7121,11 +8683,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 12,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 18,
+                        .reasoning = 18,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -7146,11 +8720,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 12,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 18,
+                        .reasoning = 18,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -7171,11 +8757,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 50,
-                    .cache_read = 1,
-                    .cache_write = 12.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 50,
+                        .reasoning = 50,
+                        .cache_read = 1,
+                        .cache_write = 12.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 20,
+                        .output = 75,
+                        .reasoning = 75,
+                        .cache_read = 2,
+                        .cache_write = 25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -7196,11 +8794,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 50,
-                    .cache_read = 1,
-                    .cache_write = 12.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 50,
+                        .reasoning = 50,
+                        .cache_read = 1,
+                        .cache_write = 12.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 20,
+                        .output = 75,
+                        .reasoning = 75,
+                        .cache_read = 2,
+                        .cache_write = 25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -7221,11 +8831,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.5,
-                    .cache_read = 0.01,
-                    .cache_write = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.01,
+                        .cache_write = 0.125,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 0.2,
+                        .output = 0.75,
+                        .reasoning = 0.75,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -7246,11 +8868,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.5,
-                    .cache_read = 0.01,
-                    .cache_write = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.01,
+                        .cache_write = 0.125,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 0.2,
+                        .output = 0.75,
+                        .reasoning = 0.75,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -7271,11 +8905,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -7296,11 +8942,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -7321,11 +8979,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.1,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.1,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.2,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -7346,11 +9016,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.1,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.1,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.2,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -7371,9 +9053,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 10,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 10,
+                        .reasoning = 10,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -7392,9 +9078,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 2.4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 2.4,
+                        .reasoning = 2.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -7413,10 +9103,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 30,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -7435,9 +9129,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
-                .cost = .{
-                    .input = 0.037,
-                    .output = 0.17,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.037,
+                        .output = 0.17,
+                        .reasoning = 0.17,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -7458,10 +9156,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.018,
-                    .output = 0.09,
-                    .cache_read = 0.009,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.018,
+                        .output = 0.09,
+                        .reasoning = 0.09,
+                        .cache_read = 0.009,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -7482,10 +9184,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.075,
-                    .output = 0.3,
-                    .cache_read = 0.0375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.075,
+                        .output = 0.3,
+                        .reasoning = 0.3,
+                        .cache_read = 0.0375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -7506,10 +9212,14 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
                 },
-                .cost = .{
-                    .input = 15,
-                    .output = 60,
-                    .cache_read = 7.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 15,
+                        .output = 60,
+                        .reasoning = 60,
+                        .cache_read = 7.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -7530,9 +9240,13 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
                 },
-                .cost = .{
-                    .input = 150,
-                    .output = 600,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 150,
+                        .output = 600,
+                        .reasoning = 600,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -7553,10 +9267,14 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 8,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 8,
+                        .reasoning = 8,
+                        .cache_read = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -7577,10 +9295,14 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
                 },
-                .cost = .{
-                    .input = 1.1,
-                    .output = 4.4,
-                    .cache_read = 0.55,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.1,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.55,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -7601,10 +9323,14 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
                 },
-                .cost = .{
-                    .input = 1.1,
-                    .output = 4.4,
-                    .cache_read = 0.55,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.1,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.55,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -7625,9 +9351,13 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
                 },
-                .cost = .{
-                    .input = 20,
-                    .output = 80,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 20,
+                        .output = 80,
+                        .reasoning = 80,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -7648,10 +9378,14 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
                 },
-                .cost = .{
-                    .input = 1.1,
-                    .output = 4.4,
-                    .cache_read = 0.275,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.1,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.275,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -7672,10 +9406,14 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 100000,
                 },
-                .cost = .{
-                    .input = 1.1,
-                    .output = 4.4,
-                    .cache_read = 0.275,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.1,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.275,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -7696,7 +9434,6 @@ pub const providers = [_]Provider{
                     .context_window = 2000000,
                     .max_output_tokens = 2000000,
                 },
-                .cost = .{},
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text, .video },
@@ -7714,7 +9451,6 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
@@ -7732,9 +9468,13 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 8000,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -7753,7 +9493,6 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
@@ -7771,7 +9510,6 @@ pub const providers = [_]Provider{
                     .context_window = 2000000,
                     .max_output_tokens = 200000,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
@@ -7789,9 +9527,13 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 1.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 1.5,
+                        .reasoning = 1.5,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -7812,9 +9554,13 @@ pub const providers = [_]Provider{
                     .context_window = 36864,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 1.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 1.5,
+                        .reasoning = 1.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -7835,9 +9581,13 @@ pub const providers = [_]Provider{
                     .context_window = 127072,
                     .max_output_tokens = 114364,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 1,
+                        .reasoning = 1,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -7856,9 +9606,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 115200,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 8,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 8,
+                        .reasoning = 3,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -7879,9 +9633,13 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 8000,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -7900,9 +9658,13 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 8000,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -7921,9 +9683,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 115200,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 8,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 8,
+                        .reasoning = 8,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -7944,10 +9710,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.09,
-                    .output = 0.18,
-                    .cache_read = 0.009,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.09,
+                        .output = 0.18,
+                        .reasoning = 0.18,
+                        .cache_read = 0.009,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -7968,9 +9738,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -7991,10 +9765,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.06,
-                    .output = 0.12,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.06,
+                        .output = 0.12,
+                        .reasoning = 0.12,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -8015,9 +9793,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -8038,10 +9820,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.075,
-                    .output = 0.5,
-                    .cache_read = 0.0375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.075,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.0375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -8062,9 +9848,13 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.36,
-                    .output = 0.4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.36,
+                        .output = 0.4,
+                        .reasoning = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -8083,9 +9873,13 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 29491,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.2,
+                        .reasoning = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -8104,9 +9898,13 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 29491,
                 },
-                .cost = .{
-                    .input = 0.66,
-                    .output = 1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.66,
+                        .output = 1,
+                        .reasoning = 1,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -8125,11 +9923,23 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.26,
-                    .output = 0.78,
-                    .cache_read = 0.052,
-                    .cache_write = 0.325,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.26,
+                        .output = 0.78,
+                        .reasoning = 0.78,
+                        .cache_read = 0.052,
+                        .cache_write = 0.325,
+                    },
+                    .{
+                        .min_prompt_tokens = 256001,
+                        .input = 0.78,
+                        .output = 2.34,
+                        .reasoning = 2.34,
+                        .cache_read = 0.156,
+                        .cache_write = 0.975,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -8148,9 +9958,19 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.26,
-                    .output = 0.78,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.26,
+                        .output = 0.78,
+                        .reasoning = 0.78,
+                    },
+                    .{
+                        .min_prompt_tokens = 256001,
+                        .input = 0.78,
+                        .output = 2.34,
+                        .reasoning = 2.34,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -8169,10 +9989,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 115200,
                 },
-                .cost = .{
-                    .input = 0.8,
-                    .output = 1,
-                    .cache_read = 0.4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.8,
+                        .output = 1,
+                        .reasoning = 1,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
@@ -8191,9 +10015,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.12,
-                    .output = 0.24,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.12,
+                        .output = 0.24,
+                        .reasoning = 0.24,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -8214,9 +10042,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{
-                    .input = 0.455,
-                    .output = 1.82,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.455,
+                        .output = 1.82,
+                        .reasoning = 1.82,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -8237,10 +10069,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.0875,
-                    .output = 0.35,
-                    .cache_read = 0.0175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.0875,
+                        .output = 0.35,
+                        .reasoning = 0.35,
+                        .cache_read = 0.0175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -8259,9 +10095,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
-                .cost = .{
-                    .input = 0.23,
-                    .output = 2.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.23,
+                        .output = 2.3,
+                        .reasoning = 2.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -8280,9 +10120,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{
-                    .input = 0.13,
-                    .output = 0.52,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.13,
+                        .output = 0.52,
+                        .reasoning = 0.52,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -8303,9 +10147,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32000,
                 },
-                .cost = .{
-                    .input = 0.04815,
-                    .output = 0.19305,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.04815,
+                        .output = 0.19305,
+                        .reasoning = 0.19305,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -8324,9 +10172,13 @@ pub const providers = [_]Provider{
                     .context_window = 81920,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 2.4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 2.4,
+                        .reasoning = 2.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -8345,9 +10197,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.08,
-                    .output = 0.28,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.08,
+                        .output = 0.28,
+                        .reasoning = 0.28,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -8368,9 +10224,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{
-                    .input = 0.117,
-                    .output = 0.455,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.117,
+                        .output = 0.455,
+                        .reasoning = 0.455,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -8391,10 +10251,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1,
-                    .cache_read = 0.1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1,
+                        .reasoning = 1,
+                        .cache_read = 0.1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -8413,9 +10277,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.07,
-                    .output = 0.28,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.07,
+                        .output = 0.28,
+                        .reasoning = 0.28,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -8434,11 +10302,31 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.195,
-                    .output = 0.975,
-                    .cache_read = 0.039,
-                    .cache_write = 0.24375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.195,
+                        .output = 0.975,
+                        .reasoning = 0.975,
+                        .cache_read = 0.039,
+                        .cache_write = 0.24375,
+                    },
+                    .{
+                        .min_prompt_tokens = 32001,
+                        .input = 0.325,
+                        .output = 1.625,
+                        .reasoning = 1.625,
+                        .cache_read = 0.065,
+                        .cache_write = 0.40625,
+                    },
+                    .{
+                        .min_prompt_tokens = 128001,
+                        .input = 0.52,
+                        .output = 2.6,
+                        .reasoning = 2.6,
+                        .cache_read = 0.104,
+                        .cache_write = 0.65,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -8457,10 +10345,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.12,
-                    .output = 0.8,
-                    .cache_read = 0.07,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.12,
+                        .output = 0.8,
+                        .reasoning = 0.8,
+                        .cache_read = 0.07,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -8479,11 +10371,31 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.65,
-                    .output = 3.25,
-                    .cache_read = 0.13,
-                    .cache_write = 0.8125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.65,
+                        .output = 3.25,
+                        .reasoning = 3.25,
+                        .cache_read = 0.13,
+                        .cache_write = 0.8125,
+                    },
+                    .{
+                        .min_prompt_tokens = 32001,
+                        .input = 1.17,
+                        .output = 5.85,
+                        .reasoning = 5.85,
+                        .cache_read = 0.234,
+                        .cache_write = 1.4625,
+                    },
+                    .{
+                        .min_prompt_tokens = 128001,
+                        .input = 1.95,
+                        .output = 9.75,
+                        .reasoning = 9.75,
+                        .cache_read = 0.39,
+                        .cache_write = 2.4375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -8502,11 +10414,31 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.78,
-                    .output = 3.9,
-                    .cache_read = 0.156,
-                    .cache_write = 0.975,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.78,
+                        .output = 3.9,
+                        .reasoning = 3.9,
+                        .cache_read = 0.156,
+                        .cache_write = 0.975,
+                    },
+                    .{
+                        .min_prompt_tokens = 32001,
+                        .input = 1.56,
+                        .output = 7.8,
+                        .reasoning = 7.8,
+                        .cache_read = 0.312,
+                        .cache_write = 1.95,
+                    },
+                    .{
+                        .min_prompt_tokens = 128001,
+                        .input = 1.95,
+                        .output = 9.75,
+                        .reasoning = 9.75,
+                        .cache_read = 0.39,
+                        .cache_write = 2.4375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -8525,9 +10457,25 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.78,
-                    .output = 3.9,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.78,
+                        .output = 3.9,
+                        .reasoning = 3.9,
+                    },
+                    .{
+                        .min_prompt_tokens = 32001,
+                        .input = 1.56,
+                        .output = 7.8,
+                        .reasoning = 7.8,
+                    },
+                    .{
+                        .min_prompt_tokens = 128001,
+                        .input = 1.95,
+                        .output = 9.75,
+                        .reasoning = 9.75,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -8548,10 +10496,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 1.1,
-                    .cache_read = 0.07,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 1.1,
+                        .reasoning = 1.1,
+                        .cache_read = 0.07,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -8570,9 +10522,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 1.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -8591,10 +10547,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.21,
-                    .output = 1.9,
-                    .cache_read = 0.1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.21,
+                        .output = 1.9,
+                        .reasoning = 1.9,
+                        .cache_read = 0.1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -8613,9 +10573,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 4,
+                        .reasoning = 4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -8634,9 +10598,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -8655,9 +10623,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 2.4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 2.4,
+                        .reasoning = 2.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -8676,9 +10648,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.104,
-                    .output = 0.416,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.104,
+                        .output = 0.416,
+                        .reasoning = 0.416,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -8697,9 +10673,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.117,
-                    .output = 0.455,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.117,
+                        .output = 0.455,
+                        .reasoning = 0.455,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -8718,9 +10698,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.18,
-                    .output = 2.1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.18,
+                        .output = 2.1,
+                        .reasoning = 2.1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -8739,9 +10723,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.26,
-                    .output = 2.08,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.26,
+                        .output = 2.08,
+                        .reasoning = 2.08,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -8762,9 +10750,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.195,
-                    .output = 1.56,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.195,
+                        .output = 1.56,
+                        .reasoning = 1.56,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -8785,9 +10777,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.1625,
-                    .output = 1.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1625,
+                        .output = 1.3,
+                        .reasoning = 1.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -8808,10 +10804,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.55,
-                    .output = 3.5,
-                    .cache_read = 0.225,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.55,
+                        .output = 3.5,
+                        .reasoning = 3.5,
+                        .cache_read = 0.225,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -8832,9 +10832,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.15,
+                        .reasoning = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -8855,9 +10859,13 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.065,
-                    .output = 0.26,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.065,
+                        .output = 0.26,
+                        .reasoning = 0.26,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -8878,9 +10886,19 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.26,
-                    .output = 1.56,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.26,
+                        .output = 1.56,
+                        .reasoning = 1.56,
+                    },
+                    .{
+                        .min_prompt_tokens = 256001,
+                        .input = 0.325,
+                        .output = 1.95,
+                        .reasoning = 1.95,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -8901,10 +10919,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.8,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.8,
+                        .reasoning = 1.8,
+                        .cache_write = 0.375,
+                    },
+                    .{
+                        .min_prompt_tokens = 256001,
+                        .input = 0.375,
+                        .output = 2.25,
+                        .reasoning = 2.25,
+                        .cache_write = 0.46875,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -8925,9 +10954,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 81920,
                 },
-                .cost = .{
-                    .input = 0.32,
-                    .output = 3.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.32,
+                        .output = 3.2,
+                        .reasoning = 3.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -8948,10 +10981,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 1,
-                    .cache_read = 0.05,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 1,
+                        .reasoning = 1,
+                        .cache_read = 0.05,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -8972,10 +11009,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.1875,
-                    .output = 1.125,
-                    .cache_write = 0.234375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1875,
+                        .output = 1.125,
+                        .reasoning = 1.125,
+                        .cache_write = 0.234375,
+                    },
+                    .{
+                        .min_prompt_tokens = 256001,
+                        .input = 0.75,
+                        .output = 3,
+                        .reasoning = 3,
+                        .cache_write = 0.9375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -8996,10 +11044,21 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 1.027,
-                    .output = 6.162,
-                    .cache_write = 1.28375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.027,
+                        .output = 6.162,
+                        .reasoning = 6.162,
+                        .cache_write = 1.28375,
+                    },
+                    .{
+                        .min_prompt_tokens = 128001,
+                        .input = 1.58,
+                        .output = 9.48,
+                        .reasoning = 9.48,
+                        .cache_write = 1.975,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -9020,10 +11079,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.325,
-                    .output = 1.95,
-                    .cache_write = 0.40625,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.325,
+                        .output = 1.95,
+                        .reasoning = 1.95,
+                        .cache_write = 0.40625,
+                    },
+                    .{
+                        .min_prompt_tokens = 256001,
+                        .input = 1.3,
+                        .output = 3.9,
+                        .reasoning = 3.9,
+                        .cache_write = 1.625,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -9044,11 +11114,31 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.03,
-                    .output = 0.13,
-                    .cache_read = 0.006,
-                    .cache_write = 0.038,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.03,
+                        .output = 0.13,
+                        .reasoning = 0.13,
+                        .cache_read = 0.006,
+                        .cache_write = 0.038,
+                    },
+                    .{
+                        .min_prompt_tokens = 32001,
+                        .input = 0.1,
+                        .output = 0.4,
+                        .reasoning = 0.4,
+                        .cache_read = 0.02,
+                        .cache_write = 0.125,
+                    },
+                    .{
+                        .min_prompt_tokens = 256001,
+                        .input = 0.2,
+                        .output = 0.8,
+                        .reasoning = 0.8,
+                        .cache_read = 0.04,
+                        .cache_write = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -9069,11 +11159,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.475,
-                    .output = 4.425,
-                    .cache_read = 0.295,
-                    .cache_write = 1.84375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.475,
+                        .output = 4.425,
+                        .reasoning = 4.425,
+                        .cache_read = 0.295,
+                        .cache_write = 1.84375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -9094,11 +11188,23 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.32,
-                    .output = 1.28,
-                    .cache_read = 0.064,
-                    .cache_write = 0.4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.32,
+                        .output = 1.28,
+                        .reasoning = 1.28,
+                        .cache_read = 0.064,
+                        .cache_write = 0.4,
+                    },
+                    .{
+                        .min_prompt_tokens = 256001,
+                        .input = 0.96,
+                        .output = 3.84,
+                        .reasoning = 3.84,
+                        .cache_read = 0.192,
+                        .cache_write = 1.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -9119,10 +11225,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -9143,10 +11253,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.42,
-                    .output = 3,
-                    .cache_read = 0.085,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.42,
+                        .output = 3,
+                        .reasoning = 3,
+                        .cache_read = 0.085,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -9167,9 +11281,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -9190,11 +11308,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.47,
-                    .cache_read = 0.016,
-                    .cache_write = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.47,
+                        .reasoning = 0.47,
+                        .cache_read = 0.016,
+                        .cache_write = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -9215,11 +11337,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.25,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.25,
+                        .cache_write = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -9240,10 +11366,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 12,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -9264,10 +11394,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.47,
-                    .cache_read = 0.016,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.47,
+                        .reasoning = 0.47,
+                        .cache_read = 0.016,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -9288,9 +11422,13 @@ pub const providers = [_]Provider{
                     .context_window = 16384,
                     .max_output_tokens = 14745,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.1,
+                        .reasoning = 0.1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -9309,9 +11447,13 @@ pub const providers = [_]Provider{
                     .context_window = 65536,
                     .max_output_tokens = 58982,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.2,
+                        .reasoning = 0.2,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -9330,9 +11472,13 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.85,
-                    .output = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.85,
+                        .output = 1.25,
+                        .reasoning = 1.25,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -9351,9 +11497,13 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 3,
+                        .reasoning = 3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -9372,10 +11522,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -9396,10 +11550,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 30,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 10,
+                        .output = 45,
+                        .reasoning = 45,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -9420,10 +11585,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 30,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 10,
+                        .output = 45,
+                        .reasoning = 45,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -9444,10 +11620,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.95,
-                    .output = 4,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.95,
+                        .output = 4,
+                        .reasoning = 4,
+                        .cache_read = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -9468,9 +11648,13 @@ pub const providers = [_]Provider{
                     .context_window = 8192,
                     .max_output_tokens = 7372,
                 },
-                .cost = .{
-                    .input = 0.04,
-                    .output = 0.05,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.04,
+                        .output = 0.05,
+                        .reasoning = 0.05,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -9489,9 +11673,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.85,
-                    .output = 0.85,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.85,
+                        .output = 0.85,
+                        .reasoning = 0.85,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -9510,9 +11698,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.65,
-                    .output = 0.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.65,
+                        .output = 0.75,
+                        .reasoning = 0.75,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -9531,9 +11723,13 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 524288,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -9554,9 +11750,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.3,
+                        .reasoning = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -9575,10 +11775,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 230400,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 1.15,
-                    .cache_read = 0.04,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 1.15,
+                        .reasoning = 1.15,
+                        .cache_read = 0.04,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -9599,9 +11803,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
-                .cost = .{
-                    .input = 0.14,
-                    .output = 0.57,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.14,
+                        .output = 0.57,
+                        .reasoning = 0.57,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -9622,9 +11830,13 @@ pub const providers = [_]Provider{
                     .context_window = 8192,
                     .max_output_tokens = 4096,
                 },
-                .cost = .{
-                    .input = 0.044,
-                    .output = 0.177,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.044,
+                        .output = 0.177,
+                        .reasoning = 0.177,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -9643,9 +11855,13 @@ pub const providers = [_]Provider{
                     .context_window = 8192,
                     .max_output_tokens = 4096,
                 },
-                .cost = .{
-                    .input = 0.074,
-                    .output = 0.295,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.074,
+                        .output = 0.295,
+                        .reasoning = 0.295,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -9664,9 +11880,13 @@ pub const providers = [_]Provider{
                     .context_window = 8192,
                     .max_output_tokens = 4096,
                 },
-                .cost = .{
-                    .input = 0.074,
-                    .output = 0.295,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.074,
+                        .output = 0.295,
+                        .reasoning = 0.295,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -9685,10 +11905,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.132,
-                    .output = 0.528,
-                    .cache_read = 0.033,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.132,
+                        .output = 0.528,
+                        .reasoning = 0.528,
+                        .cache_read = 0.033,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -9709,10 +11933,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 235929,
                 },
-                .cost = .{
-                    .input = 0.18,
-                    .output = 0.6,
-                    .cache_read = 0.06,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.18,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.06,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -9733,10 +11961,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 0.834,
-                    .output = 2.501,
-                    .cache_read = 0.042,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.834,
+                        .output = 2.501,
+                        .reasoning = 2.501,
+                        .cache_read = 0.042,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -9757,10 +11989,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 0.5,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.15,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -9779,10 +12015,14 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 29491,
                 },
-                .cost = .{
-                    .input = 0.55,
-                    .output = 0.8,
-                    .cache_read = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.55,
+                        .output = 0.8,
+                        .reasoning = 0.8,
+                        .cache_read = 0.25,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -9801,9 +12041,13 @@ pub const providers = [_]Provider{
                     .context_window = 1024000,
                     .max_output_tokens = 819200,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 0.4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 0.4,
+                        .reasoning = 0.4,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -9822,10 +12066,14 @@ pub const providers = [_]Provider{
                     .context_window = 524288,
                     .max_output_tokens = 471859,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 4.05,
-                    .cache_read = 0.17,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 4.05,
+                        .reasoning = 4.05,
+                        .cache_read = 0.17,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -9846,10 +12094,14 @@ pub const providers = [_]Provider{
                     .context_window = 524288,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 0.45,
-                    .output = 1.2,
-                    .cache_read = 0.1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.45,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -9870,9 +12122,13 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -9893,9 +12149,13 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -9916,10 +12176,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 7.5,
-                    .cache_read = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 7.5,
+                        .reasoning = 7.5,
+                        .cache_read = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -9938,9 +12202,13 @@ pub const providers = [_]Provider{
                     .context_window = 6144,
                     .max_output_tokens = 5529,
                 },
-                .cost = .{
-                    .input = 0.35,
-                    .output = 0.65,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.35,
+                        .output = 0.65,
+                        .reasoning = 0.65,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -9959,10 +12227,14 @@ pub const providers = [_]Provider{
                     .context_window = 524288,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.2,
-                    .cache_read = 0.005,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.2,
+                        .reasoning = 0.2,
+                        .cache_read = 0.005,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -9983,10 +12255,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 117964,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.015,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.015,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10007,10 +12283,14 @@ pub const providers = [_]Provider{
                     .context_window = 524288,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.09,
-                    .output = 0.36,
-                    .cache_read = 0.018,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.09,
+                        .output = 0.36,
+                        .reasoning = 0.36,
+                        .cache_read = 0.018,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10031,9 +12311,13 @@ pub const providers = [_]Provider{
                     .context_window = 1040000,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 6,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 6,
+                        .reasoning = 6,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -10052,10 +12336,21 @@ pub const providers = [_]Provider{
                     .context_window = 2000000,
                     .max_output_tokens = 1800000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 2.5,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2.5,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -10076,10 +12371,21 @@ pub const providers = [_]Provider{
                     .context_window = 2000000,
                     .max_output_tokens = 1800000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 2.5,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2.5,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -10100,10 +12406,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 900000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 2.5,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2.5,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -10124,10 +12441,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 450000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.3,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.6,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -10148,10 +12476,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 450000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -10172,10 +12511,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 450000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -10196,10 +12546,21 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 230400,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 2,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 2,
+                        .reasoning = 2,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2,
+                        .output = 4,
+                        .reasoning = 4,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -10218,10 +12579,14 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.14,
-                    .output = 0.28,
-                    .cache_read = 0.0028,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.14,
+                        .output = 0.28,
+                        .reasoning = 0.28,
+                        .cache_read = 0.0028,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -10243,10 +12608,14 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.435,
-                    .output = 0.87,
-                    .cache_read = 0.0036,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.435,
+                        .output = 0.87,
+                        .reasoning = 0.87,
+                        .cache_read = 0.0036,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10268,10 +12637,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.14,
-                    .output = 0.28,
-                    .cache_read = 0.0028,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.14,
+                        .output = 0.28,
+                        .reasoning = 0.28,
+                        .cache_read = 0.0028,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -10292,10 +12665,14 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.435,
-                    .output = 0.87,
-                    .cache_read = 0.0036,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.435,
+                        .output = 0.87,
+                        .reasoning = 0.87,
+                        .cache_read = 0.0036,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -10316,10 +12693,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 4.35,
-                    .output = 8.7,
-                    .cache_read = 0.036,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4.35,
+                        .output = 8.7,
+                        .reasoning = 8.7,
+                        .cache_read = 0.036,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -10340,10 +12721,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 98304,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 2.2,
-                    .cache_read = 0.11,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 2.2,
+                        .reasoning = 2.2,
+                        .cache_read = 0.11,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10364,10 +12749,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 98304,
                 },
-                .cost = .{
-                    .input = 0.13,
-                    .output = 0.85,
-                    .cache_read = 0.025,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.13,
+                        .output = 0.85,
+                        .reasoning = 0.85,
+                        .cache_read = 0.025,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10388,10 +12777,14 @@ pub const providers = [_]Provider{
                     .context_window = 65536,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 1.8,
-                    .cache_read = 0.11,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 1.8,
+                        .reasoning = 1.8,
+                        .cache_read = 0.11,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -10412,10 +12805,14 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.43,
-                    .output = 1.75,
-                    .cache_read = 0.08,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.43,
+                        .output = 1.75,
+                        .reasoning = 1.75,
+                        .cache_read = 0.08,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10436,10 +12833,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 0.9,
-                    .cache_read = 0.055,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 0.9,
+                        .reasoning = 0.9,
+                        .cache_read = 0.055,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -10460,10 +12861,14 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 2.2,
-                    .cache_read = 0.11,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 2.2,
+                        .reasoning = 2.2,
+                        .cache_read = 0.11,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10485,9 +12890,13 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 117964,
                 },
-                .cost = .{
-                    .input = 0.0605,
-                    .output = 0.4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.0605,
+                        .output = 0.4,
+                        .reasoning = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10509,10 +12918,14 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 1.92,
-                    .cache_read = 0.12,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 1.92,
+                        .reasoning = 1.92,
+                        .cache_read = 0.12,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10534,10 +12947,14 @@ pub const providers = [_]Provider{
                     .context_window = 202752,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.2,
-                    .output = 4,
-                    .cache_read = 0.24,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.2,
+                        .output = 4,
+                        .reasoning = 4,
+                        .cache_read = 0.24,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10559,10 +12976,14 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.26,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.26,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10584,10 +13005,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 0.1739,
-                    .output = 3.99,
-                    .cache_read = 0.1391,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 3.99,
+                        .reasoning = 3.99,
+                        .cache_read = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10609,10 +13034,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943717,
                 },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.26,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.26,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -10633,10 +13062,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943717,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.5,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -10657,10 +13090,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.37,
-                    .output = 1.25,
-                    .cache_read = 0.09,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.37,
+                        .output = 1.25,
+                        .reasoning = 1.25,
+                        .cache_read = 0.09,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -10681,10 +13118,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 2.8,
-                    .output = 8.8,
-                    .cache_read = 0.56,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.8,
+                        .output = 8.8,
+                        .reasoning = 8.8,
+                        .cache_read = 0.56,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -10705,10 +13146,14 @@ pub const providers = [_]Provider{
                     .context_window = 202752,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.2,
-                    .output = 4,
-                    .cache_read = 0.24,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.2,
+                        .output = 4,
+                        .reasoning = 4,
+                        .cache_read = 0.24,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -10729,11 +13174,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 50,
-                    .cache_read = 0.25,
-                    .cache_write = 12.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 50,
+                        .reasoning = 50,
+                        .cache_read = 0.25,
+                        .cache_write = 12.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -10754,11 +13203,15 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 5,
-                    .cache_read = 0.1,
-                    .cache_write = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.1,
+                        .cache_write = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -10779,11 +13232,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 20,
-                    .cache_read = 0.2,
-                    .cache_write = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 20,
+                        .reasoning = 20,
+                        .cache_read = 0.2,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -10804,11 +13261,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -10829,10 +13290,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 0.02,
-                    .output = 0.6,
-                    .cache_read = 0.02,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.02,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.02,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -10851,12 +13316,16 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
-                    .max_output_tokens = 393216,
+                    .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 3.5,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.16,
+                        .output = 1.85024,
+                        .reasoning = 1.85024,
+                        .cache_read = 0.08832,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10877,10 +13346,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 0.012,
-                    .output = 1.25,
-                    .cache_read = 0.01,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.01,
+                        .output = 1.28,
+                        .reasoning = 1.28,
+                        .cache_read = 0.01,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -10901,11 +13374,15 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.75,
-                    .output = 3.75,
-                    .cache_read = 0.075,
-                    .cache_write = 0.041667,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.75,
+                        .output = 3.75,
+                        .reasoning = 3.75,
+                        .cache_read = 0.075,
+                        .cache_write = 0.041667,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -10926,11 +13403,22 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 12,
-                    .cache_read = 0.2,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.2,
+                        .cache_write = 0.375,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 18,
+                        .reasoning = 18,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -10951,10 +13439,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 9,
-                    .cache_read = 0.4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 9,
+                        .reasoning = 9,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -10975,11 +13467,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 50,
-                    .cache_read = 1,
-                    .cache_write = 12.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 50,
+                        .reasoning = 50,
+                        .cache_read = 1,
+                        .cache_write = 12.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 20,
+                        .output = 75,
+                        .reasoning = 75,
+                        .cache_read = 2,
+                        .cache_write = 25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -11000,11 +13504,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.5,
-                    .cache_read = 0.01,
-                    .cache_write = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.01,
+                        .cache_write = 0.125,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 0.2,
+                        .output = 0.75,
+                        .reasoning = 0.75,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -11025,10 +13541,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.75,
-                    .output = 4.5,
-                    .cache_read = 0.075,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.75,
+                        .output = 4.5,
+                        .reasoning = 4.5,
+                        .cache_read = 0.075,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -11049,11 +13569,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.1,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.1,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.2,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -11074,11 +13606,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 12,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 18,
+                        .reasoning = 18,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -11099,10 +13643,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 450000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -11123,10 +13678,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 943718,
                 },
-                .cost = .{
-                    .input = 0.02,
-                    .output = 0.3,
-                    .cache_read = 0.01,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.02,
+                        .output = 0.3,
+                        .reasoning = 0.3,
+                        .cache_read = 0.01,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -11147,10 +13706,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.12,
-                    .output = 1.5,
-                    .cache_read = 0.12,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.09,
+                        .output = 4,
+                        .reasoning = 4,
+                        .cache_read = 0.09,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -11184,10 +13747,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 393216,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.003,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.003,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -11209,10 +13776,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 393216,
                 },
-                .cost = .{
-                    .input = 0.435,
-                    .output = 0.87,
-                    .cache_read = 0.003625,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.435,
+                        .output = 0.87,
+                        .reasoning = 0.87,
+                        .cache_read = 0.003625,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -11247,9 +13818,13 @@ pub const providers = [_]Provider{
                     .context_window = 4096,
                     .max_output_tokens = 4096,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -11268,7 +13843,6 @@ pub const providers = [_]Provider{
                     .context_window = 4000,
                     .max_output_tokens = 50000,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
@@ -11286,7 +13860,6 @@ pub const providers = [_]Provider{
                     .context_window = 4000,
                     .max_output_tokens = 50000,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
@@ -11304,7 +13877,6 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
@@ -11322,7 +13894,6 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
@@ -11340,9 +13911,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.08,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.08,
+                        .reasoning = 0.08,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -11361,9 +13936,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.59,
-                    .output = 0.79,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.59,
+                        .output = 0.79,
+                        .reasoning = 0.79,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -11382,9 +13961,13 @@ pub const providers = [_]Provider{
                     .context_window = 512,
                     .max_output_tokens = 512,
                 },
-                .cost = .{
-                    .input = 0.03,
-                    .output = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.03,
+                        .output = 0.03,
+                        .reasoning = 0.03,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -11403,9 +13986,13 @@ pub const providers = [_]Provider{
                     .context_window = 512,
                     .max_output_tokens = 512,
                 },
-                .cost = .{
-                    .input = 0.04,
-                    .output = 0.04,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.04,
+                        .output = 0.04,
+                        .reasoning = 0.04,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -11424,10 +14011,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.075,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.075,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -11448,10 +14039,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.075,
-                    .output = 0.3,
-                    .cache_read = 0.0375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.075,
+                        .output = 0.3,
+                        .reasoning = 0.3,
+                        .cache_read = 0.0375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -11472,9 +14067,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.075,
-                    .output = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.075,
+                        .output = 0.3,
+                        .reasoning = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -11495,10 +14094,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 3,
-                    .cache_read = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 3,
+                        .reasoning = 3,
+                        .cache_read = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -11519,9 +14122,13 @@ pub const providers = [_]Provider{
                     .context_window = 131042,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.8,
-                    .output = 4,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.8,
+                        .output = 4,
+                        .reasoning = 4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -11542,7 +14149,6 @@ pub const providers = [_]Provider{
                     .context_window = 0,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.audio},
@@ -11560,7 +14166,6 @@ pub const providers = [_]Provider{
                     .context_window = 0,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.audio},
@@ -11591,10 +14196,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 2.5,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2.5,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -11613,10 +14229,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 2.5,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2.5,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -11635,10 +14262,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 2.5,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2.5,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -11659,10 +14297,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 2.5,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2.5,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -11683,10 +14332,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.3,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.6,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -11707,10 +14367,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -11731,10 +14402,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -11755,10 +14437,21 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 256000,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 2,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 2,
+                        .reasoning = 2,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2,
+                        .output = 4,
+                        .reasoning = 4,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -11777,7 +14470,6 @@ pub const providers = [_]Provider{
                     .context_window = 16000,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
@@ -11795,7 +14487,6 @@ pub const providers = [_]Provider{
                     .context_window = 16000,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
@@ -11813,7 +14504,6 @@ pub const providers = [_]Provider{
                     .context_window = 1024,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text, .video },
@@ -11831,7 +14521,6 @@ pub const providers = [_]Provider{
                     .context_window = 1024,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text },
@@ -11862,10 +14551,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 2.5,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2.5,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -11884,10 +14584,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 2.5,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2.5,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -11906,10 +14617,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 2.5,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2.5,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -11930,10 +14652,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 30000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 2.5,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 2.5,
+                        .reasoning = 2.5,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2.5,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -11954,10 +14687,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.3,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.6,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -11978,10 +14722,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -12002,10 +14757,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -12026,10 +14792,21 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 256000,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 2,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 2,
+                        .reasoning = 2,
+                        .cache_read = 0.2,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 2,
+                        .output = 4,
+                        .reasoning = 4,
+                        .cache_read = 0.4,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -12048,7 +14825,6 @@ pub const providers = [_]Provider{
                     .context_window = 16000,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
@@ -12066,7 +14842,6 @@ pub const providers = [_]Provider{
                     .context_window = 16000,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
@@ -12084,7 +14859,6 @@ pub const providers = [_]Provider{
                     .context_window = 1024,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text, .video },
@@ -12102,7 +14876,6 @@ pub const providers = [_]Provider{
                     .context_window = 1024,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = true },
                 .modalities = .{
                     .input = &.{ .audio, .image, .pdf, .text },
@@ -12133,10 +14906,14 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 4096,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 0.9,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 0.9,
+                        .reasoning = 0.9,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -12155,9 +14932,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 5,
+                        .reasoning = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -12176,9 +14957,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.04,
-                    .output = 0.04,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.04,
+                        .output = 0.04,
+                        .reasoning = 0.04,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -12197,9 +14982,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.1,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.1,
+                        .reasoning = 0.1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -12218,9 +15007,13 @@ pub const providers = [_]Provider{
                     .context_window = 8000,
                     .max_output_tokens = 3072,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0,
+                        .reasoning = 0,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -12239,9 +15032,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -12260,10 +15057,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 0.5,
-                    .output = 1.5,
-                    .cache_read = 0.05,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.5,
+                        .output = 1.5,
+                        .reasoning = 1.5,
+                        .cache_read = 0.05,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -12282,10 +15083,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 0.5,
-                    .output = 1.5,
-                    .cache_read = 0.05,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.5,
+                        .output = 1.5,
+                        .reasoning = 1.5,
+                        .cache_read = 0.05,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -12304,9 +15109,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 2,
+                        .reasoning = 2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -12325,9 +15134,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 2,
+                        .reasoning = 2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -12346,10 +15159,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 1.5,
-                    .output = 7.5,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.5,
+                        .output = 7.5,
+                        .reasoning = 7.5,
+                        .cache_read = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -12370,10 +15187,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 1.5,
-                    .output = 7.5,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.5,
+                        .output = 7.5,
+                        .reasoning = 7.5,
+                        .cache_read = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -12394,9 +15215,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.15,
+                        .reasoning = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -12415,9 +15240,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 16384,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.3,
+                        .reasoning = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -12436,10 +15265,14 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 256000,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.015,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.015,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -12460,10 +15293,14 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 256000,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.015,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.015,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -12484,9 +15321,13 @@ pub const providers = [_]Provider{
                     .context_window = 8000,
                     .max_output_tokens = 8000,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 0.25,
+                        .reasoning = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -12505,9 +15346,13 @@ pub const providers = [_]Provider{
                     .context_window = 64000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -12526,9 +15371,13 @@ pub const providers = [_]Provider{
                     .context_window = 32000,
                     .max_output_tokens = 32000,
                 },
-                .cost = .{
-                    .input = 0.7,
-                    .output = 0.7,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.7,
+                        .output = 0.7,
+                        .reasoning = 0.7,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -12547,9 +15396,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.15,
+                        .reasoning = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -12568,9 +15421,13 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -12589,7 +15446,6 @@ pub const providers = [_]Provider{
                     .context_window = 0,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.audio},
@@ -12607,7 +15463,6 @@ pub const providers = [_]Provider{
                     .context_window = 0,
                     .max_output_tokens = 0,
                 },
-                .cost = .{},
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
                     .input = &.{.text},
@@ -12625,9 +15480,13 @@ pub const providers = [_]Provider{
                     .context_window = 32000,
                     .max_output_tokens = 32000,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.3,
+                        .reasoning = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -12646,10 +15505,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.14,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.14,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -12670,10 +15533,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.14,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.14,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -12707,9 +15574,13 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.03,
-                    .output = 0.12,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.03,
+                        .output = 0.12,
+                        .reasoning = 0.12,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -12728,10 +15599,14 @@ pub const providers = [_]Provider{
                     .context_window = 196608,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.06,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.06,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -12750,10 +15625,14 @@ pub const providers = [_]Provider{
                     .context_window = 524288,
                     .max_output_tokens = 250000,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.06,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.06,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -12772,9 +15651,13 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 0.3,
+                        .reasoning = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -12793,9 +15676,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.17,
-                    .output = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.17,
+                        .output = 0.25,
+                        .reasoning = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -12816,9 +15703,13 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 500000,
                 },
-                .cost = .{
-                    .input = 0.5,
-                    .output = 3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.5,
+                        .output = 3,
+                        .reasoning = 3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -12839,10 +15730,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 500000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 3.75,
-                    .cache_read = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 3.75,
+                        .reasoning = 3.75,
+                        .cache_read = 0.125,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -12861,9 +15756,13 @@ pub const providers = [_]Provider{
                     .context_window = 163840,
                     .max_output_tokens = 163840,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 1.25,
+                        .reasoning = 1.25,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -12884,10 +15783,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 0.14,
-                    .output = 0.28,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.14,
+                        .output = 0.28,
+                        .reasoning = 0.28,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -12909,10 +15812,14 @@ pub const providers = [_]Provider{
                     .context_window = 512000,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 1.74,
-                    .output = 3.48,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.74,
+                        .output = 3.48,
+                        .reasoning = 3.48,
+                        .cache_read = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -12934,10 +15841,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 1.32,
-                    .output = 3.96,
-                    .cache_read = 0.13,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.32,
+                        .output = 3.96,
+                        .reasoning = 3.96,
+                        .cache_read = 0.13,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -12959,10 +15870,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.006,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.006,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -12984,9 +15899,13 @@ pub const providers = [_]Provider{
                     .context_window = 32768,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.06,
-                    .output = 0.12,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.06,
+                        .output = 0.12,
+                        .reasoning = 0.12,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -13005,9 +15924,13 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.39,
-                    .output = 0.97,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.39,
+                        .output = 0.97,
+                        .reasoning = 0.97,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -13026,9 +15949,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.04,
-                    .output = 1.04,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.04,
+                        .output = 1.04,
+                        .reasoning = 1.04,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -13047,9 +15974,13 @@ pub const providers = [_]Provider{
                     .context_window = 8192,
                     .max_output_tokens = 8192,
                 },
-                .cost = .{
-                    .input = 0.14,
-                    .output = 0.14,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.14,
+                        .output = 0.14,
+                        .reasoning = 0.14,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -13068,10 +15999,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13093,10 +16028,14 @@ pub const providers = [_]Provider{
                     .context_window = 512300,
                     .max_output_tokens = 512300,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 3.6,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 3.6,
+                        .reasoning = 3.6,
+                        .cache_read = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -13117,9 +16056,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -13140,9 +16083,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.2,
+                        .reasoning = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -13163,9 +16110,13 @@ pub const providers = [_]Provider{
                     .context_window = 32000,
                     .max_output_tokens = 32000,
                 },
-                .cost = .{
-                    .input = 0.28,
-                    .output = 0.86,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.28,
+                        .output = 0.86,
+                        .reasoning = 0.86,
+                    },
                 },
                 .caps = .{ .tools = false, .vision = false },
                 .modalities = .{
@@ -13184,10 +16135,14 @@ pub const providers = [_]Provider{
                     .context_window = 524288,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 4.05,
-                    .cache_read = 0.17,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 4.05,
+                        .reasoning = 4.05,
+                        .cache_read = 0.17,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13208,10 +16163,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048575,
                     .max_output_tokens = 164000,
                 },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.26,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.26,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -13233,10 +16192,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.26,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.26,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -13258,10 +16221,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048575,
                     .max_output_tokens = 400000,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.5,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13296,9 +16263,13 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 40960,
                 },
-                .cost = .{
-                    .input = 0.35,
-                    .output = 0.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.35,
+                        .output = 0.75,
+                        .reasoning = 0.75,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -13319,9 +16290,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 40960,
                 },
-                .cost = .{
-                    .input = 0.99,
-                    .output = 1.49,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.99,
+                        .output = 1.49,
+                        .reasoning = 1.49,
+                        .cache_read = 0.99,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13355,10 +16331,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 0.22,
-                    .output = 0.66,
-                    .cache_read = 0.007,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.22,
+                        .output = 0.66,
+                        .reasoning = 0.66,
+                        .cache_read = 0.007,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13380,10 +16360,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13405,10 +16389,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048573,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.26,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.26,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -13430,10 +16418,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048573,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.5,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13455,10 +16447,14 @@ pub const providers = [_]Provider{
                     .context_window = 131072,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.015,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.015,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -13479,10 +16475,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 1048576,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 4.05,
-                    .cache_read = 0.17,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 4.05,
+                        .reasoning = 4.05,
+                        .cache_read = 0.17,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -13501,10 +16501,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13526,10 +16530,14 @@ pub const providers = [_]Provider{
                     .context_window = 512000,
                     .max_output_tokens = 512000,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.06,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.06,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -13551,10 +16559,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 2.4,
-                    .cache_read = 0.12,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 2.4,
+                        .reasoning = 2.4,
+                        .cache_read = 0.12,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -13575,10 +16587,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.2,
-                    .cache_read = 0.01,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.2,
+                        .reasoning = 0.2,
+                        .cache_read = 0.01,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -13599,10 +16615,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -13624,10 +16644,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13648,10 +16672,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 0.22,
-                    .output = 0.66,
-                    .cache_read = 0.007,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.22,
+                        .output = 0.66,
+                        .reasoning = 0.66,
+                        .cache_read = 0.007,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13673,10 +16701,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048572,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 2.1,
-                    .output = 6.6,
-                    .cache_read = 0.39,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.1,
+                        .output = 6.6,
+                        .reasoning = 6.6,
+                        .cache_read = 0.39,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -13698,10 +16730,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048572,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 2.1,
-                    .output = 6.6,
-                    .cache_read = 0.39,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.1,
+                        .output = 6.6,
+                        .reasoning = 6.6,
+                        .cache_read = 0.39,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -13723,10 +16759,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048573,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.5,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13748,10 +16788,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048573,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.26,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.26,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -13773,10 +16817,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 4.5,
-                    .output = 22.5,
-                    .cache_read = 0.45,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4.5,
+                        .output = 22.5,
+                        .reasoning = 22.5,
+                        .cache_read = 0.45,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13798,10 +16846,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 4.5,
-                    .output = 22.5,
-                    .cache_read = 0.45,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4.5,
+                        .output = 22.5,
+                        .reasoning = 22.5,
+                        .cache_read = 0.45,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13823,10 +16875,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13848,10 +16904,14 @@ pub const providers = [_]Provider{
                     .context_window = 512000,
                     .max_output_tokens = 512000,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.06,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.06,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -13873,10 +16933,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -13910,9 +16974,13 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -13931,11 +16999,15 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.03,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.03,
+                        .cache_write = 0.375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -13954,11 +17026,15 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.03,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.03,
+                        .cache_write = 0.375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -13977,11 +17053,15 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 2.4,
-                    .cache_read = 0.06,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 2.4,
+                        .reasoning = 2.4,
+                        .cache_read = 0.06,
+                        .cache_write = 0.375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -14000,11 +17080,15 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.06,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.06,
+                        .cache_write = 0.375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -14023,11 +17107,15 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 2.4,
-                    .cache_read = 0.06,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 2.4,
+                        .reasoning = 2.4,
+                        .cache_read = 0.06,
+                        .cache_write = 0.375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -14046,10 +17134,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 512000,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.06,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.06,
+                    },
+                    .{
+                        .min_prompt_tokens = 512001,
+                        .input = 0.6,
+                        .output = 2.4,
+                        .reasoning = 2.4,
+                        .cache_read = 0.12,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -14085,11 +17184,15 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 32000,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
-                    .cache_read = 0,
-                    .cache_write = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                        .cache_read = 0,
+                        .cache_write = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -14108,11 +17211,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 50,
-                    .cache_read = 1,
-                    .cache_write = 12.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 50,
+                        .reasoning = 50,
+                        .cache_read = 1,
+                        .cache_write = 12.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14131,11 +17238,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 50,
-                    .cache_read = 0.25,
-                    .cache_write = 12.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 50,
+                        .reasoning = 50,
+                        .cache_read = 0.25,
+                        .cache_write = 12.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14154,11 +17265,15 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 5,
-                    .cache_read = 0.1,
-                    .cache_write = 1.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 5,
+                        .reasoning = 5,
+                        .cache_read = 0.1,
+                        .cache_write = 1.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14181,11 +17296,15 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14204,11 +17323,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14227,11 +17350,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14250,11 +17377,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14273,11 +17404,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 25,
-                    .cache_read = 0.5,
-                    .cache_write = 6.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 25,
+                        .reasoning = 25,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14296,11 +17431,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 20,
-                    .cache_read = 0.2,
-                    .cache_write = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 20,
+                        .reasoning = 20,
+                        .cache_read = 0.2,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14319,11 +17458,23 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
-                    .cache_write = 3.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                        .cache_write = 3.75,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 6,
+                        .output = 22.5,
+                        .reasoning = 22.5,
+                        .cache_read = 0.6,
+                        .cache_write = 7.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14346,11 +17497,23 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
-                    .cache_write = 3.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                        .cache_write = 3.75,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 6,
+                        .output = 22.5,
+                        .reasoning = 22.5,
+                        .cache_read = 0.6,
+                        .cache_write = 7.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14373,11 +17536,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
-                    .cache_write = 3.75,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                        .cache_write = 3.75,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14396,11 +17563,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14419,11 +17590,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -14442,10 +17617,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 0.14,
-                    .output = 0.28,
-                    .cache_read = 0.028,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.14,
+                        .output = 0.28,
+                        .reasoning = 0.28,
+                        .cache_read = 0.028,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -14466,10 +17645,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 0.14,
-                    .output = 0.28,
-                    .cache_read = 0.028,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.14,
+                        .output = 0.28,
+                        .reasoning = 0.28,
+                        .cache_read = 0.028,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -14490,10 +17673,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 1.74,
-                    .output = 3.84,
-                    .cache_read = 0.145,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.74,
+                        .output = 3.84,
+                        .reasoning = 3.84,
+                        .cache_read = 0.145,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -14514,10 +17701,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.006,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.006,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -14538,10 +17729,14 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 3.2,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 3.2,
+                        .reasoning = 3.2,
+                        .cache_read = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -14562,10 +17757,14 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.26,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.26,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -14586,10 +17785,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.26,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.26,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -14610,10 +17813,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.26,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.26,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -14634,10 +17841,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.5,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -14658,10 +17869,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.07,
-                    .output = 8.5,
-                    .cache_read = 0.107,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.07,
+                        .output = 8.5,
+                        .reasoning = 8.5,
+                        .cache_read = 0.107,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -14680,10 +17895,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.07,
-                    .output = 8.5,
-                    .cache_read = 0.107,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.07,
+                        .output = 8.5,
+                        .reasoning = 8.5,
+                        .cache_read = 0.107,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -14702,10 +17921,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.05,
-                    .output = 0.4,
-                    .cache_read = 0.005,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.05,
+                        .output = 0.4,
+                        .reasoning = 0.4,
+                        .cache_read = 0.005,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -14724,10 +17947,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.07,
-                    .output = 8.5,
-                    .cache_read = 0.107,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.07,
+                        .output = 8.5,
+                        .reasoning = 8.5,
+                        .cache_read = 0.107,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -14746,10 +17973,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.07,
-                    .output = 8.5,
-                    .cache_read = 0.107,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.07,
+                        .output = 8.5,
+                        .reasoning = 8.5,
+                        .cache_read = 0.107,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -14768,10 +17999,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 10,
-                    .cache_read = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.125,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -14790,10 +18025,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.25,
-                    .output = 2,
-                    .cache_read = 0.025,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.25,
+                        .output = 2,
+                        .reasoning = 2,
+                        .cache_read = 0.025,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -14812,10 +18051,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -14834,10 +18077,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -14856,10 +18103,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -14878,10 +18129,14 @@ pub const providers = [_]Provider{
                     .context_window = 128000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 1.75,
-                    .output = 14,
-                    .cache_read = 0.175,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.75,
+                        .output = 14,
+                        .reasoning = 14,
+                        .cache_read = 0.175,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
                 .modalities = .{
@@ -14900,10 +18155,21 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 15,
-                    .cache_read = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.25,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 5,
+                        .output = 22.5,
+                        .reasoning = 22.5,
+                        .cache_read = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -14922,10 +18188,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.75,
-                    .output = 4.5,
-                    .cache_read = 0.075,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.75,
+                        .output = 4.5,
+                        .reasoning = 4.5,
+                        .cache_read = 0.075,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -14944,10 +18214,14 @@ pub const providers = [_]Provider{
                     .context_window = 400000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 1.25,
-                    .cache_read = 0.02,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 1.25,
+                        .reasoning = 1.25,
+                        .cache_read = 0.02,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -14966,10 +18240,14 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 30,
-                    .output = 180,
-                    .cache_read = 30,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 30,
+                        .output = 180,
+                        .reasoning = 180,
+                        .cache_read = 30,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -14988,10 +18266,21 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 5,
-                    .output = 30,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 5,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 10,
+                        .output = 45,
+                        .reasoning = 45,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -15010,10 +18299,14 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 30,
-                    .output = 180,
-                    .cache_read = 30,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 30,
+                        .output = 180,
+                        .reasoning = 180,
+                        .cache_read = 30,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -15032,11 +18325,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 1.2,
-                    .cache_read = 0.02,
-                    .cache_write = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 0.4,
+                        .output = 1.8,
+                        .reasoning = 1.8,
+                        .cache_read = 0.04,
+                        .cache_write = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -15055,11 +18360,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 4,
-                    .output = 20,
-                    .cache_read = 0.4,
-                    .cache_write = 5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 4,
+                        .output = 20,
+                        .reasoning = 20,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 8,
+                        .output = 30,
+                        .reasoning = 30,
+                        .cache_read = 0.8,
+                        .cache_write = 10,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -15078,11 +18395,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2.5,
-                    .output = 15,
-                    .cache_read = 0.25,
-                    .cache_write = 3.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2.5,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.25,
+                        .cache_write = 3.125,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 5,
+                        .output = 22.5,
+                        .reasoning = 22.5,
+                        .cache_read = 0.5,
+                        .cache_write = 6.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -15101,11 +18430,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 10,
-                    .output = 50,
-                    .cache_read = 1,
-                    .cache_write = 12.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 10,
+                        .output = 50,
+                        .reasoning = 50,
+                        .cache_read = 1,
+                        .cache_write = 12.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 20,
+                        .output = 75,
+                        .reasoning = 75,
+                        .cache_read = 2,
+                        .cache_write = 25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -15124,11 +18465,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.5,
-                    .cache_read = 0.01,
-                    .cache_write = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.01,
+                        .cache_write = 0.125,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 0.2,
+                        .output = 0.75,
+                        .reasoning = 0.75,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -15147,11 +18500,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.2,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.2,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.4,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -15170,11 +18535,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 10,
-                    .cache_read = 0.1,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.1,
+                        .cache_write = 2.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 4,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.2,
+                        .cache_write = 5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -15193,10 +18570,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.3,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 0.6,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -15215,10 +18603,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -15237,10 +18636,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -15259,10 +18669,14 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 256000,
                 },
-                .cost = .{
-                    .input = 1,
-                    .output = 2,
-                    .cache_read = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1,
+                        .output = 2,
+                        .reasoning = 2,
+                        .cache_read = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -15281,10 +18695,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.6,
-                    .output = 3,
-                    .cache_read = 0.08,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.6,
+                        .output = 3,
+                        .reasoning = 3,
+                        .cache_read = 0.08,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -15305,10 +18723,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.95,
-                    .output = 4,
-                    .cache_read = 0.16,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.95,
+                        .output = 4,
+                        .reasoning = 4,
+                        .cache_read = 0.16,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -15329,10 +18751,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 0.95,
-                    .output = 4,
-                    .cache_read = 0.19,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.95,
+                        .output = 4,
+                        .reasoning = 4,
+                        .cache_read = 0.19,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -15351,10 +18777,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -15375,10 +18805,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 32768,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
-                    .cache_read = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                        .cache_read = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -15397,10 +18831,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
-                    .cache_read = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                        .cache_read = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -15421,10 +18859,14 @@ pub const providers = [_]Provider{
                     .context_window = 200000,
                     .max_output_tokens = 32000,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
-                    .cache_read = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                        .cache_read = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -15443,10 +18885,14 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.06,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.06,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -15465,10 +18911,14 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.06,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.06,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -15487,10 +18937,14 @@ pub const providers = [_]Provider{
                     .context_window = 512000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.06,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.06,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -15509,10 +18963,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 4.25,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 4.25,
+                        .reasoning = 4.25,
+                        .cache_read = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -15531,10 +18989,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.25,
-                    .output = 4.25,
-                    .cache_read = 0.15,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.25,
+                        .output = 4.25,
+                        .reasoning = 4.25,
+                        .cache_read = 0.15,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -15553,10 +19015,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
-                    .cache_read = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                        .cache_read = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -15575,10 +19041,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
-                    .cache_read = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                        .cache_read = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -15597,10 +19067,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
-                    .cache_read = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                        .cache_read = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false },
                 .modalities = .{
@@ -15619,11 +19093,15 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 1.2,
-                    .cache_read = 0.02,
-                    .cache_write = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -15644,11 +19122,15 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.5,
-                    .output = 3,
-                    .cache_read = 0.05,
-                    .cache_write = 0.625,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.5,
+                        .output = 3,
+                        .reasoning = 3,
+                        .cache_read = 0.05,
+                        .cache_write = 0.625,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -15669,11 +19151,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.47,
-                    .cache_read = 0.016,
-                    .cache_write = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.47,
+                        .reasoning = 0.47,
+                        .cache_read = 0.016,
+                        .cache_write = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -15692,11 +19178,15 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.25,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.25,
+                        .cache_write = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -15715,11 +19205,15 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 524288,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
-                    .cache_read = 0,
-                    .cache_write = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                        .cache_read = 0,
+                        .cache_write = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -15755,10 +19249,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.003,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.003,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -15779,10 +19277,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.003,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.003,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -15803,10 +19305,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 0.66,
-                    .output = 1.98,
-                    .cache_read = 0.022,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.66,
+                        .output = 1.98,
+                        .reasoning = 1.98,
+                        .cache_read = 0.022,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -15827,10 +19333,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 384000,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.6,
-                    .cache_read = 0.003,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.6,
+                        .reasoning = 0.6,
+                        .cache_read = 0.003,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -15851,10 +19361,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.26,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.26,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -15875,10 +19389,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 1.4,
-                    .output = 4.4,
-                    .cache_read = 0.26,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
+                        .cache_read = 0.26,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -15899,10 +19417,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.5,
-                    .cache_read = 0.03,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.03,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -15923,11 +19445,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.2,
-                    .output = 1.2,
-                    .cache_read = 0.02,
-                    .cache_write = 0.25,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.2,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 0.4,
+                        .output = 1.8,
+                        .reasoning = 1.8,
+                        .cache_read = 0.04,
+                        .cache_write = 0.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -15946,11 +19480,23 @@ pub const providers = [_]Provider{
                     .context_window = 1050000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.5,
-                    .cache_read = 0.01,
-                    .cache_write = 0.125,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.5,
+                        .reasoning = 0.5,
+                        .cache_read = 0.01,
+                        .cache_write = 0.125,
+                    },
+                    .{
+                        .min_prompt_tokens = 272001,
+                        .input = 0.2,
+                        .output = 0.75,
+                        .reasoning = 0.75,
+                        .cache_read = 0.02,
+                        .cache_write = 0.25,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -15969,10 +19515,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -15991,10 +19548,21 @@ pub const providers = [_]Provider{
                     .context_window = 500000,
                     .max_output_tokens = 500000,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 200001,
+                        .input = 4,
+                        .output = 12,
+                        .reasoning = 12,
+                        .cache_read = 1,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -16013,10 +19581,14 @@ pub const providers = [_]Provider{
                     .context_window = 256000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.14,
-                    .output = 0.58,
-                    .cache_read = 0.035,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.14,
+                        .output = 0.58,
+                        .reasoning = 0.58,
+                        .cache_read = 0.035,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -16035,10 +19607,14 @@ pub const providers = [_]Provider{
                     .context_window = 1024000,
                     .max_output_tokens = 64000,
                 },
-                .cost = .{
-                    .input = 0.834,
-                    .output = 2.501,
-                    .cache_read = 0.042,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.834,
+                        .output = 2.501,
+                        .reasoning = 2.501,
+                        .cache_read = 0.042,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -16057,10 +19633,14 @@ pub const providers = [_]Provider{
                     .context_window = 262144,
                     .max_output_tokens = 262144,
                 },
-                .cost = .{
-                    .input = 0.95,
-                    .output = 4,
-                    .cache_read = 0.19,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.95,
+                        .output = 4,
+                        .reasoning = 4,
+                        .cache_read = 0.19,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -16079,10 +19659,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 3,
-                    .output = 15,
-                    .cache_read = 0.3,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 3,
+                        .output = 15,
+                        .reasoning = 15,
+                        .cache_read = 0.3,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -16103,10 +19687,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.006,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.006,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -16127,10 +19715,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
-                    .cache_read = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                        .cache_read = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
                 .modalities = .{
@@ -16151,10 +19743,14 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.14,
-                    .output = 0.28,
-                    .cache_read = 0.0028,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.14,
+                        .output = 0.28,
+                        .reasoning = 0.28,
+                        .cache_read = 0.0028,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -16173,10 +19769,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 128000,
                 },
-                .cost = .{
-                    .input = 0.435,
-                    .output = 0.87,
-                    .cache_read = 0.003625,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.435,
+                        .output = 0.87,
+                        .reasoning = 0.87,
+                        .cache_read = 0.003625,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -16195,10 +19795,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.14,
-                    .output = 0.28,
-                    .cache_read = 0.0028,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.14,
+                        .output = 0.28,
+                        .reasoning = 0.28,
+                        .cache_read = 0.0028,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -16217,10 +19821,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.435,
-                    .output = 0.87,
-                    .cache_read = 0.003625,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.435,
+                        .output = 0.87,
+                        .reasoning = 0.87,
+                        .cache_read = 0.003625,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
@@ -16239,11 +19847,15 @@ pub const providers = [_]Provider{
                     .context_window = 204800,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.06,
-                    .cache_write = 0.375,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.06,
+                        .cache_write = 0.375,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .cache_breakpoint = true },
                 .modalities = .{
@@ -16262,10 +19874,21 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.3,
-                    .output = 1.2,
-                    .cache_read = 0.06,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.3,
+                        .output = 1.2,
+                        .reasoning = 1.2,
+                        .cache_read = 0.06,
+                    },
+                    .{
+                        .min_prompt_tokens = 512001,
+                        .input = 0.6,
+                        .output = 2.4,
+                        .reasoning = 2.4,
+                        .cache_read = 0.12,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
                 .modalities = .{
@@ -16286,10 +19909,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.2,
-                    .cache_read = 0.002,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.2,
+                        .reasoning = 0.2,
+                        .cache_read = 0.002,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -16308,10 +19935,14 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.1,
-                    .output = 0.2,
-                    .cache_read = 0.002,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.1,
+                        .output = 0.2,
+                        .reasoning = 0.2,
+                        .cache_read = 0.002,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
                 .modalities = .{
@@ -16330,11 +19961,23 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 65536,
                 },
-                .cost = .{
-                    .input = 0.4,
-                    .output = 1.6,
-                    .cache_read = 0.04,
-                    .cache_write = 0.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.4,
+                        .output = 1.6,
+                        .reasoning = 1.6,
+                        .cache_read = 0.04,
+                        .cache_write = 0.5,
+                    },
+                    .{
+                        .min_prompt_tokens = 256001,
+                        .input = 1.2,
+                        .output = 4.8,
+                        .reasoning = 4.8,
+                        .cache_read = 0.12,
+                        .cache_write = 1.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -16355,11 +19998,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 0.15,
-                    .output = 0.47,
-                    .cache_read = 0.016,
-                    .cache_write = 0.2,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0.15,
+                        .output = 0.47,
+                        .reasoning = 0.47,
+                        .cache_read = 0.016,
+                        .cache_write = 0.2,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -16378,11 +20025,15 @@ pub const providers = [_]Provider{
                     .context_window = 1000000,
                     .max_output_tokens = 131072,
                 },
-                .cost = .{
-                    .input = 2,
-                    .output = 6,
-                    .cache_read = 0.25,
-                    .cache_write = 2.5,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 2,
+                        .output = 6,
+                        .reasoning = 6,
+                        .cache_read = 0.25,
+                        .cache_write = 2.5,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{
@@ -16401,11 +20052,15 @@ pub const providers = [_]Provider{
                     .context_window = 1048576,
                     .max_output_tokens = 524288,
                 },
-                .cost = .{
-                    .input = 0,
-                    .output = 0,
-                    .cache_read = 0,
-                    .cache_write = 0,
+                .cost = &.{
+                    .{
+                        .min_prompt_tokens = 0,
+                        .input = 0,
+                        .output = 0,
+                        .reasoning = 0,
+                        .cache_read = 0,
+                        .cache_write = 0,
+                    },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
                 .modalities = .{

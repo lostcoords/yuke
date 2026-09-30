@@ -2,11 +2,11 @@
 import { client } from "yuke:internal/client";
 import { showInfo } from "yuke:internal/info-panel";
 import { currentEntry, currentSession, defaultModel, feedItem } from "yuke:internal/session";
-import { modelOf, sessionCost } from "yuke:internal/catalog";
-import { contextBar, money, tokenLabel } from "yuke:internal/format";
+import { modelOf } from "yuke:internal/catalog";
+import { contextBar, costLabel, thousands, tokenLabel } from "yuke:internal/format";
 
 /** @import { Context } from "yuke:internal/ext" */
-/** @typedef {{ model: string, count: number, tokens: number, total: Wire.TokenUsage, queued: number, compaction: boolean }} Reading */
+/** @typedef {{ model: string, count: number, tokens: number, total: Wire.TokenUsage, cost: Wire.SessionCost | null, queued: number, compaction: boolean }} Reading */
 
 /** @type {Wire.TokenUsage} */
 const NO_TOKENS = { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 };
@@ -15,13 +15,14 @@ const NO_TOKENS = { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_writ
 /** @returns {Reading} */
 function reading() {
   const e = currentEntry();
-  if (!e) return { model: defaultModel().model || "", count: 0, tokens: 0, total: NO_TOKENS, queued: 0, compaction: false };
+  if (!e) return { model: defaultModel().model || "", count: 0, tokens: 0, total: NO_TOKENS, cost: null, queued: 0, compaction: false };
   const a = e.activity;
   return {
     model: e.session.model,
     count: e.session.message_count,
     tokens: a.context_tokens,
     total: e.session.usage_total,
+    cost: e.session.cost,
     queued: a.queued,
     compaction: a.pending_compaction != null,
   };
@@ -38,12 +39,7 @@ function contextLine() {
   return tokenLabel(used) + " context";
 }
 
-/** @param {number} n @returns {string} */
-function thousands(n) {
-  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
-// Build the label and value rows of the breakdown window. The cost row needs the model in the catalog.
+// Build the label and value rows of the breakdown window. The engine priced each turn, so the cost row reads the session.
 /** @param {Reading} r @param {Wire.TokenUsage} u @param {ReadonlyArray<Wire.InstructionSource>} [sources] @param {ReadonlyArray<Wire.SkillInfo>} [skills] @returns {[string, string][]} */
 function contextRows(r, u, sources = [], skills = []) {
   const t = r.total;
@@ -60,10 +56,8 @@ function contextRows(r, u, sources = [], skills = []) {
     ["queued", String(r.queued)],
     ["compaction", r.compaction ? "pending" : "none"],
   ];
-  if (model) {
-    const cost = sessionCost(t, model.cost);
-    rows.push(["cost", money(cost)]);
-  }
+  // With no session the window describes the next chat, which has spent nothing.
+  if (r.cost) rows.push(["cost", costLabel(r.cost)]);
   for (const source of sources) rows.push([source.scope + " AGENTS", source.path]);
   for (const skill of skills) rows.push([skill.scope + " skill", skill.name + " · " + skill.description]);
   return rows;

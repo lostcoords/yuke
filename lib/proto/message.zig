@@ -23,7 +23,8 @@ pub const AssistantMessage = struct {
     content: []const AssistantPart,
     finish: ?enums.StopReason = null,
     tokens: ?TokenUsage = null,
-    cost: ?f64 = null,
+    /// What the tokens of this message cost. Null when a token count met an unknown price, or when no count arrived.
+    cost: ?MessageCost = null,
     time: MessageTime,
     @"error": ?MessageError = null,
     provenance: ?TurnProvenance = null,
@@ -188,6 +189,25 @@ pub const RedactedReasoningPart = struct {
 pub const TextPart = struct {
     id: ids.PartId,
     text: []const u8,
+};
+
+/// This type gives the cost of one assistant message in US dollars, at the prices of the request.
+pub const MessageCost = struct {
+    total: f64,
+    /// The cost of the same tokens with no cache read and no cache write. The saving is this value minus `total`.
+    without_cache: f64,
+};
+
+/// This type sums the message costs of one session in US dollars.
+pub const SessionCost = struct {
+    /// The sum of the known message costs.
+    total: f64,
+    /// The sum of `without_cache` over the same messages.
+    without_cache: f64,
+    /// The count of assistant messages with tokens and no known cost. Zero means that `total` is the whole cost.
+    unpriced: u64,
+
+    pub const zero: SessionCost = .{ .total = 0, .without_cache = 0, .unpriced = 0 };
 };
 
 /// This type records token counts for one assistant message.

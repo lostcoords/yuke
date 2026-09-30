@@ -56,10 +56,14 @@ pub const CatalogReloadResult = struct {
     changed: bool,
 };
 
-/// These costs use United States dollars per million tokens.
-pub const ModelCost = struct {
+/// This type gives the prices of one band in US dollars per million tokens. An absent price is unknown, and never zero.
+pub const PriceBand = struct {
+    /// The smallest prompt that this band prices. The prompt counts every input token, and the cached tokens too.
+    min_prompt_tokens: u64,
     input: ?f64 = null,
     output: ?f64 = null,
+    /// A reasoning token is also an output token. This price replaces the output price for that token.
+    reasoning: ?f64 = null,
     cache_read: ?f64 = null,
     cache_write: ?f64 = null,
 };
@@ -78,7 +82,8 @@ pub const ModelInfo = struct {
     supports_vision: ?bool = null,
     supports_tools: ?bool = null,
     supports_tool_search: ?bool = null,
-    cost: ModelCost,
+    /// The price bands in threshold order. The first band starts at 0. The last band that a prompt reaches prices the whole request.
+    cost: []const PriceBand,
 };
 
 test "catalog list result full round-trips without availability state" {

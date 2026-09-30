@@ -513,6 +513,16 @@ pub fn defaultLevel(arena: std.mem.Allocator, spec: ModelSpec) ![]const u8 {
 /// Project one model onto the public wire shape. An unknown value becomes an absent field.
 fn modelInfo(arena: std.mem.Allocator, provider_id: []const u8, spec: ModelSpec) !proto.catalog.ModelInfo {
     const names = try levelNames(arena, spec);
+    std.debug.assert(model.validCost(spec.cost)); // cataloggen and the providers.json load reject any other list.
+    const cost = try arena.alloc(proto.catalog.PriceBand, spec.cost.len);
+    for (cost, spec.cost) |*out, band| out.* = .{
+        .min_prompt_tokens = band.min_prompt_tokens,
+        .input = band.input,
+        .output = band.output,
+        .reasoning = band.reasoning,
+        .cache_read = band.cache_read,
+        .cache_write = band.cache_write,
+    };
 
     return .{
         .id = spec.id,
@@ -526,12 +536,7 @@ fn modelInfo(arena: std.mem.Allocator, provider_id: []const u8, spec: ModelSpec)
         .supports_vision = spec.caps.vision,
         .supports_tools = spec.caps.tools,
         .supports_tool_search = spec.caps.tool_search,
-        .cost = .{
-            .input = spec.cost.input,
-            .output = spec.cost.output,
-            .cache_read = spec.cost.cache_read,
-            .cache_write = spec.cost.cache_write,
-        },
+        .cost = cost,
     };
 }
 

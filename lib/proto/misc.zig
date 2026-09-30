@@ -87,6 +87,7 @@ pub const Session = struct {
     title: []const u8,
     message_count: u64,
     usage_total: message.TokenUsage,
+    cost: message.SessionCost,
     created_at_ms: u64,
     updated_at_ms: u64,
     created_by: ?initialize.Client = null,

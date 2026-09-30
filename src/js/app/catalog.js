@@ -65,15 +65,6 @@ export function providerStateLabel(state, canLogin = true) {
   }
 }
 
-// The cost of the tokens at the catalog prices in dollars per million. An unpriced kind costs nothing.
-/** @param {Wire.TokenUsage} total @param {Wire.ModelCost} cost @returns {number} */
-export function sessionCost(total, cost) {
-  const per = (/** @type {number} */ n, /** @type {number | undefined} */ price) => (n / 1e6) * (price || 0);
-  // The input total holds both cache subsets, so only the remainder pays the full input price.
-  const fresh = Math.max(0, total.input - total.cache_read - total.cache_write);
-  return per(fresh, cost.input) + per(total.output, cost.output) + per(total.cache_read, cost.cache_read) + per(total.cache_write, cost.cache_write);
-}
-
 // The catalog registration: the first read and the reload command. The chat shows the model it sends to.
 export const catalogPlugin = {
   name: "catalog",

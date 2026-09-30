@@ -3,7 +3,7 @@ import { Session, showSession, currentPane } from "yuke:internal/session";
 import { root, command, status } from "yuke:internal/core";
 import { events } from "yuke:internal/kernel";
 import { client } from "yuke:internal/client";
-import { catalogRefresh, sessionCost } from "yuke:internal/catalog";
+import { catalogRefresh } from "yuke:internal/catalog";
 import { phaseLabel, indicatorLine } from "yuke:internal/indicator";
 import { elapsedLabel, contextBar } from "yuke:internal/format";
 import { stripRows, queuedText, queueOf } from "yuke:internal/queue";
@@ -31,9 +31,9 @@ client.sessionQueue = () => { queueReads++; return Promise.resolve({ items: item
 const dropped = [];
 client.sessionCancelInput = (id, input) => { dropped.push(input); return Promise.resolve({ canceled_input: input }); };
 client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r1", providers: [],
-  models: [{ id: "m", provider: "p", selector: "p/m", name: "m", context_window: 1000, reasoning_levels: [], default_reasoning: "", cost: { input: 10, output: 50 } }] });
+  models: [{ id: "m", provider: "p", selector: "p/m", name: "m", context_window: 1000, reasoning_levels: [], default_reasoning: "", cost: [{ min_prompt_tokens: 0, input: 10, output: 50, reasoning: 50 }] }] });
 await catalogRefresh.run();
-await listSessions([{ session: { id: "s1", model: "p/m", message_count: 19, updated_at_ms: 1, usage_total: { input: 1000000, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 } }, activity: idle }]);
+await listSessions([{ session: { id: "s1", model: "p/m", message_count: 19, updated_at_ms: 1, usage_total: { input: 1000000, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, cost: { total: 10, without_cache: 10, unpriced: 0 } }, activity: idle }]);
 root.focusView(chat);
 showSession(chat, "s1");
 await settle();
@@ -96,6 +96,8 @@ const windowRows = dialogs()[0].content.pager.source.rows(80, 0, 100).map(rowTex
 check("context-instructions", windowRows.some((row) => /^workspace AGENTS +\/work\/AGENTS\.md$/.test(row)));
 check("context-count", windowRows.some((row) => /^context +300 \/ 1,000 · 30%$/.test(row)));
 check("context-last-turn", windowRows.some((row) => /^last turn +in 200 · out 30 · reasoning 5$/.test(row)));
+// The engine priced each turn, so the cost row states the session sum.
+check("context-cost", windowRows.some((row) => /^cost +\$10\.00$/.test(row)));
 root.onEvent(key("esc"));
 check("context-closed", dialogs().length === 0);
 // The pure helpers.
@@ -105,12 +107,6 @@ check("phase", phaseLabel({ type: "retrying", run_id: 1, attempt: 2, max_attempt
 check("phase-countdown-up", phaseLabel({ type: "retrying", run_id: 1, attempt: 2, max_attempts: 5, next_at_ms: 500, code: "rate_limited", message: "" }, 0) === "retry 2/5 in 1s · rate_limited");
 check("phase-waiting", phaseLabel({ type: "waiting", run_id: 1, started_at_ms: 0 }, 0) === "waiting for response" && phaseLabel({ type: "streaming", run_id: 1, started_at_ms: 0 }, 0) === "responding");
 check("bar", contextBar(0, 1000) === "[░░░░░░]" && contextBar(1, 1000) === "[░░░░░░]" && contextBar(500, 1000) === "[███░░░]" && contextBar(1000, 1000) === "[██████]" && contextBar(5, 0) === "[░░░░░░]");
-check("cost", sessionCost({ input: 1000000, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, { input: 10 }) === 10 && sessionCost(usage, {}) === 0);
-// The input total holds the cached subsets, so a cached token pays the cache price alone, never both prices.
-check("cost-cache", sessionCost({ input: 1000000, output: 0, reasoning: 0, cache_read: 500000, cache_write: 0 }, { input: 10, cache_read: 2 }) === 6);
-check("cost-cache-write", sessionCost({ input: 1000000, output: 0, reasoning: 0, cache_read: 250000, cache_write: 250000 }, { input: 10, cache_read: 2, cache_write: 4 }) === 6.5);
-// A peer that reports more cached tokens than input tokens leaves no fresh remainder to charge.
-check("cost-cache-over", sessionCost({ input: 100, output: 0, reasoning: 0, cache_read: 500, cache_write: 0 }, { input: 10, cache_read: 0 }) === 0);
 // With no session the reading describes the next chat: the default model's window and 0%.
 showSession(chat, new Session());
 check("empty-reading", status.side("right").indexOf("[░░░░░░] 0% context") >= 0);

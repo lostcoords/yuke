@@ -37,8 +37,23 @@ export function tokenLabel(n) {
 }
 
 /** @param {number} n @returns {string} */
+export function thousands(n) {
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/** @param {number} n @returns {string} */
 export function money(n) {
-  return "$" + n.toFixed(n < 1 ? 3 : 2);
+  const size = Math.abs(n);
+  const text = size.toFixed(size < 1 ? 3 : 2);
+  // A float sum can leave a tiny negative rest, and "-$0.000" would claim a loss that is not there.
+  return (n < 0 && Number(text) !== 0 ? "-$" : "$") + text;
+}
+
+// The cost of a session. An unpriced turn makes the sum a floor, so the label says so and does not guess.
+/** @param {Wire.SessionCost} cost @returns {string} */
+export function costLabel(cost) {
+  if (cost.unpriced === 0) return money(cost.total);
+  return "≥ " + money(cost.total) + " · " + cost.unpriced + (cost.unpriced === 1 ? " turn" : " turns") + " unpriced";
 }
 
 // A bar of `cells` glyphs in proportion. Block Elements, because the terminal draws them and a font glyph can bleed.

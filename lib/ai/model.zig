@@ -19,13 +19,32 @@ pub const Limits = struct {
     max_output_tokens: ?u64 = null,
 };
 
-/// A price the source does not publish stays null. A null price is not a zero price.
-pub const Cost = struct {
+/// The prices of one band, in US dollars per million tokens. A null price is unknown, and never zero.
+pub const PriceBand = struct {
+    /// The smallest prompt this band prices. The prompt counts every input token, the cached ones too.
+    min_prompt_tokens: u64 = 0,
     input: ?f64 = null,
     output: ?f64 = null,
+    /// A reasoning token is also an output token. This price replaces the output price for it.
+    reasoning: ?f64 = null,
     cache_read: ?f64 = null,
     cache_write: ?f64 = null,
 };
+
+/// The cost of a model that the source does not price: one band of unknown prices.
+pub const unknown_cost: []const PriceBand = &.{.{}};
+
+/// Report whether `bands` is a cost: the first band starts at 0, the thresholds rise, and no price is negative.
+pub fn validCost(bands: []const PriceBand) bool {
+    if (bands.len == 0 or bands[0].min_prompt_tokens != 0) return false;
+    for (bands, 0..) |band, i| {
+        if (i > 0 and band.min_prompt_tokens <= bands[i - 1].min_prompt_tokens) return false;
+        inline for (.{ "input", "output", "reasoning", "cache_read", "cache_write" }) |name| {
+            if (@field(band, name)) |price| if (!(price >= 0)) return false;
+        }
+    }
+    return true;
+}
 
 pub const Caps = struct {
     tools: ?bool = null,
@@ -90,7 +109,8 @@ pub const ModelSpec = struct {
     /// Name the endpoint that serves this model. A host can serve several endpoints.
     protocol: types.Protocol,
     limits: Limits = .{},
-    cost: Cost = .{},
+    /// The price bands in threshold order. The last band that the prompt reaches prices the whole request.
+    cost: []const PriceBand = unknown_cost,
     caps: Caps = .{},
     reasoning_levels: []const ReasoningLevel = &.{},
     dialect: Dialect = .{},
@@ -124,6 +144,16 @@ test "an input kind is unknown until the source lists one" {
     const vision: Modalities = .{ .input = &.{ .text, .image, .pdf } };
     try testing.expectEqual(true, vision.takesInput(.pdf).?);
     try testing.expectEqual(false, vision.takesInput(.audio).?);
+}
+
+test "a cost starts at zero, rises, and holds no negative price" {
+    try testing.expect(validCost(unknown_cost));
+    try testing.expect(validCost(&.{ .{ .input = 4 }, .{ .min_prompt_tokens = 272_001, .input = 8 } }));
+    try testing.expect(!validCost(&.{}));
+    try testing.expect(!validCost(&.{.{ .min_prompt_tokens = 1 }}));
+    try testing.expect(!validCost(&.{ .{}, .{ .min_prompt_tokens = 9 }, .{ .min_prompt_tokens = 9 } }));
+    try testing.expect(!validCost(&.{ .{}, .{ .min_prompt_tokens = 9 }, .{ .min_prompt_tokens = 5 } }));
+    try testing.expect(!validCost(&.{ .{}, .{ .min_prompt_tokens = 9, .cache_write = -1 } }));
 }
 
 test "a null reasoning level means no effort" {

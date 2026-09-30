@@ -149,26 +149,29 @@ fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer
     const arena = round_state.allocator();
 
     // A request hook can await indefinitely, so the build runs as a child a run cancel can reach.
-    var request: ?ai.PreparedRequest = null;
-    defer if (request) |*prepared| prepared.deinit();
+    var built: ?Built = null;
+    defer if (built) |*held| held.request.deinit();
     // A compaction inside the build calls the provider, and its answer must outlive the build state.
     var diagnostics: ai.Diagnostics = .{ .arena = out };
-    const built = switch (slot.cancel.runChild(engine.deps.io, requestChild, .{ engine, arena, slot, &request, &diagnostics })) {
+    const build = switch (slot.cancel.runChild(engine.deps.io, requestChild, .{ engine, arena, slot, &built, &diagnostics })) {
         .canceled, .aborted => return .canceled,
         .returned => |result| result,
     };
-    built catch |err| {
+    build catch |err| {
         if (err == error.Canceled) return .canceled;
         std.log.warn("run {d} could not build its request: {t}", .{ slot.runId(), err });
         return .{ .failed = provider.failure.outcome(out, err, &diagnostics.info) };
     };
-    std.debug.assert(request != null);
+    std.debug.assert(built != null);
+    // The commit prices the round at the prices this request used, so they outlive the build state.
+    const cost = proto.dupe(out, built.?.cost) catch |err| return .{ .failed = failure(out, err) };
     // The build state dies here, so the projected transcript and the blob bytes do not stay live while the stream runs.
     _ = round_state.reset(.free_all);
 
     const rt = streamer.session;
     const session_id = slot.sessionId();
     beginRound(engine, arena, slot) catch |err| return .{ .failed = failure(out, err) };
+    slot.progress.current.?.cost = cost;
     const created_at = slot.progress.current.?.created_at_ms;
     const started_note: proto.rpc.Notification = .{ .method = .@"message.started", .params = .{ .message_started_data = .{
         .session_id = session_id,
@@ -192,7 +195,7 @@ fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer
         streamer.reset();
         _ = round_state.reset(.retain_capacity); // The storage of one attempt dies with it.
         var info: ai.transport.AttemptInfo = .{};
-        const terminal = streamAttempt(engine, arena, slot, streamer, &request.?, &info) catch |err| {
+        const terminal = streamAttempt(engine, arena, slot, streamer, &built.?.request, &info) catch |err| {
             const delay_ms = retry.decide(engine.deps.retry_policy, .{
                 .err = err,
                 .info = info,
@@ -275,14 +278,20 @@ fn streamAttempt(
     }
 }
 
-fn requestChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, out: *?ai.PreparedRequest, diagnostics: *ai.Diagnostics) !void {
+/// The request of one round and the price bands of its model. The bands borrow the build arena.
+const Built = struct {
+    request: ai.PreparedRequest,
+    cost: []const ai.model.PriceBand,
+};
+
+fn requestChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, out: *?Built, diagnostics: *ai.Diagnostics) !void {
     std.debug.assert(out.* == null);
     try slot.cancel.check(engine.deps.io);
     out.* = try roundRequest(engine, arena, slot, diagnostics);
 }
 
 /// Build the request for one round. A retry re-sends these bytes, so the cached prefix still matches.
-fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, diagnostics: *ai.Diagnostics) !ai.PreparedRequest {
+fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, diagnostics: *ai.Diagnostics) !Built {
     const model = slot.config.model;
 
     // The catalog must resolve the model. An unresolved selector is an operating error, not a bug.
@@ -290,15 +299,15 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, diagn
 
     const held = try round_request.snapshot(arena, engine, slot, resolved);
     // The provider refused the last request as too large, so this build compacts before it counts.
-    if (slot.progress.overflow == .compact) {
+    const projected = if (slot.progress.overflow == .compact) compacted: {
         slot.progress.overflow = .spent;
-        return round_request.prepare(arena, engine, slot, held, try compactAndProject(engine, arena, slot, held, diagnostics));
-    }
-    const projected = request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget) catch |err| switch (err) {
+        break :compacted try compactAndProject(engine, arena, slot, held, diagnostics);
+    } else request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget) catch |err| switch (err) {
         error.ContextHistoryTooLarge => try compactAndProject(engine, arena, slot, held, diagnostics),
         else => return err,
     };
-    return round_request.prepare(arena, engine, slot, held, projected);
+    const request = try round_request.prepare(arena, engine, slot, held, projected);
+    return .{ .request = request, .cost = held.model.cost };
 }
 
 /// Summarize the oldest history, then project the request again under the same budget.
@@ -338,6 +347,33 @@ const Failure = proto.run.RunOutcomeFailed;
 /// Describe a failure that no provider attempt explains, in `arena`, which must outlive the round.
 fn failure(arena: std.mem.Allocator, err: anyerror) Failure {
     return provider.failure.outcome(arena, err, &.{});
+}
+
+/// Price the tokens of one round at the band that its prompt reaches. Return null when a needed price is unknown.
+fn priceRound(bands: []const ai.model.PriceBand, usage: message.TokenUsage) ?message.MessageCost {
+    std.debug.assert(ai.model.validCost(bands));
+    // The prompt counts every input token, cached tokens too. The last band that it reaches prices the whole request.
+    var band = bands[0];
+    for (bands[1..]) |next| if (usage.input >= next.min_prompt_tokens) {
+        band = next;
+    };
+    // The input count holds both cache subsets. A peer can report more cached tokens than input, so the rest stops at 0.
+    const fresh = usage.input -| usage.cache_read -| usage.cache_write;
+    // The output count holds the reasoning tokens.
+    const answer = usage.output -| usage.reasoning;
+    const output = (priceOf(answer, band.output) orelse return null) + (priceOf(usage.reasoning, band.reasoning) orelse return null);
+    return .{
+        .total = output + (priceOf(fresh, band.input) orelse return null) +
+            (priceOf(usage.cache_read, band.cache_read) orelse return null) +
+            (priceOf(usage.cache_write, band.cache_write) orelse return null),
+        .without_cache = output + (priceOf(usage.input, band.input) orelse return null),
+    };
+}
+
+/// Return the dollar cost of `tokens` at `price` per million. A zero count needs no price.
+fn priceOf(tokens: u64, price: ?f64) ?f64 {
+    if (tokens == 0) return 0;
+    return @as(f64, @floatFromInt(tokens)) * (price orelse return null) / 1_000_000;
 }
 
 /// Commit the current round, and terminalize the run only when this is the final round.
@@ -396,7 +432,7 @@ fn commitRound(
         .content = content,
         .finish = finish,
         .tokens = usage,
-        .cost = null,
+        .cost = if (usage) |counts| priceRound(round.cost, counts) else null,
         .time = .{ .created_at_ms = round.created_at_ms, .completed_at_ms = ended_at },
         .@"error" = message_error,
         .provenance = .{ .protocol = slot.protocol, .model = slot.config.model },
@@ -827,6 +863,30 @@ fn emptyPart(part_id: ids.PartId, kind: event.BlockKind) message.AssistantPart {
 const Resources = @import("test_resources.zig");
 const hookset = @import("hookset.zig");
 
+test "one band prices the whole round, picked by the whole prompt" {
+    const bands: []const ai.model.PriceBand = &.{
+        .{ .input = 4, .output = 20, .reasoning = 20, .cache_read = 0.4, .cache_write = 5 },
+        .{ .min_prompt_tokens = 272_001, .input = 8, .output = 30, .reasoning = 30, .cache_read = 0.8, .cache_write = 10 },
+    };
+    // The prompt holds the vendor threshold exactly, so the base band prices it. The cached tokens pay the read price.
+    const base = priceRound(bands, .{ .input = 272_000, .output = 1_000, .reasoning = 0, .cache_read = 200_000, .cache_write = 0 }).?;
+    try std.testing.expectApproxEqAbs(0.288 + 0.08 + 0.02, base.total, 1e-12);
+    try std.testing.expectApproxEqAbs(1.088 + 0.02, base.without_cache, 1e-12);
+    // One more token reaches the tier, and every token of the round pays the tier price.
+    const tier = priceRound(bands, .{ .input = 272_001, .output = 1_000, .reasoning = 0, .cache_read = 200_000, .cache_write = 1 }).?;
+    try std.testing.expectApproxEqAbs(0.576 + 0.16 + 0.00001 + 0.03, tier.total, 1e-12);
+    try std.testing.expectApproxEqAbs(2.176008 + 0.03, tier.without_cache, 1e-12);
+}
+
+test "a reasoning token pays its own price, and an unknown price makes the round unknown" {
+    const priced = priceRound(&.{.{ .input = 2, .output = 8, .reasoning = 3 }}, .{ .input = 1_000, .output = 500, .reasoning = 200, .cache_read = 0, .cache_write = 0 }).?;
+    try std.testing.expectApproxEqAbs(0.002 + 0.0024 + 0.0006, priced.total, 1e-12);
+    // No token went through the cache, so the round costs the same without it.
+    try std.testing.expectEqual(priced.total, priced.without_cache);
+    // A cache read at an unknown price leaves the round unknown.
+    try std.testing.expect(priceRound(&.{.{ .input = 2, .output = 8, .reasoning = 3 }}, .{ .input = 1_000, .output = 500, .reasoning = 200, .cache_read = 10, .cache_write = 0 }) == null);
+}
+
 test "the stream cap rejects an oversized provider delta" {
     const max = proto.meta.limits.max_message_string_bytes;
     try checkStreamCap(0, max); // A delta up to the cap is allowed.
@@ -997,6 +1057,21 @@ test "a paused round continues with the same content and commits both messages" 
     try std.testing.expect(std.mem.lastIndexOf(u8, body, "\"role\":\"user\"").? < paused_at);
 }
 
+test "a round commits its cost at the prices of its request, and the session sums it" {
+    var f: Resources.Fixture = undefined;
+    try f.init(.{ .cost = &.{.{ .input = 3, .output = 15, .reasoning = 15 }} });
+    defer f.deinit();
+    _ = try f.send(&.{.{ .text = .{ .text = "hi" } }});
+    try f.finish(Resources.Fixture.id);
+
+    // The canned reply reports 8 output tokens and no input token.
+    const cost = (try f.history())[1].assistant.cost.?;
+    try std.testing.expectApproxEqAbs(0.00012, cost.total, 1e-15);
+    const summary = (try database.session.snapshot(&f.db, f.arena.allocator(), Resources.Fixture.id.raw)).?;
+    try std.testing.expectEqual(cost.total, summary.cost_total);
+    try std.testing.expectEqual(@as(u64, 0), summary.unpriced_count);
+}
+
 test "a run that pauses past the continuation cap fails with max_rounds" {
     var f: Resources.Fixture = undefined;
     try f.init(.{ .replies = &[_][]const u8{Resources.pause_reply} ** (max_pause_continuations + 1) });
@@ -1159,7 +1234,7 @@ test "a build hook can discard the live registry and tools before the request se
         .name = "Before",
         .protocol = .openai_chat,
         .caps = .{ .tools = true },
-        .cost = .{ .input = 1.5 },
+        .cost = &.{.{ .input = 1.5 }},
     });
     const row = try source.create(registry.Provider);
     row.* = try proto.dupe(source, Resources.mockProvider(&.{}, .{

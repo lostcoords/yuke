@@ -324,6 +324,10 @@ pub const AdvanceMessage = sql.OneQuery(
     \\    usage_last_reasoning    = COALESCE(:tokens_reasoning, usage_last_reasoning),
     \\    usage_last_cache_read   = COALESCE(:tokens_cache_read, usage_last_cache_read),
     \\    usage_last_cache_write  = COALESCE(:tokens_cache_write, usage_last_cache_write),
+    \\    cost_total               = cost_total               + COALESCE(:cost, 0),
+    \\    cost_without_cache_total = cost_without_cache_total + COALESCE(:cost_without_cache, 0),
+    \\    -- A message with tokens and no known cost is unpriced. A message without tokens is not unpriced.
+    \\    unpriced_count           = unpriced_count           + (:tokens_input IS NOT NULL AND :cost IS NULL),
     \\    projection_seq          = :seq,
     \\    updated_at_ms           = MAX(updated_at_ms, :updated_at_ms)
     \\WHERE id = :id RETURNING 1 AS advanced;
@@ -335,6 +339,8 @@ pub const AdvanceMessage = sql.OneQuery(
         tokens_reasoning: ?u64 = null,
         tokens_cache_read: ?u64 = null,
         tokens_cache_write: ?u64 = null,
+        cost: ?f64 = null,
+        cost_without_cache: ?f64 = null,
         seq: u64,
         updated_at_ms: u64,
         id: [16]u8,
@@ -529,6 +535,7 @@ pub const SessionSnapshot = sql.OptionalQuery(
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    \\    cost_total, cost_without_cache_total, unpriced_count,
     \\    created_at_ms, updated_at_ms,
     \\    open_run_id, open_run_kind, open_run_started_at_ms,
     \\    usage_last_input, usage_last_output, usage_last_reasoning, usage_last_cache_read, usage_last_cache_write
@@ -560,6 +567,9 @@ pub const SessionSnapshot = sql.OptionalQuery(
         usage_reasoning_total: u64,
         usage_cache_read_total: u64,
         usage_cache_write_total: u64,
+        cost_total: f64,
+        cost_without_cache_total: f64,
+        unpriced_count: u64,
         created_at_ms: u64,
         updated_at_ms: u64,
         open_run_id: ?u64,
@@ -622,6 +632,7 @@ pub const SessionPageRecent = sql.ManyQuery(
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    \\    cost_total, cost_without_cache_total, unpriced_count,
     \\    created_at_ms, updated_at_ms
     \\FROM sessions
     \\WHERE (NOT :top_level OR origin IN ('root', 'fork'))
@@ -657,6 +668,9 @@ pub const SessionPageRecent = sql.ManyQuery(
         usage_reasoning_total: u64,
         usage_cache_read_total: u64,
         usage_cache_write_total: u64,
+        cost_total: f64,
+        cost_without_cache_total: f64,
+        unpriced_count: u64,
         created_at_ms: u64,
         updated_at_ms: u64,
     },
@@ -670,6 +684,7 @@ pub const SessionPageParent = sql.ManyQuery(
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    \\    cost_total, cost_without_cache_total, unpriced_count,
     \\    created_at_ms, updated_at_ms
     \\FROM sessions
     \\WHERE parent_id = :filter_parent_id

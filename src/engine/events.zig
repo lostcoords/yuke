@@ -65,6 +65,11 @@ pub fn sessionItem(arena: std.mem.Allocator, row: anytype) !proto.session.Sessio
                 .cache_read = row.usage_cache_read_total,
                 .cache_write = row.usage_cache_write_total,
             },
+            .cost = .{
+                .total = row.cost_total,
+                .without_cache = row.cost_without_cache_total,
+                .unpriced = row.unpriced_count,
+            },
             .created_at_ms = row.created_at_ms,
             .updated_at_ms = row.updated_at_ms,
             .created_by = created_by,

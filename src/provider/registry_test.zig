@@ -33,7 +33,7 @@ const catalog_model: registry.ModelSpec = .{
     .name = "Catalog Model",
     .protocol = .openai_chat,
     .limits = .{ .context_window = 1000, .max_output_tokens = 100 },
-    .cost = .{ .input = 1, .output = 2 },
+    .cost = &.{.{ .input = 1, .output = 2 }},
     .caps = .{ .tools = true, .vision = false },
 };
 

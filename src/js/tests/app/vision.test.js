@@ -12,9 +12,9 @@ const lastShown = () => shown[shown.length - 1] ?? "";
 // The shell built the first chat pane at boot.
 const chat = currentPane();
 const png = { hash: "a".repeat(64), mime: "image/png", bytes: 2048 };
-const blind = { id: "m1", provider: "p", selector: "p/blind", name: "Blind", reasoning_levels: [], default_reasoning: "", supports_vision: false, cost: {} };
-const seeing = { id: "m2", provider: "p", selector: "p/seeing", name: "Seeing", reasoning_levels: [], default_reasoning: "", supports_vision: true, cost: {} };
-const quiet = { id: "m3", provider: "p", selector: "p/quiet", name: "Quiet", reasoning_levels: [], default_reasoning: "", cost: {} };
+const blind = { id: "m1", provider: "p", selector: "p/blind", name: "Blind", reasoning_levels: [], default_reasoning: "", supports_vision: false, cost: [{ min_prompt_tokens: 0 }] };
+const seeing = { id: "m2", provider: "p", selector: "p/seeing", name: "Seeing", reasoning_levels: [], default_reasoning: "", supports_vision: true, cost: [{ min_prompt_tokens: 0 }] };
+const quiet = { id: "m3", provider: "p", selector: "p/quiet", name: "Quiet", reasoning_levels: [], default_reasoning: "", cost: [{ min_prompt_tokens: 0 }] };
 catalog.models = [blind, seeing, quiet];
 
 const attach = () => { chat.composer.spans = [{ start: 0, end: 6, blob: png }]; };

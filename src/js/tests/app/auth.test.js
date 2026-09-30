@@ -92,7 +92,7 @@ check("env-key-notice", lastShown().indexOf("in the environment") > 0);
 
 // The model picker dims a model whose provider needs a credential, and accepting it starts the login.
 client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r2", providers: [{ id: "codex", name: "Codex", state: "needs_credential", can_login: true }],
-  models: [{ id: "gpt", provider: "codex", selector: "codex/gpt", name: "gpt", reasoning_levels: [], default_reasoning: "", cost: {} }] });
+  models: [{ id: "gpt", provider: "codex", selector: "codex/gpt", name: "gpt", reasoning_levels: [], default_reasoning: "", cost: [{ min_prompt_tokens: 0 }] }] });
 command.perform("model:pick");
 await settle();
 check("model-picker", dialogs().length === 1);
@@ -105,7 +105,7 @@ root.onEvent(key("esc"));
 check("dialog-closed", dialogs().length === 0);
 // A provider without a route cannot log in, so the picker stops with the reason.
 client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r3", providers: [{ id: "codex", name: "Codex", state: "needs_route", can_login: true }],
-  models: [{ id: "gpt", provider: "codex", selector: "codex/gpt", name: "gpt", reasoning_levels: ["low", "high"], default_reasoning: "low", cost: {} }] });
+  models: [{ id: "gpt", provider: "codex", selector: "codex/gpt", name: "gpt", reasoning_levels: ["low", "high"], default_reasoning: "low", cost: [{ min_prompt_tokens: 0 }] }] });
 command.perform("model:pick");
 await settle();
 root.onEvent(key("enter"));
@@ -117,7 +117,7 @@ command.perform("model:pick", "codex/gpt");
 await settle();
 check("query-route-stops", defaultModel().model === beforeQuery && lastShown().indexOf("needs a route") > 0);
 client.catalogList = () => Promise.resolve({ type: "full", catalog_rev: "r4", providers: [{ id: "codex", name: "Codex", state: "ready", can_login: true }],
-  models: [{ id: "gpt", provider: "codex", selector: "codex/gpt", name: "gpt", reasoning_levels: ["low", "high"], default_reasoning: "high", cost: {} }] });
+  models: [{ id: "gpt", provider: "codex", selector: "codex/gpt", name: "gpt", reasoning_levels: ["low", "high"], default_reasoning: "high", cost: [{ min_prompt_tokens: 0 }] }] });
 command.perform("model:pick", "codex/gpt");
 await settle();
 check("query-ready-uses-default", dialogs().length === 0 && defaultModel().model === "codex/gpt" && defaultModel().reasoning === "high");

@@ -55,6 +55,9 @@ SELECT 1 AS present FROM sessions WHERE id = :id;
 -- usage_reasoning_total: u64!
 -- usage_cache_read_total: u64!
 -- usage_cache_write_total: u64!
+-- cost_total: f64!
+-- cost_without_cache_total: f64!
+-- unpriced_count: u64!
 -- created_at_ms: u64!
 -- updated_at_ms: u64!
 -- open_run_id: ?u64!
@@ -72,6 +75,7 @@ SELECT
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    cost_total, cost_without_cache_total, unpriced_count,
     created_at_ms, updated_at_ms,
     open_run_id, open_run_kind, open_run_started_at_ms,
     usage_last_input, usage_last_output, usage_last_reasoning, usage_last_cache_read, usage_last_cache_write
@@ -138,6 +142,9 @@ RETURNING 1 AS changed;
 -- usage_reasoning_total: u64!
 -- usage_cache_read_total: u64!
 -- usage_cache_write_total: u64!
+-- cost_total: f64!
+-- cost_without_cache_total: f64!
+-- unpriced_count: u64!
 -- created_at_ms: u64!
 -- updated_at_ms: u64!
 SELECT
@@ -147,6 +154,7 @@ SELECT
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    cost_total, cost_without_cache_total, unpriced_count,
     created_at_ms, updated_at_ms
 FROM sessions
 WHERE (NOT :top_level OR origin IN ('root', 'fork'))
@@ -170,6 +178,7 @@ SELECT
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
+    cost_total, cost_without_cache_total, unpriced_count,
     created_at_ms, updated_at_ms
 FROM sessions
 WHERE parent_id = :filter_parent_id

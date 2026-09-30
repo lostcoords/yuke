@@ -704,9 +704,15 @@
       ]
     },
     {
-      "name": "ModelCost",
-      "doc": "These costs use United States dollars per million tokens.",
+      "name": "PriceBand",
+      "doc": "This type gives the prices of one band in US dollars per million tokens. An absent price is unknown, and never zero.",
       "fields": [
+        {
+          "name": "min_prompt_tokens",
+          "doc": "The smallest prompt that this band prices. The prompt counts every input token, and the cached tokens too.",
+          "type": "u64",
+          "presence": "required"
+        },
         {
           "name": "input",
           "type": "f64",
@@ -714,6 +720,12 @@
         },
         {
           "name": "output",
+          "type": "f64",
+          "presence": "optional"
+        },
+        {
+          "name": "reasoning",
+          "doc": "A reasoning token is also an output token. This price replaces the output price for that token.",
           "type": "f64",
           "presence": "optional"
         },
@@ -791,7 +803,8 @@
         },
         {
           "name": "cost",
-          "type": "ModelCost",
+          "doc": "The price bands in threshold order. The first band starts at 0. The last band that a prompt reaches prices the whole request.",
+          "type": "[]PriceBand",
           "presence": "required"
         }
       ]
@@ -1641,7 +1654,8 @@
         },
         {
           "name": "cost",
-          "type": "f64",
+          "doc": "What the tokens of this message cost. Null when a token count met an unknown price, or when no count arrived.",
+          "type": "MessageCost",
           "presence": "optional"
         },
         {
@@ -1974,6 +1988,47 @@
         {
           "name": "text",
           "type": "string",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "MessageCost",
+      "doc": "This type gives the cost of one assistant message in US dollars, at the prices of the request.",
+      "fields": [
+        {
+          "name": "total",
+          "type": "f64",
+          "presence": "required"
+        },
+        {
+          "name": "without_cache",
+          "doc": "The cost of the same tokens with no cache read and no cache write. The saving is this value minus `total`.",
+          "type": "f64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "SessionCost",
+      "doc": "This type sums the message costs of one session in US dollars.",
+      "fields": [
+        {
+          "name": "total",
+          "doc": "The sum of the known message costs.",
+          "type": "f64",
+          "presence": "required"
+        },
+        {
+          "name": "without_cache",
+          "doc": "The sum of `without_cache` over the same messages.",
+          "type": "f64",
+          "presence": "required"
+        },
+        {
+          "name": "unpriced",
+          "doc": "The count of assistant messages with tokens and no known cost. Zero means that `total` is the whole cost.",
+          "type": "u64",
           "presence": "required"
         }
       ]
@@ -2338,6 +2393,11 @@
         {
           "name": "usage_total",
           "type": "TokenUsage",
+          "presence": "required"
+        },
+        {
+          "name": "cost",
+          "type": "SessionCost",
           "presence": "required"
         },
         {
