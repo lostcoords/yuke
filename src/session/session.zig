@@ -62,6 +62,8 @@ pub const RunProgress = struct {
     rounds_committed: u64 = 0,
     /// Consecutive rounds the provider paused. Any other stop reason resets it.
     pauses: u8 = 0,
+    /// A provider overflow buys one compaction for each run. `compact` makes the next build compact first.
+    overflow: enum { allow, compact, spent } = .allow,
     current: ?RoundState = null,
 };
 

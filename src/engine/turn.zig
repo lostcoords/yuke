@@ -67,7 +67,7 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
         streamer.reset();
         std.debug.assert(slot.progress.current == null);
         std.debug.assert(rt.draft == null); // one draft per round
-        const terminal = streamRound(engine, boundary_arena, slot, &streamer);
+        const terminal = streamRound(engine, boundary_arena, slot, &streamer) orelse continue;
         const live = if (rt.draft) |*live| live else {
             commitFinal(engine, boundary_arena, slot, null, false, streamer.usage, terminal);
             return;
@@ -140,8 +140,9 @@ fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: 
     };
 }
 
-/// Run one round and resend the request while the classifier allows it. A failure copies the provider answer into `out`, which outlives the round.
-fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) Terminal {
+/// Run one round and resend the request while the classifier allows it. A provider failure copies its answer into `out`, which outlives the round.
+/// Null means a provider overflow discarded the round, and the next round compacts first.
+fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer: *Streamer) ?Terminal {
     // The request and its attempts die with this round, so a long run never accumulates them.
     var round_state: std.heap.ArenaAllocator = .init(engine.deps.gpa);
     defer round_state.deinit();
@@ -200,6 +201,21 @@ fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer
                 .number = number,
                 .budget_left = slot.retry_budget,
             }, engine.jitter()) orelse {
+                // The provider refused the input size before any output reached a client, so one compaction can save the round.
+                if (err == error.ContextOverflow and !streamer.saw_semantic and slot.progress.overflow == .allow) {
+                    // Close the round with no message. The client drops the draft, and the message id stays unused.
+                    const note: proto.rpc.Notification = .{ .method = .@"message.discarded", .params = .{ .message_discarded_data = .{
+                        .session_id = session_id,
+                        .message_id = slot.progress.current.?.message_id,
+                    } } };
+                    // A sink can read the activity, so the round closes before the publish.
+                    slot.progress.current = null;
+                    slot.round = .none;
+                    slot.progress.overflow = .compact;
+                    rt.apply(note.params) catch |fold| std.debug.panic("cannot fold the discard: {t}", .{fold}); // The engine opened this draft.
+                    engine.sinks.emit(note);
+                    return null;
+                }
                 std.log.warn("run {d} attempt {d} ended: {t} (status {?d})", .{ slot.runId(), number, err, info.status });
                 return .{ .failed = provider.failure.outcome(out, err, &info) };
             };
@@ -273,6 +289,11 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, diagn
     const resolved = engine.deps.providers.merged.resolveModel(model) orelse return error.UnknownModel;
 
     const held = try round_request.snapshot(arena, engine, slot, resolved);
+    // The provider refused the last request as too large, so this build compacts before it counts.
+    if (slot.progress.overflow == .compact) {
+        slot.progress.overflow = .spent;
+        return round_request.prepare(arena, engine, slot, held, try compactAndProject(engine, arena, slot, held, diagnostics));
+    }
     const projected = request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget) catch |err| switch (err) {
         error.ContextHistoryTooLarge => try compactAndProject(engine, arena, slot, held, diagnostics),
         else => return err,
@@ -1231,7 +1252,7 @@ test "a run cancel interrupts either request hook before it settles" {
         defer canceller.cancel(state.io) catch {};
         var streamer = f.streamer();
         defer streamer.blocks.deinit(std.testing.allocator);
-        try std.testing.expect(streamRound(&f.engine, std.testing.allocator, f.slot, &streamer) == .canceled);
+        try std.testing.expect(streamRound(&f.engine, std.testing.allocator, f.slot, &streamer).? == .canceled);
         try std.testing.expect(state.asked);
         try std.testing.expect(!state.timed_out);
     }
@@ -1262,7 +1283,7 @@ test "a failed attempt keeps the provider status, request id, and detail past it
     defer out.deinit();
     var streamer = f.streamer();
     defer streamer.blocks.deinit(std.testing.allocator);
-    const terminal = streamRound(&f.engine, out.allocator(), f.slot, &streamer);
+    const terminal = streamRound(&f.engine, out.allocator(), f.slot, &streamer).?;
     try std.testing.expect(terminal == .failed);
     try std.testing.expectEqual(proto.enums.RunErrorCode.provider, terminal.failed.code);
     try std.testing.expectEqual(@as(?u16, 400), terminal.failed.status);
@@ -1289,7 +1310,7 @@ test "an error event inside a 200 stream reports its class and the provider mess
     defer out.deinit();
     var streamer = f.streamer();
     defer streamer.blocks.deinit(std.testing.allocator);
-    const terminal = streamRound(&f.engine, out.allocator(), f.slot, &streamer);
+    const terminal = streamRound(&f.engine, out.allocator(), f.slot, &streamer).?;
     try std.testing.expect(terminal == .failed);
     try std.testing.expectEqual(proto.enums.RunErrorCode.quota_exhausted, terminal.failed.code);
     try std.testing.expectEqual(@as(?u16, null), terminal.failed.status);

@@ -635,6 +635,68 @@ test "automatic compaction preserves the exact tail and the next assistant id" {
     try testing.expectEqualSlices(u8, page.messages[3].assistant.content[0].text.text, projected.messages[2].assistant.content[0].text.text);
 }
 
+test "a provider overflow compacts once and repeats the round, unless output already reached a client" {
+    const overflow = comptime ai.testing.sseFrame(
+        \\{"type":"error","error":{"type":"invalid_request_error","error_type":"context_length_exceeded","message":"too long"}}
+    );
+    const after_text = comptime ai.testing.sseFrame(
+        \\{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+    ) ++ ai.testing.sseFrame(
+        \\{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}
+    ) ++ overflow;
+    const Case = struct { replies: []const []const u8, compacts: bool };
+    const Discards = struct {
+        engine: *Engine,
+        session: *Session,
+        arena: std.mem.Allocator,
+        ids: std.ArrayList(u64) = .empty,
+
+        fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (note.method != .@"message.discarded") return;
+            self.ids.append(self.arena, note.params.message_discarded_data.message_id) catch |err| std.debug.panic("{t}", .{err});
+            // A sink can read the activity during the publish, so the round state must hold then.
+            _ = session_events.residentActivity(self.engine, self.arena, self.session) catch |err| std.debug.panic("{t}", .{err});
+        }
+    };
+    for ([_]Case{
+        .{ .replies = &.{ overflow, ai.testing.canned_reply, ai.testing.canned_reply }, .compacts = true },
+        // The run holds one compaction, so a second overflow fails it.
+        .{ .replies = &.{ overflow, ai.testing.canned_reply, overflow }, .compacts = true },
+        .{ .replies = &.{after_text}, .compacts = false },
+    }, 0..) |case, i| {
+        var f: TaskFixture = undefined;
+        try f.init();
+        defer f.deinit();
+        var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        // The count stays under the compaction point, so only the provider answer starts the compaction.
+        try seedCompactableHistory(&f.db, a);
+        var capture: Resources.Capture = .{ .arena = a, .replies = case.replies };
+        f.engine.deps.route_transport = capture.transport();
+        var discards: Discards = .{ .engine = &f.engine, .session = f.session, .arena = a };
+        f.engine.sinks.add(.{ .ctx = &discards, .on_event = Discards.onEvent });
+        try sendAndWait(&f, a, "repeat after the overflow");
+        try testing.expectEqualSlices(u64, if (case.compacts) &.{6} else &.{}, discards.ids.items);
+        try testing.expectEqual(case.replies.len, capture.requests.items.len);
+        const page = try database.message.historyPage(&f.db, a, TaskFixture.sid, 0, 20);
+        const outcome = (try database.run.latestOutcome(&f.db, a, TaskFixture.sid)).?;
+        if (!case.compacts) {
+            // The client saw text, so the round commits it and fails.
+            try testing.expectEqualStrings("partial", page.messages[5].assistant.content[0].text.text);
+            try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, outcome.failed.code);
+            continue;
+        }
+        try testing.expect(std.mem.indexOf(u8, capture.requests.items[2], "context_summary") != null);
+        // Message 6 opened the refused round and stays unused. The checkpoint and the next round follow it.
+        try testing.expectEqual(@as(usize, 7), page.messages.len);
+        try testing.expectEqual(@as(u64, 7), page.messages[5].compaction.id);
+        try testing.expectEqual(@as(u64, 8), page.messages[6].assistant.id);
+        if (i == 0) try testing.expect(outcome == .turn) else try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, outcome.failed.code);
+    }
+}
+
 /// Seed a history large enough that one compaction reaches the model instead of skipping.
 fn seedCompactableHistory(db: *database.Database, arena: std.mem.Allocator) !void {
     // The newest turn passes the tail target at 20,000. The covered turn is larger than a short summary.
