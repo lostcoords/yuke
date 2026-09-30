@@ -45,6 +45,8 @@ pub const Paint = struct {
     tick_period_ms: u32 = 450,
     quit_requested: bool = false,
     suspend_requested: bool = false,
+    /// The last background class the terminal reported. `term.background` mirrors it.
+    background: term_pkg.Background = .dark,
     term_obj: quickjs.Value = quickjs.UNDEFINED,
 
     /// Apply a terminal size to the renderer and cached JavaScript objects.
@@ -118,6 +120,7 @@ fn addRoots(host: *Host, ctx: Context, term_obj: Value) void {
     module.set(ctx, term_obj, "cwd", ctx.newString(host.cwd));
     module.set(ctx, term_obj, "width", ctx.newInt32(host.paint.width));
     module.set(ctx, term_obj, "height", ctx.newInt32(host.paint.height));
+    module.set(ctx, term_obj, "background", ctx.newString(@tagName(host.paint.background)));
     host.paint.term_obj = ctx.dupValue(term_obj);
 }
 

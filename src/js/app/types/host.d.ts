@@ -50,6 +50,7 @@ type HostEvent =
       count: number;
     }
   | { type: "focus"; focused: boolean }
+  | { type: "background"; background: "dark" | "light" }
   | { type: "paste"; text: string }
   | { type: "resize"; w: number; h: number }
   | { type: "tick" };

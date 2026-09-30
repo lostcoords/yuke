@@ -190,11 +190,17 @@ fn run(init: std.process.Init) !u8 {
         .rpc, .tui, .print, .check => {},
     }
 
+    // The TUI asks the terminal for its background before the host exists, so `index.js` reads the answer.
+    var terminal: tui_app.Terminal = undefined;
+    if (command == .tui) try terminal.start(init.gpa, io);
+    defer if (command == .tui) terminal.deinit(init.gpa, io);
+
     var extensions: extensions_mod.Extensions = undefined;
     try extensions.init(init.gpa, io, application, .{
         .host = .{
             .cwd = cwd_buf[0..cwd_len],
             .execution = context,
+            .background = if (command == .tui) terminal.replies.background else .dark,
         },
         .boot = switch (command) {
             .tui => tui_app.boot,
@@ -209,7 +215,7 @@ fn run(init: std.process.Init) !u8 {
 
     switch (command) {
         .rpc => try rpc.runIo(&extensions),
-        .tui => try tui_app.runIo(&extensions),
+        .tui => try tui_app.runIo(&extensions, &terminal),
         .print => |opts| return print_cli.run(init.gpa, io, &extensions, cwd_buf[0..cwd_len], opts),
         .check => return try check_cli.run(io, &extensions),
         .login, .logout => unreachable, // These commands return before the host starts.

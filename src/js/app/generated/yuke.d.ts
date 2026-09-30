@@ -1824,6 +1824,11 @@ class Surface {
      */
     get style(): typeof style;
     /**
+     * The light or dark class of the terminal background. yuke asks the terminal before `index.js` runs, and `background.changed` reports each change.
+     * It is "dark" when the terminal does not report its color.
+     */
+    get background(): "dark" | "light";
+    /**
      * Show `layer` above the panes until it closes. The disposer, a pop of the layer, or the block stop closes it.
      * Any close runs `onClose` once. After the block stops, the layer does not show and `onClose` runs at once.
      * @param layer - a view such as the `win` from `ui.pick`. A layer that already shows stays in its place.
@@ -2984,6 +2989,8 @@ export interface EventsBase extends EngineFacts {
   "mouse.received"(ev: HostMouseEvent): void;
   "paste.received"(ev: Extract<HostEvent, { type: "paste" }>): void;
   "focus.changed"(ev: Extract<HostEvent, { type: "focus" }>): void;
+  /** The terminal background changed between light and dark. `c.tui.background` holds the new class. */
+  "background.changed"(ev: Extract<HostEvent, { type: "background" }>): void;
   "pane.focused"(view: ViewLike): void;
   "pane.closed"(view: ViewLike): void;
   "region.focused"(view: ChatView, region: ChatRegion): void;
@@ -3321,6 +3328,7 @@ type HostEvent =
       count: number;
     }
   | { type: "focus"; focused: boolean }
+  | { type: "background"; background: "dark" | "light" }
   | { type: "paste"; text: string }
   | { type: "resize"; w: number; h: number }
   | { type: "tick" };

@@ -74,6 +74,8 @@ export interface Events extends EngineFacts {
   "mouse.received"(ev: HostMouseEvent): void;
   "paste.received"(ev: Extract<HostEvent, { type: "paste" }>): void;
   "focus.changed"(ev: Extract<HostEvent, { type: "focus" }>): void;
+  /** The terminal background changed between light and dark. `c.tui.background` holds the new class. */
+  "background.changed"(ev: Extract<HostEvent, { type: "background" }>): void;
   "pane.focused"(view: ViewLike): void;
   "pane.closed"(view: ViewLike): void;
   "region.focused"(view: ChatView, region: ChatRegion): void;

@@ -13,6 +13,9 @@ pub const resize_in_band = @import("tty.zig").resize_in_band;
 pub const Input = @import("input.zig").Input;
 pub const Event = @import("input.zig").Event;
 pub const Key = @import("input.zig").Key;
+pub const Background = @import("input.zig").Background;
+pub const background_query = @import("input.zig").background_query;
+pub const background_probe = @import("input.zig").background_probe;
 pub const Render = @import("render.zig").Render;
 
 test {

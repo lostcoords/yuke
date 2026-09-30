@@ -10,11 +10,15 @@ const Event = term_pkg.Event;
 
 const Queue = std.Io.Queue(Msg);
 
-/// One owner message: a parser event with owned key or paste text, or a synthetic tick.
+/// One owner message: a parser event with owned key or paste text, a synthetic tick, or a terminal answer.
 const Msg = union(enum) {
     event: EventBuf,
     paste: []const u8,
     tick,
+    /// The terminal reported its background color.
+    background: term_pkg.Background,
+    /// The terminal changed its scheme, so the owner asks for the new background color.
+    query_background,
 
     pub fn from(ev: Event) Msg {
         return switch (ev) {
@@ -77,19 +81,72 @@ pub const boot =
 /// The largest run of messages one frame absorbs, so steady input never starves the screen.
 const drain_max = 64;
 
-/// Open the TTY, enter the alternate screen, and run until quit. The caller owns `extensions`.
-pub fn runIo(extensions: *extensions_mod.Extensions) !void {
-    const gpa = extensions.host.gpa;
+/// The longest wait for the startup answers. Neovim waits as long; a later answer still arrives as an event.
+const probe_timeout: std.Io.Duration = .fromMilliseconds(100);
+
+/// The terminal answers that the input task records. The task and the owner share one thread.
+const Replies = struct {
+    /// The DA1 reply sets this; it is the last answer to `background_probe`.
+    answered: std.Io.Event = .unset,
+    background: term_pkg.Background = .dark,
+    scheme_updates: bool = false,
+};
+
+/// The TTY in raw mode, its input task, and the queue the owner reads. `start` asks for the background before the host exists, so the first script reads the answer.
+pub const Terminal = struct {
+    tty: term_pkg.Tty,
+    input: term_pkg.Input,
+    // The queue holds a wheel burst, so `serve` can fold it into one dispatch.
+    slot: [64]Msg,
+    queue: Queue,
+    replies: Replies,
+    group: std.Io.Group,
+
+    /// Open the TTY, start the input task, and wait for the answers to `background_probe` or the timeout. `self` must not move until `deinit`.
+    pub fn start(self: *Terminal, gpa: std.mem.Allocator, io: std.Io) !void {
+        self.tty = try term_pkg.Tty.open(io);
+        self.input = .{ .gpa = gpa };
+        self.slot = undefined;
+        self.queue = .init(&self.slot);
+        self.replies = .{};
+        self.group = .init;
+        errdefer self.deinit(gpa, io);
+        try self.group.concurrent(io, inputTask, .{ gpa, io, &self.tty, &self.input, &self.queue, &self.replies });
+
+        var buf: [term_pkg.background_probe.len]u8 = undefined;
+        var file_w = self.tty.writerStreaming(&buf);
+        try file_w.interface.writeAll(term_pkg.background_probe);
+        try file_w.interface.flush();
+        self.replies.answered.waitTimeout(io, .{ .duration = .{ .raw = probe_timeout, .clock = .awake } }) catch |err| switch (err) {
+            error.Timeout => std.log.info("the terminal did not answer DA1 in {d} ms; the background stays {t}", .{ probe_timeout.toMilliseconds(), self.replies.background }),
+            error.Canceled => |e| return e,
+        };
+    }
+
+    /// Stop the input task, free the queued messages, and restore the TTY.
+    pub fn deinit(self: *Terminal, gpa: std.mem.Allocator, io: std.Io) void {
+        self.tty.shutdownInput();
+        self.group.cancel(io);
+        drainQueue(gpa, io, &self.queue);
+        self.input.deinit();
+        self.tty.deinit();
+        self.* = undefined;
+    }
+};
+
+/// Enter the alternate screen and run until quit. The caller owns `extensions` and `terminal`.
+pub fn runIo(extensions: *extensions_mod.Extensions, terminal: *Terminal) !void {
     const io = extensions.host.io;
-    var tty = try term_pkg.Tty.open(io);
-    defer tty.deinit();
+    const tty = &terminal.tty;
+    const queue = &terminal.queue;
 
     var write_buf: [frame_buf_bytes]u8 = undefined;
     var file_w = tty.writerStreaming(&write_buf);
     const writer = &file_w.interface;
 
-    var render = try term_pkg.Render.init(io, gpa, extensions.host.execution.env);
+    var render = try term_pkg.Render.init(io, extensions.host.gpa, extensions.host.execution.env);
     defer render.deinit(writer);
+    render.vx.caps.color_scheme_updates = terminal.replies.scheme_updates;
     try render.enableTui(writer);
 
     const host = extensions.host;
@@ -102,29 +159,21 @@ pub fn runIo(extensions: *extensions_mod.Extensions) !void {
         host.paint.output = null;
     }
     std.debug.assert(host.paint.output != null);
-    host.paint.output.?.tty = &tty;
+    host.paint.output.?.tty = tty;
 
-    var input: term_pkg.Input = .{ .gpa = gpa };
-    defer input.deinit();
-    // The queue holds a wheel burst, so `serve` can fold it into one dispatch.
-    var slot: [64]Msg = undefined;
-    var queue: Queue = .init(&slot);
     var winch: ?term_pkg.WinsizeWatch = if (term_pkg.resize_in_band) null else try term_pkg.WinsizeWatch.init();
     defer if (winch) |*watch| watch.deinit();
     var group: std.Io.Group = .init;
     defer {
-        // Stop all producers, then free the queued messages.
-        tty.shutdownInput();
+        // The terminal keeps its input task; only these producers end with the loop.
         host.wake.set(io);
         group.cancel(io);
-        drainQueue(gpa, io, &queue);
     }
 
-    try group.concurrent(io, inputTask, .{ gpa, io, &tty, &input, &queue });
-    try group.concurrent(io, tickTask, .{ host, &queue });
-    if (winch) |*watch| try group.concurrent(io, winchTask, .{ io, watch, &tty, &queue });
+    try group.concurrent(io, tickTask, .{ host, queue });
+    if (winch) |*watch| try group.concurrent(io, winchTask, .{ io, watch, tty, queue });
 
-    try serve(host, &queue);
+    try serve(host, queue);
 }
 
 /// Run `start`, then process queued events with `step`. Native quit ends the loop, but a script error does not.
@@ -167,6 +216,9 @@ fn parkIfRequested(host: *Host) !void {
     std.posix.raise(std.posix.SIG.TSTP) catch {};
     try tty.enterRaw();
     try output.render.enableTui(output.writer);
+    // The terminal can change its colors while yuke is stopped, and mode 2031 was off then.
+    try output.writer.writeAll(term_pkg.background_query);
+    try output.writer.flush();
     output.render.queueRefresh();
     const ws = tty.getWinsize() catch term_pkg.Winsize{
         .rows = host.paint.height,
@@ -197,6 +249,15 @@ fn applyMsg(host: *Host, msg: *Msg, wheel: *?tui_loop.WheelRun) !void {
             defer msg.deinit(host.gpa);
             try absorbScriptFault(host, tui_loop.flushWheel(host, wheel));
             try absorbScriptFault(host, tui_loop.stepPaste(host, text));
+        },
+        .background => |background| {
+            try absorbScriptFault(host, tui_loop.flushWheel(host, wheel));
+            try absorbScriptFault(host, tui_loop.stepBackground(host, background));
+        },
+        .query_background => {
+            const output = host.paint.output orelse return;
+            try output.writer.writeAll(term_pkg.background_query);
+            try output.writer.flush();
         },
     }
 }
@@ -270,8 +331,8 @@ fn absorbScriptFault(host: *Host, result: host_mod.Error!void) host_mod.Error!vo
     };
 }
 
-/// Read TTY events. A decode error resets the input, only EOF or cancellation closes the queue, and the owner frees the paste text.
-fn inputTask(gpa: std.mem.Allocator, io: std.Io, tty: *term_pkg.Tty, input: *term_pkg.Input, queue: *Queue) std.Io.Cancelable!void {
+/// Read TTY events and record the terminal answers. A decode error resets the input, only EOF or cancellation closes the queue, and the owner frees the paste text.
+fn inputTask(gpa: std.mem.Allocator, io: std.Io, tty: *term_pkg.Tty, input: *term_pkg.Input, queue: *Queue, replies: *Replies) std.Io.Cancelable!void {
     while (true) {
         const ev = input.readEvent(tty) catch |err| switch (err) {
             error.EndOfStream, error.Canceled => {
@@ -289,6 +350,15 @@ fn inputTask(gpa: std.mem.Allocator, io: std.Io, tty: *term_pkg.Tty, input: *ter
                 gpa.free(text);
                 return;
             },
+            .color_report => |report| if (report.kind == .bg) {
+                const background: term_pkg.Background = .fromRgb(report.value);
+                replies.background = background;
+                queue.putOne(io, .{ .background = background }) catch return;
+            },
+            // Neovim also asks again: the report names a scheme, and the background color decides the class.
+            .color_scheme => queue.putOne(io, .query_background) catch return,
+            .cap_color_scheme_updates => replies.scheme_updates = true,
+            .cap_da1 => replies.answered.set(io),
             else => {},
         }
     }

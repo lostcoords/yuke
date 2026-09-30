@@ -1,5 +1,6 @@
 // The terminal capability. A block that declares `tui` registers its view effects here.
 import { command, keymap, route, context, status, style, root } from "yuke:internal/core";
+import { term } from "yuke:internal/native/term";
 
 /** @import { Disposer } from "./types/ext.js" */
 /** @import { Context } from "yuke:internal/ext" */
@@ -82,6 +83,12 @@ class Surface {
    * @returns {typeof style}
    */
   get style() { return this._settle("style", owned(this._ctx, style, ["set", "setPalette", "theme"])); }
+  /**
+   * The light or dark class of the terminal background. yuke asks the terminal before `index.js` runs, and `background.changed` reports each change.
+   * It is "dark" when the terminal does not report its color.
+   * @returns {"dark" | "light"}
+   */
+  get background() { return term.background; }
 
   /**
    * Show `layer` above the panes until it closes. The disposer, a pop of the layer, or the block stop closes it.

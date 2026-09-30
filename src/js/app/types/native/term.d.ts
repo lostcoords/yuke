@@ -55,5 +55,7 @@ declare module "yuke:internal/native/term" {
     cwd: string;
     width: number;
     height: number;
+    /** The light or dark class of the terminal background. It is "dark" when the terminal does not report its color. */
+    background: "dark" | "light";
   };
 }

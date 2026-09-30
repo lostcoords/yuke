@@ -75,6 +75,20 @@ Do not bind these unless the user asks you to replace one.
 - `theme({ groups, palette })` makes one theme active, above the defaults and below every other `set`. A new call replaces it, so a theme switcher calls it again at runtime. The disposer of a replaced theme does nothing.
 - A `link` takes the fields of the linked group, and the group's own fields win.
 
+### Terminal background
+
+`c.tui.background` is `"dark"` or `"light"`, from the terminal background color. It is set before `index.js` runs, and stays `"dark"` if the terminal does not answer.
+
+```js
+ctx.inject(["tui"], (c) => {
+  const pick = () => c.tui.style.theme(c.tui.background === "light" ? light : dark); // { palette, groups }
+  pick();
+  c.on("background.changed", pick);
+});
+```
+
+`background.changed` fires when the class changes: a late answer, a resume, or a light/dark switch in a terminal that reports it.
+
 ## Dialogs and pickers
 
 ```js

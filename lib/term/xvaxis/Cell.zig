@@ -156,47 +156,35 @@ pub const Color = union(enum) {
         return .{ .rgb = rgb };
     }
 
-    /// parse an XParseColor-style rgb specification into an rgb Color. The spec
-    /// is of the form: rgb:rrrr/gggg/bbbb. Generally, the high two bits will always
-    /// be the same as the low two bits.
-    pub fn rgbFromSpec(spec: []const u8) !Color {
-        var iter = std.mem.splitScalar(u8, spec, ':');
-        const prefix = iter.next() orelse return error.InvalidColorSpec;
-        if (!std.mem.eql(u8, "rgb", prefix)) return error.InvalidColorSpec;
-
-        const spec_str = iter.next() orelse return error.InvalidColorSpec;
-
-        var spec_iter = std.mem.splitScalar(u8, spec_str, '/');
-
-        const r_raw = spec_iter.next() orelse return error.InvalidColorSpec;
-        if (r_raw.len != 4) return error.InvalidColorSpec;
-
-        const g_raw = spec_iter.next() orelse return error.InvalidColorSpec;
-        if (g_raw.len != 4) return error.InvalidColorSpec;
-
-        const b_raw = spec_iter.next() orelse return error.InvalidColorSpec;
-        if (b_raw.len != 4) return error.InvalidColorSpec;
-
-        const r = try std.fmt.parseUnsigned(u8, r_raw[2..], 16);
-        const g = try std.fmt.parseUnsigned(u8, g_raw[2..], 16);
-        const b = try std.fmt.parseUnsigned(u8, b_raw[2..], 16);
-
-        return .{
-            .rgb = [_]u8{ r, g, b },
-        };
+    /// Parse a terminal color reply, `rgb:rrrr/gggg/bbbb` or `rgba:rrrr/gggg/bbbb/aaaa`, into an rgb Color. Each channel keeps its high byte. The alpha channel is checked and dropped.
+    pub fn rgbFromSpec(spec: []const u8) error{InvalidColorSpec}!Color {
+        const colon = std.mem.indexOfScalar(u8, spec, ':') orelse return error.InvalidColorSpec;
+        const prefix = spec[0..colon];
+        const channels: usize = if (std.mem.eql(u8, prefix, "rgb")) 3 else if (std.mem.eql(u8, prefix, "rgba")) 4 else return error.InvalidColorSpec;
+        var iter = std.mem.splitScalar(u8, spec[colon + 1 ..], '/');
+        var rgb: [3]u8 = undefined;
+        for (0..channels) |i| {
+            const digits = iter.next() orelse return error.InvalidColorSpec;
+            if (digits.len != 4) return error.InvalidColorSpec;
+            // Each of the 4 characters must be a hex digit; `parseUnsigned` would accept `_`.
+            var high: u8 = 0;
+            for (digits, 0..) |c, j| {
+                const digit = std.fmt.charToDigit(c, 16) catch return error.InvalidColorSpec;
+                if (j < 2) high = high * 16 + digit;
+            }
+            if (i < rgb.len) rgb[i] = high;
+        }
+        if (iter.next() != null) return error.InvalidColorSpec;
+        return .{ .rgb = rgb };
     }
 
-    test "rgbFromSpec" {
-        const spec = "rgb:aaaa/bbbb/cccc";
-        const actual = try rgbFromSpec(spec);
-        switch (actual) {
-            .rgb => |rgb| {
-                try std.testing.expectEqual(0xAA, rgb[0]);
-                try std.testing.expectEqual(0xBB, rgb[1]);
-                try std.testing.expectEqual(0xCC, rgb[2]);
-            },
-            else => try std.testing.expect(false),
-        }
+    test "rgbFromSpec keeps the high byte of each channel" {
+        try std.testing.expectEqual([3]u8{ 0x12, 0xff, 0x00 }, (try rgbFromSpec("rgb:1234/ffff/0000")).rgb);
+        try std.testing.expectEqual([3]u8{ 0x1e, 0x1e, 0x2e }, (try rgbFromSpec("rgba:1e1e/1e1e/2e2e/c000")).rgb);
+        try std.testing.expectError(error.InvalidColorSpec, rgbFromSpec("rgb:1e/1e/2e"));
+        try std.testing.expectError(error.InvalidColorSpec, rgbFromSpec("rgb:1e1e/1e1e"));
+        try std.testing.expectError(error.InvalidColorSpec, rgbFromSpec("rgb:1e1e/1e1e/2e2e/c000"));
+        try std.testing.expectError(error.InvalidColorSpec, rgbFromSpec("rgb:1_2f/0000/0000"));
     }
 };
 

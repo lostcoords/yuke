@@ -65,6 +65,8 @@ pub const Options = struct {
     cwd: []const u8,
     /// The startup answers: the effective environment and the one command shell.
     execution: execution_mod.Context,
+    /// The terminal background class at start. The TUI asks the terminal before the host exists; a frontend with no terminal keeps dark.
+    background: term_pkg.Background = .dark,
 };
 
 /// Own one QuickJS runtime and context. The TUI owner calls `eval` and `destroy`.
@@ -174,7 +176,7 @@ pub const Host = struct {
             .interrupt_count = 0,
             .fault_text = undefined,
             .fault_text_len = 0,
-            .paint = .{},
+            .paint = .{ .background = opts.background },
             .engine = eng,
             .cwd = opts.cwd,
             .io = io,

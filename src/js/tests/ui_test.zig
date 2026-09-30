@@ -335,6 +335,27 @@ test "a pane focus and a terminal focus are separate events" {
     try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
 }
 
+test "a background report updates term.background and emits only a change" {
+    var fixture = try support.PaintedHost.init(4, 16);
+    defer fixture.deinit();
+    const host = fixture.host;
+    try host.evalModule(
+        \\import { events } from "yuke:internal/kernel";
+        \\import { term } from "yuke:internal/native/term";
+        \\import "yuke:internal/core";
+        \\globalThis.log = term.background;
+        \\events.on("background.changed", (ev) => { globalThis.log += "," + ev.background + ":" + term.background; });
+    , "background.js");
+
+    // The terminal answers each query, so a repeated class must not emit again.
+    try loop.stepBackground(host, .light);
+    try loop.stepBackground(host, .light);
+    try loop.stepBackground(host, .dark);
+    try host.eval("globalThis.result = globalThis.log;", "r.js");
+    try support.expectString(host, "result", "dark,light:light,dark:dark");
+    try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
+}
+
 test "the chat pane names the region that reads the keyboard" {
     try support.run("ui/region.test.js");
 }

@@ -935,6 +935,7 @@ events.declare([
   "mouse.received",
   "paste.received",
   "focus.changed",
+  "background.changed",
   "pane.focused",
   "pane.closed",
   "region.focused",
@@ -951,6 +952,7 @@ const HOST_TO_CORE_EVENT = /** @type {const} */ ({
   mouse: "mouse.received",
   paste: "paste.received",
   focus: "focus.changed",
+  background: "background.changed",
 });
 
 /** A base class for a pane view. Each hook does nothing, and `layout` keeps the rect. A subclass overrides the hooks it needs. */
@@ -1668,8 +1670,11 @@ export class RootView {
         const viewTakes = !keymapFirst && callHook(this.active, "onKey", ev);
         if (!viewTakes && ev.type === "key") keymap.onKey(ev);
       }
-    } else {
+    } else if (ev.type === "mouse") {
       if (!this._consumedByOverlay("onMouse", ev)) this.routeMouse(ev);
+    } else {
+      // A background change alters no view: a theme that follows it repaints through `style`.
+      return;
     }
     this.invalidate();
   }

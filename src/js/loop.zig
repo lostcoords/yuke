@@ -41,6 +41,19 @@ pub fn step(host: *Host, ev: Event) Error!void {
     }
 }
 
+/// Apply a background report: update `term.background`, then dispatch a `background` event. A report of the same class dispatches nothing, because the terminal answers each query.
+pub fn stepBackground(host: *Host, background: term_pkg.Background) Error!void {
+    std.debug.assert(host.phase == .open);
+    if (host.paint.background == background) return;
+    host.paint.background = background;
+    const ctx = host.ctx;
+    std.debug.assert(!ctx.isUndefined(host.paint.term_obj));
+    module.set(ctx, host.paint.term_obj, "background", ctx.newString(@tagName(background)));
+    const obj = objectType(ctx, "background");
+    module.set(ctx, obj, "background", ctx.newString(@tagName(background)));
+    _ = try dispatch(host, obj);
+}
+
 /// Dispatch a paste as its own event type, so a text input inserts `text` with one edit.
 pub fn stepPaste(host: *Host, text: []const u8) Error!void {
     std.debug.assert(host.phase == .open);

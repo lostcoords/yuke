@@ -6,6 +6,24 @@ const Tty = @import("tty.zig").Tty;
 pub const Event = xvaxis.Event;
 pub const Key = xvaxis.Key;
 
+/// The light or dark class of the terminal background. The terminal reports its color, and `fromRgb` classifies it.
+pub const Background = enum {
+    dark,
+    light,
+
+    /// Classify by BT.601 luma, as Neovim does: a color below half of the full luma is dark.
+    pub fn fromRgb(rgb: [3]u8) Background {
+        const luma = 299 * @as(u32, rgb[0]) + 587 * @as(u32, rgb[1]) + 114 * @as(u32, rgb[2]);
+        return if (luma * 2 < 1000 * 255) .dark else .light;
+    }
+};
+
+/// Ask for the background color. The answer arrives as a `color_report` event, or never when the terminal does not know the query.
+pub const background_query = xvaxis.ctlseqs.osc11_query;
+
+/// Ask for the background color, then for mode 2031 support, then for DA1. Every terminal answers DA1 and answers in order, so the DA1 reply ends the answers.
+pub const background_probe = background_query ++ xvaxis.ctlseqs.decrqm_color_scheme ++ xvaxis.ctlseqs.primary_device_attrs;
+
 /// The end marker of a bracketed paste. The terminal must not send this marker inside paste data.
 const paste_end = "\x1b[201~";
 
@@ -317,4 +335,13 @@ test "push rejects an overflow" {
     var input: Input = .{};
     const big = [_]u8{'a'} ** (Input.capacity + 1);
     try std.testing.expectError(error.Overflow, input.push(&big));
+}
+
+test "Background splits at half luma" {
+    // The split matches Neovim, so one terminal gives one answer in both programs.
+    try std.testing.expectEqual(Background.dark, Background.fromRgb(.{ 0x7f, 0x7f, 0x7f }));
+    try std.testing.expectEqual(Background.light, Background.fromRgb(.{ 0x80, 0x80, 0x80 }));
+    // Green weighs most, so a pure green is light and a pure blue is dark.
+    try std.testing.expectEqual(Background.light, Background.fromRgb(.{ 0x00, 0xff, 0x00 }));
+    try std.testing.expectEqual(Background.dark, Background.fromRgb(.{ 0x00, 0x00, 0xff }));
 }

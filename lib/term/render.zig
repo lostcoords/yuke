@@ -66,6 +66,12 @@ pub const Render = struct {
         try self.vx.enterAltScreen(writer);
         try self.setBracketedPaste(writer, true);
         try self.setMouseMode(writer, true);
+        // Mode 2031 sends a report on each scheme change; `resetState` turns it off.
+        if (self.vx.caps.color_scheme_updates) {
+            try writer.writeAll(xvaxis.ctlseqs.color_scheme_set);
+            try writer.flush();
+            self.vx.state.color_scheme_updates = true;
+        }
         std.debug.assert(self.vx.state.alt_screen);
         std.debug.assert(self.vx.state.bracketed_paste);
         std.debug.assert(self.vx.state.mouse);
@@ -189,15 +195,16 @@ test "enableTui after resetState restores alt-screen modes" {
 
     var r = try Render.init(io, std.testing.allocator, &env_map);
     defer r.deinit(&out.writer);
+    r.vx.caps.color_scheme_updates = true;
 
     try r.enableTui(&out.writer);
     r.resetState(&out.writer);
     out.clearRetainingCapacity();
 
-    // A reset forgets every mode, so the second enable writes all three again.
+    // A reset forgets every mode, so the second enable writes all four again.
     try r.enableTui(&out.writer);
     try std.testing.expectEqualStrings(
-        "\x1b[?1049h" ++ "\x1b[?2004h" ++ "\x1b[?1002;1004;1006h",
+        "\x1b[?1049h" ++ "\x1b[?2004h" ++ "\x1b[?1002;1004;1006h" ++ "\x1b[?2031h",
         out.written(),
     );
 }
