@@ -1,6 +1,6 @@
 // Scroll and paint rows with source-coordinate maps.
 import { term } from "yuke:internal/native/term";
-import { text, fill, isWheel } from "yuke:internal/core";
+import { style, resolveStyleOn, isWheel } from "yuke:internal/core";
 import { config } from "yuke:internal/kernel";
 import { clip } from "yuke:internal/text-input";
 import { isLinear } from "yuke:internal/md";
@@ -141,12 +141,16 @@ export class Pager {
       const r = rows[row];
       if (!r) break;
       const sy = y + row;
-      if (r.bg) fill(x, sy, w, 1, r.bg);
-      if (r.marker) text(x, sy, r.marker, /** @type {string} */ (r.markerGroup));
+      if (r.bg) term.fill(x, sy, w, 1, style.resolve(r.bg));
+      if (r.marker) {
+        const group = /** @type {string} */ (r.markerGroup);
+        if (r.bg) term.text(x, sy, r.marker, resolveStyleOn(group, r.bg));
+        else term.text(x, sy, r.marker, style.resolve(group));
+      }
       const ind = r.indent || 0;
       let segs = r.segments || (r.text ? segmentsOf(r) : undefined);
       if (segs && r.sel) segs = markSelection(segs, r.sel.from, r.sel.to, r.selGroup || "TxSelect");
-      if (segs) drawSegments(x + ind, sy, Math.max(0, w - ind), segs);
+      if (segs) drawSegments(x + ind, sy, Math.max(0, w - ind), segs, r.bg);
     }
   }
 
@@ -299,8 +303,8 @@ function markSelection(segments, from, to, group) {
 const segmentWidths = [];
 
 // Clip the row as one string, so a split run never repeats the ellipsis.
-/** @param {number} x @param {number} sy @param {number} w @param {Segment[]} segments */
-function drawSegments(x, sy, w, segments) {
+/** @param {number} x @param {number} sy @param {number} w @param {Segment[]} segments @param {string | undefined} background */
+function drawSegments(x, sy, w, segments, background) {
   if (w <= 0) return;
   let total = 0;
   for (let i = 0; i < segments.length; i++) {
@@ -314,7 +318,10 @@ function drawSegments(x, sy, w, segments) {
   if (total <= w) {
     for (let i = 0; i < segments.length; i++) {
       const seg = /** @type {Segment} */ (segments[i]);
-      if (seg.text) text(cx, sy, seg.text, seg.group);
+      if (seg.text) {
+        if (background) term.text(cx, sy, seg.text, resolveStyleOn(seg.group, background));
+        else term.text(cx, sy, seg.text, style.resolve(seg.group));
+      }
       cx += /** @type {number} */ (segmentWidths[i]);
     }
     return;
@@ -330,16 +337,24 @@ function drawSegments(x, sy, w, segments) {
     const cells = /** @type {number} */ (segmentWidths[i]);
     // A run that fits keeps its measured width, so only the cut run measures again.
     if (cells <= avail) {
-      if (seg.text) text(cx, sy, seg.text, seg.group);
+      if (seg.text) {
+        if (background) term.text(cx, sy, seg.text, resolveStyleOn(seg.group, background));
+        else term.text(cx, sy, seg.text, style.resolve(seg.group));
+      }
       cx += cells;
     } else {
       const t = clip(seg.text, avail, false, cells);
-      if (t) text(cx, sy, t, seg.group);
+      if (t) {
+        if (background) term.text(cx, sy, t, resolveStyleOn(seg.group, background));
+        else term.text(cx, sy, t, style.resolve(seg.group));
+      }
       cx += term.measure(t);
     }
     cutGroup = seg.group;
   }
-  text(x + room, sy, "…", /** @type {string} */ (cutGroup));
+  const group = /** @type {string} */ (cutGroup);
+  if (background) term.text(x + room, sy, "…", resolveStyleOn(group, background));
+  else term.text(x + room, sy, "…", style.resolve(group));
 }
 
 // A fixed-array row source (width-independent), for the pickers and tests.

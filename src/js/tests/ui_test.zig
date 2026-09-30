@@ -2,6 +2,7 @@ const support = @import("support.zig");
 const std = @import("std");
 const Host = @import("../host.zig").Host;
 const loop = @import("../loop.zig");
+const term_pkg = @import("term");
 
 test "yuke:internal/core clip and style.resolve" {
     try support.run("ui/core.test.js");
@@ -135,6 +136,21 @@ test "yuke:internal/ui Transcript draws markdown segments through the pager" {
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "hi") != null);
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "there") != null);
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "─") != null);
+}
+
+test "a transcript row keeps its background under its marker, text, and ellipsis" {
+    var fixture = try support.PaintedHost.init(2, 5);
+    defer fixture.deinit();
+    try support.eval(fixture.host, "ui/row-background.test.js");
+
+    const green = term_pkg.Color{ .rgb = .{ 48, 64, 48 } };
+    for ([_][2]u16{ .{ 0, 0 }, .{ 1, 0 }, .{ 4, 0 }, .{ 4, 1 } }) |point| {
+        const cell = fixture.paint.render.window().readCell(point[0], point[1]).?;
+        try std.testing.expect(term_pkg.Color.eql(green, cell.style.bg));
+    }
+    const glyph = fixture.paint.render.window().readCell(1, 0).?;
+    try std.testing.expect(term_pkg.Color.eql(.{ .rgb = .{ 255, 255, 255 } }, glyph.style.fg));
+    try std.testing.expect(glyph.style.bold);
 }
 
 test "yuke:internal/ui Composer collapses a large paste and still submits the whole text" {

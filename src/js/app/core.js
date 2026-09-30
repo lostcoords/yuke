@@ -29,6 +29,9 @@ const link_depth_max = 100;
 
 /** @type {Record<string, Color>} */
 const CORE_PALETTE = { fg: "reset", bg: "reset", danger: "red" };
+// A background owns a small dictionary of text groups. A style change drops every composed pair.
+/** @type {Record<string, Record<string, Style>>} */
+let stylesOn = Object.create(null);
 
 /**
  * The highlight groups and the palette. A group merges its default (from `set` with `{ default: true }`), then the active theme, then each other `set` in call order.
@@ -122,6 +125,7 @@ export const style = {
 
   _changed() {
     this._cache = Object.create(null);
+    stylesOn = Object.create(null);
     root.invalidatePaint();
   },
 
@@ -166,6 +170,26 @@ export const style = {
     return out;
   },
 };
+
+/**
+ * Resolve a text group with the authoritative background of another group. The cache owns the returned composite until any style change.
+ * @param {string} name
+ * @param {string} background
+ * @returns {Style}
+ */
+export function resolveStyleOn(name, background) {
+  return stylesOn[background]?.[name] || buildStyleOn(name, background);
+}
+
+/** @param {string} name @param {string} background @returns {Style} */
+function buildStyleOn(name, background) {
+  const byName = stylesOn[background] || (stylesOn[background] = Object.create(null));
+  const foreground = style.resolve(name);
+  const bg = style.resolve(background).bg;
+  const out = bg === undefined || foreground.bg === bg ? foreground : { ...foreground, bg };
+  byName[name] = out;
+  return out;
+}
 
 // Apply one patch in place: a null field deletes the field.
 /** @param {object} out @param {object} change @returns {void} */

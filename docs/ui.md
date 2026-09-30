@@ -109,7 +109,7 @@ ctx.inject(["chat"], (c) => {
 - `message`, `error`, `fold`, `activate`, `sameVisible`, `groupKey`, and `groupHeader` change the rest. Search `interface Render` in `yuke.d.ts`.
 - A row sets `header` on the row that a click folds, and `stop` on each row where part motion lands (J and K in `transcriptVim`). A segment `src`/`srcEnd` indexes `source`, so a copy takes the source text.
 - ctrl+o (`chat:expand-all`) opens or folds every part. A click on a block toggles it.
-- A tool block row has the background `TxToolPendingBg`, `TxToolSuccessBg`, or `TxToolErrorBg`, and a user message `TxUser`. The tool backgrounds have no color by default, so a theme sets them. `TxUser` defaults to reverse video.
+- A row `bg` group supplies the background of the complete row, including its marker and text. A tool block uses `TxToolPendingBg`, `TxToolSuccessBg`, or `TxToolErrorBg`, and a user message uses `TxUser`. The tool backgrounds have no color by default, so a theme sets them. `TxUser` defaults to reverse video.
 
 [`examples/tree-transcript.js`](examples/tree-transcript.js) stacks a whole look: tool calls grouped under "N actions" in a tree, a three-row preview, and a details window.
 
