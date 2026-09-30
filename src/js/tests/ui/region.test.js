@@ -39,6 +39,17 @@ check("caret-hidden", v.cursor() === null);
 v.focusRegion("composer");
 check("composer-caret-restored", (v.cursor() || {}).x === 1);
 
+// The pane focus alone does not focus the composer: it draws as focused only while it reads the keyboard.
+let drew = null;
+v.composer.draw = (focused) => { drew = focused; };
+v.rect = { x: 0, y: 0, w: 1, h: 1 };
+v.focusRegion("transcript");
+v.draw(true);
+check("transcript-unfocuses-composer", drew === false);
+v.focusRegion("composer");
+v.draw(true);
+check("composer-draws-focused", drew === true);
+
 // A pane focus returns the keyboard to the composer.
 v.focusRegion("transcript");
 v.onFocus();

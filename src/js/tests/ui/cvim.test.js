@@ -1,4 +1,5 @@
 import { check } from "yuke:internal/test";
+import { events } from "yuke:internal/kernel";
 import { ChatView } from "yuke:internal/chat-view";
 import { root, Node, View, keymap } from "yuke:internal/core";
 import { plugins, services } from "yuke:internal/ext";
@@ -148,6 +149,6 @@ check("insert", vim.mode(v.composer) === "insert");
 vim.setMode(v.composer, "normal");
 t.setText("");
 off.dispose();
-check("unloaded", v.composer._prompt() !== "▪ ");
+check("unloaded", events.bail("composer.prompt", v.composer) === undefined);
 v.composer.onKey(key("z"));
 check("types-after-unload", t.text === "z");

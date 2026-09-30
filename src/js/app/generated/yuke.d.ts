@@ -1971,7 +1971,7 @@ export class Composer {
     };
     /** The text buffer and the caret. An edit through it emits `composer.changed`. */
     input: TextInput;
-    /** The glyph before the first row. A `composer.prompt` listener can replace it. */
+    /** The glyph before the first row. A `composer.prompt` listener can replace it. A change shows after the next layout. */
     prompt: string;
     placeholder: string;
     onSubmit: ((content: Wire.ContentPart[]) => boolean | void) | null;
@@ -1987,6 +1987,8 @@ export class Composer {
     _rows: WrapRow[] | null;
     _rowsW: number;
     _proj: Projection | null;
+    _promptText: string;
+    _promptW: number;
     constructor(opts?: ComposerOptions);
     _invalidate(): void;
     _shiftSpans(from: number, to: number, ins: number): void;
@@ -1995,7 +1997,6 @@ export class Composer {
     _toText(disp: number): number;
     _spanEndingAt(caret: number): ComposerSpan | null;
     _spanStartingAt(caret: number): ComposerSpan | null;
-    _prompt(): string;
     _textWidth(w: number): number;
     _rowsAt(width: number): {
         start: number;
@@ -2004,6 +2005,7 @@ export class Composer {
     }[];
     /**
      * The screen rows the text needs at width `w`, at most `maxRows`. The caller caps this against the space it has.
+     * It reads the prompt. `draw`, `cursor`, and `moveRow` use that prompt until the next call.
      */
     height(w: number): number;
     layout(rect: Rect): void;
@@ -2045,6 +2047,10 @@ export class Composer {
      * Move the caret by `delta` drawn rows. The goal column survives a short row.
      */
     moveRow(delta: number): boolean;
+    /**
+     * Draw into the rect of the last layout. An empty composer shows its placeholder only while `focused` is false.
+     * @param focused - True only while the composer reads the keyboard, not only while its pane has focus.
+     */
     draw(focused: boolean): void;
     cursor(): {
         x: number;
@@ -3013,6 +3019,7 @@ export interface EventsBase extends EngineFacts {
   "chat.strip"(view: ChatView): StripRow[] | null | undefined;
   "chat.rule"(view: ChatView): StripRow | null | undefined;
   "chat.cursor"(view: ChatView): { x: number; y: number; visible: boolean } | null | undefined;
+  /** A string replaces the composer prompt. A listener that changes its answer must call `root.invalidate()`, because each layout asks once. */
   "composer.prompt"(composer: Composer): string | null | undefined;
   "composer-vim:mode"(composer: Composer, mode: "insert" | "normal"): void;
   [name: `${string}:${string}`]: (...args: any[]) => any;

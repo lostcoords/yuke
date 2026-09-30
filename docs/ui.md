@@ -74,7 +74,7 @@ Do not bind these unless the user asks you to replace one.
 - `setPalette({ accent: "#88c0d0" })` changes palette colors. The core colors are `fg`, `bg`, and `danger`. A color can also be a literal, such as `"#88c0d0"`.
 - `theme({ groups, palette })` makes one theme active, above the defaults and below every other `set`. A new call replaces it, so a theme switcher calls it again at runtime. The disposer of a replaced theme does nothing.
 - A `link` takes the fields of the linked group, and the group's own fields win.
-- `UIComposer` styles the composer surface. `UIComposerPrompt` and `UIComposerPromptInactive` link to it and style the focused or unfocused prompt when the buffer has text. An empty composer keeps its prompt and placeholder together in `UIComposerDim`, which also links to the surface. `UIPrompt` remains the picker and dialog prompt.
+- `UIComposer` styles the composer surface. `UIComposerPrompt` styles the prompt while the composer reads the keyboard, and `UIComposerPromptInactive` styles it at other times. Both link to `UIComposer`. `UIComposerPlaceholder` also links to the surface and styles the placeholder, which an empty composer shows only without focus. `UIPrompt` remains the picker and dialog prompt.
 
 ### Terminal background
 

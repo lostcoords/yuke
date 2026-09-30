@@ -93,6 +93,7 @@ export interface Events extends EngineFacts {
   "chat.strip"(view: ChatView): StripRow[] | null | undefined;
   "chat.rule"(view: ChatView): StripRow | null | undefined;
   "chat.cursor"(view: ChatView): { x: number; y: number; visible: boolean } | null | undefined;
+  /** A string replaces the composer prompt. A listener that changes its answer must call `root.invalidate()`, because each layout asks once. */
   "composer.prompt"(composer: Composer): string | null | undefined;
   "composer-vim:mode"(composer: Composer, mode: "insert" | "normal"): void;
   [name: `${string}:${string}`]: (...args: any[]) => any;

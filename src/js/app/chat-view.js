@@ -198,7 +198,8 @@ export class ChatView {
       text(this.stripRect.x, this.stripRect.y + i, clip(row.text, this.stripRect.w), row.group || "UIDim");
     }
     if (this.ruleRect.h > 0) this._drawRule(this.ruleRect.x, this.ruleRect.y, this.ruleRect.w);
-    this.composer.draw(focused);
+    // `focused` is the pane focus. The composer draws as focused only while it also reads the keyboard.
+    this.composer.draw(focused && this.focus === "composer");
   }
 
   /**

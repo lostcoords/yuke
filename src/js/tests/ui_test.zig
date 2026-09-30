@@ -192,7 +192,7 @@ test "the clipboard image attaches and its temporary file never outlives the put
 }
 
 test "yuke:internal/ui Composer draws a wrapped row whole and puts the caret on it" {
-    var fixture = try support.PaintedHost.init(4, 7);
+    var fixture = try support.PaintedHost.init(2, 7);
     defer fixture.deinit();
     const host = fixture.host;
 
@@ -205,14 +205,38 @@ test "yuke:internal/ui Composer draws a wrapped row whole and puts the caret on 
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "…") == null);
 
     const composer_bg = term_pkg.Color{ .rgb = .{ 17, 34, 51 } };
-    for ([_][2]u16{ .{ 0, 0 }, .{ 2, 0 }, .{ 0, 2 }, .{ 0, 3 } }) |point| {
+    for ([_][2]u16{ .{ 0, 0 }, .{ 2, 0 } }) |point| {
         const cell = fixture.paint.render.window().readCell(point[0], point[1]).?;
         try std.testing.expect(term_pkg.Color.eql(composer_bg, cell.style.bg));
     }
-    const narrow = fixture.paint.render.window().readCell(0, 3).?;
-    try std.testing.expectEqualStrings("x", narrow.char.grapheme);
 
     try support.expectString(host, "result", "ok");
+}
+
+test "an empty Composer shows its placeholder only without focus" {
+    var fixture = try support.PaintedHost.init(5, 7);
+    defer fixture.deinit();
+
+    try support.eval(fixture.host, "ui/composer_empty.test.js");
+    const window = fixture.paint.render.window();
+
+    // Focus: a bold prompt and a clear input lane.
+    const focused_prompt = window.readCell(0, 0).?;
+    try std.testing.expectEqualStrings("›", focused_prompt.char.grapheme);
+    try std.testing.expect(focused_prompt.style.bold);
+    try std.testing.expectEqualStrings(" ", window.readCell(2, 0).?.char.grapheme);
+
+    // No focus: a dim prompt and a dim placeholder.
+    const prompt = window.readCell(0, 1).?;
+    try std.testing.expect(prompt.style.dim and !prompt.style.bold);
+    const placeholder = window.readCell(2, 1).?;
+    try std.testing.expectEqualStrings("a", placeholder.char.grapheme);
+    try std.testing.expect(placeholder.style.dim);
+
+    for ([_]u16{ 1, 2, 3 }, 2..) |w, row| {
+        const cell = window.readCell(w - 1, @intCast(row)).?;
+        try std.testing.expectEqualStrings("a", cell.char.grapheme);
+    }
 }
 
 test "a style link cycle falls back instead of spinning" {

@@ -29,7 +29,7 @@ const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
   UIComposer: { fg: "fg", bg: "bg" },
   UIComposerPrompt: { link: "UIComposer", bold: true },
   UIComposerPromptInactive: { link: "UIComposer", dim: true },
-  UIComposerDim: { link: "UIComposer", dim: true },
+  UIComposerPlaceholder: { link: "UIComposer", dim: true },
   UIDim: { fg: "fg", dim: true },
   UIDimSel: { reverse: true },
   TxSelect: { reverse: true },
@@ -414,7 +414,7 @@ export class Composer {
       },
       onEdit: (from, to, ins) => this._shiftSpans(from, to, ins),
     });
-    /** The glyph before the first row. A `composer.prompt` listener can replace it. */
+    /** The glyph before the first row. A `composer.prompt` listener can replace it. A change shows after the next layout. */
     this.prompt = "› ";
     this.placeholder = opts.placeholder || "";
     this.onSubmit = opts.onSubmit || null;
@@ -436,6 +436,9 @@ export class Composer {
     this._rowsW = -1;
     /** @type {Projection | null} */
     this._proj = null;
+    // The prompt that the last `height` read, and its width in cells.
+    this._promptText = this.prompt;
+    this._promptW = term.measure(this.prompt);
   }
 
   // Drop the projection and the row cache after an edit, so both rebuild once per edit.
@@ -523,15 +526,10 @@ export class Composer {
     return this.spans.find((sp) => sp.start === caret) || null;
   }
 
-  /** @returns {string} */
-  _prompt() {
-    const supplied = events.bail("composer.prompt", this);
-    return typeof supplied === "string" ? supplied : this.prompt;
-  }
-
+  // The input lane keeps at least one cell, and the prompt takes the cells before it.
   /** @param {number} w @returns {number} */
   _textWidth(w) {
-    return Math.max(1, w - term.measure(this._prompt()));
+    return Math.max(1, w - this._promptW);
   }
 
   /** @param {number} width @returns {{ start: number, end: number, soft: boolean }[]} */
@@ -544,11 +542,17 @@ export class Composer {
 
   /**
    * The screen rows the text needs at width `w`, at most `maxRows`. The caller caps this against the space it has.
+   * It reads the prompt. `draw`, `cursor`, and `moveRow` use that prompt until the next call.
    * @param {number} w
    * @returns {number}
    */
   height(w) {
     if (w <= 0) return 0;
+    const prompt = events.bail("composer.prompt", this) ?? this.prompt;
+    if (prompt !== this._promptText) {
+      this._promptText = prompt;
+      this._promptW = term.measure(prompt);
+    }
     if (this.input.text === "") return 1;
     return Math.min(this.maxRows, this._rowsAt(this._textWidth(w)).length);
   }
@@ -733,42 +737,36 @@ export class Composer {
     return true;
   }
 
-  /** @param {boolean} focused @returns {void} */
+  /**
+   * Draw into the rect of the last layout. An empty composer shows its placeholder only while `focused` is false.
+   * @param {boolean} focused True only while the composer reads the keyboard, not only while its pane has focus.
+   * @returns {void}
+   */
   draw(focused) {
     const { x, y, w, h } = this.rect;
     if (w <= 0 || h <= 0) return;
     fill(x, y, w, h, "UIComposer");
+    const tw = this._textWidth(w);
+    const pw = w - tw;
     if (this.input.text === "") {
       this.scroll = 0;
-      if (w > 2) text(x, y, clip(this._prompt() + this.placeholder, w), "UIComposerDim");
-      else {
-        const tw = this._textWidth(w);
-        const pw = w - tw;
-        if (pw > 0) text(x, y, clip(this._prompt(), pw, false), "UIComposerDim");
-        text(x + pw, y, clip(this.placeholder, tw), "UIComposerDim");
+      // A focused composer keeps the input lane clear for the caret.
+      if (!focused) text(x + pw, y, clip(this.placeholder, tw), "UIComposerPlaceholder");
+    } else {
+      const rows = this._rowsAt(tw);
+      const proj = this._projection().text;
+      // Scroll the smallest amount that keeps the caret row on the screen.
+      const { row: caretRow } = caretRowCol(proj, rows, this._toDisplay(this.input.caret));
+      this.scroll = Math.min(this.scroll, Math.max(0, rows.length - h));
+      if (caretRow < this.scroll) this.scroll = caretRow;
+      else if (caretRow >= this.scroll + h) this.scroll = caretRow - h + 1;
+      for (let i = 0; i < h && this.scroll + i < rows.length; i++) {
+        const r = /** @type {WrapRow} */ (rows[this.scroll + i]);
+        text(x + pw, y + i, clip(proj.slice(r.start, r.end), tw, false), "UIComposer");
       }
-      return;
     }
-
-    const tw = this._textWidth(w);
-    const rows = this._rowsAt(tw);
-    const proj = this._projection().text;
-    // Scroll the smallest amount that keeps the caret row on the screen.
-    const { row: caretRow } = caretRowCol(proj, rows, this._toDisplay(this.input.caret));
-    this.scroll = Math.min(this.scroll, Math.max(0, rows.length - h));
-    if (caretRow < this.scroll) this.scroll = caretRow;
-    else if (caretRow >= this.scroll + h) this.scroll = caretRow - h + 1;
-    const pw = w - tw;
     // The prompt marks the first row only. A later row aligns under it.
-    if (this.scroll === 0) {
-      const group = focused ? "UIComposerPrompt" : "UIComposerPromptInactive";
-      if (w > 2) text(x, y, this._prompt(), group);
-      else if (pw > 0) text(x, y, clip(this._prompt(), pw, false), group);
-    }
-    for (let i = 0; i < h && this.scroll + i < rows.length; i++) {
-      const r = /** @type {WrapRow} */ (rows[this.scroll + i]);
-      text(x + pw, y + i, clip(proj.slice(r.start, r.end), tw, false), "UIComposer");
-    }
+    if (this.scroll === 0 && pw > 0) text(x, y, clip(this._promptText, pw, false, this._promptW), focused ? "UIComposerPrompt" : "UIComposerPromptInactive");
   }
 
   /** @returns {{ x: number, y: number, visible: boolean } | null} */
