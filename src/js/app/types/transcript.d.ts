@@ -102,11 +102,19 @@ export type ToolPart = Extract<Wire.AssistantPart, { type: "tool" }>;
 /** A reasoning part. */
 export type ReasoningPart = Extract<Wire.AssistantPart, { type: "reasoning" }>;
 
+/** The words and raw input behind one tool header. Flattening the line feeds of a nonempty `input` must equal `subject`; an empty `input` means that the header has no hidden input. */
+export interface ToolHeading {
+  verb: string;
+  subject: string;
+  category: string;
+  input: string;
+}
+
 /**
- * The header words of one tool call, for any look: `verb` first, then `subject`. `category` names the kind of work, such as "read", "write", "run", or "agent"; a look picks a style from it.
- * It runs when the row builds, so it must not walk the tool output or scan a whole text. `args` holds the parsed JSON arguments, or `{}` when they do not parse.
+ * Build the heading of one tool call. `category` names the kind of work, such as "read", "write", "run", or "agent"; a look picks a style from it.
+ * It runs when the row builds, so it must not walk the tool output. `args` holds the parsed JSON arguments, or `{}` when they do not parse.
  */
-export type ToolHead = (args: Record<string, any>, part: ToolPart) => { verb: string; subject: string; category?: string };
+export type ToolHead = (args: Record<string, any>, part: ToolPart) => ToolHeading;
 
 /** The rows of a render and the text they show. The `src` and `srcEnd` of each segment index `source`, so a selection copies the source text. */
 export interface Rendered {

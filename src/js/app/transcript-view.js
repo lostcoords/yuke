@@ -9,90 +9,45 @@ import { clip } from "yuke:internal/text-input";
 import { inputSourceLabel } from "yuke:internal/transcript";
 
 /** @import { Segment, TranscriptRow } from "./types/pager.js" */
-/** @import { Render, Rendered, ToolHead, ToolPart } from "./types/transcript.js" */
+/** @import { Render, Rendered, ToolHead, ToolHeading, ToolPart } from "./types/transcript.js" */
 /** @import { MessagePart } from "yuke:internal/native/engine" */
 /** @import { Context } from "yuke:internal/ext" */
 
 // The process directory. A path under it drops this prefix.
 const CWD = String(term.cwd || "");
-const CWD_PREFIX = CWD + "/";
-// Bound the command scan. The header clips to the pane width, so a longer pipeline carries nothing.
-const COMMAND_MAX = 160;
+const CWD_PREFIX = CWD === "/" ? "/" : CWD + "/";
 // The folded preview: the tail of a shell output, and the head of any other output.
 const EXEC_PREVIEW_LINES = 5;
 const PREVIEW_LINES = 10;
 // Every row starts one column in, so a block background frames its text.
 const PAD = 1;
+const USER_PAD = 2;
 
 /**
- * A path for a header: relative under the process directory, else its base name.
+ * A path for a header: relative under the process directory, else complete.
  * @param {unknown} path @returns {string}
  */
-export function shortPath(path) {
+export function displayPath(path) {
   const s = String(path || "");
-  if (s.length === 0 || s.charCodeAt(0) !== 47) return s;
-  if (CWD.length !== 0 && s.length > CWD_PREFIX.length && s.charCodeAt(CWD.length) === 47 && s.startsWith(CWD)) return s.slice(CWD_PREFIX.length);
-  return s.slice(s.lastIndexOf("/") + 1);
-}
-
-// True for a space, a tab, or a line feed.
-/** @param {number} code @returns {boolean} */
-function blank(code) {
-  return code === 32 || code === 9 || code === 10;
-}
-
-// Skip a leading run of blank lines and `#` comments, so a script header shows its first real command.
-/** @param {string} s @returns {number} */
-function skipComments(s) {
-  let i = 0;
-  for (;;) {
-    while (i < s.length && blank(s.charCodeAt(i))) i++;
-    if (s.charCodeAt(i) !== 35) return i;
-    const nl = s.indexOf("\n", i);
-    if (nl < 0) return i;
-    i = nl + 1;
-  }
-}
-
-// Skip a leading run of `NAME=value` assignments, because they are the environment and not the command.
-/** @param {string} s @param {number} from @returns {number} */
-function skipAssignments(s, from) {
-  let i = from;
-  for (;;) {
-    while (i < s.length && blank(s.charCodeAt(i))) i++;
-    let j = i;
-    let eq = -1;
-    while (j < s.length && !blank(s.charCodeAt(j))) {
-      if (eq < 0 && s.charCodeAt(j) === 61) eq = j;
-      j++;
-    }
-    // A name holds no separator, so `bin/x=y` is a path and closes the run.
-    if (eq <= i || s.lastIndexOf("/", eq) >= i) return i;
-    i = j;
-  }
+  if (s.length === 0 || s.charCodeAt(0) !== 47 || CWD.length === 0) return s;
+  if (s === CWD || s === CWD_PREFIX) return ".";
+  if (s.startsWith(CWD_PREFIX)) return s.slice(CWD_PREFIX.length);
+  return s;
 }
 
 /**
- * A shell command for a header: the program base name and its arguments on one line, without leading comments and environment assignments.
+ * A complete shell command on one header line. It changes line feeds to spaces and preserves every other byte.
  * @param {unknown} raw @returns {string}
  */
-export function shortCommand(raw) {
+export function displayCommand(raw) {
   const s = String(raw || "");
-  const start = skipAssignments(s, skipComments(s));
-  const cut = s.slice(start, start + COMMAND_MAX);
-  const line = cut.indexOf("\n") < 0 ? cut : cut.split("\n").join(" ");
-  // A path under the process directory reads relative to it, as it does on its own header.
-  const flat = CWD.length !== 0 && line.indexOf(CWD_PREFIX) >= 0 ? line.split(CWD_PREFIX).join("") : line;
-  let end = 0;
-  while (end < flat.length && !blank(flat.charCodeAt(end))) end++;
-  const program = flat.slice(0, end);
-  return program.slice(program.lastIndexOf("/") + 1) + flat.slice(end) + (s.length > start + COMMAND_MAX ? "…" : "");
+  return s.indexOf("\n") < 0 ? s : s.split("\n").join(" ");
 }
 
 /**
- * The header words of a tool call from `tools`, else the tool name and its `path`, its `command`, or its raw arguments cut to 48 characters.
+ * The heading of a tool call from `tools`, else the tool name and its path, command, or raw arguments.
  * `args` holds the parsed JSON arguments, or `{}` when they do not parse.
- * @param {ToolPart} part @param {Record<string, ToolHead>} tools @returns {{ verb: string, subject: string, category: string }}
+ * @param {ToolPart} part @param {Record<string, ToolHead>} tools @returns {ToolHeading}
  */
 export function toolHead(part, tools) {
   const raw = String(part.arguments || "");
@@ -106,11 +61,13 @@ export function toolHead(part, tools) {
   const head = tools[verb];
   if (head) {
     const out = head(args, part);
-    return { verb: out.verb, subject: out.subject, category: out.category ?? "other" };
+    const subject = String(out.subject || "");
+    const input = String(out.input || "");
+    return { verb: String(out.verb || verb), subject, category: String(out.category || "other"), input: displayCommand(input) === subject ? input : "" };
   }
-  if (typeof args.path === "string") return { verb, subject: shortPath(args.path), category: "other" };
-  if (typeof args.command === "string") return { verb, subject: shortCommand(args.command), category: "other" };
-  return { verb, subject: raw.length > 48 ? raw.slice(0, 47) + "…" : raw, category: "other" };
+  if (typeof args.path === "string") return { verb, subject: displayPath(args.path), category: "other", input: "" };
+  if (typeof args.command === "string") return { verb, subject: displayCommand(args.command), category: "other", input: args.command };
+  return { verb, subject: displayCommand(raw), category: "other", input: raw };
 }
 
 /**
@@ -146,7 +103,7 @@ function moveSrc(rows, base) {
 }
 
 /**
- * The rows of the views of a tool result: a diff, markdown, or plain text. `limit` bounds the row count, and the source holds only the text of the rows it answers.
+ * The rows of tool-result views. A one-file diff omits its path label; a multi-file or mixed view keeps file paths. `limit` bounds rows; the source retains each view chunk that starts before the limit so row offsets stay stable.
  * @param {readonly Wire.View[]} views @param {number} width @param {number} indent @param {number} [limit] @returns {Rendered}
  */
 export function viewRows(views, width, indent, limit = Infinity) {
@@ -165,7 +122,7 @@ export function viewRows(views, width, indent, limit = Infinity) {
   for (const v of views) {
     if (v.type === "diff") {
       for (const f of v.files) {
-        if (f.path) add(f.path, "TxToolTitle");
+        if (f.path && (views.length !== 1 || v.files.length !== 1)) add(f.path, "TxToolTitle");
         for (const h of f.hunks) for (const line of h.lines) add(line, line[0] === "+" ? "TxDiffAdd" : line[0] === "-" ? "TxDiffDel" : "TxDiffContext");
       }
     } else if (v.type === "markdown") {
@@ -276,9 +233,9 @@ function addShown(rows, shown, body, source) {
   return source + "\n" + body.slice(from, end);
 }
 
-// The body of a tool block is the tail of a shell output, the whole diff of an edit, or the head of any other output; the source holds only the shown text, so a folded preview copies no more than the preview.
-/** @param {ToolPart} part @param {string} verb @param {number} width @param {boolean} expanded @param {TranscriptRow[]} rows @param {string} source @returns {string} */
-function toolBody(part, verb, width, expanded, rows, source) {
+// The body of a tool block is the tail of a shell output, the whole diff of an edit, or the head of any other output. Plain folded output keeps only shown text; view sources retain accepted chunks for stable offsets.
+/** @param {ToolPart} part @param {number} width @param {boolean} expanded @param {TranscriptRow[]} rows @param {string} source @returns {string} */
+function toolBody(part, width, expanded, rows, source) {
   const state = part.state;
   const name = String(part.name || "");
   const views = /** @type {{ view?: readonly Wire.View[] }} */ (state).view;
@@ -316,7 +273,7 @@ function toolBody(part, verb, width, expanded, rows, source) {
     source = addShown(rows, wrapRows(label, width, "TxToolHint", PAD), label, source);
   });
   const ms = /** @type {{ duration_ms?: number }} */ (state).duration_ms;
-  if (verb === "$" && typeof ms === "number" && state.type !== "running") hint(rows, "Took " + (ms / 1000).toFixed(1) + "s");
+  if (name === "exec" && typeof ms === "number" && state.type !== "running") hint(rows, "Took " + (ms / 1000).toFixed(1) + "s");
   return source;
 }
 
@@ -336,11 +293,14 @@ export const defaultRender = {
   indent: PAD,
   gap: 1,
   tools: {
-    read: (o) => ({ verb: "read", subject: shortPath(o.path) + (typeof o.start === "number" ? ":" + o.start + (typeof o.end === "number" ? "-" + o.end : "") : ""), category: "read" }),
-    write: (o) => ({ verb: "write", subject: shortPath(o.path), category: "write" }),
-    edit: (o) => ({ verb: "edit", subject: shortPath(o.path) + (o.replace_all ? " (all)" : ""), category: "write" }),
-    exec: (o) => ({ verb: "$", subject: shortCommand(o.command), category: "run" }),
-    skill: (o) => ({ verb: "skill", subject: String(o.name || ""), category: "other" }),
+    read: (o) => ({ verb: "read", subject: displayPath(o.path) + (typeof o.start === "number" ? ":" + o.start + (typeof o.end === "number" ? "-" + o.end : "") : ""), category: "read", input: "" }),
+    write: (o) => ({ verb: "write", subject: displayPath(o.path), category: "write", input: "" }),
+    edit: (o) => ({ verb: "edit", subject: displayPath(o.path) + (o.replace_all ? " (all)" : ""), category: "write", input: "" }),
+    exec: (o) => {
+      const command = String(o.command || "");
+      return { verb: "$", subject: displayCommand(command), category: "run", input: command };
+    },
+    skill: (o) => ({ verb: "skill", subject: String(o.name || ""), category: "other", input: "" }),
   },
 
   part(part, env) {
@@ -348,17 +308,30 @@ export const defaultRender = {
     if (part.type === "reasoning") return stopRows(part.text || "", width, "TxThought");
     const head = toolHead(part, env.tools);
     const title = head.verb;
-    const source = head.subject ? title + " " + head.subject : title;
+    const input = head.input;
+    const hasInput = input.length !== 0;
+    const source = hasInput ? title + " " + input : head.subject ? title + " " + head.subject : title;
     /** @type {Segment[]} */
     const segments = [{ text: title, group: "TxToolTitle", src: 0, srcEnd: title.length }];
+    const shown = head.subject ? clip(head.subject, Math.max(1, width - term.measure(title) - 1)) : "";
+    const lineFeed = hasInput ? input.indexOf("\n") : -1;
+    const revealInput = env.expanded && hasInput && (lineFeed >= 0 || shown !== head.subject);
     // The header clips here and not in the draw, so a frame allocates no cut string for a long command.
-    if (head.subject) segments.push({ text: " " + clip(head.subject, Math.max(1, width - term.measure(title) - 1)), group: "TxToolArg", src: title.length, srcEnd: source.length });
+    if (head.subject) {
+      if (revealInput) segments.push({ text: " " + shown, group: "TxToolArg" });
+      else segments.push({ text: " " + shown, group: "TxToolArg", src: title.length, srcEnd: source.length });
+    }
     /** @type {TranscriptRow[]} */
     const rows = [{ segments, indent: PAD, header: true, stop: true }];
-    const all = toolBody(part, title, width, env.expanded, rows, source);
+    if (revealInput) {
+      const inputRows = wrapRows(/** @type {string} */ (input), width, "TxToolArg", PAD);
+      moveSrc(inputRows, title.length + 1);
+      for (let i = 0; i < inputRows.length; i++) rows.push(/** @type {TranscriptRow} */ (inputRows[i]));
+    }
+    const all = toolBody(part, width, env.expanded, rows, source);
     const type = part.state.type;
     const bg = type === "error" || type === "canceled" ? "TxToolErrorBg" : type === "completed" ? "TxToolSuccessBg" : "TxToolPendingBg";
-    for (const r of rows) r.bg = bg;
+    for (let i = 0; i < rows.length; i++) /** @type {TranscriptRow} */ (rows[i]).bg = bg;
     return { rows, source: all };
   },
 
@@ -381,16 +354,18 @@ export const defaultRender = {
       return { rows, source: text };
     }
     // Each attachment label takes the place of its part. The number counts media alone, as the composer does.
+    const userPad = Math.max(0, Math.min(USER_PAD, Math.floor((env.width - 1) / 2)));
+    const userWidth = Math.max(1, env.width - 2 * userPad);
     let image = 0;
     let text = "";
     for (const part of parts) {
       if (part.type === "text") text += part.text;
       else if (part.type === "image" || part.type === "audio" || part.type === "file") text += mediaLabel(part.source, part.type === "image" ? ++image : 0);
     }
-    const rows = wrapRows(text, width, "TxUser", PAD);
-    if (!rows.length) rows.push({ text: "", indent: PAD });
+    const rows = wrapRows(text, userWidth, "TxUser", userPad);
+    if (!rows.length) rows.push({ text: "", indent: userPad });
     // A parent-sent task reads like user input, so one label row says where it came from.
-    if (source) rows.unshift({ text: clip(inputSourceLabel(source), width), group: "TxMeta", indent: PAD });
+    if (source) rows.unshift({ text: clip(inputSourceLabel(source), userWidth), group: "TxMeta", indent: userPad });
     for (const r of rows) r.bg = "TxUser";
     /** @type {TranscriptRow} */ (rows[0]).stop = true;
     return { rows, source: text };

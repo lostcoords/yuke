@@ -2,7 +2,7 @@
 // It stacks on the default look through `c.chat.render` alone. CI type-checks this file against yuke.d.ts, and a test renders it.
 import { plugins } from "yuke";
 import { measure, clip } from "yuke:ui";
-import { inputSourceLabel, toolHead, shortPath, shortCommand, wrapRows, viewRows, mediaLabel, errorLabel, isCut, openDetails } from "yuke:chat";
+import { inputSourceLabel, toolHead, displayPath, displayCommand, wrapRows, viewRows, mediaLabel, errorLabel, isCut, openDetails } from "yuke:chat";
 
 /** @typedef {import("yuke:chat").Render} Render */
 /** @typedef {import("yuke:chat").PartEnv} PartEnv */
@@ -126,11 +126,14 @@ const treeLook = {
   indent: GUTTER,
   gap: 0,
   tools: {
-    read: (o) => ({ verb: "Read", subject: shortPath(o.path) + (typeof o.start === "number" ? " (" + o.start + "-" + (typeof o.end === "number" ? o.end : "") + ")" : ""), category: "read" }),
-    write: (o) => ({ verb: "Write", subject: shortPath(o.path), category: "write" }),
-    edit: (o) => ({ verb: "Edit", subject: shortPath(o.path) + (o.replace_all ? " (all)" : ""), category: "write" }),
-    exec: (o) => ({ verb: "Run", subject: shortCommand(o.command), category: "run" }),
-    skill: (o) => ({ verb: "Skill", subject: String(o.name || ""), category: "other" }),
+    read: (o) => ({ verb: "Read", subject: displayPath(o.path) + (typeof o.start === "number" ? " (" + o.start + "-" + (typeof o.end === "number" ? o.end : "") + ")" : ""), category: "read", input: "" }),
+    write: (o) => ({ verb: "Write", subject: displayPath(o.path), category: "write", input: "" }),
+    edit: (o) => ({ verb: "Edit", subject: displayPath(o.path) + (o.replace_all ? " (all)" : ""), category: "write", input: "" }),
+    exec: (o) => {
+      const command = String(o.command || "");
+      return { verb: "Run", subject: displayCommand(command), category: "run", input: "" };
+    },
+    skill: (o) => ({ verb: "Skill", subject: String(o.name || ""), category: "other", input: "" }),
   },
   // Tool calls and thoughts group as actions, and text closes the group.
   groupKey: (part) => (part.type === "text" ? null : "actions"),

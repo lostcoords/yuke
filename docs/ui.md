@@ -74,6 +74,7 @@ Do not bind these unless the user asks you to replace one.
 - `setPalette({ accent: "#88c0d0" })` changes palette colors. The core colors are `fg`, `bg`, and `danger`. A color can also be a literal, such as `"#88c0d0"`.
 - `theme({ groups, palette })` makes one theme active, above the defaults and below every other `set`. A new call replaces it, so a theme switcher calls it again at runtime. The disposer of a replaced theme does nothing.
 - A `link` takes the fields of the linked group, and the group's own fields win.
+- `UIComposer` styles the composer surface. `UIComposerPrompt` and `UIComposerPromptInactive` link to it and style the focused or unfocused prompt when the buffer has text. An empty composer keeps its prompt and placeholder together in `UIComposerDim`, which also links to the surface. `UIPrompt` remains the picker and dialog prompt.
 
 ### Terminal background
 
@@ -113,17 +114,17 @@ The `transcript` plugin draws every chat transcript. A renderer changes it throu
 
 ```js
 ctx.inject(["chat"], (c) => {
-  c.chat.render({ tools: { web_search: (args) => ({ verb: "search", subject: String(args.query) }) } });
+  c.chat.render({ tools: { web_search: (args) => ({ verb: "search", subject: String(args.query), category: "other", input: "" }) } });
 });
 ```
 
-- `tools` sets the header words of a tool call in any look: `verb`, then `subject`, and an optional `category` ("read", "write", "run", "agent"; default "other") that a look styles. The default names `read`, `write`, `edit`, `exec`, and `skill`.
+- `tools` sets one complete tool heading: `verb`, then `subject`; `category` names the style role (such as "read", "write", "run", or "agent"); and `input` holds the raw source of `subject`. Replacing each line feed in a nonempty `input` with a space must produce `subject`; normalization drops an input that does not match. Use an empty `input` when there is no hidden input. The default names `read`, `write`, `edit`, `exec`, and `skill`.
 - `sources` sets the label of an input from an engine source, such as a child report.
 - `part(part, env)` answers `{ rows, source }` for one tool or reasoning part. The core builds text parts as markdown, indented by `indent`. `gap` blank rows separate two parts.
 - `message`, `error`, `fold`, `activate`, `sameVisible`, `groupKey`, and `groupHeader` change the rest. Search `interface Render` in `yuke.d.ts`.
 - A row sets `header` on the row that a click folds, and `stop` on each row where part motion lands (J and K in `transcriptVim`). A segment `src`/`srcEnd` indexes `source`, so a copy takes the source text.
-- ctrl+o (`chat:expand-all`) opens or folds every part. A click on a block toggles it.
-- A row `bg` group is the base style of the complete row. Its background wins, and explicit text fields win every other field. A selection overlays only its explicit fields, so `TxSelect` keeps the content style by default. A tool block uses `TxToolPendingBg`, `TxToolSuccessBg`, or `TxToolErrorBg`, and a user message uses `TxUser`. The tool backgrounds have no color by default, so a theme sets them. `TxUser` defaults to reverse video.
+- ctrl+o (`chat:expand-all`) opens or folds every part. A click on a block toggles it. The default exec renderer shows the original command below its header when the header clipped it or flattened a line feed.
+- A row `bg` group is the base style of the complete row. Its background wins over ordinary text backgrounds. An overlay with an explicit background, such as `TxSelect`, wins over the row. A selection keeps every content field that it does not set. A tool block uses `TxToolPendingBg`, `TxToolSuccessBg`, or `TxToolErrorBg`, and a user message uses `TxUser`. The tool backgrounds have no color by default, so a theme sets them. `TxUser` defaults to reverse video and has two cells of horizontal padding when the pane has room.
 
 [`examples/tree-transcript.js`](examples/tree-transcript.js) stacks a whole look: tool calls grouped under "N actions" in a tree, a three-row preview, and a details window.
 

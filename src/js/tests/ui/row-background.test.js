@@ -5,7 +5,8 @@ import { Pager } from "yuke:internal/pager";
 style.set({
   TestRowBg: { bg: "#203020" },
   TestRowText: { fg: "#ffffff", bg: "#ff0000", bold: true },
-  TestSelect: { reverse: true },
+  TestSelect: { bg: "#445566", reverse: false },
+  TestSelectPlain: { reverse: true },
   TestReverseRow: { reverse: true },
   TestMeta: { fg: "#aaaaaa", dim: true },
 }, { default: true });
@@ -13,7 +14,7 @@ style.set({
 const pager = new Pager();
 pager.setRows([
   { bg: "TestRowBg", marker: ">", markerGroup: "TestRowText", indent: 1, text: "abc", group: "TestRowText", sel: { from: 0, to: 3 }, selGroup: "TestSelect" },
-  { bg: "TestRowBg", text: "abcdef", group: "TestRowText" },
+  { bg: "TestRowBg", text: "abcdef", group: "TestRowText", sel: { from: 0, to: 3 }, selGroup: "TestSelectPlain" },
   { bg: "TestReverseRow", text: "meta", group: "TestMeta" },
 ]);
 pager.stuck = false;

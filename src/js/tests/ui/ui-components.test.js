@@ -4,7 +4,7 @@ import { term } from "yuke:internal/native/term";
 import { root, Node } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import { Transcript, inputSourceLabel, registerRender } from "yuke:internal/transcript";
-import { defaultRender } from "yuke:internal/transcript-view";
+import { defaultRender, displayCommand, viewRows } from "yuke:internal/transcript-view";
 import { chatPlugin } from "yuke:internal/chat";
 import { Session, sessionsPlugin } from "yuke:internal/session";
 import { transcriptVim } from "yuke:internal/transcript-vim";
@@ -67,7 +67,9 @@ equal(src, "hi** there\nread c.zig");
 const dt = new Transcript({ partsOf: (id) => parts[id] || [] });
 dt.setOutline([{ id: "diff", type: "assistant" }], null);
 const diffRows = dt.rows(40, 0, 10);
-check("diff", rowsHave(diffRows, "-old") && rowsGroup(diffRows, "TxDiffDel") && rowsHave(diffRows, "+new") && rowsGroup(diffRows, "TxDiffAdd"));
+check("diff", rowsHave(diffRows, "-old") && rowsGroup(diffRows, "TxDiffDel") && rowsHave(diffRows, "+new") && rowsGroup(diffRows, "TxDiffAdd") && dt._sourceOf("diff") === "edit d.zig\n-old\n+new");
+const multiDiff = viewRows([{ type: "diff", files: [{ path: "one.zig", hunks: [] }, { path: "two.zig", hunks: [] }] }], 40, 1);
+check("multi-diff-paths", rowsHave(multiDiff.rows, "one.zig") && rowsHave(multiDiff.rows, "two.zig") && multiDiff.source === "one.zig\ntwo.zig");
 
 // Enter toggles the block under the transcript cursor.
 const v = new ChatView(new Session());
@@ -102,24 +104,30 @@ const headerAt = longT.screenAt({ id: "long", row: 0, col: 0 });
 check("header-on-screen", !!headerAt && headerAt.y >= 0 && headerAt.y < 4);
 check("expanded-all", rowsHave(longT.rows(40, 0, longT.rowCount(40)), "line0") && longT.pager.stuck === false);
 
-// A header names the program of a command, and an unknown tool shows its name and its path.
-parts.pres = [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"MISE_SHELL=bash /usr/bin/zig build test-js"}', state: { type: "completed", output: "ok", duration_ms: 1 } }];
+// A command header preserves shell context. An open clipped header reveals the original command. An outside path stays absolute.
+const command = "# prepare\ncd /tmp/demo-project && MISE_SHELL=bash /usr/bin/zig build test-js # all";
+parts.pres = [{ type: "tool", id: 0, name: "exec", arguments: JSON.stringify({ command }), state: { type: "completed", output: "ok", duration_ms: 1 } }];
 const pres = new Transcript({ partsOf: (id) => parts[id] || [] });
 pres.setOutline([{ id: "pres", type: "assistant" }], null);
-pres.rows(60, 0, 4);
-check("exec-head", pres._sourceOf("pres").indexOf("$ zig build test-js") === 0);
+check("exec-head", rowsHave(pres.rows(100, 0, 4), displayCommand(command)) && pres._sourceOf("pres") === "$ " + command + "\nok");
+pres.togglePart("pres", 0);
+const shownCommand = pres.rows(40, 0, pres.rowCount(40));
+const commandSource = pres._sourceOf("pres");
+check("exec-input", rowsHave(shownCommand, "/usr/bin/zig") && commandSource === "$ " + command + "\nok");
+pres.select(pres.posAtSource("pres", 0), pres.posAtSource("pres", commandSource.length));
+equal(pres.selectedText(true), commandSource);
 parts.unknown = [{ type: "tool", id: 0, name: "mcp_thing", arguments: '{"path":"/tmp/x.txt"}', state: { type: "completed", output: "ok", duration_ms: 1 } }];
 const unknown = new Transcript({ partsOf: (id) => parts[id] || [] });
 unknown.setOutline([{ id: "unknown", type: "assistant" }], null);
-check("fallback-head", rowsHave(unknown.rows(60, 0, 4), "mcp_thing") && rowsHave(unknown.rows(60, 0, 4), "x.txt"));
+check("fallback-head", rowsHave(unknown.rows(60, 0, 4), "mcp_thing") && rowsHave(unknown.rows(60, 0, 4), "/tmp/x.txt"));
 
-// A plugin renderer stacks on the look: its tool head wins, a faulty head leaves the part without rows, and an unload restores the one below.
+// A plugin renderer stacks on the look: its tool head wins, unrelated raw input drops, a faulty head leaves no rows, and an unload restores the look below.
 const owner = plugins.use({ name: "test-head", apply(ctx) {
-  ctx.inject(["chat"], (ctx) => { ctx.chat.render({ tools: { exec: () => ({ verb: "run", subject: "custom" }) }, sources: { engine_interruption: () => "first" } }); });
+  ctx.inject(["chat"], (ctx) => { ctx.chat.render({ tools: { exec: () => ({ verb: "run", subject: "custom", category: "run", input: "unrelated raw input" }) }, sources: { engine_interruption: () => "first" } }); });
 } });
 const over = new Transcript({ partsOf: (id) => parts[id] || [] });
 over.setOutline([{ id: "pres", type: "assistant" }], null);
-check("override-head", rowsHave(over.rows(60, 0, 4), "custom") && over._sourceOf("pres").indexOf("run custom") === 0);
+check("override-head", rowsHave(over.rows(60, 0, 4), "custom") && over._sourceOf("pres") === "run custom\nok");
 check("cached-rows-change", rowsHave(pres.rows(60, 0, 4), "custom"));
 const faulty = plugins.use({ name: "test-faulty-head", apply(ctx) {
   ctx.inject(["chat"], (ctx) => { ctx.chat.render({ tools: { exec: () => { throw new Error("bad"); } }, sources: { engine_interruption: () => "second" } }); });

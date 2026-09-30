@@ -26,7 +26,10 @@ const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
   UIPrompt: { fg: "fg", bold: true },
   UIQuery: { fg: "fg" },
   UIBody: { fg: "fg" },
-  UIComposer: { fg: "fg" },
+  UIComposer: { fg: "fg", bg: "bg" },
+  UIComposerPrompt: { link: "UIComposer", bold: true },
+  UIComposerPromptInactive: { link: "UIComposer", dim: true },
+  UIComposerDim: { link: "UIComposer", dim: true },
   UIDim: { fg: "fg", dim: true },
   UIDimSel: { reverse: true },
   TxSelect: { reverse: true },
@@ -730,19 +733,19 @@ export class Composer {
     return true;
   }
 
-  /** @param {boolean} _focused @returns {void} */
-  draw(_focused) {
+  /** @param {boolean} focused @returns {void} */
+  draw(focused) {
     const { x, y, w, h } = this.rect;
     if (w <= 0 || h <= 0) return;
     fill(x, y, w, h, "UIComposer");
     if (this.input.text === "") {
       this.scroll = 0;
-      if (w > 2) text(x, y, clip(this._prompt() + this.placeholder, w), "UIDim");
+      if (w > 2) text(x, y, clip(this._prompt() + this.placeholder, w), "UIComposerDim");
       else {
         const tw = this._textWidth(w);
         const pw = w - tw;
-        if (pw > 0) text(x, y, clip(this._prompt(), pw, false), "UIDim");
-        text(x + pw, y, clip(this.placeholder, tw), "UIDim");
+        if (pw > 0) text(x, y, clip(this._prompt(), pw, false), "UIComposerDim");
+        text(x + pw, y, clip(this.placeholder, tw), "UIComposerDim");
       }
       return;
     }
@@ -758,8 +761,8 @@ export class Composer {
     const pw = w - tw;
     // The prompt marks the first row only. A later row aligns under it.
     if (this.scroll === 0) {
-      if (w > 2) text(x, y, this._prompt(), "UIComposer");
-      else if (pw > 0) text(x, y, clip(this._prompt(), pw, false), "UIComposer");
+      if (w > 2) text(x, y, this._prompt(), focused ? "UIComposerPrompt" : "UIComposerPromptInactive");
+      else if (pw > 0) text(x, y, clip(this._prompt(), pw, false), focused ? "UIComposerPrompt" : "UIComposerPromptInactive");
     }
     for (let i = 0; i < h && this.scroll + i < rows.length; i++) {
       const r = /** @type {WrapRow} */ (rows[this.scroll + i]);

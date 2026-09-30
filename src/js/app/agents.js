@@ -261,9 +261,9 @@ export function agents(options) {
                 chat = ctx.chat;
                 ctx.effect(() => () => { chat = null; });
                 ctx.chat.render({ tools: {
-                    spawn_agent: (o, part) => ({ verb: "agent", subject: String(o.agent || catalog.default) + liveSuffix(part), category: "agent" }),
-                    send_agent_input: (o) => ({ verb: "send", subject: String(o.child || ""), category: "agent" }),
-                    stop_agent: (o) => ({ verb: "stop", subject: String(o.child || ""), category: "agent" }),
+                    spawn_agent: (o, part) => ({ verb: "agent", subject: String(o.agent || catalog.default) + liveSuffix(part), category: "agent", input: "" }),
+                    send_agent_input: (o) => ({ verb: "send", subject: String(o.child || ""), category: "agent", input: "" }),
+                    stop_agent: (o) => ({ verb: "stop", subject: String(o.child || ""), category: "agent", input: "" }),
                 }, sources: {
                     parent_instruction: () => "From the parent session",
                     child_report: reportLabel,

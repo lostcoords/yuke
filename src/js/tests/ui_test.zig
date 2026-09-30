@@ -144,14 +144,19 @@ test "a transcript row composes its background, text, and selection" {
     try support.eval(fixture.host, "ui/row-background.test.js");
 
     const green = term_pkg.Color{ .rgb = .{ 48, 64, 48 } };
-    for ([_][2]u16{ .{ 0, 0 }, .{ 1, 0 }, .{ 4, 0 }, .{ 4, 1 } }) |point| {
+    for ([_][2]u16{ .{ 0, 0 }, .{ 4, 0 }, .{ 1, 1 }, .{ 4, 1 } }) |point| {
         const cell = fixture.paint.render.window().readCell(point[0], point[1]).?;
         try std.testing.expect(term_pkg.Color.eql(green, cell.style.bg));
     }
     const selected = fixture.paint.render.window().readCell(1, 0).?;
     try std.testing.expect(term_pkg.Color.eql(.{ .rgb = .{ 255, 255, 255 } }, selected.style.fg));
+    try std.testing.expect(term_pkg.Color.eql(.{ .rgb = .{ 68, 85, 102 } }, selected.style.bg));
     try std.testing.expect(selected.style.bold);
-    try std.testing.expect(selected.style.reverse);
+    try std.testing.expect(!selected.style.reverse);
+
+    const plain_selected = fixture.paint.render.window().readCell(1, 1).?;
+    try std.testing.expect(term_pkg.Color.eql(green, plain_selected.style.bg));
+    try std.testing.expect(plain_selected.style.reverse);
 
     const metadata = fixture.paint.render.window().readCell(0, 2).?;
     try std.testing.expect(term_pkg.Color.eql(.{ .rgb = .{ 170, 170, 170 } }, metadata.style.fg));
@@ -199,7 +204,13 @@ test "yuke:internal/ui Composer draws a wrapped row whole and puts the caret on 
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "hello") != null);
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "world") != null);
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "…") == null);
-    const narrow = fixture.paint.render.window().readCell(0, 0).?;
+
+    const composer_bg = term_pkg.Color{ .rgb = .{ 17, 34, 51 } };
+    for ([_][2]u16{ .{ 0, 0 }, .{ 2, 0 }, .{ 0, 2 }, .{ 0, 3 } }) |point| {
+        const cell = fixture.paint.render.window().readCell(point[0], point[1]).?;
+        try std.testing.expect(term_pkg.Color.eql(composer_bg, cell.style.bg));
+    }
+    const narrow = fixture.paint.render.window().readCell(0, 3).?;
     try std.testing.expectEqualStrings("x", narrow.char.grapheme);
 
     try support.expectString(host, "result", "ok");

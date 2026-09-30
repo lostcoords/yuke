@@ -8,8 +8,8 @@ export import ChatView = $chat_view.ChatView;
 export import ChatSurface = $chat.ChatSurface;
 export import Transcript = $transcript.Transcript;
 export import inputSourceLabel = $transcript.inputSourceLabel;
-export import shortPath = $transcript_view.shortPath;
-export import shortCommand = $transcript_view.shortCommand;
+export import displayPath = $transcript_view.displayPath;
+export import displayCommand = $transcript_view.displayCommand;
 export import toolHead = $transcript_view.toolHead;
 export import wrapRows = $transcript_view.wrapRows;
 export import viewRows = $transcript_view.viewRows;
@@ -21,6 +21,7 @@ export import attachPath = $attach.attachPath;
 export import attachClipboard = $attach.attachClipboard;
 export type Render = $types_transcript.Render;
 export type ToolHead = $types_transcript.ToolHead;
+export type ToolHeading = $types_transcript.ToolHeading;
 export type PartEnv = $types_transcript.PartEnv;
 export type MessageEnv = $types_transcript.MessageEnv;
 export type Rendered = $types_transcript.Rendered;
@@ -1460,31 +1461,28 @@ declare namespace $transcript_view {
 import TranscriptRow = $types_pager.TranscriptRow;
 import Rendered = $types_transcript.Rendered;
 import ToolHead = $types_transcript.ToolHead;
+import ToolHeading = $types_transcript.ToolHeading;
 import ToolPart = $types_transcript.ToolPart;
 /**
- * A path for a header: relative under the process directory, else its base name.
+ * A path for a header: relative under the process directory, else complete.
  */
-export function shortPath(path: unknown): string;
+export function displayPath(path: unknown): string;
 /**
- * A shell command for a header: the program base name and its arguments on one line, without leading comments and environment assignments.
+ * A complete shell command on one header line. It changes line feeds to spaces and preserves every other byte.
  */
-export function shortCommand(raw: unknown): string;
+export function displayCommand(raw: unknown): string;
 /**
- * The header words of a tool call from `tools`, else the tool name and its `path`, its `command`, or its raw arguments cut to 48 characters.
+ * The heading of a tool call from `tools`, else the tool name and its path, command, or raw arguments.
  * `args` holds the parsed JSON arguments, or `{}` when they do not parse.
  */
-export function toolHead(part: ToolPart, tools: Record<string, ToolHead>): {
-    verb: string;
-    subject: string;
-    category: string;
-};
+export function toolHead(part: ToolPart, tools: Record<string, ToolHead>): ToolHeading;
 /**
  * Wrap `text` to `width` columns as rows of one segment in `group`. Each segment indexes `text`, so a selection copies the text.
  * `limit` keeps that many rows from the head, and `tail` also keeps that many rows from the end.
  */
 export function wrapRows(text: string, width: number, group: string, indent: number, limit?: number, tail?: number): TranscriptRow[];
 /**
- * The rows of the views of a tool result: a diff, markdown, or plain text. `limit` bounds the row count, and the source holds only the text of the rows it answers.
+ * The rows of tool-result views. A one-file diff omits its path label; a multi-file or mixed view keeps file paths. `limit` bounds rows; the source retains each view chunk that starts before the limit so row offsets stay stable.
  */
 export function viewRows(views: readonly Wire.View[], width: number, indent: number, limit?: number): Rendered;
 /**
@@ -2046,7 +2044,7 @@ export class Composer {
      * Move the caret by `delta` drawn rows. The goal column survives a short row.
      */
     moveRow(delta: number): boolean;
-    draw(_focused: boolean): void;
+    draw(focused: boolean): void;
     cursor(): {
         x: number;
         y: number;
@@ -3620,11 +3618,19 @@ export type ToolPart = Extract<Wire.AssistantPart, { type: "tool" }>;
 /** A reasoning part. */
 export type ReasoningPart = Extract<Wire.AssistantPart, { type: "reasoning" }>;
 
+/** The words and raw input behind one tool header. Flattening the line feeds of a nonempty `input` must equal `subject`; an empty `input` means that the header has no hidden input. */
+export interface ToolHeading {
+  verb: string;
+  subject: string;
+  category: string;
+  input: string;
+}
+
 /**
- * The header words of one tool call, for any look: `verb` first, then `subject`. `category` names the kind of work, such as "read", "write", "run", or "agent"; a look picks a style from it.
- * It runs when the row builds, so it must not walk the tool output or scan a whole text. `args` holds the parsed JSON arguments, or `{}` when they do not parse.
+ * Build the heading of one tool call. `category` names the kind of work, such as "read", "write", "run", or "agent"; a look picks a style from it.
+ * It runs when the row builds, so it must not walk the tool output. `args` holds the parsed JSON arguments, or `{}` when they do not parse.
  */
-export type ToolHead = (args: Record<string, any>, part: ToolPart) => { verb: string; subject: string; category?: string };
+export type ToolHead = (args: Record<string, any>, part: ToolPart) => ToolHeading;
 
 /** The rows of a render and the text they show. The `src` and `srcEnd` of each segment index `source`, so a selection copies the source text. */
 export interface Rendered {
