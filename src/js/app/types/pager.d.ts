@@ -14,7 +14,7 @@ export interface TranscriptRow {
   group?: string | undefined;
   /** The source offset of `text` in a row with no `segments`. The row shows its source text as it is, so the source ends at `src + text.length`. */
   src?: number | undefined;
-  /** The highlight group that supplies the background of the complete row, including its marker and text. */
+  /** The base highlight group of the complete row. Its background wins, and explicit text fields win every other field. */
   bg?: string | undefined;
   marker?: string | null | undefined;
   markerGroup?: string | undefined;

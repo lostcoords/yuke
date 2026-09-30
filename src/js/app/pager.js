@@ -1,6 +1,6 @@
 // Scroll and paint rows with source-coordinate maps.
 import { term } from "yuke:internal/native/term";
-import { style, resolveStyleOn, isWheel } from "yuke:internal/core";
+import { style, resolveStyleOn, overlayStyleGroup, isWheel } from "yuke:internal/core";
 import { config } from "yuke:internal/kernel";
 import { clip } from "yuke:internal/text-input";
 import { isLinear } from "yuke:internal/md";
@@ -276,7 +276,7 @@ export function rowSourceAt(row, col, base = 0) {
   return last < 0 ? last : base + last;
 }
 
-// Repaint the string range [from, to) of `segments` with `group`; `caretAtCol` puts the bounds on a grapheme edge.
+// Repaint the string range [from, to) of `segments` with an overlay; `caretAtCol` puts the bounds on a grapheme edge.
 /** @param {Segment[]} segments @param {number} from @param {number} to @param {string} group @returns {Segment[]} */
 function markSelection(segments, from, to, group) {
   if (to <= from) return segments;
@@ -284,13 +284,13 @@ function markSelection(segments, from, to, group) {
   let at = 0;
   for (const seg of segments) {
     const end = at + seg.text.length;
-    const a = Math.max(from, at);
-    const b = Math.min(to, end);
+    const a = from > at ? from : at;
+    const b = to < end ? to : end;
     if (b <= a) {
       out.push(seg);
     } else {
       if (a > at) out.push({ ...seg, text: seg.text.slice(0, a - at) });
-      out.push({ ...seg, text: seg.text.slice(a - at, b - at), group });
+      out.push({ ...seg, text: seg.text.slice(a - at, b - at), group: overlayStyleGroup(seg.group, group) });
       if (b < end) out.push({ ...seg, text: seg.text.slice(b - at) });
     }
     at = end;

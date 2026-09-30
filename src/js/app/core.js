@@ -29,9 +29,22 @@ const link_depth_max = 100;
 
 /** @type {Record<string, Color>} */
 const CORE_PALETTE = { fg: "reset", bg: "reset", danger: "red" };
-// A background owns a small dictionary of text groups. A style change drops every composed pair.
+const style_fg = 1 << 0;
+const style_bg = 1 << 1;
+const style_ul = 1 << 2;
+const style_bold = 1 << 3;
+const style_dim = 1 << 4;
+const style_italic = 1 << 5;
+const style_reverse = 1 << 6;
+const style_underline = 1 << 7;
+// A style change drops the field masks and every composed pair.
+/** @type {Record<string, number>} */
+let styleMasks = Object.create(null);
 /** @type {Record<string, Record<string, Style>>} */
 let stylesOn = Object.create(null);
+/** @type {Record<string, Record<string, string>>} */
+let overlayGroups = Object.create(null);
+let overlayGroupId = 0;
 
 /**
  * The highlight groups and the palette. A group merges its default (from `set` with `{ default: true }`), then the active theme, then each other `set` in call order.
@@ -125,7 +138,10 @@ export const style = {
 
   _changed() {
     this._cache = Object.create(null);
+    styleMasks = Object.create(null);
     stylesOn = Object.create(null);
+    overlayGroups = Object.create(null);
+    overlayGroupId = 0;
     root.invalidatePaint();
   },
 
@@ -155,6 +171,16 @@ export const style = {
       def = def.link === undefined ? undefined : this.groups[def.link];
     }
 
+    let mask = 0;
+    if (fg !== undefined) mask |= style_fg;
+    if (bg !== undefined) mask |= style_bg;
+    if (ul !== undefined) mask |= style_ul;
+    if (bold !== undefined) mask |= style_bold;
+    if (dim !== undefined) mask |= style_dim;
+    if (italic !== undefined) mask |= style_italic;
+    if (reverse !== undefined) mask |= style_reverse;
+    if (underline !== undefined) mask |= style_underline;
+
     /** @type {Style} */
     const out = {};
     if (bg !== undefined) out.bg = resolveColor(this.palette, bg);
@@ -166,13 +192,15 @@ export const style = {
     if (reverse) out.reverse = true;
     out.fg = resolveColor(this.palette, fg ?? "fg");
 
+    styleMasks[name] = mask;
     this._cache[name] = out;
     return out;
   },
 };
 
 /**
- * Resolve a text group with the authoritative background of another group. The cache owns the returned composite until any style change.
+ * Resolve a text group over a row group. The text's explicit fields win, and the row's explicit background remains authoritative.
+ * The cache owns the returned composite until any style change.
  * @param {string} name
  * @param {string} background
  * @returns {Style}
@@ -184,11 +212,64 @@ export function resolveStyleOn(name, background) {
 /** @param {string} name @param {string} background @returns {Style} */
 function buildStyleOn(name, background) {
   const byName = stylesOn[background] || (stylesOn[background] = Object.create(null));
-  const foreground = style.resolve(name);
-  const bg = style.resolve(background).bg;
-  const out = bg === undefined || foreground.bg === bg ? foreground : { ...foreground, bg };
+  const row = style.resolve(background);
+  const out = { ...row };
+  applyStyle(out, style.resolve(name), maskOf(name));
+  if (maskOf(background) & style_bg) out.bg = /** @type {Color} */ (row.bg);
   byName[name] = out;
   return out;
+}
+
+/**
+ * Return the cached internal group that applies the explicit fields of `overlay` over `name`.
+ * The cache owns the returned name and style until any style change.
+ * @param {string} name
+ * @param {string} overlay
+ * @returns {string}
+ */
+export function overlayStyleGroup(name, overlay) {
+  return overlayGroups[overlay]?.[name] || buildOverlayStyleGroup(name, overlay);
+}
+
+/** @param {string} name @param {string} overlay @returns {string} */
+function buildOverlayStyleGroup(name, overlay) {
+  const byName = overlayGroups[overlay] || (overlayGroups[overlay] = Object.create(null));
+  const overlayMask = maskOf(overlay);
+  if (overlayMask === 0) {
+    byName[name] = name;
+    return name;
+  }
+  const composite = "\x00" + overlayGroupId++;
+  const out = { ...style.resolve(name) };
+  applyStyle(out, style.resolve(overlay), overlayMask);
+  styleMasks[composite] = maskOf(name) | overlayMask;
+  style._cache[composite] = out;
+  byName[name] = composite;
+  return composite;
+}
+
+/** @param {string} name @returns {number} */
+function maskOf(name) {
+  style.resolve(name);
+  return styleMasks[name] || 0;
+}
+
+/** @param {Style} out @param {Style} change @param {number} mask */
+function applyStyle(out, change, mask) {
+  if (mask & style_fg) out.fg = /** @type {Color} */ (change.fg);
+  if (mask & style_bg) out.bg = /** @type {Color} */ (change.bg);
+  if (mask & style_ul) out.ul = /** @type {Color} */ (change.ul);
+  if (mask & style_bold) setFlag(out, "bold", change.bold === true);
+  if (mask & style_dim) setFlag(out, "dim", change.dim === true);
+  if (mask & style_italic) setFlag(out, "italic", change.italic === true);
+  if (mask & style_reverse) setFlag(out, "reverse", change.reverse === true);
+  if (mask & style_underline) setFlag(out, "underline", change.underline === true);
+}
+
+/** @param {Style} out @param {"bold" | "dim" | "italic" | "reverse" | "underline"} field @param {boolean} on */
+function setFlag(out, field, on) {
+  if (on) out[field] = true;
+  else delete out[field];
 }
 
 // Apply one patch in place: a null field deletes the field.

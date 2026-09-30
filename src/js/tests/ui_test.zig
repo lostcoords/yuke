@@ -138,8 +138,8 @@ test "yuke:internal/ui Transcript draws markdown segments through the pager" {
     try std.testing.expect(std.mem.indexOf(u8, fixture.paint.out.written(), "─") != null);
 }
 
-test "a transcript row keeps its background under its marker, text, and ellipsis" {
-    var fixture = try support.PaintedHost.init(2, 5);
+test "a transcript row composes its background, text, and selection" {
+    var fixture = try support.PaintedHost.init(3, 5);
     defer fixture.deinit();
     try support.eval(fixture.host, "ui/row-background.test.js");
 
@@ -148,9 +148,15 @@ test "a transcript row keeps its background under its marker, text, and ellipsis
         const cell = fixture.paint.render.window().readCell(point[0], point[1]).?;
         try std.testing.expect(term_pkg.Color.eql(green, cell.style.bg));
     }
-    const glyph = fixture.paint.render.window().readCell(1, 0).?;
-    try std.testing.expect(term_pkg.Color.eql(.{ .rgb = .{ 255, 255, 255 } }, glyph.style.fg));
-    try std.testing.expect(glyph.style.bold);
+    const selected = fixture.paint.render.window().readCell(1, 0).?;
+    try std.testing.expect(term_pkg.Color.eql(.{ .rgb = .{ 255, 255, 255 } }, selected.style.fg));
+    try std.testing.expect(selected.style.bold);
+    try std.testing.expect(selected.style.reverse);
+
+    const metadata = fixture.paint.render.window().readCell(0, 2).?;
+    try std.testing.expect(term_pkg.Color.eql(.{ .rgb = .{ 170, 170, 170 } }, metadata.style.fg));
+    try std.testing.expect(metadata.style.dim);
+    try std.testing.expect(metadata.style.reverse);
 }
 
 test "yuke:internal/ui Composer collapses a large paste and still submits the whole text" {
