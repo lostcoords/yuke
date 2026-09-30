@@ -26,12 +26,6 @@ const Meta = struct {
     tokens_cache_write: ?u64 = null,
     cost: ?f64 = null,
     created_at_ms: u64,
-    // Add the session usage totals. Use zero when the message carries no tokens.
-    add_input: u64 = 0,
-    add_output: u64 = 0,
-    add_reasoning: u64 = 0,
-    add_cache_read: u64 = 0,
-    add_cache_write: u64 = 0,
 };
 
 /// The event borrows the input message; bytes is the exact stored JSON size.
@@ -81,16 +75,17 @@ pub fn appendCommittedMessage(
         .created_at_ms = m.created_at_ms,
         .tokens_estimate = estimate.tokens,
         .reasoning_estimate = estimate.reasoning,
+        .first_kept_id = if (message == .compaction) message.compaction.first_kept_id orelse 0 else null,
     });
     _ = try db.queries.advance_message.one(arena, .{
         .id = session_id,
         .message_id = m.message_id,
         .seq = seq,
-        .add_input = m.add_input,
-        .add_output = m.add_output,
-        .add_reasoning = m.add_reasoning,
-        .add_cache_read = m.add_cache_read,
-        .add_cache_write = m.add_cache_write,
+        .tokens_input = m.tokens_input,
+        .tokens_output = m.tokens_output,
+        .tokens_reasoning = m.tokens_reasoning,
+        .tokens_cache_read = m.tokens_cache_read,
+        .tokens_cache_write = m.tokens_cache_write,
         .updated_at_ms = committed_at_ms,
     });
     return .{ .data = .{ .session_id = .bytes(session_id), .seq = seq, .message = message }, .bytes = payload.len };
@@ -119,11 +114,6 @@ fn metaOf(message: proto.message.Message) Meta {
             .tokens_cache_write = if (a.tokens) |t| t.cache_write else null,
             .cost = a.cost,
             .created_at_ms = a.time.created_at_ms,
-            .add_input = if (a.tokens) |t| t.input else 0,
-            .add_output = if (a.tokens) |t| t.output else 0,
-            .add_reasoning = if (a.tokens) |t| t.reasoning else 0,
-            .add_cache_read = if (a.tokens) |t| t.cache_read else 0,
-            .add_cache_write = if (a.tokens) |t| t.cache_write else 0,
         },
         .compaction => |c| .{
             .message_id = c.id,
@@ -191,19 +181,6 @@ pub fn historyPage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, 
     const kept = newest_first.items[0..@min(newest_first.items.len, limit)];
     std.mem.reverse(proto.message.Message, kept);
     return .{ .messages = kept, .has_more = has_more };
-}
-
-/// Return the token usage of the newest committed assistant turn as the live context gauge, not a lifetime total; a session with no such turn reports zero.
-pub fn contextUsage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8) !proto.message.TokenUsage {
-    const row = (try db.queries.last_assistant_usage.maybeOne(arena, .{ .session_id = session_id })) orelse return .zero;
-    std.debug.assert(row.value.tokens_input != null); // The query keeps a null-usage turn out.
-    return .{
-        .input = row.value.tokens_input orelse 0,
-        .output = row.value.tokens_output orelse 0,
-        .reasoning = row.value.tokens_reasoning orelse 0,
-        .cache_read = row.value.tokens_cache_read orelse 0,
-        .cache_write = row.value.tokens_cache_write orelse 0,
-    };
 }
 
 const testing = std.testing;
@@ -296,7 +273,7 @@ fn assistantTurn(id: u64, created_at_ms: u64, tokens: ?proto.message.TokenUsage)
     } };
 }
 
-test "each committed turn adds its usage one time and the gauge names the newest" {
+test "each committed turn updates the session usage" {
     var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -327,14 +304,13 @@ test "each committed turn adds its usage one time and the gauge names the newest
     try testing.expectEqual(@as(u64, 20), snap.usage_cache_write_total);
     try testing.expectEqual(@as(u64, 3), snap.message_count);
 
-    // The context gauge reads the newest round alone, never the sum.
-    const context = try contextUsage(&db, a, sid);
-    try testing.expectEqual(@as(u64, 300), context.input);
-    try testing.expectEqual(@as(u64, 50), context.output);
-    try testing.expectEqual(@as(u64, 150), context.cache_read);
+    // The last usage reads the newest round alone, never the sum.
+    try testing.expectEqual(@as(u64, 300), snap.usage_last_input);
+    try testing.expectEqual(@as(u64, 50), snap.usage_last_output);
+    try testing.expectEqual(@as(u64, 150), snap.usage_last_cache_read);
 }
 
-test "the context gauge skips a turn that reported no usage" {
+test "the last usage skips a turn that reported no usage" {
     var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -344,30 +320,27 @@ test "the context gauge skips a turn that reported no usage" {
     const sid = [_]u8{11} ** 16;
     try session.seedSession(&db, sid);
 
-    // A session with no assistant turn reports zero rather than an error.
-    const empty = try contextUsage(&db, a, sid);
-    try testing.expectEqual(@as(u64, 0), empty.input);
+    // A session with no assistant turn reports zero.
+    try testing.expectEqual(@as(u64, 0), (try session.snapshot(&db, a, sid)).?.usage_last_input);
 
     const with_usage: proto.message.TokenUsage = .{ .input = 70, .output = 8, .reasoning = 0, .cache_read = 25, .cache_write = 5 };
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     _ = try appendCommittedMessage(&db, a, sid, [_]u8{1} ** 16, 300, assistantTurn(1, 300, with_usage));
-    // A canceled round commits with no tokens. It must not blank the gauge.
+    // A canceled round commits with no tokens. It must not blank the last usage.
     _ = try appendCommittedMessage(&db, a, sid, [_]u8{2} ** 16, 310, assistantTurn(2, 310, null));
     // A later user turn must not blank it either.
     _ = try appendCommittedMessage(&db, a, sid, [_]u8{3} ** 16, 320, .{ .user = .{ .id = 3, .content = &.{}, .input_id = 1, .time = .{ .created_at_ms = 320 } } });
     try db.conn.execNoArgs("COMMIT");
 
-    const context = try contextUsage(&db, a, sid);
-    try testing.expectEqual(@as(u64, 70), context.input);
-    try testing.expectEqual(@as(u64, 8), context.output);
-    try testing.expectEqual(@as(u64, 25), context.cache_read);
-    try testing.expectEqual(@as(u64, 5), context.cache_write);
+    const snap = (try session.snapshot(&db, a, sid)).?;
+    try testing.expectEqual(@as(u64, 70), snap.usage_last_input);
+    try testing.expectEqual(@as(u64, 8), snap.usage_last_output);
+    try testing.expectEqual(@as(u64, 25), snap.usage_last_cache_read);
+    try testing.expectEqual(@as(u64, 5), snap.usage_last_cache_write);
 
     // The usage-free turn still counts as a message and adds nothing to the totals.
-    const snap = (try session.snapshot(&db, a, sid)).?;
     try testing.expectEqual(@as(u64, 3), snap.message_count);
     try testing.expectEqual(@as(u64, 70), snap.usage_input_total);
-    try testing.expectEqual(@as(u64, 70), snap.ctx_tokens_input.?); // The view agrees with the query.
 }
 
 test "a later commit with an earlier timestamp does not regress recency" {

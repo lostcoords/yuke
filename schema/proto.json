@@ -2605,8 +2605,9 @@
           "presence": "required"
         },
         {
-          "name": "context_usage",
-          "type": "TokenUsage",
+          "name": "context_tokens",
+          "doc": "The tokens of the next request: the newest provider count plus an estimate of the later messages. Compaction starts from this count.",
+          "type": "u64",
           "presence": "required"
         },
         {
@@ -2837,6 +2838,12 @@
           "doc": "Compare the stored AGENTS.md and skill snapshots with the files on disk.",
           "type": "bool",
           "presence": "defaulted"
+        },
+        {
+          "name": "last_usage",
+          "doc": "Include the provider usage of the newest assistant turn that reported one.",
+          "type": "bool",
+          "presence": "defaulted"
         }
       ]
     },
@@ -2885,6 +2892,12 @@
         {
           "name": "skills",
           "type": "[]SkillInfo",
+          "presence": "optional"
+        },
+        {
+          "name": "usage_last",
+          "doc": "Only session.get with last_usage includes the provider usage of the newest assistant turn that reported one. Zero before any turn reports usage.",
+          "type": "TokenUsage",
           "presence": "optional"
         },
         {

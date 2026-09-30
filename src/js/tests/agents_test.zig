@@ -328,7 +328,7 @@ test "dirty overflow refreshes a picker even beside unrelated index facts" {
     }
     sink.on_event(sink.ctx, .{ .method = .@"session.activity_changed", .params = .{ .session_activity_changed_data = .{
         .session_id = .bytes([_]u8{2} ** 16),
-        .activity = .{ .state = .{ .idle = .{} }, .config = null, .queued = 0, .context_usage = .zero, .pending_compaction = null },
+        .activity = .{ .state = .{ .idle = .{} }, .config = null, .queued = 0, .context_tokens = 0, .pending_compaction = null },
     } } });
     sink.on_event(sink.ctx, .{ .method = .notice, .params = .{ .notice = .{ .level = .info, .source = "bench", .message = "unrelated" } } });
     try host.pump();

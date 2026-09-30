@@ -32,6 +32,16 @@ CREATE TABLE sessions (
     usage_cache_read_total  INTEGER NOT NULL DEFAULT 0 CHECK (usage_cache_read_total  BETWEEN 0 AND 9007199254740991), -- u64
     usage_cache_write_total INTEGER NOT NULL DEFAULT 0 CHECK (usage_cache_write_total BETWEEN 0 AND 9007199254740991), -- u64
 
+    -- Store the provider usage of the newest assistant turn that reported one. Zero means no turn reported usage yet.
+    usage_last_input       INTEGER NOT NULL DEFAULT 0 CHECK (usage_last_input       BETWEEN 0 AND 9007199254740991), -- u64
+    usage_last_output      INTEGER NOT NULL DEFAULT 0 CHECK (usage_last_output      BETWEEN 0 AND 9007199254740991), -- u64
+    usage_last_reasoning   INTEGER NOT NULL DEFAULT 0 CHECK (usage_last_reasoning   BETWEEN 0 AND 9007199254740991), -- u64
+    usage_last_cache_read  INTEGER NOT NULL DEFAULT 0 CHECK (usage_last_cache_read  BETWEEN 0 AND 9007199254740991), -- u64
+    usage_last_cache_write INTEGER NOT NULL DEFAULT 0 CHECK (usage_last_cache_write BETWEEN 0 AND 9007199254740991), -- u64
+
+    -- Store the token estimate of the system prompt and the tools of the last built request. The context count adds it when no provider count anchors it.
+    prompt_tokens INTEGER NOT NULL DEFAULT 0 CHECK (prompt_tokens BETWEEN 0 AND 9007199254740991), -- u64
+
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND 9007199254740991), -- u64
     updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms BETWEEN 0 AND 9007199254740991), -- u64
 
@@ -111,6 +121,8 @@ CREATE TABLE messages (
     tokens_estimate    INTEGER NOT NULL CHECK (tokens_estimate BETWEEN 0 AND 9007199254740991), -- u64
     -- Store the reasoning share of the estimate. A request to another model drops that reasoning.
     reasoning_estimate INTEGER NOT NULL CHECK (reasoning_estimate BETWEEN 0 AND tokens_estimate), -- u64
+    -- Store the first message that a checkpoint keeps, so the context count reads no checkpoint body.
+    first_kept_id INTEGER CHECK (first_kept_id IS NULL OR (role = 'compaction' AND first_kept_id BETWEEN 0 AND 9007199254740991)), -- proto.MessageId
 
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND 9007199254740991), -- u64
 
@@ -121,25 +133,13 @@ CREATE TABLE messages (
 -- Index the FK child columns so a session or event cascade can seek instead of a message scan.
 CREATE INDEX messages_by_event ON messages(session_id, seq);
 
--- Index only the turns that answer the context-usage lookup. The lookup then seeks the newest turn.
-CREATE INDEX messages_context_usage ON messages(session_id, message_id)
-    WHERE role = 'assistant' AND tokens_input IS NOT NULL;
+-- Index the turns that can anchor the context count, so the count seeks the newest one.
+CREATE INDEX messages_count_anchor ON messages(session_id, message_id)
+    WHERE role = 'assistant' AND tokens_input > 0;
 
--- Join each session to the usage of its newest committed assistant turn for the context gauge. A truncation removes the newest messages, so this view is read, not a session column.
-CREATE VIEW session_context AS
-SELECT s.*,
-       ctx.tokens_input       AS ctx_tokens_input,
-       ctx.tokens_output      AS ctx_tokens_output,
-       ctx.tokens_reasoning   AS ctx_tokens_reasoning,
-       ctx.tokens_cache_read  AS ctx_tokens_cache_read,
-       ctx.tokens_cache_write AS ctx_tokens_cache_write
-FROM sessions s
-LEFT JOIN messages ctx
-       ON ctx.session_id = s.id
-      AND ctx.message_id = (
-          SELECT message_id FROM messages
-           WHERE session_id = s.id AND role = 'assistant' AND tokens_input IS NOT NULL
-           ORDER BY message_id DESC LIMIT 1);
+-- Index the checkpoints, so a read seeks the newest one.
+CREATE INDEX messages_checkpoint ON messages(session_id, message_id)
+    WHERE role = 'compaction';
 
 -- Replay rebuilds this projection; store each revision so session.config reads it directly instead of scanning the log from seq 1.
 CREATE TABLE session_configs (

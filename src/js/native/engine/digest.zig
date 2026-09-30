@@ -410,7 +410,7 @@ test "the activity never reloads the transcript, and a part event outranks it" {
     const sid = SessionId.bytes([_]u8{0} ** 16);
     var change: Change = .of(.{ .method = .@"session.activity_changed", .params = .{ .session_activity_changed_data = .{
         .session_id = sid,
-        .activity = .{ .state = .{ .idle = .{} }, .config = null, .queued = 0, .context_usage = .zero, .pending_compaction = null },
+        .activity = .{ .state = .{ .idle = .{} }, .config = null, .queued = 0, .context_tokens = 0, .pending_compaction = null },
     } } });
     try testing.expectEqualStrings("quiet", change.kind());
 

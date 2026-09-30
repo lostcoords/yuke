@@ -17,7 +17,8 @@ pub const SessionActivity = struct {
     state: activity.ActivityState,
     config: ?run.RunConfig = null,
     queued: u64,
-    context_usage: message.TokenUsage,
+    /// The tokens of the next request: the newest provider count plus an estimate of the later messages. Compaction starts from this count.
+    context_tokens: u64,
     pending_compaction: ?ids.RunId = null,
 };
 
@@ -101,6 +102,8 @@ pub const SessionGetParams = struct {
     session_id: ids.SessionId,
     /// Compare the stored AGENTS.md and skill snapshots with the files on disk.
     check_files: bool = false,
+    /// Include the provider usage of the newest assistant turn that reported one.
+    last_usage: bool = false,
 };
 
 /// Which stored snapshots differ from the files on disk.
@@ -118,6 +121,8 @@ pub const SessionListItem = struct {
     /// Only session.get includes the instruction sources and the skill catalog.
     instruction_sources: ?[]const instructions.InstructionSource = null,
     skills: ?[]const skill.SkillInfo = null,
+    /// Only session.get with last_usage includes the provider usage of the newest assistant turn that reported one. Zero before any turn reports usage.
+    usage_last: ?message.TokenUsage = null,
     /// Only session.get with check_files includes this field.
     context_changes: ?ContextChanges = null,
 };

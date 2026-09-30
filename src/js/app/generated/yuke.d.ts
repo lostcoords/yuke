@@ -341,6 +341,11 @@ function sessionGet(sessionId: string): Promise<Wire.SessionListItem>;
  */
 function sessionCheckContext(sessionId: string): Promise<Wire.SessionListItem>;
 /**
+ * Read one session with the facts that the context window shows: the instruction sources, the skills, and `usage_last`.
+ * It never resolves to null. It throws when the engine does not know the session or the request fails.
+ */
+function sessionContextInfo(sessionId: string): Promise<Wire.SessionListItem>;
+/**
  * Rescan AGENTS.md and the skill roots for one idle session. The next run uses the new snapshots.
  */
 function sessionReloadContext(sessionId: string): Promise<Wire.SessionReloadContextResult>;
@@ -457,6 +462,7 @@ export const client: {
     sessionActivity: typeof sessionActivity;
     sessionGet: typeof sessionGet;
     sessionCheckContext: typeof sessionCheckContext;
+    sessionContextInfo: typeof sessionContextInfo;
     sessionReloadContext: typeof sessionReloadContext;
     skillLoad: typeof skillLoad;
     sessionQueue: typeof sessionQueue;
@@ -1241,7 +1247,7 @@ export type FeedActivity = Wire.SessionActivity | {
         type: "idle";
     };
     queued: number;
-    context_usage: Wire.TokenUsage;
+    context_tokens: number;
     pending_compaction: null;
 };
 export type FeedItem = {
@@ -4642,7 +4648,8 @@ export interface SessionActivity {
   readonly state: ActivityState;
   readonly config?: RunConfig;
   readonly queued: number;
-  readonly context_usage: TokenUsage;
+  /** The tokens of the next request: the newest provider count plus an estimate of the later messages. Compaction starts from this count. */
+  readonly context_tokens: number;
   readonly pending_compaction?: RunId;
 }
 
@@ -4726,6 +4733,8 @@ export interface SessionGetParams {
   readonly session_id: SessionId;
   /** Compare the stored AGENTS.md and skill snapshots with the files on disk. */
   readonly check_files?: boolean;
+  /** Include the provider usage of the newest assistant turn that reported one. */
+  readonly last_usage?: boolean;
 }
 
 /** Which stored snapshots differ from the files on disk. */
@@ -4743,6 +4752,8 @@ export interface SessionListItem {
   /** Only session.get includes the instruction sources and the skill catalog. */
   readonly instruction_sources?: ReadonlyArray<InstructionSource>;
   readonly skills?: ReadonlyArray<SkillInfo>;
+  /** Only session.get with last_usage includes the provider usage of the newest assistant turn that reported one. Zero before any turn reports usage. */
+  readonly usage_last?: TokenUsage;
   /** Only session.get with check_files includes this field. */
   readonly context_changes?: ContextChanges;
 }

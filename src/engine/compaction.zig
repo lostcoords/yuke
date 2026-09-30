@@ -147,7 +147,7 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: ro
     // A tail that alone reaches the compaction point would compact again at once.
     if (budget.fixed + cut.tokens_kept >= budget.compact_at) return error.TurnTooLarge;
     // The record states the count that the gauge showed before the summary.
-    const count_before = try context.count(engine.deps.gpa, db, sid, head, budget);
+    const count_before = try context.count(engine.deps.gpa, db, sid, budget.model, budget.fixed);
     const covered = try context.collect(engine.deps.gpa, arena, db, sid, head, cut.first_kept_id);
     // The summary reads no blob, so a text-only modality set turns every attachment into its note.
     const built = (try provider.request_builder.build(arena, covered, .{
@@ -302,11 +302,11 @@ test "the stored estimate charges each image, and the cut reads the same rows" {
     const sid = [_]u8{10} ** 16;
     try Resources.seedSession(&db, sid, .{ .model = "mock", .title = "t" });
     try seedMessage(&db, a, sid, 1, .user, 300);
-    const before = try context.count(testing.allocator, &db, sid, null, unmeasured);
+    const before = try context.count(testing.allocator, &db, sid, "mock/m", 0);
     const blob: proto.content.MediaBlob = .{ .hash = .bytes(@splat(0x5a)), .mime = "image/png", .bytes = 64 };
     const message: proto.message.Message = .{ .user = .{ .id = 2, .input_id = 2, .content = &.{ .{ .image = .{ .source = blob } }, .{ .image = .{ .source = blob } } }, .time = .{ .created_at_ms = 2 } } };
     try seedCommitted(&db, a, sid, 2, message);
-    const after = try context.count(testing.allocator, &db, sid, null, unmeasured);
+    const after = try context.count(testing.allocator, &db, sid, "mock/m", 0);
     try testing.expectEqual(before + 2 * token_estimate.media_tokens, after);
     // The cut charges the same rows the same way, so the covered range carries the image cost.
     try seedMessage(&db, a, sid, 3, .assistant, 300);
@@ -314,7 +314,7 @@ test "the stored estimate charges each image, and the cut reads the same rows" {
     try seedMessage(&db, a, sid, 5, .assistant, 3000);
     const cut = (try selectCut(testing.allocator, &db, sid, "mock/m", 0, 100)).?;
     try testing.expectEqual(@as(u64, 4), cut.first_kept_id);
-    try testing.expectEqual(try context.count(testing.allocator, &db, sid, null, unmeasured), cut.tokens_before);
+    try testing.expectEqual(try context.count(testing.allocator, &db, sid, "mock/m", 0), cut.tokens_before);
     try testing.expect(cut.tokens_before - cut.tokens_kept >= after);
 }
 
@@ -424,6 +424,9 @@ test "a compaction commits one checkpoint and ends its run" {
     try testing.expectEqual(proto.enums.CompactionReason.manual, checkpoint.reason);
     try testing.expect(std.mem.indexOf(u8, checkpoint.summary, "Hello from the mock provider.") != null);
     try testing.expect(checkpoint.tokens_after < checkpoint.tokens_before);
+    // The gauge counts the checkpoint at once, with no new provider answer.
+    f.session = try f.engine.activate(.bytes(TaskFixture.sid));
+    try testing.expectEqual(checkpoint.tokens_after, (try session_events.residentActivity(&f.engine, a, f.session)).context_tokens);
     // The run left no open marker, so a restart repairs nothing.
     const snapshot = (try database.session.snapshot(&f.db, a, TaskFixture.sid)).?;
     try testing.expectEqual(@as(?u64, null), snapshot.open_run_id);
@@ -460,6 +463,48 @@ test "the compaction record starts from the provider count of the session model"
     // The provider input holds messages 1 to 3 and the prompt, so only the answer adds to it.
     const head = (try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid)).?;
     try testing.expectEqual(50_000 + token_estimate.ofMessage(answer).tokens, head.message.compaction.tokens_before);
+}
+
+test "a listed session that is not resident shows its count" {
+    var f: TaskFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const other = [_]u8{22} ** 16;
+    try Resources.seedSession(&f.db, other, .{ .model = "mock/m", .title = "other" });
+    try seedMessage(&f.db, a, other, 1, .user, 4000);
+    try testing.expect(f.engine.sessions.get(.bytes(other)) == null);
+    const listed = try commands.sessionList(&f.engine, a, .{});
+    for (listed.items) |item| if (std.meta.eql(item.session.id, proto.ids.SessionId.bytes(other))) {
+        try testing.expectEqual(token_estimate.ofBytes(4000), item.activity.context_tokens);
+        break;
+    } else return error.TestExpectedListed;
+}
+
+test "a new prompt estimate clears the cached gauge" {
+    var f: TaskFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try seedMessage(&f.db, a, TaskFixture.sid, 1, .user, 4000);
+    try f.db.conn.execNoArgs("UPDATE sessions SET prompt_tokens = 999");
+    const stale = (try session_events.residentActivity(&f.engine, a, f.session)).context_tokens;
+    try testing.expectEqual(999 + token_estimate.ofBytes(4000), stale);
+    // A request build stores the estimate of its own prompt and tools.
+    const slot = try runs.prepareCompaction(&f.engine, f.session, .manual, null);
+    slot.phase = .running; // the test drives the task, so it takes the transition `launch` makes
+    try prompt.refresh(&f.engine, a, slot);
+    _ = try round_request.snapshot(a, &f.engine, slot, f.engine.deps.providers.merged.resolveModel(slot.config.model).?);
+    const fresh = (try session_events.residentActivity(&f.engine, a, f.session)).context_tokens;
+    try testing.expect(fresh != stale);
+    try testing.expectEqual(try context.count(testing.allocator, &f.db, TaskFixture.sid, null, null), fresh);
+    const io = f.resources.runtime.io();
+    var future = try io.concurrent(runs.execute, .{ &f.engine, slot });
+    future.await(io);
 }
 
 test "a history with no earlier turn skips instead of a model call" {
@@ -581,7 +626,7 @@ fn sendAndWait(f: *TaskFixture, arena: std.mem.Allocator, text: []const u8) !voi
     try f.engine.turn_tasks.await(f.engine.deps.io);
 }
 
-test "a request inside its budget reads the checkpoint and context sizes once" {
+test "a send runs each context statement a fixed number of times" {
     var f: TaskFixture = undefined;
     try f.init();
     defer f.deinit();
@@ -600,7 +645,9 @@ test "a request inside its budget reads the checkpoint and context sizes once" {
     try sendAndWait(&f, a, "one context read");
     try testing.expectEqual(@as(usize, 1), capture.requests.items.len);
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[0], "one context read") != null);
-    inline for (statements) |stmt| try testing.expectEqual(@as(c_int, 1), c.sqlite3_stmt_status(stmt, c.SQLITE_STMTSTATUS_RUN, 0));
+    // The build counts once, and the gauge reuses that count until the commit clears it.
+    const runs_of = [_]c_int{ 1, 2, 1 };
+    inline for (statements, runs_of) |stmt, want| try testing.expectEqual(want, c.sqlite3_stmt_status(stmt, c.SQLITE_STMTSTATUS_RUN, 0));
 }
 
 test "automatic compaction preserves the exact tail and the next assistant id" {
@@ -828,7 +875,7 @@ test "an incomplete or empty summary leaves the checkpoint unchanged" {
         const outcome = try f.run(.manual);
         try testing.expect(outcome == .failed);
         const head = (try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid)).?;
-        try testing.expectEqual(@as(u64, 5), head.id);
+        try testing.expectEqual(@as(u64, 5), head.message.compaction.id);
         const page = try database.message.historyPage(&f.db, a, TaskFixture.sid, 0, 20);
         try testing.expectEqual(@as(usize, 7), page.messages.len);
     }
@@ -973,14 +1020,13 @@ test "repeated compaction merges the prior summary and charges only the active c
     f.session = try f.engine.activate(.bytes(TaskFixture.sid));
     try seedMessage(&f.db, a, TaskFixture.sid, 6, .user, 300);
     try seedMessage(&f.db, a, TaskFixture.sid, 7, .assistant, 90_000);
-    const first = try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid);
-    const before = try context.count(testing.allocator, &f.db, TaskFixture.sid, first, unmeasured);
+    const before = try context.count(testing.allocator, &f.db, TaskFixture.sid, "mock/m", 0);
     try testing.expect(try f.run(.manual) == .compacted);
     const head = (try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid)).?;
-    try testing.expectEqual(@as(u64, 8), head.id);
+    try testing.expectEqual(@as(u64, 8), head.message.compaction.id);
     try testing.expectEqual(@as(u64, 6), head.from_id);
     // The record and the count share one scale: the record drops what the new checkpoint removed.
-    const after = try context.count(testing.allocator, &f.db, TaskFixture.sid, head, unmeasured);
+    const after = try context.count(testing.allocator, &f.db, TaskFixture.sid, "mock/m", 0);
     try testing.expectEqual(before - after, head.message.compaction.tokens_before - head.message.compaction.tokens_after);
     // The merge call carries the wrapped earlier summary and the merge instruction the stub answered.
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "<context_summary>") != null);

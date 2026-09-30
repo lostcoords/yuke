@@ -60,7 +60,7 @@ root.popOverlay();
 // The catalog readings must come through the shell's own wiring, not a test's own callbacks.
 {
   await listSessions([{ session: { id: "probe", model: "wired-model", message_count: 3, updated_at_ms: 1 },
-    activity: { state: { type: "idle" }, queued: 0, context_usage: { input: 2500 }, pending_compaction: null } }]);
+    activity: { state: { type: "idle" }, queued: 0, context_tokens: 2500, pending_compaction: null } }]);
   chat.session.sessionId = "probe";
   const right = status.side("right");
   if (right.indexOf("wired-model") < 0) fail.push("catalog-entry-wired");

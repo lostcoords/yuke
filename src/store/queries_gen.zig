@@ -281,10 +281,10 @@ pub const ProtectedInputCount = sql.OneQuery(
 pub const InsertMessage = sql.ExecQuery(
     \\INSERT INTO messages(
     \\    session_id, message_id, seq, role, run_id, config_rev, model, protocol, finish,
-    \\    tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, cost, created_at_ms, tokens_estimate, reasoning_estimate
+    \\    tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, cost, created_at_ms, tokens_estimate, reasoning_estimate, first_kept_id
     \\) VALUES (
     \\    :session_id, :message_id, :seq, :role, :run_id, :config_rev, :model, :protocol, :finish,
-    \\    :tokens_input, :tokens_output, :tokens_reasoning, :tokens_cache_read, :tokens_cache_write, :cost, :created_at_ms, :tokens_estimate, :reasoning_estimate
+    \\    :tokens_input, :tokens_output, :tokens_reasoning, :tokens_cache_read, :tokens_cache_write, :cost, :created_at_ms, :tokens_estimate, :reasoning_estimate, :first_kept_id
     \\);
 ,
     struct {
@@ -306,6 +306,7 @@ pub const InsertMessage = sql.ExecQuery(
         created_at_ms: u64,
         tokens_estimate: u64,
         reasoning_estimate: u64,
+        first_kept_id: ?u64 = null,
     },
 );
 
@@ -313,22 +314,27 @@ pub const AdvanceMessage = sql.OneQuery(
     \\UPDATE sessions SET
     \\    message_count           = message_count + 1,
     \\    message_id_high         = MAX(message_id_high, :message_id),
-    \\    usage_input_total       = usage_input_total       + :add_input,
-    \\    usage_output_total      = usage_output_total      + :add_output,
-    \\    usage_reasoning_total   = usage_reasoning_total    + :add_reasoning,
-    \\    usage_cache_read_total  = usage_cache_read_total   + :add_cache_read,
-    \\    usage_cache_write_total = usage_cache_write_total  + :add_cache_write,
+    \\    usage_input_total       = usage_input_total       + COALESCE(:tokens_input, 0),
+    \\    usage_output_total      = usage_output_total      + COALESCE(:tokens_output, 0),
+    \\    usage_reasoning_total   = usage_reasoning_total    + COALESCE(:tokens_reasoning, 0),
+    \\    usage_cache_read_total  = usage_cache_read_total   + COALESCE(:tokens_cache_read, 0),
+    \\    usage_cache_write_total = usage_cache_write_total  + COALESCE(:tokens_cache_write, 0),
+    \\    usage_last_input        = COALESCE(:tokens_input, usage_last_input),
+    \\    usage_last_output       = COALESCE(:tokens_output, usage_last_output),
+    \\    usage_last_reasoning    = COALESCE(:tokens_reasoning, usage_last_reasoning),
+    \\    usage_last_cache_read   = COALESCE(:tokens_cache_read, usage_last_cache_read),
+    \\    usage_last_cache_write  = COALESCE(:tokens_cache_write, usage_last_cache_write),
     \\    projection_seq          = :seq,
     \\    updated_at_ms           = MAX(updated_at_ms, :updated_at_ms)
     \\WHERE id = :id RETURNING 1 AS advanced;
 ,
     struct {
         message_id: u64,
-        add_input: u64,
-        add_output: u64,
-        add_reasoning: u64,
-        add_cache_read: u64,
-        add_cache_write: u64,
+        tokens_input: ?u64 = null,
+        tokens_output: ?u64 = null,
+        tokens_reasoning: ?u64 = null,
+        tokens_cache_read: ?u64 = null,
+        tokens_cache_write: ?u64 = null,
         seq: u64,
         updated_at_ms: u64,
         id: [16]u8,
@@ -373,25 +379,6 @@ pub const MessageTail = sql.ManyQuery(
     MessagePage.Row,
 );
 
-pub const LastAssistantUsage = sql.OptionalQuery(
-    \\SELECT tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write
-    \\FROM messages
-    \\WHERE session_id = :session_id AND role = 'assistant' AND tokens_input IS NOT NULL
-    \\ORDER BY message_id DESC
-    \\LIMIT 1;
-,
-    struct {
-        session_id: [16]u8,
-    },
-    struct {
-        tokens_input: ?u64,
-        tokens_output: ?u64,
-        tokens_reasoning: ?u64,
-        tokens_cache_read: ?u64,
-        tokens_cache_write: ?u64,
-    },
-);
-
 pub const RunReportMessages = sql.ManyQuery(
     \\SELECT e.payload FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
     \\WHERE m.session_id = :session_id AND m.run_id = :run_id AND m.role = 'assistant'
@@ -425,27 +412,37 @@ pub const ContextSizes = sql.ManyQuery(
 );
 
 pub const ContextCount = sql.OneQuery(
-    \\WITH newest AS (
-    \\    SELECT message_id, tokens_input, model IS :model AS own
+    \\WITH inputs AS NOT MATERIALIZED (
+    \\    SELECT COALESCE(:model, model) AS model, COALESCE(:prompt_tokens, prompt_tokens) AS prompt_tokens
+    \\    FROM sessions
+    \\    WHERE id = :session_id
+    \\), head AS NOT MATERIALIZED (
+    \\    SELECT message_id, first_kept_id AS kept
     \\    FROM messages
-    \\    WHERE session_id = :session_id AND role = 'assistant' AND tokens_input > 0 AND message_id > :checkpoint_id
+    \\    WHERE session_id = :session_id AND role = 'compaction'
     \\    ORDER BY message_id DESC
     \\    LIMIT 1
-    \\), anchor AS (SELECT message_id, tokens_input FROM newest WHERE own)
-    \\SELECT (SELECT tokens_input FROM anchor) AS anchor_input,
-    \\    COALESCE(SUM(tokens_estimate - CASE WHEN model IS :model THEN 0 ELSE reasoning_estimate END), 0) AS tokens
+    \\), newest AS NOT MATERIALIZED (
+    \\    SELECT message_id, tokens_input, model IS (SELECT model FROM inputs) AS own
+    \\    FROM messages
+    \\    WHERE session_id = :session_id AND role = 'assistant' AND tokens_input > 0
+    \\        AND message_id > COALESCE((SELECT message_id FROM head), 0)
+    \\    ORDER BY message_id DESC
+    \\    LIMIT 1
+    \\), anchor AS NOT MATERIALIZED (SELECT message_id, tokens_input FROM newest WHERE own)
+    \\SELECT COALESCE((SELECT tokens_input FROM anchor), (SELECT prompt_tokens FROM inputs))
+    \\    + COALESCE(SUM(tokens_estimate - CASE WHEN model IS (SELECT model FROM inputs) THEN 0 ELSE reasoning_estimate END), 0) AS tokens
     \\FROM messages
-    \\WHERE session_id = :session_id AND role <> 'compaction'
-    \\    AND message_id >= COALESCE((SELECT message_id FROM anchor), :first_message_id);
+    \\WHERE session_id = :session_id
+    \\    AND (role <> 'compaction' OR message_id = (SELECT message_id FROM head))
+    \\    AND message_id >= COALESCE((SELECT message_id FROM anchor), (SELECT kept FROM head), 0);
 ,
     struct {
-        model: []const u8,
+        model: ??[]const u8 = null,
+        prompt_tokens: ??u64 = null,
         session_id: [16]u8,
-        checkpoint_id: u64,
-        first_message_id: u64,
     },
     struct {
-        anchor_input: ?u64,
         tokens: u64,
     },
 );
@@ -534,8 +531,8 @@ pub const SessionSnapshot = sql.OptionalQuery(
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
     \\    created_at_ms, updated_at_ms,
     \\    open_run_id, open_run_kind, open_run_started_at_ms,
-    \\    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
-    \\FROM session_context
+    \\    usage_last_input, usage_last_output, usage_last_reasoning, usage_last_cache_read, usage_last_cache_write
+    \\FROM sessions
     \\WHERE id = :id;
 ,
     struct {
@@ -568,11 +565,11 @@ pub const SessionSnapshot = sql.OptionalQuery(
         open_run_id: ?u64,
         open_run_kind: ?[]const u8,
         open_run_started_at_ms: ?u64,
-        ctx_tokens_input: ?u64,
-        ctx_tokens_output: ?u64,
-        ctx_tokens_reasoning: ?u64,
-        ctx_tokens_cache_read: ?u64,
-        ctx_tokens_cache_write: ?u64,
+        usage_last_input: u64,
+        usage_last_output: u64,
+        usage_last_reasoning: u64,
+        usage_last_cache_read: u64,
+        usage_last_cache_write: u64,
     },
 );
 
@@ -625,9 +622,8 @@ pub const SessionPageRecent = sql.ManyQuery(
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
-    \\    created_at_ms, updated_at_ms,
-    \\    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
-    \\FROM session_context
+    \\    created_at_ms, updated_at_ms
+    \\FROM sessions
     \\WHERE (NOT :top_level OR origin IN ('root', 'fork'))
     \\  AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
     \\ORDER BY updated_at_ms DESC, id DESC
@@ -663,11 +659,6 @@ pub const SessionPageRecent = sql.ManyQuery(
         usage_cache_write_total: u64,
         created_at_ms: u64,
         updated_at_ms: u64,
-        ctx_tokens_input: ?u64,
-        ctx_tokens_output: ?u64,
-        ctx_tokens_reasoning: ?u64,
-        ctx_tokens_cache_read: ?u64,
-        ctx_tokens_cache_write: ?u64,
     },
 );
 
@@ -679,9 +670,8 @@ pub const SessionPageParent = sql.ManyQuery(
     \\    created_by_name, created_by_version,
     \\    message_count,
     \\    usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
-    \\    created_at_ms, updated_at_ms,
-    \\    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
-    \\FROM session_context
+    \\    created_at_ms, updated_at_ms
+    \\FROM sessions
     \\WHERE parent_id = :filter_parent_id
     \\  AND (NOT :top_level OR origin IN ('root', 'fork'))
     \\  AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
@@ -955,6 +945,18 @@ pub const SelectInstructionSources = sql.ManyQuery(
     },
 );
 
+pub const SetPromptTokens = sql.OptionalQuery(
+    \\UPDATE sessions SET prompt_tokens = :prompt_tokens WHERE id = :id AND prompt_tokens <> :prompt_tokens RETURNING 1 AS changed;
+,
+    struct {
+        prompt_tokens: u64,
+        id: [16]u8,
+    },
+    struct {
+        changed: i64,
+    },
+);
+
 pub const Queries = struct {
     insert_blob_ref: InsertBlobRef,
     blob_refs_of_session: BlobRefsOfSession,
@@ -980,7 +982,6 @@ pub const Queries = struct {
     advance_message: AdvanceMessage,
     message_page: MessagePage,
     message_tail: MessageTail,
-    last_assistant_usage: LastAssistantUsage,
     run_report_messages: RunReportMessages,
     context_sizes: ContextSizes,
     context_count: ContextCount,
@@ -1014,6 +1015,7 @@ pub const Queries = struct {
     insert_instruction: InsertInstruction,
     select_instructions: SelectInstructions,
     select_instruction_sources: SelectInstructionSources,
+    set_prompt_tokens: SetPromptTokens,
 
     pub fn prepareAll(conn: sql.Connection) !@This() {
         return sql.prepareAll(@This(), conn);

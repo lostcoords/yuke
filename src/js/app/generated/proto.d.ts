@@ -746,7 +746,8 @@ export interface SessionActivity {
   readonly state: ActivityState;
   readonly config?: RunConfig;
   readonly queued: number;
-  readonly context_usage: TokenUsage;
+  /** The tokens of the next request: the newest provider count plus an estimate of the later messages. Compaction starts from this count. */
+  readonly context_tokens: number;
   readonly pending_compaction?: RunId;
 }
 
@@ -830,6 +831,8 @@ export interface SessionGetParams {
   readonly session_id: SessionId;
   /** Compare the stored AGENTS.md and skill snapshots with the files on disk. */
   readonly check_files?: boolean;
+  /** Include the provider usage of the newest assistant turn that reported one. */
+  readonly last_usage?: boolean;
 }
 
 /** Which stored snapshots differ from the files on disk. */
@@ -847,6 +850,8 @@ export interface SessionListItem {
   /** Only session.get includes the instruction sources and the skill catalog. */
   readonly instruction_sources?: ReadonlyArray<InstructionSource>;
   readonly skills?: ReadonlyArray<SkillInfo>;
+  /** Only session.get with last_usage includes the provider usage of the newest assistant turn that reported one. Zero before any turn reports usage. */
+  readonly usage_last?: TokenUsage;
   /** Only session.get with check_files includes this field. */
   readonly context_changes?: ContextChanges;
 }

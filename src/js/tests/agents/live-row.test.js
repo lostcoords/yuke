@@ -25,8 +25,7 @@ plugins.use(agents({ catalog: { explore: {} } }));
   client.sessionOutline = () => ({ messages: [{ id: 1, type: "assistant" }], active: null });
   client.sessionParts = () => [part];
   client.sessionPart = () => ({ part });
-  const usage = { input: 8200, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 };
-  const item = { session: { id: childId, model: "m", origin: { type: "child", name: "explore", site: { session_id: parent, message_id: 1, part_id: 0 } } }, activity: { state: { type: "running_tool", run_id: 1, message_id: 1, part_id: 0, tool_name: "read", started_at_ms: 1 }, queued: 0, context_usage: usage, pending_compaction: null }, last_run: null };
+  const item = { session: { id: childId, model: "m", origin: { type: "child", name: "explore", site: { session_id: parent, message_id: 1, part_id: 0 } } }, activity: { state: { type: "running_tool", run_id: 1, message_id: 1, part_id: 0, tool_name: "read", started_at_ms: 1 }, queued: 0, context_tokens: 8200, pending_compaction: null }, last_run: null };
   let gets = 0;
   client.sessionGet = async () => { gets++; return JSON.parse(JSON.stringify(item)); };
   chat.session.reload();
@@ -46,7 +45,7 @@ plugins.use(agents({ catalog: { explore: {} } }));
   events.emit("session.changed", { type: "session", session: childId, kind: "quiet", facts: ["run.done"] });
   await settle();
   check(text().includes("agent explore · completed · 8.2k ctx"), "done row: " + text());
-  check(childLabel({ ...item, activity: { ...item.activity, context_usage: { ...usage, input: 0 } } }) === "completed", "no context words at zero");
+  check(childLabel({ ...item, activity: { ...item.activity, context_tokens: 0 } }) === "completed", "no context words at zero");
   // A fact the row does not draw costs no read.
   gets = 0;
   events.emit("session.changed", { type: "session", session: childId, kind: "quiet", facts: ["run.started"] });

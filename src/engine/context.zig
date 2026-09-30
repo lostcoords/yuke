@@ -52,7 +52,6 @@ pub const Projection = struct {
 /// The newest compaction message. It leads the request and stands for every message it covers.
 pub const Head = struct {
     message: proto.message.Message,
-    id: u64,
     /// The first message the checkpoint kept. The request reads no message below it.
     from_id: u64,
 };
@@ -63,28 +62,21 @@ pub fn readHead(gpa: std.mem.Allocator, arena: std.mem.Allocator, db: *database.
     defer row.deinit();
     const message = try std.json.parseFromSliceLeaky(proto.message.Message, arena, row.value.payload, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
     if (message != .compaction or message.compaction.id != row.value.message_id) return error.CorruptLog;
-    return .{ .message = message, .id = row.value.message_id, .from_id = message.compaction.first_kept_id orelse 0 };
+    return .{ .message = message, .from_id = message.compaction.first_kept_id orelse 0 };
 }
 
-/// Count the tokens of the next request. The newest provider count after the checkpoint anchors the count. The estimate covers the rest.
-pub fn count(gpa: std.mem.Allocator, db: *database.Database, session_id: [16]u8, head: ?Head, budget: Budget) !u64 {
-    var row = try db.queries.context_count.one(gpa, .{
-        .session_id = session_id,
-        .model = budget.model,
-        .checkpoint_id = if (head) |h| h.id else 0,
-        .first_message_id = if (head) |h| h.from_id else 0,
-    });
+/// Count the tokens of the next request to `model`. `prompt_tokens` stands for the prompt and the tools when no provider count anchors the count.
+/// A null model or prompt estimate takes the value that the session row stores.
+pub fn count(gpa: std.mem.Allocator, db: *database.Database, session_id: [16]u8, model: ?[]const u8, prompt_tokens: ?u64) !u64 {
+    var row = try db.queries.context_count.one(gpa, .{ .session_id = session_id, .model = model, .prompt_tokens = prompt_tokens });
     defer row.deinit();
-    // The anchor holds the prompt and every message before it. The sum starts at the anchor message.
-    if (row.value.anchor_input) |input| return input + row.value.tokens;
-    const summary = if (head) |h| token_estimate.ofSummary(h.message.compaction.summary) else 0;
-    return budget.fixed + summary + row.value.tokens;
+    return row.value.tokens;
 }
 
 /// Return the newest checkpoint and every retained message, or refuse a count above the compaction point.
 pub fn project(gpa: std.mem.Allocator, arena: std.mem.Allocator, db: *database.Database, session_id: [16]u8, budget: Budget) !Projection {
     const head = try readHead(gpa, arena, db, session_id);
-    const tokens = try count(gpa, db, session_id, head, budget);
+    const tokens = try count(gpa, db, session_id, budget.model, budget.fixed);
     if (tokens > budget.compact_at) return error.ContextHistoryTooLarge;
     return .{ .messages = try collect(gpa, arena, db, session_id, head, null), .tokens = tokens };
 }
@@ -161,13 +153,13 @@ test "only a provider count of the session model anchors the count" {
     // The provider input holds message 1 and the prompt, so only message 2 and the later message add to it.
     const answer = token_estimate.ofMessage(messages[1]);
     const later = token_estimate.ofMessage(messages[2]).tokens;
-    try t.expectEqual(5000 + answer.tokens + later, try count(t.allocator, &db, sid, null, budget));
+    try t.expectEqual(5000 + answer.tokens + later, try count(t.allocator, &db, sid, budget.model, budget.fixed));
     // Another model has no anchor and gets no replayed reasoning, so the prompt and the rest of each message are estimated.
     var switched = budget;
     switched.model = "p/other";
     try t.expect(answer.reasoning > 0);
     const rest = token_estimate.ofMessage(messages[0]).tokens + answer.tokens - answer.reasoning + later;
-    try t.expectEqual(700 + rest, try count(t.allocator, &db, sid, null, switched));
+    try t.expectEqual(700 + rest, try count(t.allocator, &db, sid, switched.model, switched.fixed));
 }
 
 test "model history survives cache eviction and an insufficient budget drops nothing" {

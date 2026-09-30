@@ -5,6 +5,7 @@ const proto = @import("proto");
 const Engine = @import("Engine.zig");
 const Session = @import("../session/session.zig").Session;
 const RunSlot = @import("../session/session.zig").RunSlot;
+const context = @import("context.zig");
 const database = @import("../store/store.zig");
 
 const message_store = database.message;
@@ -32,17 +33,6 @@ fn sessionOrigin(row: anytype) !proto.session.SessionOrigin {
         return .{ .fork = .{ .source_id = .bytes(row.source_id.?) } };
     }
     return error.CorruptDatabase;
-}
-
-/// The context gauge that `session_context` joined onto the row.
-pub fn contextUsage(row: anytype) proto.message.TokenUsage {
-    return .{
-        .input = row.ctx_tokens_input orelse 0,
-        .output = row.ctx_tokens_output orelse 0,
-        .reasoning = row.ctx_tokens_reasoning orelse 0,
-        .cache_read = row.ctx_tokens_cache_read orelse 0,
-        .cache_write = row.ctx_tokens_cache_write orelse 0,
-    };
 }
 
 /// Project one durable session row onto its public list item.
@@ -85,24 +75,25 @@ pub fn sessionItem(arena: std.mem.Allocator, row: anytype) !proto.session.Sessio
             .state = .{ .idle = .{} },
             .config = null,
             .queued = 0,
-            .context_usage = contextUsage(row),
+            // The list fills the live values, because a row holds no count.
+            .context_tokens = 0,
             .pending_compaction = null,
         },
     };
 }
 
-/// Build an activity from the session projection and its context usage.
+/// Build an activity from the session projection and its context count.
 fn sessionActivity(
     arena: std.mem.Allocator,
     session: *Session,
     slot: ?*RunSlot,
-    context_usage: proto.message.TokenUsage,
+    context_tokens: u64,
 ) !proto.session.SessionActivity {
     var activity: proto.session.SessionActivity = .{
         .state = .{ .idle = .{} },
         .config = null,
         .queued = session.queueDepth(),
-        .context_usage = context_usage,
+        .context_tokens = context_tokens,
         .pending_compaction = if (session.pending_compaction) |pending| pending.run_id else null,
     };
 
@@ -140,21 +131,22 @@ fn sessionActivity(
 
 /// Build the activity of one resident session.
 pub fn residentActivity(engine: *Engine, arena: std.mem.Allocator, rt: *Session) !proto.session.SessionActivity {
-    const session_id = rt.id.raw;
-    // Only a committed message moves the gauge, and nothing commits inside a round.
-    const usage = rt.context_usage orelse blk: {
-        const read = try message_store.contextUsage(engine.deps.db, arena, session_id);
-        rt.context_usage = read;
+    // A commit, a durable event, or a new prompt estimate clears the cached count.
+    const tokens = rt.context_tokens orelse blk: {
+        // The next request goes to the model that the run pinned, or to the session model between runs.
+        const model = if (rt.active_run) |run| run.config.model else null;
+        const read = try context.count(engine.deps.gpa, engine.deps.db, rt.id.raw, model, null);
+        rt.context_tokens = read;
         break :blk read;
     };
-    return sessionActivity(arena, rt, rt.active_run, usage);
+    return sessionActivity(arena, rt, rt.active_run, tokens);
 }
 
 /// Fold a durable engine event into the session, then publish the same value.
 pub fn emitDurable(engine: *Engine, rt: *Session, note: proto.rpc.Notification) void {
     std.debug.assert(note.method != .@"message.committed");
     // A durable event can move the committed set, so the gauge is re-read on the next activity.
-    rt.context_usage = null;
+    rt.context_tokens = null;
     // The engine produced this event against its own engine, so a rejection here is a bug.
     rt.apply(note.params) catch |err|
         std.debug.panic("cannot fold the durable event {t}: {t}", .{ note.method, err });
@@ -163,7 +155,7 @@ pub fn emitDurable(engine: *Engine, rt: *Session, note: proto.rpc.Notification) 
 
 /// Fold the known stored size and publish only the public event data.
 pub fn emitCommitted(engine: *Engine, rt: *Session, commit: message_store.Commit) void {
-    rt.context_usage = null;
+    rt.context_tokens = null;
     rt.commit(commit.data, commit.bytes) catch |err|
         std.debug.panic("cannot fold the committed message: {t}", .{err});
     engine.sinks.emit(.{ .method = .@"message.committed", .params = .{ .message_committed_data = commit.data } });

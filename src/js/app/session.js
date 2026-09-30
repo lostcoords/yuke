@@ -14,7 +14,7 @@ import { errorText } from "yuke:internal/format";
 /** @import { InjectContext } from "./types/ext.js" */
 /** @import { Context } from "yuke:internal/ext" */
 /** @typedef {Wire.CreateSession} CreateSessionDraft */
-/** @typedef {Wire.SessionActivity | { state: { type: "idle" }, queued: number, context_usage: Wire.TokenUsage, pending_compaction: null }} FeedActivity */
+/** @typedef {Wire.SessionActivity | { state: { type: "idle" }, queued: number, context_tokens: number, pending_compaction: null }} FeedActivity */
 /**
  * One entry of the session list: the session record and its activity.
  * @typedef {{ session: Wire.Session, activity: FeedActivity }} FeedItem

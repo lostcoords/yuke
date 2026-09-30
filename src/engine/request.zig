@@ -36,6 +36,10 @@ pub fn snapshot(
     const build = try config.buildConfig(engine, arena, slot, &model);
 
     const budget = try context.Budget.forRequest(model.limits.context_window, slot.config.model, build.max_output_tokens, build.system, build.tools);
+    // The gauge counts with the prompt estimate of the last request, so a new estimate clears its cached count.
+    if (try engine.deps.db.queries.set_prompt_tokens.maybeOne(arena, .{ .id = slot.sessionId().raw, .prompt_tokens = budget.fixed })) |_| {
+        if (engine.sessions.get(slot.sessionId())) |rt| rt.context_tokens = null;
+    }
     return .{ .route = route, .model = model, .build = build, .budget = budget };
 }
 
@@ -54,6 +58,8 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
     });
     const tools = try provider.request_builder.declared(arena, build.tools, built.added);
     const max_output = held.budget.clampOutput(build.max_output_tokens, projected.tokens);
+    // The gauge counts with the same model and prompt estimate, so it reuses this count.
+    if (engine.sessions.get(slot.sessionId())) |rt| rt.context_tokens = projected.tokens;
 
     // The serializer and the header builder both copy this, so it only has to outlive `prepare`.
     const session_hex = std.fmt.bytesToHex(slot.sessionId().raw, .lower);

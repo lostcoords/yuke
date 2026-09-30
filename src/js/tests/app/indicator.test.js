@@ -13,14 +13,15 @@ const chat = currentPane();
 const key = (code, o = {}) => ({ type: "key", code, char: "", text: "", event: "press", mods: 0, ...o });
 const settle = async () => { for (let i = 0; i < 64; i++) await Promise.resolve(); };
 const usage = { input: 200, output: 30, reasoning: 5, cache_read: 0, cache_write: 0 };
-const idle = { state: { type: "idle" }, queued: 0, context_usage: usage, pending_compaction: null };
+// The count differs from the last input, so a check reads the right one.
+const idle = { state: { type: "idle" }, queued: 0, context_tokens: 300, pending_compaction: null };
 const tool = { ...idle, state: { type: "running_tool", run_id: 1, message_id: 1, part_id: 1, tool_name: "bash", started_at_ms: Date.now() - 65000 }, queued: 2 };
 let answer = idle;
 let load = { runs: 0, childRuns: 0, continuations: 0 };
 client.load = () => load;
 client.sessionOpen = () => true;
 client.sessionActivity = () => answer;
-client.sessionGet = async () => ({ instruction_sources: [{ scope: "workspace", path: "/work/AGENTS.md" }] });
+client.sessionContextInfo = async () => ({ instruction_sources: [{ scope: "workspace", path: "/work/AGENTS.md" }], usage_last: usage });
 const items = [
   { input_id: 11, queued_at_ms: 1, content: [{ type: "text", text: "first line\nsecond" }] },
   { input_id: 12, queued_at_ms: 2, content: [{ type: "image", source: { type: "blob", hash: "h", mime: "image/png", bytes: 1 } }, { type: "text", text: "look" }] },
@@ -39,7 +40,7 @@ await settle();
 // Idle: no rule line, no strip, and no queue command.
 check("idle-rule", events.bail("chat.rule", chat) === undefined);
 check("idle-strip", stripRows([]).length === 0 && events.bail("chat.strip", chat).length === 0);
-check("idle-status", status.side("right").indexOf("[█░░░░░] 20% context") >= 0);
+check("idle-status", status.side("right").indexOf(contextBar(300, 1000) + " 30% context") >= 0);
 check("idle-no-queue-cmd", !command.available("queue:drop"));
 // A resting pane still shows the child runs from the moment the count rose from zero; a tick reads the load once, and each pane rule reads that count.
 load = { runs: 2, childRuns: 2, continuations: 0 };
@@ -66,7 +67,7 @@ root.tickLayers();
 check("queue-read-once", queueReads === 1);
 const strip = events.bail("chat.strip", chat);
 check("strip-rows", strip.length === 2 && strip[0].text === " ↳ first line…" && strip[1].text === " ↳ [image] look");
-check("working-status", status.side("right").indexOf("[█░░░░░] 20% context") >= 0);
+check("working-status", status.side("right").indexOf(contextBar(300, 1000) + " 30% context") >= 0);
 // The same count reads nothing again; a changed count reads once more.
 events.emit("session.changed", { type: "session", session: "s1", kind: "quiet", facts: ["session.activity_changed"] });
 await settle();
@@ -91,7 +92,10 @@ check("strip-folds", many.length === 3 && many[2].text === " ↳ … 2 more queu
 command.perform("context:show");
 await settle();
 check("context-open", dialogs().length === 1);
-check("context-instructions", dialogs()[0].content.pager.source.rows(80, 0, 100).some((row) => /^workspace AGENTS +\/work\/AGENTS\.md$/.test(rowText(row))));
+const windowRows = dialogs()[0].content.pager.source.rows(80, 0, 100).map(rowText);
+check("context-instructions", windowRows.some((row) => /^workspace AGENTS +\/work\/AGENTS\.md$/.test(row)));
+check("context-count", windowRows.some((row) => /^context +300 \/ 1,000 · 30%$/.test(row)));
+check("context-last-turn", windowRows.some((row) => /^last turn +in 200 · out 30 · reasoning 5$/.test(row)));
 root.onEvent(key("esc"));
 check("context-closed", dialogs().length === 0);
 // The pure helpers.

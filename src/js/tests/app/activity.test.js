@@ -6,7 +6,7 @@ import { plugins } from "yuke:internal/ext";
 import { currentEntry, showSession, currentPane } from "yuke:internal/session";
 // The shell built the first chat pane at boot.
 const chat = currentPane();
-const idle = { state: { type: "idle" }, queued: 0, context_usage: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, pending_compaction: null };
+const idle = { state: { type: "idle" }, queued: 0, context_tokens: 0, pending_compaction: null };
 const streaming = { ...idle, state: { type: "streaming", run_id: 1, started_at_ms: 5 }, queued: 2 };
 let reads = 0;
 let answer = streaming;

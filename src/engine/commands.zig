@@ -8,6 +8,7 @@ const database = @import("../store/store.zig");
 const blob_store = database.blob;
 const run = @import("run.zig");
 const session_events = @import("events.zig");
+const request_context = @import("context.zig");
 const paths = @import("../paths.zig");
 const instructions = @import("../session/instructions.zig");
 const skills = @import("../session/skills.zig");
@@ -98,7 +99,7 @@ pub fn sessionList(engine: *Engine, arena: std.mem.Allocator, params: proto.sess
 fn liveSessionItem(engine: *Engine, arena: std.mem.Allocator, row: anytype) !proto.session.SessionListItem {
     var item = try session_events.sessionItem(arena, row);
     if (row.parent_id != null) item.last_run = try database.run.latestOutcome(engine.deps.db, arena, row.id);
-    item.activity = try liveActivity(engine, arena, item.session.id, item.activity);
+    item.activity = try liveActivity(engine, arena, row, item.activity);
     return item;
 }
 
@@ -116,6 +117,13 @@ pub fn sessionGet(engine: *Engine, arena: std.mem.Allocator, params: proto.sessi
     var item = try liveSessionItem(engine, arena, snapshot);
     item.instruction_sources = try session_store.instructionSources(engine.deps.db, arena, session_id.raw);
     item.skills = try session_store.skillCatalog(engine.deps.db, arena, session_id.raw);
+    if (params.last_usage) item.usage_last = .{
+        .input = snapshot.usage_last_input,
+        .output = snapshot.usage_last_output,
+        .reasoning = snapshot.usage_last_reasoning,
+        .cache_read = snapshot.usage_last_cache_read,
+        .cache_write = snapshot.usage_last_cache_write,
+    };
     if (params.check_files) item.context_changes = .{
         .instructions = try instructionsChanged(engine, arena, snapshot.root, item.instruction_sources.?),
         .skills = try skills.changed(arena, engine.deps.io, engine.deps.execution.env, snapshot.root, item.skills.?),
@@ -201,11 +209,12 @@ fn skillContent(engine: *Engine, arena: std.mem.Allocator, catalog: []const skil
 }
 
 /// Return the live activity of a resident session, or the idle activity with the queue depth for the rest.
-fn liveActivity(engine: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId, durable: proto.session.SessionActivity) !proto.session.SessionActivity {
-    if (engine.sessions.get(id)) |rt| return session_events.residentActivity(engine, arena, rt);
+fn liveActivity(engine: *Engine, arena: std.mem.Allocator, row: anytype, durable: proto.session.SessionActivity) !proto.session.SessionActivity {
+    if (engine.sessions.get(.bytes(row.id))) |rt| return session_events.residentActivity(engine, arena, rt);
     std.debug.assert(durable.state == .idle);
     var activity = durable;
-    activity.queued = try input_store.count(engine.deps.db, arena, id.raw);
+    activity.queued = try input_store.count(engine.deps.db, arena, row.id);
+    activity.context_tokens = try request_context.count(engine.deps.gpa, engine.deps.db, row.id, null, null);
     return activity;
 }
 

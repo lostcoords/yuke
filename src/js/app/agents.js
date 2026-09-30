@@ -54,7 +54,7 @@ function childOf(part) {
 /** The live words of a child on its spawn row: the state the picker shows, then the context it holds. */
 /** @param {ChildView} view @returns {string} */
 export function childLabel(view) {
-    const held = view.activity.context_usage.input;
+    const held = view.activity.context_tokens;
     return childState(view) + (held > 0 ? " · " + tokenLabel(held) + " ctx" : "");
 }
 

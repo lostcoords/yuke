@@ -60,11 +60,11 @@ SELECT 1 AS present FROM sessions WHERE id = :id;
 -- open_run_id: ?u64!
 -- open_run_kind: ?[]const u8!
 -- open_run_started_at_ms: ?u64!
--- ctx_tokens_input: ?u64!
--- ctx_tokens_output: ?u64!
--- ctx_tokens_reasoning: ?u64!
--- ctx_tokens_cache_read: ?u64!
--- ctx_tokens_cache_write: ?u64!
+-- usage_last_input: u64!
+-- usage_last_output: u64!
+-- usage_last_reasoning: u64!
+-- usage_last_cache_read: u64!
+-- usage_last_cache_write: u64!
 SELECT
     id, root,
     origin, parent_id, parent_message_id, parent_part_id, source_id,
@@ -74,8 +74,8 @@ SELECT
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
     created_at_ms, updated_at_ms,
     open_run_id, open_run_kind, open_run_started_at_ms,
-    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
-FROM session_context
+    usage_last_input, usage_last_output, usage_last_reasoning, usage_last_cache_read, usage_last_cache_write
+FROM sessions
 WHERE id = :id;
 
 -- name: SetOpenRun :one
@@ -140,11 +140,6 @@ RETURNING 1 AS changed;
 -- usage_cache_write_total: u64!
 -- created_at_ms: u64!
 -- updated_at_ms: u64!
--- ctx_tokens_input: ?u64!
--- ctx_tokens_output: ?u64!
--- ctx_tokens_reasoning: ?u64!
--- ctx_tokens_cache_read: ?u64!
--- ctx_tokens_cache_write: ?u64!
 SELECT
     id, root,
     origin, parent_id, parent_message_id, parent_part_id, source_id,
@@ -152,9 +147,8 @@ SELECT
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
-    created_at_ms, updated_at_ms,
-    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
-FROM session_context
+    created_at_ms, updated_at_ms
+FROM sessions
 WHERE (NOT :top_level OR origin IN ('root', 'fork'))
   AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
 ORDER BY updated_at_ms DESC, id DESC
@@ -176,9 +170,8 @@ SELECT
     created_by_name, created_by_version,
     message_count,
     usage_input_total, usage_output_total, usage_reasoning_total, usage_cache_read_total, usage_cache_write_total,
-    created_at_ms, updated_at_ms,
-    ctx_tokens_input, ctx_tokens_output, ctx_tokens_reasoning, ctx_tokens_cache_read, ctx_tokens_cache_write
-FROM session_context
+    created_at_ms, updated_at_ms
+FROM sessions
 WHERE parent_id = :filter_parent_id
   AND (NOT :top_level OR origin IN ('root', 'fork'))
   AND (updated_at_ms, id) < (:cursor_updated_at_ms, :cursor_id)
@@ -342,3 +335,10 @@ WHERE session_id = :session_id ORDER BY scope;
 -- content_hash: [32]u8!
 SELECT scope, path, canonical_path, content_hash FROM session_instructions
 WHERE session_id = :session_id ORDER BY scope;
+
+-- name: SetPromptTokens :optional
+-- Store the prompt estimate of the request that the engine built last. An equal value writes nothing and returns no row.
+-- id: [16]u8!
+-- prompt_tokens: u64!
+-- changed: i64!
+UPDATE sessions SET prompt_tokens = :prompt_tokens WHERE id = :id AND prompt_tokens <> :prompt_tokens RETURNING 1 AS changed;

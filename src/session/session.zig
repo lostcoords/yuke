@@ -165,7 +165,8 @@ pub const Session = struct {
     pending_compaction: ?PendingCompaction = null,
     faulted: bool = false,
     hydrated: bool = false,
-    context_usage: ?message.TokenUsage = null,
+    /// The cached context count of the gauge. A commit, a durable event, or a new prompt estimate clears it.
+    context_tokens: ?u64 = null,
     pins: u32 = 0,
 
     pub fn init(gpa: std.mem.Allocator, id: ids.SessionId) Session {

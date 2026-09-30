@@ -18,34 +18,41 @@
 -- created_at_ms: u64!
 -- tokens_estimate: u64!
 -- reasoning_estimate: u64!
+-- first_kept_id: ?u64!
 INSERT INTO messages(
     session_id, message_id, seq, role, run_id, config_rev, model, protocol, finish,
-    tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, cost, created_at_ms, tokens_estimate, reasoning_estimate
+    tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, cost, created_at_ms, tokens_estimate, reasoning_estimate, first_kept_id
 ) VALUES (
     :session_id, :message_id, :seq, :role, :run_id, :config_rev, :model, :protocol, :finish,
-    :tokens_input, :tokens_output, :tokens_reasoning, :tokens_cache_read, :tokens_cache_write, :cost, :created_at_ms, :tokens_estimate, :reasoning_estimate
+    :tokens_input, :tokens_output, :tokens_reasoning, :tokens_cache_read, :tokens_cache_write, :cost, :created_at_ms, :tokens_estimate, :reasoning_estimate, :first_kept_id
 );
 
 -- name: AdvanceMessage :one
--- Raise the session summary when a message commits: count, token totals, the id mark, and projection seq; RETURNING yields no row for an absent session, so the caller sees NoRow.
+-- Raise the session summary when a message commits: count, token totals, the last usage, the id mark, and projection seq. Null tokens mean that the message reports no usage.
+-- RETURNING yields no row for an absent session, so the caller sees NoRow.
 -- id: [16]u8!
 -- message_id: u64!
 -- seq: u64!
--- add_input: u64!
--- add_output: u64!
--- add_reasoning: u64!
--- add_cache_read: u64!
--- add_cache_write: u64!
+-- tokens_input: ?u64!
+-- tokens_output: ?u64!
+-- tokens_reasoning: ?u64!
+-- tokens_cache_read: ?u64!
+-- tokens_cache_write: ?u64!
 -- updated_at_ms: u64!
 -- advanced: i64!
 UPDATE sessions SET
     message_count           = message_count + 1,
     message_id_high         = MAX(message_id_high, :message_id),
-    usage_input_total       = usage_input_total       + :add_input,
-    usage_output_total      = usage_output_total      + :add_output,
-    usage_reasoning_total   = usage_reasoning_total    + :add_reasoning,
-    usage_cache_read_total  = usage_cache_read_total   + :add_cache_read,
-    usage_cache_write_total = usage_cache_write_total  + :add_cache_write,
+    usage_input_total       = usage_input_total       + COALESCE(:tokens_input, 0),
+    usage_output_total      = usage_output_total      + COALESCE(:tokens_output, 0),
+    usage_reasoning_total   = usage_reasoning_total    + COALESCE(:tokens_reasoning, 0),
+    usage_cache_read_total  = usage_cache_read_total   + COALESCE(:tokens_cache_read, 0),
+    usage_cache_write_total = usage_cache_write_total  + COALESCE(:tokens_cache_write, 0),
+    usage_last_input        = COALESCE(:tokens_input, usage_last_input),
+    usage_last_output       = COALESCE(:tokens_output, usage_last_output),
+    usage_last_reasoning    = COALESCE(:tokens_reasoning, usage_last_reasoning),
+    usage_last_cache_read   = COALESCE(:tokens_cache_read, usage_last_cache_read),
+    usage_last_cache_write  = COALESCE(:tokens_cache_write, usage_last_cache_write),
     projection_seq          = :seq,
     updated_at_ms           = MAX(updated_at_ms, :updated_at_ms)
 WHERE id = :id RETURNING 1 AS advanced;
@@ -77,20 +84,6 @@ FROM (
 ) t JOIN events e ON e.session_id = t.session_id AND e.seq = t.seq
 ORDER BY t.message_id ASC;
 
--- name: LastAssistantUsage :optional
--- Return the newest committed assistant usage for the live context gauge, or no row; the session_context view serves the same value for a page.
--- session_id: [16]u8!
--- tokens_input: ?u64!
--- tokens_output: ?u64!
--- tokens_reasoning: ?u64!
--- tokens_cache_read: ?u64!
--- tokens_cache_write: ?u64!
-SELECT tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write
-FROM messages
-WHERE session_id = :session_id AND role = 'assistant' AND tokens_input IS NOT NULL
-ORDER BY message_id DESC
-LIMIT 1;
-
 -- name: RunReportMessages :many
 -- Read only this run's committed assistant output, newest first.
 -- session_id: [16]u8!
@@ -114,26 +107,38 @@ WHERE session_id = :session_id AND message_id >= :first_message_id AND role <> '
 ORDER BY message_id DESC;
 
 -- name: ContextCount :one
--- Read the parts of the next request count. The anchor is the newest nonzero provider input after the checkpoint, when the session model gave it.
--- A provider that omits usage records zero, so zero anchors nothing. The sum starts at the anchor, or at the first kept message with no anchor.
+-- Count the next request from stored rows. The anchor is the newest nonzero provider input after the newest checkpoint, when `model` gave it.
+-- With an anchor, the count is its input plus the estimate from the anchor message on. With none, it is the prompt estimate plus the checkpoint and the kept messages.
+-- Another model drops the reasoning share. A provider that omits usage records zero, so zero anchors nothing.
+-- A null model or prompt estimate takes the value that the session row stores.
 -- session_id: [16]u8!
--- model: []const u8!
--- checkpoint_id: u64!
--- first_message_id: u64!
--- anchor_input: ?u64!
+-- model: ?[]const u8
+-- prompt_tokens: ?u64
 -- tokens: u64!
-WITH newest AS (
-    SELECT message_id, tokens_input, model IS :model AS own
+WITH inputs AS NOT MATERIALIZED (
+    SELECT COALESCE(:model, model) AS model, COALESCE(:prompt_tokens, prompt_tokens) AS prompt_tokens
+    FROM sessions
+    WHERE id = :session_id
+), head AS NOT MATERIALIZED (
+    SELECT message_id, first_kept_id AS kept
     FROM messages
-    WHERE session_id = :session_id AND role = 'assistant' AND tokens_input > 0 AND message_id > :checkpoint_id
+    WHERE session_id = :session_id AND role = 'compaction'
     ORDER BY message_id DESC
     LIMIT 1
-), anchor AS (SELECT message_id, tokens_input FROM newest WHERE own)
-SELECT (SELECT tokens_input FROM anchor) AS anchor_input,
-    COALESCE(SUM(tokens_estimate - CASE WHEN model IS :model THEN 0 ELSE reasoning_estimate END), 0) AS tokens
+), newest AS NOT MATERIALIZED (
+    SELECT message_id, tokens_input, model IS (SELECT model FROM inputs) AS own
+    FROM messages
+    WHERE session_id = :session_id AND role = 'assistant' AND tokens_input > 0
+        AND message_id > COALESCE((SELECT message_id FROM head), 0)
+    ORDER BY message_id DESC
+    LIMIT 1
+), anchor AS NOT MATERIALIZED (SELECT message_id, tokens_input FROM newest WHERE own)
+SELECT COALESCE((SELECT tokens_input FROM anchor), (SELECT prompt_tokens FROM inputs))
+    + COALESCE(SUM(tokens_estimate - CASE WHEN model IS (SELECT model FROM inputs) THEN 0 ELSE reasoning_estimate END), 0) AS tokens
 FROM messages
-WHERE session_id = :session_id AND role <> 'compaction'
-    AND message_id >= COALESCE((SELECT message_id FROM anchor), :first_message_id);
+WHERE session_id = :session_id
+    AND (role <> 'compaction' OR message_id = (SELECT message_id FROM head))
+    AND message_id >= COALESCE((SELECT message_id FROM anchor), (SELECT kept FROM head), 0);
 
 -- name: ContextMessages :many
 -- row-from: MessagePage

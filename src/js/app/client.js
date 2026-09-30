@@ -87,6 +87,15 @@ function sessionCheckContext(sessionId) {
 }
 
 /**
+ * Read one session with the facts that the context window shows: the instruction sources, the skills, and `usage_last`.
+ * It never resolves to null. It throws when the engine does not know the session or the request fails.
+ * @param {string} sessionId @returns {Promise<Wire.SessionListItem>}
+ */
+function sessionContextInfo(sessionId) {
+  return request("session.get", { session_id: sessionId, last_usage: true });
+}
+
+/**
  * Rescan AGENTS.md and the skill roots for one idle session. The next run uses the new snapshots.
  * @param {string} sessionId @returns {Promise<Wire.SessionReloadContextResult>}
  */
@@ -363,6 +372,7 @@ export const client = {
   sessionActivity,
   sessionGet,
   sessionCheckContext,
+  sessionContextInfo,
   sessionReloadContext,
   skillLoad,
   sessionQueue,
