@@ -367,7 +367,7 @@ function blobPut(path: string): Promise<Wire.MediaBlob>;
  */
 function blobPutData(data: string): Promise<Wire.MediaBlob>;
 /**
- * The parts of one message. The text of a text part and the arguments of a tool part are complete; a tool body and a view stay paged.
+ * The parts of one message. The text of a text part and the arguments of a tool part are complete; the tool output, error, and diff stay paged.
  */
 function sessionParts(sessionId: string, messageId: number): MessagePart[];
 /**
@@ -646,6 +646,12 @@ export class RootView {
     _closers: WeakMap<Overlay, () => void>;
     _leafScratch: Node[];
     tickables: TickableEntry[];
+    _tickScratch: TickableEntry[];
+    _passPeriod: number | null;
+    _passNow: number;
+    _passTicked: boolean;
+    _periodOf: (layer: Overlay | Tickable) => void;
+    _tickOf: (layer: Overlay | Tickable, isTickable: boolean) => void;
     _tickedAt: WeakMap<object, number>;
     _capture: Node | null;
     _needsDraw: boolean;

@@ -69,7 +69,7 @@ Use `prompt.build` to add text while you keep the built-in prompt. Search `Promp
 
 ## Subagents
 
-The optional `agents` plugin adds child sessions and three model tools. This is a complete `index.js`:
+The optional `agents` plugin adds child sessions and two model tools: `spawn_agent` and `send_agent_input`. The built-in `stop` tool ends a child. This is a complete `index.js`:
 
 ```js
 import { plugins } from "yuke";

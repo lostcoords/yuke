@@ -3,7 +3,7 @@ import { native } from "yuke:internal/native/engine";
 import { events } from "yuke:internal/kernel";
 import { gateInput } from "yuke:internal/ext";
 
-/** @import { MessagePart, PartRead, SessionOutline, TextCursor, ViewCut, ViewPart } from "yuke:internal/native/engine" */
+/** @import { MessagePart, PartRead, SessionOutline, TextCursor, FieldCut, PagedPart } from "yuke:internal/native/engine" */
 
 // This module emits the drain per kind in every frontend, so it declares the names and a headless bus accepts them.
 events.declare(["session.changed", "index.changed"]);
@@ -136,11 +136,11 @@ function blobPutData(data) {
 }
 
 /**
- * The parts of one message. The text of a text part and the arguments of a tool part are complete; a tool body and a view stay paged.
+ * The parts of one message. The text of a text part and the arguments of a tool part are complete; the tool output, error, and diff stay paged.
  * @param {string} sessionId @param {number} messageId @returns {MessagePart[]}
  */
 function sessionParts(sessionId, messageId) {
-  const parts = /** @type {ViewPart[]} */ (JSON.parse(native.sessionParts(sessionId, messageId)));
+  const parts = /** @type {PagedPart[]} */ (JSON.parse(native.sessionParts(sessionId, messageId)));
   return parts.map((p) => wholePart(sessionId, messageId, p));
 }
 
@@ -149,24 +149,24 @@ function sessionParts(sessionId, messageId) {
  * @param {string} sessionId @param {number} messageId @param {number} partId @param {TextCursor} [cursor] @returns {PartRead | null}
  */
 function sessionPart(sessionId, messageId, partId, cursor) {
-  const p = /** @type {ViewPart | undefined} */ (JSON.parse(native.sessionPart(sessionId, messageId, partId, cursor?.generation, cursor?.bytes))[0]);
+  const p = /** @type {PagedPart | undefined} */ (JSON.parse(native.sessionPart(sessionId, messageId, partId, cursor?.generation, cursor?.bytes))[0]);
   if (!p) return null;
   const next = p.text_generation === undefined || p.text_bytes === undefined ? null : { generation: p.text_generation, bytes: p.text_bytes };
   const tail = !!p.text_offset;
   return { part: wholePart(sessionId, messageId, p), cursor: next, tail };
 }
 
-/** @param {string} sessionId @param {number} messageId @param {ViewPart} p @returns {ViewPart} */
+/** @param {string} sessionId @param {number} messageId @param {PagedPart} p @returns {PagedPart} */
 function wholePart(sessionId, messageId, p) {
   delete p.text_generation;
   delete p.text_bytes;
   delete p.text_offset;
-  // Complete the text or tool arguments; the tool body and views stay paged.
+  // Complete the text or the tool arguments. The tool output, error, and diff stay paged.
   const field = p.type === "tool" ? "arguments" : "text";
   const cut = p.cut && p.cut.find((c) => c.field === field && c.next != null);
   if (!cut) return p;
   const tail = partTextFrom(sessionId, messageId, p.id, field, /** @type {number} */ (cut.next));
-  const remaining = /** @type {readonly ViewCut[]} */ (p.cut).filter((c) => c !== cut);
+  const remaining = /** @type {readonly FieldCut[]} */ (p.cut).filter((c) => c !== cut);
   if (p.type === "tool") return { ...p, arguments: p.arguments + tail, cut: remaining };
   if (p.type === "text" || p.type === "reasoning") return { ...p, text: p.text + tail, cut: remaining };
   return p;

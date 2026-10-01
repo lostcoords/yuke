@@ -19,10 +19,10 @@ declare module "yuke:internal/native/engine" {
     | { type: "session"; session: string; kind: "quiet" | "active" | "reload" | "gone"; id?: number; part?: number; facts: DrainFact[] };
 
   /** One page of text. `next` is the offset to ask for, or null at the end. */
-  export type TextPage = { text: string; next: number | null; bytes: number };
+  export type TextPage = { text: string; next: number | null };
 
   /** One value the projection cut: `field` is the address `partText` takes, `bytes` or `total` is the whole size, and `next` is where a reader resumes. */
-  export type ViewCut = { field: string; bytes?: number; total?: number; next?: number };
+  export type FieldCut = { field: string; bytes?: number; total?: number; next?: number };
 
   /** One part of a message. A user content part has no wire id, so its position is the id. */
   export type MessagePart = Wire.AssistantPart | (Wire.ContentPart & { id: number });
@@ -34,7 +34,7 @@ declare module "yuke:internal/native/engine" {
   export type PartRead = { part: MessagePart; cursor?: TextCursor | null; tail?: boolean };
 
   /** One part as the read surface returns it: the wire part plus every value the projection cut. */
-  export type ViewPart = MessagePart & { cut?: readonly ViewCut[]; text_generation?: number; text_bytes?: number; text_offset?: number };
+  export type PagedPart = MessagePart & { cut?: readonly FieldCut[]; text_generation?: number; text_bytes?: number; text_offset?: number };
 
   /** The QuickJS allocation counters exclude unused memory in the backing allocator. */
   export type MemoryUsage = {
@@ -77,7 +77,7 @@ declare module "yuke:internal/native/engine" {
     sessionParts(sessionId: string, messageId: number): string;
     /** One part as JSON; a draft cursor reads the suffix at a byte offset within the same lifetime. */
     sessionPart(sessionId: string, messageId: number, partId: number, generation?: number, offset?: number): string;
-    /** One page of one field of a part, as JSON `TextPage`. `field` is the address a `ViewCut` names. */
+    /** One page of one field of a part, as JSON `TextPage`. `field` is the address a `FieldCut` names. */
     partText(sessionId: string, messageId: number, partId: number, field: string, offset: number, limit: number): string;
   };
 }
