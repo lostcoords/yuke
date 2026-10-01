@@ -14,7 +14,7 @@ const scheduler_mod = @import("scheduler.zig");
 const execution = @import("../execution.zig");
 
 // The timeout wakes a stalled provider read. Cancellation also interrupts the read.
-const provider_idle_timeout = std.Io.Duration.fromMilliseconds(60_000);
+const provider_idle_timeout = std.Io.Duration.fromMilliseconds(300_000);
 /// The name every provider request carries. A gateway wants an agent name, not a library name.
 const user_agent = "yuke/" ++ build_info.version;
 
