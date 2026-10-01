@@ -4,6 +4,7 @@ import { client, env, net, plugins, utf8 } from "yuke";
 /** @import { Plugin } from "yuke" */
 
 const source = "custom:yuke";
+const agent = "yuke";
 const timeoutMs = 250;
 const frameLimit = 4096;
 const maxAttempts = 3;
@@ -14,6 +15,8 @@ export function herdr() {
     name: "herdr",
     apply(ctx) {
       if (env.get("HERDR_ENV") !== "1") return;
+      // A yuke that another agent starts inherits that agent's pane, so it must not report over that agent.
+      if (env.get("AI_AGENT") || env.get("CLAUDECODE")) return;
       // Herdr reports the TUI state, so the reporter runs only while the TUI exists.
       ctx.inject(["tui"], (ctx) => {
         const path = env.get("HERDR_SOCKET_PATH");
@@ -21,6 +24,8 @@ export function herdr() {
         if (!path || !pane) return;
         const socketPath = path;
         let id = 0;
+        // Herdr ignores a report whose seq is not above the last one it accepted, also across restarts, so seq follows the clock.
+        let seq = 0;
         let attempts = 0;
         let retry = 0;
         let desired = "";
@@ -35,7 +40,8 @@ export function herdr() {
         /** @param {string} method @param {Record<string, string>} params @param {boolean} cleanup */
         async function request(method, params, cleanup) {
           const requestId = String(++id);
-          const bytes = utf8.encode(JSON.stringify({ id: requestId, method, params: { pane_id: pane, source, ...params } }) + "\n");
+          seq = Math.max(seq + 1, Date.now());
+          const bytes = utf8.encode(JSON.stringify({ id: requestId, method, params: { pane_id: pane, source, agent, seq, ...params } }) + "\n");
           if (bytes.length > frameLimit) throw new Error("Herdr request exceeds the byte limit");
           const options = cleanup ? { timeoutMs } : { timeoutMs, signal: ctx.signal };
           let expired = false;
@@ -82,7 +88,7 @@ export function herdr() {
           /** @type {unknown} */
           let failure;
           attempts++;
-          active = request("pane.report_agent", { agent: "yuke", state }, false)
+          active = request("pane.report_agent", { state }, false)
             .then(() => { acknowledged = state; }, (error) => { acknowledged = ""; failure = error; })
             .then(() => {
               active = undefined;
@@ -109,7 +115,8 @@ export function herdr() {
           clearTimeout(retry);
           socket?.close();
           await active;
-          try { await request("pane.clear_agent_authority", {}, true); } catch {}
+          // Herdr documents release_agent as the exit report; it clears only the label that this source and agent hold.
+          try { await request("pane.release_agent", {}, true); } catch {}
         });
         ctx.on("interaction.changed", refresh);
         ctx.on("engine.activity.changed", refresh);

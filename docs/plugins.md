@@ -14,7 +14,7 @@ A plugin is `{ name, apply(ctx) }`. Register it with `plugins.use(plugin)`. Name
 
 Register listeners, hooks, tools, and capabilities in the synchronous part of `apply`. yuke does not wait before it continues startup when `apply` is async. An unload cancels the signal, removes registrations, and releases resources from newest to oldest.
 
-[`examples/herdr.js`](examples/herdr.js) is a complete lifecycle example. It uses a TUI injection, event listeners, cancellable Unix-socket I/O, bounded retries, and an async release. It stays inactive unless Herdr supplies its three environment variables.
+[`examples/herdr.js`](examples/herdr.js) is a complete lifecycle example. It uses a TUI injection, event listeners, cancellable Unix-socket I/O, bounded retries, and an async release. It stays inactive unless Herdr supplies its three environment variables. It also stays inactive when `AI_AGENT` or `CLAUDECODE` shows that another agent started yuke, because that agent holds the pane.
 
 ## Startup order
 
