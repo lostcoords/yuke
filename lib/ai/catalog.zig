@@ -213,8 +213,9 @@ test "baked tool search support remains specific to the provider and model" {
     try testing.expectEqual(@as(?bool, true), (try bakedCaps("openai", "gpt-5.4")).tool_search);
     try testing.expectEqual(@as(?bool, false), (try bakedCaps("openai", "gpt-5.4-nano")).tool_search);
     // The producer states Codex support after a live verification on the backend.
-    try testing.expectEqual(@as(?bool, true), (try bakedCaps("openai-codex", "gpt-5.4")).tool_search);
-    try testing.expectEqual(@as(?bool, false), (try bakedCaps("openai-codex", "gpt-5.4-nano")).tool_search);
+    try testing.expectEqual(@as(?bool, true), (try bakedCaps("openai-codex", "gpt-6-astra")).tool_search);
+    // A model with no statement stays unknown; it never inherits a value.
+    try testing.expectEqual(@as(?bool, null), (try bakedCaps("openai-codex", "gpt-6-sol")).tool_search);
     try testing.expectEqual(@as(?bool, true), (try bakedCaps("anthropic", "claude-opus-4-6")).tool_search);
 }
 

@@ -34,7 +34,7 @@ pub fn find(id: []const u8) ?*const Provider {
 }
 
 /// The catalog revision these rows come from.
-pub const revision = "1f127ae63fe7b2aba5d2571ab1410b372f969d6c5294c242d81da70124542b09560f2f273fd60d9db0dc3749fcdf9f01536f555609910c1e6585e26f5396d724";
+pub const revision = "d88f58a79e452f853de4aa0ee8938ffa2537425d3c1a77c8cc95fa9fa244b83f23e9460191268ba055578b3586ac184de1a41eeede9b2d28c20e9724fa545e45";
 
 pub const providers = [_]Provider{
     .{
@@ -1662,533 +1662,12 @@ pub const providers = [_]Provider{
         },
         .models = &.{
             .{
-                .id = "chatgpt-image-latest",
-                .upstream_id = "chatgpt-image-latest",
-                .name = "chatgpt-image-latest",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 0,
-                    .max_output_tokens = 0,
-                },
-                .caps = .{ .tools = false, .vision = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{ .image, .text },
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-4.1",
-                .upstream_id = "gpt-4.1",
-                .name = "GPT-4.1",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 1047576,
-                    .max_output_tokens = 32768,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 2,
-                        .output = 8,
-                        .reasoning = 8,
-                        .cache_read = 0.5,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true },
-                .modalities = .{
-                    .input = &.{ .image, .pdf, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-4.1-mini",
-                .upstream_id = "gpt-4.1-mini",
-                .name = "GPT-4.1 mini",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 1047576,
-                    .max_output_tokens = 32768,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 0.4,
-                        .output = 1.6,
-                        .reasoning = 1.6,
-                        .cache_read = 0.1,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true },
-                .modalities = .{
-                    .input = &.{ .image, .pdf, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-4o",
-                .upstream_id = "gpt-4o",
-                .name = "GPT-4o",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 128000,
-                    .max_output_tokens = 16384,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 2.5,
-                        .output = 10,
-                        .reasoning = 10,
-                        .cache_read = 1.25,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true },
-                .modalities = .{
-                    .input = &.{ .image, .pdf, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-4o-2024-08-06",
-                .upstream_id = "gpt-4o-2024-08-06",
-                .name = "GPT-4o (2024-08-06)",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 128000,
-                    .max_output_tokens = 16384,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 2.5,
-                        .output = 10,
-                        .reasoning = 10,
-                        .cache_read = 1.25,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-4o-2024-11-20",
-                .upstream_id = "gpt-4o-2024-11-20",
-                .name = "GPT-4o (2024-11-20)",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 128000,
-                    .max_output_tokens = 16384,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 2.5,
-                        .output = 10,
-                        .reasoning = 10,
-                        .cache_read = 1.25,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-4o-mini",
-                .upstream_id = "gpt-4o-mini",
-                .name = "GPT-4o mini",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 128000,
-                    .max_output_tokens = 16384,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 0.15,
-                        .output = 0.6,
-                        .reasoning = 0.6,
-                        .cache_read = 0.075,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true },
-                .modalities = .{
-                    .input = &.{ .image, .pdf, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5",
-                .upstream_id = "gpt-5",
-                .name = "GPT-5",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 400000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 1.25,
-                        .output = 10,
-                        .reasoning = 10,
-                        .cache_read = 0.125,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5-mini",
-                .upstream_id = "gpt-5-mini",
-                .name = "GPT-5 Mini",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 400000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 0.25,
-                        .output = 2,
-                        .reasoning = 2,
-                        .cache_read = 0.025,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5-nano",
-                .upstream_id = "gpt-5-nano",
-                .name = "GPT-5 Nano",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 400000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 0.05,
-                        .output = 0.4,
-                        .reasoning = 0.4,
-                        .cache_read = 0.005,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5-pro",
-                .upstream_id = "gpt-5-pro",
-                .name = "GPT-5 Pro",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 400000,
-                    .max_output_tokens = 272000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 15,
-                        .output = 120,
-                        .reasoning = 120,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{.{ .named = "high" }},
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5.1",
-                .upstream_id = "gpt-5.1",
-                .name = "GPT-5.1",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 400000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 1.25,
-                        .output = 10,
-                        .reasoning = 10,
-                        .cache_read = 0.125,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5.2",
-                .upstream_id = "gpt-5.2",
-                .name = "GPT-5.2",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 400000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 1.75,
-                        .output = 14,
-                        .reasoning = 14,
-                        .cache_read = 0.175,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5.2-pro",
-                .upstream_id = "gpt-5.2-pro",
-                .name = "GPT-5.2 Pro",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 400000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 21,
-                        .output = 168,
-                        .reasoning = 168,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5.3-codex",
-                .upstream_id = "gpt-5.3-codex",
-                .name = "GPT-5.3 Codex",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 400000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 1.75,
-                        .output = 14,
-                        .reasoning = 14,
-                        .cache_read = 0.175,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{ .image, .pdf, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5.3-codex-spark",
-                .upstream_id = "gpt-5.3-codex-spark",
-                .name = "GPT-5.3 Codex Spark",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 128000,
-                    .max_output_tokens = 32000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 1.75,
-                        .output = 14,
-                        .reasoning = 14,
-                        .cache_read = 0.175,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{ .image, .pdf, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5.4",
-                .upstream_id = "gpt-5.4",
-                .name = "GPT-5.4",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 1050000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 2.5,
-                        .output = 15,
-                        .reasoning = 15,
-                        .cache_read = 0.25,
-                    },
-                    .{
-                        .min_prompt_tokens = 272001,
-                        .input = 5,
-                        .output = 22.5,
-                        .reasoning = 22.5,
-                        .cache_read = 0.5,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{ .image, .pdf, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5.4-mini",
-                .upstream_id = "gpt-5.4-mini",
-                .name = "GPT-5.4 mini",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 400000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 0.75,
-                        .output = 4.5,
-                        .reasoning = 4.5,
-                        .cache_read = 0.075,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5.4-nano",
-                .upstream_id = "gpt-5.4-nano",
-                .name = "GPT-5.4 nano",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 400000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 0.2,
-                        .output = 1.25,
-                        .reasoning = 1.25,
-                        .cache_read = 0.02,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .tool_search = false, .disable_reasoning = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5.4-pro",
-                .upstream_id = "gpt-5.4-pro",
-                .name = "GPT-5.4 Pro",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 1050000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 30,
-                        .output = 180,
-                        .reasoning = 180,
-                    },
-                    .{
-                        .min_prompt_tokens = 272001,
-                        .input = 60,
-                        .output = 270,
-                        .reasoning = 270,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
-                .dialect = .{},
-            },
-            .{
                 .id = "gpt-5.5",
                 .upstream_id = "gpt-5.5",
                 .name = "GPT-5.5",
                 .protocol = .openai_responses,
                 .limits = .{
-                    .context_window = 1050000,
+                    .context_window = 272000,
                     .max_output_tokens = 128000,
                 },
                 .cost = &.{
@@ -2216,78 +1695,12 @@ pub const providers = [_]Provider{
                 .dialect = .{},
             },
             .{
-                .id = "gpt-5.5-pro",
-                .upstream_id = "gpt-5.5-pro",
-                .name = "GPT-5.5 Pro",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 1050000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 30,
-                        .output = 180,
-                        .reasoning = 180,
-                    },
-                    .{
-                        .min_prompt_tokens = 272001,
-                        .input = 60,
-                        .output = 270,
-                        .reasoning = 270,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .tool_search = false, .disable_reasoning = false },
-                .modalities = .{
-                    .input = &.{ .image, .pdf, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-5.6",
-                .upstream_id = "gpt-5.6",
-                .name = "GPT-5.6",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 1050000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 4,
-                        .output = 20,
-                        .reasoning = 20,
-                        .cache_read = 0.4,
-                        .cache_write = 5,
-                    },
-                    .{
-                        .min_prompt_tokens = 272001,
-                        .input = 8,
-                        .output = 30,
-                        .reasoning = 30,
-                        .cache_read = 0.8,
-                        .cache_write = 10,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
-                .modalities = .{
-                    .input = &.{ .image, .pdf, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
-            },
-            .{
                 .id = "gpt-5.6-luna",
                 .upstream_id = "gpt-5.6-luna",
                 .name = "GPT-5.6 Luna",
                 .protocol = .openai_responses,
                 .limits = .{
-                    .context_window = 1050000,
+                    .context_window = 272000,
                     .max_output_tokens = 128000,
                 },
                 .cost = &.{
@@ -2322,7 +1735,7 @@ pub const providers = [_]Provider{
                 .name = "GPT-5.6 Sol",
                 .protocol = .openai_responses,
                 .limits = .{
-                    .context_window = 1050000,
+                    .context_window = 272000,
                     .max_output_tokens = 128000,
                 },
                 .cost = &.{
@@ -2357,7 +1770,7 @@ pub const providers = [_]Provider{
                 .name = "GPT-5.6 Terra",
                 .protocol = .openai_responses,
                 .limits = .{
-                    .context_window = 1050000,
+                    .context_window = 272000,
                     .max_output_tokens = 128000,
                 },
                 .cost = &.{
@@ -2392,7 +1805,7 @@ pub const providers = [_]Provider{
                 .name = "GPT-6 Astra",
                 .protocol = .openai_responses,
                 .limits = .{
-                    .context_window = 1050000,
+                    .context_window = 272000,
                     .max_output_tokens = 128000,
                 },
                 .cost = &.{
@@ -2427,7 +1840,7 @@ pub const providers = [_]Provider{
                 .name = "GPT-6 Luna",
                 .protocol = .openai_responses,
                 .limits = .{
-                    .context_window = 1050000,
+                    .context_window = 272000,
                     .max_output_tokens = 128000,
                 },
                 .cost = &.{
@@ -2462,7 +1875,7 @@ pub const providers = [_]Provider{
                 .name = "GPT-6 Sol",
                 .protocol = .openai_responses,
                 .limits = .{
-                    .context_window = 1050000,
+                    .context_window = 272000,
                     .max_output_tokens = 128000,
                 },
                 .cost = &.{
@@ -2497,7 +1910,7 @@ pub const providers = [_]Provider{
                 .name = "GPT-6.1 Sol",
                 .protocol = .openai_responses,
                 .limits = .{
-                    .context_window = 1050000,
+                    .context_window = 272000,
                     .max_output_tokens = 128000,
                 },
                 .cost = &.{
@@ -2524,280 +1937,6 @@ pub const providers = [_]Provider{
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-daybreak-blue-latest",
-                .upstream_id = "gpt-daybreak-blue-latest",
-                .name = "Daybreak Blue",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 1050000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 4,
-                        .output = 20,
-                        .reasoning = 20,
-                        .cache_read = 0.4,
-                        .cache_write = 5,
-                    },
-                    .{
-                        .min_prompt_tokens = 272001,
-                        .input = 8,
-                        .output = 30,
-                        .reasoning = 30,
-                        .cache_read = 0.8,
-                        .cache_write = 10,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
-                .modalities = .{
-                    .input = &.{ .image, .pdf, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-daybreak-red-latest",
-                .upstream_id = "gpt-daybreak-red-latest",
-                .name = "Daybreak Red",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 400000,
-                    .max_output_tokens = 128000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 12.5,
-                        .output = 75,
-                        .reasoning = 75,
-                        .cache_read = 1.25,
-                        .cache_write = 15.625,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-image-1-mini",
-                .upstream_id = "gpt-image-1-mini",
-                .name = "gpt-image-1-mini",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 0,
-                    .max_output_tokens = 0,
-                },
-                .caps = .{ .tools = false, .vision = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{ .image, .text },
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-image-1.5",
-                .upstream_id = "gpt-image-1.5",
-                .name = "gpt-image-1.5",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 0,
-                    .max_output_tokens = 0,
-                },
-                .caps = .{ .tools = false, .vision = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{ .image, .text },
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-image-2",
-                .upstream_id = "gpt-image-2",
-                .name = "gpt-image-2",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 0,
-                    .max_output_tokens = 0,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 5,
-                        .output = 30,
-                        .reasoning = 30,
-                        .cache_read = 1.25,
-                    },
-                },
-                .caps = .{ .tools = false, .vision = true },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.image},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "gpt-realtime-2.1",
-                .upstream_id = "gpt-realtime-2.1",
-                .name = "GPT-Realtime-2.1",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 128000,
-                    .max_output_tokens = 32000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 4,
-                        .output = 24,
-                        .reasoning = 24,
-                        .cache_read = 0.4,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
-                .modalities = .{
-                    .input = &.{ .audio, .image, .text },
-                    .output = &.{ .audio, .text },
-                },
-                .reasoning_levels = &.{ .{ .named = "minimal" }, .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "o3",
-                .upstream_id = "o3",
-                .name = "o3",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 200000,
-                    .max_output_tokens = 100000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 2,
-                        .output = 8,
-                        .reasoning = 8,
-                        .cache_read = 0.5,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
-                .modalities = .{
-                    .input = &.{ .image, .pdf, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "o3-pro",
-                .upstream_id = "o3-pro",
-                .name = "o3-pro",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 200000,
-                    .max_output_tokens = 100000,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 20,
-                        .output = 80,
-                        .reasoning = 80,
-                    },
-                },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false },
-                .modalities = .{
-                    .input = &.{ .image, .text },
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" } },
-                .dialect = .{},
-            },
-            .{
-                .id = "text-embedding-3-large",
-                .upstream_id = "text-embedding-3-large",
-                .name = "text-embedding-3-large",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 8191,
-                    .max_output_tokens = 3072,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 0.13,
-                        .output = 0,
-                        .reasoning = 0,
-                    },
-                },
-                .caps = .{ .tools = false, .vision = false },
-                .modalities = .{
-                    .input = &.{.text},
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "text-embedding-3-small",
-                .upstream_id = "text-embedding-3-small",
-                .name = "text-embedding-3-small",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 8191,
-                    .max_output_tokens = 1536,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 0.02,
-                        .output = 0,
-                        .reasoning = 0,
-                    },
-                },
-                .caps = .{ .tools = false, .vision = false },
-                .modalities = .{
-                    .input = &.{.text},
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
-                .dialect = .{},
-            },
-            .{
-                .id = "text-embedding-ada-002",
-                .upstream_id = "text-embedding-ada-002",
-                .name = "text-embedding-ada-002",
-                .protocol = .openai_responses,
-                .limits = .{
-                    .context_window = 8192,
-                    .max_output_tokens = 1536,
-                },
-                .cost = &.{
-                    .{
-                        .min_prompt_tokens = 0,
-                        .input = 0.1,
-                        .output = 0,
-                        .reasoning = 0,
-                    },
-                },
-                .caps = .{ .tools = false, .vision = false },
-                .modalities = .{
-                    .input = &.{.text},
-                    .output = &.{.text},
-                },
-                .reasoning_levels = &.{},
                 .dialect = .{},
             },
         },
@@ -4271,15 +3410,15 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
-                    .max_output_tokens = 131072,
+                    .max_output_tokens = 384000,
                 },
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.14,
-                        .output = 0.28,
-                        .reasoning = 0.28,
-                        .cache_read = 0.028,
+                        .input = 0.07854,
+                        .output = 0.15708,
+                        .reasoning = 0.15708,
+                        .cache_read = 0.015708,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -4361,10 +3500,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.95526,
-                        .output = 1.91052,
-                        .reasoning = 1.91052,
-                        .cache_read = 0.079605,
+                        .input = 0.783,
+                        .output = 1.566,
+                        .reasoning = 1.566,
+                        .cache_read = 0.06525,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -4390,10 +3529,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 1.32,
-                        .output = 3.96,
-                        .reasoning = 3.96,
-                        .cache_read = 0.044,
+                        .input = 0.66,
+                        .output = 1.98,
+                        .reasoning = 1.98,
+                        .cache_read = 0.022,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -4418,10 +3557,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.3,
-                        .output = 1.2,
-                        .reasoning = 1.2,
-                        .cache_read = 0.006,
+                        .input = 0.0198,
+                        .output = 0.396,
+                        .reasoning = 0.396,
+                        .cache_read = 0.00291,
                     },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
@@ -5197,10 +4336,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.09,
-                        .output = 0.3,
-                        .reasoning = 0.3,
-                        .cache_read = 0.05,
+                        .input = 0.0765,
+                        .output = 0.255,
+                        .reasoning = 0.255,
+                        .cache_read = 0.0425,
                     },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
@@ -7039,10 +6178,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 3,
-                        .output = 15,
-                        .reasoning = 15,
-                        .cache_read = 0.3,
+                        .input = 0.28,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.27,
                     },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
@@ -10118,14 +9257,14 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 131072,
-                    .max_output_tokens = 8192,
+                    .max_output_tokens = 16384,
                 },
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.13,
-                        .output = 0.52,
-                        .reasoning = 0.52,
+                        .input = 0.12,
+                        .output = 0.5,
+                        .reasoning = 0.5,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -11908,10 +11047,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.132,
-                        .output = 0.528,
-                        .reasoning = 0.528,
-                        .cache_read = 0.033,
+                        .input = 0.0825,
+                        .output = 0.33,
+                        .reasoning = 0.33,
+                        .cache_read = 0.020625,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -11964,10 +11103,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.834,
-                        .output = 2.501,
-                        .reasoning = 2.501,
-                        .cache_read = 0.042,
+                        .input = 0.7506,
+                        .output = 2.2509,
+                        .reasoning = 2.2509,
+                        .cache_read = 0.0378,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -12634,7 +11773,7 @@ pub const providers = [_]Provider{
                 .name = "MiMo-V2.6-Flash",
                 .protocol = .openai_chat,
                 .limits = .{
-                    .context_window = 1048576,
+                    .context_window = 1050000,
                     .max_output_tokens = 131072,
                 },
                 .cost = &.{
@@ -12979,10 +12118,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 1.4,
-                        .output = 4.4,
-                        .reasoning = 4.4,
-                        .cache_read = 0.26,
+                        .input = 0.9646,
+                        .output = 3.0316,
+                        .reasoning = 3.0316,
+                        .cache_read = 0.17914,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -13008,10 +12147,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.25,
+                        .input = 0.3249,
                         .output = 3.99,
                         .reasoning = 3.99,
-                        .cache_read = 0.2,
+                        .cache_read = 0.26,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -13293,10 +12432,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.02,
-                        .output = 0.6,
-                        .reasoning = 0.6,
-                        .cache_read = 0.02,
+                        .input = 0.0198,
+                        .output = 0.396,
+                        .reasoning = 0.396,
+                        .cache_read = 0.00291,
                     },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
@@ -13316,15 +12455,15 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
-                    .max_output_tokens = 943718,
+                    .max_output_tokens = 393216,
                 },
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.16,
-                        .output = 1.85024,
-                        .reasoning = 1.85024,
-                        .cache_read = 0.08832,
+                        .input = 0.123,
+                        .output = 3.5,
+                        .reasoning = 3.5,
+                        .cache_read = 0.123,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -13349,10 +12488,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.01,
-                        .output = 1.28,
-                        .reasoning = 1.28,
-                        .cache_read = 0.01,
+                        .input = 0.0099,
+                        .output = 0.13068,
+                        .reasoning = 0.13068,
+                        .cache_read = 0.001386,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -13442,10 +12581,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.4,
-                        .output = 9,
-                        .reasoning = 9,
-                        .cache_read = 0.4,
+                        .input = 0.28,
+                        .output = 10,
+                        .reasoning = 10,
+                        .cache_read = 0.27,
                     },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
@@ -13682,8 +12821,8 @@ pub const providers = [_]Provider{
                     .{
                         .min_prompt_tokens = 0,
                         .input = 0.02,
-                        .output = 0.3,
-                        .reasoning = 0.3,
+                        .output = 0.2475,
+                        .reasoning = 0.2475,
                         .cache_read = 0.01,
                     },
                 },
@@ -13709,10 +12848,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.09,
+                        .input = 0.13,
                         .output = 4,
                         .reasoning = 4,
-                        .cache_read = 0.09,
+                        .cache_read = 0.13,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
@@ -16486,7 +15625,7 @@ pub const providers = [_]Provider{
                 },
                 .caps = .{ .tools = true, .vision = true },
                 .modalities = .{
-                    .input = &.{ .audio, .image, .text },
+                    .input = &.{ .image, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{},
