@@ -2786,7 +2786,13 @@
         {
           "name": "clear_queue",
           "type": "bool",
-          "presence": "optional"
+          "presence": "defaulted"
+        },
+        {
+          "name": "report",
+          "doc": "Set this field to false when the caller returns the stop result. The parent then gets no report.",
+          "type": "bool",
+          "presence": "defaulted"
         }
       ]
     },

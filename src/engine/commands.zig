@@ -453,7 +453,7 @@ pub fn sessionCancelRun(engine: *Engine, arena: std.mem.Allocator, params: proto
     }
 
     var cleared_inputs: []proto.ids.InputId = &.{};
-    if (params.clear_queue orelse false) {
+    if (params.clear_queue) {
         const pending = try input_store.list(engine.deps.db, arena, sid);
         cleared_inputs = try arena.alloc(proto.ids.InputId, pending.len);
         const cleared_seqs = try arena.alloc(proto.ids.Seq, pending.len);
@@ -470,7 +470,7 @@ pub fn sessionCancelRun(engine: *Engine, arena: std.mem.Allocator, params: proto
             cleared_seqs[i] = canceled;
         }
         cleared_inputs = cleared_inputs[0..count];
-        const report = try reports.droppedInputs(engine, arena, params.session_id, cleared_inputs.len);
+        const report = if (params.report) try reports.droppedInputs(engine, arena, params.session_id, cleared_inputs.len) else null;
         try tx.commit();
         for (cleared_inputs, cleared_seqs[0..count]) |input_id, seq| {
             session_events.emitDurable(engine, rt, .{ .method = .@"input.canceled", .params = .{
@@ -483,6 +483,8 @@ pub fn sessionCancelRun(engine: *Engine, arena: std.mem.Allocator, params: proto
 
     const canceled_run = if (active) |slot| slot.handle.started.run_id else null;
     if (active) |slot| {
+        // A stop that answers its caller itself leaves the parent no report.
+        if (!params.report) slot.report_end = false;
         if (!slot.cancel.isRequested()) {
             slot.cancel.request(engine.deps.io); // Wake the run task so it cancels its reader.
         }

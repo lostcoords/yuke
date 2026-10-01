@@ -201,7 +201,7 @@ pub fn finishRunOpen(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, 
         .kind = slot.handle.started.kind,
         .timing = .{ .started_at_ms = slot.handle.started.started_at_ms, .ended_at_ms = ended_at },
         .outcome = outcome,
-    });
+    }, slot.report_end);
     try tx.commit();
     slot.phase = .terminalized;
 

@@ -24,14 +24,15 @@ pub fn reserve(engine: *Engine, arena: std.mem.Allocator, root: proto.ids.Sessio
     if (row.value.used >= limit) return error.ReportCapacityFull;
 }
 
-pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDoneData) !Terminal {
+/// Append the terminal record. A child turn also reports to its parent when `report` holds.
+pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDoneData, report: bool) !Terminal {
     std.debug.assert(sql.inTransaction(engine.deps.db.conn));
     std.debug.assert(data.run_id > 0);
     const db = engine.deps.db;
     const ended = data.timing.ended_at_ms;
     var result: Terminal = .{ .done = try store.run.appendOpenDone(db, arena, util.newId(engine.deps.io), ended, data) };
     const snapshot = (try store.session.snapshot(db, arena, data.session_id.raw)) orelse return error.UnknownSession;
-    if (data.kind == .turn) if (snapshot.parent_id) |parent| {
+    if (data.kind == .turn and report) if (snapshot.parent_id) |parent| {
         const name = snapshot.name orelse return error.CorruptDatabase;
         // A stop is a choice of the parent or the user, so the body is a fragment with no value.
         const stopped = data.outcome == .canceled;

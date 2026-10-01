@@ -10,7 +10,7 @@ A model tool is a function that the model calls. Define it with `ctx.tools.defin
 - `description` tells the model when to call the tool. Use the imperative mood. State each limit the model must know.
 - `parameters` is a JSON Schema object. It needs `type: "object"` and `properties`. Set `additionalProperties: false`.
 - `defer: true` waits for a `tool_search` tool to load the tool. Without a search tool, the engine loads it at once.
-- A tool that `index.js` defines at startup replaces a built-in tool with the same name: `read`, `write`, `edit`, `exec`, `jobs`, or `skill`.
+- A tool that `index.js` defines at startup replaces a built-in tool with the same name: `read`, `write`, `edit`, `exec`, `stop`, or `skill`.
 
 ## Arguments
 
@@ -49,7 +49,7 @@ Throw an `Error` when the call fails. The model reads its `message` and nothing 
 
 ## Background jobs
 
-`exec` with `background: true` starts a job and returns at once. When the job ends by itself, its session gets one message: `[job-k3x9 exited 1. This message is not from the user.]`, then the log path and the last 20 lines. No hook rewrites it. A queue clear does not drop it. A requested stop sends no message.
+`exec` with `background: true` starts a job and returns at once. When the job ends by itself, its session gets one message: `[job-k3x9 exited 1. This message is not from the user.]`, then the log path and the last 20 lines. No hook rewrites it. A queue clear does not drop it. `stop` with the job ID ends it, waits for the end, and returns `[job-k3x9 stopped.] Log: <path>`. A requested stop sends no end message.
 
 ## Cancellation
 

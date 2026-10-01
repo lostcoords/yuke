@@ -446,7 +446,7 @@ fn commitRound(
         .kind = slot.handle.started.kind,
         .timing = .{ .started_at_ms = slot.handle.started.started_at_ms, .ended_at_ms = ended_at },
         .outcome = outcome,
-    }) else null;
+    }, slot.report_end) else null;
     const inputs = if (!final) try run.consumeEntries(engine.deps.db, engine.deps.io, arena, session_id.raw, queued) else &.{};
     try tx.commit();
     slot.progress.rounds_committed = rounds_committed;

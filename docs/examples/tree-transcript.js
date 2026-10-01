@@ -16,7 +16,7 @@ const PREVIEW_ROWS = 3;
 const REPORT_LINES = 8;
 const LABEL_W = 7;
 // A null prototype keeps a tool named `constructor` on the fallback style.
-const TOOL_STYLE = /** @type {Record<string, string>} */ (Object.assign(Object.create(null), { read: "TreeRead", write: "TreeWrite", edit: "TreeWrite", exec: "TreeRun", spawn_agent: "TreeAgent", send_agent_input: "TreeAgent", stop_agent: "TreeAgent" }));
+const TOOL_STYLE = /** @type {Record<string, string>} */ (Object.assign(Object.create(null), { read: "TreeRead", write: "TreeWrite", edit: "TreeWrite", exec: "TreeRun", spawn_agent: "TreeAgent", send_agent_input: "TreeAgent", stop: "TreeRun" }));
 
 /** @param {PartEnv["group"]} group @returns {Row} */
 function headerAttrs(group) {

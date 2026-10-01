@@ -78,7 +78,7 @@ const Fixture = struct {
             .kind = .turn,
             .timing = .{ .started_at_ms = started.handle.started.started_at_ms, .ended_at_ms = util.nowMillis(self.engine.deps.io) },
             .outcome = outcome,
-        });
+        }, true);
         try tx.commit();
         return result;
     }
@@ -198,7 +198,7 @@ test "one report reservation survives each hop from a grandchild to the root" {
             .kind = .turn,
             .timing = .{ .started_at_ms = started.handle.started.started_at_ms, .ended_at_ms = util.nowMillis(f.engine.deps.io) },
             .outcome = success,
-        });
+        }, true);
         try testing.expectEqual(child, terminal.report.?.session_id);
         try testing.expectEqualStrings("scan", terminal.report.?.input.source.?.child_report.name);
         try tx.commit();
@@ -249,6 +249,28 @@ test "a stop of queued input reports a stopped child without a run ID" {
         try testing.expectEqualStrings("[research-" ++ child_tail ++ " stopped. This message is not from the user.]\n", entry.input.content[0].text.text);
     }
     try testing.expectEqualStrings("A stop dropped 1 queued input before a run took it.", queue[1].input.content[1].text.text);
+    // A stop that answers its caller itself sends the parent no report.
+    {
+        var tx = try f.db.begin();
+        defer tx.deinit();
+        _ = try database.input.enqueue(&f.db, a, child.raw, util.newId(f.engine.deps.io), 1, .{ .content = &.{.{ .text = .{ .text = "task" } }} }, 1);
+        try tx.commit();
+    }
+    const quiet = try commands.sessionCancelRun(&f.engine, a, .{ .session_id = child, .clear_queue = true, .report = false });
+    try testing.expectEqual(@as(usize, 1), quiet.cleared_inputs.len);
+    try testing.expectEqual(@as(usize, 2), (try database.input.list(&f.db, a, root.raw)).len);
+}
+
+test "a child turn reports to its parent only when the run end asks for a report" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const a = f.arena.allocator();
+    const started = try f.start();
+    var tx = try f.db.begin();
+    defer tx.deinit();
+    const quiet = try reports.append(&f.engine, a, .{ .session_id = child, .seq = 0, .run_id = started.handle.started.run_id, .kind = .turn, .timing = .{ .started_at_ms = started.handle.started.started_at_ms, .ended_at_ms = util.nowMillis(f.engine.deps.io) }, .outcome = .{ .canceled = .{} } }, false);
+    try testing.expect(quiet.report == null);
 }
 
 test "a crash notice and parent report commit once without a child retry" {
@@ -309,7 +331,7 @@ test "compaction does not produce a child turn report" {
     defer tx.deinit();
     const id = try database.event.allocRunId(&f.db, a, child.raw);
     _ = try database.run.appendStarted(&f.db, a, util.newId(f.engine.deps.io), 1, .{ .session_id = child, .seq = 0, .run_id = id, .kind = .compaction, .config_rev = 0, .started_at_ms = 1 });
-    const result = try reports.append(&f.engine, a, .{ .session_id = child, .seq = 0, .run_id = id, .kind = .compaction, .timing = .{ .started_at_ms = 1, .ended_at_ms = 2 }, .outcome = .{ .canceled = .{} } });
+    const result = try reports.append(&f.engine, a, .{ .session_id = child, .seq = 0, .run_id = id, .kind = .compaction, .timing = .{ .started_at_ms = 1, .ended_at_ms = 2 }, .outcome = .{ .canceled = .{} } }, true);
     try tx.commit();
     try testing.expect(result.report == null);
     try testing.expectEqual(@as(u64, 0), try database.input.count(&f.db, a, root.raw));

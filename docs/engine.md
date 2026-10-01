@@ -120,11 +120,12 @@ All three values are positive 32-bit integers.
 |---|---|---|
 | `spawn_agent` | `{ message, agent? }` | Starts or queues a new child and returns one line with its child ID. It does not wait for completion. |
 | `send_agent_input` | `{ child, message }` | Sends a follow-up to the child. The child keeps its transcript. |
-| `stop_agent` | `{ child }` | Stops the current child run and drops its queued input. It returns one line that names the stopped run and the count of dropped inputs, if any. It keeps the transcript. Completed side effects remain. |
+
+The built-in `stop` tool ends a child: `stop { id: "explore-a91c07d2" }`. It stops the current run and drops the queued input. It also stops the background jobs of the child. It returns one line, such as `[explore-a91c07d2 stopped. Dropped 1 queued input.]`. No report follows. The transcript stays, and completed side effects remain.
 
 `message` must be nonempty. `agent` must name a catalog row. `child` is a child ID such as `explore-a91c07d2`: the catalog name and the last 8 hex digits of the child session ID. It must name a direct child of the calling parent. An error for an unknown child ID lists the child IDs.
 
-A child uses the parent workspace in a separate session and transcript. When a run ends, the parent gets one report: a header line such as `[explore-a91c07d2 completed. This message is not from the user.]`, then the last text of the run. The status is `completed`, `stopped`, or `failed: <reason>`. A stop of queued input that no run took also sends a `stopped` report. A report that arrives while the parent runs joins the parent run at its next round. A follow-up creates a new run in the same child transcript and produces another report.
+A child uses the parent workspace in a separate session and transcript. When a run ends, the parent gets one report. The report starts with a header line, such as `[explore-a91c07d2 completed. This message is not from the user.]`. The last text of the run follows. The status is `completed`, `stopped`, or `failed: <reason>`. A stop from `/agents` also sends a `stopped` report. This includes queued input that no run took. A report that arrives while the parent runs joins the parent run at its next round. A follow-up creates a new run in the same child transcript. That run produces another report.
 
 `/agents` shows the root and all descendants of the current session. It can switch to a child or stop its work. Disposing the plugin removes its tools and restores the previous depth and concurrency limits. Existing sessions and durable queued records remain.
 

@@ -37,15 +37,17 @@ const tool_fixture =
     \\import { tuiPlugin } from "yuke:internal/tui";
     \\import { chatPlugin } from "yuke:internal/chat";
     \\import { sessionsPlugin } from "yuke:internal/session";
+    \\import { builtins } from "yuke:internal/builtins";
+    \\plugins.use(builtins);
     \\plugins.use(tuiPlugin);
     \\plugins.use(sessionsPlugin);
     \\plugins.use(chatPlugin);
-    \\plugins.use(agents({ default: "small", maxRounds: 7, catalog: { small: { description: "Narrow research.", model: "p/family/model" }, review: { description: "Read-only review.", prompt: "Review only. Do not edit.", tools: ["read", "exec"] } } }));
+    \\plugins.use(agents({ default: "small", maxRounds: 7, catalog: { small: { description: "Narrow research.", model: "p/family/model" }, review: { description: "Read-only review.", prompt: "Review only. Do not edit.", tools: ["read", "exec"] }, look: { description: "Reads only.", tools: ["read"] } } }));
     \\globalThis.child = { session: { id: "0192aaaa00000000000000000a91c07d", name: "small", root: "/work", model: "p/family/model", origin: { type: "child", site: { session_id: "01".repeat(16), message_id: 1, part_id: 0 } } }, activity: { state: { type: "idle" }, queued: 0 }, last_run: { type: "turn" } };
     \\client.sessionList = async (params) => { return { items: params.population.parent_id === "01".repeat(16) ? [child] : [], next_cursor: null, total: 1 }; };
     \\client.sessionGet = async (id) => id === child.session.id ? child : { session: { id, title: "Main conversation", root: "/work", model: "parent/large", origin: { type: "root" } }, activity: { state: { type: "idle" }, queued: 0 } };
     \\client.sessionSendInput = async (id, content, site) => { if (id !== child.session.id || site.message_id !== 2) throw new Error("instruction"); return content[0].text === "go" ? { type: "started", input_id: 3, run_id: 1 } : { type: "queued", reason: "session_busy", input_id: 2 }; };
-    \\client.sessionCancelRun = async (id, clear) => { if (id !== child.session.id || !clear) throw new Error("stop scope"); return { canceled_run: null, cleared_inputs: [2] }; };
+    \\client.sessionCancelRun = async (id, clear, report) => { if (id !== child.session.id || !clear || report !== false) throw new Error("stop scope"); return { canceled_run: null, cleared_inputs: [2] }; };
 ;
 
 test "the catalog is validated at boot and an absent plugin declares no agent tool" {
@@ -54,7 +56,7 @@ test "the catalog is validated at boot and an absent plugin declares no agent to
     try support.eval(host, "agents/fixture.js");
     try support.eval(host, "agents/catalog.test.js");
     try support.expectString(host, "result", "ok");
-    for ([_][]const u8{ "spawn_agent", "send_agent_input", "stop_agent", "list_agents" }) |name| try std.testing.expect(!support.hasTool(host, name));
+    for ([_][]const u8{ "spawn_agent", "send_agent_input" }) |name| try std.testing.expect(!support.hasTool(host, name));
 }
 
 test "a catalog with no maxRounds starts a child with no round cap" {
@@ -78,7 +80,6 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     defer support.destroyHost(host);
     try support.eval(host, "agents/fixture.js");
     try host.evalModule(tool_fixture, "tools.js");
-    try std.testing.expect(!support.hasTool(host, "list_agents"));
     var seen = false;
     for (host.tools.entries.items) |entry| if (std.mem.eql(u8, entry.decl.name, "spawn_agent")) {
         seen = true;
@@ -90,7 +91,7 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
         try std.testing.expect(!schema.get("additionalProperties").?.bool);
         try std.testing.expectEqual(@as(usize, 1), schema.get("required").?.array.items.len);
         try std.testing.expectEqualStrings("message", schema.get("required").?.array.items[0].string);
-        try std.testing.expectEqual(@as(usize, 2), schema.get("properties").?.object.get("agent").?.object.get("enum").?.array.items.len);
+        try std.testing.expectEqual(@as(usize, 3), schema.get("properties").?.object.get("agent").?.object.get("enum").?.array.items.len);
     };
     try std.testing.expect(seen);
     for ([_][]const u8{ "{}", "{\"message\":\"task\",\"agent\":\"ghost\"}", "{\"message\":\"task\",\"name\":\"one\"}", "{\"message\":\"\"}" }) |args| {
@@ -114,7 +115,7 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     const cases = [_]struct { []const u8, []const u8, []const u8 }{
         .{ "send_agent_input", "{\"child\":\"small-0a91c07d\",\"message\":\"more\"}", "Queued for small-0a91c07d after its current run." },
         .{ "send_agent_input", "{\"child\":\"small-0a91c07d\",\"message\":\"go\"}", "Sent to small-0a91c07d." },
-        .{ "stop_agent", "{\"child\":\"small-0a91c07d\"}", "No run of small-0a91c07d was active. Dropped 1 queued input(s)." },
+        .{ "stop", "{\"id\":\"small-0a91c07d\"}", "[small-0a91c07d was not running. Dropped 1 queued input.]" },
     };
     for (cases) |case| {
         const answer = try invokeAgent(host, case[0], case[1]);
@@ -122,16 +123,19 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
         try std.testing.expect(!answer.is_error);
         try std.testing.expectEqualStrings(case[2], answer.text);
     }
-    // An unknown child ID lists the child IDs, so the model can correct it.
-    const unknown = try invokeAgent(host, "stop_agent", "{\"child\":\"small-ffffffff\"}");
+    // An unknown child ID lists the ids, so the model can correct it.
+    const unknown = try invokeAgent(host, "send_agent_input", "{\"child\":\"small-ffffffff\",\"message\":\"x\"}");
     defer std.testing.allocator.free(unknown.text);
     try std.testing.expectEqualStrings("The child small-ffffffff does not exist. The children are: small-0a91c07d.", unknown.text);
+    const unknown_stop = try invokeAgent(host, "stop", "{\"id\":\"small-ffffffff\"}");
+    defer std.testing.allocator.free(unknown_stop.text);
+    try std.testing.expectEqualStrings("The id small-ffffffff does not exist. The ids are: small-0a91c07d.", unknown_stop.text);
     // A child of another parent is in neither this parent's list nor its ownership check.
     try host.evalModule("child.session.origin.site.session_id = 'other'; client.sessionList = async () => ({ items: [], next_cursor: null, total: 0 });", "foreign.js");
-    const foreign = try invokeAgent(host, "stop_agent", "{\"child\":\"small-0a91c07d\"}");
+    const foreign = try invokeAgent(host, "stop", "{\"id\":\"small-0a91c07d\"}");
     defer std.testing.allocator.free(foreign.text);
     try std.testing.expect(foreign.is_error);
-    try std.testing.expectEqualStrings("The child small-0a91c07d does not exist. No child exists.", foreign.text);
+    try std.testing.expectEqualStrings("The id small-0a91c07d does not exist. Nothing runs.", foreign.text);
     try host.evalModule(
         \\import { Transcript, registerRender } from "yuke:internal/transcript";
         \\import { defaultRender } from "yuke:internal/transcript-view";
@@ -149,10 +153,10 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     try host.evalModule(
         \\import { plugins } from "yuke:internal/ext";
         \\plugins.dispose("agents");
-        \\globalThis.presentersGone = ["spawn_agent", "send_agent_input", "stop_agent"].every((name) => toolSource(name, {}).startsWith(name)) ? 1 : 0;
+        \\globalThis.presentersGone = ["spawn_agent", "send_agent_input"].every((name) => toolSource(name, {}).startsWith(name)) ? 1 : 0;
     , "dispose.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("presentersGone"));
-    for ([_][]const u8{ "spawn_agent", "send_agent_input", "stop_agent" }) |name| try std.testing.expect(!support.hasTool(host, name));
+    for ([_][]const u8{ "spawn_agent", "send_agent_input" }) |name| try std.testing.expect(!support.hasTool(host, name));
 }
 
 test "the plugin ends a root prompt with the rule and scopes a child by its row" {
@@ -190,20 +194,29 @@ test "the plugin ends a root prompt with the rule and scopes a child by its row"
     try std.testing.expect(std.mem.endsWith(u8, ghost_build.value.value.sections[1].text, "unless new input requires it."));
     // tools.select runs once per run: a child at the depth limit keeps only its row tools, and agent tools never reach it.
     const Select = struct { type: []const u8, value: struct { tools: []const []const u8 } };
-    const every = "\"tools\":[\"edit\",\"exec\",\"read\",\"send_agent_input\",\"spawn_agent\",\"stop_agent\",\"write\"]";
+    const every = "\"tools\":[\"edit\",\"exec\",\"read\",\"send_agent_input\",\"spawn_agent\",\"stop\",\"write\"]";
     const review = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"review\",\"workspace\":\"/w\",\"max_agent_depth\":1,\"has_skills\":true}}");
     defer std.testing.allocator.free(review);
     const review_select = try std.json.parseFromSlice(Select, std.testing.allocator, review, .{ .ignore_unknown_fields = true });
     defer review_select.deinit();
-    try std.testing.expectEqual(@as(usize, 2), review_select.value.value.tools.len);
+    // A row with exec also keeps stop, so the child can end the jobs it starts.
+    try std.testing.expectEqual(@as(usize, 3), review_select.value.value.tools.len);
     try std.testing.expectEqualStrings("exec", review_select.value.value.tools[0]);
     try std.testing.expectEqualStrings("read", review_select.value.value.tools[1]);
+    try std.testing.expectEqualStrings("stop", review_select.value.value.tools[2]);
+    // A row without exec gets no stop.
+    const look = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"look\",\"workspace\":\"/w\",\"max_agent_depth\":1,\"has_skills\":true}}");
+    defer std.testing.allocator.free(look);
+    const look_select = try std.json.parseFromSlice(Select, std.testing.allocator, look, .{ .ignore_unknown_fields = true });
+    defer look_select.deinit();
+    try std.testing.expectEqual(@as(usize, 1), look_select.value.value.tools.len);
+    try std.testing.expectEqualStrings("read", look_select.value.value.tools[0]);
     const small = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"small\",\"workspace\":\"/w\",\"max_agent_depth\":1,\"has_skills\":true}}");
     defer std.testing.allocator.free(small);
     const small_select = try std.json.parseFromSlice(Select, std.testing.allocator, small, .{ .ignore_unknown_fields = true });
     defer small_select.deinit();
-    try std.testing.expectEqual(@as(usize, 4), small_select.value.value.tools.len);
-    try std.testing.expectEqualStrings("write", small_select.value.value.tools[3]);
+    try std.testing.expectEqual(@as(usize, 5), small_select.value.value.tools.len);
+    try std.testing.expectEqualStrings("write", small_select.value.value.tools[4]);
     // A root below the depth limit keeps every tool.
     const root_select = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ root_id ++ "\",\"parent_id\":null,\"depth\":0,\"agent_name\":\"root\",\"workspace\":\"/w\",\"max_agent_depth\":1,\"has_skills\":true}}");
     defer std.testing.allocator.free(root_select);

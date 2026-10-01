@@ -43,7 +43,9 @@ pub const SessionCancelInputResult = struct {
 pub const SessionCancelRunParams = struct {
     session_id: ids.SessionId,
     run_id: ?ids.RunId = null,
-    clear_queue: ?bool = null,
+    clear_queue: bool = false,
+    /// Set this field to false when the caller returns the stop result. The parent then gets no report.
+    report: bool = true,
 };
 
 /// This result identifies the canceled run and cleared inputs.

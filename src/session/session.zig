@@ -79,6 +79,8 @@ pub const RunSlot = struct {
     phase: Phase = .pending_start,
     protocol: proto.enums.ProviderProtocol = .anthropic_messages,
     cancel: cancelmod.Cancel = .{},
+    /// False after a stop that asked for no report. The stopper got its answer from the stop call.
+    report_end: bool = true,
     compacting: bool = false,
     retry_budget: u8 = 8,
     round: Round = .none,

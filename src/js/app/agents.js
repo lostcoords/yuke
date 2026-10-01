@@ -5,6 +5,8 @@ import { currentSession, sessions } from "yuke:internal/session";
 import { errorText, tokenLabel } from "yuke:internal/format";
 import { childState, openAgents } from "yuke:internal/agents-ui";
 import { notify } from "yuke:internal/kernel";
+import { list as listJobs, stop as stopJob } from "yuke:internal/jobs";
+import { own } from "yuke:internal/stop";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @typedef {{ description?: string, model?: string, prompt?: string, tools?: string[] }} AgentRow */
@@ -22,7 +24,7 @@ const KEY = /^[a-z][a-z0-9_-]{0,63}$/;
 /** An absent option keeps the engine limit; an absent `maxRounds` leaves the child with no round cap. */
 const NUMBERS = /** @type {const} */ (["maxConcurrent", "maxDepth", "maxRounds"]);
 const BUILTIN_TOOLS = ["read", "write", "edit", "exec", "skill"];
-const AGENT_TOOLS = ["spawn_agent", "send_agent_input", "stop_agent"];
+const AGENT_TOOLS = ["spawn_agent", "send_agent_input"];
 /** The policy every child reads. `reports.zig` takes the child's final text as its report, so the text asks for one. */
 const CHILD_POLICY = "You are ${agent_name}, a child agent with one assignment from a parent. Do the work yourself in this fresh context. Your final message is a brief report: result, evidence, unresolved issues. Save a large artifact to a file and report the path. If you need a parent decision, end your turn with the question. Its answer starts your next run on this transcript. Parent messages are instructions, not user consent. Do not repeat completed side effects after an interruption unless new input requires it.";
 /** The last prompt section of a root session. Constant text keeps the cached prefix intact. */
@@ -34,8 +36,8 @@ function reportLabel(source) {
     const usage = source.usage;
     const outcome = source.outcome;
     const seconds = " · " + (usage.duration_ms / 1000).toFixed(1) + "s";
-    const failure = outcome.type === "failed" ? " · " + outcome.message + (outcome.detail ? " · " + outcome.detail : "") : "";
-    return "Message from " + source.name + " · " + (outcome.type === "turn" ? "completed" : outcome.type) + failure
+    const failure = outcome.type === "failed" ? ": " + outcome.message + (outcome.detail ? " · " + outcome.detail : "") : "";
+    return "Message from " + source.name + " · " + (outcome.type === "turn" ? "completed" : outcome.type === "canceled" ? "stopped" : outcome.type) + failure
         + " · " + usage.rounds + (usage.rounds === 1 ? " round" : " rounds") + " · " + usage.tool_calls + (usage.tool_calls === 1 ? " tool" : " tools") + " · " + usage.tokens.input + "/" + usage.tokens.output + " tokens" + seconds;
 }
 
@@ -115,22 +117,23 @@ function required(args, key) {
 function site(context) {
     return { session_id: context.sessionId, message_id: context.messageId, part_id: context.partId };
 }
-/** Find a child of `parentId` by its child ID. A known session is checked first. An unknown ID gets an error that lists the child IDs, so the model can correct it. */
-/** @param {string} parentId @param {string} target @param {string | undefined} known @returns {Promise<Wire.SessionListItem>} */
-async function ownedChild(parentId, target, known) {
+/** Find a child of `parentId` by its child ID, or answer null. A known session is checked first. */
+/** @param {string} parentId @param {string} target @param {string | undefined} known @returns {Promise<Wire.SessionListItem | null>} */
+async function findChild(parentId, target, known) {
     if (known) {
         const child = await client.sessionGet(known);
         if (child.session.origin.type === "child" && child.session.origin.site.session_id === parentId) return child;
     }
-    const items = await allChildren(parentId);
-    const child = items.find((item) => childId(item.session.name ?? "", item.session.id) === target);
-    if (child) return child;
-    const ids = items.map((item) => childId(item.session.name ?? "", item.session.id));
-    throw new Error("The child " + target + " does not exist. " + (ids.length === 0 ? "No child exists." : "The children are: " + ids.join(", ") + "."));
+    return (await allChildren(parentId)).find((item) => childId(item.session.name ?? "", item.session.id) === target) ?? null;
+}
+
+/** The child IDs of `parentId`. @param {string} parentId @returns {Promise<string[]>} */
+async function childIds(parentId) {
+    return (await allChildren(parentId)).map((item) => childId(item.session.name ?? "", item.session.id));
 }
 
 /**
- * Build the `agents` plugin. It gives the model the tools spawn_agent, send_agent_input, and stop_agent, which start and steer child sessions.
+ * Build the `agents` plugin. It gives the model the tools spawn_agent and send_agent_input, which start and steer child sessions. The built-in stop tool ends a child.
  * It throws a TypeError for invalid options.
  * @param {AgentsOptions} options - `catalog` maps each child label (a-z first, then a-z, 0-9, _ or -, up to 64 characters, not "root") to a row.
  * A row has `description` for the model, `model` (the parent model without it), `prompt` after the child policy, and `tools`, a subset of read, write, edit, exec, and skill.
@@ -155,7 +158,8 @@ export function agents(options) {
                 const row = selection.context.parent_id ? catalog.rows[selection.context.agent_name] : null;
                 let tools = selection.tools;
                 if (selection.context.depth >= selection.context.max_agent_depth) tools = tools.filter((name) => !AGENT_TOOLS.includes(name));
-                if (row?.tools) tools = tools.filter((name) => row.tools?.includes(name));
+                // A row with exec also gets stop, so a child can end the jobs it starts.
+                if (row?.tools) tools = tools.filter((name) => row.tools?.includes(name) || (name === "stop" && row.tools?.includes("exec")));
                 return tools.length === selection.tools.length ? null : { replace: { ...selection, tools } };
             });
             // The rule ends a root prompt. A child gets the child policy and its row prompt. Both are stored with the session.
@@ -204,23 +208,32 @@ export function agents(options) {
                 execute: async (raw, _signal, context) => {
                     const args = argsOf(raw, ["child", "message"]);
                     const parentSite = site(context);
-                    const child = await ownedChild(parentSite.session_id, required(args, "child"), childSessions.get(required(args, "child")));
+                    const target = required(args, "child");
+                    const child = await findChild(parentSite.session_id, target, childSessions.get(target));
+                    if (!child) {
+                        const ids = await childIds(parentSite.session_id);
+                        throw new Error("The child " + target + " does not exist. " + (ids.length === 0 ? "No child exists." : "The children are: " + ids.join(", ") + "."));
+                    }
                     const result = await client.sessionSendInput(child.session.id, client.textContent(required(args, "message")), parentSite);
                     const id = required(args, "child");
                     return result.type === "queued" ? "Queued for " + id + " after its current run." : "Sent to " + id + ".";
                 },
             });
-            ctx.tools.define({
-                name: "stop_agent", description: "Stop a child's current run; drop its queued input. The transcript stays; completed side effects are not undone.",
-                parameters: { type: "object", properties: { child: childField }, required: ["child"], additionalProperties: false },
-                execute: async (raw, _signal, context) => {
-                    const args = argsOf(raw, ["child"]);
-                    const child = await ownedChild(site(context).session_id, required(args, "child"), childSessions.get(required(args, "child")));
-                    const result = await client.sessionCancelRun(child.session.id, true);
-                    const id = required(args, "child");
-                    return (result.canceled_run == null ? "No run of " + id + " was active." : "Stopped " + id + ".") + (result.cleared_inputs.length === 0 ? "" : " Dropped " + result.cleared_inputs.length + " queued input(s).");
+            // The built-in stop tool ends a child through this owner of the catalog names.
+            ctx.effect(() => own({
+                owns: (id) => { const name = /^([a-z][a-z0-9_-]*)-[0-9a-f]{8}$/.exec(id)?.[1]; return name !== undefined && name in catalog.rows; },
+                stop: async (id, context) => {
+                    const child = await findChild(context.sessionId, id, childSessions.get(id));
+                    if (!child) return null;
+                    // The stop answers the parent itself, so the engine sends the parent no report.
+                    const result = await client.sessionCancelRun(child.session.id, true, false);
+                    // A job end would start a new child run, so the stop also ends the jobs of the child.
+                    for (const job of listJobs()) if (job.session_id === child.session.id && job.state === "running") await stopJob(job.id);
+                    const dropped = result.cleared_inputs.length;
+                    return "[" + id + " " + (result.canceled_run == null ? "was not running" : "stopped") + "." + (dropped === 0 ? "" : " Dropped " + dropped + " queued input" + (dropped === 1 ? "" : "s") + ".") + "]";
                 },
-            });
+                ids: (context) => childIds(context.sessionId),
+            }));
 
             // The spawn row reads its child from this cache. A first sight starts one read, and the read rebuilds the row.
             /** @type {Map<string, ChildEntry>} */
@@ -300,7 +313,6 @@ export function agents(options) {
                 ctx.chat.render({ tools: {
                     spawn_agent: (o, part) => ({ verb: "agent", subject: String(o.agent || catalog.default) + liveSuffix(part), input: "" }),
                     send_agent_input: (o) => ({ verb: "send", subject: String(o.child || ""), input: "" }),
-                    stop_agent: (o) => ({ verb: "stop", subject: String(o.child || ""), input: "" }),
                 }, sources: {
                     parent_instruction: () => "From the parent session",
                     child_report: reportLabel,

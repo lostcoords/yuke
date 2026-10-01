@@ -657,7 +657,7 @@ test "extensions install no agent tool without the agents plugin" {
     var f: Fixture = undefined;
     try f.init("", kernel_boot);
     defer f.deinit();
-    for ([_][]const u8{ "spawn_agent", "send_agent_input", "stop_agent" }) |name| try std.testing.expect(f.extensions.host.tools.find(name) == null);
+    for ([_][]const u8{ "spawn_agent", "send_agent_input" }) |name| try std.testing.expect(f.extensions.host.tools.find(name) == null);
 }
 
 test "the skill tool answers a catalog body through skill.load" {

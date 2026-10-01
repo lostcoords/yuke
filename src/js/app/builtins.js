@@ -2,7 +2,8 @@
 
 import { fs } from "yuke:internal/native/fs";
 import { exec as runCommand } from "yuke:internal/native/exec";
-import { start as startJob, stop as stopJob, list as listJobs, get as getJob, name as jobName, endLabel, shortCommand } from "yuke:internal/jobs";
+import { start as startJob, stop as stopJob, wait as waitJob, list as listJobs, get as getJob, name as jobName, shortCommand } from "yuke:internal/jobs";
+import { own, stop } from "yuke:internal/stop";
 import { diff } from "yuke:internal/native/diff";
 import { hasTool } from "yuke:internal/native/tools";
 import { client } from "yuke:internal/client";
@@ -160,47 +161,36 @@ function sessionJobs(sessionId) {
   return listJobs().filter(j => j.session_id === sessionId);
 }
 
-/** @param {Job} job @returns {string} */
-function jobState(job) {
-  return job.stop_requested ? `${jobName(job)} ${endLabel(job)}: ${shortCommand(job.command)}` : job.state === "exited" ? `${jobName(job)} exited (${endLabel(job)}): ${shortCommand(job.command)}` : `${jobName(job)} ${job.state}: ${shortCommand(job.command)}`;
+/** The end of a job in the words of the engine end header. @param {Job} job @returns {string} */
+function jobStatus(job) {
+  if (job.state === "running") return "running";
+  if (job.stop_requested) return "stopped";
+  if (job.state === "failed") return "failed";
+  return job.signal !== undefined ? "signal " + job.signal : "exited " + job.exit_code;
 }
 
 /** @param {string} command @param {ToolContext} context @returns {Promise<string>} */
 async function startBackground(command, context) {
   const root = context.workspaceRoot;
   const same = sessionJobs(context.sessionId).find(j => j.state === "running" && j.command === command && j.cwd === root);
-  if (same) return `[job ${jobName(same)} already runs this command. Log: ${same.log}]`;
+  if (same) return `[${jobName(same)} already runs this command. Log: ${same.log}]`;
   const job = await startJob(command, context.sessionId, { workspaceRoot: root });
-  return `[job ${jobName(job)} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use jobs with id and stop: true to request its stop.]`;
+  const name = jobName(job);
+  return `[${name} started: ${shortCommand(command)}. Log: ${job.log}. Its end arrives as a message, so never sleep or poll. Use stop with ${name} to end it.]`;
 }
 
-// A job of another session stays hidden, so its id reads as absent.
-/** @param {string} id @param {ToolContext} context @returns {Job} */
-function jobOf(id, context) {
-  const job = /^job-[0-9a-z]{4}$/.test(id) ? getJob(parseInt(id.slice(4), 36)) : null;
-  if (job && job.session_id === context.sessionId) return job;
-  const ids = sessionJobs(context.sessionId).map(jobName);
-  return invalid(`the job ${id} does not exist. ${ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`}`);
-}
-
-/** @param {Job} job @returns {string} */
-function jobLine(job) {
-  return `[${jobState(job)}. Log: ${job.log}]`;
-}
-
-/** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
-async function jobs(args, _signal, context) {
-  const stop = args.stop ?? false;
-  if (typeof stop !== "boolean") invalid("Set stop to true or false.");
-  if (args.id == null) {
-    if (stop) invalid("Set id when stop is true.");
-    const own = sessionJobs(context.sessionId);
-    return own.length === 0 ? "[no job]" : own.map(jobLine).join("\n");
-  }
-  const job = jobOf(stringArg(args, "id"), context);
-  if (!stop) return jobLine(job);
-  return `[${jobState(/** @type {Job} */ (await stopJob(job.id)))}]`;
-}
+/** The stop owner of `job-` ids. A job of another session reads as absent. @type {import("./stop.js").StopOwner} */
+const jobOwner = {
+  owns: (id) => /^job-[0-9a-z]{4}$/.test(id),
+  stop: async (id, context) => {
+    const found = getJob(parseInt(id.slice(4), 36));
+    if (!found || found.session_id !== context.sessionId) return null;
+    if (found.state === "running") await stopJob(found.id);
+    const job = /** @type {Job} */ (await waitJob(found.id));
+    return `[${id} ${jobStatus(job)}.] Log: ${job.log}`;
+  },
+  ids: async (context) => sessionJobs(context.sessionId).filter(j => j.state === "running").map(jobName),
+};
 
 /** @param {ToolArgs} args @param {ToolSignal} signal @param {ToolContext} context @returns {Promise<string>} */
 async function exec(args, signal, context) {
@@ -267,13 +257,13 @@ export const builtins = {
         background: { type: "boolean", description: "Run a server or watcher as a job and return at once." },
       }, required: ["command"], additionalProperties: false }, execute: exec,
     });
-    builtin(ctx, "jobs", {
-      description: "List the background jobs, or stop one. Pass no argument for the list. Pass id alone for one job and its log path. Pass id and stop: true to request the stop of the job and its process group. A requested stop sends no exit message.",
+    builtin(ctx, "stop", {
+      description: "Stop a background job or a child agent by its id, such as job-k3x9 or explore-a91c07d2. The result is the end of the work. No end message follows.",
       parameters: { type: "object", properties: {
-        id: { type: "string", description: "The job ID, for example job-k3x9." },
-        stop: { type: "boolean" },
-      }, required: [], additionalProperties: false }, execute: jobs,
+        id: { type: "string" },
+      }, required: ["id"], additionalProperties: false }, execute: (args, _signal, context) => stop(stringArg(args, "id"), context),
     });
+    ctx.effect(() => own(jobOwner));
     builtin(ctx, "skill", {
       description: "Load one listed skill by name. Skip if its instructions are already in the transcript.",
       parameters: { type: "object", properties: {

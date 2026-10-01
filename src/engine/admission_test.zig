@@ -461,6 +461,19 @@ test "a canceled active child emits one terminal report" {
     try testing.expectEqual(@as(u64, 1), queue[0].input.source.?.child_report.run_id);
 }
 
+test "a quiet stop of an active child sends the parent no report" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const a = f.arena.allocator();
+    var launch: ?runs.Launch = null;
+    const child = try f.child("quiet", &launch);
+    _ = try commands.sessionCancelRun(&f.engine, a, .{ .session_id = child.session.id, .report = false });
+    runs.Launch.release(&launch, &f.engine);
+    try f.engine.turn_tasks.await(f.engine.deps.io);
+    try testing.expectEqual(@as(usize, 0), (try database.input.list(&f.db, a, f.parent.raw)).len);
+}
+
 test "native child admission derives the level and preserves parent instruction sources" {
     var f: Fixture = undefined;
     try f.init();

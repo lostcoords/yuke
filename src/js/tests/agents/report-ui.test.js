@@ -21,7 +21,7 @@ registerRender(defaultRender);
   if (!inputSourceLabel(source).includes("1 round · 0 tools · 0/0 tokens · 1.5s")) throw new Error("usage missing from the header");
   if (t.rowCount(80) > 15 || !inputSourceLabel(source).includes("one")) throw new Error("unfolded report");
   const failed = { ...source, outcome: { type: "failed", code: "provider", message: "the provider returned an unexpected status", detail: "invalid_request_error: too long" } };
-  if (!inputSourceLabel(failed).includes("failed · the provider returned an unexpected status · invalid_request_error: too long")) throw new Error("failure missing from the header");
+  if (!inputSourceLabel(failed).includes("failed: the provider returned an unexpected status · invalid_request_error: too long")) throw new Error("failure missing from the header");
   const child = new Transcript({ partsOf: textParts(() => "read the file") });
   child.setOutline([{ id: 1, type: "user", source: { type: "parent_instruction", session_id: "01".repeat(16), message_id: 2, part_id: 0 } }], null);
   const childRows = child.rows(80, 0, child.rowCount(80)).map(rowText).join("\n");

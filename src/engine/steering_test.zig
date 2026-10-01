@@ -311,7 +311,7 @@ test "a protected child report joins its active parent at the next boundary" {
     const report = blk: {
         var tx = try f.base.db.begin();
         defer tx.deinit();
-        const terminal = try reports.append(&f.base.engine, a, .{ .session_id = child, .seq = 0, .run_id = started.handle.started.run_id, .kind = .turn, .timing = .{ .started_at_ms = started.handle.started.started_at_ms, .ended_at_ms = util.nowMillis(f.base.engine.deps.io) }, .outcome = .{ .turn = .{ .finish = .stop, .rounds = 0 } } });
+        const terminal = try reports.append(&f.base.engine, a, .{ .session_id = child, .seq = 0, .run_id = started.handle.started.run_id, .kind = .turn, .timing = .{ .started_at_ms = started.handle.started.started_at_ms, .ended_at_ms = util.nowMillis(f.base.engine.deps.io) }, .outcome = .{ .turn = .{ .finish = .stop, .rounds = 0 } } }, true);
         try tx.commit();
         break :blk terminal.report.?;
     };

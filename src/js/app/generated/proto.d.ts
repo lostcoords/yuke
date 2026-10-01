@@ -815,6 +815,8 @@ export interface SessionCancelRunParams {
   readonly session_id: SessionId;
   readonly run_id?: RunId;
   readonly clear_queue?: boolean;
+  /** Set this field to false when the caller returns the stop result. The parent then gets no report. */
+  readonly report?: boolean;
 }
 
 /** This result identifies the canceled run and cleared inputs. */

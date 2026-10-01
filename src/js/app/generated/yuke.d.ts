@@ -129,7 +129,7 @@ export type AgentsOptions = {
     maxRounds?: number;
 };
 /**
- * Build the `agents` plugin. It gives the model the tools spawn_agent, send_agent_input, and stop_agent, which start and steer child sessions.
+ * Build the `agents` plugin. It gives the model the tools spawn_agent and send_agent_input, which start and steer child sessions. The built-in stop tool ends a child.
  * It throws a TypeError for invalid options.
  * @param options - `catalog` maps each child label (a-z first, then a-z, 0-9, _ or -, up to 64 characters, not "root") to a row.
  * A row has `description` for the model, `model` (the parent model without it), `prompt` after the child policy, and `tools`, a subset of read, write, edit, exec, and skill.
@@ -396,8 +396,9 @@ function sessionSendInput(id: string, content: readonly Wire.ContentPart[], pare
 function sessionSendSkill(id: string, name: string, args?: string): Promise<Wire.SessionSendInputResult>;
 /**
  * Stop the active run. The queue survives unless `clearQueue` asks otherwise, and the next queued input starts at once.
+ * With `report` false, the caller returns the stop result, so the parent gets no report.
  */
-function sessionCancelRun(id: string, clearQueue?: boolean): Promise<Wire.SessionCancelRunResult>;
+function sessionCancelRun(id: string, clearQueue?: boolean, report?: boolean): Promise<Wire.SessionCancelRunResult>;
 /**
  * Summarize the history below a boundary. A run in flight holds the compaction until it ends.
  */
@@ -4756,6 +4757,8 @@ export interface SessionCancelRunParams {
   readonly session_id: SessionId;
   readonly run_id?: RunId;
   readonly clear_queue?: boolean;
+  /** Set this field to false when the caller returns the stop result. The parent then gets no report. */
+  readonly report?: boolean;
 }
 
 /** This result identifies the canceled run and cleared inputs. */

@@ -221,13 +221,11 @@ function sessionSendSkill(id, name, args) {
 
 /**
  * Stop the active run. The queue survives unless `clearQueue` asks otherwise, and the next queued input starts at once.
- * @param {string} id @param {boolean} [clearQueue] @returns {Promise<Wire.SessionCancelRunResult>}
+ * With `report` false, the caller returns the stop result, so the parent gets no report.
+ * @param {string} id @param {boolean} [clearQueue] @param {boolean} [report] @returns {Promise<Wire.SessionCancelRunResult>}
  */
-function sessionCancelRun(id, clearQueue = false) {
-  return request("session.cancel_run", {
-    session_id: id,
-    ...(clearQueue ? { clear_queue: true } : {}),
-  });
+function sessionCancelRun(id, clearQueue = false, report = true) {
+  return request("session.cancel_run", { session_id: id, clear_queue: clearQueue, report });
 }
 
 /**

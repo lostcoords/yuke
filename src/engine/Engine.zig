@@ -240,7 +240,7 @@ fn repair(self: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId) !voi
                 .kind = kind,
                 .timing = .{ .started_at_ms = started, .ended_at_ms = ended },
                 .outcome = .{ .failed = .{ .code = .interrupted, .message = "the previous engine stopped before this run ended" } },
-            });
+            }, true);
         }
         try tx.commit();
     }
