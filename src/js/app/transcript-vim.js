@@ -41,8 +41,10 @@ function holdCol(t, s) {
   if (cursor.col >= body.length) s.cursor = { ...cursor, col: prevGrapheme(body, body.length) };
 }
 
+// The transcript keeps the caret on its screen row across a rebuild, so each cursor change goes to it.
 /** @param {Transcript} t @param {VimState} s @returns {void} */
 function anchor(t, s) {
+  t.caret = s.cursor;
   if (s.cursor) s.src = t.sourceAt(s.cursor);
 }
 
@@ -320,6 +322,8 @@ export const transcriptVim = {
       // A region change ends visual mode, so a return to the transcript starts clean.
       ctx.on("region.focused", (view, region) => {
         const s = panes.get(view);
+        // Only a focused transcript holds the caret, so a rebuild under the composer follows the tail again.
+        view.transcript.caret = region === "transcript" && s ? s.cursor : null;
         if (!s) return;
         s.visual = false;
         s.anchor = null;

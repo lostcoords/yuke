@@ -52,7 +52,7 @@ ctx.inject(["composer-vim"], (c) => {
 
 ## Transcript Vim
 
-`transcriptVim` makes `Tab` switch keyboard focus between the composer and transcript. A click in transcript text also focuses it. Leaving the transcript ends visual mode and clears its selection.
+`transcriptVim` makes `Tab` switch keyboard focus between the composer and transcript. A click in transcript text also focuses it. A focus change out of the transcript ends visual mode and clears the selection. ctrl+o keeps the cursor on the same screen row.
 
 | Key in transcript focus | Action |
 |---|---|

@@ -1569,6 +1569,11 @@ export class Transcript {
      * The selection, or null. It holds two `{ id, row, col }` positions, where `row` counts rendered rows and `col` indexes the row text.
      */
     selection: Selection | null;
+    /**
+     * The reader's caret, or null. A rebuild keeps the caret text on the same screen row, so a fold or a rewrap does not move it.
+     * The plugin that owns the keyboard cursor sets the caret on each cursor change. It sets null when the transcript loses the focus.
+     */
+    caret: Position | null;
     _dragging: boolean;
     _didDrag: boolean;
     _press: Position | null;
@@ -1621,13 +1626,15 @@ export class Transcript {
     };
     _invalidate(width: number): void;
     _rebuild(width: number): void;
-    _topAnchor(): {
+    _screenAnchor(): {
         pos: Position;
         off: number;
+        y: number;
     } | null;
-    _keepTop(top: {
+    _keepAnchor(kept: {
         pos: Position;
         off: number;
+        y: number;
     }): void;
     _sourceOf(id: number): string;
     _joinParts(id: number, partBases: Map<string, number>): string;

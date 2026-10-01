@@ -196,6 +196,12 @@ export class Transcript {
      * @type {Selection | null}
      */
     this.selection = null;
+    /**
+     * The reader's caret, or null. A rebuild keeps the caret text on the same screen row, so a fold or a rewrap does not move it.
+     * The plugin that owns the keyboard cursor sets the caret on each cursor change. It sets null when the transcript loses the focus.
+     * @type {Position | null}
+     */
+    this.caret = null;
     this._dragging = false;
     this._didDrag = false;
     /** @type {Position | null} */
@@ -460,7 +466,7 @@ export class Transcript {
   _rebuild(width) {
     const changed = this._revision !== renderRevision;
     const anchors = this._anchors();
-    const top = this._topAnchor();
+    const kept = this._screenAnchor();
     this._width = width;
     this._revision = renderRevision;
     // A ctrl+o opens or folds every part, so each choice the user made one by one ends.
@@ -476,27 +482,35 @@ export class Transcript {
     this._counts.clear();
     this._prefix = [0];
     if (this.selection) this._reanchor(anchors);
-    if (top) this._keepTop(top);
+    if (kept) this._keepAnchor(kept);
   }
 
-  // The first drawn row as a source offset, so a rebuild keeps the same text at the top of the pane. A pane at the tail follows the tail.
-  /** @returns {{ pos: Position, off: number } | null} */
-  _topAnchor() {
-    if (this._width <= 0 || this.pager.stuck || this._prefix.length === 1) return null;
+  // The text that a rebuild keeps on its screen row `y`: the caret on the screen, else the first drawn row. Without a caret, a pane at the tail follows the tail.
+  /** @returns {{ pos: Position, off: number, y: number } | null} */
+  _screenAnchor() {
+    if (this._width <= 0 || this._prefix.length === 1) return null;
+    const caret = this.caret;
+    const rect = this.pager.rect();
+    const y = caret && rect ? this._globalRow(caret) - this.pager.scroll : -1;
+    if (caret && rect && y >= 0 && y < rect.h) return { pos: caret, off: this.sourceAt(caret), y };
+    if (this.pager.stuck) return null;
     const i = this._messageAtRow(this.pager.scroll);
     const m = this._at(i);
     if (!m) return null;
     const pos = { id: m.id, row: this.pager.scroll - this._offset(i), col: 0 };
-    return { pos, off: this.sourceAt(pos) };
+    return { pos, off: this.sourceAt(pos), y: 0 };
   }
 
   // A row with no source, such as a separator, keeps its row in its message instead.
-  /** @param {{ pos: Position, off: number }} top @returns {void} */
-  _keepTop(top) {
-    const { id, row } = top.pos;
-    const pos = (top.off >= 0 ? this.posAtSource(id, top.off) : null) ?? { id, row: Math.min(row, Math.max(0, this.rowCountOf(id) - 1)), col: 0 };
+  /** @param {{ pos: Position, off: number, y: number }} kept @returns {void} */
+  _keepAnchor(kept) {
+    const { id, row } = kept.pos;
+    const pos = (kept.off >= 0 ? this.posAtSource(id, kept.off) : null) ?? { id, row: Math.min(row, Math.max(0, this.rowCountOf(id) - 1)), col: 0 };
     const g = this._globalRow(pos);
-    if (g >= 0) this.pager.scroll = g;
+    if (g < 0) return;
+    this.pager.scroll = Math.max(0, g - kept.y);
+    // The draw clamps the scroll. A scroll at the tail follows the tail again.
+    this.pager.stuck = false;
   }
 
   /** @param {number} id @returns {string} */

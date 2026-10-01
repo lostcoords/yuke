@@ -437,6 +437,10 @@ test "yuke:internal/ui transcript keeps each part source across a fold, so the c
     try support.run("ui/fold-source.test.js");
 }
 
+test "yuke:internal/ui transcript keeps the vim cursor on its screen row across ctrl+o, and follows the tail without one" {
+    try support.runPainted(18, 40, "ui/fold-caret.test.js");
+}
+
 test "yuke:internal/ui transcript keeps committed renders across a reload" {
     try support.runPainted(12, 40, "ui/transcript-reload-reuse.test.js");
 }
