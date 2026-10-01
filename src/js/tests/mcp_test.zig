@@ -190,12 +190,8 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try std.testing.expectEqualStrings("ab" ** 32, &std.fmt.bytesToHex(got.media[0].hash.raw, .lower));
     try support.dropCall(host, media);
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"structured\"}", .{ .text = .{ .equals = "{\"n\":1}" } });
-    const marker = "\n[truncated 20000 characters]";
-    const big = try std.testing.allocator.alloc(u8, 100_000 + marker.len);
-    defer std.testing.allocator.free(big);
-    @memset(big[0..100_000], 'x');
-    @memcpy(big[100_000..], marker);
-    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"big\"}", .{ .text = .{ .equals = big } });
+    // The plugin passes a long answer whole. The engine owns the one result cap.
+    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"big\"}", .{ .text = .{ .equals = "x" ** 120_000 } });
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"input\"}", .{ .is_error = true, .text = .{ .equals = "the tool asks for input, which this client cannot answer" } });
     try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpConflict = false; plugins.use({ name: \"mcp-conflict\", apply(ctx) { ctx.tools.define({ name: \"mcp_modern_added\", description: \"Occupied name.\", parameters: { type: \"object\", properties: {} }, execute() { return \"other\"; } }); } }); globalThis.mcpConflict = true;", "mcp-conflict.js");
     try support.pumpUntilTrue(host, "mcpConflict === true");
@@ -288,8 +284,8 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     // A timeout closes the modern stream, which is the modern cancel.
     try support.expectTool(host, "mcp_modern_slow", "{}", .{ .is_error = true, .text = .{ .equals = "the request timed out" } });
     try support.pumpUntilSet(host, &peer.cancel_seen);
-    // An answer above 256 KiB arrives whole, cut only at the model's result limit.
-    try support.expectTool(host, "mcp_legacy_echo", "{\"text\":\"big\"}", .{ .text = .{ .ends = "[truncated 207200 characters]" } });
+    // An answer above 256 KiB arrives whole.
+    try support.expectTool(host, "mcp_legacy_echo", "{\"text\":\"big\"}", .{ .text = .{ .equals = "x" ** (300 * 1024) } });
     // A forgotten session fails the call that finds it, and the server starts a new session.
     try support.expectTool(host, "mcp_legacy_echo", "{\"text\":\"expire\"}", .{ .text = .{ .equals = "legacy http: expire" } });
     try support.expectTool(host, "mcp_legacy_echo", "{\"text\":\"late\"}", .{ .is_error = true, .text = .{ .equals = "the server ended the session" } });

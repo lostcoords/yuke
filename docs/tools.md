@@ -30,6 +30,10 @@ A model tool is a function that the model calls. Define it with `ctx.tools.defin
 
 Any other value is an error. Return JSON data as a string: `JSON.stringify(data)`.
 
+## Size
+
+The engine caps `output` at 50 KiB. A longer output keeps at most 25 KiB from each end, on whole lines when possible. A marker between them names a file that holds the whole text, or says that yuke could not save it. The file lives until yuke exits. A tool does not need its own cap.
+
 ## Errors
 
 Throw an `Error` when the call fails. The model reads its `message` and nothing else. On OpenAI routes, the model reads `Error: <message>`, because those APIs have no error flag.

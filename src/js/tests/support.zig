@@ -204,7 +204,7 @@ pub fn reply(call: *const tools_table.Call) Reply {
 /// Decode a settled call the way the engine port does, into `arena`. An error outcome fails the test.
 pub fn outcome(arena: std.mem.Allocator, call: *const tools_table.Call) !toolset.Outcome {
     try std.testing.expect(reply(call).outcome);
-    const decoded = port.outcomeOf(arena, call.state.settled);
+    const decoded = port.outcomeOf(arena, .{}, call.state.settled);
     if (decoded.is_error) std.debug.print("outcome error: {s}\n", .{decoded.output});
     try std.testing.expect(!decoded.is_error);
     return decoded;

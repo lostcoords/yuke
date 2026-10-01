@@ -11,7 +11,7 @@ const tools = @import("tools.zig");
 /// Build the port the process installs. The set answers from the live host table.
 pub fn toolSet(host: *Host) toolset.ToolSet {
     std.debug.assert(host.phase == .open);
-    return .{ .ctx = host, .decls = declsFor, .run = runFor };
+    return .{ .ctx = host, .decls = declsFor, .run = runFor, .spill = spillFor };
 }
 
 /// Answer every declaration in table order, which is sorted, so the advertised order never follows load order.
@@ -44,7 +44,16 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
         }
         if (call.state == .settled) break;
     }
-    return outcomeOf(out, call.state.settled);
+    return outcomeOf(out, toolSet(host), call.state.settled);
+}
+
+/// Write the whole text of a cut result to a new file in the host log directory. Return its path, allocated with `out`, or null when the write fails.
+fn spillFor(ctx: *anyopaque, out: std.mem.Allocator, text: []const u8) ?[]const u8 {
+    const host: *Host = @ptrCast(@alignCast(ctx));
+    const path = host.logs.next(host.gpa, host.io, host.execution.env, "tool") catch return null;
+    defer host.gpa.free(path);
+    std.Io.Dir.cwd().writeFile(host.io, .{ .sub_path = path, .data = text }) catch return null;
+    return out.dupe(u8, path) catch null;
 }
 
 fn finishCall(host: *Host, call: *tools.Call) void {
@@ -103,13 +112,17 @@ fn decisionOf(out: std.mem.Allocator, point: proto.hook.Point, text: []const u8)
 }
 
 /// Read the answer of one settled tool call into `out`, because the owner frees the answer on its next sweep. A `ToolOutcome` with an unknown key is an error.
-pub fn outcomeOf(out: std.mem.Allocator, answer: tools.Call.Answer) toolset.Outcome {
+/// A text over the cap is cut here, so the whole text never gets a second copy.
+pub fn outcomeOf(out: std.mem.Allocator, set: toolset.ToolSet, answer: tools.Call.Answer) toolset.Outcome {
     const reply = switch (answer) {
         .ok => |value| value,
         .failed => |text| return fault(out, text),
         .closed => return fault(out, "the tool call did not finish"),
     };
-    if (!reply.outcome) return .{ .output = out.dupe(u8, reply.text) catch unreachable };
+    if (!reply.outcome) {
+        const capped = toolset.cut(set, out, reply.text) catch unreachable;
+        return .{ .output = capped orelse out.dupe(u8, reply.text) catch unreachable };
+    }
     return std.json.parseFromSliceLeaky(toolset.Outcome, out, reply.text, .{ .allocate = .alloc_always }) catch
         fault(out, "the tool answered an object that is not a ToolOutcome");
 }
@@ -122,7 +135,7 @@ test "a tool outcome owns its data after the call answer leaves, and an unknown 
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const json = try std.testing.allocator.dupe(u8, "{\"output\":\"done\",\"media\":[{\"hash\":\"" ++ "ab" ** 32 ++ "\",\"mime\":\"image/png\",\"bytes\":3}],\"tools_added\":[{\"name\":\"mcp_read\",\"description\":\"Read.\",\"input_schema\":\"{}\"}]}");
-    const outcome = outcomeOf(arena.allocator(), .{ .ok = .{ .text = json, .outcome = true } });
+    const outcome = outcomeOf(arena.allocator(), .{}, .{ .ok = .{ .text = json, .outcome = true } });
     @memset(json, 'x');
     std.testing.allocator.free(json);
     try std.testing.expect(!outcome.is_error);
@@ -131,10 +144,37 @@ test "a tool outcome owns its data after the call answer leaves, and an unknown 
     try std.testing.expectEqual(@as(u64, 3), outcome.media[0].bytes);
     try std.testing.expectEqualStrings("mcp_read", outcome.tools_added[0].name);
     const unknown = try arena.allocator().dupe(u8, "{\"output\":\"x\",\"text\":\"y\"}");
-    try std.testing.expect(outcomeOf(arena.allocator(), .{ .ok = .{ .text = unknown, .outcome = true } }).is_error);
+    try std.testing.expect(outcomeOf(arena.allocator(), .{}, .{ .ok = .{ .text = unknown, .outcome = true } }).is_error);
     // Plain text is model text, even when it reads as JSON.
     const plain = try arena.allocator().dupe(u8, "{\"text\":\"y\"}");
-    try std.testing.expectEqualStrings("{\"text\":\"y\"}", outcomeOf(arena.allocator(), .{ .ok = .{ .text = plain } }).output);
+    try std.testing.expectEqualStrings("{\"text\":\"y\"}", outcomeOf(arena.allocator(), .{}, .{ .ok = .{ .text = plain } }).output);
+}
+
+test "a spill writes the whole text to a new file in the host log directory" {
+    const support = @import("tests/support.zig");
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const set = toolSet(host);
+    const first = set.spill(set.ctx, arena.allocator(), "whole text").?;
+    const second = set.spill(set.ctx, arena.allocator(), "more").?;
+    try std.testing.expect(!std.mem.eql(u8, first, second));
+    try std.testing.expect(std.mem.startsWith(u8, first, host.logs.dir.?));
+    var buf: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("whole text", try std.Io.Dir.cwd().readFile(host.io, first, &buf));
+    // A plain answer over the cap is cut at the port, and the file holds the whole answer.
+    const big = try std.testing.allocator.alloc(u8, 2 * proto.meta.limits.max_tool_result_bytes);
+    defer std.testing.allocator.free(big);
+    @memset(big, 'z');
+    const decoded = outcomeOf(arena.allocator(), set, .{ .ok = .{ .text = big } });
+    try std.testing.expect(decoded.output.len < big.len);
+    const marker = "Full output: ";
+    const at = std.mem.indexOf(u8, decoded.output, marker).? + marker.len;
+    const path = decoded.output[at..][0 .. std.mem.indexOfScalar(u8, decoded.output[at..], ' ').? - 1];
+    const saved = try std.Io.Dir.cwd().readFileAlloc(host.io, path, std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(saved);
+    try std.testing.expectEqualStrings(big, saved);
 }
 
 test "hook decisions own text after the call answer leaves" {

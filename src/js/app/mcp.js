@@ -46,7 +46,6 @@ const INSTRUCTIONS_MAX = 2048;
 const SEARCH_DESCRIPTION_MAX = 4096;
 const QUERY_MAX = 500;
 const DESCRIPTION_MAX = 1024;
-const RESULT_MAX = 16 * 1024;
 // A loaded schema above this stays out of the context; the search names the tool without it.
 const SCHEMA_MAX = 64 * 1024;
 const LIMIT_DEFAULT = 5;
@@ -60,8 +59,6 @@ const PROGRESS_CAP = 10;
 const MAX_IMAGES = 8;
 // A text result shares this empty list, so it allocates none.
 const NO_IMAGES = Object.freeze(/** @type {string[]} */ ([]));
-// A result above this reaches the model cut, with a marker that names the missing part.
-const MAX_RESULT_CHARS = 100_000;
 
 // `mcp_<server>_<tool>` within the provider limit; an overflow keeps a prefix and a stable hash of the whole name.
 /** @param {string} server @param {string} tool @returns {string} */
@@ -79,36 +76,25 @@ export function toolName(server, tool) {
 /** @param {Content[]} content @param {unknown} structured @returns {string} */
 function contentText(content, structured) {
   // A single block exists once the length is one, so the reads need no guard.
-  if (content.length === 1 && /** @type {Content} */ (content[0]).type === "text") {
-    const text = /** @type {Extract<Content, { type: "text" }>} */ (content[0]).text;
-    return text.length <= MAX_RESULT_CHARS ? text : text.slice(0, MAX_RESULT_CHARS) + "\n[truncated " + (text.length - MAX_RESULT_CHARS) + " characters]";
-  }
+  if (content.length === 1 && /** @type {Content} */ (content[0]).type === "text") return /** @type {Extract<Content, { type: "text" }>} */ (content[0]).text;
   /** @type {string[]} */
   const parts = [];
-  let total = 0, blocks = 0, hasText = false;
-  /** @param {string} text */
-  const append = (text) => {
-    const separator = blocks++ === 0 ? 0 : 1;
-    const remaining = MAX_RESULT_CHARS - total - separator;
-    if (remaining >= 0) parts.push(text.slice(0, remaining));
-    total += separator + text.length;
-  };
+  let hasText = false;
   for (const block of content) {
     switch (block.type) {
-      case "text": append(block.text); hasText = true; break;
-      case "image": case "audio": append("[" + block.type + " " + block.mimeType + ", " + Math.floor(block.data.length * 3 / 4) + " bytes]"); break;
-      case "resource_link": append("[resource " + block.uri + " " + block.name + "]"); break;
+      case "text": parts.push(block.text); hasText = true; break;
+      case "image": case "audio": parts.push("[" + block.type + " " + block.mimeType + ", " + Math.floor(block.data.length * 3 / 4) + " bytes]"); break;
+      case "resource_link": parts.push("[resource " + block.uri + " " + block.name + "]"); break;
       case "resource": {
         const resource = block.resource;
-        if (typeof resource.text === "string") append(resource.text);
-        else append("[resource " + resource.uri + (resource.mimeType ? " " + resource.mimeType : "") + "]");
+        if (typeof resource.text === "string") parts.push(resource.text);
+        else parts.push("[resource " + resource.uri + (resource.mimeType ? " " + resource.mimeType : "") + "]");
         break;
       }
     }
   }
-  if (!hasText && structured !== undefined) append(JSON.stringify(structured));
-  const text = parts.join("\n");
-  return total <= MAX_RESULT_CHARS ? text : text + "\n[truncated " + (total - MAX_RESULT_CHARS) + " characters]";
+  if (!hasText && structured !== undefined) parts.push(JSON.stringify(structured));
+  return parts.join("\n");
 }
 
 /** @param {string} message @returns {never} */
@@ -326,14 +312,11 @@ function searchCatalog(servers, args) {
   const lines = [];
   /** @type {Wire.ToolDefinition[]} */
   const added = [];
-  let bytes = 0;
   for (const hit of hits.slice(0, limit)) {
     const description = hit.definition.description.slice(0, DESCRIPTION_MAX);
     // An eager tool is in the context already, so only a deferred one is loaded.
     const schema = hit.definition.defer === true ? JSON.stringify(hit.definition.parameters) : "";
     const line = hit.definition.name + " (" + hit.server + "): " + description + (schema.length > SCHEMA_MAX ? " [not loaded: the input schema is too large]" : "");
-    if (bytes + line.length > RESULT_MAX) break;
-    bytes += line.length + 1;
     lines.push(line);
     if (schema !== "" && schema.length <= SCHEMA_MAX) added.push({ name: hit.definition.name, description, input_schema: schema });
   }

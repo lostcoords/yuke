@@ -112,7 +112,7 @@ pub const Host = struct {
     wake: std.Io.Event = .unset,
     /// The tasks running those calls. `close` cancels them before the context dies.
     tasks: std.Io.Group = .init,
-    /// The command logs. Only the owner makes a path.
+    /// The logs hold command output and cut tool results.
     logs: Logs = .{},
     /// The `setTimeout` and `setInterval` table. Only the owner touches it.
     timers: timers_mod.Timers = .{},

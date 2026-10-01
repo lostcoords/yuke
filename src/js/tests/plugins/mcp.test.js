@@ -232,7 +232,6 @@ if (mcpCase === "validation") {
   rejects("modern tag required", () => toolResult({ content: [] }, true));
   equal(toolResult({ content: [] }).text, "");
   equal(toolResult({ resultType: "complete", content: [{ type: "text", text: "ok", extension: 1 }] }, true).text, "ok");
-  equal(toolResult({ content: [{ type: "text", text: "x".repeat(99999) }, { type: "text", text: "yy" }] }).text, "x".repeat(99999) + "\n\n[truncated 2 characters]");
   // Only image blocks attach, and one result attaches at most eight.
   const shots = toolResult({ content: [...Array.from({ length: 9 }, (_, i) => ({ type: "image", data: "i" + i, mimeType: "image/png" })), { type: "audio", data: "a", mimeType: "audio/wav" }] });
   equal(shots.images.join(","), "i0,i1,i2,i3,i4,i5,i6,i7");

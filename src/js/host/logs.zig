@@ -1,4 +1,4 @@
-//! The private directory for command logs. Only the owner creates a path, and `Host.destroy` deletes the directory.
+//! The private directory for command logs and cut tool results. The owner and the turn tasks make paths on one thread. `Host.destroy` deletes the directory.
 
 const std = @import("std");
 const h = @import("operations.zig");
@@ -21,7 +21,11 @@ pub const Logs = struct {
                 gpa.free(dir);
                 return error.HostFailure;
             };
-            self.dir = dir;
+            // The create can yield, so another task can set the directory first. Keep one directory so that `deinit` deletes every log.
+            if (self.dir != null) {
+                std.Io.Dir.cwd().deleteDir(io, dir) catch {};
+                gpa.free(dir);
+            } else self.dir = dir;
         }
         self.count += 1;
         return std.fmt.allocPrint(gpa, "{s}/{s}-{d}.log", .{ self.dir.?, name, self.count }) catch unreachable;

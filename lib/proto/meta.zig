@@ -14,6 +14,7 @@ pub const limits = struct {
     pub const max_queued_inputs: u64 = 128;
     pub const max_reasoning_levels: u64 = 32;
     pub const max_session_list_page_size: u64 = 100;
+    pub const max_tool_result_bytes: u64 = 50 * 1024;
     pub const max_tool_output_stream_bytes: u64 = 1048576;
 };
 

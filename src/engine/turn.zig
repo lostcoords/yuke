@@ -834,7 +834,7 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
         .proceed => {},
         // An unreadable answer is a plugin bug, so the call fails closed like it does on a throw.
         .replace => |value| call = std.json.parseFromValueLeaky(ToolCall, arena, value, .{ .ignore_unknown_fields = true }) catch return .{ .output = "a tool.before handler answered an unreadable call", .is_error = true },
-        .block => |reason| return .{ .output = reason, .is_error = true },
+        .block => |reason| return .{ .output = try toolset.cut(engine.deps.tools, arena, reason) orelse reason, .is_error = true },
         .canceled => return error.Canceled,
     }
 
@@ -860,10 +860,12 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
         .proceed => res,
         // A replacement is the whole result, so a field it omits is gone.
         .replace => |value| std.json.parseFromValueLeaky(toolset.Outcome, arena, value, .{ .ignore_unknown_fields = true }) catch return .{ .output = "a tool.after handler answered an unreadable result", .is_error = true },
-        .block => |reason| return .{ .output = reason, .is_error = true },
+        .block => |reason| return .{ .output = try toolset.cut(engine.deps.tools, arena, reason) orelse reason, .is_error = true },
         .canceled => return error.Canceled,
     };
-    return admitMedia(engine, arena, admitAdditions(arena, held, outcome));
+    var capped = outcome;
+    capped.output = try toolset.cut(engine.deps.tools, arena, outcome.output) orelse outcome.output;
+    return admitMedia(engine, arena, admitAdditions(arena, held, capped));
 }
 
 /// A search result grants no new authority: every loaded definition must sit in the run loadout and carry an object schema.
@@ -1719,6 +1721,69 @@ test "a tool.after replacement is the whole result, and the engine admits the me
     const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard);
     try std.testing.expect(refused.is_error);
     try std.testing.expect(std.mem.indexOf(u8, refused.output, "does not hold") != null);
+}
+
+test "an output over the cap keeps whole head and tail lines, and names the file with every byte" {
+    const State = struct {
+        output: []const u8,
+        saved: []const u8 = "",
+        save: bool = true,
+        block: ?[]const u8 = null,
+        block_at: proto.hook.Point = .@"tool.after",
+
+        fn execute(raw: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            return .{ .output = self.output };
+        }
+
+        fn spill(raw: *anyopaque, _: std.mem.Allocator, text: []const u8) ?[]const u8 {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.saved = text;
+            return if (self.save) "/tmp/spill-1.log" else null;
+        }
+
+        fn holds(raw: *anyopaque, point: proto.hook.Point) bool {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            return point == self.block_at and self.block != null;
+        }
+
+        fn ask(raw: *anyopaque, _: std.mem.Allocator, _: proto.hook.Point, _: []const u8) hookset.Decision {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            return .{ .block = self.block.? };
+        }
+    };
+    const line = "x" ** 99 ++ "\n";
+    const big = "first\n" ++ line ** 1024 ++ "last\n";
+    var f: StreamerFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    var state: State = .{ .output = big };
+    f.engine.installTools(.{ .ctx = &state, .decls = Resources.serveTools(&.{"read"}), .run = State.execute, .spill = State.spill });
+    f.engine.installHooks(.{ .ctx = &state, .holds = State.holds, .ask = State.ask });
+    var scratch: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer scratch.deinit();
+    const pending: PendingTool = .{ .part_id = 0, .name = "read", .arguments = "{}" };
+    const capped = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard);
+    try std.testing.expect(capped.output.len <= proto.meta.limits.max_tool_result_bytes + 128);
+    try std.testing.expect(std.mem.startsWith(u8, capped.output, "first\n"));
+    try std.testing.expect(std.mem.endsWith(u8, capped.output, line ++ "last\n"));
+    try std.testing.expect(std.mem.indexOf(u8, capped.output, "bytes here. Full output: /tmp/spill-1.log.") != null);
+    try std.testing.expectEqualStrings(big, state.saved);
+    // Each kept side holds whole lines, so the marker line sits between two whole lines.
+    try std.testing.expect(std.mem.indexOf(u8, capped.output, line ++ "[yuke cut") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capped.output, "run grep with exec.]\n" ++ line) != null);
+    // An output at the cap passes untouched.
+    state.output = "y" ** proto.meta.limits.max_tool_result_bytes;
+    try std.testing.expectEqualStrings(state.output, (try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard)).output);
+    // A block reason is capped too. A cut point inside a two-byte character moves to the character boundary, and a failed save says so.
+    state.save = false;
+    state.block = "a" ++ "é" ** 30_000;
+    for ([_]proto.hook.Point{ .@"tool.before", .@"tool.after" }) |point| {
+        state.block_at = point;
+        const blocked = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard);
+        try std.testing.expect(blocked.is_error);
+        try std.testing.expectEqualStrings("a" ++ "é" ** 12_799 ++ "\n[yuke cut 8802 bytes here. yuke could not save the full output.]\n" ++ "é" ** 12_800, blocked.output);
+    }
 }
 
 test "a section title closes on its second star, across deltas, and only at the section start" {

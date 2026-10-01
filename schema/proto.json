@@ -10,6 +10,7 @@
     "max_queued_inputs": 128,
     "max_reasoning_levels": 32,
     "max_session_list_page_size": 100,
+    "max_tool_result_bytes": 51200,
     "max_tool_output_stream_bytes": 1048576
   },
   "constants": {

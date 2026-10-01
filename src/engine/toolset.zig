@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const proto = @import("proto");
+const utf8 = @import("../utf8.zig");
 const ir = @import("ai").ir;
 const work = @import("../session/work.zig");
 
@@ -51,11 +52,18 @@ pub const ToolSet = struct {
         arguments: []const u8,
         context: Context,
     ) Outcome = unknownTool,
+    /// Save the whole text of a result that the engine cuts. Return its absolute path, allocated with `out`, or null when the save fails.
+    spill: *const fn (ctx: *anyopaque, out: std.mem.Allocator, text: []const u8) ?[]const u8 = noSpill,
 };
 
 /// A process without extensions advertises no tool.
 fn noDecls(_: *anyopaque, _: std.mem.Allocator) error{OutOfMemory}![]const ir.Tool {
     return &.{};
+}
+
+/// A process without extensions has no spill directory.
+fn noSpill(_: *anyopaque, _: std.mem.Allocator, _: []const u8) ?[]const u8 {
+    return null;
 }
 
 /// A name the process does not serve answers the model, so a turn continues.
@@ -64,4 +72,31 @@ fn unknownTool(_: *anyopaque, out: std.mem.Allocator, name: []const u8, _: []con
         .output = std.fmt.allocPrint(out, "The tool \"{s}\" is unknown.", .{name}) catch "The requested tool is unknown.",
         .is_error = true,
     };
+}
+
+/// Answer `text` cut to the cap, or null when it fits: the head and the tail stay, and `set` saves the whole text. The result belongs to `arena`.
+pub fn cut(set: ToolSet, arena: std.mem.Allocator, text: []const u8) error{OutOfMemory}!?[]const u8 {
+    const cap: usize = proto.meta.limits.max_tool_result_bytes;
+    if (text.len <= cap) return null;
+    const kept = middleCut(text, cap / 2);
+    const head = text[0..kept.head_end];
+    const tail = text[kept.tail_start..];
+    const dropped = kept.tail_start - kept.head_end;
+    // The marker takes its own line, so a head without a final line break gets one.
+    const gap = if (std.mem.endsWith(u8, head, "\n")) "" else "\n";
+    if (set.spill(set.ctx, arena, text)) |path|
+        return try std.fmt.allocPrint(arena, "{s}{s}[yuke cut {d} bytes here. Full output: {s}. Read it with start and end, or run grep with exec.]\n{s}", .{ head, gap, dropped, path, tail });
+    return try std.fmt.allocPrint(arena, "{s}{s}[yuke cut {d} bytes here. yuke could not save the full output.]\n{s}", .{ head, gap, dropped, tail });
+}
+
+/// Return the ranges that a middle cut keeps: at most `half` bytes from each end, on line boundaries when possible and always on character boundaries.
+fn middleCut(text: []const u8, half: usize) struct { head_end: usize, tail_start: usize } {
+    std.debug.assert(text.len > 2 * half); // the caller passes only a text that exceeds the cap
+    const floor = utf8.floor(text, half);
+    // A head with no line break keeps its character boundary, so one long line still shows its start.
+    const head_end = if (std.mem.lastIndexOfScalar(u8, text[0..floor], '\n')) |nl| nl + 1 else floor;
+    const from = text.len - half;
+    const aligned = from + utf8.head(text[from..]);
+    const tail_start = if (std.mem.indexOfScalar(u8, text[aligned..], '\n')) |nl| aligned + nl + 1 else aligned;
+    return .{ .head_end = head_end, .tail_start = tail_start };
 }

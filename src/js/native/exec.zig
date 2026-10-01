@@ -35,7 +35,7 @@ const Request = struct {
     cwd: ?[]u8,
     timeout_ms: u32,
     max_bytes: u32,
-    /// Null unless the caller asked for a log. The owner makes the path, because only the owner touches `Host.logs`.
+    /// Null unless the caller asked for a log. The owner makes the path in `Host.logs`.
     log: ?[]u8 = null,
     /// True when the caller passed `onOutput`, so each chunk reaches the op as live text.
     live: bool = false,
