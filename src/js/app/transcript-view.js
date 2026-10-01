@@ -21,7 +21,6 @@ const EXEC_PREVIEW_LINES = 5;
 const PREVIEW_LINES = 10;
 // Every row starts one column in, so a block background frames its text.
 const PAD = 1;
-const USER_PAD = 2;
 
 /**
  * A path for a header: relative under the process directory, else complete.
@@ -368,18 +367,16 @@ export const defaultRender = {
       return { rows, source: text };
     }
     // Each attachment label takes the place of its part. The number counts media alone, as the composer does.
-    const userPad = Math.max(0, Math.min(USER_PAD, Math.floor((env.width - 1) / 2)));
-    const userWidth = Math.max(1, env.width - 2 * userPad);
     let image = 0;
     let text = "";
     for (const part of parts) {
       if (part.type === "text") text += part.text;
       else if (part.type === "image" || part.type === "audio" || part.type === "file") text += mediaLabel(part.source, part.type === "image" ? ++image : 0);
     }
-    const rows = wrapRows(text, userWidth, "TxUser", userPad);
-    if (!rows.length) rows.push({ text: "", indent: userPad });
+    const rows = wrapRows(text, width, "TxUser", PAD);
+    if (!rows.length) rows.push({ text: "", indent: PAD });
     // A parent-sent task reads like user input, so one label row says where it came from.
-    if (source) rows.unshift({ text: clip(inputSourceLabel(source), userWidth), group: "TxMeta", indent: userPad });
+    if (source) rows.unshift({ text: clip(inputSourceLabel(source), width), group: "TxMeta", indent: PAD });
     for (const r of rows) r.bg = "TxUser";
     /** @type {TranscriptRow} */ (rows[0]).stop = true;
     return { rows, source: text };

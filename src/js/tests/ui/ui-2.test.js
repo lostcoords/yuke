@@ -36,9 +36,7 @@ const texts = { u1: "hello world", a1: "**bold** text" };
 const t = new Transcript({ partsOf: textParts((id) => texts[id] || "") });
 t.setOutline([{ id: "u1", type: "user" }, { id: "a1", type: "assistant" }], null);
 const rows = t.rows(40, 0, 100);
-const wideUser = rows.find((r) => r.bg === "TxUser" && r.text === "hello world");
-const narrowUser = t.rows(3, 0, 100).find((r) => r.bg === "TxUser");
-check("user-band", wideUser !== undefined && narrowUser !== undefined && wideUser.indent > narrowUser.indent);
+check("user-band", rows.some((r) => r.bg === "TxUser" && r.text === "hello world"));
 check("assistant-md", rows.some((r) => r.segments && r.segments.some((s) => s.group === "MdStrong" && s.text === "bold")));
 
 // A draft delta re-renders the assistant turn through yuke:internal/md.
