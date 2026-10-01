@@ -13,7 +13,7 @@ const tool = (id, name) => ({ type: "tool", id, name, arguments: '{"value":"' + 
 // Consecutive tool calls and thoughts group across messages under one header, and text closes the group.
 const parts = {
   a: [tool(1, "one"), tool(2, "two")],
-  b: [{ type: "reasoning", id: 3, text: "continued analysis" }, tool(4, "three")],
+  b: [{ type: "reasoning", id: 3, text: "**Continued analysis**\n\nbody", title: "Continued analysis", duration_ms: 4000 }, tool(4, "three")],
   c: [{ type: "text", id: 5, text: "visible answer" }, tool(6, "four")],
 };
 const t = new Transcript({ partsOf: (id) => parts[id] || [] });
@@ -22,7 +22,7 @@ const rows = t.rows(60, 0, t.rowCount(60));
 const tools = rows.filter((r) => r.kind === "tool-header");
 check("one-group", rows.filter((r) => rowText(r) === "4 actions").length === 1 && rows.filter((r) => rowText(r) === "1 action").length === 1);
 check("tree", tools.map((r) => r.marker).join(",") === "  ├─,  ├─,  └─,  └─" && tools.every((r) => r.indent === 5));
-check("reasoning-action", rows.some((r) => r.kind === "reasoning-header" && r.marker === "  ├─" && rowText(r) === "thought · continued analysis"));
+check("reasoning-action", rows.some((r) => r.kind === "reasoning-header" && r.marker === "  ├─" && rowText(r) === "thought for 4s · Continued analysis"));
 const aRows = t.rows(60, t._globalRow({ id: "a", row: 0, col: 0 }), t.rowCountOf("a"));
 check("joined-messages", aRows.length > 0 && rowText(aRows[aRows.length - 1]) !== "");
 
@@ -34,6 +34,8 @@ const live = new Transcript({ partsOf: (id) => liveParts[id] || [], partOf: (id,
 } });
 live.setOutline([{ id: "first", type: "assistant" }], { id: "next", type: "assistant" });
 check("reasoning-counts", live.rows(60, 0, live.rowCount(60)).some((r) => rowText(r) === "2 actions"));
+// A thought that still streams stays folded to its header.
+check("live-thought-folded", live.rows(60, 0, live.rowCount(60)).filter((r) => r.kind === "reasoning-header" || r.kind === "reasoning-body").map((r) => r.kind).join() === "reasoning-header");
 liveParts.next.push(tool(12, "after"));
 live.setActive("next");
 let liveRows = live.rows(60, 0, live.rowCount(60));

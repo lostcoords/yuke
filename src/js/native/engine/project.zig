@@ -172,8 +172,17 @@ pub const TextCursor = struct {
 fn writePart(w: *std.Io.Writer, parts: *Parts, p: proto.message.AssistantPart, cursor: ?TextCursor) !void {
     parts.* = .{};
     switch (p) {
-        .text => |t| try writeTextPart(w, parts, "text", t.id, t.text, cursor),
-        .reasoning => |r| try writeTextPart(w, parts, "reasoning", r.id, r.text, cursor),
+        .text => |t| {
+            try writeTextPart(w, parts, "text", t.id, t.text, cursor);
+            try w.writeByte('}');
+        },
+        .reasoning => |r| {
+            try writeTextPart(w, parts, "reasoning", r.id, r.text, cursor);
+            // Every reasoning object holds the same fields, so QuickJS gives them one shape.
+            try w.writeAll(",\"title\":");
+            try std.json.Stringify.encodeJsonString(r.title, .{}, w);
+            if (r.duration_ms) |ms| try w.print(",\"duration_ms\":{d}}}", .{ms}) else try w.writeAll(",\"duration_ms\":null}");
+        },
         .redacted_reasoning => |r| try w.print("{{\"type\":\"redacted_reasoning\",\"id\":{d}}}", .{r.id}),
         .tool => |t| try writeToolPart(w, parts, t),
     }
@@ -183,7 +192,10 @@ fn writePart(w: *std.Io.Writer, parts: *Parts, p: proto.message.AssistantPart, c
 fn writeContentPart(w: *std.Io.Writer, parts: *Parts, id: u64, c: proto.content.ContentPart) !void {
     parts.* = .{};
     switch (c) {
-        .text => |t| try writeTextPart(w, parts, "text", id, t.text, null),
+        .text => |t| {
+            try writeTextPart(w, parts, "text", id, t.text, null);
+            try w.writeByte('}');
+        },
         .image => |t| try writeMediaPart(w, "image", id, t.source),
         .audio => |t| try writeMediaPart(w, "audio", id, t.source),
         .file => |t| try writeMediaPart(w, "file", id, t.source),
@@ -197,7 +209,7 @@ fn writeMediaPart(w: *std.Io.Writer, kind: []const u8, id: u64, source: proto.co
     try w.writeByte('}');
 }
 
-/// Write a text-bearing part. A cut text names itself in `cut`, so a view knows to page the rest.
+/// Write a text-bearing part with no closing brace, so the caller can add fields. A cut text names itself in `cut`, so a view knows to page the rest.
 fn writeTextPart(w: *std.Io.Writer, parts: *Parts, kind: []const u8, id: u64, text: []const u8, cursor: ?TextCursor) !void {
     const offset = if (cursor) |c| c.offset else 0;
     const start = if (offset <= text.len and (offset == text.len or text[offset] & 0xc0 != 0x80)) offset else 0;
@@ -208,7 +220,6 @@ fn writeTextPart(w: *std.Io.Writer, parts: *Parts, kind: []const u8, id: u64, te
     if (end < text.len) parts.cuts.add(.{ .field = .text, .size = text.len, .next = end });
     if (cursor) |c| try w.print(",\"text_generation\":{d},\"text_bytes\":{d},\"text_offset\":{d}", .{ c.generation, text.len, start });
     try parts.cuts.write(w);
-    try w.writeByte('}');
 }
 
 /// Write a tool part field by field. A generic encode here would copy a whole tool result.
@@ -394,7 +405,10 @@ pub fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: pro
                 try writeContentPart(w, &parts, id, c);
             },
             // A summary reads as one text part, so a view reads every message through its parts.
-            .compaction => |c| if (only == null or only.? == 0) try writeTextPart(w, &parts, "text", 0, c.summary, null),
+            .compaction => |c| if (only == null or only.? == 0) {
+                try writeTextPart(w, &parts, "text", 0, c.summary, null);
+                try w.writeByte('}');
+            },
         }
         return w.writeByte(']');
     }
@@ -791,4 +805,33 @@ test "a compaction projects its summary as one text part" {
     defer buffer.deinit();
     try writeMessageParts(&buffer.writer, &session, 1, null, null);
     try std.testing.expectEqualStrings("[{\"type\":\"text\",\"id\":0,\"text\":\"the work so far\"}]", buffer.written());
+}
+
+test "a reasoning part projects its title and duration, and a live one projects a null duration" {
+    const a = std.testing.allocator;
+    var session = domain_session.Session.init(a, .bytes([_]u8{6} ** 16));
+    defer session.deinit();
+    try session.apply(.{ .message_committed_data = .{
+        .session_id = session.id,
+        .seq = 1,
+        .message = .{ .assistant = .{
+            .id = 1,
+            .run_id = 1,
+            .config_rev = 0,
+            .content = &.{
+                .{ .reasoning = .{ .id = 0, .text = "**Plan**", .signature = "", .title = "Plan", .duration_ms = 1500 } },
+                .{ .reasoning = .{ .id = 1, .text = "", .signature = "" } },
+            },
+            .finish = .stop,
+            .time = .{ .created_at_ms = 1 },
+        } },
+    } });
+    var buffer: std.Io.Writer.Allocating = .init(a);
+    defer buffer.deinit();
+    try writeMessageParts(&buffer.writer, &session, 1, null, null);
+    try std.testing.expectEqualStrings(
+        "[{\"type\":\"reasoning\",\"id\":0,\"text\":\"**Plan**\",\"title\":\"Plan\",\"duration_ms\":1500}," ++
+            "{\"type\":\"reasoning\",\"id\":1,\"text\":\"\",\"title\":\"\",\"duration_ms\":null}]",
+        buffer.written(),
+    );
 }

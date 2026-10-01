@@ -86,7 +86,7 @@ test "tagged unions round-trip one representative value each" {
         .{ .union_type = activity.ActivityState, .json = "{\"type\":\"running_tool\",\"run_id\":7,\"message_id\":8,\"part_id\":9,\"tool_name\":\"search\",\"started_at_ms\":100}" },
         .{ .union_type = activity.ActivityState, .json = "{\"type\":\"waiting\",\"run_id\":7,\"started_at_ms\":100}" },
         .{ .union_type = message.AssistantPart, .json = "{\"type\":\"text\",\"id\":7,\"text\":\"hello\"}" },
-        .{ .union_type = message.PartFinal, .json = "{\"type\":\"reasoning\",\"signature\":\"sig\"}" },
+        .{ .union_type = message.PartFinal, .json = "{\"type\":\"reasoning\",\"signature\":\"sig\",\"duration_ms\":1200}" },
         .{ .union_type = message.PartFinal, .json = "{\"type\":\"redacted_reasoning\",\"data\":\"opaque\"}" },
         .{ .union_type = input.Input, .json = "{\"type\":\"content\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}" },
         .{ .union_type = run.RunOutcome, .json = "{\"type\":\"failed\",\"code\":\"timeout\",\"message\":\"provider timed out\"}" },

@@ -38,8 +38,9 @@ async function requests() {
 
 function notification(event: Wire.Notification) {
   if (event.method === "message.part_delta") {
-    const delta: Wire.PartDelta = event.params;
+    const delta: Wire.MessagePartDeltaData = event.params;
     const offset: number = event.params.offset;
+    const title: string | undefined = event.params.title;
     // @ts-expect-error A delta has no interaction response.
     event.params.response;
   }

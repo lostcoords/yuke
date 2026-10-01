@@ -1,4 +1,4 @@
-//! The default transcript renderer: full-width blocks, thinking in full, and a short folded preview of each tool.
+//! The default transcript renderer: full-width blocks, a one-row fold of each thought, and a short folded preview of each tool.
 //! It is a plugin on the render API, so a user replaces it or stacks a renderer on top of it. The helpers serve any look.
 import { term } from "yuke:internal/native/term";
 import { root } from "yuke:internal/core";
@@ -301,7 +301,16 @@ export const defaultRender = {
 
   part(part, env) {
     const width = Math.max(1, env.width - 2 * PAD);
-    if (part.type === "reasoning") return stopRows(part.text || "", width, "TxThought");
+    if (part.type === "reasoning") {
+      const ms = part.duration_ms;
+      // A block can stop while it is still the last part of the draft, so its duration wins over `env.live`.
+      const label = ms != null ? "thought for " + (ms / 1000).toFixed(1) + "s" : env.live ? "thinking" : "thought";
+      // A folded thought builds one row, so a delta wraps none of its text. The source is the whole text, folded and open.
+      /** @type {TranscriptRow[]} */
+      const rows = [{ text: clip((env.expanded ? "▾ " : "▸ ") + (part.title ? label + ": " + part.title : label), width), group: "TxMeta", indent: PAD, header: true, stop: true }];
+      if (env.expanded) for (const row of wrapRows(part.text, width, "TxThought", PAD)) rows.push(row);
+      return { rows, source: part.text };
+    }
     const head = toolHead(part, env.tools);
     const title = head.verb;
     const input = head.input;

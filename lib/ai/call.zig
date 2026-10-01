@@ -301,7 +301,8 @@ const Collector = struct {
                 try self.blocks.append(self.gpa, .{ .kind = started.kind });
             },
             .delta => |delta| try self.append(delta.block, delta.text),
-            .tool_input_delta => {},
+            // The text of a block already joins its sections.
+            .section_started, .tool_input_delta => {},
             .block_stopped => |stopped| {
                 const current = self.getBlock(stopped.block);
                 std.debug.assert(!current.stopped);

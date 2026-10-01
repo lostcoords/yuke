@@ -506,7 +506,7 @@ export interface MessageTime {
   readonly completed_at_ms?: number;
 }
 
-/** This payload holds more text or reasoning bytes for a draft. */
+/** This payload holds more output bytes for a tool part. */
 export interface PartDelta {
   readonly session_id: SessionId;
   readonly message_id: MessageId;
@@ -515,9 +515,22 @@ export interface PartDelta {
   readonly offset: number;
 }
 
-/** The engine attaches the reasoning signature at block stop. An empty string means none. */
+/** This payload describes `message.part_delta`: more text or reasoning bytes for a draft. */
+export interface MessagePartDeltaData {
+  readonly session_id: SessionId;
+  readonly message_id: MessageId;
+  readonly part_id: PartId;
+  readonly delta: string;
+  readonly offset: number;
+  /** The title of the reasoning section that this delta completes. Null keeps the current title. */
+  readonly title?: string;
+}
+
+/** The engine attaches the reasoning signature and duration at block stop. An empty signature means none. */
 export interface ReasoningFinal {
   readonly signature: string;
+  /** The milliseconds from the start to the stop of the block, on a monotonic clock. */
+  readonly duration_ms: number;
 }
 
 /** The engine attaches the opaque redacted reasoning data at block stop. */
@@ -538,6 +551,10 @@ export interface ReasoningPart {
   readonly id: PartId;
   readonly text: string;
   readonly signature: string;
+  /** The title of the latest summary section. An empty string means that the provider sent none. */
+  readonly title?: string;
+  /** The milliseconds that the block took. Null while the block streams. */
+  readonly duration_ms?: number;
 }
 
 /** This payload holds opaque, safety-redacted model reasoning. Its fields borrow their data. */
@@ -1619,9 +1636,6 @@ export type ModelId = string;
 
 /** This string identifies a request. */
 export type RequestId = string;
-
-/** The broadcast uses this shared message-part delta payload. */
-export type MessagePartDeltaData = PartDelta;
 
 /** The broadcast uses this shared tool-output delta payload. */
 export type ToolOutputDeltaData = PartDelta;

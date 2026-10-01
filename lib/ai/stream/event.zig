@@ -17,6 +17,7 @@ pub const BlockKind = enum { text, reasoning, redacted_reasoning, tool };
 pub const StreamEvent = union(enum) {
     block_started: BlockStarted,
     delta: Delta,
+    section_started: SectionStarted,
     tool_input_delta: ToolInputDelta,
     block_stopped: BlockStopped,
     done: Done,
@@ -31,6 +32,11 @@ pub const BlockStarted = struct {
 pub const Delta = struct {
     block: BlockId,
     text: []const u8,
+};
+
+/// A reasoning block starts a new section. The next delta of the block opens the section.
+pub const SectionStarted = struct {
+    block: BlockId,
 };
 
 /// A tool argument fragment. The fragment is not valid JSON by itself.

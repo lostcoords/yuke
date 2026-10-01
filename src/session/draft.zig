@@ -27,6 +27,9 @@ pub const Part = union(enum) {
         id: ids.PartId,
         text: std.ArrayList(u8) = .empty,
         signature: []const u8,
+        /// The latest section title. The draft arena owns it.
+        title: []const u8 = "",
+        duration_ms: ?u64 = null,
     };
     pub const RedactedReasoning = struct {
         id: ids.PartId,
@@ -73,7 +76,13 @@ pub const Part = union(enum) {
                 try text.appendSlice(gpa, r.text);
                 errdefer text.deinit(gpa);
 
-                return .{ .reasoning = .{ .id = r.id, .text = text, .signature = try arena.dupe(u8, r.signature) } };
+                return .{ .reasoning = .{
+                    .id = r.id,
+                    .text = text,
+                    .signature = try arena.dupe(u8, r.signature),
+                    .title = try arena.dupe(u8, r.title),
+                    .duration_ms = r.duration_ms,
+                } };
             },
             .redacted_reasoning => |r| return .{ .redacted_reasoning = .{
                 .id = r.id,
@@ -144,8 +153,13 @@ pub const Draft = struct {
         try self.parts.append(self.gpa, cloned);
     }
 
-    /// Fold a text or reasoning byte delta from `message.part_delta` into its buffer.
-    pub fn applyPartDelta(self: *Draft, d: message.PartDelta) Error!void {
+    /// Fold a text or reasoning byte delta from `message.part_delta` into its buffer, and take its section title.
+    pub fn applyPartDelta(self: *Draft, d: message.MessagePartDeltaData) Error!void {
+        if (d.title) |title| {
+            const part = self.partAt(d.part_id);
+            std.debug.assert(part.* == .reasoning); // the engine titles a reasoning section only
+            part.reasoning.title = try self.arena.allocator().dupe(u8, title);
+        }
         const buf = self.streamBuffer(d.part_id);
         const cap: usize = @intCast(proto.meta.limits.max_message_string_bytes);
         return foldBytes(self.gpa, buf, d.offset, d.delta, cap);
@@ -165,13 +179,13 @@ pub const Draft = struct {
         t.state = try dupeToolState(self.arena.allocator(), d.state);
     }
 
-    /// Attach the reasoning signature at block stop. A signed block resends on a tool continuation.
-    pub fn finalizeReasoning(self: *Draft, part_id: ids.PartId, signature: []const u8) Error!void {
-        const a = self.arena.allocator();
+    /// Attach the reasoning signature and duration at block stop. A signed block resends on a tool continuation.
+    pub fn finalizeReasoning(self: *Draft, part_id: ids.PartId, final: message.ReasoningFinal) Error!void {
         const part = self.partAt(part_id);
         std.debug.assert(part.* == .reasoning); // the engine finalizes a reasoning block only
-        std.debug.assert(part.reasoning.signature.len == 0); // the engine finalizes each part once
-        part.reasoning.signature = try a.dupe(u8, signature);
+        std.debug.assert(part.reasoning.duration_ms == null); // the engine finalizes each part once
+        part.reasoning.signature = try self.arena.allocator().dupe(u8, final.signature);
+        part.reasoning.duration_ms = final.duration_ms;
     }
 
     /// Attach the redacted reasoning data at block stop. The provider encrypts this block, so keep it opaque.
@@ -278,7 +292,7 @@ fn foldBytes(gpa: std.mem.Allocator, buf: *std.ArrayList(u8), offset: u64, bytes
 pub fn partToWire(p: *const Part) message.AssistantPart {
     return switch (p.*) {
         .text => |*t| .{ .text = .{ .id = t.id, .text = t.text.items } },
-        .reasoning => |*r| .{ .reasoning = .{ .id = r.id, .text = r.text.items, .signature = r.signature } },
+        .reasoning => |*r| .{ .reasoning = .{ .id = r.id, .text = r.text.items, .signature = r.signature, .title = r.title, .duration_ms = r.duration_ms } },
         .redacted_reasoning => |*r| .{ .redacted_reasoning = .{ .id = r.id, .data = r.data } },
         .tool => |*t| .{ .tool = .{
             .id = t.id,
@@ -352,7 +366,11 @@ fn addTool(part_id: ids.PartId, state: tool.ToolState) message.MessagePartAddedD
     } } };
 }
 
-fn delta(part_id: ids.PartId, offset: u64, bytes: []const u8) message.PartDelta {
+fn delta(part_id: ids.PartId, offset: u64, bytes: []const u8) message.MessagePartDeltaData {
+    return .{ .session_id = zero_session, .message_id = 1, .part_id = part_id, .delta = bytes, .offset = offset };
+}
+
+fn outputDelta(part_id: ids.PartId, offset: u64, bytes: []const u8) message.PartDelta {
     return .{ .session_id = zero_session, .message_id = 1, .part_id = part_id, .delta = bytes, .offset = offset };
 }
 
@@ -391,23 +409,32 @@ test "reasoning owns its signature; redacted owns its data" {
     try testing.expectEqualStrings("opaque", d.parts.items[1].redacted_reasoning.data);
 }
 
-test "streamed reasoning finalizes its signature and redacted data at block stop" {
+test "streamed reasoning keeps its latest section title, and finalizes its signature, duration, and redacted data at block stop" {
     var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     // The stream path adds empty parts, sends text, then finalizes at block stop.
     try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 0, .text = "", .signature = "" } } });
     try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .redacted_reasoning = .{ .id = 1, .data = "" } } });
-    try d.applyPartDelta(delta(0, 0, "why"));
+    var one = delta(0, 0, "**One**");
+    one.title = "One";
+    try d.applyPartDelta(one);
+    var two = delta(0, 7, "\n\n**Two**");
+    two.title = "Two";
+    try d.applyPartDelta(two);
+    try d.applyPartDelta(delta(0, 16, " why"));
 
     var sig = [_]u8{ 's', 'i', 'g' };
     var enc = [_]u8{ 'e', 'n', 'c' };
-    try d.finalizeReasoning(0, &sig);
+    try d.finalizeReasoning(0, .{ .signature = &sig, .duration_ms = 1200 });
     try d.finalizeRedacted(1, &enc);
     @memset(&sig, 'x'); // The Draft owns its copies, so the overwrite is safe.
     @memset(&enc, 'x');
 
-    try testing.expectEqualStrings("why", d.parts.items[0].reasoning.text.items);
-    try testing.expectEqualStrings("sig", d.parts.items[0].reasoning.signature);
+    const reasoning = partToWire(&d.parts.items[0]).reasoning;
+    try testing.expectEqualStrings("**One**\n\n**Two** why", reasoning.text);
+    try testing.expectEqualStrings("Two", reasoning.title);
+    try testing.expectEqualStrings("sig", reasoning.signature);
+    try testing.expectEqual(@as(?u64, 1200), reasoning.duration_ms);
     try testing.expectEqualStrings("enc", d.parts.items[1].redacted_reasoning.data);
 }
 
@@ -416,8 +443,8 @@ test "tool output streams into the tool buffer" {
     defer d.deinit();
     try d.addPart(addTool(0, .{ .running = .{ .started_at_ms = 5 } }));
     try testing.expectEqualStrings("bash", d.parts.items[0].tool.name);
-    try d.applyToolOutputDelta(delta(0, 0, "out"));
-    try d.applyToolOutputDelta(delta(0, 3, "put"));
+    try d.applyToolOutputDelta(outputDelta(0, 0, "out"));
+    try d.applyToolOutputDelta(outputDelta(0, 3, "put"));
     try testing.expectEqualStrings("output", d.parts.items[0].tool.output.items);
 }
 
@@ -480,7 +507,7 @@ test "toActiveDraft carries the parts and the streamed output" {
     try d.addPart(addText(0, ""));
     try d.applyPartDelta(delta(0, 0, "hello"));
     try d.addPart(addTool(1, .{ .running = .{ .started_at_ms = 5 } }));
-    _ = try d.applyToolOutputDelta(delta(1, 0, "out"));
+    _ = try d.applyToolOutputDelta(outputDelta(1, 0, "out"));
 
     var scratch = std.heap.ArenaAllocator.init(testing.allocator);
     defer scratch.deinit();

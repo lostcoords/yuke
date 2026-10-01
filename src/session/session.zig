@@ -277,7 +277,7 @@ pub const Session = struct {
     fn onFinalized(self: *Session, d: message.MessagePartFinalizedData) Error!void {
         const dr = self.activeDraft(d.message_id);
         return switch (d.final) {
-            .reasoning => |r| dr.finalizeReasoning(d.part_id, r.signature),
+            .reasoning => |r| dr.finalizeReasoning(d.part_id, r),
             .redacted_reasoning => |r| dr.finalizeRedacted(d.part_id, r.data),
         };
     }

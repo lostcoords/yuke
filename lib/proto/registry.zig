@@ -36,9 +36,8 @@ pub const string_enums = collect(.string_enum);
 /// An enum with a signed tag carries a number on the wire, like `ErrorCode`.
 pub const numeric_enums = collect(.numeric_enum);
 
-/// Every identifier type of `ids.zig`, then the broadcast payloads that share one type under two names.
+/// Every identifier type of `ids.zig`, then the broadcast payload that shares one type under two names.
 pub const aliases = idAliases() ++ [_]AliasEntry{
-    .{ .name = "MessagePartDeltaData", .base = "PartDelta" },
     .{ .name = "ToolOutputDeltaData", .base = "PartDelta" },
 };
 

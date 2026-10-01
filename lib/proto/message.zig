@@ -128,7 +128,7 @@ pub const MessageTime = struct {
     completed_at_ms: ?u64 = null,
 };
 
-/// This payload holds more text or reasoning bytes for a draft.
+/// This payload holds more output bytes for a tool part.
 pub const PartDelta = struct {
     session_id: ids.SessionId,
     message_id: ids.MessageId,
@@ -137,8 +137,16 @@ pub const PartDelta = struct {
     offset: u64,
 };
 
-/// The broadcast uses this shared message-part delta payload.
-pub const MessagePartDeltaData = PartDelta;
+/// This payload describes `message.part_delta`: more text or reasoning bytes for a draft.
+pub const MessagePartDeltaData = struct {
+    session_id: ids.SessionId,
+    message_id: ids.MessageId,
+    part_id: ids.PartId,
+    delta: []const u8,
+    offset: u64,
+    /// The title of the reasoning section that this delta completes. Null keeps the current title.
+    title: ?[]const u8 = null,
+};
 
 /// The broadcast uses this shared tool-output delta payload.
 pub const ToolOutputDeltaData = PartDelta;
@@ -154,9 +162,11 @@ pub const PartFinal = union(enum) {
     pub const jsonStringify = tagged.Codec(@This()).jsonStringify;
 };
 
-/// The engine attaches the reasoning signature at block stop. An empty string means none.
+/// The engine attaches the reasoning signature and duration at block stop. An empty signature means none.
 pub const ReasoningFinal = struct {
     signature: []const u8,
+    /// The milliseconds from the start to the stop of the block, on a monotonic clock.
+    duration_ms: u64,
 };
 
 /// The engine attaches the opaque redacted reasoning data at block stop.
@@ -177,6 +187,10 @@ pub const ReasoningPart = struct {
     id: ids.PartId,
     text: []const u8,
     signature: []const u8,
+    /// The title of the latest summary section. An empty string means that the provider sent none.
+    title: []const u8 = "",
+    /// The milliseconds that the block took. Null while the block streams.
+    duration_ms: ?u64 = null,
 };
 
 /// This payload holds opaque, safety-redacted model reasoning. Its fields borrow their data.

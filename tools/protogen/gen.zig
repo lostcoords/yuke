@@ -39,9 +39,7 @@ const field_aliases = std.StaticStringMap([]const u8).initComptime(.{
     .{ "hash", "BlobHash" },
     .{ "input_ids", "InputId" },
     .{ "first_kept_id", "MessageId" },
-    .{ "message.part_delta", "MessagePartDeltaData" },
     .{ "tool.output_delta", "ToolOutputDeltaData" },
-    .{ "message_part_delta_data", "MessagePartDeltaData" },
     .{ "tool_output_delta_data", "ToolOutputDeltaData" },
 });
 
@@ -350,7 +348,6 @@ test "field and broadcast aliases survive type erasure" {
     out.clearRetainingCapacity();
     try writeTypeText(&out.writer, "SessionCancelRunResult", "cleared_inputs", []const proto.ids.InputId);
     try testing.expectEqualStrings("[]InputId", out.written());
-    try testing.expectEqualStrings("MessagePartDeltaData", broadcastType("message.part_delta", "", "", proto.message.PartDelta));
     try testing.expectEqualStrings("ToolOutputDeltaData", broadcastType("tool.output_delta", "", "", proto.message.PartDelta));
 }
 

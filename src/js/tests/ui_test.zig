@@ -99,7 +99,7 @@ test "yuke:internal/ui hidden tool deltas keep rows stable and the output field 
     try support.run("ui/hidden-deltas.test.js");
 }
 
-test "yuke:internal/ui reasoning shows in full, a fold choice holds, and J/K walks parts" {
+test "yuke:internal/ui reasoning folds to its header and stays open once opened, a fold choice holds, and J/K walks parts" {
     try support.runPainted(12, 40, "ui/reason.test.js");
 }
 

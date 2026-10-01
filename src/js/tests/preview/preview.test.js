@@ -35,19 +35,19 @@ check("report-row-cap", reportRows.length === 13 && reportRows[0].header === tru
 check("report-first-ten", reportRows.slice(1, 11).every((row, i) => rowText(row) === "report-line-" + i + " with stable context"));
 check("report-hint", rowText(reportRows[11]).indexOf("expands") >= 0);
 check("report-source", sourceSpan(t._sourceOf("report"), reportRows, "report-line-0"));
-// A folded tool shows its first ten output rows and a count of the rest; a thought shows in full.
+// A folded tool shows its first ten output rows and a count of the rest. A thought folds to its header.
 const folded = publicRows("answer");
-check("eight-tools", folded.filter((row) => row.header).length === 8);
+check("eight-tools", folded.filter((row) => row.header && row.partId !== 9).length === 8);
 const bodyOf = (rows, id) => rows.filter((row) => row.partId === id && !row.header && row.src != null);
 check("plain-first-ten", bodyOf(folded, 1).length === 10 && bodyOf(folded, 1).every((row, i) => rowText(row) === "plain-line-" + i));
 check("plain-hint", folded.some((row) => row.partId === 1 && rowText(row) === "… (more lines, ctrl+o to expand)"));
 check("view-cap", bodyOf(folded, 2).length <= 10 && folded.some((row) => row.partId === 2 && rowText(row) === "view-first"));
 check("plain-source", sourceSpan(t._sourceOf("answer"), folded, "plain-line-0"));
-check("reasoning-whole", folded.some((row) => rowText(row) === "reason-first") && folded.some((row) => rowText(row) === "reason-last"));
-check("reasoning-source", sourceSpan(t._sourceOf("answer"), folded, "reason-first") && sourceSpan(t._sourceOf("answer"), folded, "reason-last"));
-// An open tool shows its whole output.
-for (const part of tools) t.togglePart("answer", part.id);
+check("reasoning-folded", folded.filter((row) => row.partId === 9).length === 1 && t._sourceOf("answer").endsWith("reason-last"));
+// An open tool shows its whole output, and an open thought its whole text.
+for (const part of parts) t.togglePart("answer", part.id);
 const open = publicRows("answer");
+check("reasoning-whole", sourceSpan(t._sourceOf("answer"), open, "reason-first") && sourceSpan(t._sourceOf("answer"), open, "reason-last"));
 check("plain-open", bodyOf(open, 1).length === 128 && rowText(bodyOf(open, 1)[127]) === "plain-line-127");
 check("view-open", open.some((row) => rowText(row) === "view-tail"));
 

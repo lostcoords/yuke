@@ -7,16 +7,23 @@ registerRender(defaultRender);
 const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
 const draw = (x, w, h) => { term.beginFrame(); x.draw({ x: 0, y: 0, w, h }); term.endFrame(); };
 
-// A thought shows in full, in its own style, while it streams and after the commit.
-const parts = { u: [{ type: "text", id: 0, text: "ask" }], r1: [{ type: "reasoning", id: 0, text: "because why" }] };
+// A thought folds to one header while it streams, and a thought that the user opens stays open across the commit.
+const thought = { type: "reasoning", id: 0, text: "**Plan**\n\nbecause why", title: "Plan" };
+const parts = { u: [{ type: "text", id: 0, text: "ask" }], r1: [thought] };
 const t = new Transcript({ partsOf: (id) => parts[id] || [] });
 t.setOutline([], { id: "r1", type: "assistant" });
 draw(t, 40, 10);
-check("thought-style", t.rows(40, 0, 10).some((r) => r.text === "because why" && r.group === "TxThought"));
-parts.r1.push({ type: "text", id: 1, text: "hello" });
+check("thought-folded", rowsHave(t.rows(40, 0, 10), "▸ thinking: Plan") && !rowsHave(t.rows(40, 0, 10), "because why"));
+t.togglePart("r1", 0);
+check("thought-opens", t.rows(40, 0, 10).some((r) => r.text === "because why" && r.group === "TxThought"));
+// A block stops before the next part starts, so its duration ends the live label in the draft.
+parts.r1 = [{ ...thought, duration_ms: 1500 }];
+t.setActive("r1");
+check("stopped-in-draft", rowsHave(t.rows(40, 0, 10), "▾ thought for 1.5s: Plan"));
+parts.r1 = [{ ...thought, duration_ms: 1500 }, { type: "text", id: 1, text: "hello" }];
 t.setActive("r1");
 t.setOutline([{ id: "r1", type: "assistant" }], null);
-check("commit-keeps-thought", rowsHave(t.rows(40, 0, 10), "because why") && rowsHave(t.rows(40, 0, 10), "hello"));
+check("commit-keeps-open", rowsHave(t.rows(40, 0, 10), "▾ thought for 1.5s: Plan") && rowsHave(t.rows(40, 0, 10), "because why"));
 
 // A fold choice holds across a later send, for string and number ids.
 parts.r3 = [{ type: "tool", id: 2, name: "read", arguments: '{"path":"a.zig"}', state: { type: "completed", output: "file body", duration_ms: 1 } }];
@@ -32,12 +39,12 @@ num.togglePart(2, 0);
 num.setOutline([{ id: 2, type: "assistant" }, { id: 3, type: "user" }], { id: 4, type: "assistant" });
 check("num-id-later-send", rowsHave(num.rows(40, 0, num.rowCount(40)), "num body"));
 
-// An empty or redacted thought takes no row.
+// An empty thought shows its header, and a redacted thought takes no row.
 const blank = new Transcript({ partsOf: () => [{ type: "reasoning", id: 0, text: "" }, { type: "redacted_reasoning", id: 1 }, { type: "text", id: 2, text: "answer" }] });
 blank.setOutline([{ id: "bl", type: "assistant" }], null);
 draw(blank, 40, 8);
 const blankRows = blank.rows(40, 0, 8);
-check("empty-reasoning-skipped", blankRows[0] && rowsHave([blankRows[0]], "answer"));
+check("empty-thought-header", rowsHave([blankRows[0]], "▸ thought") && blankRows.filter((r) => rowsHave([r], "answer")).length === 1);
 
 // J and K walk the parts: the thought, the tool header, then the text.
 parts.walk = [

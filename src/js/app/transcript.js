@@ -113,12 +113,6 @@ export function inputSourceLabel(source) {
   return label ? label(source) : source.type.replaceAll("_", " ");
 }
 
-// A part with no content renders nothing, so it takes no row and no place in its group.
-/** @param {Wire.AssistantPart} part @returns {boolean} */
-function emptyPart(part) {
-  return part.type === "reasoning" && !part.text;
-}
-
 /** @param {import("./types/pager.js").Segment[] | undefined} segments @param {number} base @returns {import("./types/pager.js").Segment[] | undefined} */
 function shiftSrc(segments, base) {
   if (!segments || !base) return segments;
@@ -144,10 +138,10 @@ function rowSourceBase(cache, row) {
   return cache.partBases.get(String(row.partId)) || 0;
 }
 
-// The group key of a part: undefined for a part with no content, which passes through a group; null for a part that closes a group.
+// The group key of a part. An empty text part answers undefined and passes through a group. A part that closes a group answers null.
 /** @param {Wire.AssistantPart} part @returns {string | null | undefined} */
 function partKey(part) {
-  if (emptyPart(part) || (part.type === "text" && !part.text)) return undefined;
+  if (part.type === "text" && !part.text) return undefined;
   return hook("groupKey", part) ?? null;
 }
 
@@ -1063,7 +1057,6 @@ export class Transcript {
     const list = state.list;
     for (let index = 0; index < list.length; index++) {
       const part = /** @type {Wire.AssistantPart} */ (list[index]);
-      if (emptyPart(part)) continue;
       const tree = plan ? plan.trees[start + index] || 0 : 0;
       const head = tree !== 0 && (tree & GROUP_FIRST) !== 0;
       const gap = shown++ === 0 ? 0 : merged.gap;

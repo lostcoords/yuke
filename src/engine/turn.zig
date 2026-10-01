@@ -479,6 +479,8 @@ fn isSemantic(ev: event.StreamEvent) bool {
         // A completed stream must not repeat either. A later body fault would duplicate the round.
         .done => true,
         .delta => |d| d.text.len != 0,
+        // A section start carries no bytes. The delta after it closes the window.
+        .section_started => false,
         .tool_input_delta => |d| d.partial_json.len != 0,
     };
 }
@@ -490,6 +492,52 @@ const BlockSlot = struct {
     stopped: bool = false,
     /// The byte count that the deltas of this part already carry.
     offset: u64 = 0,
+    /// The monotonic start time of a reasoning block, for its duration.
+    started_ms: u64 = 0,
+};
+
+/// The leading `**Title**` of a reasoning summary section, read across deltas into a fixed buffer.
+/// One section reads at a time, because a provider streams its reasoning items one after another.
+const Title = struct {
+    /// The state `off` reads nothing. The states `open` and `star` read the opening `**`.
+    /// The state `text` reads the title. The state `close` saw one closing star.
+    state: enum { off, open, star, text, close } = .off,
+    /// The block whose section the parser reads.
+    block: event.BlockId = 0,
+    len: u8 = 0,
+    buf: [128]u8 = undefined,
+
+    /// Read the title of a new section of `block`, which starts with the next delta of that block.
+    fn start(self: *Title, block: event.BlockId) void {
+        self.state = .open;
+        self.block = block;
+        self.len = 0;
+    }
+
+    /// Return the title when `bytes` close it. A newline, a star inside, an empty title, or an overlong one stops the read with no title.
+    fn feed(self: *Title, bytes: []const u8) ?[]const u8 {
+        for (bytes) |byte| switch (self.state) {
+            .off => return null,
+            .open => self.state = if (byte == '*') .star else .off,
+            .star => self.state = if (byte == '*') .text else .off,
+            .text => switch (byte) {
+                '*' => self.state = .close,
+                '\n', '\r' => self.state = .off,
+                else => if (self.len == self.buf.len) {
+                    self.state = .off;
+                } else {
+                    self.buf[self.len] = byte;
+                    self.len += 1;
+                },
+            },
+            .close => {
+                self.state = .off;
+                const title = std.mem.trim(u8, self.buf[0..self.len], " ");
+                return if (byte == '*' and title.len != 0) title else null;
+            },
+        };
+        return null;
+    }
 };
 
 const Streamer = struct {
@@ -498,6 +546,8 @@ const Streamer = struct {
     session: *Session,
     /// One row per stream block, indexed by the reducer's dense `BlockId`.
     blocks: std.ArrayList(BlockSlot) = .empty,
+    /// The title parser of the current reasoning summary section.
+    title: Title = .{},
     /// The next wire part id. A part takes its id when the engine emits it, never from a block id.
     next_part_id: ids.PartId = 0,
     stop_reason: ?proto.enums.StopReason = null,
@@ -529,7 +579,7 @@ const Streamer = struct {
             .block_started => |b| {
                 // A part takes the next id when it is emitted, so parallel blocks keep the wire ids dense.
                 std.debug.assert(b.block == self.blocks.items.len); // the reducer assigns dense ids in start order
-                try self.blocks.append(self.engine.deps.gpa, .{});
+                try self.blocks.append(self.engine.deps.gpa, .{ .started_ms = if (b.kind == .reasoning) util.monoMillis(self.engine.deps.io) else 0 });
                 // A tool block has no metadata yet. Open its part at block_stopped instead.
                 if (b.kind != .tool) {
                     const part_id = self.openPart(b.block);
@@ -543,13 +593,17 @@ const Streamer = struct {
                 }
             },
             .delta => |d| try self.partDelta(d.block, d.text),
+            .section_started => |s| self.title.start(s.block),
             .tool_input_delta => {}, // The reducer joins fragments; the whole call arrives at block_stopped.
             .block_stopped => |b| {
                 const stopped_index = self.blockIndex(b.block);
                 std.debug.assert(!self.blocks.items[stopped_index].stopped); // the reducer stops a block one time
                 self.blocks.items[stopped_index].stopped = true;
                 switch (b.result) {
-                    .reasoning => |r| try self.emitFinalized(self.partIdOf(b.block), .{ .reasoning = .{ .signature = r.signature } }),
+                    .reasoning => |r| try self.emitFinalized(self.partIdOf(b.block), .{ .reasoning = .{
+                        .signature = r.signature,
+                        .duration_ms = util.monoMillis(self.engine.deps.io) - self.blocks.items[stopped_index].started_ms,
+                    } }),
                     .redacted_reasoning => |r| try self.emitFinalized(self.partIdOf(b.block), .{ .redacted_reasoning = .{ .data = r.data } }),
                     .text => {},
                     // A tool part carries its call metadata, so it opens here and not at the start.
@@ -587,8 +641,9 @@ const Streamer = struct {
 
     fn partDelta(self: *Streamer, block: event.BlockId, text: []const u8) !void {
         const index = self.blockIndex(block);
-        const part_id = self.blocks.items[index].part_id.?; // a delta follows the part that block_started opened
-        const offset = self.blocks.items[index].offset;
+        const slot = &self.blocks.items[index];
+        const part_id = slot.part_id.?; // a delta follows the part that block_started opened
+        const offset = slot.offset;
         try checkStreamCap(offset, text.len); // The provider is a peer. Return an error for an oversized delta.
         try self.emit(.{ .method = .@"message.part_delta", .params = .{ .message_part_delta_data = .{
             .session_id = self.slot.sessionId(),
@@ -596,6 +651,7 @@ const Streamer = struct {
             .part_id = part_id,
             .delta = text,
             .offset = offset,
+            .title = if (self.title.state != .off and self.title.block == block) self.title.feed(text) else null,
         } } });
         self.blocks.items[index].offset += text.len;
     }
@@ -1107,6 +1163,27 @@ test "interleaved tool blocks number their parts in emit order" {
     try std.testing.expectEqualStrings("c", parts[0].tool.call_id.?);
     try std.testing.expectEqualStrings("a", parts[1].tool.call_id.?);
     try std.testing.expectEqualStrings("b", parts[2].tool.call_id.?);
+}
+
+// The stream sends the title that a delta completes, and the stop sends the duration, so the draft holds both.
+test "a reasoning block carries its latest section title and its duration to the draft" {
+    var fixture: StreamerFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+
+    var s = fixture.streamer();
+    defer s.blocks.deinit(std.testing.allocator);
+
+    try s.onEvent(.{ .block_started = .{ .block = 0, .kind = .reasoning } });
+    try s.onEvent(.{ .section_started = .{ .block = 0 } });
+    try s.onEvent(.{ .delta = .{ .block = 0, .text = "**Ti" } });
+    try s.onEvent(.{ .delta = .{ .block = 0, .text = "tle**" } });
+    try s.onEvent(.{ .block_stopped = .{ .block = 0, .result = .{ .reasoning = .{ .signature = "" } } } });
+
+    const reasoning = draft.partToWire(&fixture.session.draft.?.parts.items[0]).reasoning;
+    try std.testing.expectEqualStrings("**Title**", reasoning.text);
+    try std.testing.expectEqualStrings("Title", reasoning.title);
+    try std.testing.expect(reasoning.duration_ms != null);
 }
 
 // A text block opens its part at the start, so a tool block that stops later takes a later id.
@@ -1642,4 +1719,18 @@ test "a tool.after replacement is the whole result, and the engine admits the me
     const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard);
     try std.testing.expect(refused.is_error);
     try std.testing.expect(std.mem.indexOf(u8, refused.output, "does not hold") != null);
+}
+
+test "a section title closes on its second star, across deltas, and only at the section start" {
+    const none: ?[]const u8 = null;
+    var title: Title = .{};
+    try std.testing.expectEqual(none, title.feed("**before any section**"));
+    title.start(0);
+    try std.testing.expectEqual(none, title.feed("**Ti"));
+    try std.testing.expectEqualStrings("Title", title.feed("tle**\n\nbody").?);
+    try std.testing.expectEqual(none, title.feed("**later bold**"));
+    title.start(0);
+    try std.testing.expectEqual(none, title.feed("plain **bold**"));
+    title.start(0);
+    try std.testing.expectEqual(none, title.feed("**two\nlines**"));
 }

@@ -92,21 +92,13 @@ function toolRows(part, env) {
   return { rows, source };
 }
 
-// A summary on the OpenAI Responses protocol opens with a bold title; prose falls back to its first line.
-/** @param {string} text @returns {string} */
-function reasoningTitle(text) {
-  const head = text.trimStart().slice(0, 76);
-  const bold = head.startsWith("**") ? head.indexOf("**", 2) : -1;
-  const title = bold > 2 ? head.slice(2, bold) : head.split("\n")[0] || "";
-  return title.length > 72 ? title.slice(0, 72) + "…" : title;
-}
-
 /** @param {Extract<AssistantPart, { type: "reasoning" }>} part @param {PartEnv} env */
 function reasoningRows(part, env) {
-  const name = env.live ? "thinking" : "thought";
+  const ms = part.duration_ms;
+  const name = ms != null ? "thought for " + Math.round(ms / 1000) + "s" : env.live ? "thinking" : "thought";
   const text = part.text || "";
-  const title = reasoningTitle(text);
-  const headerSrc = title ? name + " · " + title : name;
+  // The engine reads the title of the latest summary section, so the renderer parses no text.
+  const headerSrc = part.title ? name + " · " + part.title : name;
   /** @type {Row[]} */
   const rows = [{ segments: [{ text: headerSrc, group: "TxThought", src: 0, srcEnd: headerSrc.length }], ...headerAttrs(env.group, env.expanded), markerGroup: "TxThought", kind: "reasoning-header" }];
   // The source keeps the text while folded, so a fold never moves a source offset.
@@ -138,8 +130,8 @@ const treeLook = {
   // Tool calls and thoughts group as actions, and text closes the group.
   groupKey: (part) => (part.type === "text" ? null : "actions"),
   groupHeader: (group) => [{ text: group.count + (group.count === 1 ? " action" : " actions"), group: "TxMeta", indent: GUTTER }],
-  // A call that runs or fails shows open, and so does the thought that still streams.
-  fold: (part, live) => (part.type === "tool" ? ["running", "error", "canceled"].includes(part.state.type) : live),
+  // A call that runs or fails shows open. A thought stays folded, also while it streams.
+  fold: (part) => part.type === "tool" && ["running", "error", "canceled"].includes(part.state.type),
   part: (part, env) => (part.type === "tool" ? toolRows(part, env) : reasoningRows(part, env)),
 
   message(m, parts, env) {

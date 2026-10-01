@@ -312,7 +312,7 @@ function verifyStreamSuffix() {
     throw new Error("stream suffix span changed");
 }
 
-// The folded look is the preview: a report shows ten lines, a tool its first ten output rows, and a thought its whole text.
+// The folded look is the preview: a report shows ten lines, a tool its first ten output rows, and a thought its header alone.
 function verifyPreview() {
   const reportRows = publicRowsFor(PREVIEW_REPORT_ID);
   if (reportRows.length !== 13) throw new Error("preview report row cap changed");
@@ -322,13 +322,16 @@ function verifyPreview() {
   if (!spanMatches(transcript._sourceOf(PREVIEW_REPORT_ID), reportRows, "report-line-0")) throw new Error("preview report source span changed");
 
   const toolRows = publicRowsFor(PREVIEW_ASSISTANT_ID);
-  if (toolRows.filter((row) => row.header).length !== 8) throw new Error("preview tool count changed");
-  for (const part of parts.get(PREVIEW_ASSISTANT_ID) || []) if (part.type === "tool" && part.name !== "view") {
-    const body = toolRows.filter((row) => row.partId === part.id && !row.header && row.src != null);
-    if (body.length !== 10) throw new Error("preview tool body cap changed");
+  for (const part of parts.get(PREVIEW_ASSISTANT_ID) || []) {
+    const rows = toolRows.filter((row) => row.partId === part.id);
+    if (part.type === "reasoning" && rows.length !== 1) throw new Error("preview thought fold changed");
+    if (part.type === "tool" && rows.filter((row) => row.header).length !== 1) throw new Error("preview tool count changed");
+    if (part.type === "tool" && part.name !== "view" && rows.filter((row) => !row.header && row.src != null).length !== 10) throw new Error("preview tool body cap changed");
   }
   const source = transcript._sourceOf(PREVIEW_ASSISTANT_ID);
-  for (const needle of ["plain-0-line-0", "view-first", "reason-first", "reason-last"])
+  // A folded thought still holds its whole text in the source.
+  if (!source.includes("reason-first") || !source.includes("reason-last")) throw new Error("preview thought source changed");
+  for (const needle of ["plain-0-line-0", "view-first"])
     if (!spanMatches(source, toolRows, needle)) throw new Error("preview source span changed: " + needle);
 }
 

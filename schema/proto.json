@@ -1862,7 +1862,7 @@
     },
     {
       "name": "PartDelta",
-      "doc": "This payload holds more text or reasoning bytes for a draft.",
+      "doc": "This payload holds more output bytes for a tool part.",
       "fields": [
         {
           "name": "session_id",
@@ -1892,12 +1892,55 @@
       ]
     },
     {
+      "name": "MessagePartDeltaData",
+      "doc": "This payload describes `message.part_delta`: more text or reasoning bytes for a draft.",
+      "fields": [
+        {
+          "name": "session_id",
+          "type": "SessionId",
+          "presence": "required"
+        },
+        {
+          "name": "message_id",
+          "type": "MessageId",
+          "presence": "required"
+        },
+        {
+          "name": "part_id",
+          "type": "PartId",
+          "presence": "required"
+        },
+        {
+          "name": "delta",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "offset",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "title",
+          "doc": "The title of the reasoning section that this delta completes. Null keeps the current title.",
+          "type": "string",
+          "presence": "optional"
+        }
+      ]
+    },
+    {
       "name": "ReasoningFinal",
-      "doc": "The engine attaches the reasoning signature at block stop. An empty string means none.",
+      "doc": "The engine attaches the reasoning signature and duration at block stop. An empty signature means none.",
       "fields": [
         {
           "name": "signature",
           "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "duration_ms",
+          "doc": "The milliseconds from the start to the stop of the block, on a monotonic clock.",
+          "type": "u64",
           "presence": "required"
         }
       ]
@@ -1957,6 +2000,18 @@
           "name": "signature",
           "type": "string",
           "presence": "required"
+        },
+        {
+          "name": "title",
+          "doc": "The title of the latest summary section. An empty string means that the provider sent none.",
+          "type": "string",
+          "presence": "defaulted"
+        },
+        {
+          "name": "duration_ms",
+          "doc": "The milliseconds that the block took. Null while the block streams.",
+          "type": "u64",
+          "presence": "optional"
         }
       ]
     },
@@ -4891,11 +4946,6 @@
       "name": "RequestId",
       "base": "string",
       "doc": "This string identifies a request."
-    },
-    {
-      "name": "MessagePartDeltaData",
-      "base": "PartDelta",
-      "doc": "The broadcast uses this shared message-part delta payload."
     },
     {
       "name": "ToolOutputDeltaData",

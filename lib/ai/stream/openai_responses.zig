@@ -197,6 +197,7 @@ pub const Reducer = struct {
         // Each summary section opens with a bold title, so sections joined without a break read as one run of titles.
         if (summary) |index| {
             if (output.summary) |last| if (last != index) try out.append(self.gpa, .{ .delta = .{ .block = id, .text = "\n\n" } });
+            if (output.summary != index) try out.append(self.gpa, .{ .section_started = .{ .block = id } });
             output.summary = index;
         }
         try out.append(self.gpa, .{ .delta = .{ .block = id, .text = delta } });
@@ -661,7 +662,7 @@ test "a reasoning output item streams a block and captures encrypted content" {
     try testing.expect(h.out.items[3] == .done);
 }
 
-test "a new summary section starts a paragraph" {
+test "a new summary section starts a paragraph and a section event" {
     var h = Harness.init();
     defer h.deinit();
     try h.feed(&.{
@@ -675,8 +676,15 @@ test "a new summary section starts a paragraph" {
     });
     var text: std.ArrayList(u8) = .empty;
     defer text.deinit(testing.allocator);
-    for (h.out.items[1..]) |item| try text.appendSlice(testing.allocator, item.delta.text);
+    var tags: std.ArrayList(std.meta.Tag(StreamEvent)) = .empty;
+    defer tags.deinit(testing.allocator);
+    for (h.out.items[1..]) |item| {
+        try tags.append(testing.allocator, item);
+        if (item == .delta) try text.appendSlice(testing.allocator, item.delta.text);
+    }
     try testing.expectEqualStrings("**One** body\n\n**Two**", text.items);
+    // The separator comes before the section event, so each section opens on its title.
+    try testing.expectEqualSlices(std.meta.Tag(StreamEvent), &.{ .section_started, .delta, .delta, .delta, .section_started, .delta }, tags.items);
 }
 
 test "encrypted reasoning with no summary delta still emits a block" {
