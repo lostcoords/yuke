@@ -274,7 +274,7 @@ export class Transcript {
 
   /**
    * Replace the outline with the committed `messages` and the streaming draft `active`, or null without a draft. It clears the selection.
-   * A committed message never changes under its id, so its render survives; the draft render goes because a commit folds its reasoning.
+   * A committed message never changes under its id, so its render survives. The draft render goes, because a live part renders apart from its committed form.
    * @param {MessageDescriptor[]} messages @param {MessageDescriptor | null} active @returns {void}
    */
   setOutline(messages, active) {

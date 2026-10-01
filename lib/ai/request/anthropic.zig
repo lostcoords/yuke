@@ -7,7 +7,7 @@ const request_testing = @import("testing.zig");
 const types = @import("../types.zig");
 
 /// Write the request JSON to `w`.
-pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block) !void {
+pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block) ir.SerializeError!void {
     std.debug.assert(blocks.len != 0); // Anthropic needs at least one message.
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
@@ -71,7 +71,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
 }
 
 /// Write the thinking control. A compatible host takes `adaptive`, and Anthropic takes a budget.
-fn writeThinking(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) !void {
+fn writeThinking(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) ir.SerializeError!void {
     const kind: []const u8 = switch (reasoning) {
         // An effort is a whole-request control, so `output_config` carries it instead.
         .default, .effort => return,
@@ -90,7 +90,7 @@ fn writeThinking(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) !void 
 }
 
 /// Write `output_config`. The effort and the response format share the one object.
-fn writeOutputConfig(jw: *std.json.Stringify, reasoning: ir.ReasoningControl, schema: ?ir.OutputSchema) !void {
+fn writeOutputConfig(jw: *std.json.Stringify, reasoning: ir.ReasoningControl, schema: ?ir.OutputSchema) ir.SerializeError!void {
     const effort: ?ir.Effort = switch (reasoning) {
         .effort => |value| value,
         else => null,
@@ -112,19 +112,19 @@ fn writeOutputConfig(jw: *std.json.Stringify, reasoning: ir.ReasoningControl, sc
     try jw.endObject();
 }
 
-fn beginMessage(jw: *std.json.Stringify, role: ir.Role) !void {
+fn beginMessage(jw: *std.json.Stringify, role: ir.Role) ir.SerializeError!void {
     try jw.beginObject();
     try json.field(jw, "role", @tagName(role));
     try jw.objectField("content");
     try jw.beginArray();
 }
 
-fn endMessage(jw: *std.json.Stringify) !void {
+fn endMessage(jw: *std.json.Stringify) ir.SerializeError!void {
     try jw.endArray();
     try jw.endObject();
 }
 
-fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) !void {
+fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) ir.SerializeError!void {
     switch (block.value) {
         .text => |t| {
             try jw.beginObject();
@@ -193,7 +193,7 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) !void {
 }
 
 /// Write one attachment. An image is an `image` block and every other document is a `document` block.
-fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media, cache: bool) !void {
+fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media, cache: bool) ir.SerializeError!void {
     const plain_text = std.mem.startsWith(u8, media.mime, "text/");
     const document = plain_text or std.mem.eql(u8, media.mime, "application/pdf");
     const kind: []const u8 = switch (ir.modalityOf(media.mime)) {
@@ -214,7 +214,7 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media, cache: bool) !void
             try json.field(jw, "type", if (plain_text) "text" else "base64");
             try json.field(jw, "media_type", media.mime);
             try jw.objectField("data");
-            if (plain_text) try jw.write(data) else try json.writeBase64(jw, "", data);
+            if (plain_text) try jw.write(data) else try json.writeBase64(jw, null, data);
         },
         .url => |value| {
             try json.field(jw, "type", "url");
@@ -243,7 +243,7 @@ fn lastCacheable(blocks: []const ir.Block) ?usize {
     return null;
 }
 
-fn writeCacheControl(jw: *std.json.Stringify) !void {
+fn writeCacheControl(jw: *std.json.Stringify) ir.SerializeError!void {
     try json.nested(jw, "cache_control", "type", "ephemeral");
 }
 

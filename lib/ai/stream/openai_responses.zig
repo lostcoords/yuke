@@ -176,7 +176,7 @@ pub const Reducer = struct {
     fn onTextDelta(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
         const id = try self.outputBlockId(try self.outputFor(root), .text);
         const delta = json.fieldStr(root, "delta") orelse return error.Protocol;
-        try out.append(self.gpa, .{ .text_delta = .{ .block = id, .text = delta } });
+        try out.append(self.gpa, .{ .delta = .{ .block = id, .text = delta } });
     }
 
     /// Carry a refusal as assistant text, so the reason the model declined reaches the consumer.
@@ -196,10 +196,10 @@ pub const Reducer = struct {
         const delta = json.fieldStr(root, "delta") orelse return error.Protocol;
         // Each summary section opens with a bold title, so sections joined without a break read as one run of titles.
         if (summary) |index| {
-            if (output.summary) |last| if (last != index) try out.append(self.gpa, .{ .reasoning_delta = .{ .block = id, .text = "\n\n" } });
+            if (output.summary) |last| if (last != index) try out.append(self.gpa, .{ .delta = .{ .block = id, .text = "\n\n" } });
             output.summary = index;
         }
-        try out.append(self.gpa, .{ .reasoning_delta = .{ .block = id, .text = delta } });
+        try out.append(self.gpa, .{ .delta = .{ .block = id, .text = delta } });
     }
 
     fn onToolDelta(self: *Reducer, root: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
@@ -656,7 +656,7 @@ test "a reasoning output item streams a block and captures encrypted content" {
         \\{"type":"response.completed","response":{"status":"completed","usage":{"output_tokens":7}}}
     });
     try testing.expectEqual(event.BlockKind.reasoning, h.out.items[0].block_started.kind);
-    try testing.expectEqualStrings("pondering", h.out.items[1].reasoning_delta.text);
+    try testing.expectEqualStrings("pondering", h.out.items[1].delta.text);
     try testing.expectEqualStrings("gAAAAsig", h.out.items[2].block_stopped.result.reasoning.signature);
     try testing.expect(h.out.items[3] == .done);
 }
@@ -675,7 +675,7 @@ test "a new summary section starts a paragraph" {
     });
     var text: std.ArrayList(u8) = .empty;
     defer text.deinit(testing.allocator);
-    for (h.out.items[1..]) |item| try text.appendSlice(testing.allocator, item.reasoning_delta.text);
+    for (h.out.items[1..]) |item| try text.appendSlice(testing.allocator, item.delta.text);
     try testing.expectEqualStrings("**One** body\n\n**Two**", text.items);
 }
 
@@ -854,7 +854,7 @@ test "a refusal streams as text and reports refusal" {
     });
 
     try testing.expectEqual(event.BlockKind.text, h.out.items[0].block_started.kind);
-    try testing.expectEqualStrings("I cannot help", h.out.items[1].text_delta.text);
+    try testing.expectEqualStrings("I cannot help", h.out.items[1].delta.text);
     try testing.expect(h.out.items[2] == .block_stopped);
     // The turn reports the refusal, so a caller never reads it as a plain answer.
     try testing.expectEqual(types.FinishReason.refusal, h.out.items[3].done.stop_reason);

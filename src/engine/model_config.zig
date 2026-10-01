@@ -1,6 +1,7 @@
 //! One gate for every model and reasoning choice a session stores.
 
 const std = @import("std");
+const util = @import("../util.zig");
 const registry = @import("../provider/registry.zig");
 const Engine = @import("Engine.zig");
 
@@ -27,7 +28,7 @@ pub fn validate(engine: *Engine, arena: std.mem.Allocator, model: []const u8, re
         .needs_route => error.ModelRouteUnavailable,
         .needs_credential => error.ModelUnavailable,
     };
-    if (registry.credential(match.provider.availability.ready.credential, engine.deps.execution.env, engine.nowMillis()) == null) return error.ModelUnavailable;
+    if (registry.credential(match.provider.availability.ready.credential, engine.deps.execution.env, util.nowMillis(engine.deps.io)) == null) return error.ModelUnavailable;
     if (match.model.caps.tools != true) return error.ModelToolsUnsupported;
     // The merged registry can reload before the caller commits, so the arena keeps its own copies.
     const owned_model = try arena.dupe(u8, model);

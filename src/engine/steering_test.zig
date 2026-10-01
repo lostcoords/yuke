@@ -311,7 +311,7 @@ test "a protected child report joins its active parent at the next boundary" {
     const report = blk: {
         var tx = try f.base.db.begin();
         defer tx.deinit();
-        const terminal = try reports.append(&f.base.engine, a, .{ .session_id = child, .seq = 0, .run_id = started.handle.started.run_id, .kind = .turn, .timing = .{ .started_at_ms = started.handle.started.started_at_ms, .ended_at_ms = f.base.engine.nowMillis() }, .outcome = .{ .turn = .{ .finish = .stop, .rounds = 0 } } });
+        const terminal = try reports.append(&f.base.engine, a, .{ .session_id = child, .seq = 0, .run_id = started.handle.started.run_id, .kind = .turn, .timing = .{ .started_at_ms = started.handle.started.started_at_ms, .ended_at_ms = util.nowMillis(f.base.engine.deps.io) }, .outcome = .{ .turn = .{ .finish = .stop, .rounds = 0 } } });
         try tx.commit();
         break :blk terminal.report.?;
     };
@@ -355,7 +355,7 @@ test "input during automatic compaction waits for the next round and keeps messa
                 .finish = .stop,
                 .time = .{ .created_at_ms = 1 },
             } };
-            _ = try database.message.appendCommittedMessage(&f.base.db, a, Fixture.id.raw, f.base.engine.newId(), 1, message);
+            _ = try database.message.appendCommittedMessage(&f.base.db, a, Fixture.id.raw, util.newId(f.base.engine.deps.io), 1, message);
         }
         try tx.commit();
     }

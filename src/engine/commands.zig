@@ -1,6 +1,7 @@
 //! Session commands build wire results from the engine and the store, and each handler owns its write transaction.
 
 const std = @import("std");
+const util = @import("../util.zig");
 const proto = @import("proto");
 const Engine = @import("Engine.zig");
 
@@ -309,7 +310,7 @@ pub fn sessionPatch(engine: *Engine, arena: std.mem.Allocator, params: proto.ses
     const seq = seq: {
         var tx = try engine.deps.db.begin();
         defer tx.deinit();
-        const seq = try config_store.appendConfig(engine.deps.db, arena, sid, engine.newId(), engine.nowMillis(), config);
+        const seq = try config_store.appendConfig(engine.deps.db, arena, sid, util.newId(engine.deps.io), util.nowMillis(engine.deps.io), config);
         try tx.commit();
         break :seq seq;
     };
@@ -378,10 +379,10 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
 
     // A run is active. Persist and fold the queued input before the response.
     if (rt.userQueueDepth() >= proto.meta.limits.max_queued_inputs) return error.QueueFull;
-    const now = engine.nowMillis();
+    const now = util.nowMillis(engine.deps.io);
     var tx = try engine.deps.db.*.begin();
     defer tx.deinit();
-    const queued = try input_store.enqueue(engine.deps.db, arena, sid, engine.newId(), now, .{ .content = content, .source = source, .skill_name = skill_name }, now);
+    const queued = try input_store.enqueue(engine.deps.db, arena, sid, util.newId(engine.deps.io), now, .{ .content = content, .source = source, .skill_name = skill_name }, now);
     try tx.commit();
     session_events.emitDurable(engine, rt, .{ .method = .@"input.queued", .params = .{
         .input_queued_data = .{ .session_id = params.session_id, .seq = queued.seq, .input = queued.input },
@@ -421,10 +422,10 @@ pub fn sessionCancelInput(engine: *Engine, arena: std.mem.Allocator, params: pro
     if (!try session_store.exists(engine.deps.db, arena, sid)) return error.UnknownSession;
     const rt = try engine.activate(params.session_id);
 
-    const now = engine.nowMillis();
+    const now = util.nowMillis(engine.deps.io);
     var tx = try engine.deps.db.*.begin();
     defer tx.deinit();
-    const canceled = input_store.cancel(engine.deps.db, arena, sid, engine.newId(), now, params.input_id) catch |err| switch (err) {
+    const canceled = input_store.cancel(engine.deps.db, arena, sid, util.newId(engine.deps.io), now, params.input_id) catch |err| switch (err) {
         error.NoRow => return error.UnknownInput,
         else => return err,
     };
@@ -456,7 +457,7 @@ pub fn sessionCancelRun(engine: *Engine, arena: std.mem.Allocator, params: proto
         const pending = try input_store.list(engine.deps.db, arena, sid);
         cleared_inputs = try arena.alloc(proto.ids.InputId, pending.len);
         const cleared_seqs = try arena.alloc(proto.ids.Seq, pending.len);
-        const now = engine.nowMillis();
+        const now = util.nowMillis(engine.deps.io);
         var tx = try engine.deps.db.*.begin();
         defer tx.deinit();
         var count: usize = 0;
@@ -465,7 +466,7 @@ pub fn sessionCancelRun(engine: *Engine, arena: std.mem.Allocator, params: proto
             const i = count;
             count += 1;
             cleared_inputs[i] = entry.input.input_id;
-            const canceled = try input_store.cancel(engine.deps.db, arena, sid, engine.newId(), now, entry.input.input_id);
+            const canceled = try input_store.cancel(engine.deps.db, arena, sid, util.newId(engine.deps.io), now, entry.input.input_id);
             cleared_seqs[i] = canceled;
         }
         cleared_inputs = cleared_inputs[0..count];
@@ -598,7 +599,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
         if (parent_tree.?.depth >= engine.max_agent_depth) return error.AgentDepthLimit;
         try validateParentSite(engine, child.site);
     }
-    const id: proto.ids.SessionId = .bytes(engine.newId());
+    const id: proto.ids.SessionId = .bytes(util.newId(engine.deps.io));
     if (content != null and parent == null) try engine.ownNewRoot(id);
     errdefer if (content != null and parent == null) engine.releaseRoot(id);
     const base = std.Io.Dir.path.basename(root);
@@ -620,7 +621,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     else
         &.{};
     const sources = if (parent) |pid| try session_store.instructionSnapshots(engine.deps.db, arena, pid.raw) else try instructions.load(arena, engine.deps.io, engine.deps.execution.env, root, diagnostic);
-    const now = engine.nowMillis();
+    const now = util.nowMillis(engine.deps.io);
     if (parent_tree) |tree| try reports.reserve(engine, arena, tree.root);
     const available = content != null and (parent_tree == null or try admission.available(engine, arena, parent_tree.?.root, id));
     const resident = if (content != null) try engine.sessions.getOrCreate(id) else null;
@@ -658,7 +659,7 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
             if (config != null) {
                 started = try run.beginTurnInTransaction(engine.deps.db, engine.deps.io, arena, id.raw, input, 0);
             } else {
-                queued = try input_store.enqueue(engine.deps.db, arena, id.raw, engine.newId(), now, input, now);
+                queued = try input_store.enqueue(engine.deps.db, arena, id.raw, util.newId(engine.deps.io), now, input, now);
             }
         }
         try tx.commit();

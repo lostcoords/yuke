@@ -1,6 +1,7 @@
 //! Terminal records and child reports share one database transaction.
 
 const std = @import("std");
+const util = @import("../util.zig");
 const proto = @import("proto");
 const Engine = @import("Engine.zig");
 const store = @import("../store/store.zig");
@@ -29,7 +30,7 @@ pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDone
     std.debug.assert(data.run_id > 0);
     const db = engine.deps.db;
     const ended = data.timing.ended_at_ms;
-    var result: Terminal = .{ .done = try store.run.appendOpenDone(db, arena, engine.newId(), ended, data) };
+    var result: Terminal = .{ .done = try store.run.appendOpenDone(db, arena, util.newId(engine.deps.io), ended, data) };
     const snapshot = (try store.session.snapshot(db, arena, data.session_id.raw)) orelse return error.UnknownSession;
     if (data.kind == .turn) if (snapshot.parent_id) |parent| {
         const name = snapshot.name orelse return error.CorruptDatabase;
@@ -63,7 +64,7 @@ pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDone
             .content = &.{.{ .text = .{ .text = try std.fmt.allocPrint(arena, "The previous engine stopped before run {d} ended. Its committed output remains in the transcript. Tool calls may have produced side effects before the stop.", .{data.run_id}) } }},
             .time = .{ .created_at_ms = ended },
         } };
-        result.notice = try store.message.appendCommittedMessage(db, arena, data.session_id.raw, engine.newId(), ended, message);
+        result.notice = try store.message.appendCommittedMessage(db, arena, data.session_id.raw, util.newId(engine.deps.io), ended, message);
     }
     return result;
 }
@@ -77,7 +78,7 @@ pub fn canceledInputs(engine: *Engine, arena: std.mem.Allocator, child: proto.id
     const name = snapshot.name orelse return error.CorruptDatabase;
     const ids = try std.json.Stringify.valueAlloc(arena, input_ids, .{});
     const text = try std.fmt.allocPrint(arena, "Message from {s}: inputs {s} were canceled before they entered the transcript.", .{ name, ids });
-    return try enqueue(engine, arena, .bytes(parent), engine.nowMillis(), &.{.{ .text = .{ .text = text } }}, .{ .child_input_canceled = .{
+    return try enqueue(engine, arena, .bytes(parent), util.nowMillis(engine.deps.io), &.{.{ .text = .{ .text = text } }}, .{ .child_input_canceled = .{
         .session_id = child,
         .name = name,
         .input_ids = input_ids,
@@ -85,7 +86,7 @@ pub fn canceledInputs(engine: *Engine, arena: std.mem.Allocator, child: proto.id
 }
 
 fn enqueue(engine: *Engine, arena: std.mem.Allocator, parent: proto.ids.SessionId, now: u64, content: []const proto.content.ContentPart, source: proto.input.InputSource) !proto.input.InputQueuedData {
-    const entry = try store.input.enqueue(engine.deps.db, arena, parent.raw, engine.newId(), now, .{ .content = content, .source = source }, now);
+    const entry = try store.input.enqueue(engine.deps.db, arena, parent.raw, util.newId(engine.deps.io), now, .{ .content = content, .source = source }, now);
     return .{ .session_id = parent, .seq = entry.seq, .input = entry.input };
 }
 

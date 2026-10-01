@@ -47,7 +47,7 @@ fn drive(runtime: *App, slot: *login_runtime.LoginSlot, seam: oauth.Http) !proto
     defer runtime.gpa.free(body);
 
     // The clock counts the request time too, so a slow provider cannot outlast the deadline.
-    const began_ms = util.nowMillis(runtime.io);
+    const began_ms = util.monoMillis(runtime.io);
     var pace: poller.Poller = .init(0, slot.start.interval_ms, max_lifetime_ms);
     if (try slot.cancel.holdFor(runtime.io, pace.firstWaitMs())) return .{ .canceled = .{} };
 
@@ -56,7 +56,7 @@ fn drive(runtime: *App, slot: *login_runtime.LoginSlot, seam: oauth.Http) !proto
         defer arena.deinit();
 
         // One poll per turn, because an xAI poll that returns tokens spends the device code.
-        const elapsed_ms = util.nowMillis(runtime.io) -| began_ms;
+        const elapsed_ms = util.monoMillis(runtime.io) - began_ms;
         if (elapsed_ms >= max_lifetime_ms) return .{ .failed = .{ .message = "the login expired before approval" } };
 
         const result: ?oauth.Poll = pollFlow(arena.allocator(), slot, seam, util.nowMillis(runtime.io), body) catch |err| switch (err) {
@@ -75,7 +75,7 @@ fn drive(runtime: *App, slot: *login_runtime.LoginSlot, seam: oauth.Http) !proto
             .slow_down => .{ .slow_down = null },
         } else .unavailable;
 
-        switch (pace.step(reply, util.nowMillis(runtime.io) -| began_ms)) {
+        switch (pace.step(reply, util.monoMillis(runtime.io) - began_ms)) {
             .failed => |failure| return .{ .failed = .{ .message = switch (failure) {
                 .expired => "the login expired before approval",
                 .offline => "the provider stayed unreachable",
@@ -275,7 +275,7 @@ const Probe = struct {
 
     fn now(userdata: ?*anyopaque, clock: std.Io.Clock) std.Io.Timestamp {
         const self: *Probe = @ptrCast(@alignCast(userdata.?));
-        std.debug.assert(clock == .real or clock == .awake);
+        std.debug.assert(clock == .real or clock == .awake or clock == .boot);
         return .{ .nanoseconds = @as(i96, epoch_ms + self.elapsed_ms) * std.time.ns_per_ms };
     }
 

@@ -135,16 +135,11 @@ pub const Draft = struct {
         self.* = undefined;
     }
 
-    /// Append a part from `message.part_added` and reject an out-of-order id when a part event is absent.
+    /// Append a clone of the part from `message.part_added`.
     pub fn addPart(self: *Draft, d: message.MessagePartAddedData) Error!void {
-        return self.appendPart(d.part);
-    }
-
-    /// Clone a wire part. Check its ordinal and append it.
-    fn appendPart(self: *Draft, p: message.AssistantPart) Error!void {
         const expected: ids.PartId = @intCast(self.parts.items.len);
-        std.debug.assert(p.id() == expected); // the engine numbers each part in order
-        var cloned = try Part.initFrom(self.gpa, self.arena.allocator(), p);
+        std.debug.assert(d.part.id() == expected); // the engine numbers each part in order
+        var cloned = try Part.initFrom(self.gpa, self.arena.allocator(), d.part);
         errdefer cloned.deinit(self.gpa);
         try self.parts.append(self.gpa, cloned);
     }

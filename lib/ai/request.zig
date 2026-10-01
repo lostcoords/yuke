@@ -7,7 +7,8 @@ const openai_chat = @import("request/openai_chat.zig");
 const openai_responses = @import("request/openai_responses.zig");
 
 /// Validate and serialize one request into `arena`, which must outlive the returned body. The wire tag selects the protocol.
-pub fn serialize(arena: std.mem.Allocator, request: ir.Request, blocks: []const ir.Block) ![]u8 {
+/// It fails on a request that breaks the IR, on content the endpoint cannot carry, and on `OutOfMemory`.
+pub fn serialize(arena: std.mem.Allocator, request: ir.Request, blocks: []const ir.Block) (ir.ValidateError || ir.Unsupported)![]u8 {
     try ir.validate(arena, request, blocks);
     var body: std.Io.Writer.Allocating = .init(arena);
     const written = switch (request.wire) {
@@ -17,7 +18,7 @@ pub fn serialize(arena: std.mem.Allocator, request: ir.Request, blocks: []const 
     };
     written catch |err| switch (err) {
         error.WriteFailed => return error.OutOfMemory,
-        else => return err,
+        else => |e| return e,
     };
     return body.written();
 }

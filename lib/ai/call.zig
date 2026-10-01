@@ -300,8 +300,7 @@ const Collector = struct {
                 std.debug.assert(started.block == self.blocks.items.len);
                 try self.blocks.append(self.gpa, .{ .kind = started.kind });
             },
-            .text_delta => |delta| try self.append(delta.block, delta.text),
-            .reasoning_delta => |delta| try self.append(delta.block, delta.text),
+            .delta => |delta| try self.append(delta.block, delta.text),
             .tool_input_delta => {},
             .block_stopped => |stopped| {
                 const current = self.getBlock(stopped.block);

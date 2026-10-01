@@ -1577,6 +1577,8 @@ export class Transcript {
     _dragging: boolean;
     _didDrag: boolean;
     _press: Position | null;
+    _pressCol: number;
+    _pressEnd: Position | null;
     /** Receives the selected text when a mouse drag ends on a selection that is not empty. */
     onSelect: ((text: string) => void) | null;
     constructor(opts?: TranscriptOptions);
@@ -1590,6 +1592,7 @@ export class Transcript {
     select(anchor: Position | null, cursor: Position | null, opts?: {
         inclusive?: boolean;
     } | null | undefined): void;
+    _after(p: Position): Position;
     /**
      * Compare two positions in transcript order: below 0 when `a` comes first, 0 when they are equal, above 0 when `b` comes first.
      */
@@ -1602,7 +1605,7 @@ export class Transcript {
     isEmpty(): boolean;
     /**
      * Replace the outline with the committed `messages` and the streaming draft `active`, or null without a draft. It clears the selection.
-     * A committed message never changes under its id, so its render survives; the draft render goes because a commit folds its reasoning.
+     * A committed message never changes under its id, so its render survives. The draft render goes, because a live part renders apart from its committed form.
      */
     setOutline(messages: MessageDescriptor[], active: MessageDescriptor | null): void;
     _resetOrder(): void;
@@ -1770,9 +1773,9 @@ export class Transcript {
      */
     draw(rect: Rect): void;
     /**
-     * The logical position under a screen cell, or null off the drawn rows. `clamp` pulls a drag back to the nearest row.
+     * The logical position before the grapheme under a screen cell, or after it when `after` is true. Null off the drawn rows. `clamp` pulls a drag back to the nearest row.
      */
-    posAt(col: number, row: number, clamp: boolean): Position | null;
+    posAt(col: number, row: number, clamp: boolean, after?: boolean): Position | null;
     /**
      * A left drag selects text: a press records the start and a drag opens the range, so a click leaves no one-cell range.
      * A click on a part opens or folds it. The wheel scrolls. A finished selection goes to `onSelect`.

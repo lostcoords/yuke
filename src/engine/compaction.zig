@@ -1,6 +1,7 @@
 //! Summarize the history below a boundary into one message. The tail after the boundary stays exact.
 
 const std = @import("std");
+const util = @import("../util.zig");
 const proto = @import("proto");
 const database = @import("../store/store.zig");
 const context = @import("context.zig");
@@ -206,7 +207,7 @@ fn commit(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, cut: Cut, s
     std.debug.assert(summary.len != 0);
     const session_id = slot.sessionId();
     const rt = engine.sessions.get(session_id) orelse return error.UnknownSession;
-    const now = engine.nowMillis();
+    const now = util.nowMillis(engine.deps.io);
     const protection = engine.deps.io.swapCancelProtection(.blocked);
     defer _ = engine.deps.io.swapCancelProtection(protection);
 
@@ -225,7 +226,7 @@ fn commit(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, cut: Cut, s
         .tokens_after = counts.after,
         .time = .{ .created_at_ms = now },
     } };
-    const stored = try database.message.appendCommittedMessage(engine.deps.db, arena, session_id.raw, engine.newId(), now, message);
+    const stored = try database.message.appendCommittedMessage(engine.deps.db, arena, session_id.raw, util.newId(engine.deps.io), now, message);
     try tx.commit();
 
     session_events.emitCommitted(engine, rt, stored);

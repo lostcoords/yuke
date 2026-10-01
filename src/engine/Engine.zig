@@ -236,7 +236,7 @@ fn repair(self: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId) !voi
         if (try database.session.openRun(row)) |open| {
             const kind = std.meta.stringToEnum(proto.enums.RunKind, open.kind) orelse return error.CorruptDatabase;
             const started = open.started_at_ms;
-            const ended = @max(self.nowMillis(), started);
+            const ended = @max(util.nowMillis(self.deps.io), started);
             done = try reports.append(self, arena, .{
                 .session_id = id,
                 .seq = 0,
@@ -329,19 +329,10 @@ fn loadSession(self: *Engine, session_id: proto.ids.SessionId) !Session {
     return resident;
 }
 
-/// Return wall-clock milliseconds since the Unix epoch. See util.nowMillis for the clock rules.
-pub fn nowMillis(self: *const Engine) u64 {
-    return util.nowMillis(self.deps.io);
-}
-
-/// Mint a fresh UUIDv7 for a session, workspace, or event.
-pub fn newId(self: *const Engine) [16]u8 {
-    return util.newId(self.deps.io);
-}
 
 /// Draw a retry jitter in [0, 1) from the UUIDv7 bytes that stay random.
 pub fn jitter(self: *const Engine) f64 {
-    return util.jitterFrom(self.newId());
+    return util.jitterFrom(util.newId(self.deps.io));
 }
 
 test {

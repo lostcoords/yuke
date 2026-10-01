@@ -124,11 +124,7 @@ pub const Reducer = struct {
         const index = channel.* orelse try self.startBlock(kind, null, out);
         std.debug.assert(self.blocks.items[index].kind == kind); // a channel names only blocks of its own kind
         channel.* = index;
-        try out.append(self.gpa, switch (kind) {
-            .text => .{ .text_delta = .{ .block = @intCast(index), .text = text } },
-            .reasoning => .{ .reasoning_delta = .{ .block = @intCast(index), .text = text } },
-            else => unreachable, // the channel switch above admitted only text or reasoning.
-        });
+        try out.append(self.gpa, .{ .delta = .{ .block = @intCast(index), .text = text } });
     }
 
     fn onToolCall(self: *Reducer, call: std.json.Value, out: *std.ArrayList(StreamEvent)) Error!void {
@@ -367,13 +363,10 @@ test "interleaved reasoning and text keep one block per channel" {
             started[started_len] = b.kind;
             started_len += 1;
         },
-        .text_delta => |d| {
-            try testing.expectEqual(@as(event.BlockId, 1), d.block);
-            try text.appendSlice(testing.allocator, d.text);
-        },
-        .reasoning_delta => |d| {
-            try testing.expectEqual(@as(event.BlockId, 0), d.block);
-            try reasoning.appendSlice(testing.allocator, d.text);
+        .delta => |d| switch (d.block) {
+            0 => try reasoning.appendSlice(testing.allocator, d.text),
+            1 => try text.appendSlice(testing.allocator, d.text),
+            else => return error.TestUnexpectedResult,
         },
         .block_stopped => |b| {
             try testing.expectEqual(@as(event.BlockId, @intCast(stopped)), b.block);
@@ -411,7 +404,7 @@ test "a refusal streams as text and reports refusal" {
     });
 
     try testing.expectEqual(event.BlockKind.text, h.out.items[0].block_started.kind);
-    try testing.expectEqualStrings("I cannot help", h.out.items[1].text_delta.text);
+    try testing.expectEqualStrings("I cannot help", h.out.items[1].delta.text);
     const done = h.out.items[h.out.items.len - 1].done;
     try testing.expectEqual(types.FinishReason.refusal, done.stop_reason);
     try testing.expectEqualStrings("stop", done.raw_stop_reason);
@@ -483,8 +476,12 @@ test "a chunk with no function and an openrouter reasoning field are both handle
 
     var reasoning: std.ArrayList(u8) = .empty;
     defer reasoning.deinit(testing.allocator);
+    var reasoning_block: ?event.BlockId = null;
     for (h.out.items) |ev| switch (ev) {
-        .reasoning_delta => |d| try reasoning.appendSlice(testing.allocator, d.text),
+        .block_started => |b| if (b.kind == .reasoning) {
+            reasoning_block = b.block;
+        },
+        .delta => |d| if (d.block == reasoning_block) try reasoning.appendSlice(testing.allocator, d.text),
         else => {},
     };
     try testing.expectEqualStrings("why", reasoning.items);

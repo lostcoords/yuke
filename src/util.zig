@@ -13,9 +13,14 @@ pub fn v7(ms: u64, rand: [10]u8) [16]u8 {
     return out;
 }
 
-/// Return wall-clock milliseconds since the Unix epoch, clamp a time before 1970 to 0, and do not use this non-monotonic clock for durations or timeouts.
+/// Return wall-clock milliseconds since the Unix epoch. A time before 1970 clamps to 0. The clock can move back, so a duration or a timeout uses `monoMillis`.
 pub fn nowMillis(io: std.Io) u64 {
     return @intCast(@max(std.Io.Timestamp.now(io, .real).toMilliseconds(), 0));
+}
+
+/// Return monotonic milliseconds from an unspecified origin, with the time the machine sleeps. Subtract two readings for a duration or a deadline. Never show one reading as a time.
+pub fn monoMillis(io: std.Io) u64 {
+    return @intCast(@max(std.Io.Timestamp.now(io, .boot).toMilliseconds(), 0));
 }
 
 /// Mint a fresh UUIDv7 from the wall clock and random bytes.

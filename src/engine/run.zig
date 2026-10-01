@@ -191,7 +191,7 @@ pub fn finishRunOpen(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, 
     defer _ = engine.deps.io.swapCancelProtection(old_cancel_protection);
 
     const session_id = slot.sessionId();
-    const ended_at = @max(engine.nowMillis(), slot.handle.started.started_at_ms);
+    const ended_at = @max(util.nowMillis(engine.deps.io), slot.handle.started.started_at_ms);
     var tx = try engine.deps.db.*.begin();
     defer tx.deinit();
     const done = try reports.append(engine, arena, .{
@@ -337,11 +337,11 @@ pub fn prepareCompaction(engine: *Engine, rt: *Session, reason: proto.enums.Comp
     const sid = rt.id.raw;
     const config = try slotConfig(engine, arena, rt, context, .compaction);
 
-    const started_at = engine.nowMillis();
+    const started_at = util.nowMillis(engine.deps.io);
     var tx = try engine.deps.db.begin();
     defer tx.deinit();
     const run_id = reserved orelse try database.event.allocRunId(engine.deps.db, arena, sid);
-    const started = try database.run.appendStarted(engine.deps.db, arena, engine.newId(), started_at, .{
+    const started = try database.run.appendStarted(engine.deps.db, arena, util.newId(engine.deps.io), started_at, .{
         .session_id = rt.id,
         .seq = 0,
         .run_id = run_id,

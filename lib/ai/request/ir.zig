@@ -177,8 +177,18 @@ pub const Request = struct {
 /// The tool controls every host understands.
 pub const ToolChoice = enum { auto, none };
 
+/// A request breaks a rule of the IR or a byte limit, or the check runs out of memory.
+pub const ValidateError = std.mem.Allocator.Error || error{ InvalidRequest, RequestTooLarge };
+
+/// The endpoint of a wire cannot carry this content.
+pub const Unsupported = error{ UnsupportedContent, UnsupportedLoadedTools, UnsupportedDeferredTools };
+
+/// A serializer fails on a write, or on content that its endpoint cannot carry.
+pub const SerializeError = std.Io.Writer.Error || Unsupported;
+
 /// Check one request, and bound the input bytes it carries before a serializer reads it.
-pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Block) !void {
+/// It fails with `InvalidRequest` on a broken rule, `RequestTooLarge` past the byte limit, and `OutOfMemory` in the schema check.
+pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Block) ValidateError!void {
     if (request.model.len == 0 or request.model.len > types.limits.max_string_bytes) return error.InvalidRequest;
     if (request.system.len > types.limits.max_string_bytes) return error.InvalidRequest;
     switch (request.wire) {
@@ -224,7 +234,7 @@ pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Bloc
     }
 }
 
-fn validateTool(arena: std.mem.Allocator, tool: Tool, total: *usize) !void {
+fn validateTool(arena: std.mem.Allocator, tool: Tool, total: *usize) ValidateError!void {
     if (tool.name.len == 0 or !stringValid(tool.name) or !stringValid(tool.description)) return error.InvalidRequest;
     try validateObject(arena, tool.input_schema);
     total.* +|= tool.name.len +| tool.description.len +| tool.input_schema.len;
@@ -252,7 +262,7 @@ fn mediaBytes(media: Block.Media) usize {
     };
 }
 
-fn validateMedia(media: Block.Media) !void {
+fn validateMedia(media: Block.Media) error{InvalidRequest}!void {
     if (media.mime.len == 0 or !stringValid(media.mime)) return error.InvalidRequest;
     if (!stringValid(media.filename)) return error.InvalidRequest;
     switch (media.source) {
@@ -261,7 +271,7 @@ fn validateMedia(media: Block.Media) !void {
     }
 }
 
-fn validateBlock(arena: std.mem.Allocator, block: Block) !void {
+fn validateBlock(arena: std.mem.Allocator, block: Block) ValidateError!void {
     switch (block.value) {
         .text => |value| if (!stringValid(value)) return error.InvalidRequest,
         .media => |media| {
@@ -292,7 +302,7 @@ fn stringValid(value: []const u8) bool {
     return value.len <= types.limits.max_string_bytes and std.unicode.utf8ValidateSlice(value);
 }
 
-fn validateObject(arena: std.mem.Allocator, raw: []const u8) !void {
+fn validateObject(arena: std.mem.Allocator, raw: []const u8) ValidateError!void {
     if (raw.len == 0) return;
     if (!stringValid(raw)) return error.InvalidRequest;
     for (raw) |byte| {

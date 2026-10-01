@@ -146,14 +146,14 @@ pub const Reducer = struct {
             // MiniMax (and some Anthropic-compat hosts) put the whole trace on start, with no deltas.
             if (kind == .reasoning) {
                 if (json.fieldStr(cb, "thinking")) |t| {
-                    if (t.len != 0) try out.append(self.gpa, .{ .reasoning_delta = .{ .block = block.emitted_id, .text = t } });
+                    if (t.len != 0) try out.append(self.gpa, .{ .delta = .{ .block = block.emitted_id, .text = t } });
                 }
                 if (json.fieldStr(cb, "signature")) |s| {
                     if (s.len != 0) try block.signature.appendSlice(self.gpa, s);
                 }
             } else if (kind == .text) {
                 if (json.fieldStr(cb, "text")) |t| {
-                    if (t.len != 0) try out.append(self.gpa, .{ .text_delta = .{ .block = block.emitted_id, .text = t } });
+                    if (t.len != 0) try out.append(self.gpa, .{ .delta = .{ .block = block.emitted_id, .text = t } });
                 }
             }
         }
@@ -169,10 +169,10 @@ pub const Reducer = struct {
 
         if (std.mem.eql(u8, delta_type, "text_delta")) {
             if (block.kind != .text) return error.Protocol;
-            try out.append(self.gpa, .{ .text_delta = .{ .block = block.emitted_id, .text = json.fieldStr(delta, "text") orelse return error.Protocol } });
+            try out.append(self.gpa, .{ .delta = .{ .block = block.emitted_id, .text = json.fieldStr(delta, "text") orelse return error.Protocol } });
         } else if (std.mem.eql(u8, delta_type, "thinking_delta")) {
             if (block.kind != .reasoning) return error.Protocol;
-            try out.append(self.gpa, .{ .reasoning_delta = .{ .block = block.emitted_id, .text = json.fieldStr(delta, "thinking") orelse return error.Protocol } });
+            try out.append(self.gpa, .{ .delta = .{ .block = block.emitted_id, .text = json.fieldStr(delta, "thinking") orelse return error.Protocol } });
         } else if (std.mem.eql(u8, delta_type, "signature_delta")) {
             if (block.kind != .reasoning) return error.Protocol;
             try block.signature.appendSlice(self.gpa, json.fieldStr(delta, "signature") orelse return error.Protocol);
@@ -383,7 +383,7 @@ test "a thinking block that arrives complete on start still emits a delta" {
     });
 
     try testing.expectEqual(event.BlockKind.reasoning, h.out.items[0].block_started.kind);
-    try testing.expectEqualStrings("plan the poem", h.out.items[1].reasoning_delta.text);
+    try testing.expectEqualStrings("plan the poem", h.out.items[1].delta.text);
     try testing.expectEqualStrings("sig", h.out.items[2].block_stopped.result.reasoning.signature);
 }
 
@@ -401,7 +401,7 @@ test "thinking block accumulates its signature into the result" {
     });
 
     try testing.expectEqual(event.BlockKind.reasoning, h.out.items[0].block_started.kind);
-    try testing.expectEqualStrings("pondering", h.out.items[1].reasoning_delta.text);
+    try testing.expectEqualStrings("pondering", h.out.items[1].delta.text);
     try testing.expectEqualStrings("sig123", h.out.items[2].block_stopped.result.reasoning.signature);
 }
 
@@ -511,7 +511,7 @@ test "a dropped leading block keeps the neutral ids dense from zero" {
     // The dropped block emits nothing, so the text block is neutral id 0, not the provider index 1.
     try testing.expectEqual(@as(usize, 4), h.out.items.len);
     try testing.expectEqual(@as(event.BlockId, 0), h.out.items[0].block_started.block);
-    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[1].text_delta.block);
+    try testing.expectEqual(@as(event.BlockId, 0), h.out.items[1].delta.block);
     try testing.expectEqual(@as(event.BlockId, 0), h.out.items[2].block_stopped.block);
     try testing.expect(h.out.items[3] == .done);
 }

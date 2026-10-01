@@ -1,6 +1,7 @@
 //! Report tests use durable run markers without a provider or a live model.
 
 const std = @import("std");
+const util = @import("../util.zig");
 const proto = @import("proto");
 const database = @import("../store/store.zig");
 const Engine = @import("Engine.zig");
@@ -59,7 +60,7 @@ const Fixture = struct {
         const a = self.arena.allocator();
         var tx = try self.db.begin();
         defer tx.deinit();
-        for (texts, 0..) |value, i| _ = try database.message.appendCommittedMessage(&self.db, a, child.raw, self.engine.newId(), self.engine.nowMillis(), .{ .assistant = .{
+        for (texts, 0..) |value, i| _ = try database.message.appendCommittedMessage(&self.db, a, child.raw, util.newId(self.engine.deps.io), util.nowMillis(self.engine.deps.io), .{ .assistant = .{
             .id = try database.event.allocMessageId(&self.db, a, child.raw),
             .run_id = started.handle.started.run_id,
             .config_rev = 0,
@@ -73,7 +74,7 @@ const Fixture = struct {
             .seq = 0,
             .run_id = started.handle.started.run_id,
             .kind = .turn,
-            .timing = .{ .started_at_ms = started.handle.started.started_at_ms, .ended_at_ms = self.engine.nowMillis() },
+            .timing = .{ .started_at_ms = started.handle.started.started_at_ms, .ended_at_ms = util.nowMillis(self.engine.deps.io) },
             .outcome = outcome,
         });
         try tx.commit();
@@ -130,7 +131,7 @@ test "a full user queue cannot block a terminal report or clear protected input"
     {
         var tx = try f.db.begin();
         defer tx.deinit();
-        for (0..proto.meta.limits.max_queued_inputs) |_| _ = try database.input.enqueue(&f.db, a, root.raw, f.engine.newId(), 1, .{ .content = &.{.{ .text = .{ .text = "user work" } }} }, 1);
+        for (0..proto.meta.limits.max_queued_inputs) |_| _ = try database.input.enqueue(&f.db, a, root.raw, util.newId(f.engine.deps.io), 1, .{ .content = &.{.{ .text = .{ .text = "user work" } }} }, 1);
         try tx.commit();
     }
     const result = try f.terminal(try f.start(), &.{"answer"}, success);
@@ -181,7 +182,7 @@ test "one report reservation survives each hop from a grandchild to the root" {
     {
         var tx = try f.db.begin();
         defer tx.deinit();
-        _ = try database.input.enqueue(&f.db, a, grandchild, f.engine.newId(), 1, .{ .content = &.{.{ .text = .{ .text = "task" } }} }, 1);
+        _ = try database.input.enqueue(&f.db, a, grandchild, util.newId(f.engine.deps.io), 1, .{ .content = &.{.{ .text = .{ .text = "task" } }} }, 1);
         try tx.commit();
     }
     try testing.expectEqual(@as(i64, 1), (try f.db.queries.child_report_credits.one(a, .{ .parent_id = root.raw })).value.used);
@@ -195,7 +196,7 @@ test "one report reservation survives each hop from a grandchild to the root" {
             .seq = 0,
             .run_id = started.handle.started.run_id,
             .kind = .turn,
-            .timing = .{ .started_at_ms = started.handle.started.started_at_ms, .ended_at_ms = f.engine.nowMillis() },
+            .timing = .{ .started_at_ms = started.handle.started.started_at_ms, .ended_at_ms = util.nowMillis(f.engine.deps.io) },
             .outcome = success,
         });
         try testing.expectEqual(child, terminal.report.?.session_id);
@@ -234,7 +235,7 @@ test "cancel before admission reports input IDs without a run ID" {
     {
         var tx = try f.db.begin();
         defer tx.deinit();
-        for (&ids) |*id| id.* = (try database.input.enqueue(&f.db, a, child.raw, f.engine.newId(), 1, .{ .content = &.{.{ .text = .{ .text = "task" } }} }, 1)).input.input_id;
+        for (&ids) |*id| id.* = (try database.input.enqueue(&f.db, a, child.raw, util.newId(f.engine.deps.io), 1, .{ .content = &.{.{ .text = .{ .text = "task" } }} }, 1)).input.input_id;
         try tx.commit();
     }
     _ = try commands.sessionCancelInput(&f.engine, a, .{ .session_id = child, .input_id = ids[0] });
@@ -303,7 +304,7 @@ test "compaction does not produce a child turn report" {
     var tx = try f.db.begin();
     defer tx.deinit();
     const id = try database.event.allocRunId(&f.db, a, child.raw);
-    _ = try database.run.appendStarted(&f.db, a, f.engine.newId(), 1, .{ .session_id = child, .seq = 0, .run_id = id, .kind = .compaction, .config_rev = 0, .started_at_ms = 1 });
+    _ = try database.run.appendStarted(&f.db, a, util.newId(f.engine.deps.io), 1, .{ .session_id = child, .seq = 0, .run_id = id, .kind = .compaction, .config_rev = 0, .started_at_ms = 1 });
     const result = try reports.append(&f.engine, a, .{ .session_id = child, .seq = 0, .run_id = id, .kind = .compaction, .timing = .{ .started_at_ms = 1, .ended_at_ms = 2 }, .outcome = .{ .canceled = .{} } });
     try tx.commit();
     try testing.expect(result.report == null);

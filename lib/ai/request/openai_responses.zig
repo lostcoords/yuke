@@ -10,7 +10,7 @@ const types = @import("../types.zig");
 const default_instructions = "You are a helpful assistant.";
 
 /// Write the OpenAI Responses request body for `request` and `blocks`.
-pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block) !void {
+pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block) ir.SerializeError!void {
     const wire = request.wire.openai_responses;
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
@@ -169,20 +169,20 @@ fn lastUserText(blocks: []const ir.Block) ?usize {
     return null;
 }
 
-fn ensureMessage(jw: *std.json.Stringify, message: *?ir.Role, role: ir.Role) !void {
+fn ensureMessage(jw: *std.json.Stringify, message: *?ir.Role, role: ir.Role) ir.SerializeError!void {
     if (message.* == role) return;
     try closeMessage(jw, message);
     try beginMessage(jw, role);
     message.* = role;
 }
 
-fn closeMessage(jw: *std.json.Stringify, message: *?ir.Role) !void {
+fn closeMessage(jw: *std.json.Stringify, message: *?ir.Role) ir.SerializeError!void {
     if (message.* == null) return;
     try endMessage(jw);
     message.* = null;
 }
 
-fn beginMessage(jw: *std.json.Stringify, role: ir.Role) !void {
+fn beginMessage(jw: *std.json.Stringify, role: ir.Role) ir.SerializeError!void {
     try jw.beginObject();
     try json.field(jw, "type", "message");
     try json.field(jw, "role", @tagName(role));
@@ -190,7 +190,7 @@ fn beginMessage(jw: *std.json.Stringify, role: ir.Role) !void {
     try jw.beginArray();
 }
 
-fn writeReasoning(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) !void {
+fn writeReasoning(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) ir.SerializeError!void {
     switch (reasoning) {
         // A model that lists `off` takes `none`. It writes no trace, so it needs no include.
         .off => try json.nested(jw, "reasoning", "effort", "none"),
@@ -210,12 +210,12 @@ fn writeReasoning(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) !void
     }
 }
 
-fn endMessage(jw: *std.json.Stringify) !void {
+fn endMessage(jw: *std.json.Stringify) ir.SerializeError!void {
     try jw.endArray();
     try jw.endObject();
 }
 
-fn writeReasoningItem(jw: *std.json.Stringify, summary: ?[]const u8, signature: []const u8) !void {
+fn writeReasoningItem(jw: *std.json.Stringify, summary: ?[]const u8, signature: []const u8) ir.SerializeError!void {
     std.debug.assert(signature.len != 0);
     try jw.beginObject();
     try json.field(jw, "type", "reasoning");
@@ -233,7 +233,7 @@ fn writeReasoningItem(jw: *std.json.Stringify, summary: ?[]const u8, signature: 
 }
 
 /// Constrain the response to a schema. Responses names the format under `text`, not `response_format`.
-fn writeTextFormat(jw: *std.json.Stringify, schema: ?ir.OutputSchema) !void {
+fn writeTextFormat(jw: *std.json.Stringify, schema: ?ir.OutputSchema) ir.SerializeError!void {
     const output = schema orelse return;
     try jw.objectField("text");
     try jw.beginObject();
@@ -246,7 +246,7 @@ fn writeTextFormat(jw: *std.json.Stringify, schema: ?ir.OutputSchema) !void {
 }
 
 /// Write one function tool. A tool that a search loads keeps `defer_loading`.
-fn writeFunctionTool(jw: *std.json.Stringify, tool: ir.Tool, defer_loading: bool) !void {
+fn writeFunctionTool(jw: *std.json.Stringify, tool: ir.Tool, defer_loading: bool) ir.SerializeError!void {
     try jw.beginObject();
     try json.field(jw, "type", "function");
     try json.field(jw, "name", tool.name);
@@ -270,7 +270,7 @@ fn answersSearch(before: []const ir.Block, call_id: []const u8) bool {
 }
 
 /// Answer a client search with its declarations. The output has no error member, so a failed search loads nothing.
-fn writeSearchOutput(jw: *std.json.Stringify, tools: []const ir.Tool, tool_result: ir.Block.ToolResult) !void {
+fn writeSearchOutput(jw: *std.json.Stringify, tools: []const ir.Tool, tool_result: ir.Block.ToolResult) ir.SerializeError!void {
     try jw.beginObject();
     try json.field(jw, "type", "tool_search_output");
     try json.field(jw, "execution", "client");
@@ -287,7 +287,7 @@ fn writeSearchOutput(jw: *std.json.Stringify, tools: []const ir.Tool, tool_resul
 }
 
 /// Write one attachment. Responses names the image URL as a plain string, not an object.
-fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
+fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) ir.SerializeError!void {
     try jw.beginObject();
     switch (ir.modalityOf(media.mime)) {
         .image => {
@@ -295,7 +295,7 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
             switch (media.source) {
                 .bytes => |data| {
                     try jw.objectField("image_url");
-                    try json.writeDataUrl(jw, media.mime, data);
+                    try json.writeBase64(jw, media.mime, data);
                 },
                 .url => |value| try json.field(jw, "image_url", value),
                 .file_id => |value| try json.field(jw, "file_id", value),
@@ -310,7 +310,7 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
                     if (media.filename.len == 0) return error.UnsupportedContent; // The endpoint names the file.
                     try json.field(jw, "filename", media.filename);
                     try jw.objectField("file_data");
-                    try json.writeDataUrl(jw, media.mime, data);
+                    try json.writeBase64(jw, media.mime, data);
                 },
                 .url => |value| try json.field(jw, "file_url", value),
                 .file_id => |value| try json.field(jw, "file_id", value),

@@ -16,8 +16,7 @@ pub const BlockKind = enum { text, reasoning, redacted_reasoning, tool };
 
 pub const StreamEvent = union(enum) {
     block_started: BlockStarted,
-    text_delta: TextDelta,
-    reasoning_delta: ReasoningDelta,
+    delta: Delta,
     tool_input_delta: ToolInputDelta,
     block_stopped: BlockStopped,
     done: Done,
@@ -28,12 +27,8 @@ pub const BlockStarted = struct {
     kind: BlockKind,
 };
 
-pub const TextDelta = struct {
-    block: BlockId,
-    text: []const u8,
-};
-
-pub const ReasoningDelta = struct {
+/// A delta adds bytes to a text or reasoning block. The `block_started` of the block names its kind.
+pub const Delta = struct {
     block: BlockId,
     text: []const u8,
 };

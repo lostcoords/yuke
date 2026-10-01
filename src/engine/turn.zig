@@ -12,6 +12,7 @@ const Loadout = @import("../session/session.zig").Loadout;
 const database = @import("../store/store.zig");
 const toolset = @import("toolset.zig");
 const utf8 = @import("../utf8.zig");
+const util = @import("../util.zig");
 const registry = @import("../provider/registry.zig");
 const ai = @import("ai");
 const retry = ai.retry;
@@ -246,7 +247,7 @@ fn publishRetrying(engine: *Engine, rt: *Session, slot: *RunSlot, number: u8, er
         .run_id = slot.runId(),
         .attempt = number,
         .max_attempts = engine.deps.retry_policy.max_attempts,
-        .next_at_ms = engine.nowMillis() + delay_ms,
+        .next_at_ms = util.nowMillis(engine.deps.io) + delay_ms,
         .code = detail.code,
         .message = detail.message,
     } };
@@ -415,7 +416,7 @@ fn commitRound(
     const rounds_committed = slot.progress.rounds_committed + 1;
     const round = &slot.progress.current.?;
     const content = (try live.toActiveDraft(arena)).message.content;
-    const ended_at = @max(engine.nowMillis(), slot.handle.started.started_at_ms);
+    const ended_at = @max(util.nowMillis(engine.deps.io), slot.handle.started.started_at_ms);
     const finish: proto.enums.StopReason = switch (terminal) {
         .success => |reason| reason,
         .canceled => .canceled,
@@ -444,7 +445,7 @@ fn commitRound(
     };
     // The committed content borrows the draft. The commit fold frees the draft, so own a copy first.
     const owned = try proto.dupe(arena, committed);
-    const commit = try message_store.appendCommittedMessage(engine.deps.db, arena, session_id.raw, engine.newId(), ended_at, owned);
+    const commit = try message_store.appendCommittedMessage(engine.deps.db, arena, session_id.raw, util.newId(engine.deps.io), ended_at, owned);
     const done: ?reports.Terminal = if (final) try reports.append(engine, arena, .{
         .session_id = session_id,
         .seq = 0,
@@ -475,7 +476,7 @@ fn beginRound(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !void {
     defer tx.deinit();
     const message_id = try event_store.allocMessageId(engine.deps.db, arena, slot.sessionId().raw);
     try tx.commit();
-    slot.progress.current = .{ .message_id = message_id, .created_at_ms = engine.nowMillis() };
+    slot.progress.current = .{ .message_id = message_id, .created_at_ms = util.nowMillis(engine.deps.io) };
 }
 
 /// Report whether an event carries model output that closes the retry window.
@@ -484,8 +485,7 @@ fn isSemantic(ev: event.StreamEvent) bool {
         .block_started, .block_stopped => true,
         // A completed stream must not repeat either. A later body fault would duplicate the round.
         .done => true,
-        .text_delta => |d| d.text.len != 0,
-        .reasoning_delta => |d| d.text.len != 0,
+        .delta => |d| d.text.len != 0,
         .tool_input_delta => |d| d.partial_json.len != 0,
     };
 }
@@ -549,8 +549,7 @@ const Streamer = struct {
                     session_events.announceActivity(self.engine, self.session);
                 }
             },
-            .text_delta => |d| try self.partDelta(d.block, d.text),
-            .reasoning_delta => |d| try self.partDelta(d.block, d.text),
+            .delta => |d| try self.partDelta(d.block, d.text),
             .tool_input_delta => {}, // The reducer joins fragments; the whole call arrives at block_stopped.
             .block_stopped => |b| {
                 const stopped_index = self.blockIndex(b.block);
@@ -696,7 +695,8 @@ fn runOneTool(engine: *Engine, slot: *RunSlot, streamer: *Streamer, pt: PendingT
 fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, pt: PendingTool) !void {
     std.debug.assert(slot.phase == .running); // the run loop owns the slot for this round
     std.debug.assert(slot.progress.current != null); // the round opened the message
-    const started = engine.nowMillis();
+    const started = util.nowMillis(engine.deps.io);
+    const clock = util.monoMillis(engine.deps.io);
     {
         const old = engine.deps.io.swapCancelProtection(.blocked);
         defer _ = engine.deps.io.swapCancelProtection(old);
@@ -709,10 +709,10 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, pt: PendingTo
     const res = runHooked(engine, scratch_state.allocator(), slot, pt, output.sink()) catch {
         const cancel_old = engine.deps.io.swapCancelProtection(.blocked);
         defer _ = engine.deps.io.swapCancelProtection(cancel_old);
-        try streamer.emitToolState(pt.part_id, .{ .canceled = .{ .duration_ms = engine.nowMillis() -| started } });
+        try streamer.emitToolState(pt.part_id, .{ .canceled = .{ .duration_ms = util.monoMillis(engine.deps.io) - clock } });
         return;
     };
-    const duration = engine.nowMillis() -| started; // Saturate; the wall clock can move backward.
+    const duration = util.monoMillis(engine.deps.io) - clock;
     const old = engine.deps.io.swapCancelProtection(.blocked);
     defer _ = engine.deps.io.swapCancelProtection(old);
     const settled: proto.tool.ToolState = if (slot.cancel.isRequested())
@@ -966,7 +966,7 @@ const StreamerFixture = struct {
         defer tx.deinit();
         const started = self.slot.handle.started;
         _ = try event_store.allocRunId(&self.db, arena, session_id);
-        _ = try database.run.appendStarted(&self.db, arena, self.engine.newId(), started.started_at_ms, .{
+        _ = try database.run.appendStarted(&self.db, arena, util.newId(self.engine.deps.io), started.started_at_ms, .{
             .session_id = started.session_id,
             .seq = 0,
             .run_id = started.run_id,
@@ -980,7 +980,7 @@ const StreamerFixture = struct {
     fn queue(self: *StreamerFixture, arena: std.mem.Allocator, text: []const u8) !ids.InputId {
         var tx = try self.db.begin();
         defer tx.deinit();
-        const entry = try database.input.enqueue(&self.db, arena, session_id, self.engine.newId(), 2, .{ .content = &.{.{ .text = .{ .text = text } }} }, 2);
+        const entry = try database.input.enqueue(&self.db, arena, session_id, util.newId(self.engine.deps.io), 2, .{ .content = &.{.{ .text = .{ .text = text } }} }, 2);
         try tx.commit();
         session_events.emitDurable(&self.engine, self.session, .{ .method = .@"input.queued", .params = .{ .input_queued_data = .{ .session_id = self.session.id, .seq = entry.seq, .input = entry.input } } });
         return entry.input.input_id;
@@ -1127,7 +1127,7 @@ test "a text block and a concurrent tool block keep dense part ids" {
 
     try s.onEvent(.{ .block_started = .{ .block = 0, .kind = .tool } });
     try s.onEvent(.{ .block_started = .{ .block = 1, .kind = .text } });
-    try s.onEvent(.{ .text_delta = .{ .block = 1, .text = "hi" } });
+    try s.onEvent(.{ .delta = .{ .block = 1, .text = "hi" } });
     try s.onEvent(.{ .block_stopped = .{ .block = 1, .result = .text } });
     try s.onEvent(.{ .block_stopped = .{ .block = 0, .result = .{ .tool = .{ .call_id = "a", .name = "read", .arguments = "{}" } } } });
 
@@ -1150,7 +1150,7 @@ test "a dropped tool block leaves the earlier parts intact" {
     defer s.blocks.deinit(std.testing.allocator);
 
     try s.onEvent(.{ .block_started = .{ .block = 0, .kind = .text } });
-    try s.onEvent(.{ .text_delta = .{ .block = 0, .text = "hi" } });
+    try s.onEvent(.{ .delta = .{ .block = 0, .text = "hi" } });
     try s.onEvent(.{ .block_stopped = .{ .block = 0, .result = .text } });
     try s.onEvent(.{ .block_started = .{ .block = 1, .kind = .tool } });
     try s.onEvent(.{ .done = .{ .stop_reason = .stop, .raw_stop_reason = "completed", .usage = .{ .input = 0, .output = 0, .reasoning = 0, .cache_read = 0, .cache_write = 0 } } });

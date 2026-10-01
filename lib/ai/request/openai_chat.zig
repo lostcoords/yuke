@@ -7,7 +7,7 @@ const request_testing = @import("testing.zig");
 const types = @import("../types.zig");
 
 /// Write the OpenAI Chat Completions request body to `w`.
-pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block) !void {
+pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block) ir.SerializeError!void {
     for (request.tools) |tool| if (tool.defer_loading) return error.UnsupportedDeferredTools;
     const wire = request.wire.openai_chat;
     var jw: std.json.Stringify = .{ .writer = w };
@@ -126,7 +126,7 @@ fn assistantMessageEnd(blocks: []const ir.Block, start: usize) usize {
 }
 
 /// Write one user message. The images of `results` lead it, each under a label that names its call.
-fn writeUserMessage(jw: *std.json.Stringify, results: []const ir.Block, blocks: []const ir.Block) !void {
+fn writeUserMessage(jw: *std.json.Stringify, results: []const ir.Block, blocks: []const ir.Block) ir.SerializeError!void {
     std.debug.assert(results.len != 0 or blocks.len != 0);
     std.debug.assert(blocks.len == 0 or blocks[0].role == .user);
 
@@ -164,7 +164,7 @@ fn replayField(replay: ir.ReasoningReplay) ?[]const u8 {
     };
 }
 
-fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block, replay: ir.ReasoningReplay) !void {
+fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block, replay: ir.ReasoningReplay) ir.SerializeError!void {
     std.debug.assert(blocks.len != 0);
     std.debug.assert(blocks[0].role == .assistant);
 
@@ -238,7 +238,7 @@ fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block, repl
 }
 
 /// Constrain the response to a schema. The endpoint nests the schema one level deeper than Responses.
-fn writeResponseFormat(jw: *std.json.Stringify, schema: ?ir.OutputSchema) !void {
+fn writeResponseFormat(jw: *std.json.Stringify, schema: ?ir.OutputSchema) ir.SerializeError!void {
     const output = schema orelse return;
     try jw.objectField("response_format");
     try jw.beginObject();
@@ -250,7 +250,7 @@ fn writeResponseFormat(jw: *std.json.Stringify, schema: ?ir.OutputSchema) !void 
     try jw.endObject();
 }
 
-fn writeTextBlock(jw: *std.json.Stringify, text: []const u8) !void {
+fn writeTextBlock(jw: *std.json.Stringify, text: []const u8) ir.SerializeError!void {
     try jw.beginObject();
     try json.field(jw, "type", "text");
     try json.field(jw, "text", text);
@@ -258,7 +258,7 @@ fn writeTextBlock(jw: *std.json.Stringify, text: []const u8) !void {
 }
 
 /// The label states which call the image belongs to, because it left that call's tool message.
-fn writeImageLabel(jw: *std.json.Stringify, call_id: []const u8) !void {
+fn writeImageLabel(jw: *std.json.Stringify, call_id: []const u8) ir.SerializeError!void {
     try jw.beginObject();
     try json.field(jw, "type", "text");
     try jw.objectField("text");
@@ -271,7 +271,7 @@ fn writeImageLabel(jw: *std.json.Stringify, call_id: []const u8) !void {
     try jw.endObject();
 }
 
-fn writeToolResult(jw: *std.json.Stringify, tool_result: ir.Block.ToolResult) !void {
+fn writeToolResult(jw: *std.json.Stringify, tool_result: ir.Block.ToolResult) ir.SerializeError!void {
     if (tool_result.loaded.len != 0) return error.UnsupportedLoadedTools;
     try jw.beginObject();
     try json.field(jw, "role", "tool");
@@ -281,7 +281,7 @@ fn writeToolResult(jw: *std.json.Stringify, tool_result: ir.Block.ToolResult) !v
 }
 
 /// Write one attachment. This endpoint names a different part for each kind.
-fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
+fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) ir.SerializeError!void {
     switch (ir.modalityOf(media.mime)) {
         .image => {
             try jw.beginObject();
@@ -291,7 +291,7 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
             try jw.objectField("url");
             // This part reads a URL alone, so bytes travel as a data URL and a handle has nowhere to go.
             switch (media.source) {
-                .bytes => |data| try json.writeDataUrl(jw, media.mime, data),
+                .bytes => |data| try json.writeBase64(jw, media.mime, data),
                 .url => |value| try jw.write(value),
                 .file_id => return error.UnsupportedContent,
             }
@@ -310,7 +310,7 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
             try jw.objectField("input_audio");
             try jw.beginObject();
             try jw.objectField("data");
-            try json.writeBase64(jw, "", data);
+            try json.writeBase64(jw, null, data);
             try json.field(jw, "format", format);
             try jw.endObject();
             try jw.endObject();
@@ -324,7 +324,7 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) !void {
                 .bytes => |data| {
                     if (media.filename.len == 0) return error.UnsupportedContent; // The endpoint names the file.
                     try jw.objectField("file_data");
-                    try json.writeDataUrl(jw, media.mime, data);
+                    try json.writeBase64(jw, media.mime, data);
                     try json.field(jw, "filename", media.filename);
                 },
                 .file_id => |value| try json.field(jw, "file_id", value),
@@ -342,7 +342,7 @@ fn writeReasoning(
     jw: *std.json.Stringify,
     format: ir.ThinkingFormat,
     reasoning: ir.ReasoningControl,
-) !void {
+) ir.SerializeError!void {
     if (format == .none) return;
     const level: []const u8 = switch (reasoning) {
         .off => "none",

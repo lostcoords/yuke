@@ -1,6 +1,7 @@
 //! Build a provider request from a round snapshot and apply its request hooks.
 
 const std = @import("std");
+const util = @import("../util.zig");
 const proto = @import("proto");
 const ai = @import("ai");
 const Engine = @import("Engine.zig");
@@ -96,7 +97,7 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
 
 /// Bind the model of one call over `route`. The credential is read here, so a rotated key or a lapsed grant takes effect on the next call.
 pub fn bind(engine: *Engine, held: Snapshot, route: ai.route.Route) !ai.Model {
-    const secret = registry.credential(held.route.credential, engine.deps.execution.env, engine.nowMillis()) orelse return error.MissingCredential;
+    const secret = registry.credential(held.route.credential, engine.deps.execution.env, util.nowMillis(engine.deps.io)) orelse return error.MissingCredential;
     return .{ .id = held.build.model, .route = route, .credential = secret, .caps = held.model.caps, .dialect = held.model.dialect };
 }
 

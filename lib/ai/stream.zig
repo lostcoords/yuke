@@ -168,7 +168,7 @@ const StreamCollector = struct {
             .block_started => |b| if (self.first_block_kind == null) {
                 self.first_block_kind = b.kind;
             },
-            .text_delta => |d| try self.text.appendSlice(self.gpa, d.text),
+            .delta => |d| try self.text.appendSlice(self.gpa, d.text),
             .block_stopped => |b| self.stop_result = std.meta.activeTag(b.result),
             .done => |d| {
                 self.stop = d.stop_reason;
@@ -198,7 +198,7 @@ test "a stream answers each event across fragmented reads" {
     try testing.expectEqual(std.meta.Tag(event.BlockResult).text, collector.stop_result.?);
     try testing.expectEqual(@as(u64, 120), collector.usage_input.?); // The cache subsets belong to input.
     try testing.expectEqual(@as(u64, 5), collector.usage_output.?);
-    // The order is block_started, two text_delta, block_stopped, done.
+    // The order is block_started, two delta, block_stopped, done.
     try testing.expectEqual(@as(usize, 5), collector.kinds.items.len);
     try testing.expectEqual(std.meta.activeTag(event.StreamEvent{ .block_started = undefined }), collector.kinds.items[0]);
     try testing.expectEqual(std.meta.activeTag(event.StreamEvent{ .done = undefined }), collector.kinds.items[4]);
