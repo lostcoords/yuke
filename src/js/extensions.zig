@@ -160,7 +160,7 @@ test "headless extensions pump an async JavaScript tool" {
         \\  name: "read_note",
         \\  description: "Read the note.",
         \\  parameters: { type: "object", properties: { path: { type: "string" } } },
-        \\  execute: async ({ path }) => ({ text: await fs.readFile(path) }),
+        \\  execute: async ({ path }) => fs.readFile(path),
         \\}); } });
     , kernel_boot);
     defer f.deinit();
@@ -177,7 +177,7 @@ test "headless extensions pump an async JavaScript tool" {
         if (std.mem.eql(u8, d.name, "read_note")) break true;
     } else false;
     try std.testing.expect(found);
-    try support.expectTool(extensions.host, "read_note", "{\"path\":\"note.txt\"}", .{ .root = "", .text = .{ .equals = "{\"text\":\"from rpc\"}" } });
+    try support.expectTool(extensions.host, "read_note", "{\"path\":\"note.txt\"}", .{ .root = "", .text = .{ .equals = "from rpc" } });
 }
 
 test "the tool port answers the declarations in table order, and a removed tool leaves the table" {

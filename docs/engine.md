@@ -4,19 +4,7 @@ Model tools, hooks, config, subagents, and MCP can run in every mode. Register t
 
 ## Model tools
 
-Use `ctx.tools.define(definition)`.
-
-- `definition` is `ToolDefinition`: `name`, `description`, `parameters`, `execute(args, signal, toolCtx)`, and optional `defer`.
-- `parameters` is a JSON Schema object. It needs `type: "object"` and `properties`.
-- `args` is any JSON that the model wrote. Validate it before use.
-- `execute` returns a promise. A string reaches the model as is. Another value reaches it as JSON. A throw becomes an error result.
-- `toolCtx.output(text)` streams live output to the user. `toolCtx.workspaceRoot` is the session root.
-- `toolCtx.sessionId`, `toolCtx.messageId`, and `toolCtx.partId` name the transcript part that holds the call.
-- Pass `signal` to `fetch` and `exec`. `spawn` takes no signal, so kill its child when the signal aborts.
-- A tool that `index.js` defines at startup replaces a built-in tool with the same name: `read`, `write`, `edit`, `exec`, `jobs`, or `skill`.
-- `defer: true` waits for a `tool_search` tool to load it. Without a search tool, the engine loads it at once.
-
-[`examples/plugin.js`](examples/plugin.js) defines a complete model tool.
+See [Tools](tools.md) for `ctx.tools.define` and the result contract.
 
 ## Engine hooks
 
@@ -130,9 +118,9 @@ All three values are positive 32-bit integers.
 
 | Tool | Arguments | Result and behavior |
 |---|---|---|
-| `spawn_agent` | `{ message, agent? }` | Starts a new child and returns its session ID, kind, model, and initial state. It does not wait for completion. |
+| `spawn_agent` | `{ message, agent? }` | Starts or queues a new child and returns one line with its session ID. It does not wait for completion. |
 | `send_agent_input` | `{ child, message }` | Sends a follow-up to the child session ID. The child keeps its transcript. |
-| `stop_agent` | `{ child }` | Stops the current child run and drops its queued input. It keeps the transcript. Completed side effects remain. |
+| `stop_agent` | `{ child }` | Stops the current child run and drops its queued input. It returns one line that names the stopped run and the count of dropped inputs, if any. It keeps the transcript. Completed side effects remain. |
 
 `message` must be nonempty. `agent` must name a catalog row. `child` must be the 32-character session ID of a direct child of the calling parent.
 

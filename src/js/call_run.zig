@@ -57,7 +57,7 @@ fn parseArguments(host: *Host, call: *table.Call) ?Value {
     const parsed = host.ctx.parseJSON(text, "call-arguments.json");
     if (!host.ctx.isException(parsed)) return parsed;
     pending.dropException(host.ctx);
-    settleText(host, call, "the arguments are not valid JSON", null, true);
+    settleText(host, call, "the arguments are not valid JSON", .failed);
     return null;
 }
 
@@ -65,14 +65,14 @@ fn parseArguments(host: *Host, call: *table.Call) ?Value {
 fn startHook(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
     // A withdrawn folder answers no point, so the call proceeds rather than failing the round.
-    const folder = host.hooks.dispatch orelse return settleText(host, call, "", null, false);
+    const folder = host.hooks.dispatch orelse return settleText(host, call, "", .text);
     const parsed = parseArguments(host, call) orelse return;
     defer ctx.freeValue(parsed);
 
     const point = ctx.newString(call.name);
     if (ctx.isException(point)) {
         pending.dropException(ctx);
-        return settleText(host, call, "out of memory", null, true);
+        return settleText(host, call, "out of memory", .failed);
     }
     defer ctx.freeValue(point);
 
@@ -85,7 +85,7 @@ fn startHook(host: *Host, call: *table.Call) void {
 fn startTool(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
     const at = host.tools.find(call.name) orelse
-        return settleText(host, call, "the tool is not registered", null, true);
+        return settleText(host, call, "the tool is not registered", .failed);
     const parsed = parseArguments(host, call) orelse return;
     defer ctx.freeValue(parsed);
 
@@ -110,7 +110,7 @@ fn startTool(host: *Host, call: *table.Call) void {
         ctx.freeValue(signal);
         tool.signal = null;
         pending.dropException(ctx);
-        return settleText(host, call, "out of memory", null, true);
+        return settleText(host, call, "out of memory", .failed);
     }
     defer ctx.freeValue(context);
     host.enterSlice();
@@ -132,7 +132,7 @@ fn acceptPromise(host: *Host, call: *table.Call, answer: Value) void {
         return settleText(host, call, switch (call.kind) {
             .tool => "the tool execute function must return a Promise",
             .hook => "the hook dispatcher must return a Promise",
-        }, null, true);
+        }, .failed);
     }
     // The call owns the Promise, so the rejection tracker never reports it, even after the submitter leaves.
     c.JS_PromiseMarkAsHandled(ctx.ptr, answer);
@@ -164,45 +164,22 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
             .tool => "the tool failed",
             .hook => "the hook failed",
         };
-        return settleText(host, call, if (message) |text| text else fallback, null, true);
+        return settleText(host, call, if (message) |text| text else fallback, .failed);
     }
-    // An empty answer is the proceed decision for a hook, and empty output for a tool.
-    if (ctx.isUndefined(value) or ctx.isNull(value)) return settleText(host, call, "", null, false);
-    // A hook answers one object, which never carries model text or a view.
-    if (call.kind != .tool) return stringifyValue(host, call, value);
+    if (call.kind == .hook) {
+        // An empty answer is the proceed decision.
+        if (ctx.isUndefined(value) or ctx.isNull(value)) return settleText(host, call, "", .text);
+        return stringifyValue(host, call, value, .text);
+    }
+    if (ctx.isUndefined(value)) return settleText(host, call, "", .text);
     if (ctx.isString(value)) {
-        const text = cstring(ctx, value) orelse return settleText(host, call, "the tool answered text the host cannot read", null, true);
+        const text = cstring(ctx, value) orelse return settleText(host, call, "the tool answered text the host cannot read", .failed);
         defer ctx.freeCString(text.ptr);
-        return settleText(host, call, text, null, false);
+        return settleText(host, call, text, .text);
     }
-
-    if (ctx.isObject(value) and !ctx.isArray(value)) {
-        const marker = ctx.getPropertyStr(value, "__yuke_result");
-        defer ctx.freeValue(marker);
-        const marked = ctx.isBool(marker) and (ctx.toBool(marker) catch unreachable); // a checked bool converts without a fault
-        if (!marked) return stringifyValue(host, call, value);
-        const text_value = ctx.getPropertyStr(value, "text");
-        defer ctx.freeValue(text_value);
-        if (ctx.isString(text_value)) {
-            const text = cstring(ctx, text_value) orelse return settleText(host, call, "the tool answered text the host cannot read", null, true);
-            defer ctx.freeCString(text.ptr);
-            // The extra object holds the view and the media, so a new member needs no host change.
-            const extra_value = ctx.getPropertyStr(value, "extra");
-            defer ctx.freeValue(extra_value);
-            if (ctx.isUndefined(extra_value) or ctx.isNull(extra_value)) return settleText(host, call, text, null, false);
-            const json = ctx.jsonStringify(extra_value, quickjs.UNDEFINED, quickjs.UNDEFINED);
-            defer ctx.freeValue(json);
-            if (!ctx.isString(json)) {
-                pending.dropException(ctx);
-                return settleText(host, call, "the tool answered a result that is not JSON", null, true);
-            }
-            const extra_text = cstring(ctx, json) orelse return settleText(host, call, "the tool answered a result that is not JSON", null, true);
-            defer ctx.freeCString(extra_text.ptr);
-            return settleText(host, call, text, extra_text, false);
-        }
-    }
-
-    return stringifyValue(host, call, value);
+    // The submitter decodes the object as a `ToolOutcome`, so it checks every key in one place.
+    if (ctx.isObject(value) and !ctx.isArray(value)) return stringifyValue(host, call, value, .outcome);
+    settleText(host, call, "the tool answered a value that is not a string or a ToolOutcome", .failed);
 }
 
 /// Take one chunk of live output for the call the signal names. A call that ended drops it, and the stream cap bounds it.
@@ -222,17 +199,17 @@ fn jsOutput(ctx_ptr: ?*c.JSContext, _: c.JSValue, argc: c_int, argv: [*c]c.JSVal
     return quickjs.UNDEFINED;
 }
 
-fn stringifyValue(host: *Host, call: *table.Call, value: Value) void {
+fn stringifyValue(host: *Host, call: *table.Call, value: Value, kind: Kind) void {
     const ctx = host.ctx;
     const json = ctx.jsonStringify(value, quickjs.UNDEFINED, quickjs.UNDEFINED);
     defer ctx.freeValue(json);
     if (!ctx.isString(json)) {
         pending.dropException(ctx);
-        return settleText(host, call, "the tool answered a value that is not JSON", null, true);
+        return settleText(host, call, "the tool answered a value that is not JSON", .failed);
     }
-    const text = cstring(ctx, json) orelse return settleText(host, call, "the tool answered a value that is not JSON", null, true);
+    const text = cstring(ctx, json) orelse return settleText(host, call, "the tool answered a value that is not JSON", .failed);
     defer ctx.freeCString(text.ptr);
-    settleText(host, call, text, null, false);
+    settleText(host, call, text, kind);
 }
 
 /// Read the text of a rejection. An Error carries `message`; any other value becomes a string.
@@ -254,14 +231,19 @@ fn cstring(ctx: Context, value: Value) ?[:0]const u8 {
     };
 }
 
-/// Sanitize the answer and its extra JSON as UTF-8 and wake the submitter.
-fn settleText(host: *Host, call: *table.Call, text: []const u8, extra_json: ?[]const u8, is_error: bool) void {
-    std.debug.assert(extra_json == null or !is_error); // only a success carries a view
+/// The submitter reads settled text as model text, a `ToolOutcome` JSON object, or an error.
+const Kind = enum { text, outcome, failed };
+
+/// Sanitize the answer as UTF-8 and wake the submitter.
+fn settleText(host: *Host, call: *table.Call, text: []const u8, kind: Kind) void {
+    std.debug.assert(kind != .outcome or call.kind == .tool); // only a tool answers a ToolOutcome
     if (call.signal()) |signal| cancellation.cancel(host, signal);
     const owned = utf8.sanitize(host.gpa, text) catch unreachable;
-    if (is_error) return call.settle(host.io, .{ .failed = owned });
-    const extra = if (extra_json) |json| utf8.sanitize(host.gpa, json) catch unreachable else null;
-    call.settle(host.io, .{ .ok = .{ .text = owned, .extra_json = extra } });
+    call.settle(host.io, switch (kind) {
+        .text => .{ .ok = .{ .text = owned } },
+        .outcome => .{ .ok = .{ .text = owned, .outcome = true } },
+        .failed => .{ .failed = owned },
+    });
 }
 
 const support = @import("tests/support.zig");

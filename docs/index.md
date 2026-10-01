@@ -18,7 +18,8 @@ An installed release puts these guides in `~/.local/lib/yuke/docs/`. The install
 | [Plugins](plugins.md) | write a plugin and customize events, chat, or bundled plugins |
 | [UI](ui.md) | add commands, keys, status items, styles, and dialogs |
 | [Vim](vim.md) | enable composer Vim or transcript Vim |
-| [Engine](engine.md) | add model tools, hooks, subagents, and MCP servers |
+| [Tools](tools.md) | define a model tool and return its result |
+| [Engine](engine.md) | add hooks, subagents, and MCP servers |
 | [Types](types.md) | find declarations and type custom events or capabilities |
 
 Start with [`examples/plugin.js`](examples/plugin.js). Other complete examples cover a [Herdr lifecycle integration](examples/herdr.js), [chat APIs](examples/chat-api.js), [subagents](examples/agents.js), [MCP](examples/mcp.js), and a [replacement chat pane](examples/roomy-chat.js).

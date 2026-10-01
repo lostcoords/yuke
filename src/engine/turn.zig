@@ -1557,7 +1557,7 @@ test "a running tool publishes its live output in order, and a cut on a characte
             context.output.write(context.output.ctx, big);
             // The cut closed the stream, so a later chunk never publishes, though it fits the two bytes of room.
             context.output.write(context.output.ctx, "ok");
-            return .{ .output = "done", .is_error = false };
+            return .{ .output = "done" };
         }
     };
     const Recorder = struct {
@@ -1636,7 +1636,7 @@ test "the run loadout gates a tool call, and a tool.before rewrite lands inside 
             const self: *@This() = @ptrCast(@alignCast(raw));
             std.debug.assert(std.mem.eql(u8, name, "delegate"));
             self.calls += 1;
-            return .{ .output = "done", .is_error = false };
+            return .{ .output = "done" };
         }
 
         fn holds(_: *anyopaque, point: proto.hook.Point) bool {
@@ -1685,7 +1685,7 @@ test "a tool.after replacement is the whole result, and the engine admits the me
 
         fn execute(raw: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
             const self: *@This() = @ptrCast(@alignCast(raw));
-            return .{ .output = "raw", .media = &self.media, .is_error = false };
+            return .{ .output = "raw", .media = &self.media };
         }
 
         fn holds(_: *anyopaque, point: proto.hook.Point) bool {

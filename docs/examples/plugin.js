@@ -8,13 +8,14 @@ let completed = 0;
 plugins.use({
   name: "example",
   apply(ctx) {
-    // A model tool. The model sends any JSON, so the tool checks its arguments.
+    // A model tool. The model can send any JSON. This tool checks the argument and throws for a bad value.
     ctx.tools.define({
       name: "word_count",
       description: "Count the words in a text.",
       parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false },
       async execute(args) {
-        const text = typeof args === "object" && args !== null && "text" in args ? String(args.text) : "";
+        const text = typeof args === "object" && args !== null && "text" in args ? args.text : undefined;
+        if (typeof text !== "string") throw new Error("text must be a string");
         return String(text.split(/\s+/).filter(Boolean).length);
       },
     });

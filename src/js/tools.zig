@@ -145,14 +145,14 @@ pub const Call = struct {
     /// What the submitter reads. The call owns the bytes, from the host allocator.
     pub const Answer = union(enum) {
         ok: Reply,
-        /// The error text. An error carries no view.
+        /// The error text.
         failed: []u8,
         /// The host closed before the handler answered.
         closed,
     };
 
-    /// The text of a success. One JSON object holds the view and the media of a tool result, and the submitter decodes it in its turn arena.
-    pub const Reply = struct { text: []u8, extra_json: ?[]u8 = null };
+    /// The text of a success. With `outcome`, the text is one `ToolOutcome` JSON object. The submitter decodes it in its turn arena.
+    pub const Reply = struct { text: []u8, outcome: bool = false };
 
     /// Record the answer and wake the submitter. Only the owner calls this. The call takes the bytes of `answer`.
     pub fn settle(self: *Call, io: std.Io, answer: Answer) void {
@@ -270,10 +270,7 @@ pub const Calls = struct {
 
     fn freeAnswer(self: *Calls, answer: Call.Answer) void {
         switch (answer) {
-            .ok => |reply| {
-                self.gpa.free(reply.text);
-                if (reply.extra_json) |json| self.gpa.free(json);
-            },
+            .ok => |reply| self.gpa.free(reply.text),
             .failed => |text| self.gpa.free(text),
             .closed => {},
         }

@@ -99,16 +99,10 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
         try std.testing.expect(answer.is_error);
     }
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("stats.creates"));
-    const Receipt = struct { session_id: []const u8, agent: []const u8, model: []const u8, state: []const u8 };
     const spawn = try invokeAgent(host, "spawn_agent", "{\"message\":\"task\"}");
     defer std.testing.allocator.free(spawn.text);
     try std.testing.expect(!spawn.is_error);
-    const receipt = try std.json.parseFromSlice(Receipt, std.testing.allocator, spawn.text, .{});
-    defer receipt.deinit();
-    try std.testing.expectEqualStrings("small", receipt.value.agent);
-    try std.testing.expectEqualStrings("p/family/model", receipt.value.model);
-    try std.testing.expectEqualStrings("queued", receipt.value.state);
-    try std.testing.expectEqualStrings(child_id, receipt.value.session_id);
+    try std.testing.expectEqualStrings("Queued small (session " ++ child_id ++ "). Its report arrives as a new message.", spawn.text);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("created.child.name === 'small' && created.child.site.session_id === '01'.repeat(16) && created.child.site.message_id === 2 && created.child.site.part_id === 0 && created.model === 'p/family/model' && created.reasoning === undefined && created.max_rounds === 7 && Object.keys(created.child).length === 2 ? 1 : 0"));
     const inherited = try invokeAgent(host, "spawn_agent", "{\"message\":\"task\",\"agent\":\"review\"}");
     defer std.testing.allocator.free(inherited.text);
@@ -118,15 +112,15 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     defer std.testing.allocator.free(by_name.text);
     try std.testing.expect(by_name.is_error);
     const cases = [_]struct { []const u8, []const u8, []const u8 }{
-        .{ "send_agent_input", "{\"child\":\"" ++ child_id ++ "\",\"message\":\"more\"}", "{\"state\":\"queued\"}" },
-        .{ "send_agent_input", "{\"child\":\"" ++ child_id ++ "\",\"message\":\"go\"}", "{\"state\":\"started\"}" },
-        .{ "stop_agent", "{\"child\":\"" ++ child_id ++ "\"}", "cleared_inputs" },
+        .{ "send_agent_input", "{\"child\":\"" ++ child_id ++ "\",\"message\":\"more\"}", "Queued for " ++ child_id ++ " after its current run." },
+        .{ "send_agent_input", "{\"child\":\"" ++ child_id ++ "\",\"message\":\"go\"}", "Sent to " ++ child_id ++ "." },
+        .{ "stop_agent", "{\"child\":\"" ++ child_id ++ "\"}", "No run of " ++ child_id ++ " was active. Dropped 1 queued input(s)." },
     };
     for (cases) |case| {
         const answer = try invokeAgent(host, case[0], case[1]);
         defer std.testing.allocator.free(answer.text);
         try std.testing.expect(!answer.is_error);
-        try std.testing.expect(std.mem.indexOf(u8, answer.text, case[2]) != null);
+        try std.testing.expectEqualStrings(case[2], answer.text);
     }
     try host.evalModule("child.session.origin.site.session_id = 'other';", "foreign.js");
     const foreign = try invokeAgent(host, "stop_agent", "{\"child\":\"" ++ child_id ++ "\"}");

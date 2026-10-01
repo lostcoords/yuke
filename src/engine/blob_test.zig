@@ -111,7 +111,7 @@ const ImageTool = struct {
 
     fn run(raw: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
         const self: *ImageTool = @ptrCast(@alignCast(raw));
-        return .{ .output = "PNG image, 67 B", .media = &self.media, .is_error = false };
+        return .{ .output = "PNG image, 67 B", .media = &self.media };
     }
 };
 

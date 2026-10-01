@@ -19,7 +19,7 @@ const demo = {
   apply(ctx) {
     ctx.on("session.changed", () => {});
     ctx.on("demo:ping", (count) => count.toFixed());
-    ctx.tools.define({ name: "t", description: "d", parameters: {}, execute: async (args, _signal, context) => [args, context.workspaceRoot] });
+    ctx.tools.define({ name: "t", description: "d", parameters: {}, execute: async (args, _signal, context) => JSON.stringify([args, context.workspaceRoot]) });
     ctx.inject(["tui"], (c) => {
       c.tui.command.add("demo:pick", { desc: "pick one", run: () => { c.tui.overlay(ui.pick({ items: ["a"] }).win); } });
     });

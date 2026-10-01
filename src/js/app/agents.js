@@ -40,15 +40,11 @@ function reportLabel(source) {
         + " · " + usage.rounds + (usage.rounds === 1 ? " round" : " rounds") + " · " + usage.tool_calls + (usage.tool_calls === 1 ? " tool" : " tools") + " · " + usage.tokens.input + "/" + usage.tokens.output + " tokens" + seconds;
 }
 
-/** The child a settled spawn row names. The tool answered JSON with the session id, so a bad answer names none. */
+/** The child that a settled spawn row names. The spawn text holds `(session <32 lowercase hex digits>)`. Other text names no child. */
 /** @param {ToolPart} part @returns {string | null} */
 function childOf(part) {
     const state = part.state;
-    if (state.type !== "completed") return null;
-    try {
-        const id = JSON.parse(String(state.output || "")).session_id;
-        return typeof id === "string" && SESSION_ID.test(id) ? id : null;
-    } catch (_) { return null; }
+    return state.type === "completed" ? /\(session ([0-9a-f]{32})\)/.exec(state.output)?.[1] ?? null : null;
 }
 
 /** The live words of a child on its spawn row: the state the picker shows, then the context it holds. */
@@ -58,8 +54,6 @@ export function childLabel(view) {
     return childState(view) + (held > 0 ? " · " + tokenLabel(held) + " ctx" : "");
 }
 
-/** @param {string} code @param {string} message */
-function failure(code, message) { return Object.assign(new Error(message), { name: "AgentError", code }); }
 /** @param {string} message */
 function invalid(message) { return new TypeError("agents: " + message); }
 
@@ -103,13 +97,13 @@ function spawnDescription(catalog) {
 
 /** @param {unknown} value @param {string[]} fields @returns {Record<string, unknown>} */
 function argsOf(value, fields) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw failure("bad_request", "The arguments must be an object.");
-    for (const field of Object.keys(value)) if (!fields.includes(field)) throw failure("bad_request", "Unknown argument: " + field);
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("The arguments must be an object.");
+    for (const field of Object.keys(value)) if (!fields.includes(field)) throw new Error("Unknown argument: " + field);
     return /** @type {Record<string, unknown>} */ (value);
 }
 /** @param {Record<string, unknown>} args @param {string} key @returns {string} */
 function required(args, key) {
-    if (typeof args[key] !== "string" || !args[key].trim()) throw failure("bad_request", key + " must be a nonempty string.");
+    if (typeof args[key] !== "string" || !args[key].trim()) throw new Error(key + " must be a nonempty string.");
     return args[key];
 }
 /** @param {ToolContext} context */
@@ -118,9 +112,9 @@ function site(context) {
 }
 /** @param {string} parentId @param {string} target @returns {Promise<Wire.SessionListItem>} */
 async function ownedChild(parentId, target) {
-    if (!SESSION_ID.test(target)) throw failure("bad_request", "child must be a child session ID.");
+    if (!SESSION_ID.test(target)) throw new Error("child must be a child session ID.");
     const child = await client.sessionGet(target);
-    if (child.session.origin.type !== "child" || child.session.origin.site.session_id !== parentId) throw failure("bad_request", "The child belongs to another parent.");
+    if (child.session.origin.type !== "child" || child.session.origin.site.session_id !== parentId) throw new Error("The child belongs to another parent.");
     return child;
 }
 
@@ -175,7 +169,7 @@ export function agents(options) {
                     const parentSite = site(context);
                     const key = args.agent === undefined ? catalog.default : required(args, "agent");
                     const row = catalog.rows[key];
-                    if (!row) throw failure("bad_request", "Unknown agent: " + key);
+                    if (!row) throw new Error("Unknown agent: " + key);
                     const parent = await client.sessionGet(parentSite.session_id);
                     const result = await client.sessionCreate({
                         workspace_path: parent.session.root,
@@ -184,8 +178,8 @@ export function agents(options) {
                         initial_input: { type: "content", content: client.textContent(required(args, "message")) },
                         child: { name: key, site: parentSite },
                     });
-                    if (!result.input) throw failure("runtime_failed", "The child session has no initial run.");
-                    return { session_id: result.session.id, agent: key, model: result.session.model, state: result.input.type };
+                    if (!result.input) throw new Error("The child session has no initial run.");
+                    return (result.input.type === "queued" ? "Queued " : "Started ") + key + " (session " + result.session.id + "). Its report arrives as a new message.";
                 },
             });
             ctx.tools.define({
@@ -196,7 +190,7 @@ export function agents(options) {
                     const parentSite = site(context);
                     const child = await ownedChild(parentSite.session_id, required(args, "child"));
                     const result = await client.sessionSendInput(child.session.id, client.textContent(required(args, "message")), parentSite);
-                    return { state: result.type };
+                    return result.type === "queued" ? "Queued for " + child.session.id + " after its current run." : "Sent to " + child.session.id + ".";
                 },
             });
             ctx.tools.define({
@@ -205,7 +199,8 @@ export function agents(options) {
                 execute: async (raw, _signal, context) => {
                     const args = argsOf(raw, ["child"]);
                     const child = await ownedChild(site(context).session_id, required(args, "child"));
-                    return client.sessionCancelRun(child.session.id, true);
+                    const result = await client.sessionCancelRun(child.session.id, true);
+                    return (result.canceled_run == null ? "No run of " + child.session.id + " was active." : "Stopped " + child.session.id + ".") + (result.cleared_inputs.length === 0 ? "" : " Dropped " + result.cleared_inputs.length + " queued input(s).");
                 },
             });
 

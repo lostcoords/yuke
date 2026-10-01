@@ -4,6 +4,7 @@ const std = @import("std");
 const host_mod = @import("../host.zig");
 const Host = host_mod.Host;
 const tools_table = @import("../tools.zig");
+const port = @import("../port.zig");
 const BakedModule = @import("../loader.zig").BakedModule;
 const Paint = @import("paint.zig").Paint;
 const execution = @import("../../execution.zig");
@@ -176,8 +177,8 @@ pub const Answer = struct {
     root: ?[]const u8 = null,
     is_error: bool = false,
     text: union(enum) { contains: []const u8, ends: []const u8, equals: []const u8 },
-    /// Whether the answer carries a view or media. Null skips the check.
-    extra: ?bool = null,
+    /// Whether the answer is a `ToolOutcome` object. Null skips the check.
+    outcome: ?bool = null,
 };
 
 /// The run slot of every test tool call. Each native operation releases it when it ends.
@@ -189,15 +190,24 @@ pub fn toolContext(root: []const u8) toolset.Context {
 }
 
 /// What a test reads of a settled answer.
-pub const Reply = struct { text: []const u8, extra_json: ?[]const u8 = null, is_error: bool };
+pub const Reply = struct { text: []const u8, outcome: bool = false, is_error: bool };
 
 /// The handler answer of a settled call. A closed host or an unsettled call fails the test.
 pub fn reply(call: *const tools_table.Call) Reply {
     return switch (call.state.settled) {
-        .ok => |ok| .{ .text = ok.text, .extra_json = ok.extra_json, .is_error = false },
+        .ok => |ok| .{ .text = ok.text, .outcome = ok.outcome, .is_error = false },
         .failed => |text| .{ .text = text, .is_error = true },
         .closed => unreachable, // a test that closes the host reads the state itself
     };
+}
+
+/// Decode a settled call the way the engine port does, into `arena`. An error outcome fails the test.
+pub fn outcome(arena: std.mem.Allocator, call: *const tools_table.Call) !toolset.Outcome {
+    try std.testing.expect(reply(call).outcome);
+    const decoded = port.outcomeOf(arena, call.state.settled);
+    if (decoded.is_error) std.debug.print("outcome error: {s}\n", .{decoded.output});
+    try std.testing.expect(!decoded.is_error);
+    return decoded;
 }
 
 /// Submit one tool call from session 01…01, wait for it, check its answer, and drop it.
@@ -207,7 +217,7 @@ pub fn expectTool(host: *Host, name: []const u8, args: []const u8, want: Answer)
     const answer = reply(call);
     errdefer std.debug.print("{s} {s} -> {s}\n", .{ name, args, answer.text });
     try std.testing.expectEqual(want.is_error, answer.is_error);
-    if (want.extra) |extra| try std.testing.expectEqual(extra, answer.extra_json != null);
+    if (want.outcome) |expected| try std.testing.expectEqual(expected, answer.outcome);
     const text = answer.text;
     switch (want.text) {
         .contains => |part| try std.testing.expect(std.mem.indexOf(u8, text, part) != null),

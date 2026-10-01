@@ -1,6 +1,9 @@
 import { defineTool } from "yuke:internal/native/tools";
 const params = { type: "object", properties: { city: { type: "string", description: "The city." } } };
 defineTool("sync", { description: "d", parameters: params, execute: (a) => ({ got: a.city }) });
-defineTool("later", { description: "d", parameters: params, execute: async (a) => ({ got: a.city, async: true }) });
+defineTool("later", { description: "d", parameters: params, execute: async (a) => ({ output: a.city }) });
+defineTool("number", { description: "d", parameters: params, execute: async () => 7 });
+defineTool("null", { description: "d", parameters: params, execute: async () => null });
+defineTool("list", { description: "d", parameters: params, execute: async () => ["a"] });
 defineTool("text", { description: "d", parameters: params, execute: async () => "just text" });
 defineTool("nothing", { description: "d", parameters: params, execute: async () => undefined });

@@ -14,7 +14,7 @@ import { notify } from "yuke:internal/kernel";
 const NOOP = () => {};
 
 /** @import { Context } from "yuke:internal/ext" */
-/** @import { Plugin, ToolContext, ToolDefinition } from "./types/ext.js" */
+/** @import { Plugin, ToolContext, ToolDefinition, ToolOutcome } from "./types/ext.js" */
 /** @import { CancellationSignal } from "yuke:internal/native/cancellation" */
 /** @import { Endpoint, ServerConfig, Transport } from "yuke:internal/mcp-transport" */
 /** @typedef {{ servers?: Record<string, ServerConfig>, startupMs?: number, callMs?: number }} McpOptions */
@@ -277,7 +277,6 @@ function checkConfig(config) {
   return null;
 }
 
-/** @typedef {{ name: string, description: string, input_schema: string }} ToolAddition */
 
 // The name weighs most; the description and the argument names and descriptions weigh one each per term.
 /** @param {ToolDefinition} definition @param {string[]} wanted @returns {number} */
@@ -296,7 +295,7 @@ function score(definition, wanted) {
 }
 
 // The search reads the whole catalog here; the request declares only what it loads, so the context stays small.
-/** @param {Server[]} servers @param {unknown} args @returns {string | { __yuke_result: true, text: string, extra: { tools_added: ToolAddition[] } }} */
+/** @param {Server[]} servers @param {unknown} args @returns {string | ToolOutcome} */
 function searchCatalog(servers, args) {
   const { query, server: only, limit: asked } = /** @type {{ query?: unknown, server?: unknown, limit?: unknown }} */ (record(args) ? args : {});
   if (typeof query !== "string" || query.trim() === "") throw new Error("query must be a nonempty string");
@@ -325,7 +324,7 @@ function searchCatalog(servers, args) {
   if (hits.length === 0) return "No MCP tool matches " + JSON.stringify(query) + ". Connected servers: " + (connected.length ? connected.join(", ") : "none") + ".";
   /** @type {string[]} */
   const lines = [];
-  /** @type {ToolAddition[]} */
+  /** @type {Wire.ToolDefinition[]} */
   const added = [];
   let bytes = 0;
   for (const hit of hits.slice(0, limit)) {
@@ -338,7 +337,7 @@ function searchCatalog(servers, args) {
     lines.push(line);
     if (schema !== "" && schema.length <= SCHEMA_MAX) added.push({ name: hit.definition.name, description, input_schema: schema });
   }
-  return { __yuke_result: true, text: "Found " + lines.length + " MCP tool" + (lines.length === 1 ? "" : "s") + ":\n" + lines.join("\n"), extra: { tools_added: added } };
+  return { output: "Found " + lines.length + " MCP tool" + (lines.length === 1 ? "" : "s") + ":\n" + lines.join("\n"), tools_added: added };
 }
 
 // A trust record keeps a digest of the server identity, so a changed command or URL asks again.
@@ -781,7 +780,7 @@ class Server {
     this.definitions = [];
   }
 
-  /** @param {string} tool @param {unknown} args @param {CancellationSignal} signal @param {ToolContext} context @returns {Promise<string | { __yuke_result: true, text: string, extra: { media: Wire.MediaBlob[] } }>} */
+  /** @param {string} tool @param {unknown} args @param {CancellationSignal} signal @param {ToolContext} context @returns {Promise<string | ToolOutcome>} */
   async call(tool, args, signal, context) {
     if (this.state !== "connected") throw new Error("the MCP server " + this.name + " is " + this.state);
     if (!record(args)) throw new Error("MCP tool arguments must be an object");
@@ -804,7 +803,7 @@ class Server {
     const media = [];
     // The text line still names an image the store refuses, such as an SVG, so the model knows of it.
     for (const data of images) await client.blobPutData(data).then((blob) => { media.push(blob); }, () => {});
-    return media.length === 0 ? text : { __yuke_result: true, text, extra: { media } };
+    return media.length === 0 ? text : { output: text, media };
   }
 
   // Stop at once for the callers, then let the transport shut down.

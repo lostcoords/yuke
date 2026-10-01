@@ -72,11 +72,16 @@ fn deferred(host: *Host, name: []const u8) bool {
 fn expectSearch(host: *Host, args: []const u8, prefix: []const u8, loaded: []const []const u8, not_loaded: []const u8) !void {
     const call = host.calls.submit("tool_search", args, support.toolContext(host.cwd));
     try support.pumpUntilSettled(host, call);
-    try std.testing.expect(!support.reply(call).is_error);
-    try std.testing.expect(std.mem.startsWith(u8, support.reply(call).text, prefix));
-    const extra = support.reply(call).extra_json orelse return error.TestExpectedEqual;
-    for (loaded) |name| try std.testing.expect(std.mem.indexOf(u8, extra, name) != null);
-    try std.testing.expect(std.mem.indexOf(u8, extra, not_loaded) == null);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const got = try support.outcome(arena.allocator(), call);
+    try std.testing.expect(std.mem.startsWith(u8, got.output, prefix));
+    for (loaded) |name| {
+        for (got.tools_added) |added| {
+            if (std.mem.eql(u8, added.name, name)) break;
+        } else return error.TestExpectedEqual;
+    }
+    for (got.tools_added) |added| try std.testing.expect(!std.mem.eql(u8, added.name, not_loaded));
     try support.dropCall(host, call);
 }
 
@@ -175,11 +180,14 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"x\"}", .{ .text = .{ .equals = "modern: x" } });
     try support.expectTool(host, "mcp_modern_echo", "[]", .{ .is_error = true, .text = .{ .equals = "MCP tool arguments must be an object" } });
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"fail\"}", .{ .is_error = true, .text = .{ .equals = "no such thing" } });
-    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"media\"}", .{ .text = .{ .equals = "[image image/png, 3 bytes]\n[resource file:///x x]\nwhy" } });
     // The image block also attaches as media, beside the line that names it.
     const media = host.calls.submit("mcp_modern_echo", "{\"text\":\"media\"}", support.toolContext(host.cwd));
     try support.pumpUntilSettled(host, media);
-    try std.testing.expect(std.mem.indexOf(u8, support.reply(media).extra_json orelse "", "\"media\":[{\"hash\":\"abab") != null);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const got = try support.outcome(arena.allocator(), media);
+    try std.testing.expectEqualStrings("[image image/png, 3 bytes]\n[resource file:///x x]\nwhy", got.output);
+    try std.testing.expectEqualStrings("ab" ** 32, &std.fmt.bytesToHex(got.media[0].hash.raw, .lower));
     try support.dropCall(host, media);
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"structured\"}", .{ .text = .{ .equals = "{\"n\":1}" } });
     const marker = "\n[truncated 20000 characters]";

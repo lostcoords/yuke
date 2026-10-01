@@ -1136,6 +1136,7 @@ test {
     _ = @import("native/hooks.zig");
     _ = @import("tools.zig");
     _ = @import("call_run.zig");
+    _ = @import("port.zig");
     _ = @import("hooks.zig");
     _ = @import("tests/app_test.zig");
     _ = @import("tests/ui_test.zig");

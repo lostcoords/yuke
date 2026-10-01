@@ -27,7 +27,7 @@ pub const Output = struct {
     fn discardWrite(_: *anyopaque, _: []const u8) void {}
 };
 
-/// One tool run, mapped for a tool part. `is_error` selects the completed or the error state.
+/// The result of one tool run. `is_error` selects the completed state or the error state. Its JSON form is the JS `ToolOutcome`.
 pub const Outcome = struct {
     output: []const u8,
     view: ?[]const proto.view.View = null,
@@ -35,7 +35,7 @@ pub const Outcome = struct {
     media: []const proto.content.MediaBlob = &.{},
     /// The definitions a search loaded. The engine admits each one against the run loadout.
     tools_added: []const proto.tool.ToolDefinition = &.{},
-    is_error: bool,
+    is_error: bool = false,
 };
 
 pub const ToolSet = struct {

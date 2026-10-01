@@ -140,8 +140,8 @@ export interface ToolContext {
 }
 
 /**
- * Run one tool call. A string result reaches the model as is, another value reaches it as JSON, and undefined or null is empty output.
- * A rejection gives the model an error result with the message of the error.
+ * Run one tool call. A string reaches the model as is, and undefined is empty output. A `ToolOutcome` adds an error flag, a view, images, or loaded tools.
+ * Any other value, or an object with an unknown key, is an error. A rejection gives the model an error result with the message of the error.
  */
 export type ToolExecute = (
   /** The JSON the model wrote. It may be any value, so a tool checks it before use. */
@@ -149,7 +149,7 @@ export type ToolExecute = (
   /** The host cancels it when the call stops. */
   signal: CancellationSignal,
   context: ToolContext,
-) => Promise<unknown>;
+) => Promise<string | ToolOutcome | void>;
 
 /** One tool for `ctx.tools.define`. */
 export interface ToolDefinition {
@@ -230,10 +230,10 @@ export interface ToolDecl {
   strict: boolean;
 }
 
-/** One tool result as the model reads it. */
+/** One tool result. The model reads `output`, `media`, and `tools_added`; the view is for the UI. An error result shows `output` only. */
 export interface ToolOutcome {
   output: string;
-  is_error: boolean;
+  is_error?: boolean;
   view?: Wire.View[] | null;
   media?: Wire.MediaBlob[];
   /** The definitions a tool search loaded. The engine admits each one against the run loadout. */

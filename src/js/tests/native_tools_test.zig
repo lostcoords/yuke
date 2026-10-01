@@ -136,8 +136,9 @@ test "the owner runs an async handler and answers its resolved value" {
 
     // A synchronous callback violates the tool contract.
     try support.expectTool(host, "sync", "{\"city\":\"Tokyo\"}", .{ .is_error = true, .text = .{ .equals = "the tool execute function must return a Promise" } });
-    // A Promise settles through the job drain, so one pump is still enough.
-    try support.expectTool(host, "later", "{\"city\":\"Kyoto\"}", .{ .text = .{ .equals = "{\"got\":\"Kyoto\",\"async\":true}" } });
+    // A Promise settles through the job drain, so one pump is still enough. An object answers a ToolOutcome for the port to decode.
+    try support.expectTool(host, "later", "{\"city\":\"Kyoto\"}", .{ .outcome = true, .text = .{ .equals = "{\"output\":\"Kyoto\"}" } });
+    for ([_][]const u8{ "number", "null", "list" }) |name| try support.expectTool(host, name, "{\"city\":\"Kyoto\"}", .{ .is_error = true, .text = .{ .equals = "the tool answered a value that is not a string or a ToolOutcome" } });
     // A string passes through, because a text tool must not gain quotes.
     try support.expectTool(host, "text", "{\"city\":\"Osaka\"}", .{ .text = .{ .equals = "just text" } });
     try support.expectTool(host, "nothing", "{\"city\":\"Nara\"}", .{ .text = .{ .equals = "" } });
@@ -179,7 +180,7 @@ test "a handler that awaits a primitive answers when the task finishes" {
 
     try support.pumpUntilSettled(host, call);
     try std.testing.expect(!support.reply(call).is_error);
-    try std.testing.expectEqualStrings("{\"text\":\"from disk\"}", support.reply(call).text);
+    try std.testing.expectEqualStrings("from disk", support.reply(call).text);
     try support.dropCall(host, call);
 }
 
@@ -291,9 +292,11 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     {
         const call = host.calls.submit("read", "{\"path\":\"shot.png\",\"start\":2,\"end\":2}", support.toolContext(root));
         try support.pumpUntilSettled(host, call);
-        try std.testing.expect(!support.reply(call).is_error);
-        try std.testing.expectEqualStrings("PNG image, 67 B", support.reply(call).text);
-        try std.testing.expect(std.mem.indexOf(u8, support.reply(call).extra_json.?, "\"media\":[{\"hash\":\"aaaa") != null);
+        var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+        defer arena.deinit();
+        const got = try support.outcome(arena.allocator(), call);
+        try std.testing.expectEqualStrings("PNG image, 67 B", got.output);
+        try std.testing.expectEqualStrings("a" ** 64, &std.fmt.bytesToHex(got.media[0].hash.raw, .lower));
         try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.putPath.startsWith(\"/\") && globalThis.putPath.endsWith(\"/shot.png\") ? 1 : 0"));
         call.finish();
         try host.pump();
@@ -304,10 +307,10 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
     try support.expectTool(host, "read", "{\"path\":1}", .{ .root = root, .is_error = true, .text = .{ .contains = "read: the argument path must be a string" } });
     try support.expectTool(host, "read", "{\"path\":\"a.txt\",\"file_path\":\"a.txt\"}", .{ .root = root, .is_error = true, .text = .{ .contains = "read: the argument file_path does not exist. The arguments are: path, start, end." } });
     try support.expectTool(host, "edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\"}", .{ .root = root, .is_error = true, .text = .{ .contains = "more than one" } });
-    try support.expectTool(host, "edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\",\"replace_all\":true}", .{ .root = root, .text = .{ .contains = "replaced 2" }, .extra = true });
-    try support.expectTool(host, "write", "{\"path\":\"new.txt\",\"content\":\"fresh\\n\"}", .{ .root = root, .text = .{ .contains = "wrote 6 bytes" }, .extra = true });
+    try support.expectTool(host, "edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\",\"replace_all\":true}", .{ .root = root, .text = .{ .contains = "replaced 2" }, .outcome = true });
+    try support.expectTool(host, "write", "{\"path\":\"new.txt\",\"content\":\"fresh\\n\"}", .{ .root = root, .text = .{ .contains = "wrote 6 bytes" }, .outcome = true });
     // Content that matches the file changes nothing, so the answer carries no diff.
-    try support.expectTool(host, "write", "{\"path\":\"a.txt\",\"content\":\"one\\nTWO\\nTWO\\n\"}", .{ .root = root, .text = .{ .contains = "" }, .extra = false });
+    try support.expectTool(host, "write", "{\"path\":\"a.txt\",\"content\":\"one\\nTWO\\nTWO\\n\"}", .{ .root = root, .text = .{ .contains = "" }, .outcome = false });
     try support.expectTool(host, "exec", "{\"command\":\"echo out; echo err 1>&2; exit 3\"}", .{ .root = root, .text = .{ .contains = "out\n[stderr]\nerr\n[exit code: 3]" } });
     {
         const call = host.calls.submit("exec", "{\"command\":\"head -c 20000 /dev/zero | tr '\\\\0' x\"}", support.toolContext(root));

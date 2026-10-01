@@ -44,22 +44,7 @@ fn runFor(ctx: *anyopaque, out: std.mem.Allocator, name: []const u8, arguments: 
         }
         if (call.state == .settled) break;
     }
-    const reply = switch (call.state.settled) {
-        .ok => |value| value,
-        .failed => |text| return fault(out, text),
-        .closed => return fault(out, "the tool call did not finish"),
-    };
-    const extra = if (reply.extra_json) |json|
-        extraOf(out, json) orelse return fault(out, "the tool answered an invalid view or media list")
-    else
-        Extra{};
-    return .{
-        .output = out.dupe(u8, reply.text) catch unreachable,
-        .view = extra.view,
-        .media = extra.media,
-        .tools_added = extra.tools_added,
-        .is_error = false,
-    };
+    return outcomeOf(out, call.state.settled);
 }
 
 fn finishCall(host: *Host, call: *tools.Call) void {
@@ -117,35 +102,39 @@ fn decisionOf(out: std.mem.Allocator, point: proto.hook.Point, text: []const u8)
     };
 }
 
-/// The structured part of a builtin result. The engine admits the media before it commits the part.
-const Extra = struct {
-    view: ?[]const proto.view.View = null,
-    media: []const proto.content.MediaBlob = &.{},
-    tools_added: []const proto.tool.ToolDefinition = &.{},
-};
-
-/// Copy every string into `out`, because the owner frees the call JSON on its next sweep.
-fn extraOf(out: std.mem.Allocator, json: []const u8) ?Extra {
-    return std.json.parseFromSliceLeaky(Extra, out, json, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch null;
+/// Read the answer of one settled tool call into `out`, because the owner frees the answer on its next sweep. A `ToolOutcome` with an unknown key is an error.
+pub fn outcomeOf(out: std.mem.Allocator, answer: tools.Call.Answer) toolset.Outcome {
+    const reply = switch (answer) {
+        .ok => |value| value,
+        .failed => |text| return fault(out, text),
+        .closed => return fault(out, "the tool call did not finish"),
+    };
+    if (!reply.outcome) return .{ .output = out.dupe(u8, reply.text) catch unreachable };
+    return std.json.parseFromSliceLeaky(toolset.Outcome, out, reply.text, .{ .allocate = .alloc_always }) catch
+        fault(out, "the tool answered an object that is not a ToolOutcome");
 }
 
 fn fault(out: std.mem.Allocator, message: []const u8) toolset.Outcome {
     return .{ .output = out.dupe(u8, message) catch message, .is_error = true };
 }
 
-test "a tool result owns its view and media after the call answer leaves" {
+test "a tool outcome owns its data after the call answer leaves, and an unknown key fails" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
-    const json = try std.testing.allocator.dupe(u8, "{\"view\":[{\"type\":\"text\",\"text\":\"body\"}],\"media\":[{\"hash\":\"" ++ "ab" ** 32 ++ "\",\"mime\":\"image/png\",\"bytes\":3}]}");
-    const extra = extraOf(arena.allocator(), json).?;
+    const json = try std.testing.allocator.dupe(u8, "{\"output\":\"done\",\"media\":[{\"hash\":\"" ++ "ab" ** 32 ++ "\",\"mime\":\"image/png\",\"bytes\":3}],\"tools_added\":[{\"name\":\"mcp_read\",\"description\":\"Read.\",\"input_schema\":\"{}\"}]}");
+    const outcome = outcomeOf(arena.allocator(), .{ .ok = .{ .text = json, .outcome = true } });
     @memset(json, 'x');
     std.testing.allocator.free(json);
-    try std.testing.expectEqualStrings("body", extra.view.?[0].text.text);
-    try std.testing.expectEqualStrings("image/png", extra.media[0].mime);
-    try std.testing.expectEqual(@as(u64, 3), extra.media[0].bytes);
-    try std.testing.expect(extraOf(arena.allocator(), "{\"media\":[{\"hash\":\"zz\"}]}") == null);
-    const found = extraOf(arena.allocator(), "{\"tools_added\":[{\"name\":\"mcp_read\",\"description\":\"Read.\",\"input_schema\":\"{}\"}]}").?;
-    try std.testing.expectEqualStrings("mcp_read", found.tools_added[0].name);
+    try std.testing.expect(!outcome.is_error);
+    try std.testing.expectEqualStrings("done", outcome.output);
+    try std.testing.expectEqualStrings("image/png", outcome.media[0].mime);
+    try std.testing.expectEqual(@as(u64, 3), outcome.media[0].bytes);
+    try std.testing.expectEqualStrings("mcp_read", outcome.tools_added[0].name);
+    const unknown = try arena.allocator().dupe(u8, "{\"output\":\"x\",\"text\":\"y\"}");
+    try std.testing.expect(outcomeOf(arena.allocator(), .{ .ok = .{ .text = unknown, .outcome = true } }).is_error);
+    // Plain text is model text, even when it reads as JSON.
+    const plain = try arena.allocator().dupe(u8, "{\"text\":\"y\"}");
+    try std.testing.expectEqualStrings("{\"text\":\"y\"}", outcomeOf(arena.allocator(), .{ .ok = .{ .text = plain } }).output);
 }
 
 test "hook decisions own text after the call answer leaves" {

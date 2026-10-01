@@ -20,7 +20,7 @@ plugins.use(agents({ catalog: { explore: {} } }));
   const chat = new ChatView(new Session());
   root.setRoot(Node.leaf(chat)); root.focusView(chat);
   chat.session.sessionId = parent;
-  const output = JSON.stringify({ session_id: childId, agent: "explore", model: "m", state: "started" });
+  const output = "Started explore (session " + childId + "). Its report arrives as a new message.";
   const part = { type: "tool", id: 0, name: "spawn_agent", arguments: JSON.stringify({ agent: "explore", message: "look" }), state: { type: "completed", output, duration_ms: 0 } };
   client.sessionOutline = () => ({ messages: [{ id: 1, type: "assistant" }], active: null });
   client.sessionParts = () => [part];

@@ -918,7 +918,7 @@ test "a tool round can compact and resume within the same run" {
     try seedMessage(&f.db, a, TaskFixture.sid, 2, .assistant, 48_000);
     const Tool = struct {
         fn run(_: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
-            return .{ .output = "EXACT_TOOL_OUTPUT" ** 1000, .is_error = false };
+            return .{ .output = "EXACT_TOOL_OUTPUT" ** 1000 };
         }
     };
     f.engine.installTools(.{ .decls = Resources.serveTools(&.{"unknown"}), .run = Tool.run });

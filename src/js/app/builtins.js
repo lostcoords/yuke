@@ -15,16 +15,11 @@ import { utf8Length } from "yuke:internal/interaction";
 /** @import { CancellationSignal as ToolSignal } from "yuke:internal/native/cancellation" */
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { Job } from "yuke:internal/native/jobs" */
-/** @import { ToolContext, ToolDefinition } from "./types/ext.js" */
+/** @import { ToolContext, ToolDefinition, ToolOutcome } from "./types/ext.js" */
 /** @typedef {{ old_start: number, old_lines: number, new_start: number, new_lines: number, lines: string[] }} DiffHunk */
 /** @typedef {{ path: string, hunks: DiffHunk[] }} DiffFile */
 /** @typedef {{ type: "diff", files: DiffFile[] }} DiffView */
-/** @typedef {{ view?: DiffView[], media?: Wire.MediaBlob[] }} ResultExtra */
-/** @typedef {{ __yuke_result: true, text: string, extra: ResultExtra | null }} BuiltinResult */
-/** @typedef {Omit<ToolDefinition, "name" | "execute"> & { execute: (args: ToolArgs, signal: ToolSignal, context: ToolContext) => Promise<unknown> }} BuiltinTool */
-
-/** @param {string} text @param {ResultExtra | null} extra @returns {BuiltinResult} */
-const result = (text, extra) => ({ __yuke_result: true, text, extra });
+/** @typedef {Omit<ToolDefinition, "name" | "execute"> & { execute: (args: ToolArgs, signal: ToolSignal, context: ToolContext) => Promise<string | ToolOutcome> }} BuiltinTool */
 
 // A user tool with the same name wins, so the built-in steps aside.
 /** @param {Context} ctx @param {string} name @param {BuiltinTool} definition @returns {void} */
@@ -103,7 +98,7 @@ function renderRead(got, first) {
   return text;
 }
 
-/** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string | BuiltinResult>} */
+/** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string | ToolOutcome>} */
 async function read(args, _signal, context) {
   const name = "read";
   const path = stringArg(name, args, "path");
@@ -113,12 +108,12 @@ async function read(args, _signal, context) {
   if ("imagePath" in got) {
     const blob = await hostCall(name, client.blobPut(got.imagePath));
     const kind = blob.mime.slice(blob.mime.indexOf("/") + 1).toUpperCase();
-    return result(`${kind} image, ${byteLabel(blob.bytes)}`, { media: [blob] });
+    return { output: `${kind} image, ${byteLabel(blob.bytes)}`, media: [blob] };
   }
   return renderRead(got, start ?? 1);
 }
 
-/** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<BuiltinResult>} */
+/** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string | ToolOutcome>} */
 async function write(args, _signal, context) {
   const name = "write";
   const path = stringArg(name, args, "path");
@@ -131,7 +126,7 @@ async function write(args, _signal, context) {
   const bytes = await hostCall(name, fs.writeFile(path, content, { workspaceRoot: context.workspaceRoot }));
   const view = mapped == null ? null : viewOf(mapped);
   const text = view == null ? `The tool wrote ${bytes} bytes.` : `The tool wrote ${bytes} bytes and changed ${changedLines(view)} line(s).`;
-  return result(text, view == null ? null : { view });
+  return view == null ? text : { output: text, view };
 }
 
 /** @param {DiffView[]} view @returns {number} */
@@ -156,7 +151,7 @@ function replaceAt(text, old, replacement) {
   return { count, text: count === 0 ? text : out + text.slice(at) };
 }
 
-/** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<BuiltinResult>} */
+/** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string | ToolOutcome>} */
 async function edit(args, _signal, context) {
   const name = "edit";
   const path = stringArg(name, args, "path");
@@ -175,7 +170,7 @@ async function edit(args, _signal, context) {
   await hostCall(name, fs.writeFile(path, replaced.text, { workspaceRoot: context.workspaceRoot }));
   const view = viewOf(mapped);
   const text = view == null ? `The tool replaced ${replaced.count} match(es).` : `The tool replaced ${replaced.count} match(es) and changed ${changedLines(view)} line(s).`;
-  return result(text, view == null ? null : { view });
+  return view == null ? text : { output: text, view };
 }
 
 /** @param {string} text @returns {string} */

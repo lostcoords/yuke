@@ -9,5 +9,5 @@ defineTool("get_weather", {
     },
     required: ["city"],
   },
-  execute: async ({ city }) => ({ city, weather: "sunny" }),
+  execute: async ({ city }) => JSON.stringify({ city, weather: "sunny" }),
 });
