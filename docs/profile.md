@@ -37,7 +37,7 @@ plugins.use({
 |---|---|
 | `yuke` | `plugins`, `defineConfig`, `config`, `events`, `fs`, `env`, `fetch`, `exec`, `spawn`, `lines`, `net`, `jobs`, `client`, `utf8`, `diff`, and the plugin types |
 | `yuke:ui` | views and widgets, `ui.pick`, `ui.select`, `keys` |
-| `yuke:chat` | `ChatView`, `ChatSurface`, `Transcript`, and helpers for a renderer: `toolHead`, `wrapRows`, `viewRows`, `openDetails`; `attachPath`, `attachClipboard` |
+| `yuke:chat` | `ChatView`, `ChatSurface`, `Transcript`, and helpers for a renderer: `toolHead`, `wrapRows`, `diffRows`, `openDetails`; `attachPath`, `attachClipboard` |
 | `yuke:session` | `Session`, `sessions`, `currentSession()`, `currentPane()`, `currentEntry()`, `showSession` |
 | `yuke:plugins` | optional plugins: `composerVim`, `transcriptVim`, `agents(options)`, `mcp(options)`; and `shell`, the bundled window layout, for a replacement |
 

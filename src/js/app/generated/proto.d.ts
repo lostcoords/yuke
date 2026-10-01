@@ -601,7 +601,6 @@ export interface ToolPart {
   readonly call_id: string;
   readonly name: string;
   readonly arguments: string;
-  readonly input_view?: ReadonlyArray<View>;
   readonly state: ToolState;
 }
 
@@ -1041,12 +1040,28 @@ export interface ToolStateChangedData {
 /** The tool call completed successfully. */
 export interface ToolStateCompleted {
   readonly output: string;
-  readonly view?: ReadonlyArray<View>;
+  /** The file changes the UI shows. The model never reads them. */
+  readonly diff?: ReadonlyArray<DiffFile>;
   /** Images the model reads beside the output. The engine admitted each blob at the tool boundary. */
   readonly media?: ReadonlyArray<MediaBlob>;
   /** The definitions a tool search loaded. The transcript keeps them, so replay never reads the live catalog. */
   readonly tools_added?: ReadonlyArray<ToolDefinition>;
   readonly duration_ms: number;
+}
+
+/** One changed file. Its hunks hold unified diff lines. */
+export interface DiffFile {
+  readonly path: string;
+  readonly hunks: ReadonlyArray<DiffHunk>;
+}
+
+/** One hunk of a unified diff. */
+export interface DiffHunk {
+  readonly old_start: number;
+  readonly old_lines: number;
+  readonly new_start: number;
+  readonly new_lines: number;
+  readonly lines: ReadonlyArray<string>;
 }
 
 /** One tool definition as a search loaded it. `input_schema` is the JSON Schema text of the arguments. */
@@ -1059,7 +1074,6 @@ export interface ToolDefinition {
 /** The tool call failed. */
 export interface ToolStateError {
   readonly error: string;
-  readonly view?: ReadonlyArray<View>;
   readonly duration_ms: number;
 }
 
@@ -1070,43 +1084,6 @@ export type ToolStatePending = Record<string, never>;
 export interface ToolStateRunning {
   readonly started_at_ms: number;
   readonly output?: string;
-}
-
-/** This type describes one file in a diff view. */
-export interface DiffFile {
-  readonly path: string;
-  readonly old_path?: string;
-  readonly hunks: ReadonlyArray<DiffHunk>;
-}
-
-/** This type describes one hunk of a unified diff. */
-export interface DiffHunk {
-  readonly old_start: number;
-  readonly old_lines: number;
-  readonly new_start: number;
-  readonly new_lines: number;
-  readonly lines: ReadonlyArray<string>;
-}
-
-/** This view displays a unified diff. */
-export interface ViewDiff {
-  readonly files: ReadonlyArray<DiffFile>;
-}
-
-/** This view displays JSON text. */
-export interface ViewJson {
-  readonly text: string;
-}
-
-/** This view displays Markdown text. */
-export interface ViewMarkdown {
-  readonly text: string;
-}
-
-/** This view displays plain text. */
-export interface ViewText {
-  readonly text: string;
-  readonly language?: string;
 }
 
 export type InstructionScope =
@@ -1487,14 +1464,6 @@ export type ToolState =
   | { readonly type: "completed" } & ToolStateCompleted
   | { readonly type: "error" } & ToolStateError
   | { readonly type: "canceled" } & ToolStateCanceled
-;
-
-/** A frontend can render this hint natively or ignore it. Its fields borrow their data. */
-export type View =
-  | { readonly type: "text" } & ViewText
-  | { readonly type: "markdown" } & ViewMarkdown
-  | { readonly type: "json" } & ViewJson
-  | { readonly type: "diff" } & ViewDiff
 ;
 
 /** This union carries client request parameters. */

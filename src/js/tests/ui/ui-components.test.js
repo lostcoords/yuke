@@ -4,7 +4,7 @@ import { term } from "yuke:internal/native/term";
 import { root, Node } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import { Transcript, inputSourceLabel, registerRender } from "yuke:internal/transcript";
-import { defaultRender, displayCommand, viewRows } from "yuke:internal/transcript-view";
+import { defaultRender, displayCommand, diffRows } from "yuke:internal/transcript-view";
 import { chatPlugin } from "yuke:internal/chat";
 import { Session, sessionsPlugin } from "yuke:internal/session";
 import { transcriptVim } from "yuke:internal/transcript-vim";
@@ -25,7 +25,7 @@ const parts = {
   run: [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"zig build test"}', state: { type: "running", started_at_ms: 1, output: "compiling" } }],
   err: [{ type: "tool", id: 1, name: "edit", arguments: '{"path":"b.zig"}', state: { type: "error", error: "no match", duration_ms: 3 } }],
   mix: [{ type: "text", id: 0, text: "**hi** there" }, { type: "tool", id: 1, name: "read", arguments: '{"path":"c.zig"}', state: { type: "completed", output: "ok", duration_ms: 1 } }],
-  diff: [{ type: "tool", id: 0, name: "edit", arguments: '{"path":"d.zig"}', state: { type: "completed", output: "ok", duration_ms: 2, view: [{ type: "diff", files: [{ path: "d.zig", hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ["-old", "+new"] }] }] }] } }],
+  diff: [{ type: "tool", id: 0, name: "edit", arguments: '{"path":"d.zig"}', state: { type: "completed", output: "ok", duration_ms: 2, diff: [{ path: "d.zig", hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ["-old", "+new"] }] }] } }],
 };
 const t = new Transcript({ partsOf: (id) => parts[id] || [] });
 t.setOutline([{ id: "done", type: "assistant" }, { id: "b1", type: "user" }, { id: "run", type: "assistant" }, { id: "b2", type: "user" }, { id: "err", type: "assistant" }], null);
@@ -66,10 +66,17 @@ equal(src, "hi** there\nread c.zig");
 // An edit shows its whole diff while folded.
 const dt = new Transcript({ partsOf: (id) => parts[id] || [] });
 dt.setOutline([{ id: "diff", type: "assistant" }], null);
-const diffRows = dt.rows(40, 0, 10);
-check("diff", rowsHave(diffRows, "-old") && rowsGroup(diffRows, "TxDiffDel") && rowsHave(diffRows, "+new") && rowsGroup(diffRows, "TxDiffAdd") && dt._sourceOf("diff") === "edit d.zig\n-old\n+new");
-const multiDiff = viewRows([{ type: "diff", files: [{ path: "one.zig", hunks: [] }, { path: "two.zig", hunks: [] }] }], 40, 1);
+const editRows = dt.rows(40, 0, 10);
+check("diff", rowsHave(editRows, "-old") && rowsGroup(editRows, "TxDiffDel") && rowsHave(editRows, "+new") && rowsGroup(editRows, "TxDiffAdd") && dt._sourceOf("diff") === "edit d.zig\n-old\n+new");
+// A diff the engine cut says so, because an expanded edit shows no more lines.
+const cutEdit = { ...parts.diff[0], cut: [{ field: "diff", total: 500 }] };
+const ct = new Transcript({ partsOf: () => [cutEdit] });
+ct.setOutline([{ id: "cut", type: "assistant" }], null);
+check("diff-cut-hint", rowsHave(ct.rows(40, 0, 10), "… (the diff is cut: 500 lines in total)"));
+const multiDiff = diffRows([{ path: "one.zig", hunks: [] }, { path: "two.zig", hunks: [] }], 40, 1);
 check("multi-diff-paths", rowsHave(multiDiff.rows, "one.zig") && rowsHave(multiDiff.rows, "two.zig") && multiDiff.source === "one.zig\ntwo.zig");
+const hunk = (line) => ({ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: [line] });
+check("hunk-separator", diffRows([{ path: "one.zig", hunks: [hunk("-a"), hunk("+b")] }], 40, 1).source === "-a\n…\n+b");
 
 // Enter toggles the block under the transcript cursor.
 const v = new ChatView(new Session());

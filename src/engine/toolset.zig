@@ -30,7 +30,8 @@ pub const Output = struct {
 /// The result of one tool run. `is_error` selects the completed state or the error state. Its JSON form is the JS `ToolOutcome`.
 pub const Outcome = struct {
     output: []const u8,
-    view: ?[]const proto.view.View = null,
+    /// The file changes the UI shows. The model never reads them.
+    diff: []const proto.tool.DiffFile = &.{},
     /// The images beside the output. Tool output is peer input, so the engine admits each blob before it commits the result.
     media: []const proto.content.MediaBlob = &.{},
     /// The definitions a search loaded. The engine admits each one against the run loadout.

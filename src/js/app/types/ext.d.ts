@@ -140,7 +140,7 @@ export interface ToolContext {
 }
 
 /**
- * Run one tool call. A string reaches the model as is, and undefined is empty output. A `ToolOutcome` adds an error flag, a view, images, or loaded tools.
+ * Run one tool call. A string reaches the model unchanged. `undefined` produces empty output. A `ToolOutcome` adds an error flag, a diff, images, or loaded tools.
  * Any other value, or an object with an unknown key, is an error. A rejection gives the model an error result with the message of the error.
  */
 export type ToolExecute = (
@@ -230,11 +230,11 @@ export interface ToolDecl {
   strict: boolean;
 }
 
-/** One tool result. The model reads `output`, `media`, and `tools_added`; the view is for the UI. An error result shows `output` only. */
+/** One tool result. The model reads `output`, `media`, and `tools_added`. The UI shows `diff`. An error result shows `output` only. */
 export interface ToolOutcome {
   output: string;
   is_error?: boolean;
-  view?: Wire.View[] | null;
+  diff?: Wire.DiffFile[];
   media?: Wire.MediaBlob[];
   /** The definitions a tool search loaded. The engine admits each one against the run loadout. */
   tools_added?: Wire.ToolDefinition[];

@@ -2,7 +2,7 @@
 export { ChatView } from "yuke:internal/chat-view";
 export { ChatSurface } from "yuke:internal/chat";
 export { Transcript, inputSourceLabel } from "yuke:internal/transcript";
-export { displayPath, displayCommand, toolHead, wrapRows, viewRows, mediaLabel, errorLabel, isCut, openDetails } from "yuke:internal/transcript-view";
+export { displayPath, displayCommand, toolHead, wrapRows, diffRows, mediaLabel, errorLabel, isCut, openDetails } from "yuke:internal/transcript-view";
 export { attachPath, attachClipboard } from "yuke:internal/attach";
 
 

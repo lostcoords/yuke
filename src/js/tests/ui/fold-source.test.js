@@ -4,12 +4,12 @@ import { defaultRender } from "yuke:internal/transcript-view";
 
 registerRender(defaultRender);
 const lines = (tag, n) => Array.from({ length: n }, (_, i) => tag + "-" + i).join("\n");
-// One message holds a shell tail, a folded read, a view preview, and text after them, so each later part depends on the bases before it.
+// One message holds a shell tail, a folded read, a diff preview, and later text. Each later part depends on earlier source bases.
 const parts = {
   m: [
     { type: "tool", id: 1, name: "exec", arguments: '{"command":"seq"}', state: { type: "completed", output: lines("line", 12) } },
     { type: "tool", id: 2, name: "read", arguments: '{"path":"a.txt"}', state: { type: "completed", output: "alpha\nbravo" } },
-    { type: "tool", id: 3, name: "grep", arguments: "{}", state: { type: "completed", output: "", view: [{ type: "text", text: lines("hit", 15) }] } },
+    { type: "tool", id: 3, name: "write", arguments: "{}", state: { type: "completed", output: "", diff: [{ path: "a.txt", hunks: [{ old_start: 1, old_lines: 0, new_start: 1, new_lines: 15, lines: lines("+hit", 15).split("\n") }] }] } },
     { type: "text", id: 4, text: "after the tools" },
   ],
 };

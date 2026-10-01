@@ -12,7 +12,7 @@ export import displayPath = $transcript_view.displayPath;
 export import displayCommand = $transcript_view.displayCommand;
 export import toolHead = $transcript_view.toolHead;
 export import wrapRows = $transcript_view.wrapRows;
-export import viewRows = $transcript_view.viewRows;
+export import diffRows = $transcript_view.diffRows;
 export import mediaLabel = $transcript_view.mediaLabel;
 export import errorLabel = $transcript_view.errorLabel;
 export import isCut = $transcript_view.isCut;
@@ -1487,10 +1487,10 @@ export function toolHead(part: ToolPart, tools: Record<string, ToolHead>): ToolH
  */
 export function wrapRows(text: string, width: number, group: string, indent: number, limit?: number, tail?: number): TranscriptRow[];
 /**
- * The rows of tool-result views. A one-file diff omits its path. A multi-file or mixed view keeps file paths.
+ * The rows of a tool diff. A one-file diff omits its path. A row of `…` separates two hunks.
  * `limit` bounds the rows alone. The source keeps every chunk, so a fold never moves a source offset.
  */
-export function viewRows(views: readonly Wire.View[], width: number, indent: number, limit?: number): Rendered;
+export function diffRows(files: readonly Wire.DiffFile[], width: number, indent: number, limit?: number): Rendered;
 /**
  * `[PNG #1 · 2 KiB]`: the type comes from the mime, because an image part carries no file name on the wire. `n` 0 leaves out the number.
  */
@@ -3086,7 +3086,7 @@ export interface ToolContext {
 }
 
 /**
- * Run one tool call. A string reaches the model as is, and undefined is empty output. A `ToolOutcome` adds an error flag, a view, images, or loaded tools.
+ * Run one tool call. A string reaches the model as is, and undefined is empty output. A `ToolOutcome` adds an error flag, a diff, images, or loaded tools.
  * Any other value, or an object with an unknown key, is an error. A rejection gives the model an error result with the message of the error.
  */
 export type ToolExecute = (
@@ -3177,11 +3177,11 @@ export interface ToolDecl {
   strict: boolean;
 }
 
-/** One tool result. The model reads `output`, `media`, and `tools_added`; the view is for the UI. An error result shows `output` only. */
+/** One tool result. The model reads `output`, `media`, and `tools_added`. The UI shows `diff`. An error result shows `output` only. */
 export interface ToolOutcome {
   output: string;
   is_error?: boolean;
-  view?: Wire.View[] | null;
+  diff?: Wire.DiffFile[];
   media?: Wire.MediaBlob[];
   /** The definitions a tool search loaded. The engine admits each one against the run loadout. */
   tools_added?: Wire.ToolDefinition[];
@@ -4540,7 +4540,6 @@ export interface ToolPart {
   readonly call_id: string;
   readonly name: string;
   readonly arguments: string;
-  readonly input_view?: ReadonlyArray<View>;
   readonly state: ToolState;
 }
 
@@ -4980,12 +4979,28 @@ export interface ToolStateChangedData {
 /** The tool call completed successfully. */
 export interface ToolStateCompleted {
   readonly output: string;
-  readonly view?: ReadonlyArray<View>;
+  /** The file changes the UI shows. The model never reads them. */
+  readonly diff?: ReadonlyArray<DiffFile>;
   /** Images the model reads beside the output. The engine admitted each blob at the tool boundary. */
   readonly media?: ReadonlyArray<MediaBlob>;
   /** The definitions a tool search loaded. The transcript keeps them, so replay never reads the live catalog. */
   readonly tools_added?: ReadonlyArray<ToolDefinition>;
   readonly duration_ms: number;
+}
+
+/** One changed file. Its hunks hold unified diff lines. */
+export interface DiffFile {
+  readonly path: string;
+  readonly hunks: ReadonlyArray<DiffHunk>;
+}
+
+/** One hunk of a unified diff. */
+export interface DiffHunk {
+  readonly old_start: number;
+  readonly old_lines: number;
+  readonly new_start: number;
+  readonly new_lines: number;
+  readonly lines: ReadonlyArray<string>;
 }
 
 /** One tool definition as a search loaded it. `input_schema` is the JSON Schema text of the arguments. */
@@ -4998,7 +5013,6 @@ export interface ToolDefinition {
 /** The tool call failed. */
 export interface ToolStateError {
   readonly error: string;
-  readonly view?: ReadonlyArray<View>;
   readonly duration_ms: number;
 }
 
@@ -5009,43 +5023,6 @@ export type ToolStatePending = Record<string, never>;
 export interface ToolStateRunning {
   readonly started_at_ms: number;
   readonly output?: string;
-}
-
-/** This type describes one file in a diff view. */
-export interface DiffFile {
-  readonly path: string;
-  readonly old_path?: string;
-  readonly hunks: ReadonlyArray<DiffHunk>;
-}
-
-/** This type describes one hunk of a unified diff. */
-export interface DiffHunk {
-  readonly old_start: number;
-  readonly old_lines: number;
-  readonly new_start: number;
-  readonly new_lines: number;
-  readonly lines: ReadonlyArray<string>;
-}
-
-/** This view displays a unified diff. */
-export interface ViewDiff {
-  readonly files: ReadonlyArray<DiffFile>;
-}
-
-/** This view displays JSON text. */
-export interface ViewJson {
-  readonly text: string;
-}
-
-/** This view displays Markdown text. */
-export interface ViewMarkdown {
-  readonly text: string;
-}
-
-/** This view displays plain text. */
-export interface ViewText {
-  readonly text: string;
-  readonly language?: string;
 }
 
 export type InstructionScope =
@@ -5426,14 +5403,6 @@ export type ToolState =
   | { readonly type: "completed" } & ToolStateCompleted
   | { readonly type: "error" } & ToolStateError
   | { readonly type: "canceled" } & ToolStateCanceled
-;
-
-/** A frontend can render this hint natively or ignore it. Its fields borrow their data. */
-export type View =
-  | { readonly type: "text" } & ViewText
-  | { readonly type: "markdown" } & ViewMarkdown
-  | { readonly type: "json" } & ViewJson
-  | { readonly type: "diff" } & ViewDiff
 ;
 
 /** This union carries client request parameters. */

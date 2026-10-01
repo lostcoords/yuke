@@ -77,16 +77,13 @@ function previewParts() {
       type: "tool",
       id: i + 1,
       call_id: "call_" + (i + 1),
-      name: structured ? "view" : "plain-" + i,
+      name: structured ? "write" : "plain-" + i,
       arguments: JSON.stringify({ path: structured ? "view.md" : "plain-" + i + ".txt" }),
       state: {
         type: "completed",
         duration_ms: i + 1,
         output: structured ? "" : Array.from({ length: 128 }, (_, line) => "plain-" + i + "-line-" + line).join("\n"),
-        ...(structured ? { view: [
-          { type: "markdown", text: "view-first\n\nview-second" },
-          { type: "text", text: "view-tail" },
-        ] } : {}),
+        ...(structured ? { diff: [{ path: "view.md", hunks: [{ old_start: 1, old_lines: 0, new_start: 1, new_lines: 3, lines: ["+view-first", "+view-second", "+view-tail"] }] }] } : {}),
       },
     });
   }
@@ -327,12 +324,12 @@ function verifyPreview() {
     const rows = toolRows.filter((row) => row.partId === part.id);
     if (part.type === "reasoning" && rows.length !== 1) throw new Error("preview thought fold changed");
     if (part.type === "tool" && rows.filter((row) => row.header).length !== 1) throw new Error("preview tool count changed");
-    if (part.type === "tool" && part.name !== "view" && rows.filter((row) => !row.header && row.src != null).length !== 10) throw new Error("preview tool body cap changed");
+    if (part.type === "tool" && !(part.state.type === "completed" && part.state.diff) && rows.filter((row) => !row.header && row.src != null).length !== 10) throw new Error("preview tool body cap changed");
   }
   const source = transcript._sourceOf(PREVIEW_ASSISTANT_ID);
   // A folded thought still holds its whole text in the source.
   if (!source.includes("reason-first") || !source.includes("reason-last")) throw new Error("preview thought source changed");
-  for (const needle of ["plain-0-line-0", "view-first"])
+  for (const needle of ["plain-0-line-0", "+view-first"])
     if (!spanMatches(source, toolRows, needle)) throw new Error("preview source span changed: " + needle);
 }
 

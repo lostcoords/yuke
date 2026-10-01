@@ -19,14 +19,13 @@ const rpc = @import("rpc.zig");
 const run = @import("run.zig");
 const session = @import("session.zig");
 const tool = @import("tool.zig");
-const view = @import("view.zig");
 const ids = @import("ids.zig");
 
 pub const TypeEntry = struct { name: []const u8, ty: type };
 pub const AliasEntry = struct { name: []const u8, base: []const u8 };
 
 /// The wire modules in the order the schema lists their types.
-const modules = .{ initialize, content, blob, auth, catalog, rpc, activity, input, instructions, interaction, job, skill, message, misc, run, session, tool, view, enums };
+const modules = .{ initialize, content, blob, auth, catalog, rpc, activity, input, instructions, interaction, job, skill, message, misc, run, session, tool, enums };
 
 pub const structs = collect(.structure);
 pub const tagged_unions = collect(.tagged_union);

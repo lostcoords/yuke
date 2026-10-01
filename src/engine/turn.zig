@@ -767,9 +767,9 @@ fn toolChild(engine: *Engine, slot: *RunSlot, streamer: *Streamer, pt: PendingTo
     const settled: proto.tool.ToolState = if (slot.cancel.isRequested())
         .{ .canceled = .{ .duration_ms = duration } }
     else if (res.is_error)
-        .{ .@"error" = .{ .@"error" = res.output, .view = res.view, .duration_ms = duration } }
+        .{ .@"error" = .{ .@"error" = res.output, .duration_ms = duration } }
     else
-        .{ .completed = .{ .output = res.output, .view = res.view, .media = if (res.media.len == 0) null else res.media, .tools_added = if (res.tools_added.len == 0) null else res.tools_added, .duration_ms = duration } };
+        .{ .completed = .{ .output = res.output, .diff = res.diff, .media = res.media, .tools_added = res.tools_added, .duration_ms = duration } };
     try streamer.emitToolState(pt.part_id, settled);
 }
 
@@ -852,7 +852,7 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
         .arguments = call.arguments,
         .output = res.output,
         .is_error = res.is_error,
-        .view = res.view,
+        .diff = res.diff,
         .media = res.media,
         .tools_added = res.tools_added,
     });

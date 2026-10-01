@@ -24,7 +24,7 @@ pub fn ofSummary(summary: []const u8) u64 {
     return ofBytes(summary.len) + summary_frame_tokens;
 }
 
-/// Estimate one committed message from the parts that the request builder sends. Envelope fields and views cost nothing.
+/// Estimate one committed message from the parts that the request builder sends. Envelope fields and diffs cost nothing.
 pub fn ofMessage(message: proto.message.Message) Estimate {
     return switch (message) {
         .user => |u| .{ .tokens = ofUser(u), .reasoning = 0 },
@@ -58,11 +58,9 @@ fn ofAssistant(assistant: proto.message.AssistantMessage) Estimate {
             switch (t.state) {
                 .completed => |c| {
                     bytes += c.output.len;
-                    if (c.media) |blobs| media += blobs.len;
+                    media += c.media.len;
                     // A loaded definition enters the request as a declared tool.
-                    if (c.tools_added) |definitions| for (definitions) |d| {
-                        bytes += d.name.len + d.description.len + d.input_schema.len;
-                    };
+                    for (c.tools_added) |d| bytes += d.name.len + d.description.len + d.input_schema.len;
                 },
                 .@"error" => |e| bytes += e.@"error".len,
                 .canceled => bytes += request_builder.canceled_tool_note.len,
@@ -97,7 +95,6 @@ test "the estimate charges request text, decoded ciphertext, and media, and not 
             .{ .reasoning = .{ .id = 1, .text = "short summary", .signature = "A" ** 4000, .title = "" } },
             .{ .tool = .{ .id = 2, .call_id = "call_1", .name = "read", .arguments = "a" ** 96, .state = .{ .completed = .{
                 .output = "o" ** 1000,
-                .view = &.{},
                 .media = &.{blob},
                 .duration_ms = 1,
             } } } },

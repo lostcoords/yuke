@@ -16,9 +16,6 @@ import { utf8Length } from "yuke:internal/interaction";
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { Job } from "yuke:internal/native/jobs" */
 /** @import { ToolContext, ToolDefinition, ToolOutcome } from "./types/ext.js" */
-/** @typedef {{ old_start: number, old_lines: number, new_start: number, new_lines: number, lines: string[] }} DiffHunk */
-/** @typedef {{ path: string, hunks: DiffHunk[] }} DiffFile */
-/** @typedef {{ type: "diff", files: DiffFile[] }} DiffView */
 /** @typedef {Omit<ToolDefinition, "name" | "execute"> & { execute: (args: ToolArgs, signal: ToolSignal, context: ToolContext) => Promise<string | ToolOutcome> }} BuiltinTool */
 
 // A user tool with the same name wins, so the built-in steps aside.
@@ -70,21 +67,18 @@ function lineArg(name, args, key) {
   return value;
 }
 
-/** @param {ParsedDiffFile} file @returns {DiffView[] | null} */
-function viewOf(file) {
-  if (file.hunks.length === 0) return null;
+/** @param {ParsedDiffFile} file @returns {Wire.DiffFile[]} */
+function diffOf(file) {
+  if (file.hunks.length === 0) return [];
   return [{
-    type: "diff",
-    files: [{
-      path: file.path,
-      hunks: file.hunks.map(h => ({
-        old_start: h.oldStart,
-        old_lines: h.oldLines,
-        new_start: h.newStart,
-        new_lines: h.newLines,
-        lines: h.lines,
-      })),
-    }],
+    path: file.path,
+    hunks: file.hunks.map(h => ({
+      old_start: h.oldStart,
+      old_lines: h.oldLines,
+      new_start: h.newStart,
+      new_lines: h.newLines,
+      lines: h.lines,
+    })),
   }];
 }
 
@@ -124,15 +118,15 @@ async function write(args, _signal, context) {
   catch (e) { if (errorText(e) !== "the path does not exist") canDiff = false; }
   const mapped = canDiff ? await diff(path, old, content) : null;
   const bytes = await hostCall(name, fs.writeFile(path, content, { workspaceRoot: context.workspaceRoot }));
-  const view = mapped == null ? null : viewOf(mapped);
-  const text = view == null ? `The tool wrote ${bytes} bytes.` : `The tool wrote ${bytes} bytes and changed ${changedLines(view)} line(s).`;
-  return view == null ? text : { output: text, view };
+  const files = mapped == null ? [] : diffOf(mapped);
+  const text = files.length === 0 ? `The tool wrote ${bytes} bytes.` : `The tool wrote ${bytes} bytes and changed ${changedLines(files)} line(s).`;
+  return files.length === 0 ? text : { output: text, diff: files };
 }
 
-/** @param {DiffView[]} view @returns {number} */
-function changedLines(view) {
+/** @param {readonly Wire.DiffFile[]} files @returns {number} */
+function changedLines(files) {
   let count = 0;
-  for (const file of view[0]?.files || []) for (const hunk of file.hunks) for (const line of hunk.lines) if (line[0] !== " ") count++;
+  for (const file of files) for (const hunk of file.hunks) for (const line of hunk.lines) if (line[0] !== " ") count++;
   return count;
 }
 
@@ -168,9 +162,9 @@ async function edit(args, _signal, context) {
   if (utf8Length(replaced.text) > MAX_FILE_BYTES) invalid(name, "the file exceeds the size limit");
   const mapped = await diff(path, old, replaced.text);
   await hostCall(name, fs.writeFile(path, replaced.text, { workspaceRoot: context.workspaceRoot }));
-  const view = viewOf(mapped);
-  const text = view == null ? `The tool replaced ${replaced.count} match(es).` : `The tool replaced ${replaced.count} match(es) and changed ${changedLines(view)} line(s).`;
-  return view == null ? text : { output: text, view };
+  const files = diffOf(mapped);
+  const text = files.length === 0 ? `The tool replaced ${replaced.count} match(es).` : `The tool replaced ${replaced.count} match(es) and changed ${changedLines(files)} line(s).`;
+  return files.length === 0 ? text : { output: text, diff: files };
 }
 
 /** @param {string} text @returns {string} */

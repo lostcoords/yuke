@@ -93,6 +93,10 @@ pub fn stringify(comptime T: type, self: T, jw: *std.json.Stringify) !void {
                 if (@typeInfo(af.type) == .optional) {
                     if (fv == null and !jw.options.emit_null_optional_fields) emit = false;
                 }
+                // The codec omits an empty slice at its empty default. The decoder restores the default.
+                if (comptime emptyDefault(af)) {
+                    if (fv.len == 0) emit = false;
+                }
                 if (emit) {
                     try jw.objectField(af.name);
                     try jw.write(fv);
@@ -101,6 +105,14 @@ pub fn stringify(comptime T: type, self: T, jw: *std.json.Stringify) !void {
         },
     }
     try jw.endObject();
+}
+
+/// Report whether a field is a slice whose default is empty.
+fn emptyDefault(comptime field: std.builtin.Type.StructField) bool {
+    const info = @typeInfo(field.type);
+    if (info != .pointer or info.pointer.size != .slice) return false;
+    const default = field.defaultValue() orelse return false;
+    return default.len == 0;
 }
 
 test "tagged unions round-trip one representative value each" {

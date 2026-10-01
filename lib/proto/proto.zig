@@ -22,7 +22,6 @@ pub const misc = @import("misc.zig");
 pub const run = @import("run.zig");
 pub const session = @import("session.zig");
 pub const tool = @import("tool.zig");
-pub const view = @import("view.zig");
 pub const rpc = @import("rpc.zig");
 pub const registry = @import("registry.zig");
 pub const clone = @import("clone.zig");

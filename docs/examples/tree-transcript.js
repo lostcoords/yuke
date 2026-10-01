@@ -2,7 +2,7 @@
 // It stacks on the default look through `c.chat.render` alone. CI type-checks this file against yuke.d.ts, and a test renders it.
 import { plugins } from "yuke";
 import { measure, clip } from "yuke:ui";
-import { inputSourceLabel, toolHead, displayPath, displayCommand, wrapRows, viewRows, mediaLabel, errorLabel, isCut, openDetails } from "yuke:chat";
+import { inputSourceLabel, toolHead, displayPath, displayCommand, wrapRows, diffRows, mediaLabel, errorLabel, isCut, openDetails } from "yuke:chat";
 
 /** @typedef {import("yuke:chat").Render} Render */
 /** @typedef {import("yuke:chat").PartEnv} PartEnv */
@@ -71,11 +71,11 @@ function toolRows(part, env) {
   const rows = [{ segments, ...headerAttrs(env.group), kind: "tool-header" }];
   const args = String(part.arguments || "");
   const state = part.state;
-  const views = /** @type {{ view?: readonly Wire.View[] }} */ (state).view;
+  const diff = state.type === "completed" ? state.diff : undefined;
   const text = state.type === "error" ? state.error || "" : String(/** @type {{ output?: string }} */ (state).output || "");
   // A folded block builds no body rows, but its source keeps the body, so a fold never moves a source offset.
   const limit = env.expanded ? PREVIEW_ROWS + 1 : 0;
-  const body = views && views.length ? viewRows(views, width - LABEL_W, 0, limit) : { rows: wrapRows(text, width - LABEL_W, state.type === "error" ? "TxError" : "TxToolOutput", 0, limit), source: text };
+  const body = diff && diff.length ? diffRows(diff, width - LABEL_W, 0, limit) : { rows: wrapRows(text, width - LABEL_W, state.type === "error" ? "TxError" : "TxToolOutput", 0, limit), source: text };
   let source = headerSrc + "\n" + args;
   const base = source.length + 1;
   if (body.source) source += "\n" + body.source;

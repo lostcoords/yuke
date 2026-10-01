@@ -13,10 +13,11 @@ const report = Array.from({ length: 256 }, (_, i) => "report-line-" + i + " with
 const reasoning = ["reason-first", ...Array.from({ length: 254 }, (_, i) => "reason-middle-" + i), "reason-last"].join("\n");
 const plainOutput = Array.from({ length: 128 }, (_, i) => "plain-line-" + i).join("\n");
 const plain = { type: "tool", id: 1, name: "plain", arguments: '{"path":"plain.txt"}', state: { type: "completed", output: plainOutput, duration_ms: 1 } };
-const viewed = { type: "tool", id: 2, name: "view", arguments: '{"path":"view.md"}', state: { type: "completed", output: "", duration_ms: 2, view: [
-  { type: "markdown", text: "view-first\n\nview-second" }, { type: "text", text: "view-tail" },
-] } };
-const tools = [plain, viewed];
+const diffPart = { type: "tool", id: 2, name: "write", arguments: '{"path":"view.md"}', state: { type: "completed", output: "", duration_ms: 2, diff: [{ path: "view.md", hunks: [
+  { old_start: 1, old_lines: 0, new_start: 1, new_lines: 1, lines: ["+view-first"] },
+  { old_start: 9, old_lines: 0, new_start: 10, new_lines: 12, lines: Array.from({ length: 11 }, (_, i) => "+view-middle-" + i).concat("+view-tail") },
+] }] } };
+const tools = [plain, diffPart];
 for (let i = 2; i < 8; i++) tools.push({ ...plain, id: i + 1, name: "plain-" + i, arguments: '{"path":"plain-' + i + '.txt"}' });
 const parts = tools.concat([{ type: "reasoning", id: 9, text: reasoning, signature: "" }]);
 const t = new Transcript({
@@ -41,7 +42,7 @@ check("eight-tools", folded.filter((row) => row.header && row.partId !== 9).leng
 const bodyOf = (rows, id) => rows.filter((row) => row.partId === id && !row.header && row.src != null);
 check("plain-first-ten", bodyOf(folded, 1).length === 10 && bodyOf(folded, 1).every((row, i) => rowText(row) === "plain-line-" + i));
 check("plain-hint", folded.some((row) => row.partId === 1 && rowText(row) === "… (more lines, ctrl+o to expand)"));
-check("view-cap", bodyOf(folded, 2).length <= 10 && folded.some((row) => row.partId === 2 && rowText(row) === "view-first"));
+check("diff-cap", bodyOf(folded, 2).length <= 10 && folded.some((row) => row.partId === 2 && rowText(row) === "+view-first") && folded.some((row) => row.partId === 2 && rowText(row) === "…"));
 check("plain-source", sourceSpan(t._sourceOf("answer"), folded, "plain-line-0"));
 check("reasoning-folded", folded.filter((row) => row.partId === 9).length === 1 && t._sourceOf("answer").endsWith("reason-last"));
 // An open tool shows its whole output, and an open thought its whole text.
@@ -49,7 +50,7 @@ for (const part of parts) t.togglePart("answer", part.id);
 const open = publicRows("answer");
 check("reasoning-whole", sourceSpan(t._sourceOf("answer"), open, "reason-first") && sourceSpan(t._sourceOf("answer"), open, "reason-last"));
 check("plain-open", bodyOf(open, 1).length === 128 && rowText(bodyOf(open, 1)[127]) === "plain-line-127");
-check("view-open", open.some((row) => rowText(row) === "view-tail"));
+check("diff-open", open.some((row) => rowText(row) === "+view-tail"));
 
 {
   const rowsOf = (error) => { const e = new Transcript({}); e.setOutline([{ id: 1, type: "assistant", error }], null); return e.rows(160, 0, e.rowCount(160)).map(rowText).join("\n"); };

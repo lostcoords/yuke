@@ -6,7 +6,6 @@ const proto = @import("proto");
 const ids = proto.ids;
 const message = proto.message;
 const tool = proto.tool;
-const view = proto.view;
 const activity = proto.activity;
 
 /// The engine is the only producer, so an allocation failure is the one error a fold can return.
@@ -40,7 +39,6 @@ pub const Part = union(enum) {
         call_id: []const u8,
         name: []const u8,
         arguments: []const u8,
-        input_view: ?[]const view.View = null,
         output: std.ArrayList(u8) = .empty,
         state: tool.ToolState,
     };
@@ -99,7 +97,6 @@ pub const Part = union(enum) {
                     .call_id = try arena.dupe(u8, t.call_id),
                     .name = try arena.dupe(u8, t.name),
                     .arguments = try arena.dupe(u8, t.arguments),
-                    .input_view = if (t.input_view) |v| try proto.dupe(arena, v) else null,
                     .output = output,
                     .state = try dupeToolState(arena, t.state),
                 } };
@@ -299,7 +296,6 @@ pub fn partToWire(p: *const Part) message.AssistantPart {
             .call_id = t.call_id,
             .name = t.name,
             .arguments = t.arguments,
-            .input_view = t.input_view,
             .state = stateToWire(t),
         } },
     };
@@ -309,7 +305,7 @@ fn stateToWire(t: *const Part.Tool) tool.ToolState {
     return switch (t.state) {
         .running => |r| .{ .running = .{
             .started_at_ms = r.started_at_ms,
-            .output = if (t.output.items.len > 0) t.output.items else null,
+            .output = t.output.items,
         } },
         else => t.state,
     };
@@ -318,7 +314,7 @@ fn stateToWire(t: *const Part.Tool) tool.ToolState {
 /// Return output from an active state for the tool output buffer.
 fn toolOutputSeed(s: tool.ToolState) []const u8 {
     return switch (s) {
-        .running => |r| r.output orelse "",
+        .running => |r| r.output,
         else => "",
     };
 }
@@ -334,7 +330,7 @@ fn isTerminal(s: tool.ToolState) bool {
 fn dupeToolState(a: std.mem.Allocator, s: tool.ToolState) Error!tool.ToolState {
     return switch (s) {
         .pending => .{ .pending = .{} },
-        .running => |r| .{ .running = .{ .started_at_ms = r.started_at_ms, .output = null } },
+        .running => |r| .{ .running = .{ .started_at_ms = r.started_at_ms } },
         .completed, .@"error", .canceled => try proto.dupe(a, s),
     };
 }
@@ -460,24 +456,23 @@ test "tool state transitions from pending to a terminal state" {
     try testing.expectEqualStrings("done", d.parts.items[0].tool.state.completed.output);
 }
 
-test "completed tool state with a diff view clones the whole tree" {
+test "completed tool state with a diff clones the whole tree" {
     var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     try d.addPart(addTool(0, .{ .running = .{ .started_at_ms = 1 } }));
 
     var path_bytes = [_]u8{ 'x', '.', 'z', 'i', 'g' };
     var added_line = [_]u8{ '+', 'b' };
-    const hunk: view.DiffHunk = .{ .old_start = 1, .old_lines = 1, .new_start = 1, .new_lines = 2, .lines = &.{ "-a", "+a", &added_line } };
-    const file: view.DiffFile = .{ .path = &path_bytes, .hunks = &.{hunk} };
-    const views = [_]view.View{.{ .diff = .{ .files = &.{file} } }};
-    const state: tool.ToolState = .{ .completed = .{ .output = "ok", .view = &views, .duration_ms = 3 } };
+    const hunk: tool.DiffHunk = .{ .old_start = 1, .old_lines = 1, .new_start = 1, .new_lines = 2, .lines = &.{ "-a", "+a", &added_line } };
+    const files = [_]tool.DiffFile{.{ .path = &path_bytes, .hunks = &.{hunk} }};
+    const state: tool.ToolState = .{ .completed = .{ .output = "ok", .diff = &files, .duration_ms = 3 } };
     try d.applyToolState(toolStateChange(0, state));
     @memset(&path_bytes, 'x');
     @memset(&added_line, 'x');
 
     const cloned = d.parts.items[0].tool.state.completed;
-    try testing.expectEqualStrings("x.zig", cloned.view.?[0].diff.files[0].path);
-    try testing.expectEqualStrings("+b", cloned.view.?[0].diff.files[0].hunks[0].lines[2]);
+    try testing.expectEqualStrings("x.zig", cloned.diff[0].path);
+    try testing.expectEqualStrings("+b", cloned.diff[0].hunks[0].lines[2]);
 }
 
 test "streaming state: running tool outranks a trailing reasoning part" {
@@ -514,5 +509,5 @@ test "toActiveDraft carries the parts and the streamed output" {
     defer scratch.deinit();
     const snapshot = try d.toActiveDraft(scratch.allocator());
     try testing.expectEqualStrings("hello", snapshot.message.content[0].text.text);
-    try testing.expectEqualStrings("out", snapshot.message.content[1].tool.state.running.output.?);
+    try testing.expectEqualStrings("out", snapshot.message.content[1].tool.state.running.output);
 }

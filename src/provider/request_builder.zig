@@ -162,9 +162,9 @@ fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), added: *
         .tool => |t| {
             const call_id = t.call_id;
             var result = try terminalToolResult(gpa, call_id, t.state, options, images);
-            if (t.state == .completed) if (t.state.completed.tools_added) |definitions| {
-                result.loaded = try loadDefinitions(gpa, added, definitions, options);
-            };
+            if (t.state == .completed and t.state.completed.tools_added.len > 0) {
+                result.loaded = try loadDefinitions(gpa, added, t.state.completed.tools_added, options);
+            }
             try blocks.append(gpa, .{ .role = .user, .value = .{ .tool_result = result } });
         },
         else => {},
@@ -235,7 +235,8 @@ fn terminalToolResult(gpa: std.mem.Allocator, call_id: []const u8, state: proto.
 /// Resolve the images of a completed call. An image the model cannot read becomes a note after the text.
 fn completedResult(gpa: std.mem.Allocator, call_id: []const u8, c: proto.tool.ToolStateCompleted, options: Options, images: *ImageBudget) Error!Block.ToolResult {
     var result: Block.ToolResult = .{ .call_id = call_id, .content = c.output, .is_error = false };
-    const blobs = c.media orelse return result;
+    const blobs = c.media;
+    if (blobs.len == 0) return result;
     var media: std.ArrayList(Block.Media) = .empty;
     var text: std.ArrayList(u8) = .empty;
     for (blobs) |blob| switch (try mediaValue(blob, options, images)) {

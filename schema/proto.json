@@ -2144,11 +2144,6 @@
           "presence": "required"
         },
         {
-          "name": "input_view",
-          "type": "[]View",
-          "presence": "optional"
-        },
-        {
           "name": "state",
           "type": "ToolState",
           "presence": "required"
@@ -3400,25 +3395,73 @@
           "presence": "required"
         },
         {
-          "name": "view",
-          "type": "[]View",
-          "presence": "optional"
+          "name": "diff",
+          "doc": "The file changes the UI shows. The model never reads them.",
+          "type": "[]DiffFile",
+          "presence": "defaulted"
         },
         {
           "name": "media",
           "doc": "Images the model reads beside the output. The engine admitted each blob at the tool boundary.",
           "type": "[]MediaBlob",
-          "presence": "optional"
+          "presence": "defaulted"
         },
         {
           "name": "tools_added",
           "doc": "The definitions a tool search loaded. The transcript keeps them, so replay never reads the live catalog.",
           "type": "[]ToolDefinition",
-          "presence": "optional"
+          "presence": "defaulted"
         },
         {
           "name": "duration_ms",
           "type": "u64",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "DiffFile",
+      "doc": "One changed file. Its hunks hold unified diff lines.",
+      "fields": [
+        {
+          "name": "path",
+          "type": "string",
+          "presence": "required"
+        },
+        {
+          "name": "hunks",
+          "type": "[]DiffHunk",
+          "presence": "required"
+        }
+      ]
+    },
+    {
+      "name": "DiffHunk",
+      "doc": "One hunk of a unified diff.",
+      "fields": [
+        {
+          "name": "old_start",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "old_lines",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "new_start",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "new_lines",
+          "type": "u64",
+          "presence": "required"
+        },
+        {
+          "name": "lines",
+          "type": "[]string",
           "presence": "required"
         }
       ]
@@ -3454,11 +3497,6 @@
           "presence": "required"
         },
         {
-          "name": "view",
-          "type": "[]View",
-          "presence": "optional"
-        },
-        {
           "name": "duration_ms",
           "type": "u64",
           "presence": "required"
@@ -3482,108 +3520,7 @@
         {
           "name": "output",
           "type": "string",
-          "presence": "optional"
-        }
-      ]
-    },
-    {
-      "name": "DiffFile",
-      "doc": "This type describes one file in a diff view.",
-      "fields": [
-        {
-          "name": "path",
-          "type": "string",
-          "presence": "required"
-        },
-        {
-          "name": "old_path",
-          "type": "string",
-          "presence": "optional"
-        },
-        {
-          "name": "hunks",
-          "type": "[]DiffHunk",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "DiffHunk",
-      "doc": "This type describes one hunk of a unified diff.",
-      "fields": [
-        {
-          "name": "old_start",
-          "type": "u64",
-          "presence": "required"
-        },
-        {
-          "name": "old_lines",
-          "type": "u64",
-          "presence": "required"
-        },
-        {
-          "name": "new_start",
-          "type": "u64",
-          "presence": "required"
-        },
-        {
-          "name": "new_lines",
-          "type": "u64",
-          "presence": "required"
-        },
-        {
-          "name": "lines",
-          "type": "[]string",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "ViewDiff",
-      "doc": "This view displays a unified diff.",
-      "fields": [
-        {
-          "name": "files",
-          "type": "[]DiffFile",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "ViewJson",
-      "doc": "This view displays JSON text.",
-      "fields": [
-        {
-          "name": "text",
-          "type": "string",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "ViewMarkdown",
-      "doc": "This view displays Markdown text.",
-      "fields": [
-        {
-          "name": "text",
-          "type": "string",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "ViewText",
-      "doc": "This view displays plain text.",
-      "fields": [
-        {
-          "name": "text",
-          "type": "string",
-          "presence": "required"
-        },
-        {
-          "name": "language",
-          "type": "string",
-          "presence": "optional"
+          "presence": "defaulted"
         }
       ]
     }
@@ -3926,29 +3863,6 @@
         {
           "tag": "canceled",
           "type": "ToolStateCanceled"
-        }
-      ]
-    },
-    {
-      "name": "View",
-      "doc": "A frontend can render this hint natively or ignore it. Its fields borrow their data.",
-      "discriminator": "type",
-      "arms": [
-        {
-          "tag": "text",
-          "type": "ViewText"
-        },
-        {
-          "tag": "markdown",
-          "type": "ViewMarkdown"
-        },
-        {
-          "tag": "json",
-          "type": "ViewJson"
-        },
-        {
-          "tag": "diff",
-          "type": "ViewDiff"
         }
       ]
     },

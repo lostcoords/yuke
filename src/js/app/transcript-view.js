@@ -2,7 +2,6 @@
 //! It is a plugin on the render API, so a user replaces it or stacks a renderer on top of it. The helpers serve any look.
 import { term } from "yuke:internal/native/term";
 import { root } from "yuke:internal/core";
-import { Document, normalizeSource } from "yuke:internal/md";
 import { RowsView, Window } from "yuke:internal/ui";
 import { byteLabel } from "yuke:internal/format";
 import { clip } from "yuke:internal/text-input";
@@ -100,11 +99,11 @@ function moveSrc(rows, base) {
 }
 
 /**
- * The rows of tool-result views. A one-file diff omits its path. A multi-file or mixed view keeps file paths.
+ * The rows of a tool diff. A one-file diff omits its path. A row of `…` separates two hunks.
  * `limit` bounds the rows alone. The source keeps every chunk, so a fold never moves a source offset.
- * @param {readonly Wire.View[]} views @param {number} width @param {number} indent @param {number} [limit] @returns {Rendered}
+ * @param {readonly Wire.DiffFile[]} files @param {number} width @param {number} indent @param {number} [limit] @returns {Rendered}
  */
-export function viewRows(views, width, indent, limit = Infinity) {
+export function diffRows(files, width, indent, limit = Infinity) {
   /** @type {TranscriptRow[]} */
   const rows = [];
   let source = "";
@@ -118,25 +117,12 @@ export function viewRows(views, width, indent, limit = Infinity) {
     }
     source += text;
   };
-  for (const v of views) {
-    if (v.type === "diff") {
-      for (const f of v.files) {
-        if (f.path && (views.length !== 1 || v.files.length !== 1)) add(f.path, "TxToolTitle");
-        for (const h of f.hunks) for (const line of h.lines) add(line, line[0] === "+" ? "TxDiffAdd" : line[0] === "-" ? "TxDiffDel" : "TxDiffContext");
-      }
-    } else if (v.type === "markdown") {
-      if (source) source += "\n";
-      const base = source.length;
-      const chunk = normalizeSource(v.text || "");
-      source += chunk;
-      if (rows.length >= limit) continue;
-      const doc = new Document();
-      doc.setText(chunk);
-      // The document is new, so its rows belong to this call alone.
-      const shown = doc.rows(Math.max(1, width), limit - rows.length).map((r) => ({ segments: r.segments, indent }));
-      moveSrc(shown, base);
-      for (const r of shown) rows.push(r);
-    } else add(/** @type {{ text?: string }} */ (v).text ?? "", "TxToolOutput");
+  for (const f of files) {
+    if (files.length !== 1) add(f.path, "TxToolTitle");
+    for (let i = 0; i < f.hunks.length; i++) {
+      if (i > 0) add("…", "TxDiffContext");
+      for (const line of /** @type {Wire.DiffHunk} */ (f.hunks[i]).lines) add(line, line[0] === "+" ? "TxDiffAdd" : line[0] === "-" ? "TxDiffDel" : "TxDiffContext");
+    }
   }
   return { rows, source };
 }
@@ -234,18 +220,22 @@ function addBody(rows, shown, body, from, source) {
 function toolBody(part, width, expanded, rows, source) {
   const state = part.state;
   const name = String(part.name || "");
-  const views = /** @type {{ view?: readonly Wire.View[] }} */ (state).view;
+  const diff = state.type === "completed" ? state.diff : undefined;
   const text = state.type === "error" ? state.error || "" : String(/** @type {{ output?: string }} */ (state).output || "");
   const group = state.type === "error" ? "TxToolError" : "TxToolOutput";
   const cap = expanded ? Infinity : name === "read" && state.type !== "error" ? 0 : PREVIEW_LINES;
-  if (views && views.length && state.type !== "error") {
+  if (diff && diff.length) {
     const limit = name === "edit" ? Infinity : cap;
     // One row past the limit tells whether more rows exist, and a zero limit wraps nothing.
-    const built = viewRows(views, width, PAD, limit && limit + 1);
+    const built = diffRows(diff, width, PAD, limit && limit + 1);
     const more = built.rows.length > limit;
     if (more) built.rows.length = limit;
     source = addBody(rows, built.rows, built.source, 0, source);
     if (more) hint(rows, "… (more lines, ctrl+o to expand)");
+    else {
+      const cut = (/** @type {{ cut?: readonly { field?: string, total?: number }[] }} */ (part).cut || []).find((c) => c.field === "diff");
+      if (cut) hint(rows, "… (the diff is cut: " + cut.total + " lines in total)");
+    }
   } else if (name === "exec" && !expanded && text) {
     // The tail lines wrap into rows, and a long last line can fill the preview alone.
     const from = tailStart(text, EXEC_PREVIEW_LINES);

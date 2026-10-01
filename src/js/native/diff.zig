@@ -1,4 +1,4 @@
-//! The native `yuke:internal/native/diff` module describes one text change as bounded unified hunks for the reader; the model never sees the view.
+//! The native `yuke:internal/native/diff` module describes one text change as bounded unified hunks for the reader; the model never sees the diff.
 
 const std = @import("std");
 const quickjs = @import("quickjs");

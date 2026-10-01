@@ -7,7 +7,6 @@ const ids = @import("ids.zig");
 const misc = @import("misc.zig");
 const tagged = @import("tagged.zig");
 const tool = @import("tool.zig");
-const view = @import("view.zig");
 const input = @import("input.zig");
 
 /// This is the assistant draft that a run streams. Its fields borrow their data.
@@ -241,7 +240,6 @@ pub const ToolPart = struct {
     call_id: []const u8,
     name: []const u8,
     arguments: []const u8,
-    input_view: ?[]const view.View = null,
     state: tool.ToolState,
 };
 

@@ -60,22 +60,17 @@ pub fn writeOutline(w: *std.Io.Writer, s: *domain_session.Session) !void {
 }
 
 /// Every string a part inlines is bounded, and each cut value appears once in the part's `cut` list with its whole size.
-const max_inline_views: usize = 8;
 const max_inline_diff_lines: usize = 200;
 const max_inline_line_bytes: usize = 512;
 /// What one diff file or hunk costs in keys and brackets. The budget charges it, so structure cannot escape the bound.
 const diff_scaffold_bytes: usize = 128;
 
-/// The writer makes at most this many cut entries for one part, because its own caps bound them.
-const max_cuts: usize = 2 * max_inline_views + 8;
+/// The writer makes at most this many cut entries for one part: arguments, output or error, and the diff.
+const max_cuts: usize = 4;
 
 /// One value the projection cut. `field` is the address, and `size` is bytes for a string and items for a collection.
 const Cut = struct {
     field: Field,
-    /// The view list this cut belongs to, and empty for a field outside a view list.
-    list: []const u8 = "",
-    /// The position in the view list, and zero for a field outside a view list.
-    index: u32 = 0,
     size: u64,
     /// Where the inline prefix stopped, so a reader resumes there and keeps what it holds. Null for a collection.
     next: ?u64 = null,
@@ -86,16 +81,11 @@ const Cut = struct {
         arguments,
         output,
         @"error",
-        view_text,
-        view_diff,
-        view_count,
+        diff,
 
         /// Report whether this field counts items instead of bytes.
         fn counts(self: Field) bool {
-            return switch (self) {
-                .view_diff, .view_count => true,
-                else => false,
-            };
+            return self == .diff;
         }
     };
 };
@@ -136,17 +126,7 @@ const Cuts = struct {
         try w.writeAll(",\"cut\":[");
         for (self.items[0..self.len], 0..) |c, i| {
             if (i > 0) try w.writeByte(',');
-            try w.writeAll("{\"field\":\"");
-            switch (c.field) {
-                .text => try w.writeAll("text"),
-                .arguments => try w.writeAll("arguments"),
-                .output => try w.writeAll("output"),
-                .@"error" => try w.writeAll("error"),
-                .view_count => try w.writeAll(c.list),
-                .view_text => try w.print("{s}.{d}.text", .{ c.list, c.index }),
-                .view_diff => try w.print("{s}.{d}.diff", .{ c.list, c.index }),
-            }
-            try w.print("\",\"{s}\":{d}", .{ if (c.field.counts()) "total" else "bytes", c.size });
+            try w.print("{{\"field\":\"{s}\",\"{s}\":{d}", .{ @tagName(c.field), if (c.field.counts()) "total" else "bytes", c.size });
             if (c.next) |next| try w.print(",\"next\":{d}", .{next});
             try w.writeByte('}');
         }
@@ -154,12 +134,12 @@ const Cuts = struct {
     }
 };
 
-/// Write `"name":"..."` with the text cut on a character boundary. Record the whole size when cut.
-fn writeCapped(w: *std.Io.Writer, parts: *Parts, field: Cut.Field, list: []const u8, index: u32, name: []const u8, text: []const u8) !void {
+/// Write `"field":"..."` with the text cut on a character boundary. Record the whole size when cut.
+fn writeCapped(w: *std.Io.Writer, parts: *Parts, field: Cut.Field, text: []const u8) !void {
     const end = utf8.floor(text, parts.take(@min(text.len, max_page_bytes)));
-    try w.print("\"{s}\":", .{name});
+    try w.print("\"{s}\":", .{@tagName(field)});
     try std.json.Stringify.encodeJsonString(text[0..end], .{}, w);
-    if (end < text.len) parts.cuts.add(.{ .field = field, .list = list, .index = index, .size = text.len, .next = end });
+    if (end < text.len) parts.cuts.add(.{ .field = field, .size = text.len, .next = end });
 }
 
 /// A byte offset belongs to one draft lifetime.
@@ -229,11 +209,7 @@ fn writeToolPart(w: *std.Io.Writer, parts: *Parts, t: proto.message.ToolPart) !v
     try w.writeAll(",\"call_id\":");
     try std.json.Stringify.encodeJsonString(t.call_id, .{}, w);
     try w.writeByte(',');
-    try writeCapped(w, parts, .arguments, "", 0, "arguments", t.arguments);
-    if (t.input_view) |views| {
-        try w.writeAll(",\"input_view\":");
-        try writeViews(w, parts, "input_view", views);
-    }
+    try writeCapped(w, parts, .arguments, t.arguments);
     try w.writeAll(",\"state\":");
     try writeToolState(w, parts, t.state);
     try parts.cuts.write(w);
@@ -250,92 +226,50 @@ fn writeToolState(w: *std.Io.Writer, parts: *Parts, state: proto.tool.ToolState)
         },
         .running => |r| {
             try w.print("{{\"type\":\"running\",\"started_at_ms\":{d}", .{r.started_at_ms});
-            if (r.output) |out| {
+            if (r.output.len > 0) {
                 try w.writeByte(',');
-                try writeCapped(w, parts, .output, "", 0, "output", out);
+                try writeCapped(w, parts, .output, r.output);
             }
             try w.writeByte('}');
         },
         .completed => |c| {
             try w.print("{{\"type\":\"completed\",\"duration_ms\":{d},", .{c.duration_ms});
-            try writeCapped(w, parts, .output, "", 0, "output", c.output);
-            if (c.view) |views| {
-                try w.writeAll(",\"view\":");
-                try writeViews(w, parts, "view", views);
-            }
+            try writeCapped(w, parts, .output, c.output);
+            if (c.diff.len > 0) try writeDiff(w, parts, c.diff);
             // A media list is small and names blobs only, so it needs no cap.
-            if (c.media) |media| {
+            if (c.media.len > 0) {
                 try w.writeAll(",\"media\":");
-                try std.json.Stringify.value(media, .{}, w);
+                try std.json.Stringify.value(c.media, .{}, w);
             }
             try w.writeByte('}');
         },
         .@"error" => |e| {
             try w.print("{{\"type\":\"error\",\"duration_ms\":{d},", .{e.duration_ms});
-            try writeCapped(w, parts, .@"error", "", 0, "error", e.@"error");
-            if (e.view) |views| {
-                try w.writeAll(",\"view\":");
-                try writeViews(w, parts, "view", views);
-            }
+            try writeCapped(w, parts, .@"error", e.@"error");
             try w.writeByte('}');
         },
     }
 }
 
-/// Write at most `max_inline_views` views. A dropped view is recorded, so a row can say how many it hides.
-fn writeViews(w: *std.Io.Writer, parts: *Parts, list: []const u8, views: []const proto.view.View) !void {
-    try w.writeByte('[');
-    const shown = @min(views.len, max_inline_views);
-    for (views[0..shown], 0..) |v, i| {
-        if (i > 0) try w.writeByte(',');
-        try writeView(w, parts, list, @intCast(i), v);
-    }
-    try w.writeByte(']');
-    if (shown < views.len) parts.cuts.add(.{ .field = .view_count, .list = list, .size = views.len });
-}
-
-fn writeView(w: *std.Io.Writer, parts: *Parts, list: []const u8, index: u32, v: proto.view.View) !void {
-    switch (v) {
-        .text => |t| try writeTextView(w, parts, list, index, "text", t.text, t.language),
-        .markdown => |t| try writeTextView(w, parts, list, index, "markdown", t.text, null),
-        .json => |t| try writeTextView(w, parts, list, index, "json", t.text, null),
-        .diff => |d| try writeDiff(w, parts, list, index, d),
-    }
-}
-
-fn writeTextView(w: *std.Io.Writer, parts: *Parts, list: []const u8, index: u32, kind: []const u8, text: []const u8, language: ?[]const u8) !void {
-    try w.print("{{\"type\":\"{s}\",", .{kind});
-    try writeCapped(w, parts, .view_text, list, index, "text", text);
-    if (language) |lang| {
-        try w.writeAll(",\"language\":");
-        try std.json.Stringify.encodeJsonString(lang, .{}, w);
-    }
-    try w.writeByte('}');
-}
-
-/// Write a diff with a bounded line count. A transcript shows a preview, never a whole patch.
-fn writeDiff(w: *std.Io.Writer, parts: *Parts, list: []const u8, index: u32, d: proto.view.ViewDiff) !void {
+/// Write `,"diff":[...]` with a bounded line count. A transcript shows a preview, never a whole patch.
+fn writeDiff(w: *std.Io.Writer, parts: *Parts, files: []const proto.tool.DiffFile) !void {
     // Count first, because the walk stops early and the reader still wants the whole size.
     var total: u64 = 0;
-    for (d.files) |file| for (file.hunks) |hunk| {
+    for (files) |file| for (file.hunks) |hunk| {
         total += hunk.lines.len;
     };
 
     var budget: usize = max_inline_diff_lines;
     var shortened: u64 = 0;
     var written: usize = 0;
-    try w.writeAll("{\"type\":\"diff\",\"files\":[");
-    for (d.files) |file| {
+    try w.writeAll(",\"diff\":[");
+    for (files) |file| {
         // Charge the keys and brackets before writing them, so a file the budget cannot afford ends the walk.
         if (parts.take(diff_scaffold_bytes) < diff_scaffold_bytes) break;
         if (written > 0) try w.writeByte(',');
         written += 1;
         try w.writeAll("{\"path\":");
         _ = try writeFloor(w, parts, file.path);
-        if (file.old_path) |old| {
-            try w.writeAll(",\"old_path\":");
-            _ = try writeFloor(w, parts, old);
-        }
         try w.writeAll(",\"hunks\":[");
         var hunks: usize = 0;
         for (file.hunks) |hunk| {
@@ -355,10 +289,10 @@ fn writeDiff(w: *std.Io.Writer, parts: *Parts, list: []const u8, index: u32, d: 
         }
         try w.writeAll("]}");
     }
-    try w.writeAll("]}");
-    // A dropped file, a dropped line and a shortened line all abbreviate the diff, and the reader gets the whole count.
-    if (written < d.files.len or total > max_inline_diff_lines or shortened > 0) {
-        parts.cuts.add(.{ .field = .view_diff, .list = list, .index = index, .size = total });
+    try w.writeByte(']');
+    // A dropped file, a dropped line, or a shortened line abbreviates the diff. The cut records the whole line count.
+    if (written < files.len or total > max_inline_diff_lines or shortened > 0) {
+        parts.cuts.add(.{ .field = .diff, .size = total });
     }
 }
 
@@ -440,16 +374,15 @@ test "a huge tool result projects into a bounded parts response" {
     @memset(huge, 'x');
 
     const lines = [_][]const u8{huge};
-    const hunks = [_]proto.view.DiffHunk{.{ .old_start = 1, .old_lines = 1, .new_start = 1, .new_lines = 1, .lines = &lines }};
-    const files = [_]proto.view.DiffFile{.{ .path = "a.zig", .hunks = &hunks }};
-    const views = [_]proto.view.View{.{ .diff = .{ .files = &files } }};
+    const hunks = [_]proto.tool.DiffHunk{.{ .old_start = 1, .old_lines = 1, .new_start = 1, .new_lines = 1, .lines = &lines }};
+    const files = [_]proto.tool.DiffFile{.{ .path = "a.zig", .hunks = &hunks }};
 
     const content = [_]proto.message.AssistantPart{.{ .tool = .{
         .id = 0,
         .call_id = "call_1",
         .name = "exec",
         .arguments = huge,
-        .state = .{ .completed = .{ .output = huge, .view = &views, .duration_ms = 5 } },
+        .state = .{ .completed = .{ .output = huge, .diff = &files, .duration_ms = 5 } },
     } }};
     const messages = [_]proto.message.Message{.{ .assistant = .{
         .id = 1,
@@ -473,7 +406,7 @@ test "a huge tool result projects into a bounded parts response" {
     try testing.expectEqual(@as(i64, @intCast(huge.len)), output.get("bytes").?.integer);
     try testing.expectEqual(@as(i64, max_page_bytes), output.get("next").?.integer);
     // The one diff line is far over the line cap, and the response says so instead of eliding in silence.
-    try testing.expectEqual(@as(i64, 1), (try cutOf(arena.allocator(), aw.written(), 0, "view.0.diff")).?.get("total").?.integer);
+    try testing.expectEqual(@as(i64, 1), (try cutOf(arena.allocator(), aw.written(), 0, "diff")).?.get("total").?.integer);
 
     // `partText` reads that output one bounded page at a time.
     const text = partTextOf(&sess, 1, 0, "output") orelse return error.TestUnexpectedResult;
@@ -489,17 +422,16 @@ test "a diff of many files stays inside the response budget" {
     // A path and its scaffolding cost bytes even when no line is written, so the file count must not escape the budget.
     const path = "a" ** 200;
     const lines = [_][]const u8{"x"};
-    const hunks = [_]proto.view.DiffHunk{.{ .old_start = 1, .old_lines = 1, .new_start = 1, .new_lines = 1, .lines = &lines }};
-    const files = try gpa.alloc(proto.view.DiffFile, 10_000);
+    const hunks = [_]proto.tool.DiffHunk{.{ .old_start = 1, .old_lines = 1, .new_start = 1, .new_lines = 1, .lines = &lines }};
+    const files = try gpa.alloc(proto.tool.DiffFile, 10_000);
     defer gpa.free(files);
     for (files) |*f| f.* = .{ .path = path, .hunks = &hunks };
-    const views = [_]proto.view.View{.{ .diff = .{ .files = files } }};
     const content = [_]proto.message.AssistantPart{.{ .tool = .{
         .id = 0,
         .call_id = "call_1",
         .name = "exec",
         .arguments = "{}",
-        .state = .{ .completed = .{ .output = "", .view = &views, .duration_ms = 1 } },
+        .state = .{ .completed = .{ .output = "", .diff = files, .duration_ms = 1 } },
     } }};
     const messages = [_]proto.message.Message{.{ .assistant = .{
         .id = 1,
@@ -518,7 +450,41 @@ test "a diff of many files stays inside the response budget" {
     // The diff says how many lines the whole patch holds, so a row can mark what it hides.
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
-    try testing.expectEqual(@as(i64, 10_000), (try cutOf(arena.allocator(), aw.written(), 0, "view.0.diff")).?.get("total").?.integer);
+    try testing.expectEqual(@as(i64, 10_000), (try cutOf(arena.allocator(), aw.written(), 0, "diff")).?.get("total").?.integer);
+}
+
+test "a diff over the line cap records its whole line count" {
+    const gpa = testing.allocator;
+    const sid = SessionId.bytes([_]u8{8} ** 16);
+    var sess = domain_session.Session.init(gpa, sid);
+    defer sess.deinit();
+
+    // Short lines in one file, so only the line cap cuts the diff.
+    const lines = [_][]const u8{"+x"} ** (max_inline_diff_lines + 1);
+    const hunks = [_]proto.tool.DiffHunk{.{ .old_start = 1, .old_lines = 0, .new_start = 1, .new_lines = lines.len, .lines = &lines }};
+    const files = [_]proto.tool.DiffFile{.{ .path = "a.zig", .hunks = &hunks }};
+    const content = [_]proto.message.AssistantPart{.{ .tool = .{
+        .id = 0,
+        .call_id = "call_1",
+        .name = "write",
+        .arguments = "{}",
+        .state = .{ .completed = .{ .output = "", .diff = &files, .duration_ms = 1 } },
+    } }};
+    const messages = [_]proto.message.Message{.{ .assistant = .{
+        .id = 1,
+        .run_id = 1,
+        .config_rev = 0,
+        .content = &content,
+        .time = .{ .created_at_ms = 1 },
+    } }};
+    try seedHistory(&sess, &messages);
+
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    try writeMessageParts(&aw.writer, &sess, 1, null, null);
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    try testing.expectEqual(@as(i64, max_inline_diff_lines + 1), (try cutOf(arena.allocator(), aw.written(), 0, "diff")).?.get("total").?.integer);
 }
 
 test "many huge parts each stay inside the part budget and none is dropped" {
@@ -584,18 +550,12 @@ test "every cut address resolves to its own field, never a neighbour" {
     var sess = domain_session.Session.init(gpa, sid);
     defer sess.deinit();
 
-    const input_views = [_]proto.view.View{.{ .markdown = .{ .text = "input view text" } }};
-    const state_views = [_]proto.view.View{
-        .{ .text = .{ .text = "first view" } },
-        .{ .json = .{ .text = "{\"second\":true}" } },
-    };
     const content = [_]proto.message.AssistantPart{.{ .tool = .{
         .id = 0,
         .call_id = "call_1",
         .name = "exec",
         .arguments = "{\"command\":\"zig build\"}",
-        .input_view = &input_views,
-        .state = .{ .completed = .{ .output = "the output", .view = &state_views, .duration_ms = 5 } },
+        .state = .{ .completed = .{ .output = "the output", .duration_ms = 5 } },
     } }};
     const messages = [_]proto.message.Message{.{ .assistant = .{
         .id = 1,
@@ -609,15 +569,16 @@ test "every cut address resolves to its own field, never a neighbour" {
     // Each address answers its own field. Before the address existed, every one of these gave the output.
     try testing.expectEqualStrings("{\"command\":\"zig build\"}", partTextOf(&sess, 1, 0, "arguments").?);
     try testing.expectEqualStrings("the output", partTextOf(&sess, 1, 0, "output").?);
-    try testing.expectEqualStrings("input view text", partTextOf(&sess, 1, 0, "input_view.0.text").?);
-    try testing.expectEqualStrings("first view", partTextOf(&sess, 1, 0, "view.0.text").?);
-    try testing.expectEqualStrings("{\"second\":true}", partTextOf(&sess, 1, 0, "view.1.text").?);
+
+    // A result without a diff writes no diff key.
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    try writeMessageParts(&aw.writer, &sess, 1, null, null);
+    try testing.expect(std.mem.indexOf(u8, aw.written(), "\"diff\"") == null);
 
     // An address that names nothing answers null, because `field` arrives from JavaScript.
     try testing.expect(partTextOf(&sess, 1, 0, "error") == null);
-    try testing.expect(partTextOf(&sess, 1, 0, "view.9.text") == null);
-    try testing.expect(partTextOf(&sess, 1, 0, "view.x.text") == null);
-    try testing.expect(partTextOf(&sess, 1, 0, "view.0") == null);
+    try testing.expect(partTextOf(&sess, 1, 0, "diff") == null);
     try testing.expect(partTextOf(&sess, 1, 0, "text") == null);
     try testing.expect(partTextOf(&sess, 1, 0, "") == null);
 }

@@ -1,4 +1,4 @@
-//! Paged text reads over one session: a part field or a view, one bounded window at a time.
+//! Paged text reads over one session: one part field, one bounded window at a time.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -35,35 +35,7 @@ fn toolFieldText(t: proto.message.ToolPart, field: []const u8) ?[]const u8 {
         .@"error" => |e| e.@"error",
         else => null,
     };
-    if (viewTextIndex(field, "input_view")) |i| return viewText(t.input_view, i);
-    if (viewTextIndex(field, "view")) |i| return viewText(switch (t.state) {
-        .completed => |c| c.view,
-        .@"error" => |e| e.view,
-        else => null,
-    }, i);
     return null;
-}
-
-/// Read `<list>.<index>.text` and answer the index. A field of another shape answers null.
-fn viewTextIndex(field: []const u8, list: []const u8) ?u32 {
-    if (!std.mem.startsWith(u8, field, list)) return null;
-    const rest = field[list.len..];
-    if (rest.len == 0 or rest[0] != '.') return null;
-    const dot = std.mem.indexOfScalar(u8, rest[1..], '.') orelse return null;
-    if (!std.mem.eql(u8, rest[1 + dot + 1 ..], "text")) return null;
-    return std.fmt.parseInt(u32, rest[1 .. 1 + dot], 10) catch null;
-}
-
-/// The text of one view, or null when the index is past the list or the view holds no text.
-fn viewText(views: ?[]const proto.view.View, index: u32) ?[]const u8 {
-    const list = views orelse return null;
-    if (index >= list.len) return null;
-    return switch (list[index]) {
-        .text => |t| t.text,
-        .markdown => |t| t.text,
-        .json => |t| t.text,
-        else => null,
-    };
 }
 
 /// One page of one field: the whole characters it holds and where a reader resumes.
@@ -133,7 +105,7 @@ test "a page limit always holds one whole character" {
     try testing.expectEqual(@as(usize, 64), pageLimit(64));
 }
 
-/// Read `text` page by page through `fieldPage`, as a view does, and answer the text the pages rebuild.
+/// Read `text` page by page through `fieldPage`. Answer the text that the pages rebuild.
 pub fn rebuildFieldPages(gpa: std.mem.Allocator, text: []const u8, want: usize) ![]u8 {
     var rebuilt: std.ArrayList(u8) = .empty;
     errdefer rebuilt.deinit(gpa);

@@ -62,7 +62,6 @@ fn hasPointers(comptime T: type) bool {
 }
 
 const tool = @import("tool.zig");
-const view = @import("view.zig");
 const testing = std.testing;
 
 /// Instantiate `dupe` for `T`. The `.run` reference instantiates the whole type graph.
@@ -82,22 +81,21 @@ test "dupe compiles for every registry type" {
     inline for (registry.numeric_enums) |e| _ = &Instantiate(e.ty).run;
 }
 
-test "dupe deep-copies a tool-state view tree" {
+test "dupe deep-copies a tool-state diff tree" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var src = [_]u8{ 'h', 'i' };
-    const hunk: view.DiffHunk = .{ .old_start = 1, .old_lines = 1, .new_start = 1, .new_lines = 2, .lines = &.{ "-a", "+b" } };
-    const file: view.DiffFile = .{ .path = "x.zig", .hunks = &.{hunk} };
-    const views = [_]view.View{.{ .diff = .{ .files = &.{file} } }};
-    const state: tool.ToolState = .{ .completed = .{ .output = &src, .view = &views, .duration_ms = 3 } };
+    const hunk: tool.DiffHunk = .{ .old_start = 1, .old_lines = 1, .new_start = 1, .new_lines = 2, .lines = &.{ "-a", "+b" } };
+    const files = [_]tool.DiffFile{.{ .path = "x.zig", .hunks = &.{hunk} }};
+    const file = files[0];
+    const state: tool.ToolState = .{ .completed = .{ .output = &src, .diff = &files, .duration_ms = 3 } };
 
     const dst = try dupe(arena.allocator(), state);
-    const cloned_files = dst.completed.view.?[0].diff.files;
+    const cloned_files = dst.completed.diff;
     const cloned_hunks = cloned_files[0].hunks;
     try testing.expectEqualStrings("x.zig", cloned_files[0].path);
     try testing.expectEqualStrings("+b", cloned_hunks[0].lines[1]);
-    try testing.expect(dst.completed.view.?.ptr != state.completed.view.?.ptr);
-    try testing.expect(cloned_files.ptr != views[0].diff.files.ptr);
+    try testing.expect(cloned_files.ptr != state.completed.diff.ptr);
     try testing.expect(cloned_files[0].path.ptr != file.path.ptr);
     try testing.expect(cloned_hunks.ptr != file.hunks.ptr);
     try testing.expect(cloned_hunks[0].lines.ptr != hunk.lines.ptr);
