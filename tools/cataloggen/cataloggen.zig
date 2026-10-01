@@ -269,22 +269,34 @@ fn emitDialect(run: *Run, flags: std.json.ObjectMap, protocol: []const u8) !void
     if (flags.get("max_tokens_field")) |value| {
         try emitDialectMember(run, vocab.ir.MaxTokensField, "max_tokens_field", try text(value));
     }
-    if (flags.get("anthropic_adaptive")) |value| {
-        if (value != .bool) return Error.InvalidDocument;
-        try w.print(" .anthropic_adaptive = {},", .{value.bool});
-    }
 
     const min = flags.get("reasoning_budget_min");
     const max = flags.get("reasoning_budget_max");
-    if (min == null and max == null) return;
-    try w.writeAll(" .reasoning_budget = .{ .range = .{");
-    if (min) |value| try w.print(" .min = {d},", .{try number(value)});
-    if (max) |value| {
-        const budget = try number(value);
-        if (budget < 0) return Error.InvalidDocument; // The field is unsigned, so a negative value would not compile.
-        try w.print(" .max = {d},", .{budget});
+    const shape_value = flags.get("anthropic_thinking") orelse {
+        // The contract states bounds only beside the budget shape.
+        if (min != null or max != null) return Error.InvalidDocument;
+        return;
+    };
+    const name = try text(shape_value);
+    // Only an Anthropic Messages path reads a thinking shape, so a model on another path would reject it.
+    if (!std.mem.eql(u8, protocol, "anthropic_messages")) return run.degrade("anthropic_thinking outside anthropic_messages", name);
+    const shape = std.meta.stringToEnum(std.meta.Tag(vocab.model.AnthropicThinking), name) orelse return run.degrade("anthropic_thinking", name);
+    if (shape != .budget and (min != null or max != null)) return Error.InvalidDocument;
+    switch (shape) {
+        // The catalog states the absent shape by omission, never by name.
+        .none => return run.degrade("anthropic_thinking", name),
+        .toggle, .adaptive => try w.print(" .anthropic_thinking = .{s},", .{@tagName(shape)}),
+        .budget => {
+            try w.writeAll(" .anthropic_thinking = .{ .budget = .{");
+            if (min) |value| try w.print(" .min = {d},", .{try number(value)});
+            if (max) |value| {
+                const budget = try number(value);
+                if (budget < 0) return Error.InvalidDocument; // The field is unsigned, so a negative value would not compile.
+                try w.print(" .max = {d},", .{budget});
+            }
+            try w.writeAll(" } },");
+        },
     }
-    try w.writeAll(" } },");
 }
 
 /// Write one dialect member, or report a name this build does not know and keep the field default.
@@ -400,7 +412,7 @@ const one_provider =
     \\  "models":[{"id":"claude","upstream_id":"claude","name":"Claude","protocol":"anthropic_messages",
     \\   "limits":{"context_window":200000,"max_output_tokens":64000},
     \\   "cost":[{"min_prompt_tokens":0,"input":3,"output":15,"reasoning":15,"cache_read":0.3,"cache_write":null},{"min_prompt_tokens":200001,"input":6,"output":22.5,"reasoning":22.5,"cache_read":0.6,"cache_write":null}],
-    \\   "flags":{"supports_tools":true,"supports_vision":true,"reasoning_budget_min":1024},
+    \\   "flags":{"supports_tools":true,"supports_vision":true,"anthropic_thinking":"budget","reasoning_budget_min":1024},
     \\   "modalities":{"input":["text","image"],"output":["text"]},
     \\   "reasoning":true,"reasoning_levels":["low","high"],"status":"beta"}]}]}
 ;
@@ -442,6 +454,7 @@ test "a provider and its model reach the generated table" {
     try testing.expect(std.mem.indexOf(u8, out, ".{ .name = \"anthropic-version\", .value = \"2023-06-01\" }") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".protocol = .anthropic_messages,\n") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".reasoning_levels = &.{ .{ .named = \"low\" }, .{ .named = \"high\" } }") != null);
+    try testing.expect(std.mem.indexOf(u8, out, ".anthropic_thinking = .{ .budget = .{") != null);
     try testing.expect(std.mem.indexOf(u8, out, ".min = 1024,") != null);
     // The kinds a model reads decide whether a request may carry an attachment at all.
     try testing.expect(std.mem.indexOf(u8, out, ".input = &.{ .text, .image },") != null);
@@ -563,6 +576,13 @@ test "the endpoint list must be consistent with the credential scheme and the mo
 
 const Run_ = struct { stats: Stats, text: []const u8 };
 
+/// Replace the fixture's thinking shape and its bounds with `shape`.
+fn withShape(a: std.mem.Allocator, shape: []const u8) !Run_ {
+    const source = try std.mem.replaceOwned(u8, a, one_provider, "\"anthropic_thinking\":\"budget\",\"reasoning_budget_min\":1024", shape);
+    var out: std.Io.Writer.Allocating = .init(a);
+    return .{ .stats = try emit(a, &out.writer, source), .text = out.written() };
+}
+
 /// Generate from a document whose model carries `extra` flags.
 fn withFlags(a: std.mem.Allocator, extra: []const u8) !Run_ {
     const source = try std.mem.replaceOwned(u8, a, one_provider, "\"supports_vision\":true", extra);
@@ -591,6 +611,40 @@ test "an unknown dialect name keeps the default and is reported" {
     const clean = try withFlags(a, "\"supports_vision\":true,\"reasoning_replay\":\"reasoning_content\"");
     try testing.expectEqual(@as(usize, 0), clean.stats.unknown.len);
     try testing.expect(std.mem.indexOf(u8, clean.text, ".reasoning_replay = .reasoning_content,") != null);
+}
+
+test "an anthropic thinking shape is emitted, reported, or refused per the contract" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Each named shape reaches the table; a budget may state no bound.
+    const toggle = try withShape(a, "\"anthropic_thinking\":\"toggle\"");
+    try testing.expect(std.mem.indexOf(u8, toggle.text, ".anthropic_thinking = .toggle,") != null);
+    const adaptive = try withShape(a, "\"anthropic_thinking\":\"adaptive\"");
+    try testing.expect(std.mem.indexOf(u8, adaptive.text, ".anthropic_thinking = .adaptive,") != null);
+    const bare = try withShape(a, "\"anthropic_thinking\":\"budget\"");
+    try testing.expectEqual(@as(usize, 0), bare.stats.unknown.len);
+    try testing.expect(std.mem.indexOf(u8, bare.text, ".anthropic_thinking = .{ .budget = .{") != null);
+
+    // A name this build does not know, and the absent shape spelled out, keep the default and are reported.
+    for ([_][]const u8{ "interleaved", "none" }) |name| {
+        const source = try std.fmt.allocPrint(a, "\"anthropic_thinking\":\"{s}\"", .{name});
+        const unknown = try withShape(a, source);
+        try testing.expectEqualStrings(try std.fmt.allocPrint(a, "anthropic_thinking={s}", .{name}), unknown.stats.unknown[0]);
+        try testing.expect(std.mem.indexOf(u8, unknown.text, ".anthropic_thinking") == null);
+    }
+
+    // Only an Anthropic Messages path reads a shape, so a chat model reports it and drops it.
+    const chat_source = try std.mem.replaceOwned(u8, a, gateway, "\"thinking_format\":\"deepseek\"", "\"anthropic_thinking\":\"adaptive\"");
+    var chat_out: std.Io.Writer.Allocating = .init(a);
+    const chat = try emit(a, &chat_out.writer, chat_source);
+    try testing.expectEqualStrings("anthropic_thinking outside anthropic_messages=adaptive", chat.unknown[0]);
+    try testing.expect(std.mem.indexOf(u8, chat_out.written(), ".anthropic_thinking") == null);
+
+    // The contract states budget bounds only beside the budget shape.
+    try testing.expectError(Error.InvalidDocument, withShape(a, "\"reasoning_budget_min\":1024"));
+    try testing.expectError(Error.InvalidDocument, withShape(a, "\"anthropic_thinking\":\"adaptive\",\"reasoning_budget_min\":1024"));
 }
 
 test "a stated capability reaches the table, and an absent one stays unknown" {

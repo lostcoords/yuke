@@ -190,23 +190,21 @@ fn beginMessage(jw: *std.json.Stringify, role: ir.Role) ir.SerializeError!void {
     try jw.beginArray();
 }
 
-fn writeReasoning(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) ir.SerializeError!void {
-    switch (reasoning) {
-        // A model that lists `off` takes `none`. It writes no trace, so it needs no include.
-        .off => try json.nested(jw, "reasoning", "effort", "none"),
-        .effort => |effort| {
-            try jw.objectField("reasoning");
-            try jw.beginObject();
-            try json.field(jw, "effort", @tagName(effort));
-            // Encrypted traces have no visible text without a plaintext summary.
-            try json.field(jw, "summary", "auto");
-            try jw.endObject();
-            try jw.objectField("include");
-            try jw.beginArray();
-            try jw.write("reasoning.encrypted_content");
-            try jw.endArray();
-        },
-        .default, .adaptive, .budget => {},
+/// Write the effort. Responses has no thinking shape of its own, so only `off` and the effort reach the wire.
+fn writeReasoning(jw: *std.json.Stringify, reasoning: ir.ReasoningSettings) ir.SerializeError!void {
+    // A model that lists `off` takes `none`. It writes no trace, so it needs no include.
+    if (reasoning.thinking == .off) return json.nested(jw, "reasoning", "effort", "none");
+    if (reasoning.effort) |effort| {
+        try jw.objectField("reasoning");
+        try jw.beginObject();
+        try json.field(jw, "effort", @tagName(effort));
+        // Encrypted traces have no visible text without a plaintext summary.
+        try json.field(jw, "summary", "auto");
+        try jw.endObject();
+        try jw.objectField("include");
+        try jw.beginArray();
+        try jw.write("reasoning.encrypted_content");
+        try jw.endArray();
     }
 }
 
@@ -371,7 +369,7 @@ test "off asks for no reasoning rather than omitting the control" {
     try expectJson(
         \\{"model":"gpt-5.2","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"none"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}
     ,
-        .{ .model = "gpt-5.2", .wire = .{ .openai_responses = .{} }, .max_output_tokens = 8, .reasoning = .off },
+        .{ .model = "gpt-5.2", .wire = .{ .openai_responses = .{} }, .max_output_tokens = 8, .reasoning = .{ .thinking = .off } },
         &blocks,
     );
 }

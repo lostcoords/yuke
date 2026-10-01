@@ -114,17 +114,27 @@ pub const ThinkingFormat = enum {
     ant_ling,
 };
 
-/// The reasoning control one request asks for, resolved against the model.
-pub const ReasoningControl = union(enum) {
+/// Whether and how the model thinks before it answers.
+pub const Thinking = union(enum) {
     /// Omit the control. The endpoint default stays.
     default,
     /// Ask for no reasoning. Some hosts accept the field and reason again.
     off,
-    /// Let the model choose when and how much to think.
-    adaptive,
+    /// Let the model choose when and how much to think. A null display leaves the endpoint default.
+    /// Only thinking can carry a display: Anthropic rejects one on disabled thinking.
+    adaptive: ?ThinkingDisplay,
     /// A thinking-token budget, clamped below `max_output_tokens`.
     budget: u64,
-    effort: Effort,
+};
+
+/// Whether a thinking block returns its summary text. Anthropic bills the full thinking either way.
+pub const ThinkingDisplay = enum { summarized, omitted };
+
+/// The reasoning one request asks for, resolved against the model. Each serializer writes the settings its protocol has.
+pub const ReasoningSettings = struct {
+    thinking: Thinking = .default,
+    /// How hard the model thinks. A null effort leaves the endpoint default.
+    effort: ?Effort = null,
 };
 
 /// The wire facts of one protocol. Its tag selects the serializer; the model and the route fill it.
@@ -163,7 +173,7 @@ pub const Request = struct {
     tools: []const Tool = &.{},
     /// A null limit leaves the endpoint default; Anthropic has none, so it needs a value.
     max_output_tokens: ?u32 = null,
-    reasoning: ReasoningControl = .default,
+    reasoning: ReasoningSettings = .{},
     /// Sampling temperature. A null value leaves the endpoint default, which every host defines.
     temperature: ?f64 = null,
     /// Nucleus sampling mass. Anthropic asks that a request set this or `temperature`, not both.

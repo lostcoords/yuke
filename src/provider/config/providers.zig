@@ -31,7 +31,7 @@ pub const Error = error{
     DuplicateEndpoint,
     /// A Responses dialect on a path that is not the Responses API.
     BadDialect,
-    /// Tool search needs a compatible protocol and tool support.
+    /// Tool search needs a compatible protocol and tool support; a thinking shape needs Anthropic Messages, and budget bounds need the budget shape.
     BadCapability,
     /// A key header on a grant, which is always a bearer.
     BadKeyHeader,
@@ -61,7 +61,9 @@ pub const FileFlags = struct {
     supports_tool_search: ?bool = null,
     reasoning_replay: ai.ir.ReasoningReplay = .none,
     thinking_format: ai.ir.ThinkingFormat = .none,
-    anthropic_adaptive: bool = false,
+    /// The request shape a named level takes on Anthropic Messages. Null means the level is an effort.
+    anthropic_thinking: ?enum { toggle, adaptive, budget } = null,
+    /// The bounds of the `budget` shape. A null bound is unknown.
     reasoning_budget_min: ?i64 = null,
     reasoning_budget_max: ?u64 = null,
     max_tokens_field: ai.ir.MaxTokensField = .max_tokens,
@@ -106,8 +108,11 @@ pub fn modelSpec(arena: Allocator, m: FileModel, endpoints: []const ai.route.End
             .thinking_format = m.flags.thinking_format,
             .reasoning_replay = m.flags.reasoning_replay,
             .max_tokens_field = m.flags.max_tokens_field,
-            .anthropic_adaptive = m.flags.anthropic_adaptive,
-            .reasoning_budget = .from(m.flags.reasoning_budget_min, m.flags.reasoning_budget_max),
+            .anthropic_thinking = if (m.flags.anthropic_thinking) |shape| switch (shape) {
+                .toggle => .toggle,
+                .adaptive => .adaptive,
+                .budget => .{ .budget = .{ .min = m.flags.reasoning_budget_min, .max = m.flags.reasoning_budget_max } },
+            } else .none,
         },
     };
 }
@@ -115,14 +120,19 @@ pub fn modelSpec(arena: Allocator, m: FileModel, endpoints: []const ai.route.End
 /// Name the endpoint one file model calls, or fail when the entry leaves the choice open.
 fn modelProtocol(m: FileModel, endpoints: []const ai.route.Endpoint) error{ NoEndpoint, BadCapability }!ai.route.Protocol {
     const protocol = m.protocol orelse (if (endpoints.len == 1) endpoints[0].protocol else return error.NoEndpoint);
-    try validateSearchCapability(m, protocol);
+    try validateCapabilities(m, protocol);
     if (ai.route.findEndpoint(endpoints, protocol) == null) return error.NoEndpoint;
     return protocol;
 }
 
-fn validateSearchCapability(m: FileModel, protocol: ?ai.route.Protocol) error{BadCapability}!void {
+/// Check the flags against the protocol. A null protocol is unknown until the catalog merge, which checks again.
+fn validateCapabilities(m: FileModel, protocol: ?ai.route.Protocol) error{BadCapability}!void {
     if (m.flags.supports_tool_search == true and
         (protocol == .openai_chat or !m.flags.supports_tools)) return error.BadCapability;
+    if (m.flags.anthropic_thinking != null and protocol != null and protocol != .anthropic_messages)
+        return error.BadCapability;
+    const bounds = m.flags.reasoning_budget_min != null or m.flags.reasoning_budget_max != null;
+    if (bounds and m.flags.anthropic_thinking != .budget) return error.BadCapability;
 }
 
 /// The file shape. Only `id` is required, and a catalog row can supply an absent routing field.
@@ -359,7 +369,7 @@ fn resolveProvider(fp: FileProvider) Error!LocalProvider {
             if (std.mem.eql(u8, prev.id, fm.id)) return error.DuplicateModel;
         }
         // The catalog can name the endpoints, so only a declared list is checked here; the merge checks the rest.
-        if (fp.endpoints) |endpoints| _ = try modelProtocol(fm, endpoints) else try validateSearchCapability(fm, fm.protocol);
+        if (fp.endpoints) |endpoints| _ = try modelProtocol(fm, endpoints) else try validateCapabilities(fm, fm.protocol);
         if (!ai.model.validCost(fm.cost)) return error.BadCost;
         if (fm.reasoning_levels.len > proto.meta.limits.max_reasoning_levels) return error.BadReasoningLevel;
         for (fm.reasoning_levels, 0..) |level, level_i| {
@@ -763,7 +773,7 @@ test "a file model decodes its flags and projects onto the library shape" {
         \\ "limits":{"context_window":65536,"max_output_tokens":8192},
         \\ "reasoning_levels":[null,"high"],
         \\ "flags":{"reasoning_replay":"reasoning_content","thinking_format":"deepseek",
-        \\ "max_tokens_field":"max_completion_tokens","supports_vision":true,"reasoning_budget_max":32000}},
+        \\ "max_tokens_field":"max_completion_tokens","supports_vision":true}},
         \\ {"id":"plain","upstream_id":"plain"}]}
     ));
     defer loaded.deinit();
@@ -786,13 +796,35 @@ test "a file model decodes its flags and projects onto the library shape" {
     try testing.expectEqual(ai.ir.ThinkingFormat.deepseek, spec.dialect.thinking_format);
     try testing.expectEqual(ai.ir.ReasoningReplay.reasoning_content, spec.dialect.reasoning_replay);
     try testing.expectEqual(ai.ir.MaxTokensField.max_completion_tokens, spec.dialect.max_tokens_field);
-    try testing.expectEqual(@as(?u64, 32000), spec.dialect.reasoning_budget.range.max);
     try testing.expect(spec.caps.vision.? and spec.caps.tools.?); // `supports_tools` defaults true.
     try testing.expect(spec.reasoning_levels[0] == .none);
     try testing.expectEqualStrings("high", spec.reasoning_levels[1].named);
 
     // A price the file omits is unknown, not zero. A local endpoint publishes none.
     try testing.expect(spec.cost.len == 1 and spec.cost[0].input == null);
+}
+
+test "a budget shape projects with its bounds" {
+    var loaded = try loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"a","base_url":"https://example.test/v1","endpoints":[{"protocol":"anthropic_messages"}],
+        \\ "models":[{"id":"m","upstream_id":"m","flags":{"anthropic_thinking":"budget","reasoning_budget_max":32000}}]}
+    ));
+    defer loaded.deinit();
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const spec = try modelSpec(arena.allocator(), loaded.providers[0].models[0], loaded.providers[0].endpoints.?);
+    try testing.expectEqual(@as(?u64, 32000), spec.dialect.anthropic_thinking.budget.max);
+}
+
+test "a thinking shape needs Anthropic Messages, and bounds need the budget shape" {
+    try testing.expectError(error.BadCapability, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"a","base_url":"https://example.test/v1","endpoints":[{"protocol":"openai_chat"}],
+        \\ "models":[{"id":"m","upstream_id":"m","flags":{"anthropic_thinking":"adaptive"}}]}
+    )));
+    try testing.expectError(error.BadCapability, loadBytes(testing.allocator, wrapProvider(
+        \\{"id":"a","base_url":"https://example.test/v1","endpoints":[{"protocol":"anthropic_messages"}],
+        \\ "models":[{"id":"m","upstream_id":"m","flags":{"anthropic_thinking":"adaptive","reasoning_budget_min":1024}}]}
+    )));
 }
 
 test "a file model may omit its limits entirely" {
@@ -815,7 +847,7 @@ test "the shipped sample document still loads" {
     defer loaded.deinit();
     try testing.expectEqual(@as(usize, 3), loaded.providers.len);
     try testing.expectEqualStrings("minimax", loaded.providers[0].id);
-    try testing.expect(loaded.providers[0].models[0].flags.anthropic_adaptive);
+    try testing.expect(loaded.providers[0].models[0].flags.anthropic_thinking.? == .toggle);
     try testing.expect(loaded.providers[1].auth == null); // The local server needs no key.
     // A gateway entry states its own paths, and its models name theirs.
     try testing.expectEqual(@as(usize, 3), loaded.providers[2].endpoints.?.len);

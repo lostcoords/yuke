@@ -34,7 +34,7 @@ pub fn find(id: []const u8) ?*const Provider {
 }
 
 /// The catalog revision these rows come from.
-pub const revision = "d88f58a79e452f853de4aa0ee8938ffa2537425d3c1a77c8cc95fa9fa244b83f23e9460191268ba055578b3586ac184de1a41eeede9b2d28c20e9724fa545e45";
+pub const revision = "a4e54e4795c795693b5b4cd94cb9ca123e8f76e583bb9a024519a488b50187be53a78bf58c9c03c6423b88d64d1c9e17018fab01f8614db9603f72603448b5ba";
 
 pub const providers = [_]Provider{
     .{
@@ -67,13 +67,15 @@ pub const providers = [_]Provider{
                         .cache_write = 12.5,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-fable-5-1",
@@ -94,13 +96,15 @@ pub const providers = [_]Provider{
                         .cache_write = 12.5,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-haiku-4-5",
@@ -128,7 +132,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .reasoning_budget = .{ .range = .{
+                    .anthropic_thinking = .{ .budget = .{
                         .min = 1024,
                     } },
                 },
@@ -159,7 +163,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .reasoning_budget = .{ .range = .{
+                    .anthropic_thinking = .{ .budget = .{
                         .min = 1024,
                     } },
                 },
@@ -183,7 +187,7 @@ pub const providers = [_]Provider{
                         .cache_write = 6.25,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -210,7 +214,7 @@ pub const providers = [_]Provider{
                         .cache_write = 6.25,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -237,13 +241,15 @@ pub const providers = [_]Provider{
                         .cache_write = 6.25,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-opus-4-7",
@@ -264,13 +270,15 @@ pub const providers = [_]Provider{
                         .cache_write = 6.25,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-opus-4-8",
@@ -291,13 +299,15 @@ pub const providers = [_]Provider{
                         .cache_write = 6.25,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-opus-5",
@@ -318,13 +328,15 @@ pub const providers = [_]Provider{
                         .cache_write = 6.25,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-opus-5-5",
@@ -345,13 +357,15 @@ pub const providers = [_]Provider{
                         .cache_write = 5,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-sonnet-4-5",
@@ -379,7 +393,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .reasoning_budget = .{ .range = .{
+                    .anthropic_thinking = .{ .budget = .{
                         .min = 1024,
                     } },
                 },
@@ -410,7 +424,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .reasoning_budget = .{ .range = .{
+                    .anthropic_thinking = .{ .budget = .{
                         .min = 1024,
                     } },
                 },
@@ -434,13 +448,15 @@ pub const providers = [_]Provider{
                         .cache_write = 3.75,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .tool_search = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-sonnet-5",
@@ -467,7 +483,9 @@ pub const providers = [_]Provider{
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-sonnet-5-5",
@@ -488,13 +506,15 @@ pub const providers = [_]Provider{
                         .cache_write = 2.5,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
         },
     },
@@ -3415,10 +3435,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.07854,
-                        .output = 0.15708,
-                        .reasoning = 0.15708,
-                        .cache_read = 0.015708,
+                        .input = 0.042,
+                        .output = 0.084,
+                        .reasoning = 0.084,
+                        .cache_read = 0.0084,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -3444,10 +3464,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.01,
+                        .input = 0.0045,
                         .output = 1.28,
                         .reasoning = 1.28,
-                        .cache_read = 0.01,
+                        .cache_read = 0.0045,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -3500,10 +3520,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.783,
-                        .output = 1.566,
-                        .reasoning = 1.566,
-                        .cache_read = 0.06525,
+                        .input = 0.255084,
+                        .output = 0.510168,
+                        .reasoning = 0.510168,
+                        .cache_read = 0.021257,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -3529,10 +3549,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.66,
-                        .output = 1.98,
-                        .reasoning = 1.98,
-                        .cache_read = 0.022,
+                        .input = 1.32,
+                        .output = 3.96,
+                        .reasoning = 3.96,
+                        .cache_read = 0.044,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -3557,10 +3577,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.0198,
+                        .input = 0.015543,
                         .output = 0.396,
                         .reasoning = 0.396,
-                        .cache_read = 0.00291,
+                        .cache_read = 0.002851,
                     },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
@@ -5341,7 +5361,7 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.4,
+                        .input = 0.55,
                         .output = 2.2,
                         .reasoning = 2.2,
                     },
@@ -6063,7 +6083,7 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 98304,
+                    .max_output_tokens = 235929,
                 },
                 .cost = &.{
                     .{
@@ -6071,7 +6091,6 @@ pub const providers = [_]Provider{
                         .input = 0.6,
                         .output = 2.5,
                         .reasoning = 2.5,
-                        .cache_read = 0.15,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false },
@@ -6178,10 +6197,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.28,
+                        .input = 0.38,
                         .output = 10,
                         .reasoning = 10,
-                        .cache_read = 0.27,
+                        .cache_read = 0.38,
                     },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
@@ -6602,15 +6621,15 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 262144,
-                    .max_output_tokens = 32768,
+                    .max_output_tokens = 131072,
                 },
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.06,
-                        .output = 0.16,
-                        .reasoning = 0.16,
-                        .cache_read = 0.03,
+                        .input = 0.0595,
+                        .output = 0.17,
+                        .reasoning = 0.17,
+                        .cache_read = 0.02975,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -11047,10 +11066,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.0825,
-                        .output = 0.33,
-                        .reasoning = 0.33,
-                        .cache_read = 0.020625,
+                        .input = 0.132,
+                        .output = 0.528,
+                        .reasoning = 0.528,
+                        .cache_read = 0.033,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -11103,10 +11122,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.7506,
-                        .output = 2.2509,
-                        .reasoning = 2.2509,
-                        .cache_read = 0.0378,
+                        .input = 0.834,
+                        .output = 2.501,
+                        .reasoning = 2.501,
+                        .cache_read = 0.042,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -12147,9 +12166,9 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.3249,
-                        .output = 3.99,
-                        .reasoning = 3.99,
+                        .input = 1.4,
+                        .output = 4.4,
+                        .reasoning = 4.4,
                         .cache_read = 0.26,
                     },
                 },
@@ -12171,15 +12190,15 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
-                    .max_output_tokens = 943717,
+                    .max_output_tokens = 943718,
                 },
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 1.4,
+                        .input = 0.3,
                         .output = 4.4,
                         .reasoning = 4.4,
-                        .cache_read = 0.26,
+                        .cache_read = 0.24,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
@@ -12432,10 +12451,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.0198,
+                        .input = 0.015543,
                         .output = 0.396,
                         .reasoning = 0.396,
-                        .cache_read = 0.00291,
+                        .cache_read = 0.002851,
                     },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
@@ -12460,10 +12479,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.123,
+                        .input = 0.2859,
                         .output = 3.5,
                         .reasoning = 3.5,
-                        .cache_read = 0.123,
+                        .cache_read = 0.2859,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = true },
@@ -12488,7 +12507,7 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.0099,
+                        .input = 0.004455,
                         .output = 0.13068,
                         .reasoning = 0.13068,
                         .cache_read = 0.001386,
@@ -12581,10 +12600,10 @@ pub const providers = [_]Provider{
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.28,
+                        .input = 0.38,
                         .output = 10,
                         .reasoning = 10,
-                        .cache_read = 0.27,
+                        .cache_read = 0.38,
                     },
                 },
                 .caps = .{ .tools = true, .vision = true, .disable_reasoning = true },
@@ -12843,15 +12862,15 @@ pub const providers = [_]Provider{
                 .protocol = .openai_chat,
                 .limits = .{
                     .context_window = 1048576,
-                    .max_output_tokens = 131072,
+                    .max_output_tokens = 943718,
                 },
                 .cost = &.{
                     .{
                         .min_prompt_tokens = 0,
-                        .input = 0.13,
-                        .output = 4,
-                        .reasoning = 4,
-                        .cache_read = 0.13,
+                        .input = 0.1428,
+                        .output = 2.694296,
+                        .reasoning = 2.694296,
+                        .cache_read = 0.185725,
                     },
                 },
                 .caps = .{ .tools = true, .vision = false, .disable_reasoning = false },
@@ -16296,7 +16315,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .anthropic_adaptive = true,
+                    .anthropic_thinking = .toggle,
                 },
             },
         },
@@ -16360,13 +16379,15 @@ pub const providers = [_]Provider{
                         .cache_write = 12.5,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-fable-5-1",
@@ -16387,13 +16408,15 @@ pub const providers = [_]Provider{
                         .cache_write = 12.5,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-haiku-4-5",
@@ -16421,7 +16444,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .reasoning_budget = .{ .range = .{
+                    .anthropic_thinking = .{ .budget = .{
                         .min = 1024,
                     } },
                 },
@@ -16445,7 +16468,7 @@ pub const providers = [_]Provider{
                         .cache_write = 6.25,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
@@ -16472,13 +16495,15 @@ pub const providers = [_]Provider{
                         .cache_write = 6.25,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-opus-4-7",
@@ -16499,13 +16524,15 @@ pub const providers = [_]Provider{
                         .cache_write = 6.25,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-opus-4-8",
@@ -16526,13 +16553,15 @@ pub const providers = [_]Provider{
                         .cache_write = 6.25,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-opus-5",
@@ -16553,13 +16582,15 @@ pub const providers = [_]Provider{
                         .cache_write = 6.25,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-opus-5-5",
@@ -16580,13 +16611,15 @@ pub const providers = [_]Provider{
                         .cache_write = 5,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-sonnet-4",
@@ -16622,7 +16655,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .reasoning_budget = .{ .range = .{
+                    .anthropic_thinking = .{ .budget = .{
                         .min = 1024,
                     } },
                 },
@@ -16661,7 +16694,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{ .{ .named = "high" }, .{ .named = "max" } },
                 .dialect = .{
-                    .reasoning_budget = .{ .range = .{
+                    .anthropic_thinking = .{ .budget = .{
                         .min = 1024,
                     } },
                 },
@@ -16685,13 +16718,15 @@ pub const providers = [_]Provider{
                         .cache_write = 3.75,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-sonnet-5",
@@ -16712,13 +16747,15 @@ pub const providers = [_]Provider{
                         .cache_write = 2.5,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "claude-sonnet-5-5",
@@ -16739,13 +16776,15 @@ pub const providers = [_]Provider{
                         .cache_write = 2.5,
                     },
                 },
-                .caps = .{ .tools = true, .vision = true, .disable_reasoning = true, .cache_breakpoint = true },
+                .caps = .{ .tools = true, .vision = true, .disable_reasoning = false, .cache_breakpoint = true },
                 .modalities = .{
                     .input = &.{ .image, .pdf, .text },
                     .output = &.{.text},
                 },
                 .reasoning_levels = &.{ .{ .named = "low" }, .{ .named = "medium" }, .{ .named = "high" }, .{ .named = "xhigh" }, .{ .named = "max" } },
-                .dialect = .{},
+                .dialect = .{
+                    .anthropic_thinking = .adaptive,
+                },
             },
             .{
                 .id = "deepseek-v4-flash",
@@ -18249,7 +18288,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .anthropic_adaptive = true,
+                    .anthropic_thinking = .toggle,
                 },
             },
             .{
@@ -18278,7 +18317,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .anthropic_adaptive = true,
+                    .anthropic_thinking = .toggle,
                 },
             },
             .{
@@ -19036,7 +19075,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .anthropic_adaptive = true,
+                    .anthropic_thinking = .toggle,
                 },
             },
             .{
@@ -19125,7 +19164,7 @@ pub const providers = [_]Provider{
                 },
                 .reasoning_levels = &.{.{ .named = "high" }},
                 .dialect = .{
-                    .anthropic_adaptive = true,
+                    .anthropic_thinking = .toggle,
                 },
             },
             .{

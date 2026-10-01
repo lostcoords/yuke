@@ -26,12 +26,10 @@
             "max_output_tokens": 131072
           },
           "reasoning_levels": [
-            "low",
-            "medium",
             "high"
           ],
           "flags": {
-            "anthropic_adaptive": true
+            "anthropic_thinking": "toggle"
           }
         }
       ]

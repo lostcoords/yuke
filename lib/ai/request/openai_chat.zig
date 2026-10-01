@@ -337,19 +337,15 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) ir.SerializeError!
     }
 }
 
-/// Write the reasoning control in the dialect of the host. Anthropic shapes write nothing.
+/// Write `off` or the effort in the dialect of the host. The Anthropic thinking shapes have no chat form.
 fn writeReasoning(
     jw: *std.json.Stringify,
     format: ir.ThinkingFormat,
-    reasoning: ir.ReasoningControl,
+    reasoning: ir.ReasoningSettings,
 ) ir.SerializeError!void {
     if (format == .none) return;
-    const level: []const u8 = switch (reasoning) {
-        .off => "none",
-        .effort => |effort| @tagName(effort),
-        .default, .adaptive, .budget => return,
-    };
-    const on = reasoning != .off;
+    const on = reasoning.thinking != .off;
+    const level: []const u8 = if (!on) "none" else if (reasoning.effort) |effort| @tagName(effort) else return;
     const switch_shape: []const u8 = if (on) "enabled" else "disabled";
 
     switch (format) {
@@ -507,7 +503,7 @@ test "off disables thinking in the dialect that has a switch" {
             .model = "m",
             .wire = .{ .openai_chat = .{ .thinking_format = case.format } },
             .max_output_tokens = 8,
-            .reasoning = .off,
+            .reasoning = .{ .thinking = .off },
         }, &blocks);
         try testing.expect(std.mem.indexOf(u8, buf.written(), case.expected) != null);
     }
@@ -517,7 +513,7 @@ test "off disables thinking in the dialect that has a switch" {
         .model = "m",
         .wire = .{ .openai_chat = .{ .thinking_format = .deepseek } },
         .max_output_tokens = 8,
-        .reasoning = .off,
+        .reasoning = .{ .thinking = .off },
     }, &blocks);
     try testing.expect(std.mem.indexOf(u8, deepseek.written(), "\"reasoning_effort\"") == null);
 }

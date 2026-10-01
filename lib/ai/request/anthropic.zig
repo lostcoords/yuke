@@ -18,8 +18,8 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
 
     try json.sampling(&jw, request.temperature, request.top_p);
 
-    try writeThinking(&jw, request.reasoning);
-    try writeOutputConfig(&jw, request.reasoning, request.output_schema);
+    try writeThinking(&jw, request.reasoning.thinking);
+    try writeOutputConfig(&jw, request.reasoning.effort, request.output_schema);
     const cache = request.wire.anthropic_messages.cache;
 
     if (request.system.len != 0) {
@@ -70,11 +70,10 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
     try jw.endObject();
 }
 
-/// Write the thinking control. A compatible host takes `adaptive`, and Anthropic takes a budget.
-fn writeThinking(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) ir.SerializeError!void {
-    const kind: []const u8 = switch (reasoning) {
-        // An effort is a whole-request control, so `output_config` carries it instead.
-        .default, .effort => return,
+/// Write the thinking control and its display. The effort rides on `output_config`.
+fn writeThinking(jw: *std.json.Stringify, thinking: ir.Thinking) ir.SerializeError!void {
+    const kind: []const u8 = switch (thinking) {
+        .default => return,
         .off => "disabled",
         .adaptive => "adaptive",
         .budget => "enabled",
@@ -83,18 +82,16 @@ fn writeThinking(jw: *std.json.Stringify, reasoning: ir.ReasoningControl) ir.Ser
     try jw.objectField("thinking");
     try jw.beginObject();
     try json.field(jw, "type", kind);
-    if (reasoning == .budget) {
-        try json.field(jw, "budget_tokens", reasoning.budget);
+    switch (thinking) {
+        .adaptive => |display| if (display) |shown| try json.field(jw, "display", @tagName(shown)),
+        .budget => |tokens| try json.field(jw, "budget_tokens", tokens),
+        .default, .off => {},
     }
     try jw.endObject();
 }
 
 /// Write `output_config`. The effort and the response format share the one object.
-fn writeOutputConfig(jw: *std.json.Stringify, reasoning: ir.ReasoningControl, schema: ?ir.OutputSchema) ir.SerializeError!void {
-    const effort: ?ir.Effort = switch (reasoning) {
-        .effort => |value| value,
-        else => null,
-    };
+fn writeOutputConfig(jw: *std.json.Stringify, effort: ?ir.Effort, schema: ?ir.OutputSchema) ir.SerializeError!void {
     if (effort == null and schema == null) return;
 
     try jw.objectField("output_config");
@@ -280,7 +277,7 @@ test "adaptive thinking rides on the request" {
     try expectJson(
         \\{"model":"MiniMax-M3","max_tokens":8,"stream":true,"thinking":{"type":"adaptive"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
-        .{ .model = "MiniMax-M3", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .reasoning = .adaptive },
+        .{ .model = "MiniMax-M3", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .reasoning = .{ .thinking = .{ .adaptive = null } } },
         &blocks,
     );
 }
@@ -290,7 +287,7 @@ test "a token budget writes the enabled shape" {
     try expectJson(
         \\{"model":"claude","max_tokens":8192,"stream":true,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
-        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8192, .reasoning = .{ .budget = 4096 } },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8192, .reasoning = .{ .thinking = .{ .budget = 4096 } } },
         &blocks,
     );
 }
@@ -300,13 +297,23 @@ test "off writes disabled and the default omits the member" {
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"thinking":{"type":"disabled"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
-        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .reasoning = .off },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .reasoning = .{ .thinking = .off } },
         &blocks,
     );
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
     ,
-        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .reasoning = .default },
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 },
+        &blocks,
+    );
+}
+
+test "adaptive thinking, its display, and an effort write their own members" {
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hi" } }};
+    try expectJson(
+        \\{"model":"claude","max_tokens":8,"stream":true,"thinking":{"type":"adaptive","display":"summarized"},"output_config":{"effort":"low"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}
+    ,
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8, .reasoning = .{ .thinking = .{ .adaptive = .summarized }, .effort = .low } },
         &blocks,
     );
 }

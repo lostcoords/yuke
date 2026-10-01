@@ -189,7 +189,7 @@ fn summaryCall(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: 
         .tools = held.build.tools,
         .options = .{
             .max_output_tokens = limit,
-            .reasoning = if (control == .budget) .default else control,
+            .reasoning = if (control.thinking == .budget) .{} else control,
             .tool_choice = .none,
             .session_id = &session_hex,
         },
@@ -845,7 +845,7 @@ test "a budget control never rides the summary call, because it would spend the 
     const a = arena.allocator();
     f.models[0].reasoning_levels = &.{.{ .named = "high" }};
     // This ceiling sits under the summary output limit, so a budget would take most of the answer.
-    f.models[0].dialect.reasoning_budget = .{ .range = .{ .max = 2000 } };
+    f.models[0].dialect.anthropic_thinking = .{ .budget = .{ .max = 2000 } };
     try seedCompactableHistory(&f.db, a);
     var capture: Resources.Capture = .{ .arena = a, .replies = &.{ai.testing.canned_reply} };
     f.engine.deps.route_transport = capture.transport();

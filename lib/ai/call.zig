@@ -36,7 +36,7 @@ pub const Request = struct {
 pub const Options = struct {
     /// A null limit takes the model limit, or the endpoint default when the model states none.
     max_output_tokens: ?u32 = null,
-    reasoning: ir.ReasoningControl = .default,
+    reasoning: ir.ReasoningSettings = .{},
     /// Constrain the response to a schema. A null schema leaves the response free.
     output_schema: ?ir.OutputSchema = null,
     /// Sampling temperature. A null value leaves the endpoint default.

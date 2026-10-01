@@ -91,9 +91,20 @@ The selector is `provider/model`, for example `gateway/big`. A local server, suc
 | `supports_tool_search` | unknown | Needs `supports_tools`. Not on `openai_chat`. |
 | `thinking_format` | `none` | `openai`, `openrouter`, `deepseek`, `zai`, `qwen`, `together`, `string_thinking`, `ant_ling` |
 | `reasoning_replay` | `none` | `reasoning`, `reasoning_content`, `reasoning_details` |
-| `anthropic_adaptive` | `false` | Adaptive thinking in place of a token budget. |
-| `reasoning_budget_min`, `reasoning_budget_max` | none | The thinking-token budget. |
+| `anthropic_thinking` | absent | `toggle`, `adaptive`, `budget`. Only on `anthropic_messages`. See below. |
+| `reasoning_budget_min`, `reasoning_budget_max` | absent | The bounds of the `budget` shape. Only with `anthropic_thinking: "budget"`. |
 | `max_tokens_field` | `max_tokens` | `max_completion_tokens` |
+
+`anthropic_thinking` sets the request that a named reasoning level sends on `anthropic_messages`:
+
+| Value | Request |
+|---|---|
+| absent | `output_config.effort` set to the level. |
+| `toggle` | `thinking: {type: "adaptive"}`. The level sends nothing more. For a compatible host such as MiniMax. |
+| `adaptive` | `thinking: {type: "adaptive", display: "summarized"}` and `output_config.effort` set to the level. For Claude Opus 4.6 and later, Sonnet 4.6 and later, Fable, and Mythos. |
+| `budget` | `thinking: {type: "enabled", budget_tokens}`, inside the bounds. |
+
+`off` sends `thinking: {type: "disabled"}`, and an empty level sends no reasoning control.
 
 `cost` is a list of price bands. A vendor can bill a long prompt at a higher price. Each band holds the prices from one prompt size up. Each band has these fields:
 

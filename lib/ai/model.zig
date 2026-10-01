@@ -75,21 +75,16 @@ pub const ReasoningLevel = union(enum) {
     }
 };
 
-/// The thinking-budget bounds. A model with no budget control reports `unsupported`.
-pub const ReasoningBudget = union(enum) {
-    unsupported,
-    range: Range,
-
-    pub const Range = struct {
-        min: ?i64 = null,
-        max: ?u64 = null,
-    };
-
-    /// Build the budget from a source pair. Two absent bounds mean the model takes no budget.
-    pub fn from(min: ?i64, max: ?u64) ReasoningBudget {
-        if (min == null and max == null) return .unsupported;
-        return .{ .range = .{ .min = min, .max = max } };
-    }
+/// The request shape a named reasoning level takes on an Anthropic Messages model.
+pub const AnthropicThinking = union(enum) {
+    /// No thinking control: the level is an effort.
+    none,
+    /// A compatible host: adaptive thinking, with no effort and no display.
+    toggle,
+    /// Anthropic's adaptive thinking: the level is an effort, and the summary is displayed.
+    adaptive,
+    /// A thinking-token budget within the bounds a source states. A published zero is a value; null is unknown.
+    budget: struct { min: ?i64 = null, max: ?u64 = null },
 };
 
 /// How a request asks this model to reason, and which output-token member it takes.
@@ -97,8 +92,7 @@ pub const Dialect = struct {
     thinking_format: ThinkingFormat = .none,
     reasoning_replay: ReasoningReplay = .none,
     max_tokens_field: MaxTokensField = .max_tokens,
-    anthropic_adaptive: bool = false,
-    reasoning_budget: ReasoningBudget = .unsupported,
+    anthropic_thinking: AnthropicThinking = .none,
 };
 
 /// One model in the shape every source shares. It holds no URL and no secret.
@@ -118,20 +112,6 @@ pub const ModelSpec = struct {
 };
 
 const testing = std.testing;
-
-test "two absent bounds mean the model takes no thinking budget" {
-    try testing.expect(ReasoningBudget.from(null, null) == .unsupported);
-
-    // A published zero is a value. Only null reports that the source knows nothing.
-    const free = ReasoningBudget.from(@as(i64, 0), null);
-    try testing.expectEqual(@as(?i64, 0), free.range.min);
-    try testing.expect(free.range.max == null);
-
-    const capped = ReasoningBudget.from(null, @as(u64, 32000));
-    try testing.expect(capped == .range);
-    try testing.expect(capped.range.min == null);
-    try testing.expectEqual(@as(?u64, 32000), capped.range.max);
-}
 
 test "an input kind is unknown until the source lists one" {
     const none: Modalities = .{};

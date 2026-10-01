@@ -250,6 +250,28 @@ test "a gateway routes each model to the path it names, and the key header follo
     }
 }
 
+test "a file thinking shape resolves its protocol at the merge, and a chat path refuses it" {
+    var anthropic = catalogRow("acme", "Acme", &.{catalog_model});
+    anthropic.endpoints = &.{.{ .protocol = .anthropic_messages, .key_header = .x_api_key, .cache = .unsupported }};
+    const file =
+        \\{"providers":[{"id":"acme","api_key":"k","models":[{"id":"t","upstream_id":"t","flags":{"anthropic_thinking":"adaptive"}}]}]}
+    ;
+    // The file names no path, so the catalog's sole Anthropic path decides it at the merge.
+    var m: Merge = undefined;
+    try m.init(file, &.{anthropic}, &no_env);
+    defer m.deinit();
+    const local = registry.findModel(m.rows, try registry.selectorOf(m.arena.allocator(), "acme", "t")).?;
+    try testing.expectEqual(ai.route.Protocol.anthropic_messages, local.model.protocol);
+    try testing.expect(local.model.dialect.anthropic_thinking == .adaptive);
+
+    // On a chat path the shape is refused, so the provider keeps only the catalog models and never routes.
+    var chat: Merge = undefined;
+    try chat.init(file, &.{catalogRow("acme", "Acme", &.{catalog_model})}, &no_env);
+    defer chat.deinit();
+    try testing.expectEqual(registry.Reason.needs_route, chat.rows[0].availability.unavailable);
+    try testing.expectEqual(@as(usize, 1), chat.rows[0].models.len);
+}
+
 test "a file model on no declared path leaves the provider unroutable" {
     // The catalog serves chat only, so a Responses model has no path, and a model that names none has no sole path to take.
     var m: Merge = undefined;
