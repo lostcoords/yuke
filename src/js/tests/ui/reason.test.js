@@ -8,14 +8,15 @@ const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg
 const draw = (x, w, h) => { term.beginFrame(); x.draw({ x: 0, y: 0, w, h }); term.endFrame(); };
 
 // A thought folds to one header while it streams, and a thought that the user opens stays open across the commit.
-const thought = { type: "reasoning", id: 0, text: "**Plan**\n\nbecause why", title: "Plan" };
+const thought = { type: "reasoning", id: 0, text: "**Plan**\n\nbecause why\n\n", title: "Plan" };
 const parts = { u: [{ type: "text", id: 0, text: "ask" }], r1: [thought] };
 const t = new Transcript({ partsOf: (id) => parts[id] || [] });
 t.setOutline([], { id: "r1", type: "assistant" });
 draw(t, 40, 10);
 check("thought-folded", rowsHave(t.rows(40, 0, 10), "thinking: Plan") && !rowsHave(t.rows(40, 0, 10), "because why"));
 t.togglePart("r1", 0);
-check("thought-opens", t.rows(40, 0, 10).some((r) => r.text === "because why" && r.group === "TxThought"));
+const opened = t.rows(40, 0, 10).filter((r) => r.partId === 0);
+check("thought-opens", opened.some((r) => r.text === "because why" && r.group === "TxThought") && opened[opened.length - 1].text === "because why");
 // A block stops before the next part starts, so its duration ends the live label in the draft.
 parts.r1 = [{ ...thought, duration_ms: 1500 }];
 t.setActive("r1");

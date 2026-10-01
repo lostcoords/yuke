@@ -312,6 +312,8 @@ export const defaultRender = {
       /** @type {TranscriptRow[]} */
       const rows = [{ text, group: "TxMeta", indent: PAD, header: true, stop: true }];
       if (env.expanded) for (const row of wrapRows(part.text, width, "TxThought", PAD)) rows.push(row);
+      // Many models end a thought with blank lines, so the open rows drop them. The source keeps the whole text.
+      while (rows.length > 1 && /** @type {TranscriptRow} */ (rows[rows.length - 1]).text === "") rows.pop();
       return { rows, source: part.text };
     }
     const head = toolHead(part, env.tools);
