@@ -50,13 +50,13 @@ export function name(job) {
   return "job-" + job.id.toString(36);
 }
 
-// The end of a job in words, shared by the tool text and the TUI list.
-/** @param {Job} job @returns {string} */
+// The state of a job in the words of the engine end header (`reports.jobEnded`). The stop tool, the TUI, and the transcript share it.
+// A `job_ended` source has no state, so it reads as an end. Neither number means the wait failed.
+/** @param {{ state?: Job["state"], stop_requested?: boolean, exit_code?: number, signal?: number }} job @returns {string} */
 export function endLabel(job) {
-  if (job.state === "failed") return "process wait failed";
-  if (job.stop_requested) return job.state === "running" ? "stop requested" : "stopped";
-  if (job.state === "running") return "running";
-  return job.signal !== undefined ? "signal " + job.signal : "exit code " + job.exit_code;
+  if (job.state === "running") return job.stop_requested ? "stop requested" : "running";
+  if (job.stop_requested && job.state !== "failed") return "stopped";
+  return job.exit_code !== undefined ? "exited " + job.exit_code : job.signal !== undefined ? "signal " + job.signal : "failed";
 }
 
 // Only the exec tool starts a job.

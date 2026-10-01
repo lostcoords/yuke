@@ -49,7 +49,7 @@ Throw an `Error` when the call fails. The model reads its `message` and nothing 
 
 ## Background jobs
 
-`exec` with `background: true` starts a job and returns at once. When the job ends by itself, its session gets one message: `[job-k3x9 exited 1. This message is not from the user.]`, then the log path and the last 20 lines. No hook rewrites it. A queue clear does not drop it. `stop` with the job ID ends it, waits for the end, and returns `[job-k3x9 stopped.] Log: <path>`. A requested stop sends no end message.
+`exec` with `background: true` starts a job and returns at once. When the job ends by itself, its session gets one message: `[job-k3x9 exited 1. This message is not from the user.]`, then the log path and the last 20 lines. The status is `exited N`, `signal N`, or `failed` (yuke could not wait for the process). No hook rewrites it. A queue clear does not drop it. `stop` with the job ID ends it, waits for the end, and returns `[job-k3x9 stopped.] Log: <path>`. A requested stop sends no end message.
 
 ## Cancellation
 

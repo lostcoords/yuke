@@ -2,7 +2,7 @@
 
 import { fs } from "yuke:internal/native/fs";
 import { exec as runCommand } from "yuke:internal/native/exec";
-import { start as startJob, stop as stopJob, wait as waitJob, list as listJobs, get as getJob, name as jobName, shortCommand } from "yuke:internal/jobs";
+import { start as startJob, stop as stopJob, wait as waitJob, list as listJobs, get as getJob, name as jobName, endLabel, shortCommand } from "yuke:internal/jobs";
 import { own, stop } from "yuke:internal/stop";
 import { diff } from "yuke:internal/native/diff";
 import { hasTool } from "yuke:internal/native/tools";
@@ -161,14 +161,6 @@ function sessionJobs(sessionId) {
   return listJobs().filter(j => j.session_id === sessionId);
 }
 
-/** The end of a job in the words of the engine end header. @param {Job} job @returns {string} */
-function jobStatus(job) {
-  if (job.state === "running") return "running";
-  if (job.stop_requested) return "stopped";
-  if (job.state === "failed") return "failed";
-  return job.signal !== undefined ? "signal " + job.signal : "exited " + job.exit_code;
-}
-
 /** @param {string} command @param {ToolContext} context @returns {Promise<string>} */
 async function startBackground(command, context) {
   const root = context.workspaceRoot;
@@ -187,7 +179,7 @@ const jobOwner = {
     if (!found || found.session_id !== context.sessionId) return null;
     if (found.state === "running") await stopJob(found.id);
     const job = /** @type {Job} */ (await waitJob(found.id));
-    return `[${id} ${jobStatus(job)}.] Log: ${job.log}`;
+    return `[${id} ${endLabel(job)}.] Log: ${job.log}`;
   },
   ids: async (context) => sessionJobs(context.sessionId).filter(j => j.state === "running").map(jobName),
 };

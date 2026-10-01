@@ -2,7 +2,7 @@ import { root, status } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import { tuiPlugin } from "yuke:internal/tui";
 import { jobsUiPlugin, openJobs, openOutput, JobOutput } from "yuke:internal/jobs-ui";
-import { start, jobs } from "yuke:internal/jobs";
+import { start, jobs, endLabel } from "yuke:internal/jobs";
 import { until } from "yuke:internal/test";
 import { events } from "yuke:internal/kernel";
 // The messages posted since the last reset, as the user saw them. A repeat posts again, so it counts too.
@@ -75,8 +75,11 @@ while :; do wait "$child"; done`, "01".repeat(16), { workspaceRoot: "/tmp" });
     globalThis.talkyStage = stage;
   }
   await jobs.wait(talky.id);
-  await until(async () => { await view.read(); return texts(view).includes("[exit code 0]"); }, "output completion");
-  check("output-follows", texts(view).join("|") === "line1|line2|line3|tail|[exit code 0]");
+  await until(async () => { await view.read(); return texts(view).includes("[exited 0]"); }, "output completion");
+  check("output-follows", texts(view).join("|") === "line1|line2|line3|tail|[exited 0]");
+  // Every state reads in the words of the engine end header, and a `job_ended` source without a state reads as an end.
+  const words = [{ state: "running", stop_requested: true }, { state: "exited", signal: 9 }, { state: "failed", stop_requested: true }, { exit_code: 3 }].map(endLabel);
+  check("end-words", words.join("|") === "stop requested|signal 9|failed|exited 3");
   view.onKey({ type: "key", code: "esc", event: "press", mods: 0 });
   check("output-closes", root.overlays.length === 0);
 
