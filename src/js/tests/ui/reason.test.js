@@ -4,6 +4,7 @@ import { Transcript, registerRender } from "yuke:internal/transcript";
 import { defaultRender } from "yuke:internal/transcript-view";
 
 registerRender(defaultRender);
+const textOf = (r) => r.text || (r.segments || []).map((sg) => sg.text).join("");
 const rowsHave = (rs, want) => rs.some((r) => (r.segments || []).some((sg) => sg.text.indexOf(want) >= 0) || (r.text || "").indexOf(want) >= 0);
 const draw = (x, w, h) => { term.beginFrame(); x.draw({ x: 0, y: 0, w, h }); term.endFrame(); };
 
@@ -13,18 +14,19 @@ const parts = { u: [{ type: "text", id: 0, text: "ask" }], r1: [thought] };
 const t = new Transcript({ partsOf: (id) => parts[id] || [] });
 t.setOutline([], { id: "r1", type: "assistant" });
 draw(t, 40, 10);
-check("thought-folded", rowsHave(t.rows(40, 0, 10), "thinking: Plan") && !rowsHave(t.rows(40, 0, 10), "because why"));
+check("thought-folded", t.rows(40, 0, 10).some((r) => textOf(r) === "thinking Plan") && !rowsHave(t.rows(40, 0, 10), "because why"));
 t.togglePart("r1", 0);
 const opened = t.rows(40, 0, 10).filter((r) => r.partId === 0);
-check("thought-opens", opened.some((r) => r.text === "because why" && r.group === "TxThought") && opened[opened.length - 1].text === "because why");
+// The open rows drop the trailing blank lines, and the source keeps them.
+check("thought-opens", opened.some((r) => r.text === "because why" && r.group === "TxThought") && opened[opened.length - 1].text === "because why" && t._sourceOf("r1") === thought.text);
 // A block stops before the next part starts, so its duration ends the live label in the draft.
 parts.r1 = [{ ...thought, duration_ms: 1500 }];
 t.setActive("r1");
-check("stopped-in-draft", rowsHave(t.rows(40, 0, 10), "thought for 1.5s: Plan"));
+check("stopped-in-draft", t.rows(40, 0, 10).some((r) => textOf(r) === "thought Plan · 1.5s"));
 parts.r1 = [{ ...thought, duration_ms: 1500 }, { type: "text", id: 1, text: "hello" }];
 t.setActive("r1");
 t.setOutline([{ id: "r1", type: "assistant" }], null);
-check("commit-keeps-open", rowsHave(t.rows(40, 0, 10), "thought for 1.5s: Plan") && rowsHave(t.rows(40, 0, 10), "because why"));
+check("commit-keeps-open", t.rows(40, 0, 10).some((r) => textOf(r) === "thought Plan · 1.5s") && rowsHave(t.rows(40, 0, 10), "because why"));
 
 // A fold choice holds across a later send, for string and number ids.
 parts.r3 = [{ type: "tool", id: 2, name: "read", arguments: '{"path":"a.zig"}', state: { type: "completed", output: "file body", duration_ms: 1 } }];
@@ -42,14 +44,20 @@ check("num-id-later-send", rowsHave(num.rows(40, 0, num.rowCount(40)), "num body
 
 // A hidden thought with a duration shows the duration on a row that does not fold. A hidden thought with no duration shows nothing.
 const blank = new Transcript({ partsOf: () => [
-  { type: "reasoning", id: 0, text: "", duration_ms: 2000 },
+  { type: "reasoning", id: 0, text: "", title: "Hidden", duration_ms: 2000 },
   { type: "reasoning", id: 1, text: "" },
   { type: "text", id: 2, text: "answer" },
 ] });
 blank.setOutline([{ id: "bl", type: "assistant" }], null);
 draw(blank, 40, 8);
 const blankRows = blank.rows(40, 0, 8);
-check("hidden-thought-row", rowsHave([blankRows[0]], "thought for 2.0s") && !blankRows[0].header && blankRows.filter((r) => rowsHave([r], "thought")).length === 1 && rowsHave(blankRows, "answer"));
+check("hidden-thought-row", textOf(blankRows[0]) === "thought Hidden · 2.0s" && !blankRows[0].header && blankRows.filter((r) => rowsHave([r], "thought")).length === 1 && rowsHave(blankRows, "answer"));
+// A long title clips to the row, and the time stays whole.
+const narrow = new Transcript({ partsOf: () => [{ type: "reasoning", id: 0, text: "x", title: "A very long title that cannot fit", duration_ms: 1500 }] });
+narrow.setOutline([{ id: "nw", type: "assistant" }], null);
+draw(narrow, 24, 4);
+const narrowHead = textOf(narrow.rows(24, 0, 4)[0]);
+check("title-clips", narrowHead.startsWith("thought A") && narrowHead.endsWith(" · 1.5s") && narrowHead.length <= 22);
 
 // J and K walk the parts: the thought, the tool header, then the text.
 parts.walk = [

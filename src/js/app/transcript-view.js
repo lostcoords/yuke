@@ -304,13 +304,19 @@ export const defaultRender = {
     if (part.type === "reasoning") {
       const ms = part.duration_ms;
       // A block can stop while it is still the last part of the draft, so its duration wins over `env.live`.
-      const label = ms != null ? "thought for " + (ms / 1000).toFixed(1) + "s" : env.live ? "thinking" : "thought";
-      const text = clip(part.title ? label + ": " + part.title : label, width);
+      const verb = ms == null && env.live ? "thinking" : "thought";
+      const time = ms != null ? " · " + (ms / 1000).toFixed(1) + "s" : "";
+      // The header reads like a tool heading: the verb, the title as its subject, then the time.
+      /** @type {Segment[]} */
+      const segments = [{ text: verb, group: "TxToolTitle" }];
+      // The verb and the time are one cell per code unit, so their lengths are their widths.
+      if (part.title) segments.push({ text: " " + clip(part.title, Math.max(1, width - verb.length - time.length - 1)), group: "TxToolArg" });
+      if (time) segments.push({ text: time, group: "TxToolHint" });
       // A thought with no text has nothing to open, so its row does not fold.
-      if (!part.text) return { rows: [{ text, group: "TxMeta", indent: PAD, header: false, stop: true }], source: "" };
+      if (!part.text) return { rows: [{ segments, indent: PAD, header: false, stop: true }], source: "" };
       // A folded thought builds one row, so a delta wraps none of its text. The source is the whole text, folded and open.
       /** @type {TranscriptRow[]} */
-      const rows = [{ text, group: "TxMeta", indent: PAD, header: true, stop: true }];
+      const rows = [{ segments, indent: PAD, header: true, stop: true }];
       if (env.expanded) for (const row of wrapRows(part.text, width, "TxThought", PAD)) rows.push(row);
       // Many models end a thought with blank lines, so the open rows drop them. The source keeps the whole text.
       while (rows.length > 1 && /** @type {TranscriptRow} */ (rows[rows.length - 1]).text === "") rows.pop();
