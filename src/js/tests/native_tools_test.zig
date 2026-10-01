@@ -845,28 +845,68 @@ test "background jobs start, list, stop, and report a natural exit once to their
         \\globalThis.sent = [];
         \\globalThis.j1Ended = false;
         \\import { events } from "yuke:internal/kernel";
-        \\events.on("jobs.changed", job => { if (job.id === 1 && job.state !== "running") j1Ended = true; });
+        \\events.on("jobs.changed", job => { if (job.command === "sleep 30" && job.state !== "running") j1Ended = true; });
         \\client.sessionSendInput = async (id, content) => { sent.push(content[0].text); return {}; };
     , "job-messages.js");
 
-    try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", .{ .text = .{ .contains = "[job j1 started: sleep 30." } });
-    try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", .{ .text = .{ .contains = "[job j1 already runs this command." } });
+    const a = std.testing.allocator;
+    const first = try toolText(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}");
+    defer a.free(first);
+    const j1 = jobName(first);
+    try std.testing.expect(std.mem.startsWith(u8, first, "[job job-") and std.mem.indexOf(u8, first, " started: sleep 30.") != null);
+    const again = try std.fmt.allocPrint(a, "[job {s} already runs this command.", .{j1});
+    defer a.free(again);
+    try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", .{ .text = .{ .contains = again } });
     try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true,\"timeout_ms\":5}", .{ .is_error = true, .text = .{ .equals = "Remove timeout_ms, or set background to false." } });
     try support.expectTool(host, "exec", "{\"command\":\"echo hi\"}", .{ .text = .{ .ends = "hi\n[exit code: 0]" } });
-    try support.expectTool(host, "jobs", "{}", .{ .text = .{ .contains = "[j1 running: sleep 30. Log: " } });
-    try support.expectTool(host, "jobs", "{\"id\":\"j1\"}", .{ .text = .{ .contains = "[j1 running: sleep 30. Log: " } });
+    const running = try std.fmt.allocPrint(a, "[{s} running: sleep 30. Log: ", .{j1});
+    defer a.free(running);
+    try support.expectTool(host, "jobs", "{}", .{ .text = .{ .contains = running } });
+    const by_id = try std.fmt.allocPrint(a, "{{\"id\":\"{s}\"}}", .{j1});
+    defer a.free(by_id);
+    try support.expectTool(host, "jobs", by_id, .{ .text = .{ .contains = running } });
     try support.expectTool(host, "jobs", "{\"stop\":true}", .{ .is_error = true, .text = .{ .equals = "Set id when stop is true." } });
-    try support.expectTool(host, "jobs", "{\"id\":\"j9\"}", .{ .is_error = true, .text = .{ .contains = "the job j9 does not exist. The jobs are: j1." } });
-    try support.expectTool(host, "exec", "{\"command\":\"echo done; exit 2\",\"background\":true}", .{ .text = .{ .contains = "[job j2 started" } });
-    try support.expectTool(host, "jobs", "{\"id\":\"j1\",\"stop\":true}", .{ .text = .{ .contains = "[j1 stop requested: sleep 30]" } });
+    const missing = try std.fmt.allocPrint(a, "the job job-zzzz does not exist. The jobs are: {s}.", .{j1});
+    defer a.free(missing);
+    try support.expectTool(host, "jobs", "{\"id\":\"job-zzzz\"}", .{ .is_error = true, .text = .{ .contains = missing } });
+    const second = try toolText(host, "exec", "{\"command\":\"echo done; exit 2\",\"background\":true}");
+    defer a.free(second);
+    const j2 = jobName(second);
+    const stop1 = try std.fmt.allocPrint(a, "{{\"id\":\"{s}\",\"stop\":true}}", .{j1});
+    defer a.free(stop1);
+    const requested = try std.fmt.allocPrint(a, "[{s} stop requested: sleep 30]", .{j1});
+    defer a.free(requested);
+    try support.expectTool(host, "jobs", stop1, .{ .text = .{ .contains = requested } });
     try support.pumpUntilTrue(host, "globalThis.j1Ended");
-    try support.expectTool(host, "jobs", "{\"id\":\"j1\",\"stop\":true}", .{ .text = .{ .contains = "[j1 stopped: sleep 30]" } });
+    const stopped = try std.fmt.allocPrint(a, "[{s} stopped: sleep 30]", .{j1});
+    defer a.free(stopped);
+    try support.expectTool(host, "jobs", stop1, .{ .text = .{ .contains = stopped } });
     try support.pumpUntilTrue(host, "sent.length === 1");
     try support.pumpUntilIdle(host);
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt(
-        \\sent.length === 1 && sent[0].startsWith("[job j2 exited (exit code 2): echo done; exit 2. Log: ") && sent[0].endsWith("]\ndone") ? 1 : 0
-    ));
-    try support.expectTool(host, "jobs", "{\"id\":\"j2\",\"stop\":true}", .{ .text = .{ .contains = "[j2 exited (exit code 2): echo done; exit 2]" } });
+    const check = try std.fmt.allocPrintSentinel(a, "sent.length === 1 && sent[0].startsWith(\"[job {s} exited (exit code 2): echo done; exit 2. Log: \") && sent[0].endsWith(\"]\\ndone\") ? 1 : 0", .{j2}, 0);
+    defer a.free(check);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt(check));
+    const stop2 = try std.fmt.allocPrint(a, "{{\"id\":\"{s}\",\"stop\":true}}", .{j2});
+    defer a.free(stop2);
+    const exited = try std.fmt.allocPrint(a, "[{s} exited (exit code 2): echo done; exit 2]", .{j2});
+    defer a.free(exited);
+    try support.expectTool(host, "jobs", stop2, .{ .text = .{ .contains = exited } });
+}
+
+/// Run one tool call and answer its text in the testing allocator.
+fn toolText(host: *Host, name: []const u8, args: []const u8) ![]u8 {
+    const call = host.calls.submit(name, args, support.toolContext(host.cwd));
+    try support.pumpUntilSettled(host, call);
+    const text = try std.testing.allocator.dupe(u8, support.reply(call).text);
+    call.finish();
+    try host.pump();
+    return text;
+}
+
+/// The job name in a start text such as `[job job-k3x9 started: …]`.
+fn jobName(text: []const u8) []const u8 {
+    const rest = text["[job ".len..];
+    return rest[0..std.mem.indexOfScalar(u8, rest, ' ').?];
 }
 
 test "yuke:internal/spawn runs a child over pipes, delivers ordered text, and resolves its exit" {

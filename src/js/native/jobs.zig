@@ -17,13 +17,17 @@ const SessionId = proto.ids.SessionId;
 
 /// The most ended jobs the table keeps. The job that ended first leaves first.
 const max_ended = 32;
+/// The ids a job takes: four base-36 digits, so the model reads `job-` and four characters.
+const min_id: u32 = 36 * 36 * 36;
+const id_span: u32 = 36 * 36 * 36 * 36 - min_id;
+
 /// The largest job read, so one read keeps the owner loop short.
 const max_read_bytes: u32 = 256 * 1024;
 
 /// One job. The table owns every string, and a record outlives its process.
 pub const Job = struct {
     id: u32,
-    session_id: ?SessionId,
+    session_id: SessionId,
     command: []u8,
     cwd: []u8,
     log: []u8,
@@ -43,12 +47,21 @@ pub const Job = struct {
 pub const Jobs = struct {
     /// Start order.
     list: std.ArrayList(*Job) = .empty,
-    last_id: u32 = 0,
     last_end: u64 = 0,
 
     pub fn find(self: *const Jobs, id: u32) ?*Job {
         for (self.list.items) |job| if (job.id == id) return job;
         return null;
+    }
+
+    /// Answer a random id that no kept job holds, so an id in an old transcript rarely names a new job.
+    fn newId(self: *const Jobs, io: std.Io) u32 {
+        while (true) {
+            var random: [4]u8 = undefined;
+            io.random(&random);
+            const id = min_id + std.mem.readInt(u32, &random, .little) % id_span;
+            if (self.find(id) == null) return id;
+        }
     }
 
     /// Record the end of a job. The process settle calls this on the owner, after the child and its output tasks end.
@@ -132,8 +145,7 @@ pub fn stop(host: *Host, job: *Job) void {
 pub fn stopSession(host: *Host, session_id: SessionId) void {
     std.debug.assert(host.phase == .open);
     for (host.jobs.list.items) |job| {
-        const owner = job.session_id orelse continue;
-        if (std.mem.eql(u8, &owner.raw, &session_id.raw)) stop(host, job);
+        if (std.mem.eql(u8, &job.session_id.raw, &session_id.raw)) stop(host, job);
     }
 }
 
@@ -143,7 +155,7 @@ pub fn jobList(host: *Host, arena: std.mem.Allocator, params: proto.job.JobListP
     const items = host.jobs.list.items;
     for (0..items.len) |i| {
         const job = items[items.len - 1 - i];
-        if (params.session_id) |id| if (job.session_id == null or !std.mem.eql(u8, &job.session_id.?.raw, &id.raw)) continue;
+        if (params.session_id) |id| if (!std.mem.eql(u8, &job.session_id.raw, &id.raw)) continue;
         try jobs.append(arena, wire(job));
     }
     return .{ .jobs = jobs.items };
@@ -209,10 +221,7 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
     if (command == null or std.mem.trim(u8, command.?, " \t\r\n").len == 0) return pending.rejected(ctx, "the command must be a non-blank string");
     if (std.mem.indexOfScalar(u8, command.?, 0) != null) return pending.rejected(ctx, "the command must not hold a NUL byte");
     const session_value: Value = if (args.len > 1) args[1] else quickjs.UNDEFINED;
-    const session_id: ?SessionId = if (ctx.isUndefined(session_value) or ctx.isNull(session_value))
-        null
-    else
-        module.sessionId(ctx, session_value) orelse return pending.rejected(ctx, "the session id must be 32 lowercase hex digits");
+    const session_id = module.sessionId(ctx, session_value) orelse return pending.rejected(ctx, "the session id must be 32 lowercase hex digits");
     const root = module.rootOption(ctx, a, if (args.len > 2) args[2] else quickjs.UNDEFINED, host.cwd) orelse
         return pending.rejected(ctx, "the workspace root must be an absolute path");
     if (host.procs.live.items.len >= process.max_processes) return pending.rejected(ctx, "the host runs 64 processes");
@@ -236,10 +245,9 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
     };
 
     const jobs = &host.jobs;
-    jobs.last_id += 1;
     const job = host.gpa.create(Job) catch unreachable;
     job.* = .{
-        .id = jobs.last_id,
+        .id = jobs.newId(host.io),
         .session_id = session_id,
         .command = host.gpa.dupe(u8, command.?) catch unreachable,
         .cwd = host.gpa.dupe(u8, root) catch unreachable,
@@ -330,7 +338,7 @@ test "the prune keeps the jobs that ended last, whatever their start order" {
     // Job 1 starts first and ends last, so it must stay while the jobs that ended before it leave.
     for (1..max_ended + 3) |i| {
         const job = try testing.allocator.create(Job);
-        job.* = .{ .id = @intCast(i), .session_id = null, .command = try testing.allocator.dupe(u8, "c"), .cwd = try testing.allocator.dupe(u8, "/"), .log = try testing.allocator.dupe(u8, "/l"), .started_at_ms = 0, .proc = null, .state = .exited, .end_seq = if (i == 1) max_ended + 3 else i };
+        job.* = .{ .id = @intCast(i), .session_id = .bytes(@splat(1)), .command = try testing.allocator.dupe(u8, "c"), .cwd = try testing.allocator.dupe(u8, "/"), .log = try testing.allocator.dupe(u8, "/l"), .started_at_ms = 0, .proc = null, .state = .exited, .end_seq = if (i == 1) max_ended + 3 else i };
         try jobs.list.append(testing.allocator, job);
     }
     jobs.prune(testing.allocator);

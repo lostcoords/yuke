@@ -22,9 +22,9 @@ let tui = null;
 plugins.use({ name: "jobs-ui-test", apply(ctx) { ctx.inject(["tui"], (ctx) => { tui = ctx; }); } });
 (async () => {
   check("hidden-when-idle", !status.side("right").includes("jobs"));
-  const one = await start("sleep 30", { workspaceRoot: "/tmp" });
-  const two = await start("sleep 30", { workspaceRoot: "/tmp" });
-  const quick = await start("exit 2", { workspaceRoot: "/tmp" });
+  const one = await start("sleep 30", "01".repeat(16), { workspaceRoot: "/tmp" });
+  const two = await start("sleep 30", "01".repeat(16), { workspaceRoot: "/tmp" });
+  const quick = await start("exit 2", "01".repeat(16), { workspaceRoot: "/tmp" });
   await jobs.wait(quick.id);
   check("counts-running", status.side("right").includes("jobs 2"));
 
@@ -55,7 +55,7 @@ trap 'stage=$((stage + 1)); case "$stage" in
   4) kill "$child"; wait "$child" 2>/dev/null; exit 0 ;;
 esac' USR1
 printf 'line1\\n'
-while :; do wait "$child"; done`, { workspaceRoot: "/tmp" });
+while :; do wait "$child"; done`, "01".repeat(16), { workspaceRoot: "/tmp" });
   globalThis.talkyId = talky.id;
   // Enter in the list opens the output view of the selected job.
   const list = openJobs(tui);
@@ -81,7 +81,7 @@ while :; do wait "$child"; done`, { workspaceRoot: "/tmp" });
   check("output-closes", root.overlays.length === 0);
 
   // A long log opens at a whole line near its end, and `x` stops the job from the view.
-  const long = await start("head -c 396000 /dev/zero | tr '\\0' a | fold -w 99; echo; echo last; sleep 30", { workspaceRoot: "/tmp" });
+  const long = await start("head -c 396000 /dev/zero | tr '\\0' a | fold -w 99; echo; echo last; sleep 30", "01".repeat(16), { workspaceRoot: "/tmp" });
   await until(async () => (await jobs.read(long.id, Number.MAX_SAFE_INTEGER, 4)).size >= 400005, "long job output");
   const tailView = openOutput(tui, long);
   await until(async () => { await tailView.read(); return texts(tailView).includes("last"); }, "tail output");
@@ -114,7 +114,7 @@ while :; do wait "$child"; done`, { workspaceRoot: "/tmp" });
   check("read-refusals", refusals.join("|") === "read needs a byte offset and a byte count from 4 to 262144|read needs a byte offset and a byte count from 4 to 262144|the job does not exist");
 
   plugins.dispose("jobs-ui");
-  await start("sleep 30", { workspaceRoot: "/tmp" });
+  await start("sleep 30", "01".repeat(16), { workspaceRoot: "/tmp" });
   check("unload-drops-segment", !status.side("right").includes("jobs"));
   globalThis.result = fail.length ? fail.join(",") : "ok";
 })().catch((e) => { globalThis.result = "threw: " + (e.stack || e.message); });

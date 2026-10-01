@@ -7,7 +7,7 @@ const tools = @import("../tools.zig");
 const digest = @import("../native/engine/digest.zig");
 
 const root_id = "01010101010101010101010101010101";
-const child_id = "02020202020202020202020202020202";
+const child_id = "0192aaaa00000000000000000a91c07d";
 
 test "child pages return a complete list or refuse" {
     try support.run("agents/pages.test.js");
@@ -41,7 +41,7 @@ const tool_fixture =
     \\plugins.use(sessionsPlugin);
     \\plugins.use(chatPlugin);
     \\plugins.use(agents({ default: "small", maxRounds: 7, catalog: { small: { description: "Narrow research.", model: "p/family/model" }, review: { description: "Read-only review.", prompt: "Review only. Do not edit.", tools: ["read", "exec"] } } }));
-    \\globalThis.child = { session: { id: "02".repeat(16), name: "small", root: "/work", model: "p/family/model", origin: { type: "child", site: { session_id: "01".repeat(16), message_id: 1, part_id: 0 } } }, activity: { state: { type: "idle" }, queued: 0 }, last_run: { type: "turn" } };
+    \\globalThis.child = { session: { id: "0192aaaa00000000000000000a91c07d", name: "small", root: "/work", model: "p/family/model", origin: { type: "child", site: { session_id: "01".repeat(16), message_id: 1, part_id: 0 } } }, activity: { state: { type: "idle" }, queued: 0 }, last_run: { type: "turn" } };
     \\client.sessionList = async (params) => { return { items: params.population.parent_id === "01".repeat(16) ? [child] : [], next_cursor: null, total: 1 }; };
     \\client.sessionGet = async (id) => id === child.session.id ? child : { session: { id, title: "Main conversation", root: "/work", model: "parent/large", origin: { type: "root" } }, activity: { state: { type: "idle" }, queued: 0 } };
     \\client.sessionSendInput = async (id, content, site) => { if (id !== child.session.id || site.message_id !== 2) throw new Error("instruction"); return content[0].text === "go" ? { type: "started", input_id: 3, run_id: 1 } : { type: "queued", reason: "session_busy", input_id: 2 }; };
@@ -102,7 +102,7 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     const spawn = try invokeAgent(host, "spawn_agent", "{\"message\":\"task\"}");
     defer std.testing.allocator.free(spawn.text);
     try std.testing.expect(!spawn.is_error);
-    try std.testing.expectEqualStrings("Queued small (session " ++ child_id ++ "). Its report arrives as a new message.", spawn.text);
+    try std.testing.expectEqualStrings("Queued small-0a91c07d. Its report arrives as a new message.", spawn.text);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("created.child.name === 'small' && created.child.site.session_id === '01'.repeat(16) && created.child.site.message_id === 2 && created.child.site.part_id === 0 && created.model === 'p/family/model' && created.reasoning === undefined && created.max_rounds === 7 && Object.keys(created.child).length === 2 ? 1 : 0"));
     const inherited = try invokeAgent(host, "spawn_agent", "{\"message\":\"task\",\"agent\":\"review\"}");
     defer std.testing.allocator.free(inherited.text);
@@ -112,9 +112,9 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     defer std.testing.allocator.free(by_name.text);
     try std.testing.expect(by_name.is_error);
     const cases = [_]struct { []const u8, []const u8, []const u8 }{
-        .{ "send_agent_input", "{\"child\":\"" ++ child_id ++ "\",\"message\":\"more\"}", "Queued for " ++ child_id ++ " after its current run." },
-        .{ "send_agent_input", "{\"child\":\"" ++ child_id ++ "\",\"message\":\"go\"}", "Sent to " ++ child_id ++ "." },
-        .{ "stop_agent", "{\"child\":\"" ++ child_id ++ "\"}", "No run of " ++ child_id ++ " was active. Dropped 1 queued input(s)." },
+        .{ "send_agent_input", "{\"child\":\"small-0a91c07d\",\"message\":\"more\"}", "Queued for small-0a91c07d after its current run." },
+        .{ "send_agent_input", "{\"child\":\"small-0a91c07d\",\"message\":\"go\"}", "Sent to small-0a91c07d." },
+        .{ "stop_agent", "{\"child\":\"small-0a91c07d\"}", "No run of small-0a91c07d was active. Dropped 1 queued input(s)." },
     };
     for (cases) |case| {
         const answer = try invokeAgent(host, case[0], case[1]);
@@ -122,10 +122,16 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
         try std.testing.expect(!answer.is_error);
         try std.testing.expectEqualStrings(case[2], answer.text);
     }
-    try host.evalModule("child.session.origin.site.session_id = 'other';", "foreign.js");
-    const foreign = try invokeAgent(host, "stop_agent", "{\"child\":\"" ++ child_id ++ "\"}");
+    // An unknown child ID lists the child IDs, so the model can correct it.
+    const unknown = try invokeAgent(host, "stop_agent", "{\"child\":\"small-ffffffff\"}");
+    defer std.testing.allocator.free(unknown.text);
+    try std.testing.expectEqualStrings("The child small-ffffffff does not exist. The children are: small-0a91c07d.", unknown.text);
+    // A child of another parent is in neither this parent's list nor its ownership check.
+    try host.evalModule("child.session.origin.site.session_id = 'other'; client.sessionList = async () => ({ items: [], next_cursor: null, total: 0 });", "foreign.js");
+    const foreign = try invokeAgent(host, "stop_agent", "{\"child\":\"small-0a91c07d\"}");
     defer std.testing.allocator.free(foreign.text);
     try std.testing.expect(foreign.is_error);
+    try std.testing.expectEqualStrings("The child small-0a91c07d does not exist. No child exists.", foreign.text);
     try host.evalModule(
         \\import { Transcript, registerRender } from "yuke:internal/transcript";
         \\import { defaultRender } from "yuke:internal/transcript-view";

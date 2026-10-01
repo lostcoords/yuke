@@ -153,7 +153,7 @@ export function openJobs(ctx) {
     title: summary(items), footer: "↵ output · x stop · X stop all · esc close",
     border: "rounded", width: (max) => Math.round(max * 0.9), height: (max) => Math.round(max * 0.6),
     key: (job) => job.id,
-    format: (job) => ({ marker: job.state === "running" ? "•" : "·", indent: 2, text: name(job) + "  " + shortCommand(job.command) + "  ", detail: (job.session_id ?? null) === (current ?? null) ? "this session" : "", right: jobState(job, Date.now()) }),
+    format: (job) => ({ marker: job.state === "running" ? "•" : "·", indent: 2, text: name(job) + "  " + shortCommand(job.command) + "  ", detail: job.session_id === current ? "this session" : "", right: jobState(job, Date.now()) }),
     onAccept: (job) => openOutput(ctx, get(job.id) ?? job),
     keymap: {
       x: (_event, content) => { const job = content.list.selected(); if (job && job.state === "running") stop(job.id).catch(failed); },

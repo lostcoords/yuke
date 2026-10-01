@@ -75,10 +75,14 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
   const changes = [];
   const off = events.on("jobs.changed", (job) => { changes.push(`${job.id} ${job.state}`); job.state = "mutated"; });
   let uppercase = "";
-  try { await startJob("true", { workspaceRoot: "/tmp", sessionId: "AA" + "00".repeat(15) }); } catch (e) { uppercase = e.message; }
+  try { await startJob("true", "AA" + "00".repeat(15), { workspaceRoot: "/tmp" }); } catch (e) { uppercase = e.message; }
   check("uppercase-session-rejects", uppercase === "the session id must be 32 lowercase hex digits");
-  const long = await startJob("sleep 30", { workspaceRoot: "/tmp", sessionId: "01010101010101010101010101010101" });
-  const quick = await startJob("echo out; echo bad 1>&2; echo \"$PYTHONUNBUFFERED\"; exit 3", { workspaceRoot: "/tmp" });
+  // Every job belongs to a session, so a start without one rejects.
+  let missing = "";
+  try { await startJob("true", /** @type {any} */ (undefined), { workspaceRoot: "/tmp" }); } catch (e) { missing = e.message; }
+  check("missing-session-rejects", missing === "the session id must be 32 lowercase hex digits");
+  const long = await startJob("sleep 30", "01010101010101010101010101010101", { workspaceRoot: "/tmp" });
+  const quick = await startJob("echo out; echo bad 1>&2; echo \"$PYTHONUNBUFFERED\"; exit 3", "02".repeat(16), { workspaceRoot: "/tmp" });
   await jobs.wait(quick.id);
   check("job-exit", jobs.get(quick.id)?.exit_code === 3 && (await jobs.stop(quick.id))?.state === "exited");
   const log = await jobs.read(quick.id, 0, 4096);

@@ -1377,7 +1377,7 @@
         {
           "name": "session_id",
           "type": "SessionId",
-          "presence": "optional"
+          "presence": "required"
         },
         {
           "name": "command",

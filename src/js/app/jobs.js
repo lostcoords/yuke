@@ -7,9 +7,9 @@ import { events } from "yuke:internal/kernel";
 
 export const { list, get, read } = native;
 
-/** @param {string} command @param {{ workspaceRoot?: string, sessionId?: string }} [options] @returns {Promise<Job>} */
-export async function start(command, options = {}) {
-  const { job, ended } = await native.start(command, options.sessionId ?? null, options);
+/** @param {string} command @param {string} sessionId @param {{ workspaceRoot?: string }} [options] @returns {Promise<Job>} */
+export async function start(command, sessionId, options = {}) {
+  const { job, ended } = await native.start(command, sessionId, options);
   events.emit("jobs.changed", job);
   ended.then((done) => events.emit("jobs.changed", done));
   return job;
@@ -47,7 +47,7 @@ export function shortCommand(command) {
 
 /** @param {Job} job @returns {string} */
 export function name(job) {
-  return "j" + job.id;
+  return "job-" + job.id.toString(36);
 }
 
 // The end of a job in words, shared by the tool text and the TUI list.

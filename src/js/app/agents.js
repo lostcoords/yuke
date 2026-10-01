@@ -1,7 +1,7 @@
 // Child sessions from a user catalog. Native stays policy-free; this plugin owns every rule.
-import { client } from "yuke:internal/client";
+import { client, allChildren } from "yuke:internal/client";
 import { native } from "yuke:internal/native/engine";
-import { currentSession } from "yuke:internal/session";
+import { currentSession, sessions } from "yuke:internal/session";
 import { errorText, tokenLabel } from "yuke:internal/format";
 import { childState, openAgents } from "yuke:internal/agents-ui";
 import { notify } from "yuke:internal/kernel";
@@ -21,7 +21,6 @@ import { notify } from "yuke:internal/kernel";
 const KEY = /^[a-z][a-z0-9_-]{0,63}$/;
 /** An absent option keeps the engine limit; an absent `maxRounds` leaves the child with no round cap. */
 const NUMBERS = /** @type {const} */ (["maxConcurrent", "maxDepth", "maxRounds"]);
-const SESSION_ID = /^[0-9a-f]{32}$/;
 const BUILTIN_TOOLS = ["read", "write", "edit", "exec", "skill"];
 const AGENT_TOOLS = ["spawn_agent", "send_agent_input", "stop_agent"];
 /** The policy every child reads. `reports.zig` takes the child's final text as its report, so the text asks for one. */
@@ -40,11 +39,17 @@ function reportLabel(source) {
         + " · " + usage.rounds + (usage.rounds === 1 ? " round" : " rounds") + " · " + usage.tool_calls + (usage.tool_calls === 1 ? " tool" : " tools") + " · " + usage.tokens.input + "/" + usage.tokens.output + " tokens" + seconds;
 }
 
-/** The child that a settled spawn row names. The spawn text holds `(session <32 lowercase hex digits>)`. Other text names no child. */
+/** The child ID the model reads: the catalog name and the last 8 hex digits of the session ID, which are random. */
+/** @param {string} name @param {string} sessionId @returns {string} */
+function childId(name, sessionId) {
+    return name + "-" + sessionId.slice(-8);
+}
+
+/** A settled spawn row names the child ID, or this returns null. The spawn text starts with `Started <id>` or `Queued <id>`. */
 /** @param {ToolPart} part @returns {string | null} */
-function childOf(part) {
+function spawnedId(part) {
     const state = part.state;
-    return state.type === "completed" ? /\(session ([0-9a-f]{32})\)/.exec(state.output)?.[1] ?? null : null;
+    return state.type === "completed" ? /^(?:Started|Queued) ([a-z][a-z0-9_-]*-[0-9a-f]{8})\./.exec(state.output)?.[1] ?? null : null;
 }
 
 /** The live words of a child on its spawn row: the state the picker shows, then the context it holds. */
@@ -92,7 +97,7 @@ function validate(raw) {
 /** @param {Catalog} catalog */
 function spawnDescription(catalog) {
     const rows = Object.entries(catalog.rows).map(([key, row]) => "- `" + key + "`" + (row.description ? ": " + row.description : ""));
-    return "Start a child on one self-contained task. Give a complete brief: goal, files or areas, and the result to return. This call returns when the child starts. " + RULE + "\n\nAgents:\n" + rows.join("\n");
+    return "Start a child on one self-contained task. Give a complete brief: goal, files or areas, and the result to return. This call starts or queues the child. It does not wait for completion. " + RULE + "\n\nAgents:\n" + rows.join("\n");
 }
 
 /** @param {unknown} value @param {string[]} fields @returns {Record<string, unknown>} */
@@ -110,12 +115,18 @@ function required(args, key) {
 function site(context) {
     return { session_id: context.sessionId, message_id: context.messageId, part_id: context.partId };
 }
-/** @param {string} parentId @param {string} target @returns {Promise<Wire.SessionListItem>} */
-async function ownedChild(parentId, target) {
-    if (!SESSION_ID.test(target)) throw new Error("child must be a child session ID.");
-    const child = await client.sessionGet(target);
-    if (child.session.origin.type !== "child" || child.session.origin.site.session_id !== parentId) throw new Error("The child belongs to another parent.");
-    return child;
+/** Find a child of `parentId` by its child ID. A known session is checked first. An unknown ID gets an error that lists the child IDs, so the model can correct it. */
+/** @param {string} parentId @param {string} target @param {string | undefined} known @returns {Promise<Wire.SessionListItem>} */
+async function ownedChild(parentId, target, known) {
+    if (known) {
+        const child = await client.sessionGet(known);
+        if (child.session.origin.type === "child" && child.session.origin.site.session_id === parentId) return child;
+    }
+    const items = await allChildren(parentId);
+    const child = items.find((item) => childId(item.session.name ?? "", item.session.id) === target);
+    if (child) return child;
+    const ids = items.map((item) => childId(item.session.name ?? "", item.session.id));
+    throw new Error("The child " + target + " does not exist. " + (ids.length === 0 ? "No child exists." : "The children are: " + ids.join(", ") + "."));
 }
 
 /**
@@ -128,7 +139,7 @@ async function ownedChild(parentId, target) {
  */
 export function agents(options) {
     const catalog = validate(options);
-    const childField = { type: "string", pattern: SESSION_ID.source };
+    const childField = { type: "string", description: "The child ID from spawn_agent, such as explore-a91c07d2." };
     return {
         name: "agents",
         /** @param {Context} ctx */
@@ -156,6 +167,9 @@ export function agents(options) {
                 return { replace: { ...build, sections: [...build.sections, { key: "agent", text: policy }] } };
             });
 
+            // The model reads a child ID. A spawn records its session. A spawn row of a resumed transcript looks the ID up.
+            /** @type {Map<string, string>} */
+            const childSessions = new Map();
             ctx.tools.define({
                 name: "spawn_agent", description: spawnDescription(catalog),
                 parameters: {
@@ -179,7 +193,9 @@ export function agents(options) {
                         child: { name: key, site: parentSite },
                     });
                     if (!result.input) throw new Error("The child session has no initial run.");
-                    return (result.input.type === "queued" ? "Queued " : "Started ") + key + " (session " + result.session.id + "). Its report arrives as a new message.";
+                    const id = childId(key, result.session.id);
+                    childSessions.set(id, result.session.id);
+                    return (result.input.type === "queued" ? "Queued " : "Started ") + id + ". Its report arrives as a new message.";
                 },
             });
             ctx.tools.define({
@@ -188,9 +204,10 @@ export function agents(options) {
                 execute: async (raw, _signal, context) => {
                     const args = argsOf(raw, ["child", "message"]);
                     const parentSite = site(context);
-                    const child = await ownedChild(parentSite.session_id, required(args, "child"));
+                    const child = await ownedChild(parentSite.session_id, required(args, "child"), childSessions.get(required(args, "child")));
                     const result = await client.sessionSendInput(child.session.id, client.textContent(required(args, "message")), parentSite);
-                    return result.type === "queued" ? "Queued for " + child.session.id + " after its current run." : "Sent to " + child.session.id + ".";
+                    const id = required(args, "child");
+                    return result.type === "queued" ? "Queued for " + id + " after its current run." : "Sent to " + id + ".";
                 },
             });
             ctx.tools.define({
@@ -198,9 +215,10 @@ export function agents(options) {
                 parameters: { type: "object", properties: { child: childField }, required: ["child"], additionalProperties: false },
                 execute: async (raw, _signal, context) => {
                     const args = argsOf(raw, ["child"]);
-                    const child = await ownedChild(site(context).session_id, required(args, "child"));
+                    const child = await ownedChild(site(context).session_id, required(args, "child"), childSessions.get(required(args, "child")));
                     const result = await client.sessionCancelRun(child.session.id, true);
-                    return (result.canceled_run == null ? "No run of " + child.session.id + " was active." : "Stopped " + child.session.id + ".") + (result.cleared_inputs.length === 0 ? "" : " Dropped " + result.cleared_inputs.length + " queued input(s).");
+                    const id = required(args, "child");
+                    return (result.canceled_run == null ? "No run of " + id + " was active." : "Stopped " + id + ".") + (result.cleared_inputs.length === 0 ? "" : " Dropped " + result.cleared_inputs.length + " queued input(s).");
                 },
             });
 
@@ -233,8 +251,13 @@ export function agents(options) {
             }
             /** @param {ToolPart} part @returns {string} */
             function liveSuffix(part) {
-                const id = childOf(part);
-                if (!id) return "";
+                const short = spawnedId(part);
+                if (!short) return "";
+                const id = childSessions.get(short);
+                if (!id) {
+                    lookUp(short);
+                    return "";
+                }
                 let entry = children.get(id);
                 if (!entry) {
                     entry = { view: null, reading: false, again: false };
@@ -243,13 +266,32 @@ export function agents(options) {
                 }
                 return entry.view ? " · " + childLabel(entry.view) : "";
             }
+            // The parents whose children a lookup already listed.
+            /** @type {Set<string>} */
+            const asked = new Set();
+            /** Find the session of a child ID among the children of every open session, once per parent. Read the child when it appears. */
+            /** @param {string} short */
+            function lookUp(short) {
+                for (const session of sessions) {
+                    const parent = session.sessionId;
+                    if (!parent || asked.has(parent)) continue;
+                    asked.add(parent);
+                    allChildren(parent).then((items) => {
+                        for (const item of items) childSessions.set(childId(item.session.name ?? "", item.session.id), item.session.id);
+                        const id = childSessions.get(short);
+                        if (!id || children.has(id)) return;
+                        children.set(id, { view: null, reading: false, again: false });
+                        read(id);
+                    }, () => { asked.delete(parent); });
+                }
+            }
             ctx.on("session.changed", (ev) => {
                 const entry = children.get(ev.session);
                 if (!entry) return;
                 if (ev.kind === "gone") { children.delete(ev.session); rebuild(entry); return; }
                 if (ev.facts.some((fact) => fact === "session.activity_changed" || fact === "run.done" || fact === "session.summary_changed")) read(ev.session);
             });
-            ctx.effect(() => () => children.clear());
+            ctx.effect(() => () => { children.clear(); childSessions.clear(); asked.clear(); });
 
             // The header words name agent calls in any transcript look, so they live as long as the chat service does.
             ctx.inject(["chat"], (ctx) => {

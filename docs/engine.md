@@ -118,11 +118,11 @@ All three values are positive 32-bit integers.
 
 | Tool | Arguments | Result and behavior |
 |---|---|---|
-| `spawn_agent` | `{ message, agent? }` | Starts or queues a new child and returns one line with its session ID. It does not wait for completion. |
-| `send_agent_input` | `{ child, message }` | Sends a follow-up to the child session ID. The child keeps its transcript. |
+| `spawn_agent` | `{ message, agent? }` | Starts or queues a new child and returns one line with its child ID. It does not wait for completion. |
+| `send_agent_input` | `{ child, message }` | Sends a follow-up to the child. The child keeps its transcript. |
 | `stop_agent` | `{ child }` | Stops the current child run and drops its queued input. It returns one line that names the stopped run and the count of dropped inputs, if any. It keeps the transcript. Completed side effects remain. |
 
-`message` must be nonempty. `agent` must name a catalog row. `child` must be the 32-character session ID of a direct child of the calling parent.
+`message` must be nonempty. `agent` must name a catalog row. `child` is a child ID such as `explore-a91c07d2`: the catalog name and the last 8 hex digits of the child session ID. It must name a direct child of the calling parent. An error for an unknown child ID lists the child IDs.
 
 A child uses the parent workspace in a separate session and transcript. It reports completion, cancellation, and failure to the parent. A failed or capped run marks its output as partial. A report waits while its parent is busy. It starts a parent follow-up after the parent becomes idle and capacity is available. A follow-up creates a new run in the same child transcript and produces another report.
 

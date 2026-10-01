@@ -181,18 +181,23 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
         \\globalThis.started = 0;
         \\globalThis.indexDigests = 0;
         \\events.on("engine.drained", (ev) => { if (ev.type === "index") indexDigests++; });
-        \\start("echo hello; sleep 30", { workspaceRoot: "/tmp", sessionId: "01010101010101010101010101010101" }).then(() => { started = 1; });
+        \\start("echo hello; sleep 30", "01010101010101010101010101010101", { workspaceRoot: "/tmp" }).then(() => { started = 1; });
     , "rpc-job.js");
     try support.pumpUntilTrue(host, "globalThis.started === 1");
     // A job change moves no view, so the digest delivers no index change for it.
     try testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.indexDigests"));
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const job_id = host.jobs.list.items[0].id;
     f.stream.flushNotifications();
-    try testing.expect(std.mem.indexOf(u8, f.out.written(), "{\"method\":\"job.changed\",\"params\":{\"job\":{\"id\":1,\"session_id\":\"01010101010101010101010101010101\",\"command\":\"echo hello; sleep 30\",\"cwd\":\"/tmp\",\"state\":\"running\"") != null);
+    try testing.expect(std.mem.indexOf(u8, f.out.written(), try std.fmt.allocPrint(a, "{{\"method\":\"job.changed\",\"params\":{{\"job\":{{\"id\":{d},\"session_id\":\"01010101010101010101010101010101\",\"command\":\"echo hello; sleep 30\",\"cwd\":\"/tmp\",\"state\":\"running\"", .{job_id})) != null);
+    const listed = try std.fmt.allocPrint(a, "\"result\":{{\"jobs\":[{{\"id\":{d},", .{job_id});
 
     rpc.serve(testing.allocator, &f.stream,
         \\{"id":"list","method":"job.list","params":{"session_id":"01010101010101010101010101010101"}}
     );
-    try testing.expect(std.mem.indexOf(u8, f.out.written(), "{\"id\":\"list\",\"result\":{\"jobs\":[{\"id\":1,") != null);
+    try testing.expect(std.mem.indexOf(u8, f.out.written(), try std.mem.concat(a, u8, &.{ "{\"id\":\"list\",", listed })) != null);
     rpc.serve(testing.allocator, &f.stream,
         \\{"id":"other","method":"job.list","params":{"session_id":"02020202020202020202020202020202"}}
     );
@@ -201,31 +206,25 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
     rpc.serve(testing.allocator, &f.stream,
         \\{"id":"all","method":"job.list","params":null}
     );
-    try testing.expect(std.mem.indexOf(u8, f.out.written(), "{\"id\":\"all\",\"result\":{\"jobs\":[{\"id\":1,") != null);
+    try testing.expect(std.mem.indexOf(u8, f.out.written(), try std.mem.concat(a, u8, &.{ "{\"id\":\"all\",", listed })) != null);
 
     // A running job has no output event, so poll its log under one failure deadline.
     const read_deadline = std.Io.Clock.Timestamp.fromNow(f.fixture.reactor.io(), .{ .raw = .fromSeconds(5), .clock = .awake });
     while (true) {
-        rpc.serve(testing.allocator, &f.stream,
-            \\{"id":"read","method":"job.read","params":{"id":1,"offset":0,"max_bytes":1024}}
-        );
+        rpc.serve(testing.allocator, &f.stream, try std.fmt.allocPrint(a, "{{\"id\":\"read\",\"method\":\"job.read\",\"params\":{{\"id\":{d},\"offset\":0,\"max_bytes\":1024}}}}", .{job_id}));
         if (std.mem.indexOf(u8, f.out.written(), "{\"id\":\"read\",\"result\":{\"start\":0,\"complete\":false,\"text\":\"hello\\n\",\"next\":6,\"size\":6}}") != null) break;
         if (read_deadline.durationFromNow(f.fixture.reactor.io()).raw.nanoseconds <= 0) return error.JobOutputDidNotArrive;
         try f.fixture.reactor.io().sleep(.fromMilliseconds(10), .awake);
     }
-    rpc.serve(testing.allocator, &f.stream,
-        \\{"id":"big","method":"job.read","params":{"id":1,"offset":0,"max_bytes":262145}}
-    );
+    rpc.serve(testing.allocator, &f.stream, try std.fmt.allocPrint(a, "{{\"id\":\"big\",\"method\":\"job.read\",\"params\":{{\"id\":{d},\"offset\":0,\"max_bytes\":262145}}}}", .{job_id}));
     try testing.expect(std.mem.endsWith(u8, f.out.written(), "{\"id\":\"big\",\"error\":{\"code\":-32602,\"message\":\"bad parameters\"}}\n"));
     rpc.serve(testing.allocator, &f.stream,
         \\{"id":"gone","method":"job.stop","params":{"id":9}}
     );
     try testing.expect(std.mem.endsWith(u8, f.out.written(), "{\"id\":\"gone\",\"error\":{\"code\":-31029,\"message\":\"unknown job\"}}\n"));
 
-    rpc.serve(testing.allocator, &f.stream,
-        \\{"id":"stop","method":"job.stop","params":{"id":1}}
-    );
-    try testing.expect(std.mem.indexOf(u8, f.out.written(), "{\"id\":\"stop\",\"result\":{\"job\":{\"id\":1,") != null);
+    rpc.serve(testing.allocator, &f.stream, try std.fmt.allocPrint(a, "{{\"id\":\"stop\",\"method\":\"job.stop\",\"params\":{{\"id\":{d}}}}}", .{job_id}));
+    try testing.expect(std.mem.indexOf(u8, f.out.written(), try std.fmt.allocPrint(a, "{{\"id\":\"stop\",\"result\":{{\"job\":{{\"id\":{d},", .{job_id})) != null);
     try host.evalModule("import { events } from \"yuke:internal/kernel\"; globalThis.ended = 0; events.on(\"jobs.changed\", (job) => { if (job.state === \"exited\" && job.stop_requested) ended = 1; });", "rpc-job-end.js");
     try support.pumpUntilTrue(host, "globalThis.ended === 1");
     f.stream.flushNotifications();
@@ -253,8 +252,8 @@ test "a removed session stops its running jobs" {
         \\import {{ events }} from "yuke:internal/kernel";
         \\globalThis.state = "";
         \\events.on("jobs.changed", (job) => {{ state = job.state; }});
-        \\start("sleep 30", {{ workspaceRoot: "/tmp", sessionId: "{s}" }});
-        \\start("sleep 30", {{ workspaceRoot: "/tmp", sessionId: "{s}" }});
+        \\start("sleep 30", "{s}", {{ workspaceRoot: "/tmp" }});
+        \\start("sleep 30", "{s}", {{ workspaceRoot: "/tmp" }});
     , .{ id, "01010101010101010101010101010101" }, 0);
     try host.evalModule(source, "rpc-remove-jobs.js");
     try support.pumpUntilTrue(host, "globalThis.state === \"running\"");
@@ -265,7 +264,7 @@ test "a removed session stops its running jobs" {
     rpc.serve(testing.allocator, &f.stream, remove);
     try testing.expect(std.mem.indexOf(u8, f.out.written(), "{\"id\":\"r\",\"result\":{}}") != null);
     try support.pumpUntilTrue(host, "globalThis.state === \"exited\"");
-    // The job of another session keeps running.
-    try testing.expectEqual(proto.job.JobState.running, host.jobs.find(2).?.state);
-    try testing.expectEqual(proto.job.JobState.exited, host.jobs.find(1).?.state);
+    // The job of another session keeps running. The table keeps start order.
+    try testing.expectEqual(proto.job.JobState.running, host.jobs.list.items[1].state);
+    try testing.expectEqual(proto.job.JobState.exited, host.jobs.list.items[0].state);
 }

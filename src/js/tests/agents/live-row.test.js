@@ -16,16 +16,22 @@ plugins.use(chatPlugin);
 plugins.use(transcriptView);
 plugins.use(agents({ catalog: { explore: {} } }));
 (async () => {
-  const parent = "01".repeat(16), childId = "02".repeat(16);
+  const parent = "01".repeat(16), childId = "0192aaaa00000000000000000a91c07d";
   const chat = new ChatView(new Session());
-  root.setRoot(Node.leaf(chat)); root.focusView(chat);
   chat.session.sessionId = parent;
-  const output = "Started explore (session " + childId + "). Its report arrives as a new message.";
+  // Another pane has the focus, so the lookup must search every open session, not the focused one.
+  const other = new ChatView(new Session());
+  other.session.sessionId = "03".repeat(16);
+  root.setRoot(Node.leaf(other)); root.focusView(other);
+  // The spawn text names the short id. A resumed transcript finds its session among the children once.
+  const output = "Started explore-0a91c07d. Its report arrives as a new message.";
   const part = { type: "tool", id: 0, name: "spawn_agent", arguments: JSON.stringify({ agent: "explore", message: "look" }), state: { type: "completed", output, duration_ms: 0 } };
   client.sessionOutline = () => ({ messages: [{ id: 1, type: "assistant" }], active: null });
   client.sessionParts = () => [part];
   client.sessionPart = () => ({ part });
-  const item = { session: { id: childId, model: "m", origin: { type: "child", name: "explore", site: { session_id: parent, message_id: 1, part_id: 0 } } }, activity: { state: { type: "running_tool", run_id: 1, message_id: 1, part_id: 0, tool_name: "read", started_at_ms: 1 }, queued: 0, context_tokens: 8200, pending_compaction: null }, last_run: null };
+  const item = { session: { id: childId, model: "m", name: "explore", origin: { type: "child", name: "explore", site: { session_id: parent, message_id: 1, part_id: 0 } } }, activity: { state: { type: "running_tool", run_id: 1, message_id: 1, part_id: 0, tool_name: "read", started_at_ms: 1 }, queued: 0, context_tokens: 8200, pending_compaction: null }, last_run: null };
+  let lists = 0;
+  client.sessionList = async (params) => { lists++; const own = params.population.parent_id === parent; return { items: own ? [JSON.parse(JSON.stringify(item))] : [], next_cursor: null, total: own ? 1 : 0 }; };
   let gets = 0;
   client.sessionGet = async () => { gets++; return JSON.parse(JSON.stringify(item)); };
   chat.session.reload();
@@ -34,7 +40,7 @@ plugins.use(agents({ catalog: { explore: {} } }));
   // The first render names the agent alone and starts one read; the read rebuilds the row with the live words.
   check(text().includes("agent explore") && !text().includes("read"), "first render must be plain: " + text());
   await settle();
-  check(gets === 1, "one read on first sight");
+  check(lists === 2 && gets === 1, "one lookup per open session and one read on first sight: " + lists);
   check(text().includes("agent explore · tool · read · 8.2k ctx"), "live row after the read: " + text());
   // A burst of facts coalesces into the read in flight and one more.
   gets = 0;
@@ -62,5 +68,6 @@ plugins.use(agents({ catalog: { explore: {} } }));
   await settle();
   check(!text().includes("completed"), "gone child must leave the plain row: " + text());
   chat.session.sessionId = null; chat.session.leave(chat);
+  other.session.sessionId = null; other.session.leave(other);
   globalThis.result = "ok";
 })().catch((e) => { globalThis.result = e.stack || e.message; });

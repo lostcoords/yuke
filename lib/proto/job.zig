@@ -7,7 +7,7 @@ pub const JobState = enum { running, exited, failed };
 /// One background job. `exit_code` and `signal` stay null while it runs, and at most one of them is set after the end.
 pub const Job = struct {
     id: ids.JobId,
-    session_id: ?ids.SessionId = null,
+    session_id: ids.SessionId,
     command: []const u8,
     cwd: []const u8,
     state: JobState,

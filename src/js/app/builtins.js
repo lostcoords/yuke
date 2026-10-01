@@ -170,14 +170,14 @@ async function startBackground(command, context) {
   const root = context.workspaceRoot;
   const same = sessionJobs(context.sessionId).find(j => j.state === "running" && j.command === command && j.cwd === root);
   if (same) return `[job ${jobName(same)} already runs this command. Log: ${same.log}]`;
-  const job = await startJob(command, { workspaceRoot: root, sessionId: context.sessionId });
+  const job = await startJob(command, context.sessionId, { workspaceRoot: root });
   return `[job ${jobName(job)} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use jobs with id and stop: true to request its stop.]`;
 }
 
 // A job of another session stays hidden, so its id reads as absent.
 /** @param {string} id @param {ToolContext} context @returns {Job} */
 function jobOf(id, context) {
-  const job = /^j[1-9][0-9]*$/.test(id) ? getJob(Number(id.slice(1))) : null;
+  const job = /^job-[0-9a-z]{4}$/.test(id) ? getJob(parseInt(id.slice(4), 36)) : null;
   if (job && job.session_id === context.sessionId) return job;
   const ids = sessionJobs(context.sessionId).map(jobName);
   return invalid(`the job ${id} does not exist. ${ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`}`);
@@ -286,7 +286,7 @@ export const builtins = {
     builtin(ctx, "jobs", {
       description: "List the background jobs, or stop one. Pass no argument for the list. Pass id alone for one job and its log path. Pass id and stop: true to request the stop of the job and its process group. A requested stop sends no exit message.",
       parameters: { type: "object", properties: {
-        id: { type: "string", description: "The job id, for example j1." },
+        id: { type: "string", description: "The job ID, for example job-k3x9." },
         stop: { type: "boolean" },
       }, required: [], additionalProperties: false }, execute: jobs,
     });

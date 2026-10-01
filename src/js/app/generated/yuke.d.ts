@@ -4290,7 +4290,7 @@ export interface InteractionValue {
 /** One background job. `exit_code` and `signal` stay null while it runs, and at most one of them is set after the end. */
 export interface Job {
   readonly id: JobId;
-  readonly session_id?: SessionId;
+  readonly session_id: SessionId;
   readonly command: string;
   readonly cwd: string;
   readonly state: JobState;

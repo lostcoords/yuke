@@ -19,7 +19,7 @@ const rangeFixturePath = "/tmp/yuke-bench-range-fixture";
 const rangeFixtureLine = "const value = compute(input, options);\n";
 const chunk = "x".repeat(4095) + "\n";
 /** @type {Job} */
-const job = { id: 1, state: "running", command: "bench", started_at_ms: 0, cwd: "/tmp", log: "", stop_requested: false };
+const job = { id: 1, session_id: "01".repeat(16), state: "running", command: "bench", started_at_ms: 0, cwd: "/tmp", log: "", stop_requested: false };
 
 /** @param {string} name @param {number} count */
 async function start(name, count) {
