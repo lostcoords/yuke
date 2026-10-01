@@ -305,9 +305,12 @@ export const defaultRender = {
       const ms = part.duration_ms;
       // A block can stop while it is still the last part of the draft, so its duration wins over `env.live`.
       const label = ms != null ? "thought for " + (ms / 1000).toFixed(1) + "s" : env.live ? "thinking" : "thought";
+      const text = clip(part.title ? label + ": " + part.title : label, width);
+      // A thought with no text has nothing to open, so its row does not fold.
+      if (!part.text) return { rows: [{ text, group: "TxMeta", indent: PAD, header: false, stop: true }], source: "" };
       // A folded thought builds one row, so a delta wraps none of its text. The source is the whole text, folded and open.
       /** @type {TranscriptRow[]} */
-      const rows = [{ text: clip((env.expanded ? "▾ " : "▸ ") + (part.title ? label + ": " + part.title : label), width), group: "TxMeta", indent: PAD, header: true, stop: true }];
+      const rows = [{ text, group: "TxMeta", indent: PAD, header: true, stop: true }];
       if (env.expanded) for (const row of wrapRows(part.text, width, "TxThought", PAD)) rows.push(row);
       return { rows, source: part.text };
     }
@@ -349,7 +352,7 @@ export const defaultRender = {
       // A child report opens with the preamble of the model, and the rows show only its body.
       const text = source?.type === "child_report" && texts.length >= 2 ? /** @type {Extract<MessagePart, { type: "text" }>} */ (texts[texts.length - 1]).text : textOfParts(parts);
       /** @type {TranscriptRow[]} */
-      const rows = [{ text: clip((env.expanded ? "▾ " : "▸ ") + label, width), group: "TxMeta", indent: PAD, header: true, stop: true }];
+      const rows = [{ text: clip(label, width), group: "TxMeta", indent: PAD, header: true, stop: true }];
       const limit = env.expanded ? Infinity : m.skill_name ? 0 : PREVIEW_LINES;
       const body = wrapRows(text, width, "TxToolOutput", PAD, limit === Infinity ? Infinity : limit + 1);
       for (const r of body.slice(0, limit)) rows.push(r);

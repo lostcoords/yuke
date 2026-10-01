@@ -13,17 +13,17 @@ const parts = { u: [{ type: "text", id: 0, text: "ask" }], r1: [thought] };
 const t = new Transcript({ partsOf: (id) => parts[id] || [] });
 t.setOutline([], { id: "r1", type: "assistant" });
 draw(t, 40, 10);
-check("thought-folded", rowsHave(t.rows(40, 0, 10), "▸ thinking: Plan") && !rowsHave(t.rows(40, 0, 10), "because why"));
+check("thought-folded", rowsHave(t.rows(40, 0, 10), "thinking: Plan") && !rowsHave(t.rows(40, 0, 10), "because why"));
 t.togglePart("r1", 0);
 check("thought-opens", t.rows(40, 0, 10).some((r) => r.text === "because why" && r.group === "TxThought"));
 // A block stops before the next part starts, so its duration ends the live label in the draft.
 parts.r1 = [{ ...thought, duration_ms: 1500 }];
 t.setActive("r1");
-check("stopped-in-draft", rowsHave(t.rows(40, 0, 10), "▾ thought for 1.5s: Plan"));
+check("stopped-in-draft", rowsHave(t.rows(40, 0, 10), "thought for 1.5s: Plan"));
 parts.r1 = [{ ...thought, duration_ms: 1500 }, { type: "text", id: 1, text: "hello" }];
 t.setActive("r1");
 t.setOutline([{ id: "r1", type: "assistant" }], null);
-check("commit-keeps-open", rowsHave(t.rows(40, 0, 10), "▾ thought for 1.5s: Plan") && rowsHave(t.rows(40, 0, 10), "because why"));
+check("commit-keeps-open", rowsHave(t.rows(40, 0, 10), "thought for 1.5s: Plan") && rowsHave(t.rows(40, 0, 10), "because why"));
 
 // A fold choice holds across a later send, for string and number ids.
 parts.r3 = [{ type: "tool", id: 2, name: "read", arguments: '{"path":"a.zig"}', state: { type: "completed", output: "file body", duration_ms: 1 } }];
@@ -39,12 +39,16 @@ num.togglePart(2, 0);
 num.setOutline([{ id: 2, type: "assistant" }, { id: 3, type: "user" }], { id: 4, type: "assistant" });
 check("num-id-later-send", rowsHave(num.rows(40, 0, num.rowCount(40)), "num body"));
 
-// An empty thought shows its header, and a redacted thought takes no row.
-const blank = new Transcript({ partsOf: () => [{ type: "reasoning", id: 0, text: "" }, { type: "redacted_reasoning", id: 1 }, { type: "text", id: 2, text: "answer" }] });
+// A hidden thought with a duration shows the duration on a row that does not fold. A hidden thought with no duration shows nothing.
+const blank = new Transcript({ partsOf: () => [
+  { type: "reasoning", id: 0, text: "", duration_ms: 2000 },
+  { type: "reasoning", id: 1, text: "" },
+  { type: "text", id: 2, text: "answer" },
+] });
 blank.setOutline([{ id: "bl", type: "assistant" }], null);
 draw(blank, 40, 8);
 const blankRows = blank.rows(40, 0, 8);
-check("empty-thought-header", rowsHave([blankRows[0]], "▸ thought") && blankRows.filter((r) => rowsHave([r], "answer")).length === 1);
+check("hidden-thought-row", rowsHave([blankRows[0]], "thought for 2.0s") && !blankRows[0].header && blankRows.filter((r) => rowsHave([r], "thought")).length === 1 && rowsHave(blankRows, "answer"));
 
 // J and K walk the parts: the thought, the tool header, then the text.
 parts.walk = [

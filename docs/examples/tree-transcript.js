@@ -17,9 +17,9 @@ const REPORT_LINES = 8;
 const LABEL_W = 7;
 const CATEGORY = /** @type {Record<string, string>} */ ({ read: "TreeRead", write: "TreeWrite", run: "TreeRun", agent: "TreeAgent" });
 
-/** @param {PartEnv["group"]} group @param {boolean} expanded @returns {Row} */
-function headerAttrs(group, expanded) {
-  if (!group) return { indent: GUTTER, marker: expanded ? "▾" : "▸", markerGroup: "TxMeta", header: true, stop: true };
+/** @param {PartEnv["group"]} group @returns {Row} */
+function headerAttrs(group) {
+  if (!group) return { indent: GUTTER, header: true, stop: true };
   return { indent: TREE_INDENT, marker: "  " + (group.last ? "└─" : "├─"), markerGroup: "TxMeta", header: true, stop: true };
 }
 
@@ -68,7 +68,7 @@ function toolRows(part, env) {
     segments.push({ text: right, group: part.state.type === "error" ? "TxError" : "TxMeta" });
   }
   /** @type {Row[]} */
-  const rows = [{ segments, ...headerAttrs(env.group, env.expanded), kind: "tool-header" }];
+  const rows = [{ segments, ...headerAttrs(env.group), kind: "tool-header" }];
   const args = String(part.arguments || "");
   const state = part.state;
   const views = /** @type {{ view?: readonly Wire.View[] }} */ (state).view;
@@ -100,7 +100,7 @@ function reasoningRows(part, env) {
   // The engine reads the title of the latest summary section, so the renderer parses no text.
   const headerSrc = part.title ? name + " · " + part.title : name;
   /** @type {Row[]} */
-  const rows = [{ segments: [{ text: headerSrc, group: "TxThought", src: 0, srcEnd: headerSrc.length }], ...headerAttrs(env.group, env.expanded), markerGroup: "TxThought", kind: "reasoning-header" }];
+  const rows = [{ segments: [{ text: headerSrc, group: "TxThought", src: 0, srcEnd: headerSrc.length }], ...headerAttrs(env.group), header: text !== "", markerGroup: "TxThought", kind: "reasoning-header" }];
   // The source keeps the text while folded, so a fold never moves a source offset.
   const source = headerSrc + "\n" + text;
   if (!env.expanded) return { rows, source };
@@ -145,7 +145,7 @@ const treeLook = {
       const body = wrapRows(text, width, "TxToolOutput", GUTTER, env.expanded ? Infinity : REPORT_LINES + 1);
       const shown = env.expanded ? body : body.slice(0, m.skill_name ? 0 : REPORT_LINES);
       /** @type {Row[]} */
-      const rows = [{ text: m.skill_name ? "Skill · " + m.skill_name : inputSourceLabel(m.source), group: "TxMeta", marker: env.expanded ? "▾" : "▸", markerGroup: "TxMeta", indent: GUTTER, header: true, stop: true }, ...shown];
+      const rows = [{ text: m.skill_name ? "Skill · " + m.skill_name : inputSourceLabel(m.source), group: "TxMeta", indent: GUTTER, header: true, stop: true }, ...shown];
       if (!env.expanded && body.length > shown.length) rows.push({ text: "… click the header to expand", group: "TxMeta", indent: GUTTER });
       return { rows, source: text };
     }

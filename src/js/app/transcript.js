@@ -798,7 +798,8 @@ export class Transcript {
 
   /** @param {number} id @returns {Wire.AssistantPart[]} */
   _readParts(id) {
-    return /** @type {Wire.AssistantPart[]} */ (this._allParts(id).filter((part) => part.type === "text" || part.type === "tool" || part.type === "reasoning"));
+    // A thought with no text and no duration renders nothing, such as hidden reasoning that still streams. A text part never reads that clause.
+    return /** @type {Wire.AssistantPart[]} */ (this._allParts(id).filter((part) => part.type === "text" || part.type === "tool" || (part.type === "reasoning" && (part.text || part.duration_ms != null))));
   }
 
   // The parts of one rendered message stay held until a delta or an eviction drops them.
