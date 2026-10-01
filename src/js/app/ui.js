@@ -11,7 +11,7 @@ import { Pager } from "yuke:internal/pager";
 /** @import { TranscriptRow } from "./types/pager.js" */
 // The composer asks this point for its prompt glyph; the newest listener that answers wins.
 events.declare(["composer.prompt", "composer.changed"]);
-/** @import { BorderSet, ComposerOptions, ComposerSnapshot, ComposerSpan, ContentHeight, Dimension, ItemKey, ListItem, ListKey, ListOptions, NavAction, PickerAction, PickOptions, Projection, PromptOptions, TextOptions, WindowContent, WindowOptions, WrapRow } from "./types/ui.js" */
+/** @import { BorderSet, ComposerOptions, ComposerSnapshot, ComposerSpan, ContentHeight, Dimension, ItemKey, ListItem, ListKey, ListOptions, NavAction, PickerAction, PickOptions, Projection, ProjectionPart, PromptOptions, TextOptions, WindowContent, WindowOptions, WrapRow } from "./types/ui.js" */
 
 // The kit adds only an absent highlight group, so a theme that set one first keeps it and a re-import does not re-seed.
 const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
@@ -357,11 +357,9 @@ export class List {
 
       if (isSel) fill(x, sy, w, drawH, this.selGroup);
 
-      const lines = cell.lines || [cell];
-      for (let ln = 0; ln < drawH && ln < lines.length; ln++) {
-        const line = cell.lines ? normalizeCell(lines[ln]) : cell;
-        this._drawLine(x, sy + ln, w, line, isSel);
-      }
+      const lines = cell.lines;
+      if (!lines) this._drawLine(x, sy, w, cell, isSel);
+      else for (let ln = 0; ln < drawH && ln < lines.length; ln++) this._drawLine(x, sy + ln, w, normalizeCell(lines[ln]), isSel);
     }
   }
 
@@ -501,7 +499,11 @@ export class Composer {
   /** @param {number} caret @returns {number} */
   _toDisplay(caret) {
     let d = caret;
-    for (const p of this._projection().parts) if (caret >= p.span.end) d += p.delta;
+    const parts = this._projection().parts;
+    for (let i = 0; i < parts.length; i++) {
+      const p = /** @type {ProjectionPart} */ (parts[i]);
+      if (caret >= p.span.end) d += p.delta;
+    }
     return d;
   }
 

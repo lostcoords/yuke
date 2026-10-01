@@ -49,10 +49,26 @@ const selfRemove = {
   needsTick() { if (armed) root.removeTickable(selfRemove); return { periodMs: 1 }; },
   tick() { ticks++; },
 };
+// The pass walks the list it started with, so the removal skips no later service.
+let nextTicks = 0;
+const after = { needsTick() { return { periodMs: 1 }; }, tick() { nextTicks++; } };
 root.addTickable(selfRemove);
+root.addTickable(after);
 armed = true;
 root.tickLayers();
-check("self-remove-skips-tick", ticks === 0 && !root.hasTickable(selfRemove));
+check("self-remove-skips-tick", ticks === 0 && !root.hasTickable(selfRemove) && nextTicks === 1);
+root.removeTickable(after);
+
+// A throw inside a pass still empties the scratch list, so the next pass reuses it.
+let failing = false;
+const thrower = { needsTick() { if (failing) throw new Error("tick"); return null; } };
+root.addTickable(thrower);
+failing = true;
+let passThrew = false;
+try { root.tickLayers(); } catch { passThrew = true; }
+failing = false;
+check("throw-clears-scratch", passThrew && root._tickScratch.length === 0);
+root.removeTickable(thrower);
 
 // A repeated removal is safe, so a disposer can run twice.
 root.addTickable(svc);

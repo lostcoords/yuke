@@ -1161,7 +1161,9 @@ export const status = {
   side(which) {
     // The frame asks each side on every draw, so the text grows in place and no array holds the parts.
     let out = "";
-    for (const seg of this._list) {
+    const list = this._list;
+    for (let i = 0; i < list.length; i++) {
+      const seg = /** @type {StatusSegment} */ (list[i]);
       if (seg.side !== which) continue;
       // One bad provider must not take the frame with it.
       /** @type {string | null | undefined} */
@@ -1204,6 +1206,34 @@ export class RootView {
     this._leafScratch = [];
     /** @type {TickableEntry[]} */
     this.tickables = [];
+    /** @type {TickableEntry[]} */
+    this._tickScratch = [];
+    // The passes after each draw keep their state here and reuse two callbacks, so a frame creates no closure.
+    /** @type {number | null} */
+    this._passPeriod = null;
+    this._passNow = 0;
+    this._passTicked = false;
+    /** @param {Overlay | Tickable} layer @returns {void} */
+    this._periodOf = (layer) => {
+      const t = /** @type {{ periodMs: number } | null} */ (callHook(layer, "needsTick"));
+      if (!t) return;
+      const ms = t.periodMs;
+      this._passPeriod = this._passPeriod == null ? ms : Math.min(this._passPeriod, ms);
+    };
+    /** @param {Overlay | Tickable} layer @param {boolean} isTickable @returns {void} */
+    this._tickOf = (layer, isTickable) => {
+      const t = /** @type {{ periodMs: number } | null} */ (callHook(layer, "needsTick"));
+      if (!t) return;
+      const now = this._passNow;
+      const last = this._tickedAt.get(layer);
+      // A clock that steps back reads as elapsed, so a layer never waits for the clock to catch up.
+      if (last !== undefined && now >= last && now - last < t.periodMs * TICK_EARLY_SHARE) return;
+      // A service can remove itself inside `needsTick`, so a stale one must not still get `tick`.
+      if (isTickable && !this.hasTickable(/** @type {Tickable} */ (layer))) return;
+      this._tickedAt.set(layer, now);
+      callHook(layer, "tick");
+      this._passTicked = true;
+    };
     // The last tick each layer received. A pulse for the engine or a faster layer never runs a layer before its period.
     /** @type {WeakMap<object, number>} */
     this._tickedAt = new WeakMap();
@@ -1560,13 +1590,21 @@ export class RootView {
       const scratch = this._leafScratch;
       const leaves = this.root_node.leaves(scratch.length === 0 ? scratch : []);
       try {
-        for (const leaf of leaves) fn(leafView(leaf), false);
+        for (let i = 0; i < leaves.length; i++) fn(leafView(/** @type {Node} */ (leaves[i])), false);
       } finally {
         leaves.length = 0;
       }
     }
-    for (const layer of this.overlays) fn(layer, false);
-    for (const e of this.tickables.slice()) fn(e.tickable, true);
+    for (let i = 0; i < this.overlays.length; i++) fn(/** @type {Overlay} */ (this.overlays[i]), false);
+    // A tick can add or remove a tickable, so the pass walks a copy. An outer pass reuses the scratch list. A nested pass takes a fresh list.
+    const held = this._tickScratch;
+    const entries = held.length === 0 ? held : [];
+    for (let i = 0; i < this.tickables.length; i++) entries.push(/** @type {TickableEntry} */ (this.tickables[i]));
+    try {
+      for (let i = 0; i < entries.length; i++) fn(/** @type {TickableEntry} */ (entries[i]).tickable, true);
+    } finally {
+      entries.length = 0;
+    }
   }
 
   /** @returns {void} */
@@ -1582,7 +1620,7 @@ export class RootView {
       try {
         if (this.root_node) this.root_node.layout({ x: 0, y: 0, w: term.width, h: Math.max(0, barY) });
         const bounds = { x: 0, y: 0, w: term.width, h: term.height };
-        for (const layer of this.overlays) callHook(layer, "layout", bounds);
+        for (let i = 0; i < this.overlays.length; i++) callHook(this.overlays[i], "layout", bounds);
       } catch (error) {
         this._layoutDirty = true;
         throw error;
@@ -1591,7 +1629,8 @@ export class RootView {
     if (this.root_node) this.root_node.draw(this.activeLeaf);
     if (barY >= 0) status.draw(0, barY, term.width);
     const focused = this.focused;
-    for (const layer of this.overlays) {
+    for (let i = 0; i < this.overlays.length; i++) {
+      const layer = this.overlays[i];
       callHook(layer, "draw", layer === focused);
     }
     const c = /** @type {{ x: number, y: number, visible: boolean } | null} */ (callHook(focused, "cursor"));
@@ -1603,14 +1642,10 @@ export class RootView {
 
   /** @returns {void} */
   syncTick() {
-    /** @type {number | null} */
-    let period = null;
-    this._forEachTickable((layer) => {
-      const t = /** @type {{ periodMs: number } | null} */ (callHook(layer, "needsTick"));
-      if (!t) return;
-      const ms = t.periodMs;
-      period = period == null ? ms : Math.min(period, ms);
-    });
+    // A nested pass from a hook takes the minimum over every current layer, so the outer pass needs no saved state.
+    this._passPeriod = null;
+    this._forEachTickable(this._periodOf);
+    const period = this._passPeriod;
     if (period != null) term.setNeedsTick(true, period);
     else term.setNeedsTick(false);
   }
@@ -1618,21 +1653,11 @@ export class RootView {
   // Tick each layer whose period elapsed, and answer whether any did. A pulse can arrive a quarter period early.
   /** @returns {boolean} */
   tickLayers() {
-    const now = Date.now();
-    let ticked = false;
-    this._forEachTickable((layer, isTickable) => {
-      const t = /** @type {{ periodMs: number } | null} */ (callHook(layer, "needsTick"));
-      if (!t) return;
-      const last = this._tickedAt.get(layer);
-      // A clock that steps back reads as elapsed, so a layer never waits for the clock to catch up.
-      if (last !== undefined && now >= last && now - last < t.periodMs * TICK_EARLY_SHARE) return;
-      // A service can remove itself inside `needsTick`, so a stale one must not still get `tick`.
-      if (isTickable && !this.hasTickable(/** @type {Tickable} */ (layer))) return;
-      this._tickedAt.set(layer, now);
-      callHook(layer, "tick");
-      ticked = true;
-    });
-    return ticked;
+    // Only a tick event starts this pass, so it never nests.
+    this._passNow = Date.now();
+    this._passTicked = false;
+    this._forEachTickable(this._tickOf);
+    return this._passTicked;
   }
 
   // A modal overlay consumes the event even when the overlay has no requested hook.

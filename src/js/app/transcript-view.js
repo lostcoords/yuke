@@ -91,9 +91,14 @@ function moveSrc(rows, base) {
   for (let i = 0; i < rows.length; i++) {
     const r = /** @type {TranscriptRow} */ (rows[i]);
     if (r.src != null) r.src += base;
-    else if (r.segments) for (const seg of r.segments) if (seg.src != null) {
-      seg.src += base;
-      seg.srcEnd = /** @type {number} */ (seg.srcEnd) + base;
+    else if (r.segments) {
+      const segments = r.segments;
+      for (let j = 0; j < segments.length; j++) {
+        const seg = /** @type {Segment} */ (segments[j]);
+        if (seg.src == null) continue;
+        seg.src += base;
+        seg.srcEnd = /** @type {number} */ (seg.srcEnd) + base;
+      }
     }
   }
 }
@@ -113,7 +118,7 @@ export function diffRows(files, width, indent, limit = Infinity) {
     if (rows.length < limit) {
       const shown = wrapRows(text, width, group, indent, limit - rows.length);
       moveSrc(shown, source.length);
-      for (const r of shown) rows.push(r);
+      for (let i = 0; i < shown.length; i++) rows.push(/** @type {TranscriptRow} */ (shown[i]));
     }
     source += text;
   };
@@ -121,7 +126,11 @@ export function diffRows(files, width, indent, limit = Infinity) {
     if (files.length !== 1) add(f.path, "TxToolTitle");
     for (let i = 0; i < f.hunks.length; i++) {
       if (i > 0) add("…", "TxDiffContext");
-      for (const line of /** @type {Wire.DiffHunk} */ (f.hunks[i]).lines) add(line, line[0] === "+" ? "TxDiffAdd" : line[0] === "-" ? "TxDiffDel" : "TxDiffContext");
+      const lines = /** @type {Wire.DiffHunk} */ (f.hunks[i]).lines;
+      for (let j = 0; j < lines.length; j++) {
+        const line = /** @type {string} */ (lines[j]);
+        add(line, line[0] === "+" ? "TxDiffAdd" : line[0] === "-" ? "TxDiffDel" : "TxDiffContext");
+      }
     }
   }
   return { rows, source };
