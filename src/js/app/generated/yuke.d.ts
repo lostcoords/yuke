@@ -838,7 +838,7 @@ export class Context {
     provide<K extends string>(name: K & FreeName<K>, value: Provider<K>): Disposer;
     /**
      * Answer one engine hook point until the disposer runs or the plugin unloads. The handlers of a point run in registration order.
-     * A handler that throws blocks the action. It throws a TypeError when `fn` is not a function or the point is unknown.
+     * A handler that throws or answers null blocks the action. It throws a TypeError when `fn` is not a function or the point is unknown.
      */
     hook<P extends HookPoint>(point: P, fn: HookHandler<P>): Disposer;
     /** The tools of this plugin. An unload of the plugin removes each tool it defines. */
@@ -3211,7 +3211,7 @@ export interface HookPayloads {
   "input.before": { session_id: string | null; content: Wire.ContentPart[]; create?: Wire.CreateSession };
 }
 
-/** The whole value a `replace` answer carries, not a patch. */
+/** The keys a `replace` answer owns. A key that the replacement omits is gone. The other payload keys are context, and the next handler still reads them. Another key blocks the action. */
 export interface HookReplacements {
   "tools.select": { tools: string[] };
   "tool.before": { name: string; arguments: string };
@@ -3226,11 +3226,11 @@ export interface HookReplacements {
 /** A hook point that `ctx.hook` can answer. */
 export type HookPoint = keyof HookPayloads;
 
-/** A block stops the action with a reason. A replace hands the next handler a new value. Nothing means proceed. */
+/** A block stops the action with a reason. A replace hands the next handler a new value. Undefined means proceed. */
 export type HookAnswer<P extends HookPoint = HookPoint> = { block: string; replace?: undefined } | { replace: HookReplacements[P]; block?: undefined };
 
-/** A handler of one hook point. It may be async. A throw blocks the action and reports a fault. */
-export type HookHandler<P extends HookPoint = HookPoint> = (payload: HookPayloads[P]) => HookAnswer<P> | null | undefined | void | Promise<HookAnswer<P> | null | undefined | void>;
+/** A handler of one hook point. It may be async. Undefined proceeds. A throw or a null blocks the action and reports a fault. */
+export type HookHandler<P extends HookPoint = HookPoint> = (payload: HookPayloads[P]) => HookAnswer<P> | void | Promise<HookAnswer<P> | void>;
 
 /** A resource release; the close awaits a returned Promise before the next older release. */
 export type Release = () => unknown;

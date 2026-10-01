@@ -32,6 +32,7 @@ QuickJS on a hot path:
 - `for...of` allocates one iterator per loop. Over a short array, use an index loop (27% faster in a probe).
 - `for (const [k, v] of map)` allocates one array per entry (10× slower). Use `map.forEach`, `map.values()`, or `map.keys()`.
 - A call sets up every local of the function before the first statement, also when the function returns early. Keep a common early exit, such as a cache hit, in a function with few locals. Move the rare path into its own method (`style.resolve` and `_build`: 11% faster).
+- `x === undefined` reads `undefined` as a global (`OP_get_var`) and takes the slow strict compare. On a hot path, test `x == null` first, then tell null apart inside that branch (hook dispatch: −450 instructions per pass).
 - An object gets its shape from its fields and their order. Give objects of one kind the same fields in the same order. Do not add a field that most objects do not need (`stop` on each text row: +1.4% on `rows()`).
 - A wrap converts the whole string before it applies its row limit. When no rows are needed, pass limit 0 or do not call it.
 - Two dictionary objects that get the same keys in the same order share one shape. Then each new key copies the whole shape. Use a `Map` for a private dictionary (`style._base`).

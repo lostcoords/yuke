@@ -272,6 +272,6 @@ export const builtins = {
     });
 
     // The skill tool has nothing to load in a session that lists no skill, so that session never sees it.
-    ctx.hook("tools.select", (selection) => selection.context.has_skills ? null : { replace: { ...selection, tools: selection.tools.filter((name) => name !== "skill") } });
+    ctx.hook("tools.select", (selection) => selection.context.has_skills ? undefined : { replace: { tools: selection.tools.filter((name) => name !== "skill") } });
   },
 };

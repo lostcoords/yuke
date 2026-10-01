@@ -322,8 +322,8 @@ pub const Harness = struct {
     const hook_source =
         \\import { plugins } from "yuke:internal/ext";
         \\plugins.use({ name: "probe", apply(ctx) {
-        \\  ctx.hook("request.build", (request) => ({ replace: { ...request, system: request.system + "\n\nDo not spawn a child unless the user asks." } }));
-        \\  ctx.hook("tool.before", () => null);
+        \\  ctx.hook("request.build", (request) => ({ replace: { model: request.model, system: request.system + "\n\nDo not spawn a child unless the user asks.", tools: request.tools, max_output_tokens: request.max_output_tokens } }));
+        \\  ctx.hook("tool.before", () => undefined);
         \\} });
         \\globalThis.bench = { start: () => 1, step: () => 1, verify: () => 1 };
     ;
@@ -348,8 +348,8 @@ pub const Harness = struct {
         try self.host.pump();
         if (held.state != .settled or held.state.settled != .ok) return error.InvalidToolResult;
         const text = held.state.settled.ok.text;
-        // A replace echoes the request; a pass is the empty answer.
-        if (phase == .hook_request_build and text.len < payload.len) return error.InvalidToolResult;
+        // A replace carries the new system text. A pass is the empty answer.
+        if (phase == .hook_request_build and std.mem.indexOf(u8, text, "Do not spawn a child unless the user asks.") == null) return error.InvalidToolResult;
         if (phase == .hook_tool_before and text.len != 0) return error.InvalidToolResult;
     }
 

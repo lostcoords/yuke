@@ -53,7 +53,7 @@ pub fn finish(runtime: *App, host: *Host, arena: std.mem.Allocator, params: anyt
         .block => return .{ .failure = .{ .code = .bad_request, .message = "an extension stopped the input" } },
         .canceled => unreachable, // The gate reads a call only while the host is open, and only a stopping host cancels.
         .replace => |value| {
-            const replaced = std.json.parseFromValueLeaky(struct { content: []const proto.content.ContentPart }, arena, value, .{ .ignore_unknown_fields = true }) catch
+            const replaced = std.json.parseFromValueLeaky(struct { content: []const proto.content.ContentPart }, arena, value, .{}) catch
                 return .{ .failure = .{ .code = .bad_request, .message = "the input hook answered an unreadable replacement" } };
             const next: proto.input.Input = .{ .content = .{ .content = replaced.content } };
             if (@TypeOf(params) == Create) resolved.initial_input = next else resolved.input = next;

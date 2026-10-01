@@ -5,7 +5,7 @@ import { bindInteraction } from "yuke:internal/interaction";
 import { defineTool, removeTool } from "yuke:internal/native/tools";
 import { installDispatcher, installLifecycle, setPoints } from "yuke:internal/native/hooks";
 
-/** @import { AdviceFor, AdviceFunction, AdviceOptions, AdviceWhere, Disposer, EventName, EventOptions, Events, FreeName, HookAnswer, HookHandler, HookPoint, InjectApply, InjectContext, InteractionSurface, MethodKey, Plugin, PluginHandle, Provider, Release, ToolDefinition } from "./types/ext.js" */
+/** @import { AdviceFor, AdviceFunction, AdviceOptions, AdviceWhere, Disposer, EventName, EventOptions, Events, FreeName, HookAnswer, HookHandler, HookPoint, HookReplacements, InjectApply, InjectContext, InteractionSurface, MethodKey, Plugin, PluginHandle, Provider, Release, ToolDefinition } from "./types/ext.js" */
 /** @import { AdviceEntry, AdviceInfo, AdviceRecord, HookDecision, HookEntry, PluginAsync, ReleaseEntry, ScopeEntry, ScopeLife } from "./types/runtime.js" */
 
 const NOOP = () => {};
@@ -429,9 +429,22 @@ export const services = {
 const inject_max_passes = 8;
 
 // --- hooks: the points a plugin answers --- A fact reads as `x.verbed` and needs no answer; a point reads as `x.verb` and the runtime waits.
-// Each chain is replaced, never mutated, so a fold walks the chain it started with and copies nothing.
+// Each chain is replaced, never mutated, so a fold walks the chain it started with.
 /** @type {Record<string, readonly HookEntry[]>} */
 const HOOKS = Object.create(null);
+
+// The keys a `replace` answer owns at each point. The other payload keys are context. The chain keeps them.
+/** @type {{ readonly [P in HookPoint]: readonly (keyof HookReplacements[P])[] }} */
+const REPLACE_KEYS = {
+  "tools.select": ["tools"],
+  "tool.before": ["name", "arguments"],
+  "tool.after": ["output", "is_error", "diff", "media", "tools_added"],
+  "request.build": ["model", "system", "tools", "max_output_tokens"],
+  "request.send": ["url", "headers", "body"],
+  "prompt.build": ["sections"],
+  "compaction.prompt": ["prompt"],
+  "input.before": ["content"],
+};
 
 // State which points now hold a handler, so a turn never submits a call no handler wants. The changed point rides along.
 /** @param {string} point @returns {void} */
@@ -466,19 +479,22 @@ async function dispatch(point, payload) {
   if (!list) return undefined;
 
   let value = payload;
-  let replaced = false;
+  /** @type {object | null} */
+  let replacement = null;
   for (const entry of list) {
     try {
       const result = await entry.fn(value);
-      if (result == null) continue;
+      if (result == null) {
+        if (result === null) throw nullAnswer(point);
+        continue;
+      }
       const answer = /** @type {HookAnswer} */ (result);
       const block = answer.block;
       if (block !== undefined) return { type: "block", reason: String(block) };
-      // Each later handler reads what this one wrote, so a chain composes without a merge rule.
       const replace = answer.replace;
       if (replace !== undefined) {
-        value = replace;
-        replaced = true;
+        value = chained(point, value, replace);
+        replacement = replace;
       }
     } catch (e) {
       // A throwing handler is a plugin bug. The point fails closed, so a broken policy never lets an action through.
@@ -487,7 +503,25 @@ async function dispatch(point, payload) {
     }
   }
 
-  return replaced ? { type: "replace", value } : undefined;
+  return replacement === null ? undefined : { type: "replace", value: replacement };
+}
+
+// A null answer is a plugin bug. The message tells the author how to proceed.
+/** @param {string} point @returns {Error} */
+function nullAnswer(point) {
+  return new Error("a " + point + " handler returned null. Return undefined to proceed.");
+}
+
+// Check one replace, and give the next handler the context of `value` with the replaced keys. A key the replace omits is gone.
+// The check runs apart from `dispatch`, so a pass through the chain sets up no extra locals.
+/** @param {string} point @param {Record<string, unknown>} value @param {unknown} replace @returns {Record<string, unknown>} */
+function chained(point, value, replace) {
+  const keys = /** @type {readonly string[]} */ (REPLACE_KEYS[/** @type {HookPoint} */ (point)]);
+  if (typeof replace !== "object" || replace === null) throw new Error("a " + point + " replace must be an object");
+  for (const key in replace) if (!keys.includes(key)) throw new Error("a " + point + " replace has the key " + key + ". It takes only " + keys.join(", ") + ".");
+  const next = { ...value };
+  for (let i = 0; i < keys.length; i++) delete next[/** @type {string} */ (keys[i])];
+  return Object.assign(next, replace);
 }
 
 installDispatcher(dispatch);
@@ -613,7 +647,7 @@ export class Context {
 
   /**
    * Answer one engine hook point until the disposer runs or the plugin unloads. The handlers of a point run in registration order.
-   * A handler that throws blocks the action. It throws a TypeError when `fn` is not a function or the point is unknown.
+   * A handler that throws or answers null blocks the action. It throws a TypeError when `fn` is not a function or the point is unknown.
    * @template {HookPoint} P @param {P} point @param {HookHandler<P>} fn @returns {Disposer}
    */
   hook(point, fn) {

@@ -112,7 +112,7 @@ export const prompt = {
   name: "prompt",
   /** @param {Context} ctx */
   apply(ctx) {
-    ctx.hook("prompt.build", (build) => ({ replace: { ...build, sections: sections(build) } }));
-    ctx.hook("compaction.prompt", (build) => ({ replace: { ...build, prompt: build.mode === "merge" ? COMPACTION_MERGE : COMPACTION_SUMMARIZE } }));
+    ctx.hook("prompt.build", (build) => ({ replace: { sections: sections(build) } }));
+    ctx.hook("compaction.prompt", (build) => ({ replace: { prompt: build.mode === "merge" ? COMPACTION_MERGE : COMPACTION_SUMMARIZE } }));
   },
 };

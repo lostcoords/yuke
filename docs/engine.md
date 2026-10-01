@@ -36,9 +36,9 @@ ctx.hook("tool.before", async (call) => {
 });
 ```
 
-Handlers run in registration order. Each handler reads the changes from earlier handlers. A handler can be async, and the engine waits for it. A throw blocks the action and reports a fault.
+Handlers run in registration order. Each handler reads the changes from earlier handlers. A handler can be async, and the engine waits for it. A throw blocks the action and reports a fault. A `null` answer also blocks and reports a fault. Return `undefined` to continue.
 
-A payload can contain context that its replacement omits. Return the full shape from `HookReplacements`, not the full payload and not one changed field. For example, a `request.build` replacement must include `model`, `system`, `tools`, and `max_output_tokens`.
+A replacement holds only the keys in `HookReplacements`. It is the whole value, not a patch. A key that it omits is gone. For example, a `request.build` replacement must include `model`, `system`, `tools`, and `max_output_tokens`. Another key blocks the action and reports a fault. The other payload keys are context. The next handler reads the context of the payload with the new keys.
 
 | Point | When | Complete `replace` value |
 |---|---|---|

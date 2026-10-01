@@ -833,7 +833,7 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
     switch (hooks.askIfHeld(arena, .@"tool.before", payload)) {
         .proceed => {},
         // An unreadable answer is a plugin bug, so the call fails closed like it does on a throw.
-        .replace => |value| call = std.json.parseFromValueLeaky(ToolCall, arena, value, .{ .ignore_unknown_fields = true }) catch return .{ .output = "a tool.before handler answered an unreadable call", .is_error = true },
+        .replace => |value| call = std.json.parseFromValueLeaky(ToolCall, arena, value, .{}) catch return .{ .output = "a tool.before handler answered an unreadable call", .is_error = true },
         .block => |reason| return .{ .output = try toolset.cut(engine.deps.tools, arena, reason) orelse reason, .is_error = true },
         .canceled => return error.Canceled,
     }
@@ -859,7 +859,7 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
     const outcome: toolset.Outcome = switch (after) {
         .proceed => res,
         // A replacement is the whole result, so a field it omits is gone.
-        .replace => |value| std.json.parseFromValueLeaky(toolset.Outcome, arena, value, .{ .ignore_unknown_fields = true }) catch return .{ .output = "a tool.after handler answered an unreadable result", .is_error = true },
+        .replace => |value| std.json.parseFromValueLeaky(toolset.Outcome, arena, value, .{}) catch return .{ .output = "a tool.after handler answered an unreadable result", .is_error = true },
         .block => |reason| return .{ .output = try toolset.cut(engine.deps.tools, arena, reason) orelse reason, .is_error = true },
         .canceled => return error.Canceled,
     };
@@ -1478,6 +1478,8 @@ test "the final build hook obeys prompt and context limits without a new floor" 
             const self: *@This() = @ptrCast(@alignCast(ctx));
             const text = arena.alloc(u8, self.size) catch unreachable;
             @memset(text, 'x');
+            // A replacement holds only its own keys, so the context goes.
+            _ = value.object.orderedRemove("context");
             value.object.put(arena, "system", .{ .string = text }) catch unreachable;
             value.object.put(arena, "max_output_tokens", .{ .integer = self.output }) catch unreachable;
             return .{ .replace = value };
@@ -1656,7 +1658,12 @@ test "the run loadout gates a tool call, and a tool.before rewrite lands inside 
                 return .{ .replace = value };
             }
             std.debug.assert(point == .@"tool.before");
-            if (!std.mem.eql(u8, sent.object.get("name").?.string, "read")) return .proceed;
+            const name = sent.object.get("name").?.string;
+            if (std.mem.eql(u8, name, "list")) {
+                const extra = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"name\":\"delegate\",\"arguments\":\"{}\",\"extra\":true}", .{}) catch unreachable;
+                return .{ .replace = extra };
+            }
+            if (!std.mem.eql(u8, name, "read")) return .proceed;
             const value = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"name\":\"delegate\",\"arguments\":\"{}\"}", .{}) catch unreachable;
             return .{ .replace = value };
         }
@@ -1678,12 +1685,17 @@ test "the run loadout gates a tool call, and a tool.before rewrite lands inside 
     try std.testing.expect(!accepted.is_error);
     try std.testing.expectEqual(@as(usize, 1), state.calls);
     try std.testing.expectEqual(@as(usize, 1), f.slot.tools.?.decls.len);
+    // A replacement with a key outside the call fails the call, and the process runs nothing.
+    const unreadable = try runHooked(&f.engine, scratch.allocator(), f.slot, .{ .part_id = 0, .name = "list", .arguments = "{}" }, .discard);
+    try std.testing.expectEqualStrings("a tool.before handler answered an unreadable call", unreadable.output);
+    try std.testing.expectEqual(@as(usize, 1), state.calls);
 }
 
 test "a tool.after replacement is the whole result, and the engine admits the media that remains" {
     const State = struct {
         media: [1]proto.content.MediaBlob = .{.{ .hash = .bytes(@splat(0x5a)), .mime = "image/png", .bytes = 1 }},
         replace: bool = true,
+        answer: []const u8 = "{\"output\":\"clean\",\"is_error\":false}",
 
         fn execute(raw: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
             const self: *@This() = @ptrCast(@alignCast(raw));
@@ -1698,7 +1710,7 @@ test "a tool.after replacement is the whole result, and the engine admits the me
             const self: *@This() = @ptrCast(@alignCast(raw));
             std.debug.assert(point == .@"tool.after");
             if (!self.replace) return .proceed;
-            const value = std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"output\":\"clean\",\"is_error\":false}", .{}) catch unreachable;
+            const value = std.json.parseFromSliceLeaky(std.json.Value, arena, self.answer, .{}) catch unreachable;
             return .{ .replace = value };
         }
     };
@@ -1721,6 +1733,11 @@ test "a tool.after replacement is the whole result, and the engine admits the me
     const refused = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard);
     try std.testing.expect(refused.is_error);
     try std.testing.expect(std.mem.indexOf(u8, refused.output, "does not hold") != null);
+    // A replacement with a key outside the result is unreadable.
+    state.replace = true;
+    state.answer = "{\"output\":\"clean\",\"name\":\"read\"}";
+    const unreadable = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard);
+    try std.testing.expectEqualStrings("a tool.after handler answered an unreadable result", unreadable.output);
 }
 
 test "an output over the cap keeps whole head and tail lines, and names the file with every byte" {

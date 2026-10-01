@@ -160,15 +160,15 @@ export function agents(options) {
                 if (selection.context.depth >= selection.context.max_agent_depth) tools = tools.filter((name) => !AGENT_TOOLS.includes(name));
                 // A row with exec also gets stop, so a child can end the jobs it starts.
                 if (row?.tools) tools = tools.filter((name) => row.tools?.includes(name) || (name === "stop" && row.tools?.includes("exec")));
-                return tools.length === selection.tools.length ? null : { replace: { ...selection, tools } };
+                return tools.length === selection.tools.length ? undefined : { replace: { tools } };
             });
             // The rule ends a root prompt. A child gets the child policy and its row prompt. Both are stored with the session.
             ctx.hook("prompt.build", (build) => {
                 const key = build.context.parent_id ? build.context.agent_name : null;
-                if (key === null) return { replace: { ...build, sections: [...build.sections, { key: "delegation", text: RULE }] } };
+                if (key === null) return { replace: { sections: [...build.sections, { key: "delegation", text: RULE }] } };
                 const row = catalog.rows[key];
                 const policy = CHILD_POLICY.replace("${agent_name}", key) + (row?.prompt ? "\n\n" + row.prompt : "");
-                return { replace: { ...build, sections: [...build.sections, { key: "agent", text: policy }] } };
+                return { replace: { sections: [...build.sections, { key: "agent", text: policy }] } };
             });
 
             // The model reads a child ID. A spawn records its session. A spawn row of a resumed transcript looks the ID up.

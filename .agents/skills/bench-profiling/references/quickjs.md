@@ -58,3 +58,4 @@ Add a finding here with its evidence: the phase, the region, the numbers, and th
 | 2026-09-30 | long-lived empty `{}` | `stream` +0.2%, bench only | none; the app keeps such objects |
 | 2026-09-30 | a one-row wrap of a whole file | folded `read` source: `build` +52 MB allocated per 300 iterations | a zero row cap passes limit 0, so `wrapRows` returns before the native wrap |
 | 2026-09-30 | the message source joined on each build | `build` 909 → 805 allocs/it, `preview` 30.7 → 21.2, `reflow` 550 → 498 (with the fix above) | `partBases` from a running length; `_sourceOf` joins on the first read |
+| 2026-10-02 | `x === undefined` is a global read plus a slow compare | `hook_tool_before` vs the same tree with `== null`: `js_strict_eq_slow` +330, `OP_get_var` +120 instr/it; both gone with `== null` | `if (x == null) { if (x === null) …; }` on the pass path |

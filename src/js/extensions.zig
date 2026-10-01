@@ -292,7 +292,7 @@ test "the prompt plugin writes the default sections, and a user handler appends 
         \\import { plugins, defineConfig } from "yuke";
         \\defineConfig({ systemPrompt: "Base for ${agent_name} in ${workspace}" });
         \\plugins.use({ name: "tail", apply(ctx) {
-        \\  ctx.hook("prompt.build", (build) => ({ replace: { ...build, sections: [...build.sections, { key: "tail", text: "the end" }] } }));
+        \\  ctx.hook("prompt.build", (build) => ({ replace: { sections: [...build.sections, { key: "tail", text: "the end" }] } }));
         \\} });
     , kernel_boot);
     defer f.deinit();
@@ -303,7 +303,7 @@ test "the prompt plugin writes the default sections, and a user handler appends 
     const answer = try settleHook(&f.extensions, "prompt.build", payload);
     defer std.testing.allocator.free(answer);
     const Answer = struct { type: []const u8, value: struct { sections: []const struct { key: []const u8, text: []const u8 } } };
-    const parsed = try std.json.parseFromSlice(Answer, std.testing.allocator, answer, .{ .ignore_unknown_fields = true });
+    const parsed = try std.json.parseFromSlice(Answer, std.testing.allocator, answer, .{});
     defer parsed.deinit();
     const sections = parsed.value.value.sections;
     try std.testing.expectEqual(@as(usize, 5), sections.len);
@@ -320,7 +320,7 @@ test "the prompt plugin writes the default sections, and a user handler appends 
     // A seeded request base wins over the configured one and keeps its key.
     const seeded = try settleHook(&f.extensions, "prompt.build", "{\"context\":{\"session_id\":\"01010101010101010101010101010101\",\"parent_id\":null,\"depth\":0,\"agent_name\":\"root\",\"workspace\":\"/w\",\"operating_system\":\"macos\",\"shell\":\"/bin/sh\",\"session_start_date_utc\":\"2026-09-19\"},\"instructions\":[],\"skills\":[],\"sections\":[{\"key\":\"system_prompt\",\"text\":\"custom\"}]}");
     defer std.testing.allocator.free(seeded);
-    const seeded_answer = try std.json.parseFromSlice(Answer, std.testing.allocator, seeded, .{ .ignore_unknown_fields = true });
+    const seeded_answer = try std.json.parseFromSlice(Answer, std.testing.allocator, seeded, .{});
     defer seeded_answer.deinit();
     try std.testing.expectEqual(@as(usize, 3), seeded_answer.value.value.sections.len);
     try std.testing.expectEqualStrings("system_prompt", seeded_answer.value.value.sections[0].key);
@@ -338,12 +338,12 @@ test "the prompt plugin writes the default sections, and a user handler appends 
     const before = f.app.engine.prompt_generation;
     try f.extensions.host.evalModule(
         \\import { plugins } from "yuke";
-        \\plugins.use({ name: "other", apply(ctx) { ctx.hook("request.send", () => null); } });
+        \\plugins.use({ name: "other", apply(ctx) { ctx.hook("request.send", () => undefined); } });
     , "other-point.js");
     try std.testing.expectEqual(before, f.app.engine.prompt_generation);
     try f.extensions.host.evalModule(
         \\import { plugins } from "yuke";
-        \\plugins.use({ name: "second", apply(ctx) { ctx.hook("prompt.build", () => null); } });
+        \\plugins.use({ name: "second", apply(ctx) { ctx.hook("prompt.build", () => undefined); } });
     , "prompt-point.js");
     try std.testing.expectEqual(before + 1, f.app.engine.prompt_generation);
 }
@@ -354,11 +354,14 @@ test "a hook chain replaces a payload and the first block ends it" {
         \\import { plugins } from "yuke";
         \\plugins.use({ name: "gate", apply: (ctx) => {
         \\  ctx.hook("tool.before", (ev) => ({ replace: { name: ev.name, arguments: "rewritten" } }));
-        \\  ctx.hook("tool.before", (ev) => (ev.arguments === "rewritten" ? { block: "denied" } : undefined));
+        \\  ctx.hook("tool.before", (ev) => (ev.arguments === "rewritten" && ev.context.agent_name === "root" ? { block: "denied" } : undefined));
         \\  ctx.hook("tool.after", async (ev) => ({ replace: { output: ev.output + "!", is_error: false } }));
-        \\  ctx.hook("request.build", (ev) => ({ replace: { ...ev, system: "from the chain" } }));
+        \\  ctx.hook("tool.after", (ev) => (ev.diff === undefined ? undefined : { block: "the replaced result kept its diff" }));
+        \\  ctx.hook("request.build", (ev) => ({ replace: { model: ev.model, system: "from the chain", tools: ev.tools, max_output_tokens: ev.max_output_tokens } }));
         \\  ctx.hook("input.before", (ev) => (ev.content[0].text === "no" ? { block: "refused" } : undefined));
         \\  ctx.hook("request.send", () => { throw new Error("boom"); });
+        \\  ctx.hook("compaction.prompt", (ev) => ({ replace: ev.mode === "merge" ? { prompt: "p", mode: "merge" } : 1 }));
+        \\  ctx.hook("prompt.build", () => null);
         \\  ctx.on("run.started", (ev) => { globalThis.sawRun = ev.session; });
         \\}});
     , kernel_boot);
@@ -396,13 +399,13 @@ test "a hook chain replaces a payload and the first block ends it" {
         \\globalThis.sawRun === "abababababababababababababababab" ? 1 : 0
     ));
 
-    // The first handler rewrites the arguments, so the second one sees them and ends the chain.
-    const blocked = try settleHook(extensions, "tool.before", "{\"name\":\"bash\",\"arguments\":\"original\"}");
+    // The first handler rewrites the arguments, and the second one sees them with the context of the payload.
+    const blocked = try settleHook(extensions, "tool.before", "{\"name\":\"bash\",\"arguments\":\"original\",\"context\":{\"agent_name\":\"root\"}}");
     defer std.testing.allocator.free(blocked);
     try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"denied\"}", blocked);
 
-    // An async handler settles through the same poll a tool call uses.
-    const replaced = try settleHook(extensions, "tool.after", "{\"output\":\"ok\",\"is_error\":false}");
+    // An async handler settles through the same poll a tool call uses. Its replacement omits `diff`, so the next handler reads none.
+    const replaced = try settleHook(extensions, "tool.after", "{\"output\":\"ok\",\"is_error\":false,\"diff\":[{\"path\":\"a\",\"hunks\":[]}]}");
     defer std.testing.allocator.free(replaced);
     try std.testing.expectEqualStrings("{\"type\":\"replace\",\"value\":{\"output\":\"ok!\",\"is_error\":false}}", replaced);
 
@@ -422,6 +425,17 @@ test "a hook chain replaces a payload and the first block ends it" {
     const refused = try settleHook(extensions, "input.before", "{\"session_id\":\"s\",\"content\":[{\"type\":\"text\",\"text\":\"no\"}]}");
     defer std.testing.allocator.free(refused);
     try std.testing.expectEqualStrings("{\"type\":\"block\",\"reason\":\"refused\"}", refused);
+
+    // A replace key outside the replacement shape and a null answer are plugin bugs, so each point fails closed.
+    const keyed = try settleHook(extensions, "compaction.prompt", "{\"context\":{},\"mode\":\"merge\",\"prompt\":\"\"}");
+    defer std.testing.allocator.free(keyed);
+    try std.testing.expect(std.mem.indexOf(u8, keyed, "gate plugin failed at compaction.prompt") != null);
+    const primitive = try settleHook(extensions, "compaction.prompt", "{\"context\":{},\"mode\":\"summarize\",\"prompt\":\"\"}");
+    defer std.testing.allocator.free(primitive);
+    try std.testing.expect(std.mem.indexOf(u8, primitive, "gate plugin failed at compaction.prompt") != null);
+    const nulled = try settleHook(extensions, "prompt.build", "{\"context\":{\"session_id\":\"01010101010101010101010101010101\",\"parent_id\":null,\"depth\":0,\"agent_name\":\"root\",\"workspace\":\"/w\",\"operating_system\":\"macos\",\"shell\":\"/bin/sh\",\"session_start_date_utc\":\"2026-09-19\"},\"instructions\":[],\"skills\":[],\"sections\":[]}");
+    defer std.testing.allocator.free(nulled);
+    try std.testing.expect(std.mem.indexOf(u8, nulled, "gate plugin failed at prompt.build") != null);
 }
 
 test "a turn task gets its hook answer from the owner without a second wake" {
@@ -569,7 +583,7 @@ test "an input hook leaves the owner free and its replacement reaches the store"
     try support.pumpUntilTrue(host, "globalThis.responsive === 1");
     try std.testing.expectEqual(@as(i32, 0), try host.evalInt("globalThis.finished"));
     try host.evalModule(
-        \\release({ replace: { ...payload, content: [{ type: "text", text: "replaced" }] } });
+        \\release({ replace: { content: [{ type: "text", text: "replaced" }] } });
     , "input-release.js");
     try support.pumpUntilTrue(host, "globalThis.finished !== 0");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.finished"));

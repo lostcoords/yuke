@@ -51,7 +51,7 @@ pub const HookSet = struct {
     ) error{ HookAnswerInvalid, HookBlocked, Canceled }!?T {
         switch (self.askIfHeld(arena, point, payload)) {
             .proceed => return null,
-            .replace => |value| return std.json.parseFromValueLeaky(T, arena, value, .{ .ignore_unknown_fields = true }) catch return error.HookAnswerInvalid,
+            .replace => |value| return std.json.parseFromValueLeaky(T, arena, value, .{}) catch return error.HookAnswerInvalid,
             .block => |reason| {
                 std.log.warn("run {d} stopped at {s}: {s}", .{ run_id, @tagName(point), reason });
                 return error.HookBlocked;
@@ -114,8 +114,12 @@ test "decide reads a replacement and stops the run on a block or an unreadable a
     const set: HookSet = .{ .ctx = &stub, .holds = Stub.holds, .ask = Stub.ask };
     try testing.expectEqual(null, try set.decide(Answer, arena, 1, .@"request.send", .{}));
 
-    stub.answer = .{ .replace = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"count\":3,\"extra\":true}", .{}) };
+    stub.answer = .{ .replace = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"count\":3}", .{}) };
     try testing.expectEqual(3, (try set.decide(Answer, arena, 1, .@"request.send", .{})).?.count);
+
+    // A replacement holds only its own keys, so an unknown key is unreadable.
+    stub.answer = .{ .replace = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"count\":3,\"extra\":true}", .{}) };
+    try testing.expectError(error.HookAnswerInvalid, set.decide(Answer, arena, 1, .@"request.send", .{}));
 
     stub.answer = .{ .replace = .{ .string = "unreadable" } };
     try testing.expectError(error.HookAnswerInvalid, set.decide(Answer, arena, 1, .@"request.send", .{}));

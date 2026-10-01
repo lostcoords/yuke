@@ -167,8 +167,8 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
         return settleText(host, call, if (message) |text| text else fallback, .failed);
     }
     if (call.kind == .hook) {
-        // An empty answer is the proceed decision.
-        if (ctx.isUndefined(value) or ctx.isNull(value)) return settleText(host, call, "", .text);
+        // An undefined answer is the proceed decision.
+        if (ctx.isUndefined(value)) return settleText(host, call, "", .text);
         return stringifyValue(host, call, value, .text);
     }
     if (ctx.isUndefined(value)) return settleText(host, call, "", .text);
