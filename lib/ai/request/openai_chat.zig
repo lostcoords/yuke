@@ -276,7 +276,8 @@ fn writeToolResult(jw: *std.json.Stringify, tool_result: ir.Block.ToolResult) ir
     try jw.beginObject();
     try json.field(jw, "role", "tool");
     try json.field(jw, "tool_call_id", tool_result.call_id);
-    try json.field(jw, "content", tool_result.content);
+    try jw.objectField("content");
+    try json.toolText(jw, tool_result.content, tool_result.is_error);
     try jw.endObject();
 }
 
@@ -546,6 +547,19 @@ test "an assistant tool call has a JSON string and its result is standalone" {
     };
     try expectJson(
         \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":64,"messages":[{"role":"assistant","content":[{"type":"text","text":"checking"}],"tool_calls":[{"id":"call_1","type":"function","function":{"name":"run","arguments":"{\"c\":1}"}}]},{"role":"tool","tool_call_id":"call_1","content":"ok"}]}
+    ,
+        .{ .model = "gpt", .wire = .{ .openai_chat = .{} }, .max_output_tokens = 64 },
+        &blocks,
+    );
+}
+
+test "an error result starts with Error, because Chat Completions has no error flag" {
+    const blocks = [_]ir.Block{
+        .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call_1", .name = "run", .arguments = "{}" } } },
+        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "no \"x\"", .is_error = true } } },
+    };
+    try expectJson(
+        \\{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":64,"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"run","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"Error: no \"x\""}]}
     ,
         .{ .model = "gpt", .wire = .{ .openai_chat = .{} }, .max_output_tokens = 64 },
         &blocks,

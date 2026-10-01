@@ -23,6 +23,16 @@ pub fn writeRawJson(jw: *std.json.Stringify, raw: []const u8) std.Io.Writer.Erro
     jw.endWriteRaw();
 }
 
+/// Write a tool result text as a JSON string. The OpenAI APIs have no error flag, so an error result starts with `Error: `. It fails only when the writer fails.
+pub fn toolText(jw: *std.json.Stringify, text: []const u8, is_error: bool) std.Io.Writer.Error!void {
+    try jw.beginWriteRaw();
+    try jw.writer.writeByte('"');
+    if (is_error) try jw.writer.writeAll("Error: ");
+    try std.json.Stringify.encodeJsonStringChars(text, .{}, jw.writer);
+    try jw.writer.writeByte('"');
+    jw.endWriteRaw();
+}
+
 /// Write the name, schema, and strict members that both OpenAI response-schema shapes carry.
 pub fn schemaMembers(jw: *std.json.Stringify, name: []const u8, schema: []const u8, strict: bool) std.Io.Writer.Error!void {
     try field(jw, "name", name);

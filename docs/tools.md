@@ -32,7 +32,7 @@ Any other value is an error. Return JSON data as a string: `JSON.stringify(data)
 
 ## Errors
 
-Throw an `Error` when the call fails. The model reads its `message` and nothing else.
+Throw an `Error` when the call fails. The model reads its `message` and nothing else. On OpenAI routes, the model reads `Error: <message>`, because those APIs have no error flag.
 
 - Write a message that tells the model what to do next.
 - Return `{ output, is_error: true }` when the output of a failed call is evidence, such as the log of a failed build.

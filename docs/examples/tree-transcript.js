@@ -15,7 +15,8 @@ const TREE_INDENT = GUTTER + 3;
 const PREVIEW_ROWS = 3;
 const REPORT_LINES = 8;
 const LABEL_W = 7;
-const CATEGORY = /** @type {Record<string, string>} */ ({ read: "TreeRead", write: "TreeWrite", run: "TreeRun", agent: "TreeAgent" });
+// A null prototype keeps a tool named `constructor` on the fallback style.
+const TOOL_STYLE = /** @type {Record<string, string>} */ (Object.assign(Object.create(null), { read: "TreeRead", write: "TreeWrite", edit: "TreeWrite", exec: "TreeRun", spawn_agent: "TreeAgent", send_agent_input: "TreeAgent", stop_agent: "TreeAgent" }));
 
 /** @param {PartEnv["group"]} group @returns {Row} */
 function headerAttrs(group) {
@@ -56,7 +57,7 @@ function toolRows(part, env) {
   const leftW = Math.max(1, width - (rightW > 0 ? rightW + 1 : 0));
   const name = clip(head.verb, leftW);
   /** @type {NonNullable<Row["segments"]>} */
-  const segments = [{ text: name, group: CATEGORY[head.category] || "TreeTool", src: 0, srcEnd: head.verb.length }];
+  const segments = [{ text: name, group: TOOL_STYLE[part.name] || "TreeTool", src: 0, srcEnd: head.verb.length }];
   let used = measure(name);
   if (head.subject && used + 1 < leftW) {
     const subject = clip(head.subject, leftW - used - 1);
@@ -121,11 +122,11 @@ const treeLook = {
   indent: GUTTER,
   gap: 0,
   tools: {
-    read: (o) => ({ verb: "Read", subject: displayPath(o.path) + (typeof o.start === "number" ? " (" + o.start + "-" + (typeof o.end === "number" ? o.end : "") + ")" : ""), category: "read", input: "" }),
-    write: (o) => ({ verb: "Write", subject: displayPath(o.path), category: "write", input: "" }),
-    edit: (o) => ({ verb: "Edit", subject: displayPath(o.path) + (o.replace_all ? " (all)" : ""), category: "write", input: "" }),
-    exec: (o) => ({ verb: "Run", subject: displayCommand(o.command), category: "run", input: "" }),
-    skill: (o) => ({ verb: "Skill", subject: String(o.name || ""), category: "other", input: "" }),
+    read: (o) => ({ verb: "Read", subject: displayPath(o.path) + (typeof o.start === "number" ? " (" + o.start + "-" + (typeof o.end === "number" ? o.end : "") + ")" : ""), input: "" }),
+    write: (o) => ({ verb: "Write", subject: displayPath(o.path), input: "" }),
+    edit: (o) => ({ verb: "Edit", subject: displayPath(o.path) + (o.replace_all ? " (all)" : ""), input: "" }),
+    exec: (o) => ({ verb: "Run", subject: displayCommand(o.command), input: "" }),
+    skill: (o) => ({ verb: "Skill", subject: String(o.name || ""), input: "" }),
   },
   // Tool calls and thoughts group as actions, and text closes the group.
   groupKey: (part) => (part.type === "text" ? null : "actions"),

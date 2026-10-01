@@ -130,7 +130,7 @@ check("fallback-head", rowsHave(unknown.rows(60, 0, 4), "mcp_thing") && rowsHave
 
 // A plugin renderer stacks on the look: its tool head wins, unrelated raw input drops, a faulty head leaves no rows, and an unload restores the look below.
 const owner = plugins.use({ name: "test-head", apply(ctx) {
-  ctx.inject(["chat"], (ctx) => { ctx.chat.render({ tools: { exec: () => ({ verb: "run", subject: "custom", category: "run", input: "unrelated raw input" }) }, sources: { engine_interruption: () => "first" } }); });
+  ctx.inject(["chat"], (ctx) => { ctx.chat.render({ tools: { exec: () => ({ verb: "run", subject: "custom", input: "unrelated raw input" }) }, sources: { engine_interruption: () => "first" } }); });
 } });
 const over = new Transcript({ partsOf: (id) => parts[id] || [] });
 over.setOutline([{ id: "pres", type: "assistant" }], null);

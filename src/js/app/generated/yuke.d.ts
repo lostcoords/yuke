@@ -3086,7 +3086,7 @@ export interface ToolContext {
 }
 
 /**
- * Run one tool call. A string reaches the model as is, and undefined is empty output. A `ToolOutcome` adds an error flag, a diff, images, or loaded tools.
+ * Run one tool call. A string reaches the model unchanged. `undefined` produces empty output. A `ToolOutcome` adds an error flag, a diff, images, or loaded tools.
  * Any other value, or an object with an unknown key, is an error. A rejection gives the model an error result with the message of the error.
  */
 export type ToolExecute = (
@@ -3653,12 +3653,11 @@ export type ReasoningPart = Extract<Wire.AssistantPart, { type: "reasoning" }>;
 export interface ToolHeading {
   verb: string;
   subject: string;
-  category: string;
   input: string;
 }
 
 /**
- * Build the heading of one tool call. `category` names the kind of work, such as "read", "write", "run", or "agent"; a look picks a style from it.
+ * Build the heading of one tool call.
  * It runs when the row builds, so it must not walk the tool output. `args` holds the parsed JSON arguments, or `{}` when they do not parse.
  */
 export type ToolHead = (args: Record<string, any>, part: ToolPart) => ToolHeading;

@@ -342,6 +342,19 @@ test "a tool call and its result coalesce by role" {
     );
 }
 
+test "an error result keeps its text and sets the error flag" {
+    const blocks = [_]ir.Block{
+        .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "toolu_1", .name = "run", .arguments = "{}" } } },
+        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "toolu_1", .content = "no", .is_error = true } } },
+    };
+    try expectJson(
+        \\{"model":"claude","max_tokens":64,"stream":true,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"run","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"no","is_error":true}]}]}
+    ,
+        .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 64 },
+        &blocks,
+    );
+}
+
 test "a tool result with an image writes a content array and keeps the marker on the result" {
     const image: ir.Block.Media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" };
     const blocks = [_]ir.Block{

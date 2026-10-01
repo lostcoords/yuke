@@ -59,11 +59,11 @@ export function toolHead(part, tools) {
   const head = tools[verb];
   if (head) {
     const out = head(args, part);
-    return { verb: out.verb, subject: out.subject, category: out.category, input: displayCommand(out.input) === out.subject ? out.input : "" };
+    return { verb: out.verb, subject: out.subject, input: displayCommand(out.input) === out.subject ? out.input : "" };
   }
-  if (typeof args.path === "string") return { verb, subject: displayPath(args.path), category: "other", input: "" };
-  if (typeof args.command === "string") return { verb, subject: displayCommand(args.command), category: "other", input: args.command };
-  return { verb, subject: displayCommand(raw), category: "other", input: raw };
+  if (typeof args.path === "string") return { verb, subject: displayPath(args.path), input: "" };
+  if (typeof args.command === "string") return { verb, subject: displayCommand(args.command), input: args.command };
+  return { verb, subject: displayCommand(raw), input: raw };
 }
 
 /**
@@ -278,14 +278,14 @@ export const defaultRender = {
   indent: PAD,
   gap: 1,
   tools: {
-    read: (o) => ({ verb: "read", subject: displayPath(o.path) + (typeof o.start === "number" ? ":" + o.start + (typeof o.end === "number" ? "-" + o.end : "") : ""), category: "read", input: "" }),
-    write: (o) => ({ verb: "write", subject: displayPath(o.path), category: "write", input: "" }),
-    edit: (o) => ({ verb: "edit", subject: displayPath(o.path) + (o.replace_all ? " (all)" : ""), category: "write", input: "" }),
+    read: (o) => ({ verb: "read", subject: displayPath(o.path) + (typeof o.start === "number" ? ":" + o.start + (typeof o.end === "number" ? "-" + o.end : "") : ""), input: "" }),
+    write: (o) => ({ verb: "write", subject: displayPath(o.path), input: "" }),
+    edit: (o) => ({ verb: "edit", subject: displayPath(o.path) + (o.replace_all ? " (all)" : ""), input: "" }),
     exec: (o) => {
       const command = String(o.command || "");
-      return { verb: "$", subject: displayCommand(command), category: "run", input: command };
+      return { verb: "$", subject: displayCommand(command), input: command };
     },
-    skill: (o) => ({ verb: "skill", subject: String(o.name || ""), category: "other", input: "" }),
+    skill: (o) => ({ verb: "skill", subject: String(o.name || ""), input: "" }),
   },
 
   part(part, env) {

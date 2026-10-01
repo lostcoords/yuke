@@ -41,7 +41,7 @@ If a name is absent, do not use it as a public API. Inspect the source only for 
 ```js
 /** @type {import("yuke:chat").Render} */
 const render = {
-  tools: { web_search: (args) => ({ verb: "search", subject: String(args.query), category: "other", input: "" }) },
+  tools: { web_search: (args) => ({ verb: "search", subject: String(args.query), input: "" }) },
 };
 ```
 

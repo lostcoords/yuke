@@ -6,7 +6,7 @@ import { start as startJob, stop as stopJob, list as listJobs, get as getJob, na
 import { diff } from "yuke:internal/native/diff";
 import { hasTool } from "yuke:internal/native/tools";
 import { client } from "yuke:internal/client";
-import { byteLabel, errorText } from "yuke:internal/format";
+import { byteLabel } from "yuke:internal/format";
 import { utf8Length } from "yuke:internal/interaction";
 
 /** @import { DiffFile as ParsedDiffFile } from "yuke:internal/native/diff" */
@@ -29,8 +29,8 @@ function builtin(ctx, name, definition) {
     name,
     ...definition,
     execute: (args, signal, context) => {
-      if (args == null || typeof args !== "object" || Array.isArray(args)) invalid(name, "the arguments must be an object");
-      for (const key of Object.keys(args)) if (!fields.has(key)) invalid(name, `the argument ${key} does not exist. The arguments are: ${[...fields].join(", ")}.`);
+      if (args == null || typeof args !== "object" || Array.isArray(args)) invalid("Pass the arguments as a JSON object.");
+      for (const key of Object.keys(args)) if (!fields.has(key)) invalid(`Remove ${key}. The arguments are: ${[...fields].join(", ")}.`);
       return execute(/** @type {ToolArgs} */ (args), signal, context);
     },
   });
@@ -41,29 +41,22 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const EXEC_STREAM_BYTES = 4096;
 const MAX_LINE = 0xffffffff;
 
-/** @param {string} name @param {string} message @returns {never} */
-function invalid(name, message) {
-  throw new Error(`${name}: ${message}`);
+/** @param {string} message @returns {never} */
+function invalid(message) {
+  throw new Error(message);
 }
 
-
-/** @template T @param {string} name @param {Promise<T>} promise @returns {Promise<T>} */
-async function hostCall(name, promise) {
-  try { return await promise; }
-  catch (e) { throw new Error(`${name}: ${errorText(e)}`); }
-}
-
-/** @param {string} name @param {ToolArgs} args @param {string} key @returns {string} */
-function stringArg(name, args, key) {
-  if (typeof args[key] !== "string") invalid(name, `the argument ${key} must be a string`);
+/** @param {ToolArgs} args @param {string} key @returns {string} */
+function stringArg(args, key) {
+  if (typeof args[key] !== "string") invalid(`Set ${key} to a string.`);
   return /** @type {string} */ (args[key]);
 }
 
-/** @param {string} name @param {ToolArgs} args @param {string} key @returns {number | null} */
-function lineArg(name, args, key) {
+/** @param {ToolArgs} args @param {string} key @returns {number | null} */
+function lineArg(args, key) {
   const value = args[key];
   if (value == null) return null;
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > MAX_LINE) invalid(name, `the argument ${key} has the wrong type or range`);
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > MAX_LINE) invalid(`Set ${key} to an integer from 1 to ${MAX_LINE}.`);
   return value;
 }
 
@@ -94,13 +87,12 @@ function renderRead(got, first) {
 
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string | ToolOutcome>} */
 async function read(args, _signal, context) {
-  const name = "read";
-  const path = stringArg(name, args, "path");
-  const start = lineArg(name, args, "start");
-  const end = lineArg(name, args, "end");
-  const got = await hostCall(name, fs.readRange(path, { start, end, workspaceRoot: context.workspaceRoot }));
+  const path = stringArg(args, "path");
+  const start = lineArg(args, "start");
+  const end = lineArg(args, "end");
+  const got = await fs.readRange(path, { start, end, workspaceRoot: context.workspaceRoot });
   if ("imagePath" in got) {
-    const blob = await hostCall(name, client.blobPut(got.imagePath));
+    const blob = await client.blobPut(got.imagePath);
     const kind = blob.mime.slice(blob.mime.indexOf("/") + 1).toUpperCase();
     return { output: `${kind} image, ${byteLabel(blob.bytes)}`, media: [blob] };
   }
@@ -109,15 +101,13 @@ async function read(args, _signal, context) {
 
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string | ToolOutcome>} */
 async function write(args, _signal, context) {
-  const name = "write";
-  const path = stringArg(name, args, "path");
-  const content = stringArg(name, args, "content");
-  let old = "";
-  let canDiff = true;
-  try { old = await fs.readFile(path, { workspaceRoot: context.workspaceRoot }); }
-  catch (e) { if (errorText(e) !== "the path does not exist") canDiff = false; }
-  const mapped = canDiff ? await diff(path, old, content) : null;
-  const bytes = await hostCall(name, fs.writeFile(path, content, { workspaceRoot: context.workspaceRoot }));
+  const path = stringArg(args, "path");
+  const content = stringArg(args, "content");
+  const root = { workspaceRoot: context.workspaceRoot };
+  // A new file has an empty old text. The tool shows no diff when it cannot stat or read the file, and it still writes.
+  const old = await fs.stat(path, root).then((stat) => stat == null ? "" : fs.readFile(path, root)).catch(() => null);
+  const mapped = old == null ? null : await diff(path, old, content);
+  const bytes = await fs.writeFile(path, content, root);
   const files = mapped == null ? [] : diffOf(mapped);
   const text = files.length === 0 ? `The tool wrote ${bytes} bytes.` : `The tool wrote ${bytes} bytes and changed ${changedLines(files)} line(s).`;
   return files.length === 0 ? text : { output: text, diff: files };
@@ -147,21 +137,20 @@ function replaceAt(text, old, replacement) {
 
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string | ToolOutcome>} */
 async function edit(args, _signal, context) {
-  const name = "edit";
-  const path = stringArg(name, args, "path");
-  const oldString = stringArg(name, args, "old_string");
-  const newString = stringArg(name, args, "new_string");
+  const path = stringArg(args, "path");
+  const oldString = stringArg(args, "old_string");
+  const newString = stringArg(args, "new_string");
   const replaceAll = args.replace_all ?? false;
-  if (typeof replaceAll !== "boolean") invalid(name, "the argument replace_all has the wrong type or range");
-  if (oldString.length === 0) invalid(name, "the argument old_string has the wrong type or range");
-  if (oldString === newString) invalid(name, "old_string and new_string match. The edit changes nothing");
-  const old = await hostCall(name, fs.readFile(path, { workspaceRoot: context.workspaceRoot }));
+  if (typeof replaceAll !== "boolean") invalid("Set replace_all to true or false.");
+  if (oldString.length === 0) invalid("Set old_string to a nonempty string.");
+  if (oldString === newString) invalid("Set new_string to a value that differs from old_string.");
+  const old = await fs.readFile(path, { workspaceRoot: context.workspaceRoot });
   const replaced = replaceAt(old, oldString, newString);
-  if (replaced.count === 0) invalid(name, "the file lacks old_string");
-  if (replaced.count > 1 && !replaceAll) invalid(name, "old_string appears more than one time. You must add context or set replace_all");
-  if (utf8Length(replaced.text) > MAX_FILE_BYTES) invalid(name, "the file exceeds the size limit");
+  if (replaced.count === 0) invalid("The file has no match for old_string. Read the file and copy the exact text.");
+  if (replaced.count > 1 && !replaceAll) invalid("old_string matches more than one place. Add context to old_string, or set replace_all to true.");
+  if (utf8Length(replaced.text) > MAX_FILE_BYTES) invalid("The edit makes the file larger than 10 MiB. Make a smaller edit.");
   const mapped = await diff(path, old, replaced.text);
-  await hostCall(name, fs.writeFile(path, replaced.text, { workspaceRoot: context.workspaceRoot }));
+  await fs.writeFile(path, replaced.text, { workspaceRoot: context.workspaceRoot });
   const files = diffOf(mapped);
   const text = files.length === 0 ? `The tool replaced ${replaced.count} match(es).` : `The tool replaced ${replaced.count} match(es) and changed ${changedLines(files)} line(s).`;
   return files.length === 0 ? text : { output: text, diff: files };
@@ -188,17 +177,17 @@ async function startBackground(command, context) {
   const root = context.workspaceRoot;
   const same = sessionJobs(context.sessionId).find(j => j.state === "running" && j.command === command && j.cwd === root);
   if (same) return `[job ${jobName(same)} already runs this command. Log: ${same.log}]`;
-  const job = await hostCall("exec", startJob(command, { workspaceRoot: root, sessionId: context.sessionId }));
+  const job = await startJob(command, { workspaceRoot: root, sessionId: context.sessionId });
   return `[job ${jobName(job)} started: ${shortCommand(command)}. Log: ${job.log}. Use grep or read on the log. A message arrives when it exits by itself, so never sleep or poll to wait. Use jobs with id and stop: true to request its stop.]`;
 }
 
 // A job of another session stays hidden, so its id reads as absent.
-/** @param {string} name @param {string} id @param {ToolContext} context @returns {Job} */
-function jobOf(name, id, context) {
+/** @param {string} id @param {ToolContext} context @returns {Job} */
+function jobOf(id, context) {
   const job = /^j[1-9][0-9]*$/.test(id) ? getJob(Number(id.slice(1))) : null;
   if (job && job.session_id === context.sessionId) return job;
   const ids = sessionJobs(context.sessionId).map(jobName);
-  return invalid(name, `the job ${id} does not exist. ${ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`}`);
+  return invalid(`the job ${id} does not exist. ${ids.length === 0 ? "No job exists." : `The jobs are: ${ids.join(", ")}.`}`);
 }
 
 /** @param {Job} job @returns {string} */
@@ -208,34 +197,32 @@ function jobLine(job) {
 
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
 async function jobs(args, _signal, context) {
-  const name = "jobs";
   const stop = args.stop ?? false;
-  if (typeof stop !== "boolean") invalid(name, "the argument stop must be a boolean");
+  if (typeof stop !== "boolean") invalid("Set stop to true or false.");
   if (args.id == null) {
-    if (stop) invalid(name, "the argument stop needs the argument id");
+    if (stop) invalid("Set id when stop is true.");
     const own = sessionJobs(context.sessionId);
     return own.length === 0 ? "[no job]" : own.map(jobLine).join("\n");
   }
-  const job = jobOf(name, stringArg(name, args, "id"), context);
+  const job = jobOf(stringArg(args, "id"), context);
   if (!stop) return jobLine(job);
   return `[${jobState(/** @type {Job} */ (await stopJob(job.id)))}]`;
 }
 
 /** @param {ToolArgs} args @param {ToolSignal} signal @param {ToolContext} context @returns {Promise<string>} */
 async function exec(args, signal, context) {
-  const name = "exec";
-  const command = stringArg(name, args, "command");
-  if (command.trim().length === 0) invalid(name, "the argument command has the wrong type or range");
+  const command = stringArg(args, "command");
+  if (command.trim().length === 0) invalid("Set command to a nonempty string.");
   const background = args.background ?? false;
-  if (typeof background !== "boolean") invalid(name, "the argument background must be a boolean");
+  if (typeof background !== "boolean") invalid("Set background to true or false.");
   const timeoutValue = args.timeout_ms;
   if (background) {
-    if (timeoutValue != null) invalid(name, "timeout_ms does not apply to background: true. Remove one of the two arguments");
+    if (timeoutValue != null) invalid("Remove timeout_ms, or set background to false.");
     return startBackground(command, context);
   }
   const timeout = timeoutValue == null ? 120000 : timeoutValue;
-  if (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < 1 || timeout > 600000) invalid(name, "the argument timeout_ms has the wrong type or range");
-  const r = await hostCall(name, runCommand(command, { timeoutMs: timeout, signal, maxBytes: EXEC_STREAM_BYTES, log: true, onOutput: context.output, workspaceRoot: context.workspaceRoot }));
+  if (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < 1 || timeout > 600000) invalid("Set timeout_ms to an integer from 1 to 600000.");
+  const r = await runCommand(command, { timeoutMs: timeout, signal, maxBytes: EXEC_STREAM_BYTES, log: true, onOutput: context.output, workspaceRoot: context.workspaceRoot });
   let text = r.stdout;
   if (r.stderr.length !== 0) text = `${endLine(text)}[stderr]\n${r.stderr}`;
   const empty = text.length === 0;
@@ -251,9 +238,8 @@ async function exec(args, signal, context) {
 // The engine wraps the body, so the tool and an explicit `/skill:name` produce one form in the transcript.
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
 async function skill(args, _signal, context) {
-  const name = "skill";
-  const skillName = stringArg(name, args, "name");
-  const loaded = await hostCall(name, client.skillLoad(context.sessionId, skillName));
+  const skillName = stringArg(args, "name");
+  const loaded = await client.skillLoad(context.sessionId, skillName);
   return loaded.content;
 }
 

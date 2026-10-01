@@ -107,12 +107,11 @@ export type ReasoningPart = Extract<Wire.AssistantPart, { type: "reasoning" }>;
 export interface ToolHeading {
   verb: string;
   subject: string;
-  category: string;
   input: string;
 }
 
 /**
- * Build the heading of one tool call. `category` names the kind of work, such as "read", "write", "run", or "agent"; a look picks a style from it.
+ * Build the heading of one tool call.
  * It runs when the row builds, so it must not walk the tool output. `args` holds the parsed JSON arguments, or `{}` when they do not parse.
  */
 export type ToolHead = (args: Record<string, any>, part: ToolPart) => ToolHeading;

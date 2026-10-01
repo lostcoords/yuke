@@ -272,7 +272,7 @@ test "a tool registers after boot and keeps the advertised order stable" {
     try std.testing.expectEqualStrings("alpha,bravo,mike,zulu", names.items);
 }
 
-test "baked tools preserve file edits, bounded reads, views, and command output" {
+test "baked tools preserve file edits, bounded reads, diffs, and command output" {
     var fixture = try ReactorHost.initTmp("/tmp");
     defer fixture.deinit();
     try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "a.txt", .data = "one\ntwo\ntwo\n" });
@@ -302,15 +302,17 @@ test "baked tools preserve file edits, bounded reads, views, and command output"
         try host.pump();
     }
     // A binary file that has no image signature keeps the text error.
-    try support.expectTool(host, "read", "{\"path\":\"blob.bin\"}", .{ .root = root, .is_error = true, .text = .{ .contains = "read: the file holds invalid UTF-8" } });
-    try support.expectTool(host, "read", "{\"path\":\"missing.txt\"}", .{ .root = root, .is_error = true, .text = .{ .contains = "read: the path does not exist" } });
-    try support.expectTool(host, "read", "{\"path\":1}", .{ .root = root, .is_error = true, .text = .{ .contains = "read: the argument path must be a string" } });
-    try support.expectTool(host, "read", "{\"path\":\"a.txt\",\"file_path\":\"a.txt\"}", .{ .root = root, .is_error = true, .text = .{ .contains = "read: the argument file_path does not exist. The arguments are: path, start, end." } });
+    try support.expectTool(host, "read", "{\"path\":\"blob.bin\"}", .{ .root = root, .is_error = true, .text = .{ .equals = "the file holds invalid UTF-8" } });
+    try support.expectTool(host, "read", "{\"path\":\"missing.txt\"}", .{ .root = root, .is_error = true, .text = .{ .equals = "the path does not exist" } });
+    try support.expectTool(host, "read", "{\"path\":1}", .{ .root = root, .is_error = true, .text = .{ .equals = "Set path to a string." } });
+    try support.expectTool(host, "read", "{\"path\":\"a.txt\",\"file_path\":\"a.txt\"}", .{ .root = root, .is_error = true, .text = .{ .equals = "Remove file_path. The arguments are: path, start, end." } });
     try support.expectTool(host, "edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\"}", .{ .root = root, .is_error = true, .text = .{ .contains = "more than one" } });
     try support.expectTool(host, "edit", "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\",\"replace_all\":true}", .{ .root = root, .text = .{ .contains = "replaced 2" }, .outcome = true });
     try support.expectTool(host, "write", "{\"path\":\"new.txt\",\"content\":\"fresh\\n\"}", .{ .root = root, .text = .{ .contains = "wrote 6 bytes" }, .outcome = true });
     // Content that matches the file changes nothing, so the answer carries no diff.
     try support.expectTool(host, "write", "{\"path\":\"a.txt\",\"content\":\"one\\nTWO\\nTWO\\n\"}", .{ .root = root, .text = .{ .contains = "" }, .outcome = false });
+    // An existing file that the tool cannot read as text gets no diff, and the write still runs.
+    try support.expectTool(host, "write", "{\"path\":\"blob.bin\",\"content\":\"text\"}", .{ .root = root, .text = .{ .equals = "The tool wrote 4 bytes." }, .outcome = false });
     try support.expectTool(host, "exec", "{\"command\":\"echo out; echo err 1>&2; exit 3\"}", .{ .root = root, .text = .{ .contains = "out\n[stderr]\nerr\n[exit code: 3]" } });
     {
         const call = host.calls.submit("exec", "{\"command\":\"head -c 20000 /dev/zero | tr '\\\\0' x\"}", support.toolContext(root));
@@ -836,11 +838,11 @@ test "background jobs start, list, stop, and report a natural exit once to their
 
     try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", .{ .text = .{ .contains = "[job j1 started: sleep 30." } });
     try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", .{ .text = .{ .contains = "[job j1 already runs this command." } });
-    try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true,\"timeout_ms\":5}", .{ .is_error = true, .text = .{ .contains = "Remove one of the two arguments" } });
+    try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true,\"timeout_ms\":5}", .{ .is_error = true, .text = .{ .equals = "Remove timeout_ms, or set background to false." } });
     try support.expectTool(host, "exec", "{\"command\":\"echo hi\"}", .{ .text = .{ .ends = "hi\n[exit code: 0]" } });
     try support.expectTool(host, "jobs", "{}", .{ .text = .{ .contains = "[j1 running: sleep 30. Log: " } });
     try support.expectTool(host, "jobs", "{\"id\":\"j1\"}", .{ .text = .{ .contains = "[j1 running: sleep 30. Log: " } });
-    try support.expectTool(host, "jobs", "{\"stop\":true}", .{ .is_error = true, .text = .{ .contains = "the argument stop needs the argument id" } });
+    try support.expectTool(host, "jobs", "{\"stop\":true}", .{ .is_error = true, .text = .{ .equals = "Set id when stop is true." } });
     try support.expectTool(host, "jobs", "{\"id\":\"j9\"}", .{ .is_error = true, .text = .{ .contains = "the job j9 does not exist. The jobs are: j1." } });
     try support.expectTool(host, "exec", "{\"command\":\"echo done; exit 2\",\"background\":true}", .{ .text = .{ .contains = "[job j2 started" } });
     try support.expectTool(host, "jobs", "{\"id\":\"j1\",\"stop\":true}", .{ .text = .{ .contains = "[j1 stop requested: sleep 30]" } });

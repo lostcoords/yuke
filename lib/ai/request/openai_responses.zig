@@ -136,15 +136,16 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
                 if (tool_result.loaded.len != 0) return error.UnsupportedLoadedTools;
                 try json.field(&jw, "type", "function_call_output");
                 try json.field(&jw, "call_id", tool_result.call_id);
+                try jw.objectField("output");
                 if (tool_result.media.len == 0) {
-                    try json.field(&jw, "output", tool_result.content);
+                    try json.toolText(&jw, tool_result.content, tool_result.is_error);
                 } else {
-                    try jw.objectField("output");
                     try jw.beginArray();
-                    if (tool_result.content.len != 0) {
+                    if (tool_result.content.len != 0 or tool_result.is_error) {
                         try jw.beginObject();
                         try json.field(&jw, "type", "input_text");
-                        try json.field(&jw, "text", tool_result.content);
+                        try jw.objectField("text");
+                        try json.toolText(&jw, tool_result.content, tool_result.is_error);
                         try jw.endObject();
                     }
                     for (tool_result.media) |media| try writeMedia(&jw, media);
@@ -389,6 +390,19 @@ test "assistant reasoning text and tool call precede a tool result" {
     );
 }
 
+test "an error result starts with Error, because Responses has no error flag" {
+    const blocks = [_]ir.Block{
+        .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call_1", .name = "run", .arguments = "{}" } } },
+        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "no \"x\"", .is_error = true } } },
+    };
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"function_call","call_id":"call_1","name":"run","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"Error: no \"x\""}]}
+    ,
+        .{ .model = "gpt-5", .wire = .{ .openai_responses = .{} }, .max_output_tokens = 64 },
+        &blocks,
+    );
+}
+
 test "a tool result with an image writes an output array" {
     const image: ir.Block.Media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" };
     const blocks = [_]ir.Block{
@@ -397,6 +411,17 @@ test "a tool result with an image writes an output array" {
     };
     try expectJson(
         \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"PNG image"},{"type":"input_image","image_url":"data:image/png;base64,YWI=","detail":"auto"}]}]}
+    , .{ .model = "gpt-5", .wire = .{ .openai_responses = .{} }, .max_output_tokens = 8 }, &blocks);
+}
+
+test "an error result with an image starts its text with Error" {
+    const image: ir.Block.Media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" };
+    const blocks = [_]ir.Block{
+        .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call_1", .name = "read", .arguments = "{}" } } },
+        .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "", .is_error = true, .media = &.{image} } } },
+    };
+    try expectJson(
+        \\{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"Error: "},{"type":"input_image","image_url":"data:image/png;base64,YWI=","detail":"auto"}]}]}
     , .{ .model = "gpt-5", .wire = .{ .openai_responses = .{} }, .max_output_tokens = 8 }, &blocks);
 }
 
