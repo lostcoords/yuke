@@ -4380,7 +4380,7 @@ export interface CompactionMessage {
   readonly run_id: RunId;
   readonly reason: CompactionReason;
   readonly summary: string;
-  readonly first_kept_id?: MessageId;
+  readonly first_kept_id: MessageId;
   readonly tokens_before: number;
   readonly tokens_after: number;
   readonly time: CreatedTime;
@@ -4479,8 +4479,8 @@ export interface ReasoningPart {
   readonly text: string;
   readonly signature: string;
   /** The title of the latest summary section. An empty string means that the provider sent none. */
-  readonly title?: string;
-  /** The milliseconds that the block took. Null while the block streams. */
+  readonly title: string;
+  /** The milliseconds that the block took. Null while the block streams, and for a block that never stopped. */
   readonly duration_ms?: number;
 }
 
@@ -4525,7 +4525,7 @@ export interface TokenUsage {
 /** This payload describes a tool part in an assistant message. Its fields borrow their data. */
 export interface ToolPart {
   readonly id: PartId;
-  readonly call_id?: string;
+  readonly call_id: string;
   readonly name: string;
   readonly arguments: string;
   readonly input_view?: ReadonlyArray<View>;

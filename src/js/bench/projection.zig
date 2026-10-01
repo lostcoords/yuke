@@ -83,7 +83,7 @@ pub fn create(host: *Host, io: std.Io, scale: u32, stream: Stream) !*Projection 
         try session.apply(.{ .message_part_added_data = .{
             .session_id = sid,
             .message_id = 2,
-            .part = .{ .tool = .{ .id = tool_part_id, .name = "exec", .arguments = "{\"command\":\"make\"}", .state = .pending } },
+            .part = .{ .tool = .{ .id = tool_part_id, .call_id = "call_tool_part_id", .name = "exec", .arguments = "{\"command\":\"make\"}", .state = .pending } },
         } });
         try session.apply(.{ .tool_state_changed_data = .{
             .session_id = sid,
@@ -118,7 +118,7 @@ fn seedExchanges(self: *Projection, scale: u32) !void {
     const question = [_]proto.content.ContentPart{.{ .text = .{ .text = "Run the build and fix the first error." } }};
     const answer = [_]proto.message.AssistantPart{
         .{ .text = .{ .id = 0, .text = "I run the build first." } },
-        .{ .tool = .{ .id = 1, .name = "exec", .arguments = "{\"command\":\"zig build\"}", .state = .{ .completed = .{ .output = "Build Summary: 42/42 steps succeeded", .duration_ms = 1200 } } } },
+        .{ .tool = .{ .id = 1, .call_id = "call_1", .name = "exec", .arguments = "{\"command\":\"zig build\"}", .state = .{ .completed = .{ .output = "Build Summary: 42/42 steps succeeded", .duration_ms = 1200 } } } },
         .{ .text = .{ .id = 2, .text = "The build passes." } },
     };
     for (0..scale) |i| {
@@ -147,7 +147,7 @@ pub fn appendPart(self: *Projection) !void {
     try self.session.apply(.{ .message_part_added_data = .{
         .session_id = self.session_id,
         .message_id = self.draft_id,
-        .part = .{ .tool = .{ .id = self.next_part, .name = "exec", .arguments = "{\"command\":\"zig build test\"}", .state = .pending } },
+        .part = .{ .tool = .{ .id = self.next_part, .call_id = "call_exec", .name = "exec", .arguments = "{\"command\":\"zig build test\"}", .state = .pending } },
     } });
     self.next_part += 1;
 }

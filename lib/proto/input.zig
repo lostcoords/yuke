@@ -130,11 +130,8 @@ test "input sources form a closed union outside public input" {
         defer testing.allocator.free(encoded);
         try testing.expectEqualStrings(text, encoded);
     }
-    const public = try std.json.parseFromSlice(Input, testing.allocator, "{\"type\":\"content\",\"content\":[],\"source\":{\"type\":\"engine_interruption\",\"run_id\":1,\"kind\":\"turn\"}}", .{});
-    defer public.deinit();
-    const encoded = try std.json.Stringify.valueAlloc(testing.allocator, public.value, .{});
-    defer testing.allocator.free(encoded);
-    try testing.expectEqualStrings("{\"type\":\"content\",\"content\":[]}", encoded);
+    // A public input has no source field, so a client cannot claim an engine source.
+    try testing.expectError(error.UnknownField, std.json.parseFromSlice(Input, testing.allocator, "{\"type\":\"content\",\"content\":[],\"source\":{\"type\":\"engine_interruption\",\"run_id\":1,\"kind\":\"turn\"}}", .{}));
     try testing.expectError(error.InvalidEnumTag, std.json.parseFromSlice(InputSource, testing.allocator, "{\"type\":\"other\"}", .{}));
     try testing.expectError(error.MissingField, std.json.parseFromSlice(InputSource, testing.allocator, "{\"type\":\"engine_interruption\",\"run_id\":1}", .{}));
 }

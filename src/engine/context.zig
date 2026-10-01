@@ -60,9 +60,9 @@ pub const Head = struct {
 pub fn readHead(gpa: std.mem.Allocator, arena: std.mem.Allocator, db: *database.Database, session_id: [16]u8) !?Head {
     var row = (try db.queries.newest_compaction.maybeOne(gpa, .{ .session_id = session_id })) orelse return null;
     defer row.deinit();
-    const message = try std.json.parseFromSliceLeaky(proto.message.Message, arena, row.value.payload, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
+    const message = try std.json.parseFromSliceLeaky(proto.message.Message, arena, row.value.payload, .{ .allocate = .alloc_always });
     if (message != .compaction or message.compaction.id != row.value.message_id) return error.CorruptLog;
-    return .{ .message = message, .from_id = message.compaction.first_kept_id orelse 0 };
+    return .{ .message = message, .from_id = message.compaction.first_kept_id };
 }
 
 /// Count the tokens of the next request to `model`. `prompt_tokens` stands for the prompt and the tools when no provider count anchors the count.
@@ -103,7 +103,7 @@ pub fn collect(
     defer rows.deinit();
     while (try rows.next(scratch.allocator())) |row| {
         defer _ = scratch.reset(.retain_capacity);
-        const msg = try std.json.parseFromSliceLeaky(proto.message.Message, arena, row.value.payload, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
+        const msg = try std.json.parseFromSliceLeaky(proto.message.Message, arena, row.value.payload, .{ .allocate = .alloc_always });
         if (msg.id() != row.value.message_id) return error.CorruptLog;
         if (msg == .compaction) continue; // The head already states every checkpoint below it.
         try messages.append(arena, msg);
@@ -138,7 +138,7 @@ test "only a provider count of the session model anchors the count" {
     const messages = [_]proto.message.Message{
         .{ .user = .{ .id = 1, .input_id = 1, .content = &.{.{ .text = .{ .text = "u" ** 4000 } }}, .time = .{ .created_at_ms = 1 } } },
         .{ .assistant = .{ .id = 2, .run_id = 1, .config_rev = 0, .time = .{ .created_at_ms = 2 }, .provenance = .{ .protocol = .openai_responses, .model = "p/m" }, .tokens = .{ .input = 5000, .output = 50, .reasoning = 0, .cache_read = 0, .cache_write = 0 }, .content = &.{
-            .{ .reasoning = .{ .id = 0, .text = "", .signature = signature } },
+            .{ .reasoning = .{ .id = 0, .text = "", .signature = signature, .title = "" } },
             .{ .text = .{ .id = 1, .text = "a" ** 400 } },
         } } },
         .{ .user = .{ .id = 3, .input_id = 2, .content = &.{.{ .text = .{ .text = "v" ** 800 } }}, .time = .{ .created_at_ms = 3 } } },

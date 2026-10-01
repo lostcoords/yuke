@@ -226,10 +226,8 @@ fn writeTextPart(w: *std.Io.Writer, parts: *Parts, kind: []const u8, id: u64, te
 fn writeToolPart(w: *std.Io.Writer, parts: *Parts, t: proto.message.ToolPart) !void {
     try w.print("{{\"type\":\"tool\",\"id\":{d},\"name\":", .{t.id});
     try std.json.Stringify.encodeJsonString(t.name, .{}, w);
-    if (t.call_id) |call_id| {
-        try w.writeAll(",\"call_id\":");
-        try std.json.Stringify.encodeJsonString(call_id, .{}, w);
-    }
+    try w.writeAll(",\"call_id\":");
+    try std.json.Stringify.encodeJsonString(t.call_id, .{}, w);
     try w.writeByte(',');
     try writeCapped(w, parts, .arguments, "", 0, "arguments", t.arguments);
     if (t.input_view) |views| {
@@ -448,6 +446,7 @@ test "a huge tool result projects into a bounded parts response" {
 
     const content = [_]proto.message.AssistantPart{.{ .tool = .{
         .id = 0,
+        .call_id = "call_1",
         .name = "exec",
         .arguments = huge,
         .state = .{ .completed = .{ .output = huge, .view = &views, .duration_ms = 5 } },
@@ -497,6 +496,7 @@ test "a diff of many files stays inside the response budget" {
     const views = [_]proto.view.View{.{ .diff = .{ .files = files } }};
     const content = [_]proto.message.AssistantPart{.{ .tool = .{
         .id = 0,
+        .call_id = "call_1",
         .name = "exec",
         .arguments = "{}",
         .state = .{ .completed = .{ .output = "", .view = &views, .duration_ms = 1 } },
@@ -538,6 +538,7 @@ test "many huge parts each stay inside the part budget and none is dropped" {
     for (content, 0..) |*part, i| {
         part.* = .{ .tool = .{
             .id = i,
+            .call_id = "call_1",
             .name = "exec",
             .arguments = "",
             .state = .{ .completed = .{ .output = "", .duration_ms = 5 } },
@@ -590,6 +591,7 @@ test "every cut address resolves to its own field, never a neighbour" {
     };
     const content = [_]proto.message.AssistantPart{.{ .tool = .{
         .id = 0,
+        .call_id = "call_1",
         .name = "exec",
         .arguments = "{\"command\":\"zig build\"}",
         .input_view = &input_views,
@@ -799,7 +801,7 @@ test "a compaction projects its summary as one text part" {
     try session.apply(.{ .message_committed_data = .{
         .session_id = session.id,
         .seq = 1,
-        .message = .{ .compaction = .{ .id = 1, .run_id = 1, .reason = .manual, .summary = "the work so far", .tokens_before = 9, .tokens_after = 3, .time = .{ .created_at_ms = 1 } } },
+        .message = .{ .compaction = .{ .id = 1, .run_id = 1, .reason = .manual, .summary = "the work so far", .first_kept_id = 1, .tokens_before = 9, .tokens_after = 3, .time = .{ .created_at_ms = 1 } } },
     } });
     var buffer: std.Io.Writer.Allocating = .init(a);
     defer buffer.deinit();
@@ -820,7 +822,7 @@ test "a reasoning part projects its title and duration, and a live one projects 
             .config_rev = 0,
             .content = &.{
                 .{ .reasoning = .{ .id = 0, .text = "**Plan**", .signature = "", .title = "Plan", .duration_ms = 1500 } },
-                .{ .reasoning = .{ .id = 1, .text = "", .signature = "" } },
+                .{ .reasoning = .{ .id = 1, .text = "", .signature = "", .title = "" } },
             },
             .finish = .stop,
             .time = .{ .created_at_ms = 1 },

@@ -586,8 +586,8 @@ test "native part refresh validates the draft cursor across replacement and remo
     defer harness.destroy();
     try harness.start(.stream_native, 1);
     const session = harness.projection.?.session;
-    try session.draft.?.addPart(.{ .session_id = session.id, .message_id = 2, .part = .{ .reasoning = .{ .id = 1, .text = "why 世界", .signature = "" } } });
-    try session.draft.?.addPart(.{ .session_id = session.id, .message_id = 2, .part = .{ .tool = .{ .id = 2, .name = "exec", .arguments = "{}", .state = .pending } } });
+    try session.draft.?.addPart(.{ .session_id = session.id, .message_id = 2, .part = .{ .reasoning = .{ .id = 1, .text = "why 世界", .signature = "", .title = "" } } });
+    try session.draft.?.addPart(.{ .session_id = session.id, .message_id = 2, .part = .{ .tool = .{ .id = 2, .call_id = "call_2", .name = "exec", .arguments = "{}", .state = .pending } } });
     try support.eval(harness.host, "app/part-refresh.test.js");
     session.draft.?.deinit();
     session.draft = null;

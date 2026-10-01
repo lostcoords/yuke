@@ -54,7 +54,7 @@ fn ofAssistant(assistant: proto.message.AssistantMessage) Estimate {
         .redacted_reasoning => |r| reasoning += encryptedBytes(r.data.len),
         .tool => |t| {
             // The call and its result both name the call id.
-            bytes += t.name.len + t.arguments.len + if (t.call_id) |id| 2 * id.len else 0;
+            bytes += t.name.len + t.arguments.len + 2 * t.call_id.len;
             switch (t.state) {
                 .completed => |c| {
                     bytes += c.output.len;
@@ -94,7 +94,7 @@ test "the estimate charges request text, decoded ciphertext, and media, and not 
         .finish = .canceled,
         .content = &.{
             .{ .text = .{ .id = 0, .text = "t" ** 400 } },
-            .{ .reasoning = .{ .id = 1, .text = "short summary", .signature = "A" ** 4000 } },
+            .{ .reasoning = .{ .id = 1, .text = "short summary", .signature = "A" ** 4000, .title = "" } },
             .{ .tool = .{ .id = 2, .call_id = "call_1", .name = "read", .arguments = "a" ** 96, .state = .{ .completed = .{
                 .output = "o" ** 1000,
                 .view = &.{},
@@ -110,7 +110,7 @@ test "the estimate charges request text, decoded ciphertext, and media, and not 
     try testing.expectEqual(Estimate{ .tokens = ofBytes(sent) + reasoning + media_tokens, .reasoning = reasoning }, ofMessage(message));
     // A summary longer than the decoded ciphertext wins, as a plain Anthropic trace does.
     const plain: proto.message.Message = .{ .assistant = .{ .id = 2, .run_id = 1, .config_rev = 0, .time = .{ .created_at_ms = 2 }, .content = &.{
-        .{ .reasoning = .{ .id = 0, .text = "r" ** 800, .signature = "sig" } },
+        .{ .reasoning = .{ .id = 0, .text = "r" ** 800, .signature = "sig", .title = "" } },
     } } };
     try testing.expectEqual(ofBytes(800), ofMessage(plain).reasoning);
 }

@@ -903,7 +903,7 @@ fn checkStreamCap(offset: u64, len: usize) error{ResponseTooLarge}!void {
 fn emptyPart(part_id: ids.PartId, kind: event.BlockKind) message.AssistantPart {
     return switch (kind) {
         .text => .{ .text = .{ .id = part_id, .text = "" } },
-        .reasoning => .{ .reasoning = .{ .id = part_id, .text = "", .signature = "" } },
+        .reasoning => .{ .reasoning = .{ .id = part_id, .text = "", .signature = "", .title = "" } },
         .redacted_reasoning => .{ .redacted_reasoning = .{ .id = part_id, .data = "" } },
         .tool => unreachable, // A tool part needs metadata from the caller.
     };
@@ -1160,9 +1160,9 @@ test "interleaved tool blocks number their parts in emit order" {
     const parts = fixture.session.draft.?.parts.items;
     try std.testing.expectEqual(@as(usize, 3), parts.len);
     for (parts, 0..) |p, i| try std.testing.expectEqual(@as(ids.PartId, @intCast(i)), p.id());
-    try std.testing.expectEqualStrings("c", parts[0].tool.call_id.?);
-    try std.testing.expectEqualStrings("a", parts[1].tool.call_id.?);
-    try std.testing.expectEqualStrings("b", parts[2].tool.call_id.?);
+    try std.testing.expectEqualStrings("c", parts[0].tool.call_id);
+    try std.testing.expectEqualStrings("a", parts[1].tool.call_id);
+    try std.testing.expectEqualStrings("b", parts[2].tool.call_id);
 }
 
 // The stream sends the title that a delta completes, and the stop sends the duration, so the draft holds both.
@@ -1206,7 +1206,7 @@ test "a text block and a concurrent tool block keep dense part ids" {
     // The text part opened first, so it holds id 0 and the tool part follows it.
     try std.testing.expectEqualStrings("hi", parts[0].text.text.items);
     try std.testing.expectEqual(@as(ids.PartId, 0), parts[0].id());
-    try std.testing.expectEqualStrings("a", parts[1].tool.call_id.?);
+    try std.testing.expectEqualStrings("a", parts[1].tool.call_id);
     try std.testing.expectEqual(@as(ids.PartId, 1), parts[1].id());
 }
 
@@ -1254,7 +1254,7 @@ test "part ids restart for each round" {
     const parts = fixture.session.draft.?.parts.items;
     try std.testing.expectEqual(@as(usize, 1), parts.len);
     try std.testing.expectEqual(@as(ids.PartId, 0), parts[0].id());
-    try std.testing.expectEqualStrings("b", parts[0].tool.call_id.?);
+    try std.testing.expectEqualStrings("b", parts[0].tool.call_id);
 }
 
 test "a build hook can discard the live registry and tools before the request serializes" {

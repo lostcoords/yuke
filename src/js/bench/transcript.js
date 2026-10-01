@@ -17,7 +17,7 @@ const sample = [
   { type: "user", text: "Hello 世界 e\u0301 👩‍💻" },
   { type: "assistant", parts: [
     { type: "text", id: 1, text: "# Answer\n\nA **bold** word and `code`.\n\n" + "One two three 世界.\n\n".repeat(24) },
-    { type: "reasoning", id: 2, text: "Reason\n\n".repeat(12), signature: "" },
+    { type: "reasoning", id: 2, text: "Reason\n\n".repeat(12), signature: "", title: "" },
     { type: "text", id: 3, text: "```zig\nconst answer = 42;\n```" },
   ] },
 ];
@@ -76,6 +76,7 @@ function previewParts() {
     parts.push({
       type: "tool",
       id: i + 1,
+      call_id: "call_" + (i + 1),
       name: structured ? "view" : "plain-" + i,
       arguments: JSON.stringify({ path: structured ? "view.md" : "plain-" + i + ".txt" }),
       state: {
@@ -89,7 +90,7 @@ function previewParts() {
       },
     });
   }
-  parts.push({ type: "reasoning", id: PREVIEW_REASONING_ID, text: previewReasoning, signature: "" });
+  parts.push({ type: "reasoning", id: PREVIEW_REASONING_ID, text: previewReasoning, signature: "", title: "" });
   return parts;
 }
 

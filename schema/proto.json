@@ -1702,7 +1702,7 @@
         {
           "name": "first_kept_id",
           "type": "MessageId",
-          "presence": "optional"
+          "presence": "required"
         },
         {
           "name": "tokens_before",
@@ -2005,11 +2005,11 @@
           "name": "title",
           "doc": "The title of the latest summary section. An empty string means that the provider sent none.",
           "type": "string",
-          "presence": "defaulted"
+          "presence": "required"
         },
         {
           "name": "duration_ms",
-          "doc": "The milliseconds that the block took. Null while the block streams.",
+          "doc": "The milliseconds that the block took. Null while the block streams, and for a block that never stopped.",
           "type": "u64",
           "presence": "optional"
         }
@@ -2131,7 +2131,7 @@
         {
           "name": "call_id",
           "type": "string",
-          "presence": "optional"
+          "presence": "required"
         },
         {
           "name": "name",

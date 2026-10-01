@@ -148,7 +148,7 @@ fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), added: *
         .reasoning => |t| if (replay) try blocks.append(gpa, .{ .role = .assistant, .value = .{ .reasoning = .{ .text = t.text, .signature = t.signature } } }),
         .redacted_reasoning => |t| if (replay) try blocks.append(gpa, .{ .role = .assistant, .value = .{ .redacted_reasoning = t.data } }),
         .tool => |t| {
-            const call_id = t.call_id orelse return error.InvalidTranscript;
+            const call_id = t.call_id;
             try blocks.append(gpa, .{ .role = .assistant, .value = .{ .tool_use = .{
                 .call_id = call_id,
                 .name = t.name,
@@ -160,7 +160,7 @@ fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), added: *
     // A tool result follows the assistant blocks, one per tool call.
     for (msg.content) |part| switch (part) {
         .tool => |t| {
-            const call_id = t.call_id orelse return error.InvalidTranscript;
+            const call_id = t.call_id;
             var result = try terminalToolResult(gpa, call_id, t.state, options, images);
             if (t.state == .completed) if (t.state.completed.tools_added) |definitions| {
                 result.loaded = try loadDefinitions(gpa, added, definitions, options);
@@ -284,7 +284,7 @@ test "reasoning replays only when the provenance matches the target" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const content = [_]proto.message.AssistantPart{
-        .{ .reasoning = .{ .id = 1, .text = "ponder", .signature = "sig" } },
+        .{ .reasoning = .{ .id = 1, .text = "ponder", .signature = "sig", .title = "" } },
         .{ .text = .{ .id = 2, .text = "answer" } },
     };
     const messages = [_]proto.message.Message{.{ .assistant = .{

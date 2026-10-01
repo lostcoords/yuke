@@ -56,7 +56,7 @@ pub const CompactionMessage = struct {
     run_id: ids.RunId,
     reason: enums.CompactionReason,
     summary: []const u8,
-    first_kept_id: ?ids.MessageId = null,
+    first_kept_id: ids.MessageId,
     tokens_before: u64,
     tokens_after: u64,
     time: misc.CreatedTime,
@@ -188,8 +188,8 @@ pub const ReasoningPart = struct {
     text: []const u8,
     signature: []const u8,
     /// The title of the latest summary section. An empty string means that the provider sent none.
-    title: []const u8 = "",
-    /// The milliseconds that the block took. Null while the block streams.
+    title: []const u8,
+    /// The milliseconds that the block took. Null while the block streams, and for a block that never stopped.
     duration_ms: ?u64 = null,
 };
 
@@ -238,7 +238,7 @@ pub const TokenUsage = struct {
 /// This payload describes a tool part in an assistant message. Its fields borrow their data.
 pub const ToolPart = struct {
     id: ids.PartId,
-    call_id: ?[]const u8 = null,
+    call_id: []const u8,
     name: []const u8,
     arguments: []const u8,
     input_view: ?[]const view.View = null,

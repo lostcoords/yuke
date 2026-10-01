@@ -37,7 +37,7 @@ pub const Part = union(enum) {
     };
     pub const Tool = struct {
         id: ids.PartId,
-        call_id: ?[]const u8 = null,
+        call_id: []const u8,
         name: []const u8,
         arguments: []const u8,
         input_view: ?[]const view.View = null,
@@ -96,7 +96,7 @@ pub const Part = union(enum) {
 
                 return .{ .tool = .{
                     .id = t.id,
-                    .call_id = if (t.call_id) |c| try arena.dupe(u8, c) else null,
+                    .call_id = try arena.dupe(u8, t.call_id),
                     .name = try arena.dupe(u8, t.name),
                     .arguments = try arena.dupe(u8, t.arguments),
                     .input_view = if (t.input_view) |v| try proto.dupe(arena, v) else null,
@@ -360,6 +360,7 @@ fn addText(part_id: ids.PartId, text: []const u8) message.MessagePartAddedData {
 fn addTool(part_id: ids.PartId, state: tool.ToolState) message.MessagePartAddedData {
     return .{ .session_id = zero_session, .message_id = 1, .part = .{ .tool = .{
         .id = part_id,
+        .call_id = "call_1",
         .name = "bash",
         .arguments = "{}",
         .state = state,
@@ -399,7 +400,7 @@ test "reasoning owns its signature; redacted owns its data" {
     defer d.deinit();
     var signature = [_]u8{ 's', 'i', 'g' };
     var data = [_]u8{ 'o', 'p', 'a', 'q', 'u', 'e' };
-    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 0, .text = "why", .signature = &signature } } });
+    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 0, .text = "why", .signature = &signature, .title = "" } } });
     try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .redacted_reasoning = .{ .id = 1, .data = &data } } });
     @memset(&signature, 'x');
     @memset(&data, 'x');
@@ -413,7 +414,7 @@ test "streamed reasoning keeps its latest section title, and finalizes its signa
     var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     // The stream path adds empty parts, sends text, then finalizes at block stop.
-    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 0, .text = "", .signature = "" } } });
+    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 0, .text = "", .signature = "", .title = "" } } });
     try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .redacted_reasoning = .{ .id = 1, .data = "" } } });
     var one = delta(0, 0, "**One**");
     one.title = "One";
@@ -483,7 +484,7 @@ test "streaming state: running tool outranks a trailing reasoning part" {
     var d = try Draft.init(testing.allocator, started());
     defer d.deinit();
     try d.addPart(addTool(0, .{ .running = .{ .started_at_ms = 7 } }));
-    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 1, .text = "", .signature = "" } } });
+    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 1, .text = "", .signature = "", .title = "" } } });
 
     const s = d.deriveStreamingState(100);
     try testing.expect(s == .running_tool);
@@ -497,7 +498,7 @@ test "streaming state: trailing reasoning, else plain streaming" {
     try d.addPart(addText(0, "hi"));
     try testing.expectEqual(@as(u64, 42), d.deriveStreamingState(42).streaming.started_at_ms);
 
-    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 1, .text = "", .signature = "" } } });
+    try d.addPart(.{ .session_id = zero_session, .message_id = 1, .part = .{ .reasoning = .{ .id = 1, .text = "", .signature = "", .title = "" } } });
     try testing.expect(d.deriveStreamingState(42) == .reasoning);
 }
 

@@ -64,7 +64,7 @@ const Fixture = struct {
             .id = try database.event.allocMessageId(&self.db, a, child.raw),
             .run_id = started.handle.started.run_id,
             .config_rev = 0,
-            .content = &.{ .{ .tool = .{ .id = 0, .name = "exec", .arguments = "{}", .state = .{ .completed = .{ .output = "", .duration_ms = 1 } } } }, .{ .text = .{ .id = 1, .text = value } } },
+            .content = &.{ .{ .tool = .{ .id = 0, .call_id = "call_0", .name = "exec", .arguments = "{}", .state = .{ .completed = .{ .output = "", .duration_ms = 1 } } } }, .{ .text = .{ .id = 1, .text = value } } },
             .finish = .stop,
             .tokens = if (i == 0) .{ .input = 10, .output = 5, .reasoning = 0, .cache_read = 0, .cache_write = 0 } else null,
             .time = .{ .created_at_ms = started.handle.started.started_at_ms },

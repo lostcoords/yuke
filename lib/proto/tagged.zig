@@ -46,16 +46,38 @@ pub fn fromValue(comptime T: type, a: std.mem.Allocator, v: std.json.Value, o: s
         else => return error.UnexpectedToken,
     };
 
-    // The arm fields share the flat object with the discriminator.
-    var arm_opts = o;
-    arm_opts.ignore_unknown_fields = true;
-
     inline for (@typeInfo(T).@"union".fields) |f| {
         if (std.mem.eql(u8, f.name, tag))
-            return @unionInit(T, f.name, try std.json.parseFromValueLeaky(f.type, a, v, arm_opts));
+            return @unionInit(T, f.name, try armFromObject(f.type, a, obj, o));
     }
 
     return error.InvalidEnumTag; // Reject an unknown discriminator.
+}
+
+/// Decode one arm from the flat object, as `std.json` decodes a struct, but skip the discriminator.
+/// The caller's options reach every field. The decoder reads the object in place and makes no copy.
+fn armFromObject(comptime A: type, a: std.mem.Allocator, obj: std.json.ObjectMap, o: std.json.ParseOptions) !A {
+    if (comptime std.meta.hasFn(A, "jsonParseFromValue")) @compileError("a tagged arm decodes field by field: " ++ @typeName(A));
+    const fields = @typeInfo(A).@"struct".fields;
+    inline for (fields) |field| if (comptime std.mem.eql(u8, field.name, disc)) @compileError("the discriminator names no arm field: " ++ @typeName(A));
+    var r: A = undefined;
+    var seen = [_]bool{false} ** fields.len;
+    var it = obj.iterator();
+    while (it.next()) |kv| {
+        const key = kv.key_ptr.*;
+        if (std.mem.eql(u8, key, disc)) continue;
+        inline for (fields, 0..) |field, i| {
+            if (std.mem.eql(u8, field.name, key)) {
+                @field(r, field.name) = try std.json.innerParseFromValue(field.type, a, kv.value_ptr.*, o);
+                seen[i] = true;
+                break;
+            }
+        } else if (!o.ignore_unknown_fields) return error.UnknownField;
+    }
+    inline for (fields, 0..) |field, i| {
+        if (!seen[i]) @field(r, field.name) = field.defaultValue() orelse return error.MissingField;
+    }
+    return r;
 }
 
 /// Encode a tagged wire union as JSON.
@@ -109,4 +131,16 @@ test "tagged unions round-trip one representative value each" {
         try std.json.Stringify.value(parsed.value, .{ .emit_null_optional_fields = false }, &buf.writer);
         try std.testing.expectEqualStrings(case.json, buf.written());
     }
+}
+
+test "an arm rejects an unknown field, needs each required field, and reads an omitted null as null" {
+    const testing = std.testing;
+    try testing.expectError(error.UnknownField, std.json.parseFromSlice(message.AssistantPart, testing.allocator, "{\"type\":\"text\",\"id\":0,\"text\":\"a\",\"extra\":1}", .{}));
+    try testing.expectError(error.MissingField, std.json.parseFromSlice(message.AssistantPart, testing.allocator, "{\"type\":\"text\",\"id\":0}", .{}));
+    // The store omits a null field, so a thought that never stopped loads back with no duration.
+    const stored = try std.json.Stringify.valueAlloc(testing.allocator, message.AssistantPart{ .reasoning = .{ .id = 0, .text = "", .signature = "", .title = "" } }, .{ .emit_null_optional_fields = false });
+    defer testing.allocator.free(stored);
+    const parsed = try std.json.parseFromSlice(message.AssistantPart, testing.allocator, stored, .{});
+    defer parsed.deinit();
+    try testing.expectEqual(@as(?u64, null), parsed.value.reasoning.duration_ms);
 }

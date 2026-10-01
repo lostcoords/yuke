@@ -127,8 +127,8 @@ CREATE TABLE messages (
     tokens_estimate    INTEGER NOT NULL CHECK (tokens_estimate BETWEEN 0 AND 9007199254740991), -- u64
     -- Store the reasoning share of the estimate. A request to another model drops that reasoning.
     reasoning_estimate INTEGER NOT NULL CHECK (reasoning_estimate BETWEEN 0 AND tokens_estimate), -- u64
-    -- Store the first message that a checkpoint keeps, so the context count reads no checkpoint body.
-    first_kept_id INTEGER CHECK (first_kept_id IS NULL OR (role = 'compaction' AND first_kept_id BETWEEN 0 AND 9007199254740991)), -- proto.MessageId
+    -- Store the first message that a checkpoint keeps, so the context count reads no checkpoint body. Only a compaction row has `first_kept_id`.
+    first_kept_id INTEGER CHECK ((role = 'compaction') = (first_kept_id IS NOT NULL) AND (first_kept_id IS NULL OR first_kept_id BETWEEN 1 AND 9007199254740991)), -- proto.MessageId
 
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND 9007199254740991), -- u64
 

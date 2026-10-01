@@ -76,7 +76,7 @@ pub fn appendCommittedMessage(
         .created_at_ms = m.created_at_ms,
         .tokens_estimate = estimate.tokens,
         .reasoning_estimate = estimate.reasoning,
-        .first_kept_id = if (message == .compaction) message.compaction.first_kept_id orelse 0 else null,
+        .first_kept_id = if (message == .compaction) message.compaction.first_kept_id else null,
     });
     _ = try db.queries.advance_message.one(arena, .{
         .id = session_id,
@@ -145,7 +145,7 @@ pub const Tail = struct {
     /// One message beside its stored size, which is the same serialization the transcript measures.
     pub fn next(self: *Tail, scratch: std.mem.Allocator) !?transcript.Sized {
         const row = (try self.rows.next(scratch)) orelse return null;
-        const msg = try std.json.parseFromSliceLeaky(proto.message.Message, scratch, row.value.payload, .{ .ignore_unknown_fields = true });
+        const msg = try std.json.parseFromSliceLeaky(proto.message.Message, scratch, row.value.payload, .{});
         if (messageId(msg) != row.value.message_id) return error.CorruptLog; // The row and body disagree.
         return .{ .message = msg, .bytes = row.value.payload.len };
     }
@@ -176,7 +176,7 @@ pub fn historyPage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, 
     // The query returns newest first. Collect the rows, then reverse them to oldest first.
     var newest_first: std.ArrayList(proto.message.Message) = .empty;
     while (try it.next(arena)) |row| {
-        const msg = try std.json.parseFromSliceLeaky(proto.message.Message, arena, row.value.payload, .{ .ignore_unknown_fields = true });
+        const msg = try std.json.parseFromSliceLeaky(proto.message.Message, arena, row.value.payload, .{});
         if (messageId(msg) != row.value.message_id) return error.CorruptLog; // The row and body disagree.
         try newest_first.append(arena, msg);
     }
