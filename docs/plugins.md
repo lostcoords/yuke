@@ -40,6 +40,10 @@ ctx.on("run.done", (drain) => {
 - Event dispatch is synchronous. It does not await a promise from a listener. Catch failures and check lifecycle when a listener starts async work.
 - Name a custom event `<plugin>:<name>`. See [Types](types.md#custom-events).
 
+### Job changes
+
+`job.changed` receives one `Job` with its `id`, `command`, `state`, and times. It fires when a job starts, when a stop request reaches the job, and when the job ends. Call `jobs.list()` from `"yuke"` to read all jobs.
+
 ### Engine drains
 
 Engine fact events include `run.started`, `run.done`, `message.*`, and `tool.*`. Each receives the whole coalesced drain, not one fact payload. A session drain has `type: "session"`, a `session` ID, and a `facts` list. `engine.drained` receives every drain. Search `DrainFact`, `EngineEvent`, and `declare namespace $client` for exact types and queries.

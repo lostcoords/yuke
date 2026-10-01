@@ -7,9 +7,7 @@ const accepted = view.filter((n) => !throws(() => events.on(n, () => {})));
 // The neutral name stays, and an owner:event name stays free.
 const neutral = !throws(() => events.on("notify.posted", () => {}));
 const owned = !throws(() => events.on("myplugin:ready", () => {}));
-// A drain never carries a job change, so the bus refuses a name that could never fire.
-const undelivered = throws(() => events.on("job.changed", () => {}));
-equal(accepted.length === 0 && neutral && owned && undelivered ? "ok" : "accepted:" + accepted.join("|"), "ok");
+equal(accepted.length === 0 && neutral && owned ? "ok" : "accepted:" + accepted.join("|"), "ok");
 
 // The client runs in every frontend, so a drain reaches a headless listener as `session.changed` and faults nothing.
 {

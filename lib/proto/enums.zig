@@ -19,7 +19,7 @@ pub const BroadcastName = enum {
     notice,
     /// An extension asks the connected frontend to interact with the user.
     @"interaction.requested",
-    /// A background job started or ended.
+    /// A background job started, got a stop request, or ended.
     @"job.changed",
     /// The engine committed a message to a session transcript.
     @"message.committed",

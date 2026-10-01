@@ -371,7 +371,7 @@
     },
     {
       "name": "job.changed",
-      "doc": "A background job started or ended.",
+      "doc": "A background job started, got a stop request, or ended.",
       "params": "JobChangedData",
       "direction": "serverToClient"
     }
@@ -4222,7 +4222,7 @@
         {
           "name": "job.changed",
           "wire": "job.changed",
-          "doc": "A background job started or ended."
+          "doc": "A background job started, got a stop request, or ended."
         },
         {
           "name": "message.committed",

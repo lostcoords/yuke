@@ -1126,7 +1126,7 @@ export type BroadcastName =
   | "notice"
   /** An extension asks the connected frontend to interact with the user. */
   | "interaction.requested"
-  /** A background job started or ended. */
+  /** A background job started, got a stop request, or ended. */
   | "job.changed"
   /** The engine committed a message to a session transcript. */
   | "message.committed"
@@ -1715,7 +1715,7 @@ export interface Broadcasts {
   "input.canceled": InputCanceledData;
   /** An extension asks the connected frontend to interact with the user. */
   "interaction.requested": InteractionRequestedData;
-  /** A background job started or ended. */
+  /** A background job started, got a stop request, or ended. */
   "job.changed": JobChangedData;
 }
 

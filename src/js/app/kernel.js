@@ -122,7 +122,7 @@ function applyConfigPatch(section, fields, src, label) {
 }
 
 // The kernel declares only the events that neutral code emits. Each tier declares its own names.
-const CORE_EVENTS = new Set(["notify.posted", "colors.changed", "engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", "quit.request", ...native.factNames()]);
+const CORE_EVENTS = new Set(["notify.posted", "colors.changed", "engine.drained", "engine.activity.changed", "job.changed", "interaction.changed", "quit.request", ...native.factNames()]);
 
 // A layer implements only the hooks it needs. Every hook takes at most two arguments, so a call on a frame path allocates no argument list.
 /** @param {object | null | undefined} obj @param {string} name @param {unknown} [a] @param {unknown} [b] @returns {unknown} */

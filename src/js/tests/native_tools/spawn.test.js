@@ -73,7 +73,7 @@ globalThis.fixtureDir = globalThis.fixtureDir ?? "";
 
   // The job table emits a fresh copy of each change, a stop of an exited job keeps its real end, and the log ends with the exit line.
   const changes = [];
-  const off = events.on("jobs.changed", (job) => { changes.push(`${job.id} ${job.state}`); job.state = "mutated"; });
+  const off = events.on("job.changed", (job) => { changes.push(`${job.id} ${job.state}`); job.state = "mutated"; });
   let uppercase = "";
   try { await startJob("true", "AA" + "00".repeat(15), { workspaceRoot: "/tmp" }); } catch (e) { uppercase = e.message; }
   check("uppercase-session-rejects", uppercase === "the session id must be 32 lowercase hex digits");

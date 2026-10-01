@@ -225,7 +225,7 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
 
     rpc.serve(testing.allocator, &f.stream, try std.fmt.allocPrint(a, "{{\"id\":\"stop\",\"method\":\"job.stop\",\"params\":{{\"id\":{d}}}}}", .{job_id}));
     try testing.expect(std.mem.indexOf(u8, f.out.written(), try std.fmt.allocPrint(a, "{{\"id\":\"stop\",\"result\":{{\"job\":{{\"id\":{d},", .{job_id})) != null);
-    try host.evalModule("import { events } from \"yuke:internal/kernel\"; globalThis.ended = 0; events.on(\"jobs.changed\", (job) => { if (job.state === \"exited\" && job.stop_requested) ended = 1; });", "rpc-job-end.js");
+    try host.evalModule("import { events } from \"yuke:internal/kernel\"; globalThis.ended = 0; events.on(\"job.changed\", (job) => { if (job.state === \"exited\" && job.stop_requested) ended = 1; });", "rpc-job-end.js");
     try support.pumpUntilTrue(host, "globalThis.ended === 1");
     f.stream.flushNotifications();
     try testing.expect(std.mem.indexOf(u8, f.out.written(), "\"state\":\"exited\",\"stop_requested\":true,\"signal\":15,") != null);
@@ -249,7 +249,7 @@ test "a job that ends by itself tells its session once as a protected input, and
         \\import {{ start, stop }} from "yuke:internal/jobs";
         \\import {{ events }} from "yuke:internal/kernel";
         \\globalThis.ended = 0;
-        \\events.on("jobs.changed", (job) => {{ if (job.state !== "running") ended++; }});
+        \\events.on("job.changed", (job) => {{ if (job.state !== "running") ended++; }});
         \\start("seq 1 21; exit 2", "{s}", {{ workspaceRoot: "/tmp" }});
         \\start("true", "{s}", {{ workspaceRoot: "/tmp" }});
         \\start("sleep 30", "{s}", {{ workspaceRoot: "/tmp" }}).then((job) => stop(job.id));
@@ -299,7 +299,7 @@ test "a removed session stops its running jobs" {
         \\import {{ start }} from "yuke:internal/jobs";
         \\import {{ events }} from "yuke:internal/kernel";
         \\globalThis.state = "";
-        \\events.on("jobs.changed", (job) => {{ state = job.state; }});
+        \\events.on("job.changed", (job) => {{ state = job.state; }});
         \\start("sleep 30", "{s}", {{ workspaceRoot: "/tmp" }});
         \\start("sleep 30", "{s}", {{ workspaceRoot: "/tmp" }});
     , .{ id, "01010101010101010101010101010101" }, 0);

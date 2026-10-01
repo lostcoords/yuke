@@ -962,7 +962,7 @@ import Job = $native_jobs.Job;
 export function stop(id: number): Promise<Job | null>;
 /** Wait until the job ends, and answer the final job. A job that is not running answers at once, and an unknown id answers null. */
 export function wait(id: number): Promise<Job | null>;
-/** The background jobs of the exec tool. A plugin lists, reads, stops, and waits for them. Each start and end emits `jobs.changed`. */
+/** The background jobs of the exec tool. A plugin lists, reads, stops, and waits for them. Each start, stop request, and end emits `job.changed` with the job. */
 export const jobs: {
     list: typeof native.list;
     get: typeof native.get;
@@ -3012,7 +3012,7 @@ export interface EventsBase extends EngineFacts {
   "notice"(ev: Extract<EngineEvent, { type: "index" }>): void;
   "auth.login_finished"(ev: Extract<EngineEvent, { type: "index" }>): void;
   "engine.activity.changed"(): void;
-  "jobs.changed"(job: Job): void;
+  "job.changed"(job: Job): void;
   "interaction.changed"(): void;
   /** A true answer holds the quit. */
   "quit.request"(): boolean | null | undefined;

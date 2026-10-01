@@ -1,4 +1,4 @@
-// Background jobs over the native table: every start and end emits `jobs.changed` with a fresh copy of the job.
+// Background jobs over the native table: every start, stop request, and end emits `job.changed` with a fresh copy of the job.
 
 import * as native from "yuke:internal/native/jobs";
 import { events } from "yuke:internal/kernel";
@@ -10,8 +10,8 @@ export const { list, get, read } = native;
 /** @param {string} command @param {string} sessionId @param {{ workspaceRoot?: string }} [options] @returns {Promise<Job>} */
 export async function start(command, sessionId, options = {}) {
   const { job, ended } = await native.start(command, sessionId, options);
-  events.emit("jobs.changed", job);
-  ended.then((done) => events.emit("jobs.changed", done));
+  events.emit("job.changed", job);
+  ended.then((done) => events.emit("job.changed", done));
   return job;
 }
 
@@ -19,7 +19,7 @@ export async function start(command, sessionId, options = {}) {
 export async function stop(id) {
   const before = native.get(id);
   const job = native.stop(id);
-  if (job?.stop_requested && !before?.stop_requested) events.emit("jobs.changed", job);
+  if (job?.stop_requested && !before?.stop_requested) events.emit("job.changed", job);
   return job;
 }
 
@@ -28,7 +28,7 @@ export function wait(id) {
   const job = native.get(id);
   if (job === null || job.state !== "running") return Promise.resolve(job);
   return new Promise((resolve) => {
-    const off = events.on("jobs.changed", (/** @type {Job} */ changed) => {
+    const off = events.on("job.changed", (/** @type {Job} */ changed) => {
       if (changed.id !== id || changed.state === "running") return;
       off();
       resolve(native.get(id));
@@ -60,5 +60,5 @@ export function endLabel(job) {
 }
 
 // Only the exec tool starts a job.
-/** The background jobs of the exec tool. A plugin lists, reads, stops, and waits for them. Each start and end emits `jobs.changed`. */
+/** The background jobs of the exec tool. A plugin lists, reads, stops, and waits for them. Each start, stop request, and end emits `job.changed` with the job. */
 export const jobs = { list, get, stop, wait, read };

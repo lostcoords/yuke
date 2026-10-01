@@ -62,7 +62,7 @@ export interface Events extends EngineFacts {
   "notice"(ev: Extract<EngineEvent, { type: "index" }>): void;
   "auth.login_finished"(ev: Extract<EngineEvent, { type: "index" }>): void;
   "engine.activity.changed"(): void;
-  "jobs.changed"(job: Job): void;
+  "job.changed"(job: Job): void;
   "interaction.changed"(): void;
   /** A true answer holds the quit. */
   "quit.request"(): boolean | null | undefined;

@@ -134,7 +134,7 @@ export function openOutput(ctx, job) {
     border: "rounded", width: (max) => Math.round(max * 0.9), height: (max) => Math.round(max * 0.8), content: view,
   });
   // The end of a job needs one last read, because its tick stops with the run.
-  const off = ctx.on("jobs.changed", (/** @type {Job} */ changed) => {
+  const off = ctx.on("job.changed", (/** @type {Job} */ changed) => {
     if (changed.id !== job.id) return;
     view.job = changed;
     view.read().catch(failed);
@@ -163,7 +163,7 @@ export function openJobs(ctx) {
       },
     },
   });
-  const offChanged = ctx.on("jobs.changed", () => {
+  const offChanged = ctx.on("job.changed", () => {
     items = list();
     picker.win.opts.title = summary(items);
     picker.content.setSource(items);
@@ -189,7 +189,7 @@ export const jobsUiPlugin = {
     ctx.inject(["tui"], (ctx) => {
       // The event carries the job, so the count follows it and a paint copies no table.
       const running = new Set(list().filter((j) => j.state === "running").map((j) => j.id));
-      ctx.on("jobs.changed", (/** @type {Job} */ job) => {
+      ctx.on("job.changed", (/** @type {Job} */ job) => {
         if (job.state === "running") running.add(job.id);
         else running.delete(job.id);
         root.invalidate();

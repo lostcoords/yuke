@@ -844,7 +844,7 @@ test "background jobs start, and stop answers the end of a running or an ended j
         \\globalThis.quickEnded = false;
         \\globalThis.longEnded = false;
         \\import { events } from "yuke:internal/kernel";
-        \\events.on("jobs.changed", job => { if (job.state === "running") return; if (job.command === "sleep 30") longEnded = true; else quickEnded = true; });
+        \\events.on("job.changed", job => { if (job.state === "running") return; if (job.command === "sleep 30") longEnded = true; else quickEnded = true; });
     , "job-messages.js");
 
     const a = std.testing.allocator;

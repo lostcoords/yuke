@@ -143,7 +143,7 @@ pub fn wire(job: *const Job) proto.job.Job {
     };
 }
 
-/// Tell every frontend that a job started or ended. The RPC sink copies the payload, and the digest ignores it.
+/// Tell every frontend that a job started, got a stop request, or ended. The RPC sink copies the payload, and the digest ignores it.
 fn emitChanged(host: *Host, job: *const Job) void {
     const runtime = host.engine.runtime orelse return;
     runtime.engine.sinks.emit(.{ .method = .@"job.changed", .params = .{ .job_changed_data = .{ .job = wire(job) } } });
