@@ -64,7 +64,7 @@ WITH RECURSIVE tree(id) AS (
 SELECT
     (SELECT count(*) FROM pending_inputs p JOIN tree t ON t.id = p.session_id) +
     (SELECT count(*) FROM sessions s JOIN tree t ON t.id = s.id WHERE s.open_run_kind = 'turn') +
-    (SELECT count(*) FROM pending_inputs WHERE session_id = :parent_id AND source IN ('child_report', 'child_input_canceled')) AS used;
+    (SELECT count(*) FROM pending_inputs WHERE session_id = :parent_id AND source = 'child_report') AS used;
 
 -- name: ProtectedInputCount :one
 -- A protected entry is an engine report or notice, never a work request.

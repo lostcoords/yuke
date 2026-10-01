@@ -247,13 +247,13 @@ export interface ToolSite {
   readonly part_id: PartId;
 }
 
+/** The end of one child run, or of queued child input that a stop dropped before any run took it. */
 export interface ChildReport {
   readonly session_id: SessionId;
-  readonly run_id: RunId;
+  /** Null when a stop dropped the queued input and no run was active. */
+  readonly run_id?: RunId;
   readonly name: string;
   readonly outcome: RunOutcome;
-  readonly partial: boolean;
-  readonly truncated: boolean;
   readonly usage: ChildReportUsage;
 }
 
@@ -265,10 +265,12 @@ export interface ChildReportUsage {
   readonly duration_ms: number;
 }
 
-export interface ChildInputCanceled {
-  readonly session_id: SessionId;
-  readonly name: string;
-  readonly input_ids: ReadonlyArray<InputId>;
+/** The end of one background job. `exit_code` and `signal` stay null when the process wait failed. */
+export interface JobEnded {
+  readonly job_id: JobId;
+  readonly command: string;
+  readonly exit_code?: number;
+  readonly signal?: number;
 }
 
 export interface EngineInterruption {
@@ -1388,7 +1390,7 @@ export type Input =
 export type InputSource =
   | { readonly type: "parent_instruction" } & ToolSite
   | { readonly type: "child_report" } & ChildReport
-  | { readonly type: "child_input_canceled" } & ChildInputCanceled
+  | { readonly type: "job_ended" } & JobEnded
   | { readonly type: "engine_interruption" } & EngineInterruption
 ;
 

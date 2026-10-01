@@ -231,6 +231,54 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
     try testing.expect(std.mem.indexOf(u8, f.out.written(), "\"state\":\"exited\",\"stop_requested\":true,\"signal\":15,") != null);
 }
 
+test "a job that ends by itself tells its session once as a protected input, and a stopped job tells nothing" {
+    var f: TestFixture = undefined;
+    try f.init();
+    defer f.deinit();
+    const host = f.fixture.extensions.host;
+    rpc.serve(testing.allocator, &f.stream,
+        \\{"id":"c","method":"session.create","params":{"workspace_path":"/tmp/yuke-rpc-job-end","model":"test/model"}}
+    );
+    const Created = struct { result: struct { session: struct { id: []const u8 } } };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const created = try std.json.parseFromSliceLeaky(Created, a, f.out.written(), .{ .ignore_unknown_fields = true });
+    const id = created.result.session.id;
+    const source = try std.fmt.allocPrintSentinel(a,
+        \\import {{ start, stop }} from "yuke:internal/jobs";
+        \\import {{ events }} from "yuke:internal/kernel";
+        \\globalThis.ended = 0;
+        \\events.on("jobs.changed", (job) => {{ if (job.state !== "running") ended++; }});
+        \\start("seq 1 21; exit 2", "{s}", {{ workspaceRoot: "/tmp" }});
+        \\start("true", "{s}", {{ workspaceRoot: "/tmp" }});
+        \\start("sleep 30", "{s}", {{ workspaceRoot: "/tmp" }}).then((job) => stop(job.id));
+    , .{ id, id, id }, 0);
+    try host.evalModule(source, "rpc-job-end.js");
+    try support.pumpUntilTrue(host, "globalThis.ended === 3");
+    var raw: [16]u8 = undefined;
+    _ = try std.fmt.hexToBytes(&raw, id);
+    // The end wakes its session, so a run takes each end from the queue into the transcript.
+    const deadline = std.Io.Clock.Timestamp.fromNow(f.fixture.reactor.io(), .{ .raw = .fromSeconds(5), .clock = .awake });
+    while ((try database.input.list(&f.fixture.app.db, a, raw)).len != 0) {
+        if (deadline.durationFromNow(f.fixture.reactor.io()).raw.nanoseconds <= 0) return error.JobEndNotTaken;
+        try f.fixture.reactor.io().sleep(.fromMilliseconds(10), .awake);
+    }
+    var ends: [2]?[]const proto.content.ContentPart = .{ null, null };
+    var count: usize = 0;
+    for ((try database.message.historyPage(&f.fixture.app.db, a, raw, 0, 20)).messages) |message| if (message == .user) if (message.user.source) |s| if (s == .job_ended) {
+        count += 1;
+        ends[if (std.mem.eql(u8, s.job_ended.command, "true")) 1 else 0] = message.user.content;
+    };
+    try testing.expectEqual(@as(usize, 2), count);
+    const seq = ends[0].?;
+    try testing.expect(std.mem.startsWith(u8, seq[0].text.text, "[job-") and std.mem.endsWith(u8, seq[0].text.text, " exited 2. This message is not from the user.]\n"));
+    // The body holds the log path and the last 20 lines.
+    try testing.expect(std.mem.startsWith(u8, seq[1].text.text, "Log: /") and std.mem.endsWith(u8, seq[1].text.text, "\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21"));
+    try testing.expect(std.mem.indexOf(u8, seq[1].text.text, "\n1\n") == null);
+    try testing.expect(std.mem.endsWith(u8, ends[1].?[1].text.text, "\n[no output]"));
+}
+
 test "a removed session stops its running jobs" {
     var f: TestFixture = undefined;
     try f.init();

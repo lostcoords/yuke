@@ -141,8 +141,8 @@ const treeLook = {
     const all = texts.map((p) => p.text).join("");
     if (m.type === "compaction") return { rows: wrapRows(all, width, "TxThought", GUTTER).map((r, i) => ({ ...r, stop: i === 0 })), source: all };
     if (m.skill_name || (m.source && m.source.type !== "parent_instruction")) {
-      // A child report opens with the preamble of the model, and the rows show only its body.
-      const text = m.source?.type === "child_report" && texts.length >= 2 ? /** @type {{ text: string }} */ (texts[texts.length - 1]).text : all;
+      // An engine end message starts with a header. The rows show only its body.
+      const text = (m.source?.type === "child_report" || m.source?.type === "job_ended") && texts.length >= 2 ? /** @type {{ text: string }} */ (texts[texts.length - 1]).text : all;
       const body = wrapRows(text, width, "TxToolOutput", GUTTER, env.expanded ? Infinity : REPORT_LINES + 1);
       const shown = env.expanded ? body : body.slice(0, m.skill_name ? 0 : REPORT_LINES);
       /** @type {Row[]} */

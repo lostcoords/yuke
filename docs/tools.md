@@ -47,6 +47,10 @@ Throw an `Error` when the call fails. The model reads its `message` and nothing 
 - `toolCtx.workspaceRoot` is the session root.
 - `toolCtx.sessionId`, `toolCtx.messageId`, and `toolCtx.partId` name the transcript part that holds the call.
 
+## Background jobs
+
+`exec` with `background: true` starts a job and returns at once. When the job ends by itself, its session gets one message: `[job-k3x9 exited 1. This message is not from the user.]`, then the log path and the last 20 lines. No hook rewrites it. A queue clear does not drop it. A requested stop sends no message.
+
 ## Cancellation
 
 The host aborts `signal` when the call stops. Pass `signal` to `fetch` and `exec`. `spawn` takes no signal, so kill its child when the signal aborts.

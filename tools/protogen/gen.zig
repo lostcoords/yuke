@@ -37,7 +37,7 @@ const field_aliases = std.StaticStringMap([]const u8).initComptime(.{
     .{ "pending_compaction", "RunId" },
     .{ "parent_id", "SessionId" },
     .{ "hash", "BlobHash" },
-    .{ "input_ids", "InputId" },
+    .{ "job_id", "JobId" },
     .{ "first_kept_id", "MessageId" },
     .{ "tool.output_delta", "ToolOutputDeltaData" },
     .{ "tool_output_delta_data", "ToolOutputDeltaData" },

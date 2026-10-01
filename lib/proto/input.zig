@@ -24,7 +24,7 @@ pub const Input = union(enum) {
 pub const InputSource = union(enum) {
     parent_instruction: ToolSite,
     child_report: ChildReport,
-    child_input_canceled: ChildInputCanceled,
+    job_ended: JobEnded,
     engine_interruption: EngineInterruption,
 
     pub fn protected(self: @This()) bool {
@@ -43,13 +43,13 @@ pub const ToolSite = struct {
     part_id: ids.PartId,
 };
 
+/// The end of one child run, or of queued child input that a stop dropped before any run took it.
 pub const ChildReport = struct {
     session_id: ids.SessionId,
-    run_id: ids.RunId,
+    /// Null when a stop dropped the queued input and no run was active.
+    run_id: ?ids.RunId = null,
     name: []const u8,
     outcome: run.RunOutcome,
-    partial: bool,
-    truncated: bool,
     usage: ChildReportUsage,
 };
 
@@ -61,10 +61,12 @@ pub const ChildReportUsage = struct {
     duration_ms: u64,
 };
 
-pub const ChildInputCanceled = struct {
-    session_id: ids.SessionId,
-    name: []const u8,
-    input_ids: []const ids.InputId,
+/// The end of one background job. `exit_code` and `signal` stay null when the process wait failed.
+pub const JobEnded = struct {
+    job_id: ids.JobId,
+    command: []const u8,
+    exit_code: ?u8 = null,
+    signal: ?u8 = null,
 };
 
 pub const EngineInterruption = struct {
@@ -118,15 +120,15 @@ test "a skill input needs a name and keeps its arguments optional" {
 test "input sources form a closed union outside public input" {
     const values = [_][]const u8{
         "{\"type\":\"parent_instruction\",\"session_id\":\"01010101010101010101010101010101\",\"message_id\":1,\"part_id\":0}",
-        "{\"type\":\"child_report\",\"session_id\":\"01010101010101010101010101010101\",\"run_id\":2,\"name\":\"research\",\"outcome\":{\"type\":\"canceled\"},\"partial\":true,\"truncated\":false,\"usage\":{\"rounds\":2,\"tool_calls\":1,\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":0,\"cache_read\":0,\"cache_write\":0},\"duration_ms\":1500}}",
-        "{\"type\":\"child_input_canceled\",\"session_id\":\"01010101010101010101010101010101\",\"name\":\"research\",\"input_ids\":[3,4]}",
+        "{\"type\":\"child_report\",\"session_id\":\"01010101010101010101010101010101\",\"run_id\":2,\"name\":\"research\",\"outcome\":{\"type\":\"canceled\"},\"usage\":{\"rounds\":2,\"tool_calls\":1,\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":0,\"cache_read\":0,\"cache_write\":0},\"duration_ms\":1500}}",
+        "{\"type\":\"job_ended\",\"job_id\":50000,\"command\":\"npm run dev\",\"exit_code\":1}",
         "{\"type\":\"engine_interruption\",\"run_id\":5,\"kind\":\"turn\"}",
     };
     for (values, 0..) |text, i| {
         const parsed = try std.json.parseFromSlice(InputSource, testing.allocator, text, .{});
         defer parsed.deinit();
         try testing.expectEqual(i != 0, parsed.value.protected());
-        const encoded = try std.json.Stringify.valueAlloc(testing.allocator, parsed.value, .{});
+        const encoded = try std.json.Stringify.valueAlloc(testing.allocator, parsed.value, .{ .emit_null_optional_fields = false });
         defer testing.allocator.free(encoded);
         try testing.expectEqualStrings(text, encoded);
     }

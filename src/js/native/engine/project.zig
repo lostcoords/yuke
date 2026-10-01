@@ -642,8 +642,6 @@ test "the outline carries report and skill identity without their bodies" {
                 .run_id = 7,
                 .name = "research",
                 .outcome = .{ .turn = .{ .finish = .stop, .rounds = 1 } },
-                .partial = false,
-                .truncated = false,
                 .usage = .{ .rounds = 1, .tool_calls = 0, .tokens = .zero, .duration_ms = 0 },
             } },
         } },

@@ -182,6 +182,10 @@ export const jobsUiPlugin = {
   name: "jobs-ui",
   /** @param {PluginContext} ctx */
   apply(ctx) {
+    // A job end reads as one labeled row in any transcript look.
+    ctx.inject(["chat"], (ctx) => {
+      ctx.chat.render({ sources: { job_ended: (source) => "job-" + source.job_id.toString(36) + " · " + (source.exit_code !== undefined ? "exit code " + source.exit_code : source.signal !== undefined ? "signal " + source.signal : "failed") + " · " + shortCommand(source.command) } });
+    });
     ctx.inject(["tui"], (ctx) => {
       // The event carries the job, so the count follows it and a paint copies no table.
       const running = new Set(list().filter((j) => j.state === "running").map((j) => j.id));

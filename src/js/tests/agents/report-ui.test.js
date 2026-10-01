@@ -5,14 +5,19 @@ import { clearWorkQueue, queuedText } from "yuke:internal/queue";
 
 registerRender(defaultRender);
 (async () => {
-  const source = { type: "child_report", name: "one", outcome: { type: "turn" }, partial: false, truncated: false, usage: { rounds: 1, tool_calls: 0, tokens: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, duration_ms: 1500 } };
+  const source = { type: "child_report", name: "one", outcome: { type: "turn" }, usage: { rounds: 1, tool_calls: 0, tokens: { input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 }, duration_ms: 1500 } };
   const full = Array.from({ length: 200 }, (_, i) => "line " + i).join("\n");
-  const preamble = "Report from one, run 1. Outcome: turn\nThis child report is not user input.\n\n";
+  const preamble = "[one-a91c07d2 completed. This message is not from the user.]\n";
   const t = new Transcript({ partsOf: () => [{ type: "text", id: 0, text: preamble }, { type: "text", id: 1, text: full }] });
   t.setOutline([{ id: 1, type: "user", source }], null);
   const rowText = (row) => row.text || (row.segments || []).map((segment) => segment.text).join("");
   const drawn = () => t.rows(80, 0, t.rowCount(80)).map(rowText).join("\n");
-  if (drawn().includes("not user input") || !drawn().includes("line 0")) throw new Error("preamble drawn or body missing");
+  if (drawn().includes("not from the user") || !drawn().includes("line 0")) throw new Error("header drawn or body missing");
+  // A job end draws its body alone too.
+  const job = new Transcript({ partsOf: () => [{ type: "text", id: 0, text: "[job-k3x9 exited 1. This message is not from the user.]\n" }, { type: "text", id: 1, text: "Log: /tmp/l\nboom" }] });
+  job.setOutline([{ id: 1, type: "user", source: { type: "job_ended", job_id: 50000, command: "make", exit_code: 1 } }], null);
+  const jobText = job.rows(80, 0, job.rowCount(80)).map(rowText).join("\n");
+  if (jobText.includes("not from the user") || !jobText.includes("boom")) throw new Error("job end header drawn or body missing: " + jobText);
   if (!inputSourceLabel(source).includes("1 round · 0 tools · 0/0 tokens · 1.5s")) throw new Error("usage missing from the header");
   if (t.rowCount(80) > 15 || !inputSourceLabel(source).includes("one")) throw new Error("unfolded report");
   const failed = { ...source, outcome: { type: "failed", code: "provider", message: "the provider returned an unexpected status", detail: "invalid_request_error: too long" } };

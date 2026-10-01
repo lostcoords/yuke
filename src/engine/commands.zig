@@ -429,7 +429,7 @@ pub fn sessionCancelInput(engine: *Engine, arena: std.mem.Allocator, params: pro
         error.NoRow => return error.UnknownInput,
         else => return err,
     };
-    const report = try reports.canceledInputs(engine, arena, params.session_id, &.{params.input_id});
+    const report = try reports.droppedInputs(engine, arena, params.session_id, 1);
     try tx.commit();
     session_events.emitDurable(engine, rt, .{ .method = .@"input.canceled", .params = .{
         .input_canceled_data = .{ .session_id = params.session_id, .seq = canceled, .input_id = params.input_id },
@@ -470,7 +470,7 @@ pub fn sessionCancelRun(engine: *Engine, arena: std.mem.Allocator, params: proto
             cleared_seqs[i] = canceled;
         }
         cleared_inputs = cleared_inputs[0..count];
-        const report = try reports.canceledInputs(engine, arena, params.session_id, cleared_inputs);
+        const report = try reports.droppedInputs(engine, arena, params.session_id, cleared_inputs.len);
         try tx.commit();
         for (cleared_inputs, cleared_seqs[0..count]) |input_id, seq| {
             session_events.emitDurable(engine, rt, .{ .method = .@"input.canceled", .params = .{

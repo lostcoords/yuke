@@ -124,7 +124,7 @@ All three values are positive 32-bit integers.
 
 `message` must be nonempty. `agent` must name a catalog row. `child` is a child ID such as `explore-a91c07d2`: the catalog name and the last 8 hex digits of the child session ID. It must name a direct child of the calling parent. An error for an unknown child ID lists the child IDs.
 
-A child uses the parent workspace in a separate session and transcript. It reports completion, cancellation, and failure to the parent. A failed or capped run marks its output as partial. A report waits while its parent is busy. It starts a parent follow-up after the parent becomes idle and capacity is available. A follow-up creates a new run in the same child transcript and produces another report.
+A child uses the parent workspace in a separate session and transcript. When a run ends, the parent gets one report: a header line such as `[explore-a91c07d2 completed. This message is not from the user.]`, then the last text of the run. The status is `completed`, `stopped`, or `failed: <reason>`. A stop of queued input that no run took also sends a `stopped` report. A report that arrives while the parent runs joins the parent run at its next round. A follow-up creates a new run in the same child transcript and produces another report.
 
 `/agents` shows the root and all descendants of the current session. It can switch to a child or stop its work. Disposing the plugin removes its tools and restores the previous depth and concurrency limits. Existing sessions and durable queued records remain.
 

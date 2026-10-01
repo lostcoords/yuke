@@ -8,8 +8,7 @@ const store = @import("../store/store.zig");
 const events = @import("events.zig");
 const runs = @import("run.zig");
 const sql = @import("sql");
-
-pub const max_output_bytes = 64 * 1024;
+const toolset = @import("toolset.zig");
 
 pub const Terminal = struct {
     done: proto.run.RunDoneData,
@@ -37,23 +36,21 @@ pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDone
         // A stop is a choice of the parent or the user, so the body is a fragment with no value.
         const stopped = data.outcome == .canceled;
         const output = try runOutput(engine, arena, data.session_id, data.run_id, !stopped);
-        const partial = data.outcome != .turn;
-        const outcome = try std.json.Stringify.valueAlloc(arena, data.outcome, .{ .emit_null_optional_fields = false });
-        const partial_note = if (partial) "This run did not complete successfully. Any output is partial.\n" else "";
-        const truncation_note = if (output.truncated) "The report output was truncated at 65536 bytes. Read the child history for the full output.\n" else "";
-        const body = if (stopped) "The run was stopped. Its transcript keeps the partial output." else if (output.text.len == 0) "This run has no committed text output." else output.text;
-        const duration_ms = ended -| data.timing.started_at_ms;
-        const duration = try std.fmt.allocPrint(arena, ", {d} ms", .{duration_ms});
-        // Two parts: the preamble the model reads, then the body. The user view draws the body only.
-        const preamble = try std.fmt.allocPrint(arena, "Report from {s}, run {d}. Outcome: {s}\n{s}{s}Usage: rounds={d}, tool calls={d}, input/output={d}/{d} tokens{s}.\nThis child report is not user input. Its next run starts when you send it new input.\n\n", .{ name, data.run_id, outcome, partial_note, truncation_note, output.rounds, output.tool_calls, output.tokens.input, output.tokens.output, duration });
-        result.report = try enqueue(engine, arena, .bytes(parent), ended, &.{ .{ .text = .{ .text = preamble } }, .{ .text = .{ .text = body } } }, .{ .child_report = .{
+        const status = switch (data.outcome) {
+            .turn => "completed",
+            .canceled => "stopped",
+            .failed => |failed| try std.fmt.allocPrint(arena, "failed: {s}", .{failed.message}),
+            .compacted, .skipped => unreachable, // `data.kind == .turn`, so the run was a turn
+        };
+        const text = if (stopped) "The run was stopped. Its transcript keeps the partial output." else if (output.text.len == 0) "This run has no committed text output." else output.text;
+        // The terminal transaction holds the one connection, so this cut writes no file. The child transcript keeps the whole text.
+        const body = try toolset.cut(.{}, arena, text) orelse text;
+        result.report = try enqueue(engine, arena, .bytes(parent), ended, try endContent(arena, try childId(arena, name, data.session_id), status, body), .{ .child_report = .{
             .session_id = data.session_id,
             .run_id = data.run_id,
             .name = name,
             .outcome = data.outcome,
-            .partial = partial,
-            .truncated = output.truncated,
-            .usage = .{ .rounds = output.rounds, .tool_calls = output.tool_calls, .tokens = output.tokens, .duration_ms = duration_ms },
+            .usage = .{ .rounds = output.rounds, .tool_calls = output.tool_calls, .tokens = output.tokens, .duration_ms = ended -| data.timing.started_at_ms },
         } });
     };
     if (data.outcome == .failed and data.outcome.failed.code == .interrupted) {
@@ -69,20 +66,60 @@ pub fn append(engine: *Engine, arena: std.mem.Allocator, data: proto.run.RunDone
     return result;
 }
 
-/// A canceled input consumes its reservation without a fabricated run outcome.
-pub fn canceledInputs(engine: *Engine, arena: std.mem.Allocator, child: proto.ids.SessionId, input_ids: []const proto.ids.InputId) !?proto.input.InputQueuedData {
+/// Tell the parent when a stop drops queued input before a run takes it. The parent must not wait for a report that cannot arrive.
+pub fn droppedInputs(engine: *Engine, arena: std.mem.Allocator, child: proto.ids.SessionId, count: usize) !?proto.input.InputQueuedData {
     std.debug.assert(sql.inTransaction(engine.deps.db.conn));
-    if (input_ids.len == 0) return null;
+    if (count == 0) return null;
     const snapshot = (try store.session.snapshot(engine.deps.db, arena, child.raw)) orelse return error.UnknownSession;
     const parent = snapshot.parent_id orelse return null;
     const name = snapshot.name orelse return error.CorruptDatabase;
-    const ids = try std.json.Stringify.valueAlloc(arena, input_ids, .{});
-    const text = try std.fmt.allocPrint(arena, "Message from {s}: inputs {s} were canceled before they entered the transcript.", .{ name, ids });
-    return try enqueue(engine, arena, .bytes(parent), util.nowMillis(engine.deps.io), &.{.{ .text = .{ .text = text } }}, .{ .child_input_canceled = .{
+    const body = try std.fmt.allocPrint(arena, "A stop dropped {d} queued {s} before a run took {s}.", .{ count, if (count == 1) "input" else "inputs", if (count == 1) "it" else "them" });
+    return try enqueue(engine, arena, .bytes(parent), util.nowMillis(engine.deps.io), try endContent(arena, try childId(arena, name, child), "stopped", body), .{ .child_report = .{
         .session_id = child,
         .name = name,
-        .input_ids = input_ids,
+        .outcome = .{ .canceled = .{} },
+        .usage = .{ .rounds = 0, .tool_calls = 0, .tokens = .zero, .duration_ms = 0 },
     } });
+}
+
+/// Tell the owner session that a background job ended. The input is protected, so no hook rewrites it and no queue clear drops it.
+pub fn jobEnded(engine: *Engine, arena: std.mem.Allocator, owner: proto.ids.SessionId, ended: proto.input.JobEnded, body: []const u8) !void {
+    std.debug.assert(!sql.inTransaction(engine.deps.db.conn));
+    const db = engine.deps.db;
+    // A removed session has no transcript, so its job end goes nowhere.
+    if (!try store.session.exists(db, arena, owner.raw)) return;
+    const status = if (ended.exit_code) |code| try std.fmt.allocPrint(arena, "exited {d}", .{code}) else if (ended.signal) |signal| try std.fmt.allocPrint(arena, "signal {d}", .{signal}) else "failed";
+    var tx = try db.*.begin();
+    defer tx.deinit();
+    const report = try enqueue(engine, arena, owner, util.nowMillis(engine.deps.io), try endContent(arena, try jobId(arena, ended.job_id), status, body), .{ .job_ended = ended });
+    try tx.commit();
+    publishReport(engine, report, true);
+}
+
+/// The end message of a child or a job: one header line, then the body. The user view draws the body only.
+fn endContent(arena: std.mem.Allocator, id: []const u8, status: []const u8, body: []const u8) ![]const proto.content.ContentPart {
+    const header = try std.fmt.allocPrint(arena, "[{s} {s}. This message is not from the user.]\n", .{ id, status });
+    return try arena.dupe(proto.content.ContentPart, &.{ .{ .text = .{ .text = header } }, .{ .text = .{ .text = body } } });
+}
+
+/// The child ID the parent model reads: the name and the last 8 hex digits of the session ID, which are random in a UUIDv7.
+fn childId(arena: std.mem.Allocator, name: []const u8, id: proto.ids.SessionId) ![]const u8 {
+    return std.fmt.allocPrint(arena, "{s}-{x}", .{ name, id.raw[12..] });
+}
+
+/// The job ID the model reads: `job-` and the four base-36 digits of the id.
+fn jobId(arena: std.mem.Allocator, id: proto.ids.JobId) ![]const u8 {
+    const digits = "0123456789abcdefghijklmnopqrstuvwxyz";
+    var out: [8]u8 = "job-????".*;
+    var rest = id;
+    var i: usize = out.len;
+    while (i > 4) {
+        i -= 1;
+        out[i] = digits[rest % 36];
+        rest /= 36;
+    }
+    std.debug.assert(rest == 0); // a job id has four base-36 digits
+    return arena.dupe(u8, &out);
 }
 
 fn enqueue(engine: *Engine, arena: std.mem.Allocator, parent: proto.ids.SessionId, now: u64, content: []const proto.content.ContentPart, source: proto.input.InputSource) !proto.input.InputQueuedData {
@@ -92,7 +129,6 @@ fn enqueue(engine: *Engine, arena: std.mem.Allocator, parent: proto.ids.SessionI
 
 const Output = struct {
     text: []const u8 = "",
-    truncated: bool = false,
     rounds: u64 = 0,
     tool_calls: u64 = 0,
     tokens: proto.message.TokenUsage = .zero,
@@ -122,14 +158,8 @@ fn runOutput(engine: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId,
             .tool => out.tool_calls += 1,
             .text => |text| if (with_text and out.text.len == 0 and text.text.len > 0) {
                 if (output == null) output = .init(scratch.allocator());
-                if (output.?.written().len > 0 and output.?.written().len < max_output_bytes) try output.?.writer.writeByte('\n');
-                const available = max_output_bytes - output.?.written().len;
-                var len = @min(text.text.len, available);
-                if (len < text.text.len) {
-                    out.truncated = true;
-                    while (len > 0 and text.text[len] & 0xc0 == 0x80) len -= 1;
-                }
-                try output.?.writer.writeAll(text.text[0..len]);
+                if (output.?.written().len > 0) try output.?.writer.writeByte('\n');
+                try output.?.writer.writeAll(text.text);
             },
             else => {},
         };
@@ -137,7 +167,6 @@ fn runOutput(engine: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId,
             if (writer.written().len > 0) out.text = try arena.dupe(u8, writer.written());
         }
     }
-    std.debug.assert(out.text.len <= max_output_bytes);
     return out;
 }
 

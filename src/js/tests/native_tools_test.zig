@@ -835,18 +835,16 @@ fn processExists(pid: std.posix.pid_t) bool {
     return true;
 }
 
-test "background jobs start, list, stop, and report a natural exit once to their session" {
+test "background jobs start, list, and stop" {
     var fixture = try ReactorHost.init("/tmp");
     defer fixture.deinit();
     const host = fixture.host;
     try support.eval(host, "native_tools/builtins.test.js");
     try host.evalModule(
-        \\import { client } from "yuke:internal/client";
-        \\globalThis.sent = [];
         \\globalThis.j1Ended = false;
+        \\globalThis.j2Ended = false;
         \\import { events } from "yuke:internal/kernel";
-        \\events.on("jobs.changed", job => { if (job.command === "sleep 30" && job.state !== "running") j1Ended = true; });
-        \\client.sessionSendInput = async (id, content) => { sent.push(content[0].text); return {}; };
+        \\events.on("jobs.changed", job => { if (job.state === "running") return; if (job.command === "sleep 30") j1Ended = true; else j2Ended = true; });
     , "job-messages.js");
 
     const a = std.testing.allocator;
@@ -881,11 +879,7 @@ test "background jobs start, list, stop, and report a natural exit once to their
     const stopped = try std.fmt.allocPrint(a, "[{s} stopped: sleep 30]", .{j1});
     defer a.free(stopped);
     try support.expectTool(host, "jobs", stop1, .{ .text = .{ .contains = stopped } });
-    try support.pumpUntilTrue(host, "sent.length === 1");
-    try support.pumpUntilIdle(host);
-    const check = try std.fmt.allocPrintSentinel(a, "sent.length === 1 && sent[0].startsWith(\"[job {s} exited (exit code 2): echo done; exit 2. Log: \") && sent[0].endsWith(\"]\\ndone\") ? 1 : 0", .{j2}, 0);
-    defer a.free(check);
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt(check));
+    try support.pumpUntilTrue(host, "globalThis.j2Ended");
     const stop2 = try std.fmt.allocPrint(a, "{{\"id\":\"{s}\",\"stop\":true}}", .{j2});
     defer a.free(stop2);
     const exited = try std.fmt.allocPrint(a, "[{s} exited (exit code 2): echo done; exit 2]", .{j2});

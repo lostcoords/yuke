@@ -10,6 +10,7 @@ const process = @import("process.zig");
 const runner = @import("../host/process.zig");
 const LocalHost = @import("../host/local.zig").LocalHost;
 const util = @import("../../util.zig");
+const reports = @import("../../engine/reports.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
@@ -77,9 +78,24 @@ pub const Jobs = struct {
         self.last_end += 1;
         job.end_seq = self.last_end;
         job.proc = null;
+        // A job that ends by itself tells its session once. A requested stop sends nothing.
+        if (!job.stop_requested) tellEnd(host, job);
         self.prune(host.gpa);
         std.debug.assert(self.find(job.id) == job);
         emitChanged(host, job);
+    }
+
+    /// Post the job end to its session as a protected input. Include the log path and its last 20 lines.
+    fn tellEnd(host: *Host, job: *const Job) void {
+        const app = host.engine.runtime orelse return;
+        var arena: std.heap.ArenaAllocator = .init(host.gpa);
+        defer arena.deinit();
+        const a = arena.allocator();
+        var local: LocalHost = .{ .io = host.io, .root = job.cwd, .env = host.execution.env };
+        const tail = if (local.readFrom(a, job.log, null, 8192, true)) |read| lastLines(read.text, 20) else |_| "";
+        const body = std.fmt.allocPrint(a, "Log: {s}\n{s}", .{ job.log, if (tail.len == 0) "[no output]" else tail }) catch unreachable;
+        reports.jobEnded(&app.engine, a, job.session_id, .{ .job_id = job.id, .command = job.command, .exit_code = job.code, .signal = job.signal }, body) catch |err|
+            std.log.err("the end of job {d} did not reach its session: {t}", .{ job.id, err });
     }
 
     fn prune(self: *Jobs, gpa: std.mem.Allocator) void {
@@ -263,6 +279,20 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
     module.set(ctx, result, "job", toValue(ctx, job));
     module.set(ctx, result, "ended", ended);
     return pending.resolved(ctx, module.finish(ctx, result));
+}
+
+/// The last `count` lines of `text`. The final line break ends the last line, so it starts no empty line.
+fn lastLines(text: []const u8, count: usize) []const u8 {
+    const trimmed = if (std.mem.endsWith(u8, text, "\n")) text[0 .. text.len - 1] else text;
+    var start = trimmed.len;
+    var seen: usize = 0;
+    while (start > 0) : (start -= 1) {
+        if (trimmed[start - 1] == '\n') {
+            seen += 1;
+            if (seen == count) break;
+        }
+    }
+    return trimmed[start..];
 }
 
 /// Answer every job, newest first.

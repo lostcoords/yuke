@@ -346,8 +346,8 @@ export const defaultRender = {
     if (m.skill_name || (source && source.type !== "parent_instruction")) {
       const label = m.skill_name ? "skill · " + m.skill_name : inputSourceLabel(source);
       const texts = parts.filter((part) => part.type === "text");
-      // A child report opens with the preamble of the model, and the rows show only its body.
-      const text = source?.type === "child_report" && texts.length >= 2 ? /** @type {Extract<MessagePart, { type: "text" }>} */ (texts[texts.length - 1]).text : textOfParts(parts);
+      // An engine end message starts with a header. The rows show only its body.
+      const text = (source?.type === "child_report" || source?.type === "job_ended") && texts.length >= 2 ? /** @type {Extract<MessagePart, { type: "text" }>} */ (texts[texts.length - 1]).text : textOfParts(parts);
       /** @type {TranscriptRow[]} */
       const rows = [{ text: clip(label, width), group: "TxMeta", indent: PAD, header: true, stop: true }];
       const limit = env.expanded ? Infinity : m.skill_name ? 0 : PREVIEW_LINES;

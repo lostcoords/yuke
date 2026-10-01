@@ -2,7 +2,7 @@
 
 import { fs } from "yuke:internal/native/fs";
 import { exec as runCommand } from "yuke:internal/native/exec";
-import { start as startJob, stop as stopJob, list as listJobs, get as getJob, name as jobName, endLabel, read as readJob, shortCommand } from "yuke:internal/jobs";
+import { start as startJob, stop as stopJob, list as listJobs, get as getJob, name as jobName, endLabel, shortCommand } from "yuke:internal/jobs";
 import { diff } from "yuke:internal/native/diff";
 import { hasTool } from "yuke:internal/native/tools";
 import { client } from "yuke:internal/client";
@@ -235,22 +235,6 @@ export const builtins = {
   name: "builtins",
   /** @param {Context} ctx */
   apply(ctx) {
-    // A job that exits by itself tells its session once, in exit order, even when its log cannot be read; a stop sends nothing.
-    /** @type {Promise<unknown>} */
-    let exitMessages = Promise.resolve();
-    ctx.on("jobs.changed", (job) => {
-      const sessionId = job.session_id;
-      if (job.state === "running" || job.stop_requested || sessionId === undefined) return;
-      // The last 20 lines of the log; the read covers its last 8 KiB.
-      const tail = readJob(job.id, null, 8192)
-        .then(({ text }) => text.split("\n").filter((line, i, all) => line !== "" || i < all.length - 1).slice(-20).join("\n"))
-        .catch(() => "");
-      exitMessages = exitMessages
-        .then(() => tail)
-        .then(out => client.sessionSendInput(sessionId, client.textContent(`[job ${jobState(job)}. Log: ${job.log}]\n${out === "" ? "[no output]" : out}`)))
-        .catch(() => {});
-    });
-
     builtin(ctx, "read", {
       description: "Read a file with 1-indexed line numbers. Pass the start and end values for a line range. One read returns at most 2000 lines or 48 KiB. A capped read gives the next line. A PNG, JPEG, GIF, or WebP file returns the image.",
       parameters: { type: "object", properties: {

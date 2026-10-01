@@ -12,7 +12,9 @@ const testing = std.testing;
 const Resources = @import("test_resources.zig");
 const request_builder = @import("../provider/request_builder.zig");
 const root: proto.ids.SessionId = .bytes([_]u8{1} ** 16);
-const child: proto.ids.SessionId = .bytes([_]u8{2} ** 16);
+// Distinct last bytes, so a child ID built from the first bytes fails the tests.
+const child: proto.ids.SessionId = .bytes([_]u8{2} ** 12 ++ [_]u8{ 0xa9, 0x1c, 0x07, 0xd2 });
+const child_tail = "a91c07d2";
 
 const Fixture = struct {
     resources: Resources,
@@ -96,10 +98,8 @@ test "child reuse reports only the current run and preserves source through prom
     try testing.expectEqual(@as(u64, 1), usage.tool_calls);
     try testing.expectEqual(@as(u64, 10), usage.tokens.input);
     try testing.expectEqual(@as(usize, 2), first.report.?.input.content.len);
-    const first_text = first.report.?.input.content[0].text.text;
-    try testing.expect(std.mem.indexOf(u8, first_text, "Usage: rounds=1, tool calls=1, input/output=10/5 tokens, ") != null);
-    try testing.expect(std.mem.indexOf(u8, first_text, "not user input") != null);
-    try testing.expect(std.mem.endsWith(u8, first_text, "\n\n"));
+    // The model reads one header line with the child ID and the status. Usage stays in the source for the user view.
+    try testing.expectEqualStrings("[research-" ++ child_tail ++ " completed. This message is not from the user.]\n", first.report.?.input.content[0].text.text);
     try testing.expectEqualStrings("old answer", first.report.?.input.content[1].text.text);
     const second = try f.terminal(try f.start(), &.{}, .{ .failed = .{ .code = .provider, .message = "provider failed" } });
     const stored_child = try commands.sessionGet(&f.engine, a, .{ .session_id = child });
@@ -107,7 +107,7 @@ test "child reuse reports only the current run and preserves source through prom
     const listed = try commands.sessionList(&f.engine, a, .{ .population = .{ .children = .{ .parent_id = root } } });
     try testing.expectEqual(proto.enums.RunErrorCode.provider, listed.items[0].last_run.?.failed.code);
     try testing.expectEqualStrings("This run has no committed text output.", second.report.?.input.content[1].text.text);
-    try testing.expect(second.report.?.input.source.?.child_report.partial);
+    try testing.expectEqualStrings("[research-" ++ child_tail ++ " failed: provider failed. This message is not from the user.]\n", second.report.?.input.content[0].text.text);
     const resident = try f.engine.activate(root);
     try testing.expectEqual(@as(usize, 2), resident.queueDepth());
     try testing.expectEqual(@as(u64, 2), (try database.input.list(&f.db, a, root.raw))[1].input.source.?.child_report.run_id);
@@ -226,7 +226,7 @@ test "a report transaction failure leaves the run open for repair" {
     try testing.expectEqual(@as(usize, 1), history.messages.len);
 }
 
-test "cancel before admission reports input IDs without a run ID" {
+test "a stop of queued input reports a stopped child without a run ID" {
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
@@ -243,9 +243,12 @@ test "cancel before admission reports input IDs without a run ID" {
     try testing.expectEqual(@as(u64, 0), (try database.event.highWater(&f.db, a, child.raw)).?.run_id_high);
     const queue = try database.input.list(&f.db, a, root.raw);
     try testing.expectEqual(@as(usize, 2), queue.len);
-    for (queue, ids) |entry, id| {
-        try testing.expectEqual(id, entry.input.source.?.child_input_canceled.input_ids[0]);
+    for (queue) |entry| {
+        const source = entry.input.source.?.child_report;
+        try testing.expect(source.run_id == null and source.outcome == .canceled);
+        try testing.expectEqualStrings("[research-" ++ child_tail ++ " stopped. This message is not from the user.]\n", entry.input.content[0].text.text);
     }
+    try testing.expectEqualStrings("A stop dropped 1 queued input before a run took it.", queue[1].input.content[1].text.text);
 }
 
 test "a crash notice and parent report commit once without a child retry" {
@@ -270,18 +273,19 @@ test "a crash notice and parent report commit once without a child retry" {
     try testing.expectEqual(seq, (try database.event.highWater(&f.db, a, child.raw)).?.seq_high);
 }
 
-test "report output has a UTF-8 byte bound and a failure keeps its partial output" {
+test "a long report keeps its head and tail under the tool result cap" {
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    const text = try std.mem.concat(a, u8, &.{ "x" ** (reports.max_output_bytes - 1), "日本語" });
+    const cap = proto.meta.limits.max_tool_result_bytes;
+    const text = try std.mem.concat(a, u8, &.{ "HEAD", "x" ** cap, "日本語" });
     const result = try f.terminal(try f.start(), &.{text}, .{ .failed = .{ .code = .provider, .message = "provider failed" } });
-    const source = result.report.?.input.source.?.child_report;
-    try testing.expect(source.partial and source.truncated);
     const body = result.report.?.input.content[1].text.text;
     try testing.expect(std.unicode.utf8ValidateSlice(body));
-    try testing.expect(body.len <= reports.max_output_bytes);
+    try testing.expect(body.len < cap + 128);
+    try testing.expect(std.mem.startsWith(u8, body, "HEAD") and std.mem.endsWith(u8, body, "日本語"));
+    try testing.expect(std.mem.indexOf(u8, body, "[yuke cut ") != null);
 }
 
 test "a stopped run reports its usage and no body" {
@@ -290,7 +294,7 @@ test "a stopped run reports its usage and no body" {
     defer f.deinit();
     const result = try f.terminal(try f.start(), &.{"half an answer"}, .{ .canceled = .{} });
     const source = result.report.?.input.source.?.child_report;
-    try testing.expect(source.partial and !source.truncated);
+    try testing.expect(source.outcome == .canceled);
     try testing.expectEqual(@as(u64, 1), source.usage.rounds);
     try testing.expectEqualStrings("The run was stopped. Its transcript keeps the partial output.", result.report.?.input.content[1].text.text);
     try testing.expect(std.mem.indexOf(u8, result.report.?.input.content[0].text.text, "half an answer") == null);

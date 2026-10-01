@@ -207,7 +207,7 @@ CREATE TABLE pending_inputs (
     input_id     INTEGER NOT NULL CHECK (input_id BETWEEN 1 AND 9007199254740991),
     seq          INTEGER NOT NULL CHECK (seq BETWEEN 1 AND 9007199254740991),
     -- The source of an engine input, or null for a user input; the input.queued event holds the content.
-    source       TEXT CHECK (source IN ('parent_instruction', 'child_report', 'child_input_canceled', 'engine_interruption')),
+    source       TEXT CHECK (source IN ('parent_instruction', 'child_report', 'job_ended', 'engine_interruption')),
 
     PRIMARY KEY (session_id, input_id),
     UNIQUE (session_id, seq),

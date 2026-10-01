@@ -1064,6 +1064,7 @@
     },
     {
       "name": "ChildReport",
+      "doc": "The end of one child run, or of queued child input that a stop dropped before any run took it.",
       "fields": [
         {
           "name": "session_id",
@@ -1072,8 +1073,9 @@
         },
         {
           "name": "run_id",
+          "doc": "Null when a stop dropped the queued input and no run was active.",
           "type": "RunId",
-          "presence": "required"
+          "presence": "optional"
         },
         {
           "name": "name",
@@ -1083,16 +1085,6 @@
         {
           "name": "outcome",
           "type": "RunOutcome",
-          "presence": "required"
-        },
-        {
-          "name": "partial",
-          "type": "bool",
-          "presence": "required"
-        },
-        {
-          "name": "truncated",
-          "type": "bool",
           "presence": "required"
         },
         {
@@ -1129,22 +1121,28 @@
       ]
     },
     {
-      "name": "ChildInputCanceled",
+      "name": "JobEnded",
+      "doc": "The end of one background job. `exit_code` and `signal` stay null when the process wait failed.",
       "fields": [
         {
-          "name": "session_id",
-          "type": "SessionId",
+          "name": "job_id",
+          "type": "JobId",
           "presence": "required"
         },
         {
-          "name": "name",
+          "name": "command",
           "type": "string",
           "presence": "required"
         },
         {
-          "name": "input_ids",
-          "type": "[]InputId",
-          "presence": "required"
+          "name": "exit_code",
+          "type": "u8",
+          "presence": "optional"
+        },
+        {
+          "name": "signal",
+          "type": "u8",
+          "presence": "optional"
         }
       ]
     },
@@ -3652,8 +3650,8 @@
           "type": "ChildReport"
         },
         {
-          "tag": "child_input_canceled",
-          "type": "ChildInputCanceled"
+          "tag": "job_ended",
+          "type": "JobEnded"
         },
         {
           "tag": "engine_interruption",
