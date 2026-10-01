@@ -65,6 +65,7 @@ globalThis.result = "pending";
     [["echo x", { cwd: ".", timeoutMs: 0 }], "timeoutMs must be a whole number of milliseconds up to 600000"],
     [["echo x", { maxBytes: 65537 }], "maxBytes must be a whole number of bytes up to 65536"],
     [["echo x", { log: "yes" }], "log must be a boolean"],
+    [["echo x", { mergeStderr: "yes" }], "mergeStderr must be a boolean"],
     [["echo x", { onOutput: "yes" }], "onOutput must be a function"],
   ]) {
     message = "";

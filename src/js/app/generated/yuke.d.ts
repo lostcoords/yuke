@@ -2429,10 +2429,12 @@ interface ExecOptions {
   timeoutMs?: number;
   /** A native signal cancels the command and refuses work after cancellation; both reject with `code: "CANCELED"`. */
   signal?: CancellationSignal;
-  /** The cap for each stream. The default and the maximum are 65536. */
+  /** The cap for each stream, or for the one merged stream. The default and the maximum are 65536. */
   maxBytes?: number;
   /** Write both streams to a private log, and keep it when a stream was cut. */
   log?: boolean;
+  /** Send stderr into stdout, so `stdout` keeps the order the command wrote. `stderr` is then empty. */
+  mergeStderr?: boolean;
   /** An absolute directory; the host directory without one. */
   workspaceRoot?: string;
   /** Takes the live text of both streams in arrival order, before the result settles. `maxBytes` does not cut it, and it stops after 1 MiB. */
@@ -2440,7 +2442,7 @@ interface ExecOptions {
 }
 
 interface ExecResult {
-  /** Valid UTF-8 text; each invalid byte becomes U+FFFD. Above `maxBytes`, the text keeps its head and tail. */
+  /** Valid UTF-8 text; each invalid byte becomes U+FFFD. Above `maxBytes`, the text keeps its head and tail. A marker between them names the kept log, or says that yuke kept no copy. */
   stdout: string;
   /** The same form as `stdout`. */
   stderr: string;

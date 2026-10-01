@@ -8,14 +8,17 @@ const paths = @import("../../paths.zig");
 const execution = @import("../../execution.zig");
 const builtin = @import("builtin");
 const util = @import("../../util.zig");
+const toolset = @import("../../engine/toolset.zig");
 
 /// One command to run. `cwd` is relative to the workspace root. A null `cwd` uses the root itself.
 pub const Spec = struct {
     command: []const u8,
     cwd: ?[]const u8 = null,
     timeout_ms: u32,
-    /// The cap for each stream. The runner keeps the head and the tail and reports the cut.
+    /// The cap for each stream, or for the one merged stream. The runner keeps the head and the tail and reports the cut.
     max_stream_bytes: u32,
+    /// Send stderr into the stdout pipe, so the output keeps the order the command wrote. `Result.stderr` is then empty.
+    merge_stderr: bool = false,
     /// An absolute path. The run writes both streams to it and keeps the file only when a stream was cut.
     log: ?[]const u8 = null,
     /// The runner sends each chunk to this sink in drain order.
@@ -69,8 +72,6 @@ const Log = struct {
     }
 };
 
-const notice_format = "\n[The tool dropped {d} bytes here.]\n";
-
 /// One drain leg: it reads one stream to its end and keeps its head and its tail, because a build prints its error last.
 const Drain = struct {
     file: std.Io.File,
@@ -84,14 +85,14 @@ const Drain = struct {
     dropped: u64 = 0,
     err: ?anyerror = null,
 
-    /// Join the head, one gap notice, and the tail in one `scratch` buffer. The notice also counts the bytes of a cut character.
-    fn text(self: *Drain, scratch: std.mem.Allocator) []const u8 {
+    /// Join the head, one gap notice, and the tail in one `scratch` buffer. The notice also counts the bytes of a cut character, and names the kept log.
+    fn text(self: *Drain, scratch: std.mem.Allocator, log: ?[]const u8) []const u8 {
         if (self.tail_len == 0 and self.dropped == 0) return self.head.items;
         // With no gap the two ends stay adjacent, so the join restores the exact stream.
         const gap = self.dropped != 0;
         const head = if (gap) self.head.items[0..utf8.whole(self.head.items)] else self.head.items;
         // The ring lands after room for the longest notice, then moves back next to the notice.
-        const max_notice = std.fmt.count(notice_format, .{std.math.maxInt(u64)});
+        const max_notice = noticeLen(std.math.maxInt(u64), log);
         const joined = scratch.alloc(u8, head.len + max_notice + self.tail_len) catch unreachable;
         @memcpy(joined[0..head.len], head);
         const ring = joined[head.len + max_notice ..];
@@ -102,12 +103,24 @@ const Drain = struct {
         const tail_start = if (!gap) 0 else if (std.mem.indexOfScalar(u8, ring, '\n')) |newline| newline + 1 else utf8.head(ring);
         const tail = ring[tail_start..];
         const trimmed = (self.head.items.len - head.len) + tail_start;
-        const notice = if (gap) std.fmt.bufPrint(joined[head.len..][0..max_notice], notice_format, .{self.dropped + trimmed}) catch unreachable else "";
+        const notice = if (gap) writeNotice(joined[head.len..][0..max_notice], self.dropped + trimmed, log) else "";
         const tail_at = head.len + notice.len;
         @memmove(joined[tail_at..][0..tail.len], tail);
         return joined[0 .. tail_at + tail.len];
     }
 };
+
+/// The gap notice wears the engine cut marker, so a model reads one form for every cut.
+fn noticeLen(dropped: u64, log: ?[]const u8) usize {
+    return if (log) |path| std.fmt.count("\n" ++ toolset.saved_marker ++ "\n", .{ dropped, path }) else std.fmt.count("\n" ++ toolset.unsaved_marker ++ "\n", .{dropped});
+}
+
+fn writeNotice(buf: []u8, dropped: u64, log: ?[]const u8) []const u8 {
+    return if (log) |path|
+        std.fmt.bufPrint(buf, "\n" ++ toolset.saved_marker ++ "\n", .{ dropped, path }) catch unreachable // `noticeLen` sized the buffer for the largest count
+    else
+        std.fmt.bufPrint(buf, "\n" ++ toolset.unsaved_marker ++ "\n", .{dropped}) catch unreachable; // `noticeLen` sized the buffer for the largest count
+}
 
 /// Run `spec` and return its output. It returns an error rather than an assertion, because `spec` is validated tool input.
 pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: std.mem.Allocator, spec: Spec) h.HostError!Result {
@@ -127,18 +140,21 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     const out_pipe = try pipeAboveStdio();
     var out: Drain = .{ .file = pipeReader(out_pipe[0]), .limit = spec.max_stream_bytes, .log = if (log) |*l| l else null, .live = spec.live };
     defer out.file.close(io);
-    const err_pipe = pipeAboveStdio() catch |e| {
+    // A merged run has no stderr pipe, so its stderr drain does not exist.
+    const err_pipe: ?[2]std.posix.fd_t = if (spec.merge_stderr) null else pipeAboveStdio() catch |e| {
         _ = std.posix.system.close(out_pipe[1]);
         return e;
     };
-    var err: Drain = .{ .file = pipeReader(err_pipe[0]), .limit = spec.max_stream_bytes, .log = if (log) |*l| l else null, .live = spec.live };
-    defer err.file.close(io);
+    var err: ?Drain = if (err_pipe) |pipe| .{ .file = pipeReader(pipe[0]), .limit = spec.max_stream_bytes, .log = if (log) |*l| l else null, .live = spec.live } else null;
+    defer if (err) |*e| e.file.close(io);
 
     // The parent closes its write ends after the spawn, so a drain reaches EOF when the last child copy closes.
     var child = spawned: {
         defer _ = std.posix.system.close(out_pipe[1]);
-        defer _ = std.posix.system.close(err_pipe[1]);
-        break :spawned try spawnArgv(scratch, context.env, &.{ context.shell.path, "-c", spec.command }, cwd, null, out_pipe[1], err_pipe[1]);
+        defer if (err_pipe) |pipe| {
+            _ = std.posix.system.close(pipe[1]);
+        };
+        break :spawned try spawnArgv(scratch, context.env, &.{ context.shell.path, "-c", spec.command }, cwd, null, out_pipe[1], if (err_pipe) |pipe| pipe[1] else out_pipe[1]);
     };
     const pid = child.id.?;
 
@@ -160,7 +176,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     }
 
     drains.concurrent(io, drain, .{ io, scratch, &out }) catch return error.HostFailure;
-    drains.concurrent(io, drain, .{ io, scratch, &err }) catch return error.HostFailure;
+    if (err) |*e| drains.concurrent(io, drain, .{ io, scratch, e }) catch return error.HostFailure;
 
     const timed_out = !try util.waitEvent(io, &exited, .{ .duration = .{ .raw = .fromMilliseconds(spec.timeout_ms), .clock = .awake } });
     if (timed_out) {
@@ -171,20 +187,21 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     if (groupAlive(pid)) endGroups(io, &.{pid});
     const abandoned = try awaitDrains(io, &drains);
     if (out.err) |e| if (!abandoned) return mapDrainError(e);
-    if (err.err) |e| if (!abandoned) return mapDrainError(e);
+    const err_dropped = if (err) |e| e.dropped else 0;
+    if (err) |e| if (e.err) |failure| if (!abandoned) return mapDrainError(failure);
 
-    const cut = out.dropped + err.dropped != 0;
+    const cut = out.dropped + err_dropped != 0;
     const kept: ?[]const u8 = if (log) |*l| if (cut and !l.failed.load(.monotonic)) scratch.dupe(u8, spec.log.?) catch unreachable else blk: {
         std.Io.Dir.deleteFileAbsolute(io, spec.log.?) catch {};
         break :blk null;
     } else null;
 
     return .{
-        .stdout = out.text(scratch),
-        .stderr = err.text(scratch),
+        .stdout = out.text(scratch, kept),
+        .stderr = if (err) |*e| e.text(scratch, kept) else "",
         .outcome = if (timed_out) .timed_out else outcomeOf(term orelse return error.HostFailure) orelse return error.HostFailure,
         .stdout_dropped = out.dropped,
-        .stderr_dropped = err.dropped,
+        .stderr_dropped = err_dropped,
         .log = kept,
     };
 }
@@ -598,7 +615,7 @@ test "exec keeps the head and the tail of a long stream" {
     // The result keeps both ends, so a failure printed last still reaches the model.
     try testing.expect(std.mem.startsWith(u8, res.stdout, "abcdefgh"));
     // Real content must follow the gap marker. A head-only cap would end the result at the marker.
-    const marker = std.mem.indexOf(u8, res.stdout, "dropped").?;
+    const marker = std.mem.indexOf(u8, res.stdout, "[yuke cut").?;
     const tail = res.stdout[marker..];
     try testing.expect(std.mem.indexOf(u8, tail, "abcdefgh") != null);
 }
@@ -623,7 +640,7 @@ test "a stream one byte above the cap reports the gap" {
 
     const res = try runShell(arena.allocator(), "head -c 256 /dev/zero | tr '\\0' x", 20_000);
     try testing.expectEqual(@as(u64, 1), res.stdout_dropped);
-    try testing.expect(std.mem.indexOf(u8, res.stdout, "dropped 1 bytes") != null);
+    try testing.expect(std.mem.indexOf(u8, res.stdout, "[yuke cut 1 bytes here.") != null);
 }
 
 test "the live sink gets every byte of both streams, uncut by the result cap" {
@@ -674,7 +691,7 @@ test "the gap notice counts the halves of the characters the cap cut at both end
     // The 255-byte cap keeps a 128-byte head that ends inside an "é" and a 127-byte tail that starts inside one.
     const res = try runShell(a, "printf a; i=0; while [ $i -lt 200 ]; do printf '\\303\\251'; i=$((i+1)); done", 20_000);
     const e63 = "é" ** 63;
-    try testing.expectEqualStrings("a" ++ e63 ++ "\n[The tool dropped 148 bytes here.]\n" ++ e63, res.stdout);
+    try testing.expectEqualStrings("a" ++ e63 ++ "\n[yuke cut 148 bytes here. yuke kept no copy of the full output.]\n" ++ e63, res.stdout);
     try testing.expectEqual(@as(u64, 146), res.stdout_dropped);
 }
 
@@ -835,14 +852,32 @@ test "a cut stream keeps the whole output in the log, and an uncut run deletes i
     const cut = try run(testing.io, root, execution.testContext(&env), a, .{ .command = "head -c 1000 /dev/zero | tr '\\0' x; echo tail 1>&2", .timeout_ms = 10_000, .max_stream_bytes = 64, .log = cut_path });
     try testing.expect(cut.stdout_dropped > 0);
     try testing.expectEqualStrings(cut_path, cut.log.?);
+    // The gap notice names the log, so a reader finds every byte.
+    try testing.expect(std.mem.indexOf(u8, cut.stdout, "Full output: ") != null and std.mem.indexOf(u8, cut.stdout, cut_path) != null);
     const logged = try tmp.dir.readFileAlloc(testing.io, "cut.log", a, .limited(4096));
     try testing.expectEqual(@as(usize, 1005), logged.len);
     try testing.expect(std.mem.indexOf(u8, logged, "tail\n") != null);
+
+    // A log that cannot open costs the log, so the notice says yuke kept no copy.
+    const lost_path = try std.Io.Dir.path.join(a, &.{ root, "missing", "lost.log" });
+    const lost = try run(testing.io, root, execution.testContext(&env), a, .{ .command = "head -c 1000 /dev/zero | tr '\\0' x", .timeout_ms = 10_000, .max_stream_bytes = 64, .log = lost_path });
+    try testing.expect(lost.log == null);
+    try testing.expect(std.mem.indexOf(u8, lost.stdout, "yuke kept no copy of the full output.") != null);
 
     const whole_path = try std.Io.Dir.path.join(a, &.{ root, "whole.log" });
     const whole = try run(testing.io, root, execution.testContext(&env), a, .{ .command = "echo short", .timeout_ms = 10_000, .max_stream_bytes = 64, .log = whole_path });
     try testing.expect(whole.log == null);
     try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "whole.log", .{}));
+}
+
+test "a merged run keeps stderr in stdout, in the order the command wrote" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var env = try utilityEnv();
+    defer env.deinit();
+    const res = try run(testing.io, "/tmp", execution.testContext(&env), arena.allocator(), .{ .command = "echo a; echo b 1>&2; echo c", .timeout_ms = 10_000, .max_stream_bytes = 64, .merge_stderr = true });
+    try testing.expectEqualStrings("a\nb\nc\n", res.stdout);
+    try testing.expectEqualStrings("", res.stderr);
 }
 
 test "the tail keeps the exact suffix across wrap, oversize chunks, and zero capacity" {

@@ -1782,7 +1782,7 @@ test "an output over the cap keeps whole head and tail lines, and names the file
         state.block_at = point;
         const blocked = try runHooked(&f.engine, scratch.allocator(), f.slot, pending, .discard);
         try std.testing.expect(blocked.is_error);
-        try std.testing.expectEqualStrings("a" ++ "é" ** 12_799 ++ "\n[yuke cut 8802 bytes here. yuke could not save the full output.]\n" ++ "é" ** 12_800, blocked.output);
+        try std.testing.expectEqualStrings("a" ++ "é" ** 12_799 ++ "\n[yuke cut 8802 bytes here. yuke kept no copy of the full output.]\n" ++ "é" ** 12_800, blocked.output);
     }
 }
 

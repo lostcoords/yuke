@@ -37,8 +37,8 @@ function builtin(ctx, name, definition) {
 }
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
-// Each stream keeps 4 KiB in the result, and a cut result names the log that holds every byte.
-const EXEC_STREAM_BYTES = 4096;
+// The output stays under the 50 KiB engine cap, with room for the cut marker and the status line.
+const EXEC_OUTPUT_BYTES = 48 * 1024;
 const MAX_LINE = 0xffffffff;
 
 /** @param {string} message @returns {never} */
@@ -222,16 +222,11 @@ async function exec(args, signal, context) {
   }
   const timeout = timeoutValue == null ? 120000 : timeoutValue;
   if (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < 1 || timeout > 600000) invalid("Set timeout_ms to an integer from 1 to 600000.");
-  const r = await runCommand(command, { timeoutMs: timeout, signal, maxBytes: EXEC_STREAM_BYTES, log: true, onOutput: context.output, workspaceRoot: context.workspaceRoot });
-  let text = r.stdout;
-  if (r.stderr.length !== 0) text = `${endLine(text)}[stderr]\n${r.stderr}`;
-  const empty = text.length === 0;
-  text = endLine(text);
-  if (empty) text += "[no output]\n";
-  if (r.timedOut) text += `[The command passed its ${timeout} ms timeout. The tool stopped the process group. Run a smaller command, raise timeout_ms up to 600000, or set background: true for a server or watcher.]`;
-  else if (r.signal !== null) text += `[A signal ended the command: ${r.signal}.]`;
+  const r = await runCommand(command, { timeoutMs: timeout, signal, maxBytes: EXEC_OUTPUT_BYTES, mergeStderr: true, log: true, onOutput: context.output, workspaceRoot: context.workspaceRoot });
+  let text = r.stdout.length === 0 ? "[no output]\n" : endLine(r.stdout);
+  if (r.timedOut) text += `[timeout: ${timeout} ms. yuke stopped the process group. Run a smaller command. Raise timeout_ms up to 600000. Set background to true for a server or watcher.]`;
+  else if (r.signal !== null) text += `[signal: ${r.signal}]`;
   else text += `[exit code: ${r.code}]`;
-  if (r.log !== null) text += `\n[The tool cut the output. Full log: ${r.log}. Use grep or read on it.]`;
   return text;
 }
 
@@ -288,7 +283,7 @@ export const builtins = {
       }, required: ["path", "old_string", "new_string"], additionalProperties: false }, execute: edit,
     });
     builtin(ctx, "exec", {
-      description: "Run a shell command in the working directory and return stdout, stderr, and the exit code. Each call starts a fresh shell and ends every process it started. For a server or watcher, set background: true; never use &, nohup, or setsid.",
+      description: "Run a shell command in the working directory. Return stdout and stderr in write order, and the exit status. Output above 48 KiB keeps its head and tail. The marker names the full-output file when yuke saves one. Each call starts a fresh shell and ends every process it starts. For a server or watcher, set background to true. Do not use &, nohup, or setsid.",
       parameters: { type: "object", properties: {
         command: { type: "string" },
         timeout_ms: { type: "integer", minimum: 1, maximum: 600000, description: "The default is 120000." },

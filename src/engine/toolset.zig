@@ -74,6 +74,11 @@ fn unknownTool(_: *anyopaque, out: std.mem.Allocator, name: []const u8, _: []con
     };
 }
 
+/// The marker at a cut whose whole text sits in a file. Its arguments are the dropped byte count and the file path.
+pub const saved_marker = "[yuke cut {d} bytes here. Full output: {s}. Read it with start and end, or run grep with exec.]";
+/// The marker at a cut whose whole text has no file. Its argument is the dropped byte count.
+pub const unsaved_marker = "[yuke cut {d} bytes here. yuke kept no copy of the full output.]";
+
 /// Answer `text` cut to the cap, or null when it fits: the head and the tail stay, and `set` saves the whole text. The result belongs to `arena`.
 pub fn cut(set: ToolSet, arena: std.mem.Allocator, text: []const u8) error{OutOfMemory}!?[]const u8 {
     const cap: usize = proto.meta.limits.max_tool_result_bytes;
@@ -85,8 +90,8 @@ pub fn cut(set: ToolSet, arena: std.mem.Allocator, text: []const u8) error{OutOf
     // The marker takes its own line, so a head without a final line break gets one.
     const gap = if (std.mem.endsWith(u8, head, "\n")) "" else "\n";
     if (set.spill(set.ctx, arena, text)) |path|
-        return try std.fmt.allocPrint(arena, "{s}{s}[yuke cut {d} bytes here. Full output: {s}. Read it with start and end, or run grep with exec.]\n{s}", .{ head, gap, dropped, path, tail });
-    return try std.fmt.allocPrint(arena, "{s}{s}[yuke cut {d} bytes here. yuke could not save the full output.]\n{s}", .{ head, gap, dropped, tail });
+        return try std.fmt.allocPrint(arena, "{s}{s}" ++ saved_marker ++ "\n{s}", .{ head, gap, dropped, path, tail });
+    return try std.fmt.allocPrint(arena, "{s}{s}" ++ unsaved_marker ++ "\n{s}", .{ head, gap, dropped, tail });
 }
 
 /// Return the ranges that a middle cut keeps: at most `half` bytes from each end, on line boundaries when possible and always on character boundaries.

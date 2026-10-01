@@ -16,7 +16,7 @@ const Value = quickjs.Value;
 const default_timeout_ms: u32 = 120_000;
 const max_timeout_ms: u32 = 600_000;
 
-/// The default and the largest cap for each stream. A command that prints more loses its middle, not its result.
+/// The default and the largest cap for each stream, or for the one merged stream. A command that prints more loses its middle, not its result.
 const max_stream_bytes: u32 = 64 * 1024;
 
 /// Register `yuke:internal/native/exec` and its functions.
@@ -39,6 +39,8 @@ const Request = struct {
     log: ?[]u8 = null,
     /// True when the caller passed `onOutput`, so each chunk reaches the op as live text.
     live: bool = false,
+    /// True when the caller asked for one merged stream.
+    merge_stderr: bool = false,
 
     fn parse(
         ctx: Context,
@@ -92,6 +94,9 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     defer ctx.freeValue(log);
     if (!ctx.isUndefined(log) and !ctx.isNull(log) and !ctx.isBool(log)) return pending.rejected(ctx, "log must be a boolean");
     const wants_log = ctx.isBool(log) and (ctx.toBool(log) catch unreachable); // `isBool` holds, so the conversion cannot fail.
+    const merge = if (ctx.isObject(options)) ctx.getPropertyStr(options, "mergeStderr") else quickjs.UNDEFINED;
+    defer ctx.freeValue(merge);
+    if (!ctx.isUndefined(merge) and !ctx.isBool(merge)) return pending.rejected(ctx, "mergeStderr must be a boolean");
     var request = Request.parse(ctx, host.gpa, args, options, host.cwd) catch |err|
         return pending.rejected(ctx, switch (err) {
             error.CommandType => "the command must be a string",
@@ -105,6 +110,7 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     // A log directory that cannot exist costs the log, not the command.
     if (wants_log) request.log = host.logs.next(host.gpa, host.io, host.execution.env, "exec") catch null;
     request.live = !ctx.isUndefined(on_output);
+    request.merge_stderr = ctx.isBool(merge) and (ctx.toBool(merge) catch unreachable); // `isBool` holds, so the conversion cannot fail.
     return host.startTask(Request, execTask, request, .{ .signal = signal, .on_text = on_output });
 }
 
@@ -132,6 +138,7 @@ fn execWorker(host: *Host, op: *pending.Op, req: Request, result: *pending.Resul
         .cwd = req.cwd,
         .timeout_ms = req.timeout_ms,
         .max_stream_bytes = req.max_bytes,
+        .merge_stderr = req.merge_stderr,
         .log = req.log,
         .live = if (req.live) .{ .ctx = op, .write = liveWrite } else null,
     }) catch |err| {

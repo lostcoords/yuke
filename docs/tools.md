@@ -32,7 +32,7 @@ Any other value is an error. Return JSON data as a string: `JSON.stringify(data)
 
 ## Size
 
-The engine caps `output` at 50 KiB. A longer output keeps at most 25 KiB from each end, on whole lines when possible. A marker between them names a file that holds the whole text, or says that yuke could not save it. The file lives until yuke exits. A tool does not need its own cap.
+The engine caps `output` at 50 KiB. A longer output keeps at most 25 KiB from each end, on whole lines when possible. A marker between them names a file that holds the whole text, or says that yuke kept no copy. The file lives until yuke exits. A tool does not need its own cap.
 
 ## Errors
 

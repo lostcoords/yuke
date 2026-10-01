@@ -313,27 +313,28 @@ test "baked tools preserve file edits, bounded reads, diffs, and command output"
     try support.expectTool(host, "write", "{\"path\":\"a.txt\",\"content\":\"one\\nTWO\\nTWO\\n\"}", .{ .root = root, .text = .{ .contains = "" }, .outcome = false });
     // An existing file that the tool cannot read as text gets no diff, and the write still runs.
     try support.expectTool(host, "write", "{\"path\":\"blob.bin\",\"content\":\"text\"}", .{ .root = root, .text = .{ .equals = "The tool wrote 4 bytes." }, .outcome = false });
-    try support.expectTool(host, "exec", "{\"command\":\"echo out; echo err 1>&2; exit 3\"}", .{ .root = root, .text = .{ .contains = "out\n[stderr]\nerr\n[exit code: 3]" } });
+    try support.expectTool(host, "exec", "{\"command\":\"echo out; echo err 1>&2; exit 3\"}", .{ .root = root, .text = .{ .equals = "out\nerr\n[exit code: 3]" } });
     {
-        const call = host.calls.submit("exec", "{\"command\":\"head -c 20000 /dev/zero | tr '\\\\0' x\"}", support.toolContext(root));
+        const call = host.calls.submit("exec", "{\"command\":\"head -c 100000 /dev/zero | tr '\\\\0' x\"}", support.toolContext(root));
         try support.pumpUntilSettled(host, call);
         try std.testing.expect(!support.reply(call).is_error);
         const text = support.reply(call).text;
-        // The result stays small, and the log it names holds every byte.
-        try std.testing.expect(text.len < 2 * 4096 + 512);
-        const marker = "Full log: ";
+        // The result stays under the engine cap, and the log it names holds every byte.
+        try std.testing.expect(text.len < 50 * 1024);
+        const marker = "Full output: ";
         const start = std.mem.indexOf(u8, text, marker).? + marker.len;
-        const path = text[start..std.mem.indexOfPos(u8, text, start, ". Use").?];
+        const path = text[start..std.mem.indexOfPos(u8, text, start, ". Read").?];
         const logged = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(1 << 20));
         defer std.testing.allocator.free(logged);
-        try std.testing.expectEqual(@as(usize, 20000), logged.len);
+        try std.testing.expectEqual(@as(usize, 100000), logged.len);
         // The live output is not cut, so the user sees every byte while the command runs.
-        try std.testing.expectEqual(@as(usize, 20000), call.kind.tool.output.items.len);
+        try std.testing.expectEqual(@as(usize, 100000), call.kind.tool.output.items.len);
         try std.testing.expect(std.mem.indexOfNone(u8, call.kind.tool.output.items, "x") == null);
         call.finish();
         try host.pump();
     }
-    try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"timeout_ms\":300}", .{ .root = root, .text = .{ .contains = "[The command passed its 300 ms timeout." } });
+    try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"timeout_ms\":300}", .{ .root = root, .text = .{ .contains = "[timeout: 300 ms. yuke stopped the process group." } });
+    try support.expectTool(host, "exec", "{\"command\":\"true\"}", .{ .root = root, .text = .{ .equals = "[no output]\n[exit code: 0]" } });
 }
 
 test "a user edit tool overrides the baked edit tool" {
