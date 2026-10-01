@@ -14,9 +14,10 @@ pub const HostError = error{
 };
 
 /// A 1-indexed inclusive line range. A null bound selects the first or the last line.
-pub const Range = struct { start: ?u32 = null, end: ?u32 = null };
+/// When `numbered` is true, each line gets an `N: ` prefix, and the byte cap counts each prefix.
+pub const Range = struct { start: ?u32 = null, end: ?u32 = null, numbered: bool = false };
 
-/// The bounds of a range read, so the local host never loads the whole file; `max_bytes` bounds the text and a caller adds its numbering on top.
+/// The bounds of a range read, so the local host never loads the whole file. `max_bytes` bounds the text, with its prefixes when the range is numbered.
 pub const ReadLimits = struct {
     max_lines: u32,
     max_line_bytes: u32,

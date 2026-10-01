@@ -287,7 +287,19 @@ test "baked tools preserve file edits, bounded reads, diffs, and command output"
     try support.eval(host, "native_tools/builtins-test.test.js");
 
     try support.expectTool(host, "read", "{\"path\":\"a.txt\",\"start\":2,\"end\":3}", .{ .root = root, .text = .{ .contains = "2: two\n3: two" } });
-    try support.expectTool(host, "read", "{\"path\":\"long.txt\"}", .{ .root = root, .text = .{ .contains = "[The tool cut 1 line(s) at 8000 bytes.]" } });
+    try support.expectTool(host, "read", "{\"path\":\"long.txt\"}", .{ .root = root, .text = .{ .contains = "[read cut: 1 line(s) at 8000 bytes.]" } });
+    // A large file reads one page under the engine cap, so the page ends with its own note and never a cut marker.
+    {
+        const many = ("x" ** 99 ++ "\n") ** 1000;
+        try fixture.tmp.?.dir.writeFile(std.testing.io, .{ .sub_path = "many.txt", .data = many });
+        const call = host.calls.submit("read", "{\"path\":\"many.txt\"}", support.toolContext(root));
+        try support.pumpUntilSettled(host, call);
+        const text = support.reply(call).text;
+        try std.testing.expect(text.len <= proto.meta.limits.max_tool_result_bytes);
+        try std.testing.expect(std.mem.indexOf(u8, text, "\n[read more: start at ") != null);
+        call.finish();
+        try host.pump();
+    }
     // An image reads as one media ref. The host anchors the relative path before the engine reads the file.
     {
         const call = host.calls.submit("read", "{\"path\":\"shot.png\",\"start\":2,\"end\":2}", support.toolContext(root));

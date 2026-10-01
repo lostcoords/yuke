@@ -10,7 +10,6 @@ import { byteLabel } from "yuke:internal/format";
 import { utf8Length } from "yuke:internal/interaction";
 
 /** @import { DiffFile as ParsedDiffFile } from "yuke:internal/native/diff" */
-/** @import { RangeRead } from "yuke:internal/native/fs" */
 /** @typedef {Record<string, unknown>} ToolArgs */
 /** @import { CancellationSignal as ToolSignal } from "yuke:internal/native/cancellation" */
 /** @import { Context } from "yuke:internal/ext" */
@@ -75,28 +74,22 @@ function diffOf(file) {
   }];
 }
 
-/** @param {RangeRead} got @param {number} first @returns {string} */
-function renderRead(got, first) {
-  const lines = got.text.length === 0 ? [] : got.text.slice(0, -1).split("\n");
-  const out = lines.map((line, i) => `${first + i}: ${line}`).join("\n");
-  let text = out;
-  if (got.longLines !== 0) text += `\n[The tool cut ${got.longLines} line(s) at 8000 bytes.]`;
-  if (got.next !== null) text += `\n[The tool capped the output. Read again with the start value set to ${got.next}.]`;
-  return text;
-}
-
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string | ToolOutcome>} */
 async function read(args, _signal, context) {
   const path = stringArg(args, "path");
   const start = lineArg(args, "start");
   const end = lineArg(args, "end");
-  const got = await fs.readRange(path, { start, end, workspaceRoot: context.workspaceRoot });
+  const got = await fs.readRange(path, { start, end, lineNumbers: true, workspaceRoot: context.workspaceRoot });
   if ("imagePath" in got) {
     const blob = await client.blobPut(got.imagePath);
     const kind = blob.mime.slice(blob.mime.indexOf("/") + 1).toUpperCase();
     return { output: `${kind} image, ${byteLabel(blob.bytes)}`, media: [blob] };
   }
-  return renderRead(got, start ?? 1);
+  // The native read numbers each line and ends each line with a newline. The result drops the last newline.
+  let text = got.text.slice(0, -1);
+  if (got.longLines !== 0) text += `\n[read cut: ${got.longLines} line(s) at 8000 bytes.]`;
+  if (got.next !== null) text += `\n[read more: start at ${got.next}.]`;
+  return text;
 }
 
 /** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string | ToolOutcome>} */
@@ -259,7 +252,7 @@ export const builtins = {
     });
 
     builtin(ctx, "read", {
-      description: "Read a file with 1-indexed line numbers. Pass the start and end values for a line range. A PNG, JPEG, GIF, or WebP file returns the image.",
+      description: "Read a file with 1-indexed line numbers. Pass the start and end values for a line range. One read returns at most 2000 lines or 48 KiB. A capped read gives the next line. A PNG, JPEG, GIF, or WebP file returns the image.",
       parameters: { type: "object", properties: {
         path: { type: "string", description: "A relative path resolves against the workspace root." },
         start: { type: "integer", minimum: 1, maximum: MAX_LINE, description: "The first line." },

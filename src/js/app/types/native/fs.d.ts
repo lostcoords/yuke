@@ -36,10 +36,11 @@ declare module "yuke:internal/native/fs" {
     /** Read a whole file as text. It rejects for a missing path, a directory, invalid UTF-8, or a file above 10 MiB. */
     readFile(path: string, options?: RootOptions): Promise<string>;
     /**
-     * Read whole lines from the 1-based line `start` through `end`, at most 2000 lines and 64 KiB; a line above 8000 bytes is cut.
+     * Read lines from the 1-based line `start` through `end`. Return at most 2000 lines and 48 KiB. Cut a line after 8000 bytes.
+     * When `lineNumbers` is true, prefix each line with `N: `. The 48 KiB limit includes each prefix. `lineNumbers` defaults to false.
      * An image file answers its path. `next` names the first line that a limit left out, or null. `longLines` counts the cut lines.
      */
-    readRange(path: string, options?: RootOptions & { start?: number | null; end?: number | null }): Promise<RangeRead | { imagePath: string }>;
+    readRange(path: string, options?: RootOptions & { start?: number | null; end?: number | null; lineNumbers?: boolean }): Promise<RangeRead | { imagePath: string }>;
     /** Replace the whole file in one atomic rename, and resolve the byte count. It creates a missing file in an existing directory. A link or a directory rejects. */
     writeFile(path: string, contents: string, options?: RootOptions): Promise<number>;
     /** Describe one path. It resolves null when nothing is at the path. An absent or empty path names the workspace root. */

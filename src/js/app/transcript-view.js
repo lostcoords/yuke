@@ -251,7 +251,7 @@ function toolBody(part, width, expanded, rows, source) {
     if (more) hint(rows, "… (more lines, ctrl+o to expand)");
   }
   const field = state.type === "error" ? "error" : "output";
-  if (expanded && isCut(part, field)) hint(rows, "… (the output is cut at 64 KiB)");
+  if (expanded && isCut(part, field)) hint(rows, "… (the output is cut at 50 KiB)");
   const media = state.type === "completed" ? state.media : undefined;
   if (media) media.forEach((blob, i) => {
     const label = mediaLabel(blob, i + 1);

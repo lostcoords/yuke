@@ -141,11 +141,14 @@ const ScanError = error{ InvalidUtf8, ReadFailed };
 const NextByte = enum { newline, other, eof };
 
 /// Stream the requested lines and stop at the first limit. `line_buf` holds one line, so memory follows the limits, not the file size.
+/// The widest `N: ` prefix a numbered read writes.
+const max_prefix_bytes = std.fmt.count("{d}: ", .{std.math.maxInt(u64)});
+
 fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, file_size: u64, range: h.Range, limits: h.ReadLimits) ScanError!h.RangeRead {
     std.debug.assert(limits.max_lines > 0 and limits.max_line_bytes > 0);
     std.debug.assert(line_buf.len == limits.max_line_bytes + 1);
-    // A first line must always fit. Otherwise a capped read makes no progress and the model repeats it.
-    std.debug.assert(limits.max_line_bytes < limits.max_bytes);
+    // A first line with the widest number must always fit. Otherwise a capped read makes no progress and the model repeats it.
+    std.debug.assert(limits.max_line_bytes + (if (range.numbered) max_prefix_bytes else 0) < limits.max_bytes);
 
     var line_no: u64 = 1;
     const first: u64 = range.start orelse 1;
@@ -161,13 +164,16 @@ fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, file
     var writer: std.Io.Writer = .fixed(line_buf);
     var long_lines: u32 = 0;
     var kept: u32 = 0;
+    var number: [max_prefix_bytes]u8 = undefined;
     while (true) {
         if (range.end) |last| if (line_no > last) break;
         const line = (try takeLine(reader, &writer, limits.max_line_bytes, &long_lines)) orelse break;
+        const prefix: []const u8 = if (range.numbered) std.fmt.bufPrint(&number, "{d}: ", .{line_no}) catch unreachable else ""; // the buffer fits the widest number
         // The scan reads the line before it tests a limit, so a limit never reports a line the file does not hold.
-        if (kept == limits.max_lines or text.items.len + line.len + 1 > limits.max_bytes) {
+        if (kept == limits.max_lines or text.items.len + prefix.len + line.len + 1 > limits.max_bytes) {
             return .{ .text = text.items, .next_line = std.math.cast(u32, line_no), .long_lines = long_lines };
         }
+        text.appendSlice(scratch, prefix) catch unreachable;
         // `line` borrows `line_buf`. Copy it before the next call reuses that buffer.
         text.appendSlice(scratch, line) catch unreachable;
         text.append(scratch, '\n') catch unreachable;
@@ -460,6 +466,24 @@ test "LocalHost stops at the byte limit with complete lines" {
     const got = try f.read(.{}, narrow);
     try testing.expectEqualStrings("aaaa\nbbbb\n", got.text);
     try testing.expectEqual(@as(?u32, 3), got.next_line);
+}
+
+test "LocalHost counts the line numbers in the byte limit" {
+    var f: Fixture = undefined;
+    try f.init("aaaa\n" ** 12);
+    defer f.deinit();
+    var narrow = test_limits;
+    narrow.max_line_bytes = 4;
+    // Three numbered eight-byte lines fit in 30 bytes. Four plain five-byte lines would.
+    narrow.max_bytes = 30;
+    const got = try f.read(.{ .numbered = true }, narrow);
+    try testing.expectEqualStrings("1: aaaa\n2: aaaa\n3: aaaa\n", got.text);
+    try testing.expectEqual(@as(?u32, 4), got.next_line);
+    // A two-digit number costs one byte more, so the fourth line from 9 does not fit in 34 bytes.
+    narrow.max_bytes = 34;
+    const wide = try f.read(.{ .start = 9, .numbered = true }, narrow);
+    try testing.expectEqualStrings("9: aaaa\n10: aaaa\n11: aaaa\n", wide.text);
+    try testing.expectEqual(@as(?u32, 12), wide.next_line);
 }
 
 test "LocalHost keeps a line of exactly the line limit whole" {

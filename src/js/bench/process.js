@@ -57,9 +57,9 @@ async function step() {
     if (result.code !== 0 || (phase !== "exec_short" && result.stdoutDropped === 0)) throw Error("exec result");
     if (phase === "exec_stream" && received !== 1048576) throw Error("exec stream bytes");
   } else if (phase === "fs_range") {
-    // The read tool path: the byte cap stops the range, so the answer holds about 64 KiB and a next line.
-    const got = await fs.readRange(rangeFixturePath, { start: 1, end: 3000 });
-    if (!("text" in got) || got.text.length < 60000 || got.next === null) throw Error("range read");
+    // The read tool path: the 48 KiB cap stops the numbered range. The result names the next line.
+    const got = await fs.readRange(rangeFixturePath, { start: 1, end: 3000, lineNumbers: true });
+    if (!("text" in got) || got.text.length < 45000 || got.next === null) throw Error("range read");
   } else if (phase === "fs_read") {
     const text = await fs.readFile(readFixturePath);
     if (text.length !== readFixtureBytes) throw Error("file read bytes");

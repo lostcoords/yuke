@@ -69,7 +69,8 @@ const ReadRequest = struct {
 const read_limits: os.ReadLimits = .{
     .max_lines = 2000,
     .max_line_bytes = 8000,
-    .max_bytes = 64 * 1024,
+    // The 48 KiB cap leaves room for the continuation note under the 50 KiB engine cap.
+    .max_bytes = 48 * 1024,
 };
 
 /// Read a whole file as text on its own task, so the owner keeps painting. A file that is not valid UTF-8 rejects.
@@ -136,7 +137,14 @@ const RangeAnswer = union(enum) {
 
 fn rangeArg(ctx: Context, args: []const Value, idx: usize) error{InvalidOption}!os.Range {
     if (args.len <= idx or !ctx.isObject(args[idx]) or ctx.isArray(args[idx])) return .{};
-    return .{ .start = try boundArg(ctx, args[idx], "start"), .end = try boundArg(ctx, args[idx], "end") };
+    const numbered = ctx.getPropertyStr(args[idx], "lineNumbers");
+    defer ctx.freeValue(numbered);
+    if (!ctx.isUndefined(numbered) and !ctx.isBool(numbered)) return error.InvalidOption;
+    return .{
+        .start = try boundArg(ctx, args[idx], "start"),
+        .end = try boundArg(ctx, args[idx], "end"),
+        .numbered = ctx.isBool(numbered) and (ctx.toBool(numbered) catch unreachable), // `isBool` holds, so the conversion cannot fail
+    };
 }
 
 fn boundArg(ctx: Context, obj: Value, name: [:0]const u8) error{InvalidOption}!?u32 {
