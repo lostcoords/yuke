@@ -319,7 +319,7 @@ test "a failed parent wake preserves the report and an explicit retry starts it"
     _ = try f.terminal(try f.start(), &.{"answer"}, success);
     try f.db.conn.execNoArgs("CREATE TEMP TRIGGER refuse_wake BEFORE INSERT ON messages BEGIN SELECT RAISE(FAIL, 'test refusal'); END");
     try testing.expectError(error.ConstraintTrigger, reports.wake(&f.engine, root));
-    try testing.expect(!f.engine.isBusy());
+    try testing.expect(!f.engine.load().busy());
     try testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, a, root.raw));
     try testing.expect((try database.session.snapshot(&f.db, a, root.raw)).?.open_run_id == null);
     try f.db.conn.execNoArgs("DROP TRIGGER refuse_wake");
@@ -333,12 +333,12 @@ test "a canceled report wake releases process activity" {
     try f.init();
     defer f.deinit();
     _ = try f.terminal(try f.start(), &.{"answer"}, success);
-    try testing.expect(!f.engine.isBusy());
+    try testing.expect(!f.engine.load().busy());
     reports.requestWake(&f.engine, root);
-    try testing.expect(f.engine.isBusy());
+    try testing.expect(f.engine.load().busy());
     f.engine.stopTurns();
     try testing.expectEqual(@as(usize, 0), f.engine.continuations);
-    try testing.expect(!f.engine.isBusy());
+    try testing.expect(!f.engine.load().busy());
     try testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, f.arena.allocator(), root.raw));
 }
 
@@ -352,13 +352,13 @@ test "an owned tree wakes an existing durable report without another terminal ev
     f.engine.stopTurns();
     reports.publishReport(&f.engine, result.report.?, true);
     try testing.expectEqual(@as(u64, 1), try database.input.count(&f.db, a, root.raw));
-    try testing.expect(!f.engine.isBusy());
+    try testing.expect(!f.engine.load().busy());
     f.engine.close();
     f.engine = f.resources.makeEngine(&f.db);
     try f.engine.own(child);
-    try testing.expect(f.engine.isBusy());
+    try testing.expect(f.engine.load().busy());
     try Resources.awaitDurableRun(&f.engine, &f.db, a, root.raw, 1);
-    try testing.expect(!f.engine.isBusy());
+    try testing.expect(!f.engine.load().busy());
     try testing.expectEqual(@as(u64, 1), (try database.event.highWater(&f.db, a, root.raw)).?.run_id_high);
     try testing.expectEqual(@as(u64, 0), try database.input.count(&f.db, a, root.raw));
     const history = try database.message.historyPage(&f.db, a, root.raw, 0, 10);

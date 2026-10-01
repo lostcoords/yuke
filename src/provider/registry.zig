@@ -99,7 +99,7 @@ pub const Provider = struct {
 
     /// Report whether the engine can start a login for this row.
     pub fn canLogin(self: Provider) bool {
-        return login_runtime.Flow.parse(self.login_flow orelse return false) != null;
+        return std.meta.stringToEnum(login_runtime.Flow, self.login_flow orelse return false) != null;
     }
 };
 

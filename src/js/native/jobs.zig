@@ -13,7 +13,6 @@ const util = @import("../../util.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
-const rejected = pending.rejected;
 const SessionId = proto.ids.SessionId;
 
 /// The most ended jobs the table keeps. The job that ended first leaves first.
@@ -201,27 +200,27 @@ pub fn toValue(ctx: Context, job: *const Job) Value {
 /// Start a shell line as a job with both streams on a private log. It resolves `{ job, ended }`, and `ended` resolves with the final job.
 fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (host.phase != .open) return rejected(ctx, "the host is closed");
+    if (host.phase != .open) return pending.rejected(ctx, "the host is closed");
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
     const a = arena.allocator();
 
     const command = if (args.len > 0) module.owned(ctx, a, args[0]) else null;
-    if (command == null or std.mem.trim(u8, command.?, " \t\r\n").len == 0) return rejected(ctx, "the command must be a non-blank string");
-    if (std.mem.indexOfScalar(u8, command.?, 0) != null) return rejected(ctx, "the command must not hold a NUL byte");
+    if (command == null or std.mem.trim(u8, command.?, " \t\r\n").len == 0) return pending.rejected(ctx, "the command must be a non-blank string");
+    if (std.mem.indexOfScalar(u8, command.?, 0) != null) return pending.rejected(ctx, "the command must not hold a NUL byte");
     const session_value: Value = if (args.len > 1) args[1] else quickjs.UNDEFINED;
     const session_id: ?SessionId = if (ctx.isUndefined(session_value) or ctx.isNull(session_value))
         null
     else
-        module.sessionId(ctx, session_value) orelse return rejected(ctx, "the session id must be 32 lowercase hex digits");
+        module.sessionId(ctx, session_value) orelse return pending.rejected(ctx, "the session id must be 32 lowercase hex digits");
     const root = module.rootOption(ctx, a, if (args.len > 2) args[2] else quickjs.UNDEFINED, host.cwd) orelse
-        return rejected(ctx, "the workspace root must be an absolute path");
-    if (host.procs.live.items.len >= process.max_processes) return rejected(ctx, "the host runs 64 processes");
+        return pending.rejected(ctx, "the workspace root must be an absolute path");
+    if (host.procs.live.items.len >= process.max_processes) return pending.rejected(ctx, "the host runs 64 processes");
 
     // A job writes to a file, and Python buffers a file in blocks, so the variable keeps its output live.
     var env = host.execution.env.clone(a) catch unreachable;
     env.put("PYTHONUNBUFFERED", "1") catch unreachable;
-    const log = host.logs.next(host.gpa, host.io, host.execution.env, "job") catch return rejected(ctx, "the host could not create the log directory");
+    const log = host.logs.next(host.gpa, host.io, host.execution.env, "job") catch return pending.rejected(ctx, "the host could not create the log directory");
     var funcs: [2]Value = undefined;
     const ended = ctx.newPromiseCapability(&funcs);
     if (ctx.isException(ended)) {
@@ -233,7 +232,7 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
         host.gpa.free(log);
         ctx.freeValue(ended);
         for (funcs) |value| ctx.freeValue(value);
-        return rejected(ctx, process.startMessage(err));
+        return pending.rejected(ctx, process.startMessage(err));
     };
 
     const jobs = &host.jobs;
@@ -295,12 +294,12 @@ const Read = struct {
 /// Read job output from a byte offset. It answers `{ text, next, size }`, so a caller follows a growing log.
 fn jsRead(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (host.phase != .open) return rejected(ctx, "the host is closed");
-    const job = jobOf(ctx, args) orelse return rejected(ctx, "the job does not exist");
+    if (host.phase != .open) return pending.rejected(ctx, "the host is closed");
+    const job = jobOf(ctx, args) orelse return pending.rejected(ctx, "the job does not exist");
     const tail = args.len > 1 and ctx.isNull(args[1]);
     const offset = if (args.len > 1 and !tail) module.integer(ctx, args[1], 0, (1 << 53) - 1) else null;
     const max_bytes = if (args.len > 2) module.integer(ctx, args[2], 4, max_read_bytes) else null;
-    if ((!tail and offset == null) or max_bytes == null) return rejected(ctx, "read needs a byte offset and a byte count from 4 to 262144");
+    if ((!tail and offset == null) or max_bytes == null) return pending.rejected(ctx, "read needs a byte offset and a byte count from 4 to 262144");
     return host.startTask(Read, readTask, .{ .log = host.gpa.dupe(u8, job.log) catch unreachable, .offset = offset, .complete = job.state != .running, .max_bytes = @intCast(max_bytes.?) }, .{});
 }
 

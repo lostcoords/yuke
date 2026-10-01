@@ -84,10 +84,13 @@ pub const FileModel = struct {
 
 /// Project one file model onto the library shape; `arena` owns its effort levels.
 pub fn modelSpec(arena: Allocator, m: FileModel, endpoints: []const ai.route.Endpoint) !ai.model.ModelSpec {
+    const protocol = try modelProtocol(m, endpoints);
+    const reasoning_levels = try arena.alloc(ai.model.ReasoningLevel, m.reasoning_levels.len);
+    for (m.reasoning_levels, reasoning_levels) |level, *out| out.* = .from(level);
     return .{
         .id = m.id,
         .upstream_id = m.upstream_id,
-        .protocol = try modelProtocol(m, endpoints),
+        .protocol = protocol,
         // The file writes no display name, so the id names the model everywhere it is shown.
         .name = m.id,
         .limits = m.limits,
@@ -98,7 +101,7 @@ pub fn modelSpec(arena: Allocator, m: FileModel, endpoints: []const ai.route.End
             .input = if (m.flags.supports_vision) &.{ .text, .image } else &.{.text},
             .output = &.{.text},
         },
-        .reasoning_levels = try levels(arena, m.reasoning_levels),
+        .reasoning_levels = reasoning_levels,
         .dialect = .{
             .thinking_format = m.flags.thinking_format,
             .reasoning_replay = m.flags.reasoning_replay,
@@ -120,12 +123,6 @@ fn modelProtocol(m: FileModel, endpoints: []const ai.route.Endpoint) error{ NoEn
 fn validateSearchCapability(m: FileModel, protocol: ?ai.route.Protocol) error{BadCapability}!void {
     if (m.flags.supports_tool_search == true and
         (protocol == .openai_chat or !m.flags.supports_tools)) return error.BadCapability;
-}
-
-fn levels(arena: Allocator, patch: []const ?[]const u8) ![]const ai.model.ReasoningLevel {
-    const out = try arena.alloc(ai.model.ReasoningLevel, patch.len);
-    for (patch, 0..) |level, i| out[i] = .from(level);
-    return out;
 }
 
 /// The file shape. Only `id` is required, and a catalog row can supply an absent routing field.

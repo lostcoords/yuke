@@ -13,7 +13,6 @@ const support = @import("../tests/support.zig");
 
 const Context = quickjs.Context;
 const Value = quickjs.Value;
-const rejected = pending.rejected;
 
 /// The most live children. A spawn past the limit throws `RangeError`.
 pub const max_processes = 64;
@@ -399,7 +398,7 @@ pub fn launch(host: *Host, program: runner.Program, on_output: Value, funcs: [2]
 fn failStart(ctx: Context, handle: Value, funcs: *[2]Value, message: []const u8) Value {
     ctx.freeValue(funcs[0]);
     ctx.freeValue(funcs[1]);
-    module.set(ctx, handle, "exited", rejected(ctx, message));
+    module.set(ctx, handle, "exited", pending.rejected(ctx, message));
     module.set(ctx, handle, "id", ctx.newInt32(0));
     return handle;
 }
@@ -407,17 +406,17 @@ fn failStart(ctx: Context, handle: Value, funcs: *[2]Value, message: []const u8)
 /// Queue text for stdin. The promise resolves after the pipe accepts every byte.
 fn jsWrite(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (!host.acceptsIo()) return rejected(ctx, "the host is closed");
-    const proc = procOf(ctx, host, args) orelse return rejected(ctx, "the process does not exist");
-    if (args.len < 2 or !ctx.isString(args[1])) return rejected(ctx, "write needs text");
+    if (!host.acceptsIo()) return pending.rejected(ctx, "the host is closed");
+    const proc = procOf(ctx, host, args) orelse return pending.rejected(ctx, "the process does not exist");
+    if (args.len < 2 or !ctx.isString(args[1])) return pending.rejected(ctx, "write needs text");
 
     proc.writes_lock.lockUncancelable(host.io);
     defer proc.writes_lock.unlock(host.io);
-    if (proc.stdin == null or proc.close_after or proc.done.load(.acquire)) return rejected(ctx, "the process input is closed");
-    const text = ctx.toCStringLen(args[1]) catch return rejected(ctx, "the process input could not be read");
+    if (proc.stdin == null or proc.close_after or proc.done.load(.acquire)) return pending.rejected(ctx, "the process input is closed");
+    const text = ctx.toCStringLen(args[1]) catch return pending.rejected(ctx, "the process input could not be read");
     defer ctx.freeCString(text.ptr);
     if (text.len > max_write_bytes - proc.write_bytes or proc.writes.len >= max_writes)
-        return rejected(ctx, "the process input queue is full; await write before retry");
+        return pending.rejected(ctx, "the process input queue is full; await write before retry");
     const started = host.ops.start(ctx) orelse return ctx.throw(ctx.getException());
     proc.writes.pushBack(host.gpa, .{ .bytes = host.gpa.dupe(u8, text) catch unreachable, .op = started.op }) catch unreachable;
     proc.write_bytes += text.len;

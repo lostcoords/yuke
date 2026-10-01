@@ -58,7 +58,7 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
     defer boundary_state.deinit();
     const boundary_arena = boundary_state.allocator();
     begin(engine, boundary_arena, slot) catch |err| {
-        commitFinal(engine, boundary_arena, slot, null, false, null, if (err == error.Canceled) .canceled else .{ .failed = failure(boundary_arena, err) });
+        commitFinal(engine, boundary_arena, slot, null, false, null, if (err == error.Canceled) .canceled else .{ .failed = provider.failure.outcome(boundary_arena, err, &.{}) });
         return;
     };
 
@@ -165,13 +165,13 @@ fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer
     };
     std.debug.assert(built != null);
     // The commit prices the round at the prices this request used, so they outlive the build state.
-    const cost = proto.dupe(out, built.?.cost) catch |err| return .{ .failed = failure(out, err) };
+    const cost = proto.dupe(out, built.?.cost) catch |err| return .{ .failed = provider.failure.outcome(out, err, &.{}) };
     // The build state dies here, so the projected transcript and the blob bytes do not stay live while the stream runs.
     _ = round_state.reset(.free_all);
 
     const rt = streamer.session;
     const session_id = slot.sessionId();
-    beginRound(engine, arena, slot) catch |err| return .{ .failed = failure(out, err) };
+    beginRound(engine, arena, slot) catch |err| return .{ .failed = provider.failure.outcome(out, err, &.{}) };
     slot.progress.current.?.cost = cost;
     const created_at = slot.progress.current.?.created_at_ms;
     const started_note: proto.rpc.Notification = .{ .method = .@"message.started", .params = .{ .message_started_data = .{
@@ -183,7 +183,7 @@ fn streamRound(engine: *Engine, out: std.mem.Allocator, slot: *RunSlot, streamer
     } } };
     // Fold the start into the session, then publish. The fold opens the draft.
     rt.apply(started_note.params) catch |err| {
-        return .{ .failed = failure(out, err) };
+        return .{ .failed = provider.failure.outcome(out, err, &.{}) };
     };
     engine.sinks.emit(started_note);
     std.debug.assert(slot.round == .none); // the last round closed before this one opened
@@ -340,15 +340,8 @@ fn streamChild(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, stream
 const Terminal = union(enum) {
     success: proto.enums.StopReason,
     canceled,
-    failed: Failure,
+    failed: proto.run.RunOutcomeFailed,
 };
-
-const Failure = proto.run.RunOutcomeFailed;
-
-/// Describe a failure that no provider attempt explains, in `arena`, which must outlive the round.
-fn failure(arena: std.mem.Allocator, err: anyerror) Failure {
-    return provider.failure.outcome(arena, err, &.{});
-}
 
 /// Price the tokens of one round at the band that its prompt reaches. Return null when a needed price is unknown.
 fn priceRound(bands: []const ai.model.PriceBand, usage: message.TokenUsage) ?message.MessageCost {

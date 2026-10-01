@@ -9,8 +9,6 @@ const process = @import("../host/process.zig");
 const pending = @import("../pending.zig");
 const utf8 = @import("../../utf8.zig");
 
-const rejected = pending.rejected;
-
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
@@ -78,24 +76,24 @@ const Request = struct {
 /// Run one shell command. A refused argument rejects, so a caller reads one failure shape.
 fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (!host.acceptsIo()) return rejected(ctx, "the host is closed");
-    if (args.len == 0) return rejected(ctx, "exec needs a command");
+    if (!host.acceptsIo()) return pending.rejected(ctx, "the host is closed");
+    if (args.len == 0) return pending.rejected(ctx, "exec needs a command");
 
     const options: Value = if (args.len > 1) args[1] else quickjs.UNDEFINED;
     const signal = if (ctx.isObject(options)) ctx.getPropertyStr(options, "signal") else quickjs.UNDEFINED;
     defer ctx.freeValue(signal);
-    if (ctx.isException(signal)) return rejected(ctx, "the exec signal could not be read");
+    if (ctx.isException(signal)) return pending.rejected(ctx, "the exec signal could not be read");
     const on_output = if (ctx.isObject(options)) ctx.getPropertyStr(options, "onOutput") else quickjs.UNDEFINED;
     defer ctx.freeValue(on_output);
-    if (!ctx.isUndefined(on_output) and !ctx.isFunction(on_output)) return rejected(ctx, "onOutput must be a function");
+    if (!ctx.isUndefined(on_output) and !ctx.isFunction(on_output)) return pending.rejected(ctx, "onOutput must be a function");
 
     // The task cannot touch JavaScript, so every argument is copied before it starts.
     const log = if (ctx.isObject(options)) ctx.getPropertyStr(options, "log") else quickjs.UNDEFINED;
     defer ctx.freeValue(log);
-    if (!ctx.isUndefined(log) and !ctx.isNull(log) and !ctx.isBool(log)) return rejected(ctx, "log must be a boolean");
+    if (!ctx.isUndefined(log) and !ctx.isNull(log) and !ctx.isBool(log)) return pending.rejected(ctx, "log must be a boolean");
     const wants_log = ctx.isBool(log) and (ctx.toBool(log) catch unreachable); // `isBool` holds, so the conversion cannot fail.
     var request = Request.parse(ctx, host.gpa, args, options, host.cwd) catch |err|
-        return rejected(ctx, switch (err) {
+        return pending.rejected(ctx, switch (err) {
             error.CommandType => "the command must be a string",
             error.CommandBlank => "the command must not be blank",
             error.CommandNul => "the command must not hold a NUL byte",

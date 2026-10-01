@@ -403,7 +403,7 @@ test "queued input and compaction retain process activity through successor admi
 
         fn onActivity(ctx: *anyopaque) void {
             const self: *@This() = @ptrCast(@alignCast(ctx));
-            const busy = self.engine.isBusy();
+            const busy = self.engine.load().busy();
             if (self.last == busy) return;
             self.last = busy;
             self.changes += 1;
@@ -415,9 +415,9 @@ test "queued input and compaction retain process activity through successor admi
     var probe: Probe = .{ .engine = &f.engine };
     f.engine.sinks.add(.{ .ctx = &probe, .on_event = Probe.onEvent, .on_activity = Probe.onActivity });
     defer f.engine.sinks.remove(&probe);
-    try testing.expect(!f.engine.isBusy());
+    try testing.expect(!f.engine.load().busy());
     _ = try f.send(&.{.{ .text = .{ .text = "first" } }});
-    try testing.expect(f.engine.isBusy());
+    try testing.expect(f.engine.load().busy());
     const resident = f.engine.sessions.get(Fixture.id).?;
     try testing.expectEqual(@as(u32, 0), resident.pins);
     var queued_gate: ?Launch = null;
@@ -434,7 +434,7 @@ test "queued input and compaction retain process activity through successor admi
     try finishRunOpen(&f.engine, f.arena.allocator(), slot, .{ .turn = .{ .finish = .stop, .rounds = 0 } });
     finishSlot(&f.engine, slot);
     try test_resources.awaitLiveIdle(&f.engine, Fixture.id);
-    try testing.expect(!f.engine.isBusy());
+    try testing.expect(!f.engine.load().busy());
     try testing.expectEqual(@as(usize, 2), probe.changes);
     try testing.expectEqual(@as(i64, 3), try eventCount(&f.db, "run.started"));
 }
@@ -527,7 +527,7 @@ test "launch failure releases both run kinds and preserves a failed terminal tra
                 .compaction => try prepareCompaction(&f.engine, resident, .manual, null),
             };
             const run_id = slot.runId();
-            try testing.expect(f.engine.isBusy());
+            try testing.expect(f.engine.load().busy());
             if (reject_terminal) try f.db.conn.execNoArgs("CREATE TEMP TRIGGER refuse_done BEFORE INSERT ON events WHEN NEW.name = 'run.done' BEGIN SELECT RAISE(FAIL, 'test refusal'); END");
             var notice: Notice = .{ .session = resident };
             f.engine.sinks.add(.{ .ctx = &notice, .on_event = Notice.onEvent });
@@ -540,7 +540,7 @@ test "launch failure releases both run kinds and preserves a failed terminal tra
 
             try testing.expectError(error.ConcurrencyUnavailable, launch(&f.engine, slot));
             try testing.expect(resident.active_run == null);
-            try testing.expect(!f.engine.isBusy());
+            try testing.expect(!f.engine.load().busy());
             try testing.expectEqual(reject_terminal, resident.faulted);
             try testing.expectEqual(reject_terminal, notice.seen);
             try testing.expectEqual(@as(usize, 0), f.capture.requests.items.len);

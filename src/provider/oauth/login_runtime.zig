@@ -11,10 +11,6 @@ const oauth = provider.oauth;
 pub const Flow = enum {
     xai,
     codex,
-
-    pub fn parse(name: []const u8) ?Flow {
-        return std.meta.stringToEnum(Flow, name);
-    }
 };
 
 /// One live login. The RPC task sets the flag and the event; the login task reads both.

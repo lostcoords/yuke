@@ -7,8 +7,6 @@ const provider = @import("provider.zig");
 const registry = @import("registry.zig");
 const catalog = ai.catalog;
 
-const resolve = registry.resolve;
-const credential = registry.credential;
 const EnvMap = std.process.Environ.Map;
 
 /// The environment every case without a named credential borrows. An empty environment allocates nothing, so no test frees it.
@@ -48,7 +46,7 @@ const Merge = struct {
         errdefer self.arena.deinit();
         self.loaded = try provider.config.loadBytes(testing.allocator, json);
         errdefer self.loaded.deinit();
-        self.rows = try resolve(self.arena.allocator(), .{ .local = &self.loaded, .catalog = rows, .env = env });
+        self.rows = try registry.resolve(self.arena.allocator(), .{ .local = &self.loaded, .catalog = rows, .env = env });
     }
 
     fn deinit(self: *Merge) void {
@@ -182,8 +180,8 @@ test "a lapsed grant presents no credential to a run" {
     defer m.deinit();
     const route = routeOf(&m.rows[0]);
     // The run reads the clock, so a grant that lapses needs no catalog rebuild.
-    try testing.expect(credential(route.credential, &no_env, 999) != null);
-    try testing.expect(credential(route.credential, &no_env, 1000) == null);
+    try testing.expect(registry.credential(route.credential, &no_env, 999) != null);
+    try testing.expect(registry.credential(route.credential, &no_env, 1000) == null);
 }
 
 test "an entry that names a key and holds none needs a credential" {
@@ -305,7 +303,7 @@ test "an empty environment value is no credential" {
     , &.{}, &env);
     defer m.deinit();
     try testing.expectEqual(proto.enums.ProviderState.needs_credential, m.rows[0].availability.state());
-    try testing.expect(credential(.{ .env = "EMPTY_KEY" }, &env, 0) == null);
+    try testing.expect(registry.credential(.{ .env = "EMPTY_KEY" }, &env, 0) == null);
 }
 
 test "an environment credential resolves through the production path" {
@@ -322,7 +320,7 @@ test "an environment credential resolves through the production path" {
     const route = routeOf(&m.rows[0]);
     // The row names the variable, and the run reads it again when it starts.
     try testing.expectEqualStrings("ACME_KEY", route.credential.env);
-    try testing.expectEqualStrings("sk-from-env", credential(route.credential, &env, 0).?.api_key);
+    try testing.expectEqualStrings("sk-from-env", registry.credential(route.credential, &env, 0).?.api_key);
 }
 fn oauthCatalogRow(id: []const u8, flow: []const u8) catalog.Provider {
     return .{

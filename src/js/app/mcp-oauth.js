@@ -193,11 +193,6 @@ function stored(url) {
   return /** @type {Grant} */ (grant);
 }
 
-/** @param {string} url */
-export function forget(url) {
-  mcpNative.removeRecord("mcp-oauth", url);
-}
-
 // The challenge scope is what the current operation needs, so configured scopes join it and never replace it.
 /** @param {string[] | undefined} configured @param {string | undefined} challenged @returns {string | undefined} */
 function scopeFor(configured, challenged) {

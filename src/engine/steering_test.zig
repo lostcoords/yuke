@@ -51,18 +51,18 @@ const Fixture = struct {
     }
 
     fn start(self: *Fixture) !void {
-        try testing.expect(!self.base.engine.isBusy());
+        try testing.expect(!self.base.engine.load().busy());
         _ = try self.send("initial task");
-        try testing.expect(self.base.engine.isBusy());
+        try testing.expect(self.base.engine.load().busy());
         runs.Launch.release(&self.base.gate, &self.base.engine);
         try testing.expect(try util.waitEvent(self.base.engine.deps.io, &self.entered, .{ .duration = .{ .raw = .fromSeconds(5), .clock = .awake } }));
-        try testing.expect(self.base.engine.isBusy());
+        try testing.expect(self.base.engine.load().busy());
     }
 
     fn finish(self: *Fixture) !void {
         self.release.set(self.base.engine.deps.io);
         try Resources.awaitLiveIdle(&self.base.engine, id);
-        try testing.expect(!self.base.engine.isBusy());
+        try testing.expect(!self.base.engine.load().busy());
     }
 
     fn pause(self: *Fixture) !void {
@@ -80,7 +80,7 @@ const Fixture = struct {
             .@"run.done" => self.run_done.append(a, proto.dupe(a, note.params.run_done_data) catch @panic("out of memory")) catch @panic("out of memory"),
             .@"session.activity_changed" => {
                 const activity = note.params.session_activity_changed_data.activity;
-                if (activity.state != .idle) std.debug.assert(self.base.engine.isBusy());
+                if (activity.state != .idle) std.debug.assert(self.base.engine.load().busy());
                 self.activity = proto.dupe(a, activity) catch @panic("out of memory");
                 self.phases.append(a, activity.state) catch @panic("out of memory");
             },

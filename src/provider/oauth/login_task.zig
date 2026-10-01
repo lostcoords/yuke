@@ -17,8 +17,6 @@ const xai = provider.oauth_xai;
 const codex = provider.oauth_codex;
 
 /// One login response fits this. The flows read a token document, never a model list.
-const response_bytes = http.max_oauth_response_bytes;
-
 /// No flow reports a lifetime, so the engine bounds the login to a fixed maximum.
 const max_lifetime_ms: u64 = 15 * 60 * 1000;
 
@@ -43,7 +41,7 @@ pub fn run(runtime: *App, slot: *login_runtime.LoginSlot) void {
 
 /// Poll through `seam` until one terminal outcome. A test replays the provider through it.
 fn drive(runtime: *App, slot: *login_runtime.LoginSlot, seam: oauth.Http) !proto.auth.AuthLoginOutcome {
-    const body = try runtime.gpa.alloc(u8, response_bytes);
+    const body = try runtime.gpa.alloc(u8, http.max_oauth_response_bytes);
     defer runtime.gpa.free(body);
 
     // The clock counts the request time too, so a slow provider cannot outlast the deadline.
@@ -153,7 +151,7 @@ pub fn refreshOnce(runtime: *App, margin_ms: u64) !bool {
     defer client.deinit();
     const seam = oauth.Http.fromClient(&client);
 
-    const body = try arena.alloc(u8, response_bytes);
+    const body = try arena.alloc(u8, http.max_oauth_response_bytes);
     // `dueGrant` selects only a grant that can rotate, so this token is present.
     const old = due.grant.refresh_token.?;
 
@@ -223,7 +221,7 @@ fn dueGrant(runtime: *App, arena: std.mem.Allocator, margin_ms: u64) !?Due {
 
         const row = ai.catalog.find(p.id) orelse continue;
         const flow = switch (row.auth) {
-            .oauth => |name| login_runtime.Flow.parse(name) orelse continue,
+            .oauth => |name| std.meta.stringToEnum(login_runtime.Flow, name) orelse continue,
             .api_key => continue,
         };
         // The refresh yields, so a concurrent edit could free the layer these slices point into.

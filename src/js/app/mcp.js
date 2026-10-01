@@ -6,7 +6,7 @@ import { fs } from "yuke:internal/native/fs";
 import { showInfo } from "yuke:internal/info-panel";
 import { endpointFor, headerValue, LISTEN_RETRY_MS, LISTEN_RETRY_MAX_MS } from "yuke:internal/mcp-transport";
 import { client } from "yuke:internal/client";
-import { signIn, forget, record } from "yuke:internal/mcp-oauth";
+import { signIn, record } from "yuke:internal/mcp-oauth";
 import { errorText } from "yuke:internal/format";
 import { openUrl } from "yuke:internal/browser";
 import { notify } from "yuke:internal/kernel";
@@ -1021,8 +1021,9 @@ export function mcp(options = {}) {
     async logout(name) {
       await loaded;
       const index = remoteIndex(name);
-      forget(/** @type {string} */ (/** @type {Server} */ (servers[index]).endpoint?.url));
-      if (/** @type {Server} */ (servers[index]).state !== "untrusted") await restart(index);
+      const server = /** @type {Server} */ (servers[index]);
+      mcpNative.removeRecord("mcp-oauth", /** @type {string} */ (server.endpoint?.url));
+      if (server.state !== "untrusted") await restart(index);
     },
     // A reset server starts over as a new, untrusted instance.
     async resetTrust() {

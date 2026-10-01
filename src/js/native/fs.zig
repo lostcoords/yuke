@@ -9,9 +9,6 @@ const LocalHost = @import("../host/local.zig").LocalHost;
 const paths = @import("../../paths.zig");
 const pending = @import("../pending.zig");
 
-const resolved = pending.resolved;
-const rejected = pending.rejected;
-
 const Context = quickjs.Context;
 const Value = quickjs.Value;
 
@@ -79,10 +76,10 @@ const read_limits: os.ReadLimits = .{
 fn jsReadFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     // The task cannot touch JavaScript, so the path is copied before it starts.
-    const root = module.rootOption(ctx, host.gpa, if (args.len > 1) args[1] else quickjs.UNDEFINED, host.cwd) orelse return rejected(ctx, "the workspace root must be an absolute path");
+    const root = module.rootOption(ctx, host.gpa, if (args.len > 1) args[1] else quickjs.UNDEFINED, host.cwd) orelse return pending.rejected(ctx, "the workspace root must be an absolute path");
     const path = ownedPath(ctx, host.gpa, args, 0, host.cwd) orelse {
         host.gpa.free(root);
-        return rejected(ctx, "the path must be a string with no NUL byte");
+        return pending.rejected(ctx, "the path must be a string with no NUL byte");
     };
     return host.startTask(ReadRequest, readTask, .{ .path = path, .root = root }, .{});
 }
@@ -90,15 +87,15 @@ fn jsReadFile(ctx: Context, _: Value, args: []const Value) Value {
 /// Read bounded whole lines. The task owns the path and returns a small JSON range descriptor.
 fn jsReadRange(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const root = module.rootOption(ctx, host.gpa, if (args.len > 1) args[1] else quickjs.UNDEFINED, host.cwd) orelse return rejected(ctx, "the workspace root must be an absolute path");
+    const root = module.rootOption(ctx, host.gpa, if (args.len > 1) args[1] else quickjs.UNDEFINED, host.cwd) orelse return pending.rejected(ctx, "the workspace root must be an absolute path");
     const path = ownedPath(ctx, host.gpa, args, 0, host.cwd) orelse {
         host.gpa.free(root);
-        return rejected(ctx, "the path must be a string with no NUL byte");
+        return pending.rejected(ctx, "the path must be a string with no NUL byte");
     };
     const range = rangeArg(ctx, args, 1) catch {
         host.gpa.free(path);
         host.gpa.free(root);
-        return rejected(ctx, "the read range is invalid");
+        return pending.rejected(ctx, "the read range is invalid");
     };
     return host.startTask(ReadRequest, readRangeTask, .{ .path = path, .root = root, .range = range }, .{});
 }
@@ -152,54 +149,54 @@ fn boundArg(ctx: Context, obj: Value, name: [:0]const u8) error{InvalidOption}!?
 /// Replace a file's whole content. It answers the byte count it wrote.
 fn jsWriteFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const root = module.rootOption(ctx, host.gpa, if (args.len > 2) args[2] else quickjs.UNDEFINED, host.cwd) orelse return rejected(ctx, "the workspace root must be an absolute path");
+    const root = module.rootOption(ctx, host.gpa, if (args.len > 2) args[2] else quickjs.UNDEFINED, host.cwd) orelse return pending.rejected(ctx, "the workspace root must be an absolute path");
     defer host.gpa.free(root);
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
     var local: LocalHost = .{ .io = host.io, .root = root, .env = host.execution.env };
 
-    if (args.len < 2) return rejected(ctx, "writeFile needs a path and content");
-    const path = ownedPath(ctx, arena.allocator(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
-    const raw = module.string(ctx, args[1]) orelse return rejected(ctx, "the content must be a string");
+    if (args.len < 2) return pending.rejected(ctx, "writeFile needs a path and content");
+    const path = ownedPath(ctx, arena.allocator(), args, 0, root) orelse return pending.rejected(ctx, "the path must be a string with no NUL byte");
+    const raw = module.string(ctx, args[1]) orelse return pending.rejected(ctx, "the content must be a string");
     defer ctx.freeCString(raw.ptr);
 
-    local.writeFile(arena.allocator(), path, raw) catch |err| return rejected(ctx, errorMessage(err));
-    return resolved(ctx, ctx.newInt64(@intCast(raw.len)));
+    local.writeFile(arena.allocator(), path, raw) catch |err| return pending.rejected(ctx, errorMessage(err));
+    return pending.resolved(ctx, ctx.newInt64(@intCast(raw.len)));
 }
 
 /// Describe one path, or answer null when nothing is there. The answer names the anchored path.
 fn jsStat(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const root = module.rootOption(ctx, host.gpa, if (args.len > 1) args[1] else quickjs.UNDEFINED, host.cwd) orelse return rejected(ctx, "the workspace root must be an absolute path");
+    const root = module.rootOption(ctx, host.gpa, if (args.len > 1) args[1] else quickjs.UNDEFINED, host.cwd) orelse return pending.rejected(ctx, "the workspace root must be an absolute path");
     defer host.gpa.free(root);
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
     var local: LocalHost = .{ .io = host.io, .root = root, .env = host.execution.env };
 
-    const path = ownedPath(ctx, arena.allocator(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
+    const path = ownedPath(ctx, arena.allocator(), args, 0, root) orelse return pending.rejected(ctx, "the path must be a string with no NUL byte");
     const info = local.stat(arena.allocator(), path) catch |err| switch (err) {
-        error.NotFound => return resolved(ctx, quickjs.NULL),
-        else => return rejected(ctx, errorMessage(err)),
+        error.NotFound => return pending.resolved(ctx, quickjs.NULL),
+        else => return pending.rejected(ctx, errorMessage(err)),
     };
-    return resolved(ctx, module.toJs(ctx, info));
+    return pending.resolved(ctx, module.toJs(ctx, info));
 }
 
 /// Remove one regular file, and resolve false for a missing path, so a cleanup needs no `stat` first.
 fn jsRemoveFile(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    if (args.len < 1 or !ctx.isString(args[0])) return rejected(ctx, "removeFile needs a path");
-    const root = module.rootOption(ctx, host.gpa, if (args.len > 1) args[1] else quickjs.UNDEFINED, host.cwd) orelse return rejected(ctx, "the workspace root must be an absolute path");
+    if (args.len < 1 or !ctx.isString(args[0])) return pending.rejected(ctx, "removeFile needs a path");
+    const root = module.rootOption(ctx, host.gpa, if (args.len > 1) args[1] else quickjs.UNDEFINED, host.cwd) orelse return pending.rejected(ctx, "the workspace root must be an absolute path");
     defer host.gpa.free(root);
     var arena: std.heap.ArenaAllocator = .init(host.gpa);
     defer arena.deinit();
     var local: LocalHost = .{ .io = host.io, .root = root, .env = host.execution.env };
 
-    const path = ownedPath(ctx, arena.allocator(), args, 0, root) orelse return rejected(ctx, "the path must be a string with no NUL byte");
+    const path = ownedPath(ctx, arena.allocator(), args, 0, root) orelse return pending.rejected(ctx, "the path must be a string with no NUL byte");
     local.removeFile(arena.allocator(), path) catch |err| switch (err) {
-        error.NotFound => return resolved(ctx, ctx.newBool(false)),
-        else => return rejected(ctx, errorMessage(err)),
+        error.NotFound => return pending.resolved(ctx, ctx.newBool(false)),
+        else => return pending.rejected(ctx, errorMessage(err)),
     };
-    return resolved(ctx, ctx.newBool(true));
+    return pending.resolved(ctx, ctx.newBool(true));
 }
 
 /// List the directories inside one path as a `Page`; a null or absent path is the directory the TUI runs in, and an unreadable one rejects.
@@ -210,19 +207,19 @@ fn jsList(ctx: Context, _: Value, args: []const Value) Value {
     const arena = arena_state.allocator();
     var local: LocalHost = .{ .io = host.io, .root = host.cwd, .env = host.execution.env };
 
-    const requested = ownedPath(ctx, arena, args, 0, host.cwd) orelse return rejected(ctx, "the path must be a string with no NUL byte");
+    const requested = ownedPath(ctx, arena, args, 0, host.cwd) orelse return pending.rejected(ctx, "the path must be a string with no NUL byte");
     const path = paths.canonicalizeWorkspace(arena, host.execution.env, requested) catch |err| switch (err) {
-        error.HomeUnavailable => return rejected(ctx, errorMessage(error.HomeUnavailable)),
-        else => return rejected(ctx, "the path is not a directory this process can read"),
+        error.HomeUnavailable => return pending.rejected(ctx, errorMessage(error.HomeUnavailable)),
+        else => return pending.rejected(ctx, "the path is not a directory this process can read"),
     };
     const page = local.listDir(arena, path, max_entries) catch |err|
-        return rejected(ctx, errorMessage(err));
+        return pending.rejected(ctx, errorMessage(err));
 
     var aw: std.Io.Writer.Allocating = .init(host.gpa);
     defer aw.deinit();
     std.json.Stringify.value(pageOf(arena, path, page), .{}, &aw.writer) catch unreachable;
     // The page is our own JSON, so the parse fails only once the QuickJS heap is full.
-    return resolved(ctx, module.parseWritten(ctx, &aw, "yuke:internal/native/fs"));
+    return pending.resolved(ctx, module.parseWritten(ctx, &aw, "yuke:internal/native/fs"));
 }
 
 /// Build the answer. Each entry carries its whole path, so the caller never joins one itself.

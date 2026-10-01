@@ -117,10 +117,6 @@ pub fn load(self: *const Engine) Load {
     return out;
 }
 
-pub fn isBusy(self: *const Engine) bool {
-    return self.load().busy();
-}
-
 pub fn beginContinuation(self: *Engine) void {
     std.debug.assert(self.continuations < std.math.maxInt(usize));
     self.continuations += 1;
@@ -328,7 +324,6 @@ fn loadSession(self: *Engine, session_id: proto.ids.SessionId) !Session {
     for (pending) |entry| try resident.queueOnQueued(entry.input);
     return resident;
 }
-
 
 /// Draw a retry jitter in [0, 1) from the UUIDv7 bytes that stay random.
 pub fn jitter(self: *const Engine) f64 {

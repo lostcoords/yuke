@@ -53,7 +53,7 @@ pub fn authLogin(runtime: *App, arena: std.mem.Allocator, params: proto.auth.Aut
     if (runtime.logins.byProvider(params.provider_id) != null) return error.LoginInProgress;
 
     const row = provider_registry.find(runtime.store.merged.rows, params.provider_id) orelse return error.UnknownProvider;
-    const flow = login_runtime.Flow.parse(row.login_flow orelse return error.NoLoginFlow) orelse return error.NoLoginFlow;
+    const flow = std.meta.stringToEnum(login_runtime.Flow, row.login_flow orelse return error.NoLoginFlow) orelse return error.NoLoginFlow;
 
     // The slot arena owns the code and the url, because the login outlives this request arena.
     var slot_arena: std.heap.ArenaAllocator = .init(runtime.gpa);
