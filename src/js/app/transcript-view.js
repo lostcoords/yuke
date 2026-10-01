@@ -392,23 +392,23 @@ export const defaultRender = {
   },
 };
 
-/** The groups of the default look. A tool block background is empty, so a theme gives it a color: `TxToolPendingBg`, `TxToolSuccessBg`, and `TxToolErrorBg`. */
+/** The groups of the default look. A pending, failed, or canceled tool block has a background color. A completed one has none. */
 const TX_GROUPS = {
-  TxUser: { reverse: true },
+  TxUser: { fg: "surfaceFg", bg: "surface" },
   TxThought: { fg: "fg", dim: true, italic: true },
   TxMeta: { fg: "fg", dim: true },
   TxError: { fg: "danger", bold: true },
   TxToolTitle: { fg: "fg", bold: true },
-  TxToolArg: { fg: "fg" },
-  TxToolOutput: { fg: "fg", dim: true },
-  TxToolHint: { fg: "fg", dim: true },
+  TxToolArg: { fg: "accent" },
+  TxToolOutput: { fg: "surfaceFg", dim: true },
+  TxToolHint: { fg: "surfaceFg", dim: true },
   TxToolError: { fg: "danger" },
-  TxToolPendingBg: {},
+  TxToolPendingBg: { bg: "pendingBg" },
   TxToolSuccessBg: {},
-  TxToolErrorBg: {},
-  TxDiffAdd: { fg: "fg", bold: true },
-  TxDiffDel: { fg: "fg", dim: true },
-  TxDiffContext: { fg: "fg", dim: true },
+  TxToolErrorBg: { bg: "errorBg" },
+  TxDiffAdd: { fg: "strongFg", bg: "diffAddBg" },
+  TxDiffDel: { fg: "danger", bg: "diffDelBg" },
+  TxDiffContext: { fg: "surfaceFg", dim: true },
 };
 
 /** The `transcript` plugin: the default look of every chat transcript and its style groups. Dispose it to start a look from nothing. */

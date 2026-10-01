@@ -528,7 +528,7 @@ import ViewLike = $types_core.ViewLike;
 /**
  * The highlight groups and the palette. A group merges its default (from `set` with `{ default: true }`), then the active theme, then each other `set` in call order.
  * The palette starts from the default palette of `colorDepth()` and the terminal background, then the theme, then each `setPalette`.
- * The core groups use only `fg`, `bg`, and `danger`: emphasis is weight and inversion.
+ * The core groups name the default palette colors, so a theme recolors them through the palette.
  */
 export const style: StyleConfig;
 /**

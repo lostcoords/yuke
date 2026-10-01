@@ -36,7 +36,7 @@ const BASE_PALETTES = {
   },
   "256": {
     dark: { fg: "reset", bg: "reset", surfaceFg: 255, strongFg: 231, accent: 151, accentMuted: 23, surface: 237, warn: 179, danger: 209, pendingBg: 58, errorBg: 52, diffAddBg: 22, diffDelBg: 52 },
-    light: { fg: "reset", bg: "reset", surfaceFg: 235, strongFg: 233, accent: 29, accentMuted: 151, surface: 255, warn: 94, danger: 160, pendingBg: 230, errorBg: 224, diffAddBg: 194, diffDelBg: 224 },
+    light: { fg: "reset", bg: "reset", surfaceFg: 235, strongFg: 233, accent: 29, accentMuted: 151, surface: 255, warn: 94, danger: 124, pendingBg: 230, errorBg: 224, diffAddBg: 194, diffDelBg: 224 },
   },
 };
 
@@ -75,7 +75,7 @@ let overlayGroupId = 0;
 /**
  * The highlight groups and the palette. A group merges its default (from `set` with `{ default: true }`), then the active theme, then each other `set` in call order.
  * The palette starts from the default palette of `colorDepth()` and the terminal background, then the theme, then each `setPalette`.
- * The core groups use only `fg`, `bg`, and `danger`: emphasis is weight and inversion.
+ * The core groups name the default palette colors, so a theme recolors them through the palette.
  * @type {StyleConfig}
  */
 export const style = {
@@ -1718,7 +1718,7 @@ events.on("colors.changed", () => style._apply({ palette: {} }));
 // Each style change repaints `root`, so the core defaults register after it exists.
 style.set({
   Normal: { fg: "fg", bg: "bg" },
-  YukeBrand: { fg: "fg", bold: true },
+  YukeBrand: { fg: "accent", bold: true },
   YukeStatus: { fg: "fg", dim: true },
   YukeRule: { fg: "fg", dim: true },
   YukeEmpty: { fg: "fg", dim: true },

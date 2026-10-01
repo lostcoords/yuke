@@ -22,17 +22,17 @@ const UI_GROUPS = /** @type {Record<string, StyleGroup>} */ ({
   UIBorder: { fg: "fg", dim: true },
   UITitle: { fg: "fg", bold: true },
   UIItem: { fg: "fg" },
-  UIItemSel: { reverse: true },
-  UIPrompt: { fg: "fg", bold: true },
+  UIItemSel: { fg: "surfaceFg", bg: "accentMuted" },
+  UIPrompt: { fg: "accent", bold: true },
   UIQuery: { fg: "fg" },
   UIBody: { fg: "fg" },
   UIComposer: { fg: "fg", bg: "bg" },
-  UIComposerPrompt: { link: "UIComposer", bold: true },
-  UIComposerPromptInactive: { link: "UIComposer", dim: true },
+  UIComposerPrompt: { link: "UIComposer", fg: "accent", bold: true },
+  UIComposerPromptInactive: { link: "UIComposer", fg: "accent", dim: true },
   UIComposerPlaceholder: { link: "UIComposer", dim: true },
   UIDim: { fg: "fg", dim: true },
-  UIDimSel: { reverse: true },
-  TxSelect: { reverse: true },
+  UIDimSel: { fg: "surfaceFg", bg: "accentMuted" },
+  TxSelect: { fg: "surfaceFg", bg: "accentMuted" },
 });
 style.set(UI_GROUPS, { default: true });
 

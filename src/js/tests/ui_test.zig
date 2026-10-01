@@ -415,6 +415,10 @@ test "the default palette follows the color depth and the background, and a them
     try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
 }
 
+test "the default look colors its groups through the palette, and a selection stays visible over a user message" {
+    try support.run("ui/default-look.test.js");
+}
+
 test "the chat pane names the region that reads the keyboard" {
     try support.run("ui/region.test.js");
 }

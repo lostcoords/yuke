@@ -62,7 +62,7 @@ export const toastsPlugin = {
       // An unload removes the groups with the toasts that use them.
       ctx.tui.style.set({
         NotifyInfo: { fg: "fg", dim: true },
-        NotifyWarn: { fg: "fg", bold: true },
+        NotifyWarn: { fg: "warn", bold: true },
         NotifyError: { fg: "danger", bold: true },
       }, { default: true });
 
