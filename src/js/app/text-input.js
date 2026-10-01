@@ -41,15 +41,16 @@ export function caretRowCol(s, rows, caret) {
   return { row: rows.length - 1, col: term.measure(s.slice(last.start, last.end)) };
 }
 
-// Return the caret index in `row` closest to the cell column `col`.
-/** @param {string} s @param {WrapRow} row @param {number} col @returns {number} */
-export function caretAtCol(s, row, col) {
+// Return the caret index in `row` before the grapheme under the cell column `col`, or after it when `after` is true.
+/** @param {string} s @param {WrapRow} row @param {number} col @param {boolean} [after] @returns {number} */
+export function caretAtCol(s, row, col, after = false) {
   const line = s.slice(row.start, row.end);
   const gs = term.graphemes(line);
   let w = 0;
   for (let k = 0; k < gs.length; k += 3) {
     const cellWidth = /** @type {number} */ (gs[k + 2]);
-    if (w + cellWidth > col) return row.start + /** @type {number} */ (gs[k]);
+    // Each grapheme is a triple of its start, its length, and its width.
+    if (w + cellWidth > col) return row.start + /** @type {number} */ (gs[k]) + (after ? /** @type {number} */ (gs[k + 1]) : 0);
     w += cellWidth;
   }
   return row.end;

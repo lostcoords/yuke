@@ -16,18 +16,18 @@ paint();
 
 // Drag inside one row: the gutter is two columns, so column 2 is the first character.
 t.onMouse(at(3, 0, "press"));
-t.onMouse(at(5, 0, "drag"));
+t.onMouse(at(4, 0, "drag"));
 check("within-row", t.selectedText() === "lp");
 
 // Row 1 is the blank row after "alpha", so the drag crosses into the second message.
-t.onMouse(at(4, 2, "drag"));
+t.onMouse(at(3, 2, "drag"));
 // The blank row between the turns stays in the copy as a blank line.
 check("across-rows", t.selectedText() === "lpha\n\nbr");
 t.onMouse(at(4, 2, "release"));
 check("copy-on-release", copied === "lpha\n\nbr");
 
-// A drag backwards selects the same text, because the ends are ordered.
-t.onMouse(at(4, 2, "press"));
+// A reverse drag selects the same text. It includes the press cell.
+t.onMouse(at(3, 2, "press"));
 t.onMouse(at(3, 0, "drag"));
 check("reverse-drag", t.selectedText() === "lpha\n\nbr");
 
@@ -44,14 +44,13 @@ t.onMouse(at(3, 0, "press"));
 t.onMouse(at(3, 0, "release"));
 check("click-clears", t.selection === null && copied === null);
 
-// A cursor at column 0 of the end row adds no trailing blank line.
-t.onMouse(at(3, 0, "press"));
-t.onMouse(at(2, 2, "drag"));
+// A selection that ends at column 0 adds no trailing blank line.
+t.select({ id: "u1", row: 0, col: 1 }, { id: "u2", row: 0, col: 0 });
 check("no-trailing-newline", t.selectedText() === "lpha\n");
 
 // A stray drag or release without a press changes nothing.
 t.onMouse(at(3, 0, "press"));
-t.onMouse(at(5, 0, "drag"));
+t.onMouse(at(4, 0, "drag"));
 t.onMouse(at(5, 0, "release"));
 copied = null;
 t.onMouse(at(8, 0, "drag"));
@@ -65,7 +64,7 @@ t.setOutline([{ id: "u1", type: "user" }], { id: "a9", type: "assistant" });
 paint();
 // Rows 0 and 1 belong to "alpha", so row 2 is the first draft row.
 t.onMouse(at(2, 2, "press"));
-t.onMouse(at(4, 2, "drag"));
+t.onMouse(at(3, 2, "drag"));
 check("draft-sel", t.selection !== null && t.selection.anchor.id === "a9");
 body.a9 = "draft text and more";
 t.setActive("a9");
@@ -100,7 +99,7 @@ check("append-keeps", t.selectedText() === "bravo");
 t.setOutline([{ id: "u1", type: "user" }, { id: "u2", type: "user" }], null);
 paint();
 t.onMouse(at(3, 0, "press"));
-t.onMouse(at(5, 0, "drag"));
+t.onMouse(at(4, 0, "drag"));
 check("before-resize", t.selectedText() === "lp");
 t.rows(20, 0, 12);
 check("keep-user-resize", t.selectedText() === "lp");
@@ -111,7 +110,7 @@ t.setOutline([{ id: "a2", type: "assistant" }], null);
 t.rows(40, 0, 12);
 paint();
 t.onMouse(at(7, 0, "press"));
-t.onMouse(at(12, 0, "drag"));
+t.onMouse(at(11, 0, "drag"));
 check("wide-sel", t.selectedText() === "bravo");
 t.rows(14, 0, 12);
 check("keep-on-resize", t.selectedText() === "bravo");

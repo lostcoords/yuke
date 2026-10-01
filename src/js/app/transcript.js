@@ -206,6 +206,9 @@ export class Transcript {
     this._didDrag = false;
     /** @type {Position | null} */
     this._press = null;
+    this._pressCol = 0; // the screen column of the press, so a drag orders its ends without a row scan
+    /** @type {Position | null} */
+    this._pressEnd = null; // the caret after the pressed grapheme, read once on the first reverse drag
     /** Receives the selected text when a mouse drag ends on a selection that is not empty. */
     this.onSelect = opts.onSelect || null;
   }
@@ -233,15 +236,16 @@ export class Transcript {
     let a = anchor;
     let b = cursor;
     if (opts && opts.inclusive) {
-      /** @param {Position} p @returns {Position} */
-      const grow = (p) => {
-        const body = this.rowTextAt(p.id, p.row);
-        return { id: p.id, row: p.row, col: Math.min(nextGrapheme(body, p.col), body.length) };
-      };
-      if (this.comparePos(b, a) >= 0) b = grow(b);
-      else a = grow(a);
+      if (this.comparePos(b, a) >= 0) b = this._after(b);
+      else a = this._after(a);
     }
     this.selection = { anchor: a, cursor: b };
+  }
+
+  /** @param {Position} p @returns {Position} */
+  _after(p) {
+    const body = this.rowTextAt(p.id, p.row);
+    return { id: p.id, row: p.row, col: Math.min(nextGrapheme(body, p.col), body.length) };
   }
 
   /**
@@ -1312,10 +1316,10 @@ export class Transcript {
   }
 
   /**
-   * The logical position under a screen cell, or null off the drawn rows. `clamp` pulls a drag back to the nearest row.
-   * @param {number} col @param {number} row @param {boolean} clamp @returns {Position | null}
+   * The logical position before the grapheme under a screen cell, or after it when `after` is true. Null off the drawn rows. `clamp` pulls a drag back to the nearest row.
+   * @param {number} col @param {number} row @param {boolean} clamp @param {boolean} [after] @returns {Position | null}
    */
-  posAt(col, row, clamp) {
+  posAt(col, row, clamp, after = false) {
     const rect = this.pager.rect();
     if (!rect) return null;
     const y = clamp ? Math.min(Math.max(row, rect.y), rect.y + rect.h - 1) : row;
@@ -1331,7 +1335,7 @@ export class Transcript {
     const body = rowText(line);
     const x = Math.max(0, col - rect.x - (line.indent || 0));
     const wrapRow = { start: 0, end: body.length, soft: false };
-    return { id: m.id, row: k, col: caretAtCol(body, wrapRow, x) };
+    return { id: m.id, row: k, col: caretAtCol(body, wrapRow, x, after) };
   }
 
   /**
@@ -1348,6 +1352,8 @@ export class Transcript {
       const pos = this.posAt(ev.col, ev.row, false);
       this.clearSelection();
       this._press = pos;
+      this._pressCol = ev.col;
+      this._pressEnd = null;
       this._dragging = pos != null;
       this._didDrag = false;
       return true;
@@ -1355,9 +1361,20 @@ export class Transcript {
     if (!this._dragging) return false;
     if (ev.event === "drag") {
       this._didDrag = true;
+      const press = this._press;
+      const r = this.pager.rect();
+      if (!press || !r) return true;
       // A drag past the edge clamps, so the selection follows the pointer out of the pane.
-      const pos = this.posAt(ev.col, ev.row, true);
-      if (this._press && pos) this.select(this._press, pos);
+      const g = this.pager.scroll + Math.min(Math.max(ev.row, r.y), r.y + r.h - 1) - r.y;
+      const p = this._globalRow(press);
+      // The selection holds both end cells, so the later end reads the caret after its grapheme. The screen order needs no row scan.
+      if (g > p || (g === p && ev.col >= this._pressCol)) {
+        const end = this.posAt(ev.col, ev.row, true, true);
+        if (end) this.selection = { anchor: press, cursor: end };
+      } else {
+        const start = this.posAt(ev.col, ev.row, true);
+        if (start) this.selection = { anchor: (this._pressEnd ??= this._after(press)), cursor: start };
+      }
       return true;
     }
     if (ev.event === "release") {

@@ -35,10 +35,10 @@ check("inside-code", t.selectedText() === "code" && t.selectedText(true) === "co
 
 // A bullet hides its markup, so one character of it still maps to the whole marker.
 t.onMouse(at(colOf(4, "•"), 4, "press"));
-t.onMouse(at(colOf(4, "•") + 1, 4, "drag"));
+t.onMouse(at(colOf(4, "•"), 4, "drag"));
 check("mark-whole", t.selectedText() === "•" && t.selectedText(true) === "- ");
 
 // A user turn is plain text, so its source is what it renders.
 t.onMouse(at(colOf(0, "plain"), 0, "press"));
-t.onMouse(at(colOf(0, "plain") + 5, 0, "drag"));
+t.onMouse(at(colOf(0, "plain") + 4, 0, "drag"));
 check("user-plain", t.selectedText() === "plain" && t.selectedText(true) === "plain");
