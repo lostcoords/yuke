@@ -11,6 +11,10 @@ const check = (name, cond) => { if (!cond) fail.push(name); };
 globalThis.result = "pending";
 globalThis.fixtureDir = globalThis.fixtureDir ?? "";
 (async () => {
+  // Bad options fail on the options, before the cwd check reads them.
+  let refused = "";
+  try { spawnNative(["true"], 7, () => {}); } catch (e) { refused = e.message; }
+  check("options-reject", refused === "the options must be an object, and workspaceRoot must be an absolute path with no NUL byte");
   // Writes arrive in order, and every chunk reaches its listener before `exited` resolves.
   const cat = spawn(["cat"]);
   let echoed = "";

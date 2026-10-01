@@ -101,7 +101,6 @@ pub const InputSkill = struct {
 };
 
 const testing = std.testing;
-const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
 test "a skill input needs a name and keeps its arguments optional" {
     const a = testing.allocator;

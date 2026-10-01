@@ -58,9 +58,14 @@ globalThis.result = "pending";
   check("timeout-fraction-rejects", message.startsWith("timeoutMs must be"));
   for (const [args, expected] of [
     [[42], "the command must be a string"],
-    [["echo x", { workspaceRoot: 42 }], "the workspace root must be an absolute path"],
+    [["echo x", { workspaceRoot: 42 }], "the options must be an object, and workspaceRoot must be an absolute path with no NUL byte"],
     [["echo ok\0; echo cut"], "the command must not hold a NUL byte"],
-    [["echo x", { workspaceRoot: "relative" }], "the workspace root must be an absolute path"],
+    [["echo x", 7], "the options must be an object, and workspaceRoot must be an absolute path with no NUL byte"],
+    [["echo x", () => {}], "the options must be an object, and workspaceRoot must be an absolute path with no NUL byte"],
+    [["echo x", { cwd: null }], "cwd must be a string"],
+    [["echo x", { log: null }], "log must be a boolean"],
+    [["echo x", { timeoutMs: null }], "timeoutMs must be a whole number of milliseconds up to 600000"],
+    [["echo x", { workspaceRoot: "relative" }], "the options must be an object, and workspaceRoot must be an absolute path with no NUL byte"],
     [["echo x", { cwd: 42 }], "cwd must be a string"],
     [["echo x", { cwd: ".", timeoutMs: 0 }], "timeoutMs must be a whole number of milliseconds up to 600000"],
     [["echo x", { maxBytes: 65537 }], "maxBytes must be a whole number of bytes up to 65536"],

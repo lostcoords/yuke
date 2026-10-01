@@ -61,8 +61,8 @@ const Request = struct {
 
         const cwd = module.optionalString(ctx, gpa, options, "cwd") catch return error.CwdType;
         errdefer if (cwd) |dir| gpa.free(dir);
-        const timeout_ms = (module.optionalInteger(ctx, options, "timeoutMs", default_timeout_ms, max_timeout_ms) catch return error.Timeout).?;
-        const max_bytes = (module.optionalInteger(ctx, options, "maxBytes", max_stream_bytes, max_stream_bytes) catch return error.MaxBytes).?;
+        const timeout_ms = module.optionalInteger(ctx, options, "timeoutMs", default_timeout_ms, max_timeout_ms) catch return error.Timeout;
+        const max_bytes = module.optionalInteger(ctx, options, "maxBytes", max_stream_bytes, max_stream_bytes) catch return error.MaxBytes;
 
         return .{ .command = command, .root = root, .cwd = cwd, .timeout_ms = timeout_ms, .max_bytes = max_bytes };
     }
@@ -92,7 +92,7 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
     // The task cannot touch JavaScript, so every argument is copied before it starts.
     const log = if (ctx.isObject(options)) ctx.getPropertyStr(options, "log") else quickjs.UNDEFINED;
     defer ctx.freeValue(log);
-    if (!ctx.isUndefined(log) and !ctx.isNull(log) and !ctx.isBool(log)) return pending.rejected(ctx, "log must be a boolean");
+    if (!ctx.isUndefined(log) and !ctx.isBool(log)) return pending.rejected(ctx, "log must be a boolean");
     const wants_log = ctx.isBool(log) and (ctx.toBool(log) catch unreachable); // `isBool` holds, so the conversion cannot fail.
     const merge = if (ctx.isObject(options)) ctx.getPropertyStr(options, "mergeStderr") else quickjs.UNDEFINED;
     defer ctx.freeValue(merge);
@@ -102,7 +102,7 @@ fn jsExec(ctx: Context, _: Value, args: []const Value) Value {
             error.CommandType => "the command must be a string",
             error.CommandBlank => "the command must not be blank",
             error.CommandNul => "the command must not hold a NUL byte",
-            error.RootType => "the workspace root must be an absolute path",
+            error.RootType => module.root_option_message,
             error.CwdType => "cwd must be a string",
             error.Timeout => "timeoutMs must be a whole number of milliseconds up to 600000",
             error.MaxBytes => "maxBytes must be a whole number of bytes up to 65536",

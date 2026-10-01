@@ -47,7 +47,6 @@ pub const ContentFile = struct {
 };
 
 const testing = std.testing;
-const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 const hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 test "content image with a blob round-trips" {
@@ -56,7 +55,7 @@ test "content image with a blob round-trips" {
     ++ hex ++
         \\","mime":"image/png","bytes":1024}}
     ;
-    const parsed = try std.json.parseFromSlice(ContentPart, testing.allocator, json, opts);
+    const parsed = try std.json.parseFromSlice(ContentPart, testing.allocator, json, .{});
     defer parsed.deinit();
     try testing.expect(parsed.value == .image);
     try testing.expectEqualStrings("image/png", parsed.value.image.source.mime);
@@ -69,7 +68,7 @@ test "content image with a blob round-trips" {
 }
 
 test "blob hash decodes 64 lowercase hexadecimal characters into 32 raw bytes" {
-    const parsed = try std.json.parseFromSlice(MediaBlob, testing.allocator, "{\"hash\":\"" ++ hex ++ "\",\"mime\":\"application/pdf\",\"bytes\":1024}", opts);
+    const parsed = try std.json.parseFromSlice(MediaBlob, testing.allocator, "{\"hash\":\"" ++ hex ++ "\",\"mime\":\"application/pdf\",\"bytes\":1024}", .{});
     defer parsed.deinit();
     try testing.expectEqual(@as(u8, 0x01), parsed.value.hash.raw[0]);
     try testing.expectEqual(@as(u8, 0xef), parsed.value.hash.raw[31]);
@@ -79,9 +78,9 @@ test "blob hash rejects every text that is not 64 lowercase hexadecimal characte
     const a = testing.allocator;
     const upper = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
     const path = "../" ** 21 ++ "x"; // 64 bytes, so only the character check can reject it.
-    try testing.expectError(error.InvalidCharacter, std.json.parseFromSlice(MediaBlob, a, "{\"hash\":\"" ++ upper ++ "\",\"mime\":\"image/png\",\"bytes\":1}", opts));
-    try testing.expectError(error.InvalidCharacter, std.json.parseFromSlice(MediaBlob, a, "{\"hash\":\"" ++ path ++ "\",\"mime\":\"image/png\",\"bytes\":1}", opts));
-    try testing.expectError(error.LengthMismatch, std.json.parseFromSlice(MediaBlob, a, "{\"hash\":\"" ++ hex[0..62] ++ "\",\"mime\":\"image/png\",\"bytes\":1}", opts));
-    try testing.expectError(error.UnexpectedToken, std.json.parseFromSlice(MediaBlob, a, "{\"hash\":7,\"mime\":\"image/png\",\"bytes\":1}", opts));
-    try testing.expectError(error.MissingField, std.json.parseFromSlice(MediaBlob, a, "{\"mime\":\"image/png\",\"bytes\":1}", opts));
+    try testing.expectError(error.InvalidCharacter, std.json.parseFromSlice(MediaBlob, a, "{\"hash\":\"" ++ upper ++ "\",\"mime\":\"image/png\",\"bytes\":1}", .{}));
+    try testing.expectError(error.InvalidCharacter, std.json.parseFromSlice(MediaBlob, a, "{\"hash\":\"" ++ path ++ "\",\"mime\":\"image/png\",\"bytes\":1}", .{}));
+    try testing.expectError(error.LengthMismatch, std.json.parseFromSlice(MediaBlob, a, "{\"hash\":\"" ++ hex[0..62] ++ "\",\"mime\":\"image/png\",\"bytes\":1}", .{}));
+    try testing.expectError(error.UnexpectedToken, std.json.parseFromSlice(MediaBlob, a, "{\"hash\":7,\"mime\":\"image/png\",\"bytes\":1}", .{}));
+    try testing.expectError(error.MissingField, std.json.parseFromSlice(MediaBlob, a, "{\"mime\":\"image/png\",\"bytes\":1}", .{}));
 }

@@ -392,7 +392,7 @@ const TaskFixture = struct {
     fn lastOutcome(self: *TaskFixture) !proto.run.RunOutcome {
         const row = (try self.db.conn.row("SELECT payload FROM events WHERE name = 'run.done' ORDER BY seq DESC LIMIT 1", .{})) orelse return error.NoRow;
         defer row.deinit();
-        const done = try std.json.parseFromSlice(proto.run.RunDoneData, testing.allocator, row.text(0), .{ .ignore_unknown_fields = true });
+        const done = try std.json.parseFromSlice(proto.run.RunDoneData, testing.allocator, row.text(0), .{});
         defer done.deinit();
         try testing.expectEqual(proto.enums.RunKind.compaction, done.value.kind);
         return switch (done.value.outcome) {

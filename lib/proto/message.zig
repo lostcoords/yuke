@@ -261,4 +261,3 @@ pub const UserMessage = struct {
 };
 
 const testing = std.testing;
-const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };

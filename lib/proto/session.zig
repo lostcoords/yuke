@@ -295,7 +295,6 @@ pub const SessionSummaryChangedData = struct {
 };
 
 const testing = std.testing;
-const opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
 test "session.get keeps check_files a boolean and reload_context needs its session" {
     const a = std.testing.allocator;

@@ -56,17 +56,3 @@ pub const Stat = struct {
     /// The last modification time in epoch milliseconds.
     last_modified_ms: u64,
 };
-
-/// One directory of a listing. `name` holds the basename only.
-pub const DirItem = struct {
-    name: []const u8,
-    /// The local host sets this field only when the directory contains a `.git` entry.
-    is_git_repo: bool = false,
-};
-
-/// The first directories of one listing, sorted by name.
-pub const DirPage = struct {
-    items: []const DirItem,
-    /// True when the directory holds more directories than the page returns.
-    more: bool,
-};

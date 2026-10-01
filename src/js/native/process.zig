@@ -322,6 +322,8 @@ fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
     const argv = if (args.len > 0) stringList(ctx, a, args[0]) orelse &.{} else &.{};
     if (argv.len == 0) return ctx.throwTypeError("argv must be a non-empty array of strings");
     const options: Value = if (args.len > 1) args[1] else quickjs.UNDEFINED;
+    const root = module.rootOption(ctx, a, options, host.cwd) orelse
+        return ctx.throwTypeError(module.root_option_message);
     const cwd = module.optionalString(ctx, a, options, "cwd") catch return ctx.throwTypeError("cwd must be a string");
     const env_value: Value = if (ctx.isObject(options)) ctx.getPropertyStr(options, "env") else quickjs.UNDEFINED;
     defer ctx.freeValue(env_value);
@@ -330,8 +332,6 @@ fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
     if (pairs.len % 2 != 0) return ctx.throwTypeError("env must be an array of key and value strings");
     const on_output: Value = if (args.len > 2) args[2] else quickjs.UNDEFINED;
     if (!ctx.isFunction(on_output)) return ctx.throwTypeError("spawn needs an output callback");
-    const root = module.rootOption(ctx, a, options, host.cwd) orelse
-        return ctx.throwTypeError("the workspace root must be an absolute path");
     var env: std.process.Environ.Map = if (pairs.len > 0) host.execution.env.clone(a) catch unreachable else undefined;
     var pair: usize = 0;
     while (pair < pairs.len) : (pair += 2) {

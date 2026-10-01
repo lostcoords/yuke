@@ -450,7 +450,7 @@ const Line = struct {
 
 /// Decode an input method into `arena`, or return null for any other method or a bad parameter object.
 fn inputOf(arena: std.mem.Allocator, request: Line) ?Input {
-    const options: std.json.ParseOptions = .{ .ignore_unknown_fields = true, .allocate = .alloc_always };
+    const options: std.json.ParseOptions = .{ .allocate = .alloc_always };
     if (std.mem.eql(u8, request.method, "session.send_input")) {
         return .{ .send = std.json.parseFromValueLeaky(proto.session.SessionSendInputParams, arena, request.params, options) catch return null };
     }

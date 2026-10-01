@@ -109,29 +109,39 @@ pub fn sessionId(ctx: Context, value: Value) ?proto.ids.SessionId {
     return .bytes(raw);
 }
 
-/// Read one optional whole-number property in `[1, max]`, or answer `default`.
-pub fn optionalInteger(ctx: Context, options: Value, name: [:0]const u8, default: ?u32, max: u32) error{InvalidOption}!?u32 {
-    if (!ctx.isObject(options)) return default;
-    const value = ctx.getPropertyStr(options, name);
+/// Read one whole-number property in `[1, max]`, or answer `default` when `options` or the property is undefined. Another type is an error.
+pub fn optionalInteger(ctx: Context, options: Value, name: [:0]const u8, default: u32, max: u32) error{InvalidOption}!u32 {
+    const value = try property(ctx, options, name);
     defer ctx.freeValue(value);
-    if (ctx.isUndefined(value) or ctx.isNull(value)) return default;
+    if (ctx.isUndefined(value)) return default;
     return @intCast(integer(ctx, value, 1, max) orelse return error.InvalidOption);
 }
 
-/// Copy one optional string option. An absent option answers null, and a wrong type is an error.
+/// Copy one string property, or answer null when `options` or the property is undefined. Another type is an error.
 pub fn optionalString(ctx: Context, gpa: std.mem.Allocator, options: Value, name: [:0]const u8) error{InvalidOption}!?[]u8 {
-    if (!ctx.isObject(options)) return null;
-    const value = ctx.getPropertyStr(options, name);
+    const value = try property(ctx, options, name);
     defer ctx.freeValue(value);
-    if (ctx.isUndefined(value) or ctx.isNull(value)) return null;
+    if (ctx.isUndefined(value)) return null;
     return owned(ctx, gpa, value) orelse error.InvalidOption;
 }
 
-/// Copy the `workspaceRoot` option, or `default` when it is absent. A relative root answers null, because a spawn asserts an absolute directory; a NUL byte answers null, because the OS stops at it.
+/// Read one property of an options argument. Undefined options give undefined. An array, a function, or a primitive is an error.
+inline fn property(ctx: Context, options: Value, name: [:0]const u8) error{InvalidOption}!Value {
+    if (ctx.isUndefined(options)) return quickjs.UNDEFINED;
+    if (!ctx.isObject(options) or ctx.isArray(options) or ctx.isFunction(options)) return error.InvalidOption;
+    return ctx.getPropertyStr(options, name);
+}
+
+/// The rejection when `rootOption` answers null. It names every cause.
+pub const root_option_message = "the options must be an object, and workspaceRoot must be an absolute path with no NUL byte";
+
+/// Copy the `workspaceRoot` option, or `default` when it is undefined.
+/// Bad options, a relative root, and a root with a NUL byte answer null.
+/// A spawn asserts an absolute directory. The OS stops at a NUL byte.
 pub fn rootOption(ctx: Context, gpa: std.mem.Allocator, options: Value, default: []const u8) ?[]u8 {
-    const value = if (ctx.isObject(options)) ctx.getPropertyStr(options, "workspaceRoot") else quickjs.UNDEFINED;
+    const value = property(ctx, options, "workspaceRoot") catch return null;
     defer ctx.freeValue(value);
-    if (ctx.isUndefined(value) or ctx.isNull(value)) return gpa.dupe(u8, default) catch unreachable;
+    if (ctx.isUndefined(value)) return gpa.dupe(u8, default) catch unreachable;
     const root = owned(ctx, gpa, value) orelse return null;
     if (std.Io.Dir.path.isAbsolute(root) and std.mem.indexOfScalar(u8, root, 0) == null) return root;
     gpa.free(root);
@@ -214,11 +224,11 @@ pub const IoOptions = struct { signal: Value, deadline: std.Io.Clock.Timestamp, 
 /// Read `{ timeoutMs, maxBytes, signal }` under `limits`. The caller frees `signal`. A wrong member is an error.
 pub fn ioOptions(host: *Host, value: Value, limits: IoLimits) error{InvalidOption}!IoOptions {
     const ctx = host.ctx;
-    if (!ctx.isUndefined(value) and (!ctx.isObject(value) or ctx.isArray(value))) return error.InvalidOption;
-    const timeout_ms = (try optionalInteger(ctx, value, "timeoutMs", limits.default_timeout_ms, limits.max_timeout_ms)).?;
-    const max_bytes = if (limits.max_bytes == 0) 0 else (try optionalInteger(ctx, value, "maxBytes", limits.default_bytes, limits.max_bytes)).?;
+    // `optionalInteger` rejects bad options first, so `value` is undefined or an object below.
+    const timeout_ms = try optionalInteger(ctx, value, "timeoutMs", limits.default_timeout_ms, limits.max_timeout_ms);
+    const max_bytes = if (limits.max_bytes == 0) 0 else try optionalInteger(ctx, value, "maxBytes", limits.default_bytes, limits.max_bytes);
     if (max_bytes < limits.min_bytes) return error.InvalidOption;
-    const signal = if (ctx.isObject(value)) ctx.getPropertyStr(value, "signal") else quickjs.UNDEFINED;
+    const signal = if (ctx.isUndefined(value)) quickjs.UNDEFINED else ctx.getPropertyStr(value, "signal");
     if (ctx.isException(signal)) return error.InvalidOption;
     errdefer ctx.freeValue(signal);
     if (!ctx.isUndefined(signal) and cancellation.get(ctx, signal) == null) return error.InvalidOption;

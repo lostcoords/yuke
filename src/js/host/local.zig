@@ -118,17 +118,6 @@ pub const LocalHost = struct {
         return .{ .path = full, .is_directory = info.kind == .directory, .last_modified_ms = millisOf(info.mtime) };
     }
 
-    /// List the first `limit` subdirectories by name. A file never appears.
-    pub fn listDir(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8, limit: u32) h.HostError!h.DirPage {
-        const full = self.resolve(scratch, path) catch |err| return mapError(err);
-        var dir = std.Io.Dir.cwd().openDir(self.io, full, .{ .iterate = true }) catch |err| return mapError(err);
-        defer dir.close(self.io);
-        var page = try selectPage(self.io, dir, scratch, limit);
-        // Check for a repository only in the directories that this page keeps.
-        for (page.items.items) |*item| item.is_git_repo = isGitRepo(self.io, dir, item.name);
-        return page.result();
-    }
-
     /// Anchor a tool path at the workspace root. `paths.anchorAt` holds the rules for every tool.
     fn resolve(self: *LocalHost, scratch: std.mem.Allocator, path: []const u8) FsError![]const u8 {
         return paths.anchorAt(scratch, self.env, self.root, path);
@@ -275,99 +264,6 @@ fn requireRegularFile(io: std.Io, path: []const u8) h.HostError!std.Io.File.Stat
 fn millisOf(ts: std.Io.Timestamp) u64 {
     const ms = @divFloor(ts.nanoseconds, std.time.ns_per_ms);
     return if (ms <= 0) 0 else @intCast(ms);
-}
-
-/// Report whether `name` inside `dir` contains a `.git` entry.
-fn isGitRepo(io: std.Io, dir: std.Io.Dir, name: []const u8) bool {
-    var sub = dir.openDir(io, name, .{}) catch return false;
-    defer sub.close(io);
-    _ = sub.statFile(io, ".git", .{}) catch return false;
-    return true;
-}
-
-/// Report whether one entry is a directory. A link or an unknown kind needs one more call.
-fn entryIsDir(io: std.Io, dir: std.Io.Dir, entry: std.Io.Dir.Entry) bool {
-    return switch (entry.kind) {
-        .directory => true,
-        .sym_link, .unknown => blk: {
-            const info = dir.statFile(io, entry.name, .{}) catch break :blk false;
-            break :blk info.kind == .directory;
-        },
-        else => false,
-    };
-}
-
-/// Hold the smallest `limit` names of one directory. A page owns its slots, so memory stays bounded.
-const PageBuilder = struct {
-    items: std.ArrayList(h.DirItem),
-    slots: [][std.Io.Dir.max_name_bytes]u8,
-    used: usize = 0,
-    limit: u32,
-    dropped: bool = false,
-
-    fn init(scratch: std.mem.Allocator, limit: u32) std.mem.Allocator.Error!PageBuilder {
-        std.debug.assert(limit > 0);
-        return .{
-            .items = try .initCapacity(scratch, limit),
-            .slots = try scratch.alloc([std.Io.Dir.max_name_bytes]u8, limit),
-            .limit = limit,
-        };
-    }
-
-    /// Copy `name` into a free slot. An eviction returns its slot, so `used` never passes `limit`.
-    fn store(self: *PageBuilder, name: []const u8, evicted: ?[]const u8) []const u8 {
-        const slot: usize = if (evicted) |old_name| self.slotOf(old_name) else blk: {
-            defer self.used += 1;
-            break :blk self.used;
-        };
-        std.debug.assert(slot < self.slots.len);
-        @memcpy(self.slots[slot][0..name.len], name);
-        return self.slots[slot][0..name.len];
-    }
-
-    fn slotOf(self: *const PageBuilder, name: []const u8) usize {
-        const offset = @intFromPtr(name.ptr) - @intFromPtr(self.slots.ptr);
-        return offset / std.Io.Dir.max_name_bytes;
-    }
-
-    /// Keep `item` when it sorts inside the page. A name too long for one slot never fits a page.
-    fn offer(self: *PageBuilder, item: h.DirItem) void {
-        std.debug.assert(self.items.items.len <= self.limit);
-        if (item.name.len > std.Io.Dir.max_name_bytes) return;
-        var at: usize = 0;
-        while (at < self.items.items.len and std.mem.lessThan(u8, self.items.items[at].name, item.name)) at += 1;
-        if (at == self.limit) {
-            self.dropped = true;
-            return;
-        }
-        const full = self.items.items.len == self.limit;
-        const evicted = if (full) self.items.pop().?.name else null;
-        self.dropped = self.dropped or full;
-        var copy = item;
-        copy.name = self.store(item.name, evicted);
-        self.items.insertAssumeCapacity(at, copy);
-        std.debug.assert(self.items.items.len <= self.limit);
-    }
-
-    fn result(self: *const PageBuilder) h.DirPage {
-        std.debug.assert(self.items.items.len <= self.limit);
-        if (self.dropped) std.debug.assert(self.items.items.len == self.limit);
-        return .{ .items = self.items.items, .more = self.dropped };
-    }
-};
-
-/// Scan the whole directory and keep the `limit` subdirectories that sort first.
-fn selectPage(io: std.Io, dir: std.Io.Dir, scratch: std.mem.Allocator, limit: u32) h.HostError!PageBuilder {
-    var builder = PageBuilder.init(scratch, limit) catch unreachable;
-    var it = dir.iterate();
-    while (it.next(io) catch |err| return mapError(err)) |entry| {
-        if (std.mem.eql(u8, entry.name, ".") or std.mem.eql(u8, entry.name, "..")) continue;
-        // A wire name is a JSON string, so a name that is not UTF-8 has no valid encoding.
-        if (!std.unicode.utf8ValidateSlice(entry.name)) continue;
-        if (!entryIsDir(io, dir, entry)) continue;
-        builder.offer(.{ .name = entry.name });
-    }
-    return builder;
 }
 
 const testing = std.testing;
@@ -705,45 +601,7 @@ const TreeFixture = struct {
     fn deinit(self: *TreeFixture) void {
         self.tmp.cleanup();
     }
-    fn list(self: *TreeFixture, a: std.mem.Allocator, limit: u32) h.HostError!h.DirPage {
-        var local: LocalHost = .{ .io = testing.io, .root = self.root_buf[0..self.root_len], .env = &test_env };
-        return local.listDir(a, ".", limit);
-    }
 };
-
-test "listDir sorts directories by name, drops files, and reports a full page" {
-    var f: TreeFixture = undefined;
-    try f.init(&.{ "beta", "alpha" }, &.{"note.txt"});
-    defer f.deinit();
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    const page = try f.list(a, 10);
-    try testing.expectEqual(@as(usize, 2), page.items.len);
-    try testing.expectEqualStrings("alpha", page.items[0].name);
-    try testing.expectEqualStrings("beta", page.items[1].name);
-    try testing.expect(!page.items[0].is_git_repo and !page.more);
-
-    const first = try f.list(a, 1);
-    try testing.expectEqualStrings("alpha", first.items[0].name);
-    try testing.expect(first.more);
-}
-
-test "listDir marks a directory that holds .git" {
-    var f: TreeFixture = undefined;
-    try f.init(&.{ "repo", "plain" }, &.{});
-    defer f.deinit();
-    try f.tmp.dir.createDir(testing.io, "repo/.git", .default_dir);
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const page = try f.list(arena.allocator(), 10);
-    try testing.expectEqualStrings("plain", page.items[0].name);
-    try testing.expect(!page.items[0].is_git_repo);
-    try testing.expectEqualStrings("repo", page.items[1].name);
-    try testing.expect(page.items[1].is_git_repo);
-}
 
 test "stat reports a directory, a file, and a missing path" {
     var f: TreeFixture = undefined;

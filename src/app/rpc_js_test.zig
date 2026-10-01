@@ -100,6 +100,12 @@ test "a pending input hook still accepts an interaction response" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const created = try std.json.parseFromSliceLeaky(Created, arena.allocator(), f.out.written(), .{ .ignore_unknown_fields = true });
+    // An unknown field fails before the gate, so a hook never holds a bad request.
+    const typo_line = try std.fmt.allocPrint(arena.allocator(),
+        \\{{"id":"typo","method":"session.send_input","params":{{"session_id":"{s}","sessionId":"x","input":{{"type":"content","content":[{{"type":"text","text":"hello"}}]}}}}}}
+    , .{created.result.session.id});
+    rpc.serve(testing.allocator, &f.stream, typo_line);
+    try testing.expect(std.mem.endsWith(u8, f.out.written(), "{\"id\":\"typo\",\"error\":{\"code\":-32602,\"message\":\"bad parameters\"}}\n"));
     const input_line = try std.fmt.allocPrint(arena.allocator(),
         \\{{"id":"input","method":"session.send_input","params":{{"session_id":"{s}","input":{{"type":"content","content":[{{"type":"text","text":"hello"}}]}}}}}}
     , .{created.result.session.id});
@@ -202,6 +208,11 @@ test "RPC lists, reads, and stops a background job, and hears its start and its 
         \\{"id":"other","method":"job.list","params":{"session_id":"02020202020202020202020202020202"}}
     );
     try testing.expect(std.mem.indexOf(u8, f.out.written(), "{\"id\":\"other\",\"result\":{\"jobs\":[]}}") != null);
+    // An unknown field is a bad request, so a misspelled filter never lists every job.
+    rpc.serve(testing.allocator, &f.stream,
+        \\{"id":"typo","method":"job.list","params":{"sessionId":"02020202020202020202020202020202"}}
+    );
+    try testing.expect(std.mem.endsWith(u8, f.out.written(), "{\"id\":\"typo\",\"error\":{\"code\":-32602,\"message\":\"bad parameters\"}}\n"));
     // An explicit null stands for the optional parameter object.
     rpc.serve(testing.allocator, &f.stream,
         \\{"id":"all","method":"job.list","params":null}

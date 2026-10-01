@@ -136,7 +136,7 @@ test "tagged unions round-trip one representative value each" {
     };
 
     inline for (cases) |case| {
-        const parsed = try std.json.parseFromSlice(case.union_type, std.testing.allocator, case.json, .{ .ignore_unknown_fields = true });
+        const parsed = try std.json.parseFromSlice(case.union_type, std.testing.allocator, case.json, .{});
         defer parsed.deinit();
         var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
         defer buf.deinit();

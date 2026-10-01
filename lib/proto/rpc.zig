@@ -270,7 +270,6 @@ pub const Notification = struct {
 };
 
 const testing = std.testing;
-const parse_opts: std.json.ParseOptions = .{ .ignore_unknown_fields = true };
 
 test "request envelope round-trips" {
     const value: Request = .{ .id = "req-1", .method = .initialize, .params = .empty };
@@ -299,7 +298,7 @@ test "response error stringifies" {
     const error_json =
         \\{"id":"req-1","error":{"code":-32602,"message":"bad request"}}
     ;
-    const parsed = try std.json.parseFromSlice(ResponseError, testing.allocator, error_json, parse_opts);
+    const parsed = try std.json.parseFromSlice(ResponseError, testing.allocator, error_json, .{});
     defer parsed.deinit();
     var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();

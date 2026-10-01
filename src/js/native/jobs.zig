@@ -239,7 +239,7 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
     const session_value: Value = if (args.len > 1) args[1] else quickjs.UNDEFINED;
     const session_id = module.sessionId(ctx, session_value) orelse return pending.rejected(ctx, "the session id must be 32 lowercase hex digits");
     const root = module.rootOption(ctx, a, if (args.len > 2) args[2] else quickjs.UNDEFINED, host.cwd) orelse
-        return pending.rejected(ctx, "the workspace root must be an absolute path");
+        return pending.rejected(ctx, module.root_option_message);
     if (host.procs.live.items.len >= process.max_processes) return pending.rejected(ctx, "the host runs 64 processes");
 
     // A job writes to a file, and Python buffers a file in blocks, so the variable keeps its output live.
