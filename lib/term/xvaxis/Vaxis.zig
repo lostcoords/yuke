@@ -288,16 +288,6 @@ pub fn queryTerminal(self: *Vaxis, tty: *std.Io.Writer, timeout: std.Io.Duration
 pub fn queryTerminalSend(vx: *Vaxis, tty: *std.Io.Writer) !void {
     vx.queries_done.store(false, .unordered);
 
-    // TODO: re-enable this
-    // const colorterm = std.posix.getenv("COLORTERM") orelse "";
-    // if (std.mem.eql(u8, colorterm, "truecolor") or
-    //     std.mem.eql(u8, colorterm, "24bit"))
-    // {
-    //     if (@hasField(Event, "cap_rgb")) {
-    //         self.postEvent(.cap_rgb);
-    //     }
-    // }
-
     // TODO: XTGETTCAP queries ("RGB", "Smulx")
     // TODO: decide if we actually want to query for focus and sync. It
     // doesn't hurt to blindly use them

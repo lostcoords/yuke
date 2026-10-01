@@ -4,8 +4,9 @@ import { errorText } from "yuke:internal/format";
 
 /** @typedef {{ copyOnSelect: boolean, scrollLines: number }} MouseConfig */
 /** @typedef {{ chordMs: number }} KeymapConfig */
-/** @typedef {{ systemPrompt?: string | null, mouse: MouseConfig, keymap: KeymapConfig }} Config */
-/** @typedef {{ systemPrompt?: string | null, mouse?: Partial<MouseConfig>, keymap?: Partial<KeymapConfig> }} ConfigPatch */
+/** @typedef {"auto" | "truecolor" | "256"} ColorsConfig */
+/** @typedef {{ systemPrompt?: string | null, colors: ColorsConfig, mouse: MouseConfig, keymap: KeymapConfig }} Config */
+/** @typedef {{ systemPrompt?: string | null, colors?: ColorsConfig, mouse?: Partial<MouseConfig>, keymap?: Partial<KeymapConfig> }} ConfigPatch */
 /** @typedef {(value: unknown) => true | string} ConfigValidator */
 /** @typedef {{ [name: string]: ConfigValidator }} ConfigValidators */
 /** @typedef {{ [name: string]: Array<(...args: any[]) => unknown> }} ListenerMap */
@@ -27,6 +28,8 @@ export function once(fn) {
 export const config = {
   // A null base selects the built-in prompt for new root sessions.
   systemPrompt: null,
+  // "auto" picks the 24-bit palette when the terminal reports it, else the 256-color palette.
+  colors: /** @type {ColorsConfig} */ ("auto"),
   // Mouse reporting is always on; `scrollLines` counts screen lines, so a wheel step moves the same in every widget.
   mouse: {
     scrollLines: 3,
@@ -42,6 +45,7 @@ export const config = {
 /**
  * Check a config patch and merge it into `config` at once. An absent or undefined field keeps its current value.
  * `systemPrompt` replaces the built-in base prompt, and null keeps the built-in prompt; `${workspace}`, `${session_id}`, and `${agent_name}` in it expand to the session facts.
+ * `colors` picks the palette depth: "auto" (default) follows the terminal, "truecolor" forces 24-bit colors, and "256" forces the 256-color palette. A change emits `colors.changed`.
  * `mouse.scrollLines` is the count of screen lines that one wheel step moves, an integer from 1 to 20 (default 3).
  * `mouse.copyOnSelect` copies the selection when a drag ends (default true).
  * `keymap.chordMs` is the longest wait in milliseconds for the next stroke of a chord, an integer from 1 to 10000 (default 1000).
@@ -53,13 +57,17 @@ export function defineConfig(partial) {
     throw new TypeError("defineConfig expects a config object");
   }
   for (const key of Object.keys(partial)) {
-    if (key !== "systemPrompt" && key !== "mouse" && key !== "keymap") {
+    if (key !== "systemPrompt" && key !== "colors" && key !== "mouse" && key !== "keymap") {
       throw new TypeError("defineConfig: unknown key " + key);
     }
   }
   const systemPrompt = partial.systemPrompt;
   if (systemPrompt !== undefined && systemPrompt !== null && typeof systemPrompt !== "string") {
     throw new TypeError("defineConfig.systemPrompt must be a string or null");
+  }
+  const colors = partial.colors;
+  if (colors !== undefined && colors !== "auto" && colors !== "truecolor" && colors !== "256") {
+    throw new TypeError("defineConfig.colors must be \"auto\", \"truecolor\", or \"256\"");
   }
   const mouse = partial.mouse;
   const nextMouse = { ...config.mouse };
@@ -70,6 +78,10 @@ export function defineConfig(partial) {
   if (systemPrompt !== undefined) config.systemPrompt = systemPrompt;
   Object.assign(config.mouse, nextMouse);
   Object.assign(config.keymap, nextKeymap);
+  if (colors !== undefined && colors !== config.colors) {
+    config.colors = colors;
+    events.emit("colors.changed");
+  }
   return partial;
 }
 
@@ -110,7 +122,7 @@ function applyConfigPatch(section, fields, src, label) {
 }
 
 // The kernel declares only the events that neutral code emits. Each tier declares its own names.
-const CORE_EVENTS = new Set(["notify.posted","engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", "quit.request", ...native.factNames()]);
+const CORE_EVENTS = new Set(["notify.posted", "colors.changed", "engine.drained", "engine.activity.changed", "jobs.changed", "interaction.changed", "quit.request", ...native.factNames()]);
 
 // A layer implements only the hooks it needs. Every hook takes at most two arguments, so a call on a frame path allocates no argument list.
 /** @param {object | null | undefined} obj @param {string} name @param {unknown} [a] @param {unknown} [b] @returns {unknown} */

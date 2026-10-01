@@ -1,5 +1,5 @@
 // The terminal capability. A block that declares `tui` registers its view effects here.
-import { command, keymap, route, context, status, style, root } from "yuke:internal/core";
+import { command, keymap, route, context, status, style, root, colorDepth } from "yuke:internal/core";
 import { term } from "yuke:internal/native/term";
 
 /** @import { Disposer } from "./types/ext.js" */
@@ -89,6 +89,12 @@ class Surface {
    * @returns {"dark" | "light"}
    */
   get background() { return term.background; }
+  /**
+   * The color depth that the default palette uses: "truecolor" for 24-bit colors, or "256" for the 256-color palette.
+   * The `colors` setting picks it, and "auto" follows `COLORTERM`. `colors.changed` reports each change of the setting.
+   * @returns {"truecolor" | "256"}
+   */
+  get colors() { return colorDepth(); }
 
   /**
    * Show `layer` above the panes until it closes. The disposer, a pop of the layer, or the block stop closes it.

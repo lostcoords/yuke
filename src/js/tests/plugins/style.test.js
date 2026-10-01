@@ -3,11 +3,14 @@ import { style } from "yuke:internal/core";
 import { plugins } from "yuke:internal/ext";
 import { tui } from "yuke:internal/tui";
 
+// The default palette depends on the terminal, so each check compares with its danger color.
+const baseDanger = style.palette.danger;
+
 // A set wins over the default in either order, and its dispose restores the default.
 {
   const setFirst = style.set({ Layered: { fg: "danger" } });
   const offDefault = style.set({ Layered: { fg: "fg", bold: true } }, { default: true });
-  const early = style.resolve("Layered").fg === "red" && style.resolve("Layered").bold === true;
+  const early = style.resolve("Layered").fg === baseDanger && style.resolve("Layered").bold === true;
   setFirst();
   const restored = style.resolve("Layered").fg === "reset";
   const setLater = style.set({ Layered: { bold: null } });
@@ -24,7 +27,7 @@ import { tui } from "yuke:internal/tui";
   const first = style.theme(DARK);
   const themed = style.resolve("Normal").fg === "#101010" && style.resolve("Normal").bold === true && style.palette.danger === "#ff0000";
   const light = style.theme({ groups: { Normal: { fg: "#f0f0f0" } } });
-  const switched = style.resolve("Normal").fg === "#f0f0f0" && style.palette.danger === "red";
+  const switched = style.resolve("Normal").fg === "#f0f0f0" && style.palette.danger === baseDanger;
   const again = style.theme(DARK);
   first();
   light();
@@ -39,7 +42,7 @@ import { tui } from "yuke:internal/tui";
   const off = style.set({ LinkBase: { fg: "danger", bold: true, underline: true }, LinkChild: { link: "LinkBase", bold: false } }, { default: true });
   const child = style.resolve("LinkChild");
   off();
-  check("style-link-inherits", child.fg === "red" && child.underline === true && child.bold === undefined);
+  check("style-link-inherits", child.fg === baseDanger && child.underline === true && child.bold === undefined);
 }
 
 // A second default for a name, core or not, throws and changes nothing.

@@ -72,6 +72,7 @@ Call `defineConfig(patch)` in `index.js`. An unknown key throws.
 | Key | Default | Meaning |
 |---|---|---|
 | `systemPrompt` | `null` | Replace the base prompt. `${workspace}`, `${session_id}`, and `${agent_name}` expand. |
+| `colors` | `"auto"` | The palette depth: `"auto"` follows `COLORTERM`, `"truecolor"` forces 24-bit colors, `"256"` forces the 256-color palette. |
 | `mouse.copyOnSelect` | `true` | Copy a mouse selection. |
 | `mouse.scrollLines` | `3` | Lines per wheel step, 1 to 20. |
 | `keymap.chordMs` | `1000` | Milliseconds to wait for the next chord key, 1 to 10000. |

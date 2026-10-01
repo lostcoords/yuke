@@ -71,7 +71,8 @@ Do not bind these unless the user asks you to replace one.
 
 - `set({ Name: { fg: "danger" } })` changes fields of any group. `null` removes a field. A later `set` wins.
 - `set({ MyGroup: { fg, bg, ul, bold, dim, italic, reverse, underline, link } }, { default: true })` sets the default of a group that your plugin owns. It sits below the theme and every other `set`, so it never undoes a change of the user. A second default for one name, such as `YukeStatus`, throws; Neovim keeps the first one silently.
-- `setPalette({ accent: "#88c0d0" })` changes palette colors. The core colors are `fg`, `bg`, and `danger`. A color can also be a literal, such as `"#88c0d0"`.
+- `setPalette({ accent: "#88c0d0" })` changes palette colors. A color can also be a literal: `"#88c0d0"`, a 256-color index such as `151`, or a name such as `"green"`.
+- The default palette names `fg`, `bg`, `surfaceFg`, `strongFg`, `accent`, `accentMuted`, `surface`, `warn`, `danger`, `pendingBg`, `errorBg`, `diffAddBg`, and `diffDelBg`. It follows the terminal background and the color depth, and the theme and each `setPalette` sit above it.
 - `theme({ groups, palette })` makes one theme active, above the defaults and below every other `set`. A new call replaces it, so a theme switcher calls it again at runtime. The disposer of a replaced theme does nothing.
 - A `link` takes the fields of the linked group, and the group's own fields win.
 - `UIComposer` styles the composer surface. `UIComposerPrompt` styles the prompt while the composer reads the keyboard, and `UIComposerPromptInactive` styles it at other times. Both link to `UIComposer`. `UIComposerPlaceholder` also links to the surface and styles the placeholder, which an empty composer shows only without focus. `UIPrompt` remains the picker and dialog prompt.
@@ -89,6 +90,21 @@ ctx.inject(["tui"], (c) => {
 ```
 
 `background.changed` fires when the class changes: a late answer, a resume, or a light/dark switch in a terminal that reports it.
+
+### Color depth
+
+`c.tui.colors` is `"truecolor"` when yuke draws 24-bit colors, or `"256"` when it uses the 256-color palette. The `colors` setting picks it (see [defineConfig](engine.md)): `"auto"` follows `COLORTERM`, like `termguicolors` in Neovim. `colors.changed` fires when the setting changes.
+
+yuke sends a hex color as it is, and a terminal without 24-bit color shows it wrong. So a theme with hex colors also gives 256-color indices, and picks again on each change:
+
+```js
+ctx.inject(["tui"], (c) => {
+  const pick = () => c.tui.style.theme(themes[c.tui.colors][c.tui.background]); // themes.truecolor.dark, themes["256"].light, ...
+  pick();
+  c.on("background.changed", pick);
+  c.on("colors.changed", pick);
+});
+```
 
 ## Dialogs and pickers
 

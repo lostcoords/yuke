@@ -527,7 +527,8 @@ import TickableEntry = $types_core.TickableEntry;
 import ViewLike = $types_core.ViewLike;
 /**
  * The highlight groups and the palette. A group merges its default (from `set` with `{ default: true }`), then the active theme, then each other `set` in call order.
- * The core groups are monochrome: emphasis is weight and inversion, `Normal` is `reset`, and `danger` is the only color.
+ * The palette starts from the default palette of `colorDepth()` and the terminal background, then the theme, then each `setPalette`.
+ * The core groups use only `fg`, `bg`, and `danger`: emphasis is weight and inversion.
  */
 export const style: StyleConfig;
 /**
@@ -978,13 +979,16 @@ export type MouseConfig = {
 export type KeymapConfig = {
     chordMs: number;
 };
+export type ColorsConfig = "auto" | "truecolor" | "256";
 export type Config = {
     systemPrompt?: string | null;
+    colors: ColorsConfig;
     mouse: MouseConfig;
     keymap: KeymapConfig;
 };
 export type ConfigPatch = {
     systemPrompt?: string | null;
+    colors?: ColorsConfig;
     mouse?: Partial<MouseConfig>;
     keymap?: Partial<KeymapConfig>;
 };
@@ -994,6 +998,7 @@ export const config: Config;
 /**
  * Check a config patch and merge it into `config` at once. An absent or undefined field keeps its current value.
  * `systemPrompt` replaces the built-in base prompt, and null keeps the built-in prompt; `${workspace}`, `${session_id}`, and `${agent_name}` in it expand to the session facts.
+ * `colors` picks the palette depth: "auto" (default) follows the terminal, "truecolor" forces 24-bit colors, and "256" forces the 256-color palette. A change emits `colors.changed`.
  * `mouse.scrollLines` is the count of screen lines that one wheel step moves, an integer from 1 to 20 (default 3).
  * `mouse.copyOnSelect` copies the selection when a drag ends (default true).
  * `keymap.chordMs` is the longest wait in milliseconds for the next stroke of a chord, an integer from 1 to 10000 (default 1000).
@@ -1844,6 +1849,11 @@ class Surface {
      */
     get background(): "dark" | "light";
     /**
+     * The color depth that the default palette uses: "truecolor" for 24-bit colors, or "256" for the 256-color palette.
+     * The `colors` setting picks it, and "auto" follows `COLORTERM`. `colors.changed` reports each change of the setting.
+     */
+    get colors(): "truecolor" | "256";
+    /**
      * Show `layer` above the panes until it closes. The disposer, a pop of the layer, or the block stop closes it.
      * Any close runs `onClose` once. After the block stops, the layer does not show and `onClose` runs at once.
      * @param layer - a view such as the `win` from `ui.pick`. A layer that already shows stays in its place.
@@ -2682,7 +2692,7 @@ export interface StyleLayer {
 
 /** The highlight groups and the palette. A draw call names a group, and `resolve` gives its terminal style. */
 export interface StyleConfig {
-  /** The merged palette: the core colors, then the theme, then each `setPalette`. Read it; change it with `setPalette` or `theme`. */
+  /** The merged palette: the default palette of the color depth and the background, then the theme, then each `setPalette`. Read it; change it with `setPalette` or `theme`. */
   palette: Record<string, Color>;
   /** The merged groups. Read them; change them with `set` or `theme`. */
   groups: Record<string, StyleGroup>;
@@ -3012,6 +3022,8 @@ export interface EventsBase extends EngineFacts {
   "focus.changed"(ev: Extract<HostEvent, { type: "focus" }>): void;
   /** The terminal background changed between light and dark. `c.tui.background` holds the new class. */
   "background.changed"(ev: Extract<HostEvent, { type: "background" }>): void;
+  /** The `colors` setting changed. `c.tui.colors` holds the color depth that the default palette now uses. */
+  "colors.changed"(): void;
   "pane.focused"(view: ViewLike): void;
   "pane.closed"(view: ViewLike): void;
   "region.focused"(view: ChatView, region: ChatRegion): void;

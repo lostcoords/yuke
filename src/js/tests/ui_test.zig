@@ -390,6 +390,31 @@ test "a background report updates term.background and emits only a change" {
     try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
 }
 
+test "the default palette follows the color depth and the background, and a theme stays above it" {
+    var fixture = try support.PaintedHost.init(4, 16);
+    defer fixture.deinit();
+    const host = fixture.host;
+    try host.evalModule(
+        \\import { defineConfig } from "yuke:internal/kernel";
+        \\import { term } from "yuke:internal/native/term";
+        \\import { style, colorDepth } from "yuke:internal/core";
+        \\const log = [colorDepth() === (term.truecolor ? "truecolor" : "256")];
+        \\defineConfig({ colors: "truecolor" });
+        \\log.push(colorDepth() + ":" + style.palette.accent);
+        \\defineConfig({ colors: "256" });
+        \\log.push(colorDepth() + ":" + style.palette.accent);
+        \\defineConfig({ colors: "truecolor" });
+        \\try { defineConfig({ colors: "16" }); } catch (e) { log.push(e instanceof TypeError); }
+        \\style.theme({ palette: { accent: "#123456" } });
+        \\globalThis.log = log;
+        \\globalThis.style = style;
+    , "palette.js");
+    try loop.stepBackground(host, .light);
+    try host.eval("globalThis.log.push(style.palette.danger, style.palette.accent); globalThis.result = globalThis.log.join();", "r.js");
+    try support.expectString(host, "result", "true,truecolor:#A8CFA0,256:151,true,#CF222E,#123456");
+    try std.testing.expectEqual(@as(usize, 0), host.faultText().len);
+}
+
 test "the chat pane names the region that reads the keyboard" {
     try support.run("ui/region.test.js");
 }

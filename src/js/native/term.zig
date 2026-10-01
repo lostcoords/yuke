@@ -121,7 +121,26 @@ fn addRoots(host: *Host, ctx: Context, term_obj: Value) void {
     module.set(ctx, term_obj, "width", ctx.newInt32(host.paint.width));
     module.set(ctx, term_obj, "height", ctx.newInt32(host.paint.height));
     module.set(ctx, term_obj, "background", ctx.newString(@tagName(host.paint.background)));
+    module.set(ctx, term_obj, "truecolor", ctx.newBool(truecolor(host.execution.env)));
     host.paint.term_obj = ctx.dupValue(term_obj);
+}
+
+/// Report whether the terminal draws 24-bit color. A terminal says so in COLORTERM (https://github.com/termstandard/colors).
+fn truecolor(env: *const std.process.Environ.Map) bool {
+    const colorterm = env.get("COLORTERM") orelse return false;
+    return std.mem.eql(u8, colorterm, "truecolor") or std.mem.eql(u8, colorterm, "24bit");
+}
+
+test "COLORTERM names 24-bit color as truecolor or 24bit" {
+    var env: std.process.Environ.Map = .init(std.testing.allocator);
+    defer env.deinit();
+    try std.testing.expect(!truecolor(&env));
+    try env.put("COLORTERM", "24bit");
+    try std.testing.expect(truecolor(&env));
+    try env.put("COLORTERM", "truecolor");
+    try std.testing.expect(truecolor(&env));
+    try env.put("COLORTERM", "yes");
+    try std.testing.expect(!truecolor(&env));
 }
 
 fn rethrow(ctx: Context) Value {

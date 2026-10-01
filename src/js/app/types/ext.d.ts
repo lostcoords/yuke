@@ -76,6 +76,8 @@ export interface Events extends EngineFacts {
   "focus.changed"(ev: Extract<HostEvent, { type: "focus" }>): void;
   /** The terminal background changed between light and dark. `c.tui.background` holds the new class. */
   "background.changed"(ev: Extract<HostEvent, { type: "background" }>): void;
+  /** The `colors` setting changed. `c.tui.colors` holds the color depth that the default palette now uses. */
+  "colors.changed"(): void;
   "pane.focused"(view: ViewLike): void;
   "pane.closed"(view: ViewLike): void;
   "region.focused"(view: ChatView, region: ChatRegion): void;

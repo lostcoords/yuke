@@ -36,7 +36,7 @@ export interface StyleLayer {
 
 /** The highlight groups and the palette. A draw call names a group, and `resolve` gives its terminal style. */
 export interface StyleConfig {
-  /** The merged palette: the core colors, then the theme, then each `setPalette`. Read it; change it with `setPalette` or `theme`. */
+  /** The merged palette: the default palette of the color depth and the background, then the theme, then each `setPalette`. Read it; change it with `setPalette` or `theme`. */
   palette: Record<string, Color>;
   /** The merged groups. Read them; change them with `set` or `theme`. */
   groups: Record<string, StyleGroup>;

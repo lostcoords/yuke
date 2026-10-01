@@ -57,5 +57,7 @@ declare module "yuke:internal/native/term" {
     height: number;
     /** The light or dark class of the terminal background. It is "dark" when the terminal does not report its color. */
     background: "dark" | "light";
+    /** True when `COLORTERM` says the terminal draws 24-bit color. */
+    truecolor: boolean;
   };
 }

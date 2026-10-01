@@ -27,8 +27,31 @@ export const contains = (r, col, row) => col >= r.x && col < r.x + r.w && row >=
 // Bound a link chain, so a cycle falls back instead of looping for ever.
 const link_depth_max = 100;
 
-/** @type {Record<string, Color>} */
-const CORE_PALETTE = { fg: "reset", bg: "reset", danger: "red" };
+// `BASE_PALETTES` holds the default palette of each color depth and background. Each 256-color pick keeps the hue of its 24-bit color.
+/** @type {Record<"truecolor" | "256", Record<"dark" | "light", Record<string, Color>>>} */
+const BASE_PALETTES = {
+  truecolor: {
+    dark: { fg: "reset", bg: "reset", surfaceFg: "#E6EDF3", strongFg: "#F6F8FA", accent: "#A8CFA0", accentMuted: "#355C4A", surface: "#343A46", warn: "#E3B341", danger: "#FF7B72", pendingBg: "#3B3520", errorBg: "#4A2323", diffAddBg: "#20372A", diffDelBg: "#3A2426" },
+    light: { fg: "reset", bg: "reset", surfaceFg: "#1F2328", strongFg: "#0D1117", accent: "#2D6A4F", accentMuted: "#B7D7B0", surface: "#E8EAED", warn: "#9A6700", danger: "#CF222E", pendingBg: "#FFF8C5", errorBg: "#FFEBE9", diffAddBg: "#E6F4EA", diffDelBg: "#FFEBE9" },
+  },
+  "256": {
+    dark: { fg: "reset", bg: "reset", surfaceFg: 255, strongFg: 231, accent: 151, accentMuted: 23, surface: 237, warn: 179, danger: 209, pendingBg: 58, errorBg: 52, diffAddBg: 22, diffDelBg: 52 },
+    light: { fg: "reset", bg: "reset", surfaceFg: 235, strongFg: 233, accent: 29, accentMuted: 151, surface: 255, warn: 94, danger: 160, pendingBg: 230, errorBg: 224, diffAddBg: 194, diffDelBg: 224 },
+  },
+};
+
+/**
+ * Return the color depth of the default palette. The `colors` setting decides it, and "auto" follows what `COLORTERM` reports.
+ * @returns {"truecolor" | "256"}
+ */
+export function colorDepth() {
+  return config.colors === "auto" ? (term.truecolor ? "truecolor" : "256") : config.colors;
+}
+
+/** @returns {Record<string, Color>} */
+function basePalette() {
+  return BASE_PALETTES[colorDepth()][term.background];
+}
 const style_fg = 1 << 0;
 const style_bg = 1 << 1;
 const style_ul = 1 << 2;
@@ -51,11 +74,12 @@ let overlayGroupId = 0;
 
 /**
  * The highlight groups and the palette. A group merges its default (from `set` with `{ default: true }`), then the active theme, then each other `set` in call order.
- * The core groups are monochrome: emphasis is weight and inversion, `Normal` is `reset`, and `danger` is the only color.
+ * The palette starts from the default palette of `colorDepth()` and the terminal background, then the theme, then each `setPalette`.
+ * The core groups use only `fg`, `bg`, and `danger`: emphasis is weight and inversion.
  * @type {StyleConfig}
  */
 export const style = {
-  palette: { ...CORE_PALETTE },
+  palette: { ...basePalette() },
   groups: Object.create(null),
   // A Map, because a dictionary object that grows in step with `groups` shares its shape, and each add then copies the shape.
   _base: new Map(),
@@ -115,7 +139,7 @@ export const style = {
   /** @param {StyleLayer} layer */
   _apply(layer) {
     if (layer.palette) {
-      const palette = { ...CORE_PALETTE };
+      const palette = { ...basePalette() };
       for (const each of this._patches) if (each.palette) patch(palette, each.palette);
       this.palette = /** @type {Record<string, Color>} */ (palette);
     }
@@ -1686,6 +1710,10 @@ export class RootView {
 
 /** The one root view of the process. */
 export const root = new RootView();
+
+// The default palette follows the terminal background and the color depth. A theme and each `setPalette` stay above it.
+events.on("background.changed", () => style._apply({ palette: {} }));
+events.on("colors.changed", () => style._apply({ palette: {} }));
 
 // Each style change repaints `root`, so the core defaults register after it exists.
 style.set({
