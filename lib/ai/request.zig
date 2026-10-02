@@ -6,6 +6,7 @@ const ir = @import("request/ir.zig");
 const anthropic = @import("request/anthropic.zig");
 const openai_chat = @import("request/openai_chat.zig");
 const openai_responses = @import("request/openai_responses.zig");
+const types = @import("types.zig");
 
 /// The encoded history array of a series of requests. A request encodes again only from the first element that can change.
 /// The caller owns it with `gpa` and keeps it while a request borrows `items`.
@@ -66,8 +67,9 @@ pub const History = struct {
 
 /// Validate one request with scratch from `arena`, then serialize it as three parts: the head, the history elements, and the tail.
 /// The head and the elements borrow `history`, which this call updates. The slice lives in `arena`. The wire tag selects the protocol.
-/// It fails on a request that breaks the IR, on content the endpoint cannot carry, and on `OutOfMemory`.
-pub fn serialize(gpa: std.mem.Allocator, arena: std.mem.Allocator, request: ir.Request, blocks: []const ir.Block, history: *History) (ir.ValidateError || ir.Unsupported)![]const []const u8 {
+/// It fails on a request that breaks the IR, on content the endpoint cannot carry, on a blob that `request.blobs` does not answer, and on `OutOfMemory`.
+/// Only an element that this call encodes reads its blobs. A Debug build also encodes the whole request again to check the kept elements, so it reads every blob.
+pub fn serialize(gpa: std.mem.Allocator, arena: std.mem.Allocator, request: ir.Request, blocks: []const ir.Block, history: *History) Error![]const []const u8 {
     try ir.validate(arena, request, blocks);
 
     var key_hash: std.hash.Wyhash = .init(0);
@@ -142,6 +144,7 @@ fn feed(hash: *std.hash.Wyhash, value: anytype) void {
             if (info.child == u8) hash.update(value) else for (value) |item| feed(hash, item);
         },
         .@"struct" => |info| inline for (info.fields) |field| feed(hash, @field(value, field.name)),
+        .array => |info| if (info.child == u8) hash.update(&value) else for (value) |item| feed(hash, item),
         .@"union" => switch (value) {
             inline else => |payload, tag| {
                 hash.update(std.mem.asBytes(&@intFromEnum(tag)));
@@ -160,7 +163,10 @@ fn feed(hash: *std.hash.Wyhash, value: anytype) void {
     }
 }
 
-fn mapWrite(err: ir.SerializeError) (ir.ValidateError || ir.Unsupported) {
+/// The errors of `serialize`.
+pub const Error = ir.ValidateError || ir.Unsupported || types.BlobReader.ReadError;
+
+fn mapWrite(err: ir.SerializeError) Error {
     return switch (err) {
         error.WriteFailed => error.OutOfMemory,
         else => |e| e,
@@ -168,13 +174,42 @@ fn mapWrite(err: ir.SerializeError) (ir.ValidateError || ir.Unsupported) {
 }
 
 const testing = std.testing;
+const request_testing = @import("request/testing.zig");
 
 fn text(role: ir.Role, value: []const u8) ir.Block {
     return .{ .role = role, .value = .{ .text = value } };
 }
 
+fn image(comptime data: []const u8) ir.Block {
+    return .{ .role = .user, .value = .{ .media = .{ .source = .{ .blob = request_testing.blob(data) }, .mime = "image/png" } } };
+}
+
+// `serialize` encodes the whole request again in a Debug build, so this test calls the protocol writers.
+test "a protocol writer reads the blobs of the elements it writes and no others" {
+    const Counter = struct {
+        reads: usize = 0,
+
+        fn read(ctx: *const anyopaque, digest: [32]u8) types.BlobReader.ReadError![]const u8 {
+            const self: *@This() = @ptrCast(@alignCast(@constCast(ctx)));
+            self.reads += 1;
+            return request_testing.blobs.readFn(request_testing.blobs.ctx, digest);
+        }
+    };
+    const blocks = [_]ir.Block{ image("ab"), text(.assistant, "b"), text(.user, "c") };
+    inline for (.{ anthropic, openai_chat, openai_responses }, [_]ir.Wire{ .{ .anthropic_messages = .{} }, .{ .openai_chat = .{} }, .{ .openai_responses = .{} } }) |protocol, wire| {
+        var counter: Counter = .{};
+        const request: ir.Request = .{ .model = "m", .wire = wire, .max_output_tokens = 8, .blobs = .{ .ctx = &counter, .readFn = Counter.read } };
+        var out: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer out.deinit();
+        try protocol.writeItems(&out.writer, request, &blocks, 1, false, null);
+        try testing.expectEqual(@as(usize, 0), counter.reads);
+        try protocol.writeItems(&out.writer, request, &blocks, 0, false, null);
+        try testing.expectEqual(@as(usize, 1), counter.reads);
+    }
+}
+
 // `serialize` checks each resumed body against a fresh encoding in a Debug build, so each call below is the assertion.
-test "a resumed history equals a fresh encoding after an append, an edit, and a marker that moves back" {
+test "a resumed history equals a fresh encoding after an append, an edit, a marker that moves back, and a new blob" {
     const rounds = [_][]const ir.Block{
         &.{text(.user, "a")},
         &.{ text(.user, "a"), text(.assistant, "b"), text(.user, "c") },
@@ -182,6 +217,9 @@ test "a resumed history equals a fresh encoding after an append, an edit, and a 
         &.{ text(.user, "x"), text(.assistant, "b"), text(.user, "c"), text(.assistant, "d"), text(.user, "e") },
         // The last user text goes, so the marker moves back to an element that a resume would keep.
         &.{ text(.user, "x"), text(.assistant, "b"), text(.user, "c"), text(.assistant, "d") },
+        &.{ image("ab"), text(.assistant, "b"), text(.user, "c"), text(.assistant, "d"), text(.user, "e") },
+        // Only the digest changes, so the element must encode again.
+        &.{ image("cd"), text(.assistant, "b"), text(.user, "c"), text(.assistant, "d"), text(.user, "e") },
     };
     for ([_]ir.Wire{ .{ .anthropic_messages = .{ .cache = true } }, .{ .openai_chat = .{} }, .{ .openai_responses = .{ .cache = true } } }) |wire| {
         var history: History = .{};
@@ -189,7 +227,7 @@ test "a resumed history equals a fresh encoding after an append, an edit, and a 
         for (rounds) |blocks| {
             var arena: std.heap.ArenaAllocator = .init(testing.allocator);
             defer arena.deinit();
-            _ = try serialize(testing.allocator, arena.allocator(), .{ .model = "m", .wire = wire, .system = "s", .max_output_tokens = 8 }, blocks, &history);
+            _ = try serialize(testing.allocator, arena.allocator(), .{ .model = "m", .wire = wire, .system = "s", .max_output_tokens = 8, .blobs = request_testing.blobs }, blocks, &history);
         }
     }
 }

@@ -49,13 +49,11 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
     const route = held.route;
     const model = held.model;
     const build = held.build;
-    var blobs: BlobReader = .{ .arena = arena, .io = engine.deps.io, .store = engine.deps.blobs };
     const built = try provider.request_builder.build(arena, projected.messages, .{
         .target = .{ .protocol = route.route.protocol, .model = slot.config.model },
         .tools = build.tools,
         .native = slot.tools.?.deferral == .native,
         .modalities = model.modalities,
-        .blobs = blobs.lookup(),
     });
     const tools = try provider.request_builder.declared(arena, build.tools, built.added);
     const max_output = held.budget.clampOutput(build.max_output_tokens, projected.tokens);
@@ -64,8 +62,10 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
 
     // The serializer and the header builder both copy this, so it only has to outlive `prepare`.
     const session_hex = std.fmt.bytesToHex(slot.sessionId().raw, .lower);
+    const blobs: BlobReader = .{ .arena = arena, .io = engine.deps.io, .store = engine.deps.blobs };
     var prepared = try ai.prepare(engine.deps.gpa, try bind(engine, held, route.route), .{
         .blocks = built.blocks,
+        .blobs = blobs.reader(),
         .system = build.system,
         .tools = tools,
         .options = .{
@@ -111,22 +111,22 @@ const RequestSend = struct {
     body: []const u8,
 };
 
-/// Read admitted blobs into the round arena, so the bytes outlive serialization.
+/// Read an admitted blob into the round arena when the serializer writes its element.
 const BlobReader = struct {
     arena: std.mem.Allocator,
     io: std.Io,
     store: store.blob.Store,
 
-    fn lookup(self: *const BlobReader) provider.request_builder.BlobLookup {
-        return .{ .context = self, .getFn = get };
+    fn reader(self: *const BlobReader) ai.BlobReader {
+        return .{ .ctx = self, .readFn = read };
     }
 
-    fn get(ctx: *const anyopaque, hash: proto.ids.BlobHash) error{ OutOfMemory, Canceled }!?[]const u8 {
+    fn read(ctx: *const anyopaque, digest: [32]u8) ai.BlobReader.ReadError![]const u8 {
         const self: *const BlobReader = @ptrCast(@alignCast(ctx));
-        return self.store.read(self.io, self.arena, hash) catch |err| switch (err) {
+        return self.store.read(self.io, self.arena, .bytes(digest)) catch |err| switch (err) {
             error.OutOfMemory, error.Canceled => |e| return e,
-            // A missing blob after admission means the store is corrupt. The builder reports an unresolved blob.
-            error.BlobMissing => null,
+            // A missing blob after admission means the store is corrupt.
+            error.BlobMissing => error.UnresolvedBlob,
         };
     }
 };

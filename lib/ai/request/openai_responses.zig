@@ -107,7 +107,7 @@ pub fn writeItems(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Blo
             .media => |media| {
                 std.debug.assert(block.role == .user); // `validate` gives media the user role.
                 try ensureMessage(&jw, &message, &separate, .user);
-                try writeMedia(&jw, media);
+                try writeMedia(&jw, request.blobs, media);
             },
             .reasoning => |reasoning| {
                 // Omit reasoning state when it has no encrypted content.
@@ -166,7 +166,7 @@ pub fn writeItems(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Blo
                         try json.toolText(&jw, tool_result.content, tool_result.is_error);
                         try jw.endObject();
                     }
-                    for (tool_result.media) |media| try writeMedia(&jw, media);
+                    for (tool_result.media) |media| try writeMedia(&jw, request.blobs, media);
                     try jw.endArray();
                 }
                 try jw.endObject();
@@ -317,15 +317,15 @@ fn writeSearchOutput(jw: *std.json.Stringify, tools: []const ir.Tool, tool_resul
 }
 
 /// Write one attachment. Responses names the image URL as a plain string, not an object.
-fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) ir.SerializeError!void {
+fn writeMedia(jw: *std.json.Stringify, blobs: ?types.BlobReader, media: ir.Block.Media) ir.SerializeError!void {
     try jw.beginObject();
     switch (ir.modalityOf(media.mime)) {
         .image => {
             try json.field(jw, "type", "input_image");
             switch (media.source) {
-                .bytes => |data| {
+                .blob => |blob| {
                     try jw.objectField("image_url");
-                    try json.writeBase64(jw, media.mime, data);
+                    try json.writeBase64(jw, media.mime, try ir.readBlob(blobs, blob));
                 },
                 .url => |value| try json.field(jw, "image_url", value),
                 .file_id => |value| try json.field(jw, "file_id", value),
@@ -336,11 +336,11 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) ir.SerializeError!
         .pdf => {
             try json.field(jw, "type", "input_file");
             switch (media.source) {
-                .bytes => |data| {
+                .blob => |blob| {
                     if (media.filename.len == 0) return error.UnsupportedContent; // The endpoint names the file.
                     try json.field(jw, "filename", media.filename);
                     try jw.objectField("file_data");
-                    try json.writeBase64(jw, media.mime, data);
+                    try json.writeBase64(jw, media.mime, try ir.readBlob(blobs, blob));
                 },
                 .url => |value| try json.field(jw, "file_url", value),
                 .file_id => |value| try json.field(jw, "file_id", value),
@@ -435,7 +435,7 @@ test "an error result starts with Error, because Responses has no error flag" {
 }
 
 test "a tool result with an image writes an output array" {
-    const image: ir.Block.Media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" };
+    const image: ir.Block.Media = .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "image/png" };
     const blocks = [_]ir.Block{
         .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call_1", .name = "read", .arguments = "{}" } } },
         .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "PNG image", .is_error = false, .media = &.{image} } } },
@@ -446,7 +446,7 @@ test "a tool result with an image writes an output array" {
 }
 
 test "an error result with an image starts its text with Error" {
-    const image: ir.Block.Media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" };
+    const image: ir.Block.Media = .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "image/png" };
     const blocks = [_]ir.Block{
         .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call_1", .name = "read", .arguments = "{}" } } },
         .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call_1", .content = "", .is_error = true, .media = &.{image} } } },
@@ -520,13 +520,13 @@ test "a schema constrains the response through the text format" {
 
 test "this api reads no sound, so audio never reaches an input part" {
     // The Responses input union is text, image and file alone; audio needs Chat Completions.
-    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "audio/wav" } } }};
+    const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "audio/wav" } } }};
     try expectError(error.UnsupportedContent, .{ .model = "gpt-5", .wire = .{ .openai_responses = .{} }, .max_output_tokens = 8 }, &blocks);
 }
 
 test "each attachment kind reaches its own input part" {
     const blocks = [_]ir.Block{
-        .{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" } } },
+        .{ .role = .user, .value = .{ .media = .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "image/png" } } },
         .{ .role = .user, .value = .{ .media = .{ .source = .{ .file_id = "file_1" }, .mime = "image/jpeg" } } },
         .{ .role = .user, .value = .{ .media = .{ .source = .{ .url = "https://x.test/a.pdf" }, .mime = "application/pdf" } } },
     };

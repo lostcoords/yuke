@@ -91,14 +91,14 @@ pub fn writeItems(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Blo
                 // A strict host refuses two user messages in a row, so the images join the user text that follows.
                 const user_end = if (block_index < blocks.len and blocks[block_index].role == .user) userMessageEnd(blocks, block_index) else block_index;
                 var jw = try beginElement(w, &separate);
-                try writeUserMessage(&jw, results, blocks[block_index..user_end]);
+                try writeUserMessage(&jw, request.blobs, results, blocks[block_index..user_end]);
                 block_index = user_end;
             },
             else => switch (block.role) {
                 .user => {
                     const end_index = userMessageEnd(blocks, block_index);
                     var jw = try beginElement(w, &separate);
-                    try writeUserMessage(&jw, &.{}, blocks[block_index..end_index]);
+                    try writeUserMessage(&jw, request.blobs, &.{}, blocks[block_index..end_index]);
                     block_index = end_index;
                 },
                 .assistant => {
@@ -148,7 +148,7 @@ fn assistantMessageEnd(blocks: []const ir.Block, start: usize) usize {
 }
 
 /// Write one user message. The images of `results` lead it, each under a label that names its call.
-fn writeUserMessage(jw: *std.json.Stringify, results: []const ir.Block, blocks: []const ir.Block) ir.SerializeError!void {
+fn writeUserMessage(jw: *std.json.Stringify, blobs: ?types.BlobReader, results: []const ir.Block, blocks: []const ir.Block) ir.SerializeError!void {
     std.debug.assert(results.len != 0 or blocks.len != 0);
     std.debug.assert(blocks.len == 0 or blocks[0].role == .user);
 
@@ -160,7 +160,7 @@ fn writeUserMessage(jw: *std.json.Stringify, results: []const ir.Block, blocks: 
         std.debug.assert(result.role == .user and result.value == .tool_result);
         for (result.value.tool_result.media) |media| {
             try writeImageLabel(jw, result.value.tool_result.call_id);
-            try writeMedia(jw, media);
+            try writeMedia(jw, blobs, media);
         }
     }
     for (blocks) |block| {
@@ -169,7 +169,7 @@ fn writeUserMessage(jw: *std.json.Stringify, results: []const ir.Block, blocks: 
             .text => |text| {
                 try writeTextBlock(jw, text);
             },
-            .media => |media| try writeMedia(jw, media),
+            .media => |media| try writeMedia(jw, blobs, media),
             .reasoning, .redacted_reasoning, .tool_use, .tool_result => unreachable, // `validate` fixes these roles.
         }
     }
@@ -304,7 +304,7 @@ fn writeToolResult(jw: *std.json.Stringify, tool_result: ir.Block.ToolResult) ir
 }
 
 /// Write one attachment. This endpoint names a different part for each kind.
-fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) ir.SerializeError!void {
+fn writeMedia(jw: *std.json.Stringify, blobs: ?types.BlobReader, media: ir.Block.Media) ir.SerializeError!void {
     switch (ir.modalityOf(media.mime)) {
         .image => {
             try jw.beginObject();
@@ -314,7 +314,7 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) ir.SerializeError!
             try jw.objectField("url");
             // This part reads a URL alone, so bytes travel as a data URL and a handle has nowhere to go.
             switch (media.source) {
-                .bytes => |data| try json.writeBase64(jw, media.mime, data),
+                .blob => |blob| try json.writeBase64(jw, media.mime, try ir.readBlob(blobs, blob)),
                 .url => |value| try jw.write(value),
                 .file_id => return error.UnsupportedContent,
             }
@@ -324,7 +324,7 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) ir.SerializeError!
         .audio => {
             const format = try json.audioFormat(media.mime);
             const data = switch (media.source) {
-                .bytes => |value| value,
+                .blob => |blob| try ir.readBlob(blobs, blob),
                 // The part carries raw base64 with no envelope, so it names neither a URL nor a handle.
                 .url, .file_id => return error.UnsupportedContent,
             };
@@ -344,10 +344,10 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media) ir.SerializeError!
             try jw.objectField("file");
             try jw.beginObject();
             switch (media.source) {
-                .bytes => |data| {
+                .blob => |blob| {
                     if (media.filename.len == 0) return error.UnsupportedContent; // The endpoint names the file.
                     try jw.objectField("file_data");
-                    try json.writeBase64(jw, media.mime, data);
+                    try json.writeBase64(jw, media.mime, try ir.readBlob(blobs, blob));
                     try json.field(jw, "filename", media.filename);
                 },
                 .file_id => |value| try json.field(jw, "file_id", value),
@@ -589,7 +589,7 @@ test "an error result starts with Error, because Chat Completions has no error f
 }
 
 test "tool images follow the whole run of tool messages, or join the user text that follows" {
-    const image: ir.Block.Media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" };
+    const image: ir.Block.Media = .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "image/png" };
     const request: ir.Request = .{ .model = "gpt", .wire = .{ .openai_chat = .{} }, .max_output_tokens = 8 };
     // A middle image tests both the media scan and the order of all three results.
     const run = [_]ir.Block{
@@ -646,7 +646,7 @@ test "a schema constrains the response through response_format" {
 }
 
 test "each attachment kind reaches its own content part" {
-    const image = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" } } }};
+    const image = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "image/png" } } }};
     try expectJson(
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,YWI="}}]}]}
     ,
@@ -654,7 +654,7 @@ test "each attachment kind reaches its own content part" {
         &image,
     );
 
-    const document = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "application/pdf", .filename = "a.pdf" } } }};
+    const document = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "application/pdf", .filename = "a.pdf" } } }};
     try expectJson(
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"user","content":[{"type":"file","file":{"file_data":"data:application/pdf;base64,YWI=","filename":"a.pdf"}}]}]}
     ,
@@ -662,7 +662,7 @@ test "each attachment kind reaches its own content part" {
         &document,
     );
 
-    const sound = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "audio/mpeg" } } }};
+    const sound = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "audio/mpeg" } } }};
     try expectJson(
         \\{"model":"m","stream":true,"stream_options":{"include_usage":true},"store":false,"max_tokens":8,"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"YWI=","format":"mp3"}}]}]}
     ,
@@ -678,9 +678,9 @@ test "a part refuses a source its shape cannot carry" {
         // The audio part carries raw base64 with no envelope.
         .{ .source = .{ .url = "https://x.test/a.mp3" }, .mime = "audio/mpeg" },
         // A document sent as bytes must name itself.
-        .{ .source = .{ .bytes = "ab" }, .mime = "application/pdf" },
-        .{ .source = .{ .bytes = "ab" }, .mime = "video/mp4" },
-        .{ .source = .{ .bytes = "ab" }, .mime = "audio/flac" },
+        .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "application/pdf" },
+        .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "video/mp4" },
+        .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "audio/flac" },
     };
     for (cases) |media| {
         const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = media } }};

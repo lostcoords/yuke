@@ -30,6 +30,8 @@ pub const Request = struct {
     system: []const u8 = "",
     tools: []const ir.Tool = &.{},
     options: Options = .{},
+    /// The store of every `.blob` media source. Null resolves no blob.
+    blobs: ?types.BlobReader = null,
 };
 
 /// Provider-neutral controls over how the model answers.
@@ -268,6 +270,7 @@ fn requestBody(gpa: std.mem.Allocator, arena: std.mem.Allocator, model: Model, r
         .temperature = options.temperature,
         .top_p = options.top_p,
         .tool_choice = options.tool_choice,
+        .blobs = request.blobs,
     };
     return request_wire.serialize(gpa, arena, value, request.blocks, history);
 }

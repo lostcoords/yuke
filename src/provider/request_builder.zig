@@ -34,22 +34,10 @@ pub const Options = struct {
     /// True when the route loads a found definition in place. Other routes add it eagerly from the search on.
     native: bool = false,
     modalities: ai.Modalities = .{},
-    /// The lookup that answers a blob ref with bytes. Null resolves no attachment.
-    blobs: ?BlobLookup = null,
-};
-
-/// One read of stored bytes by hash. The caller keeps the bytes alive through serialization.
-pub const BlobLookup = struct {
-    context: *const anyopaque,
-    getFn: *const fn (context: *const anyopaque, hash: proto.ids.BlobHash) error{ OutOfMemory, Canceled }!?[]const u8,
-
-    pub fn get(self: BlobLookup, hash: proto.ids.BlobHash) error{ OutOfMemory, Canceled }!?[]const u8 {
-        return self.getFn(self.context, hash);
-    }
 };
 
 /// A bad transcript degrades the turn. The engine never crashes on stored data.
-pub const Error = error{ OutOfMemory, InvalidTranscript, UnresolvedBlob, Canceled };
+pub const Error = error{ OutOfMemory, InvalidTranscript };
 
 /// The request body has the blocks and the loaded definitions that the request does not declare yet.
 pub const Built = struct {
@@ -134,10 +122,8 @@ fn mediaValue(blob: proto.content.MediaBlob, options: Options, images: *ImageBud
         if (!takes) return .{ .text = omittedNote(kind) };
     }
     if (kind == .image and !images.take(blob)) return .{ .text = image_budget_note };
-    // The model reads the kind, so the bytes must arrive. Admission proved the store holds them.
-    const lookup = options.blobs orelse return error.UnresolvedBlob;
-    const bytes = (try lookup.get(blob.hash)) orelse return error.UnresolvedBlob;
-    return .{ .media = .{ .source = .{ .bytes = bytes }, .mime = blob.mime } };
+    // The serializer reads the bytes only for an element it writes. Admission proved the store holds them.
+    return .{ .media = .{ .source = .{ .blob = .{ .digest = blob.hash.raw, .len = @intCast(blob.bytes) } }, .mime = blob.mime } };
 }
 
 fn foldAssistant(gpa: std.mem.Allocator, blocks: *std.ArrayList(Block), added: *std.ArrayList(ai.ir.Tool), msg: proto.message.AssistantMessage, options: Options, images: *ImageBudget) Error!void {
@@ -328,14 +314,14 @@ test "a model that reads no images sees a note where the attachment was" {
     try testing.expectEqualStrings("look", text_only[0].value.text);
     try testing.expectEqualStrings("[image omitted: this model reads no images]", text_only[1].value.text);
 
-    // A model that reads images must receive the bytes, so the missing store is an error and never a note.
-    try testing.expectError(
-        error.UnresolvedBlob,
-        build(arena.allocator(), &messages, .{ .modalities = .{ .input = &.{ .text, .image } } }),
-    );
+    // A model that reads images gets the blob by its hash and size. The serializer reads the bytes.
+    const seen = (try build(arena.allocator(), &messages, .{ .modalities = .{ .input = &.{ .text, .image } } })).blocks;
+    try testing.expectEqualSlices(u8, &blob.hash.raw, &seen[1].value.media.source.blob.digest);
+    try testing.expectEqual(@as(usize, 2), seen[1].value.media.source.blob.len);
+    try testing.expectEqualStrings("image/png", seen[1].value.media.mime);
 
-    // A model that lists nothing states no refusal, so the attachment is still owed its bytes.
-    try testing.expectError(error.UnresolvedBlob, build(arena.allocator(), &messages, .{}));
+    // A model that lists nothing states no refusal, so the attachment stays.
+    try testing.expect((try build(arena.allocator(), &messages, .{})).blocks[1].value == .media);
 }
 
 test "a tool image resolves to result media, and a text-only model gets the note after the text" {
@@ -348,21 +334,18 @@ test "a tool image resolves to result media, and a text-only model gets the note
     };
     const messages = [_]proto.message.Message{.{ .assistant = .{ .id = 1, .run_id = 1, .config_rev = 1, .content = &content, .time = .{ .created_at_ms = 0 } } }};
 
-    var spy: SpyLookup = .{ .bytes = "PNG" };
-    const seen = (try build(a, &messages, .{ .modalities = .{ .input = &.{ .text, .image } }, .blobs = spy.lookup() })).blocks;
+    const seen = (try build(a, &messages, .{ .modalities = .{ .input = &.{ .text, .image } } })).blocks;
     const result = seen[1].value.tool_result;
     try testing.expectEqualStrings("PNG image, 3 B", result.content);
     try testing.expectEqual(@as(usize, 1), result.media.len);
-    try testing.expectEqualStrings("PNG", result.media[0].source.bytes);
-    try testing.expectEqual(@as(usize, 1), spy.hits);
+    try testing.expectEqualSlices(u8, &blob.hash.raw, &result.media[0].source.blob.digest);
 
     const noted = (try build(a, &messages, .{ .modalities = .{ .input = &.{.text} } })).blocks;
     try testing.expectEqualStrings("PNG image, 3 B\n[image omitted: this model reads no images]", noted[1].value.tool_result.content);
     try testing.expectEqual(@as(usize, 0), noted[1].value.tool_result.media.len);
-    try testing.expectEqual(@as(usize, 1), spy.hits);
 }
 
-test "the request shares an image byte budget and reads only the newest images" {
+test "the request shares an image byte budget and keeps only the newest images" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -380,73 +363,13 @@ test "the request shares an image byte budget and reads only the newest images" 
         } },
         .{ .user = .{ .id = 3, .input_id = 2, .content = &.{.{ .image = .{ .source = blobs[9] } }}, .time = .{ .created_at_ms = 3 } } },
     };
-    const Lookup = struct {
-        bytes: []const u8,
-        hits: usize = 0,
-
-        fn get(raw: *const anyopaque, hash: proto.ids.BlobHash) error{ OutOfMemory, Canceled }!?[]const u8 {
-            const self: *@This() = @ptrCast(@alignCast(@constCast(raw)));
-            if (hash.raw[0] < 6) return null;
-            self.hits += 1;
-            return self.bytes;
-        }
-    };
-    const bytes = try a.alloc(u8, image_bytes);
-    @memset(bytes, 0);
-    var lookup: Lookup = .{ .bytes = bytes };
-    const built = (try build(a, &messages, .{ .blobs = .{ .context = &lookup, .getFn = Lookup.get } })).blocks;
-    try testing.expectEqual(@as(usize, 4), lookup.hits);
+    const built = (try build(a, &messages, .{})).blocks;
     try testing.expectEqualStrings(image_budget_note, built[0].value.text);
     const result = built[3].value.tool_result;
     try testing.expectEqual(@as(usize, 3), result.media.len);
     try testing.expectEqualStrings("images\n" ++ image_budget_note ++ "\n" ++ image_budget_note ++ "\n" ++ image_budget_note ++ "\n" ++ image_budget_note, result.content);
     try testing.expect(built[4].value == .media);
     try ir.validate(a, .{ .model = "vision", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 }, built);
-}
-
-const SpyLookup = struct {
-    bytes: []const u8,
-    hits: usize = 0,
-    present: bool = true,
-
-    fn lookup(self: *SpyLookup) BlobLookup {
-        return .{ .context = self, .getFn = get };
-    }
-    fn get(ctx: *const anyopaque, _: proto.ids.BlobHash) error{ OutOfMemory, Canceled }!?[]const u8 {
-        const self: *SpyLookup = @ptrCast(@alignCast(@constCast(ctx)));
-        self.hits += 1;
-        return if (self.present) self.bytes else null;
-    }
-};
-
-test "a vision model resolves the blob bytes, and a text-only model never reads the store" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const blob: proto.content.MediaBlob = .{ .hash = .bytes(@splat(7)), .mime = "image/png", .bytes = 2 };
-    const parts = [_]proto.content.ContentPart{.{ .image = .{ .source = blob } }};
-    const messages = [_]proto.message.Message{.{ .user = .{ .id = 1, .content = &parts, .input_id = 2, .time = .{ .created_at_ms = 0 } } }};
-    const reads_images: ai.Modalities = .{ .input = &.{ .text, .image } };
-
-    // A supplied lookup resolves to one media block with the exact bytes and mime.
-    var spy: SpyLookup = .{ .bytes = "PNG" };
-    const built = (try build(a, &messages, .{ .modalities = reads_images, .blobs = spy.lookup() })).blocks;
-    try testing.expectEqual(@as(usize, 1), built.len);
-    try testing.expect(built[0].value == .media);
-    try testing.expectEqualStrings("PNG", built[0].value.media.source.bytes);
-    try testing.expectEqualStrings("image/png", built[0].value.media.mime);
-    try testing.expectEqual(@as(usize, 1), spy.hits);
-
-    // A lookup that no longer holds the hash is an unresolved blob, never a silent omission.
-    var gone: SpyLookup = .{ .bytes = "PNG", .present = false };
-    try testing.expectError(error.UnresolvedBlob, build(a, &messages, .{ .modalities = reads_images, .blobs = gone.lookup() }));
-    try testing.expectEqual(@as(usize, 1), gone.hits);
-
-    // A text-only model omits the attachment and never touches the lookup.
-    var untouched: SpyLookup = .{ .bytes = "PNG" };
-    const text_only = (try build(a, &messages, .{ .modalities = .{ .input = &.{.text} }, .blobs = untouched.lookup() })).blocks;
-    try testing.expectEqualStrings("[image omitted: this model reads no images]", text_only[0].value.text);
-    try testing.expectEqual(@as(usize, 0), untouched.hits);
 }
 
 test "the media type selects the omitted-attachment note" {

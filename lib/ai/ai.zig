@@ -11,6 +11,10 @@ pub const Usage = types.Usage;
 pub const Modality = types.Modality;
 pub const Modalities = types.Modalities;
 pub const MediaSource = types.MediaSource;
+/// Bytes in the caller's store, named by their digest.
+pub const Blob = types.Blob;
+/// The store that answers each blob when the serializer writes it.
+pub const BlobReader = types.BlobReader;
 pub const ModelIdentity = types.ModelIdentity;
 pub const limits = types.limits;
 

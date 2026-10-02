@@ -34,14 +34,39 @@ pub const Modalities = struct {
     }
 };
 
-/// Where media bytes come from. A caller resolves its own storage before it serializes.
+/// Where media bytes come from.
 pub const MediaSource = union(enum) {
-    /// Raw bytes. The serializer encodes them, and the caller owns them through serialization.
-    bytes: []const u8,
+    /// Bytes in the caller's store. The serializer reads them through the request `BlobReader` only when it writes the element.
+    blob: Blob,
     /// A URL the provider fetches for itself.
     url: []const u8,
     /// A handle the provider's own files endpoint returned.
     file_id: []const u8,
+};
+
+/// Bytes in the caller's store, named by the digest of their content. Equal digests name equal bytes, so a resumed history reads no kept blob.
+pub const Blob = struct {
+    /// The digest of the content, such as its SHA-256.
+    digest: [32]u8,
+    /// The byte count of the content. The request limits count it before a read.
+    len: usize,
+};
+
+/// The caller's store of blob bytes. The serializer borrows each answer, so the bytes must stay valid until `serialize` returns.
+pub const BlobReader = struct {
+    ctx: *const anyopaque,
+    /// Answer the bytes of `digest`, or `UnresolvedBlob` when the store lacks them.
+    readFn: *const fn (ctx: *const anyopaque, digest: [32]u8) ReadError![]const u8,
+
+    /// The store lacks the bytes, or the read fails.
+    pub const ReadError = error{ OutOfMemory, Canceled, UnresolvedBlob };
+
+    /// Answer the bytes of `blob`. Bytes of another length fail with `UnresolvedBlob`, because the request limits count `len`.
+    pub fn read(self: BlobReader, blob: Blob) ReadError![]const u8 {
+        const bytes = try self.readFn(self.ctx, blob.digest);
+        if (bytes.len != blob.len) return error.UnresolvedBlob;
+        return bytes;
+    }
 };
 
 pub const limits = struct {

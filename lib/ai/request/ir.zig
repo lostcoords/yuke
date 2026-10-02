@@ -182,6 +182,8 @@ pub const Request = struct {
     output_schema: ?OutputSchema = null,
     /// Whether the model may call a tool.
     tool_choice: ToolChoice = .auto,
+    /// The store of every `.blob` media source. Null resolves no blob.
+    blobs: ?types.BlobReader = null,
 };
 
 /// The tool controls every host understands.
@@ -193,8 +195,14 @@ pub const ValidateError = std.mem.Allocator.Error || error{ InvalidRequest, Requ
 /// The endpoint of a wire cannot carry this content.
 pub const Unsupported = error{ UnsupportedContent, UnsupportedLoadedTools, UnsupportedDeferredTools };
 
-/// A serializer fails on a write, or on content that its endpoint cannot carry.
-pub const SerializeError = std.Io.Writer.Error || Unsupported;
+/// A serializer fails on a write, on content that its endpoint cannot carry, or on a blob that its store does not answer.
+pub const SerializeError = std.Io.Writer.Error || Unsupported || types.BlobReader.ReadError;
+
+/// Read the bytes of `blob` from `blobs`. A request with no store resolves no blob.
+pub fn readBlob(blobs: ?types.BlobReader, blob: types.Blob) types.BlobReader.ReadError![]const u8 {
+    const reader = blobs orelse return error.UnresolvedBlob;
+    return reader.read(blob);
+}
 
 /// The byte offset of each element of the history array, before its comma, by the index of its first block. Null marks a block inside an element.
 /// A later request can encode again from an element start. A null outer slice records no offsets.
@@ -272,7 +280,8 @@ fn blockBytes(block: Block) usize {
 
 fn mediaBytes(media: Block.Media) usize {
     return media.mime.len +| media.filename.len +| switch (media.source) {
-        .bytes, .url, .file_id => |value| value.len,
+        .blob => |blob| blob.len,
+        .url, .file_id => |value| value.len,
     };
 }
 
@@ -280,7 +289,7 @@ fn validateMedia(media: Block.Media) error{InvalidRequest}!void {
     if (media.mime.len == 0 or !stringValid(media.mime)) return error.InvalidRequest;
     if (!stringValid(media.filename)) return error.InvalidRequest;
     switch (media.source) {
-        .bytes => |data| if (data.len == 0 or data.len > types.limits.max_media_bytes) return error.InvalidRequest,
+        .blob => |blob| if (blob.len == 0 or blob.len > types.limits.max_media_bytes) return error.InvalidRequest,
         .url, .file_id => |value| if (value.len == 0 or !stringValid(value)) return error.InvalidRequest,
     }
 }
@@ -339,7 +348,7 @@ test "request validation rejects role mismatches and malformed raw JSON" {
     const bad_json = [_]Block{.{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call", .name = "tool", .arguments = "[1]" } } }};
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &bad_json));
 
-    const empty_image = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call", .content = "", .is_error = false, .media = &.{.{ .source = .{ .bytes = "" }, .mime = "image/png" }} } } }};
+    const empty_image = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call", .content = "", .is_error = false, .media = &.{.{ .source = .{ .blob = .{ .digest = @splat(0), .len = 0 } }, .mime = "image/png" }} } } }};
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &empty_image));
 
     const bad_result_role = [_]Block{.{ .role = .assistant, .value = .{ .tool_result = .{ .call_id = "call", .content = "ok", .is_error = false } } }};
@@ -352,8 +361,19 @@ test "request validation rejects role mismatches and malformed raw JSON" {
     const bad_text = [_]Block{.{ .role = .user, .value = .{ .text = &invalid_utf8 } }};
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &bad_text));
 
-    const empty_media = [_]Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "" }, .mime = "image/png" } } }};
+    const empty_media = [_]Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .blob = .{ .digest = @splat(0), .len = 0 } }, .mime = "image/png" } } }};
     try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &empty_media));
+}
+
+test "a blob that the store lacks or answers at another length fails the request" {
+    const testing = std.testing;
+    const request_testing = @import("testing.zig");
+    try testing.expectEqualStrings("ab", try readBlob(request_testing.blobs, request_testing.blob("ab")));
+    try testing.expectError(error.UnresolvedBlob, readBlob(null, request_testing.blob("ab")));
+    try testing.expectError(error.UnresolvedBlob, readBlob(request_testing.blobs, request_testing.blob("zz")));
+    var longer = request_testing.blob("ab");
+    longer.len = 3;
+    try testing.expectError(error.UnresolvedBlob, readBlob(request_testing.blobs, longer));
 }
 
 test "a loaded definition must be declared and valid, and one tool must stay eager" {

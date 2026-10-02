@@ -73,7 +73,7 @@ pub fn writeItems(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Blo
         separate = true;
         var jw: std.json.Stringify = .{ .writer = w };
         try beginMessage(&jw, blocks[start].role);
-        for (blocks[start..end], start..) |block, i| try writeBlock(&jw, block, cache_index == i);
+        for (blocks[start..end], start..) |block, i| try writeBlock(&jw, request.blobs, block, cache_index == i);
         try endMessage(&jw);
         start = end;
     }
@@ -130,7 +130,7 @@ fn endMessage(jw: *std.json.Stringify) ir.SerializeError!void {
     try jw.endObject();
 }
 
-fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) ir.SerializeError!void {
+fn writeBlock(jw: *std.json.Stringify, blobs: ?types.BlobReader, block: ir.Block, cache: bool) ir.SerializeError!void {
     switch (block.value) {
         .text => |t| {
             try jw.beginObject();
@@ -139,7 +139,7 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) ir.Serializ
             if (cache) try writeCacheControl(jw);
             try jw.endObject();
         },
-        .media => |media| try writeMedia(jw, media, cache),
+        .media => |media| try writeMedia(jw, blobs, media, cache),
         .reasoning => |r| {
             std.debug.assert(block.role == .assistant);
             try jw.beginObject();
@@ -182,7 +182,7 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) ir.Serializ
                     try json.field(jw, "text", tr.content);
                     try jw.endObject();
                 }
-                for (tr.media) |media| try writeMedia(jw, media, false);
+                for (tr.media) |media| try writeMedia(jw, blobs, media, false);
                 for (tr.loaded) |name| {
                     try jw.beginObject();
                     try json.field(jw, "type", "tool_reference");
@@ -199,7 +199,7 @@ fn writeBlock(jw: *std.json.Stringify, block: ir.Block, cache: bool) ir.Serializ
 }
 
 /// Write one attachment. An image is an `image` block and every other document is a `document` block.
-fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media, cache: bool) ir.SerializeError!void {
+fn writeMedia(jw: *std.json.Stringify, blobs: ?types.BlobReader, media: ir.Block.Media, cache: bool) ir.SerializeError!void {
     const plain_text = std.mem.startsWith(u8, media.mime, "text/");
     const document = plain_text or std.mem.eql(u8, media.mime, "application/pdf");
     const kind: []const u8 = switch (ir.modalityOf(media.mime)) {
@@ -215,7 +215,8 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media, cache: bool) ir.Se
     try jw.objectField("source");
     try jw.beginObject();
     switch (media.source) {
-        .bytes => |data| {
+        .blob => |blob| {
+            const data = try ir.readBlob(blobs, blob);
             // Plain text rides in a `text` source, which carries the characters rather than base64.
             try json.field(jw, "type", if (plain_text) "text" else "base64");
             try json.field(jw, "media_type", media.mime);
@@ -366,7 +367,7 @@ test "an error result keeps its text and sets the error flag" {
 }
 
 test "a tool result with an image writes a content array and keeps the marker on the result" {
-    const image: ir.Block.Media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" };
+    const image: ir.Block.Media = .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "image/png" };
     const blocks = [_]ir.Block{
         .{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "toolu_1", .name = "read", .arguments = "{}" } } },
         .{ .role = .user, .value = .{ .tool_result = .{ .call_id = "toolu_1", .content = "PNG image", .is_error = false, .media = &.{image} } } },
@@ -433,7 +434,7 @@ test "cache skips a trailing thinking block and marks the last eligible block" {
 
 test "an image and a document reach their own block shapes" {
     const blocks = [_]ir.Block{
-        .{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "image/png" } } },
+        .{ .role = .user, .value = .{ .media = .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "image/png" } } },
         .{ .role = .user, .value = .{ .media = .{ .source = .{ .url = "https://x.test/a.pdf" }, .mime = "application/pdf" } } },
         .{ .role = .user, .value = .{ .media = .{ .source = .{ .file_id = "file_1" }, .mime = "image/jpeg" } } },
     };
@@ -447,7 +448,7 @@ test "an image and a document reach their own block shapes" {
 
 test "anthropic reads no sound and no moving picture" {
     inline for (.{ "audio/mpeg", "video/mp4" }) |mime| {
-        const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = mime } } }};
+        const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = mime } } }};
         try expectError(error.UnsupportedContent, .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 }, &blocks);
     }
 }
@@ -479,7 +480,7 @@ test "an effort and a schema share the one output_config" {
 }
 
 test "a plain-text document rides in a text source, and an unknown type is refused" {
-    const text_doc = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "note" }, .mime = "text/plain" } } }};
+    const text_doc = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .blob = request_testing.blob("note") }, .mime = "text/plain" } } }};
     try expectJson(
         \\{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"document","source":{"type":"text","media_type":"text/plain","data":"note"}}]}]}
     ,
@@ -488,7 +489,7 @@ test "a plain-text document rides in a text source, and an unknown type is refus
     );
 
     // A document is a PDF or plain text; anything else has no source shape and must not be mislabelled.
-    const spreadsheet = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .bytes = "ab" }, .mime = "application/zip" } } }};
+    const spreadsheet = [_]ir.Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .blob = request_testing.blob("ab") }, .mime = "application/zip" } } }};
     try expectError(error.UnsupportedContent, .{ .model = "claude", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 }, &spreadsheet);
 }
 
