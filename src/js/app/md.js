@@ -304,14 +304,14 @@ function isEscaped(text, index) {
 const ESCAPABLE = "\\`*{}[]()#+-.!_>~|";
 const INLINE_MARKERS = new Set(["\\", "`", "[", "*", "_"]);
 
-/** @param {string | undefined} c @returns {boolean} */
+/** @param {string} c @returns {boolean} */
 function isSpace(c) {
-  return c === undefined || SPACE.test(c);
+  return SPACE.test(c);
 }
 
-/** @param {string | undefined} c @returns {boolean} */
+/** @param {string} c @returns {boolean} */
 function isPunctuation(c) {
-  return c !== undefined && PUNCT.test(c);
+  return PUNCT.test(c);
 }
 
 // The emphasis group for a bold and italic depth.
@@ -328,8 +328,8 @@ function emphGroup(bold, italic) {
 function scanDelims(cps, i, marker) {
   let count = 0;
   while (cps[i + count] === marker) count++;
-  const before = i === 0 ? " " : cps[i - 1];
-  const after = cps[i + count] === undefined ? " " : cps[i + count];
+  const before = i === 0 ? " " : /** @type {string} */ (cps[i - 1]);
+  const after = cps[i + count] ?? " ";
   const beforeWs = isSpace(before);
   const afterWs = isSpace(after);
   const beforeP = isPunctuation(before);
@@ -386,7 +386,7 @@ function scanLink(cps, open) {
   let paren = 1;
   let end = -1;
   for (let j = close + 2; j < cps.length; j++) {
-    const c = cps[j];
+    const c = /** @type {string} */ (cps[j]);
     if (c === "\\") {
       j++;
       continue;
