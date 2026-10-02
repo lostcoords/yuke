@@ -3079,7 +3079,7 @@ export interface ToolContext {
 }
 
 /**
- * Run one tool call. A string reaches the model unchanged. `undefined` produces empty output. A `ToolOutcome` adds an error flag, a diff, images, or loaded tools.
+ * Run one tool call. A string reaches the model unchanged. A `ToolOutcome` adds an error flag, a diff, images, or loaded tools.
  * Any other value, or an object with an unknown key, is an error. A rejection gives the model an error result with the message of the error.
  */
 export type ToolExecute = (
@@ -3088,7 +3088,7 @@ export type ToolExecute = (
   /** The host cancels it when the call stops. */
   signal: CancellationSignal,
   context: ToolContext,
-) => Promise<string | ToolOutcome | void>;
+) => Promise<string | ToolOutcome>;
 
 /** One tool for `ctx.tools.define`. */
 export interface ToolDefinition {

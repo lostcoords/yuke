@@ -23,12 +23,11 @@ A model tool is a function that the model calls. Define it with `ctx.tools.defin
 | Value | Result |
 |---|---|
 | a string | The model reads the string. |
-| `undefined` | The model reads empty output. |
 | a `ToolOutcome` | The model reads `output`, `media`, and `tools_added`. The UI also shows `diff`. |
 
 `ToolOutcome` is `{ output, is_error?, diff?, media?, tools_added? }`. `diff` is a list of `{ path, hunks }` with unified diff lines. An unknown key makes the call an error. An error result shows `output` only. A `tool.after` hook replaces the result with a `ToolOutcome`. Its payload also holds `name` and `arguments` as context. The replacement must not hold them.
 
-Any other value is an error. Return JSON data as a string: `JSON.stringify(data)`.
+The engine rejects every other value, including `undefined` and `null`. A tool with nothing to report returns a short string that says so. Return JSON data as a string: `JSON.stringify(data)`.
 
 ## Size
 

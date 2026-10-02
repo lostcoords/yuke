@@ -171,7 +171,6 @@ fn settleValue(host: *Host, call: *table.Call, value: Value, is_error: bool) voi
         if (ctx.isUndefined(value)) return settleText(host, call, "", .text);
         return stringifyValue(host, call, value, .text);
     }
-    if (ctx.isUndefined(value)) return settleText(host, call, "", .text);
     if (ctx.isString(value)) {
         const text = cstring(ctx, value) orelse return settleText(host, call, "the tool answered text the host cannot read", .failed);
         defer ctx.freeCString(text.ptr);

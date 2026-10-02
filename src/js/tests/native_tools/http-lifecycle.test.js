@@ -31,7 +31,7 @@ async function run() {
 if (httpCleanup === "tool") {
   plugins.use({ name: "http-tool", apply(ctx) {
     ctx.tools.define({ name: "fetch_probe", description: "Fetch a response.", parameters: { type: "object", properties: {} }, execute(_, signal) {
-      return finish(outcome(signal).then(message => equal(message, "the request was canceled")));
+      return finish(outcome(signal).then(message => equal(message, "the request was canceled"))).then(() => "done");
     } });
   } });
 } else finish(run());

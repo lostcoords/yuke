@@ -11,6 +11,6 @@ defineTool("probe", {
   execute: async (args, signal) => {
     globalThis.retained = signal;
     globalThis.resume = () => exec("echo forbidden > forbidden", { signal }).catch(() => { globalThis.late++; });
-    return Promise.all([1, 2].map(() => exec("echo forbidden > forbidden", { signal }).catch(() => { globalThis.prelaunch++; })));
+    return Promise.all([1, 2].map(() => exec("echo forbidden > forbidden", { signal }).catch(() => { globalThis.prelaunch++; }))).then(() => "done");
   },
 });

@@ -138,10 +138,9 @@ test "the owner runs an async handler and answers its resolved value" {
     try support.expectTool(host, "sync", "{\"city\":\"Tokyo\"}", .{ .is_error = true, .text = .{ .equals = "the tool execute function must return a Promise" } });
     // A Promise settles through the job drain, so one pump is still enough. An object answers a ToolOutcome for the port to decode.
     try support.expectTool(host, "later", "{\"city\":\"Kyoto\"}", .{ .outcome = true, .text = .{ .equals = "{\"output\":\"Kyoto\"}" } });
-    for ([_][]const u8{ "number", "null", "list" }) |name| try support.expectTool(host, name, "{\"city\":\"Kyoto\"}", .{ .is_error = true, .text = .{ .equals = "the tool answered a value that is not a string or a ToolOutcome" } });
+    for ([_][]const u8{ "number", "null", "nothing", "list" }) |name| try support.expectTool(host, name, "{\"city\":\"Kyoto\"}", .{ .is_error = true, .text = .{ .equals = "the tool answered a value that is not a string or a ToolOutcome" } });
     // A string passes through, because a text tool must not gain quotes.
     try support.expectTool(host, "text", "{\"city\":\"Osaka\"}", .{ .text = .{ .equals = "just text" } });
-    try support.expectTool(host, "nothing", "{\"city\":\"Nara\"}", .{ .text = .{ .equals = "" } });
     // Every record swept, so the host holds nothing after the calls.
     try std.testing.expectEqual(@as(usize, 0), host.calls.live.items.len);
 }
