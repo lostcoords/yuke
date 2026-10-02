@@ -208,9 +208,9 @@ pub fn readBlob(blobs: ?types.BlobReader, blob: types.Blob) types.BlobReader.Rea
 /// A later request can encode again from an element start. A null outer slice records no offsets.
 pub const Starts = ?[]?usize;
 
-/// Check one request, and bound the input bytes it carries before a serializer reads it.
+/// Check one request, and bound the input bytes it carries before a serializer reads it. `validateBlocks` checks the content of each block.
 /// It fails with `InvalidRequest` on a broken rule, `RequestTooLarge` past the byte limit, and `OutOfMemory` in the schema check.
-pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Block) ValidateError!void {
+pub fn validateRequest(arena: std.mem.Allocator, request: Request, blocks: []const Block) ValidateError!void {
     if (request.model.len == 0 or request.model.len > types.limits.max_string_bytes) return error.InvalidRequest;
     if (request.system.len > types.limits.max_string_bytes) return error.InvalidRequest;
     switch (request.wire) {
@@ -250,7 +250,6 @@ pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Bloc
             if (declaredTool(request.tools, name) == null) return error.InvalidRequest;
             total +|= name.len;
         };
-        try validateBlock(arena, block);
         total +|= blockBytes(block);
         if (total > types.limits.max_request_bytes) return error.RequestTooLarge;
     }
@@ -292,6 +291,12 @@ fn validateMedia(media: Block.Media) error{InvalidRequest}!void {
         .blob => |blob| if (blob.len == 0 or blob.len > types.limits.max_media_bytes) return error.InvalidRequest,
         .url, .file_id => |value| if (value.len == 0 or !stringValid(value)) return error.InvalidRequest,
     }
+}
+
+/// Check the content of each block: its role, its UTF-8 strings, its media limits, and its raw JSON. It borrows `blocks` and uses `arena` for JSON scratch.
+/// It fails with `InvalidRequest` on a broken rule and `OutOfMemory` in the JSON check. `validateRequest` checks the request and the byte limits.
+pub fn validateBlocks(arena: std.mem.Allocator, blocks: []const Block) ValidateError!void {
+    for (blocks) |block| try validateBlock(arena, block);
 }
 
 fn validateBlock(arena: std.mem.Allocator, block: Block) ValidateError!void {
@@ -336,33 +341,32 @@ fn validateObject(arena: std.mem.Allocator, raw: []const u8) ValidateError!void 
     if (!try std.json.validate(arena, raw)) return error.InvalidRequest;
 }
 
-test "request validation rejects role mismatches and malformed raw JSON" {
+test "block validation rejects role mismatches and malformed raw JSON" {
     const testing = std.testing;
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const base: Request = .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1 };
 
     const bad_role = [_]Block{.{ .role = .user, .value = .{ .reasoning = .{ .text = "why", .signature = "sig" } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &bad_role));
+    try testing.expectError(error.InvalidRequest, validateBlocks(arena.allocator(), &bad_role));
 
     const bad_json = [_]Block{.{ .role = .assistant, .value = .{ .tool_use = .{ .call_id = "call", .name = "tool", .arguments = "[1]" } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &bad_json));
+    try testing.expectError(error.InvalidRequest, validateBlocks(arena.allocator(), &bad_json));
 
     const empty_image = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "call", .content = "", .is_error = false, .media = &.{.{ .source = .{ .blob = .{ .digest = @splat(0), .len = 0 } }, .mime = "image/png" }} } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &empty_image));
+    try testing.expectError(error.InvalidRequest, validateBlocks(arena.allocator(), &empty_image));
 
     const bad_result_role = [_]Block{.{ .role = .assistant, .value = .{ .tool_result = .{ .call_id = "call", .content = "ok", .is_error = false } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &bad_result_role));
+    try testing.expectError(error.InvalidRequest, validateBlocks(arena.allocator(), &bad_result_role));
 
     const bad_media_role = [_]Block{.{ .role = .assistant, .value = .{ .media = .{ .source = .{ .url = "https://example.test/image.png" }, .mime = "image/png" } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &bad_media_role));
+    try testing.expectError(error.InvalidRequest, validateBlocks(arena.allocator(), &bad_media_role));
 
     const invalid_utf8 = [_]u8{0xff};
     const bad_text = [_]Block{.{ .role = .user, .value = .{ .text = &invalid_utf8 } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &bad_text));
+    try testing.expectError(error.InvalidRequest, validateBlocks(arena.allocator(), &bad_text));
 
     const empty_media = [_]Block{.{ .role = .user, .value = .{ .media = .{ .source = .{ .blob = .{ .digest = @splat(0), .len = 0 } }, .mime = "image/png" } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &empty_media));
+    try testing.expectError(error.InvalidRequest, validateBlocks(arena.allocator(), &empty_media));
 }
 
 test "a blob that the store lacks or answers at another length fails the request" {
@@ -386,13 +390,13 @@ test "a loaded definition must be declared and valid, and one tool must stay eag
     };
     const request: Request = .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1, .tools = &tools };
     const found = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c", .content = "found", .is_error = false, .loaded = &.{"mcp_read"} } } }};
-    try validate(arena.allocator(), request, &found);
+    try validateRequest(arena.allocator(), request, &found);
     const gone = [_]Block{.{ .role = .user, .value = .{ .tool_result = .{ .call_id = "c", .content = "found", .is_error = false, .loaded = &.{"mcp_gone"} } } }};
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), request, &gone));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), request, &gone));
     const all_deferred: Request = .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1, .tools = tools[1..] };
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), all_deferred, &found));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), all_deferred, &found));
     const unsearchable = [_]Tool{ .{ .name = "read", .description = "Read.", .input_schema = "{}" }, tools[1] };
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1, .tools = &unsearchable }, &found));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1, .tools = &unsearchable }, &found));
 }
 
 test "request validation enforces count, size, and token boundaries" {
@@ -402,41 +406,41 @@ test "request validation enforces count, size, and token boundaries" {
     const block = [_]Block{.{ .role = .user, .value = .{ .text = "hi" } }};
     const base: Request = .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1 };
 
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), base, &.{}));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), base, &.{}));
 
     var no_tokens = base;
     no_tokens.max_output_tokens = 0;
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), no_tokens, &block));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), no_tokens, &block));
 
     const too_long = "x" ** (types.limits.max_string_bytes + 1);
     var long_model = base;
     long_model.model = too_long;
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), long_model, &block));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), long_model, &block));
 
     // The host refuses a key over the cap, so a caller learns it here and not from a 400.
     var long_key = base;
     long_key.wire = .{ .openai_responses = .{ .cache_key = "k" ** (types.limits.max_cache_key_bytes + 1) } };
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), long_key, &block));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), long_key, &block));
     var full_key = base;
     full_key.wire = .{ .openai_responses = .{ .cache_key = "k" ** types.limits.max_cache_key_bytes } };
-    try validate(arena.allocator(), full_key, &block);
+    try validateRequest(arena.allocator(), full_key, &block);
 
     // Anthropic has no default output limit, so its request names one; the OpenAI ones may omit it.
     var unlimited = base;
     unlimited.max_output_tokens = null;
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), unlimited, &block));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), unlimited, &block));
     unlimited.wire = .{ .openai_chat = .{} };
-    try validate(arena.allocator(), unlimited, &block);
+    try validateRequest(arena.allocator(), unlimited, &block);
 
     // A long tool-heavy history has no block cap; only the byte total bounds it.
     var many_blocks: [4096]Block = undefined;
     for (&many_blocks) |*item| item.* = block[0];
-    try validate(arena.allocator(), base, &many_blocks);
+    try validateRequest(arena.allocator(), base, &many_blocks);
 
     const chunk = "x" ** types.limits.max_string_bytes;
     var oversized: [types.limits.max_request_bytes / chunk.len]Block = undefined;
     for (&oversized) |*item| item.* = .{ .role = .user, .value = .{ .text = chunk } };
-    try testing.expectError(error.RequestTooLarge, validate(arena.allocator(), base, &oversized));
+    try testing.expectError(error.RequestTooLarge, validateRequest(arena.allocator(), base, &oversized));
 }
 
 test "an output schema must name a JSON object" {
@@ -445,20 +449,20 @@ test "an output schema must name a JSON object" {
     defer arena.deinit();
     const blocks = [_]Block{.{ .role = .user, .value = .{ .text = "hi" } }};
     const base: Request = .{ .model = "m", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 1 };
-    try validate(arena.allocator(), base, &blocks);
+    try validateRequest(arena.allocator(), base, &blocks);
 
     var not_an_object = base;
     not_an_object.output_schema = .{ .schema = "[1]" };
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), not_an_object, &blocks));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), not_an_object, &blocks));
 
     // An empty schema constrains nothing, so it is a mistake rather than a default.
     var empty = base;
     empty.output_schema = .{ .schema = "" };
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), empty, &blocks));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), empty, &blocks));
 
     var unnamed = base;
     unnamed.output_schema = .{ .name = "", .schema = "{}" };
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), unnamed, &blocks));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), unnamed, &blocks));
 }
 
 test "a sampling value outside its domain is refused" {
@@ -470,19 +474,19 @@ test "a sampling value outside its domain is refused" {
 
     var hot = base;
     hot.temperature = -0.1;
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), hot, &blocks));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), hot, &blocks));
 
     // A non-finite value serializes to text no JSON parser accepts.
     var nan = base;
     nan.temperature = std.math.nan(f64);
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), nan, &blocks));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), nan, &blocks));
 
     var mass = base;
     mass.top_p = 1.5;
-    try testing.expectError(error.InvalidRequest, validate(arena.allocator(), mass, &blocks));
+    try testing.expectError(error.InvalidRequest, validateRequest(arena.allocator(), mass, &blocks));
 
     var ok = base;
     ok.temperature = 2;
     ok.top_p = 1;
-    try validate(arena.allocator(), ok, &blocks);
+    try validateRequest(arena.allocator(), ok, &blocks);
 }

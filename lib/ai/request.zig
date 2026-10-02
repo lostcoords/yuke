@@ -70,7 +70,7 @@ pub const History = struct {
 /// It fails on a request that breaks the IR, on content the endpoint cannot carry, on a blob that `request.blobs` does not answer, and on `OutOfMemory`.
 /// Only an element that this call encodes reads its blobs. A Debug build also encodes the whole request again to check the kept elements, so it reads every blob.
 pub fn serialize(gpa: std.mem.Allocator, arena: std.mem.Allocator, request: ir.Request, blocks: []const ir.Block, history: *History) Error![]const []const u8 {
-    try ir.validate(arena, request, blocks);
+    try ir.validateRequest(arena, request, blocks);
 
     var key_hash: std.hash.Wyhash = .init(0);
     feed(&key_hash, .{ request.wire, request.system, request.tools });
@@ -82,6 +82,9 @@ pub fn serialize(gpa: std.mem.Allocator, arena: std.mem.Allocator, request: ir.R
         .openai_chat => null,
     };
     const from = history.keep(key, blocks, marker);
+    // A kept block has the hash of a block that an earlier call checked, so only the encoded blocks need the content checks.
+    // A failure here records no hash, like a failed allocation below.
+    try ir.validateBlocks(arena, blocks[from..]);
     const hashed = history.blocks.len;
     // One byte more than the largest `std.heap.SmpAllocator` class goes to the page allocator, so mremap grows the buffer with no copy.
     try history.items.ensureTotalCapacityPrecise(gpa, 32 * 1024 + 1);
@@ -182,6 +185,29 @@ fn text(role: ir.Role, value: []const u8) ir.Block {
 
 fn image(comptime data: []const u8) ir.Block {
     return .{ .role = .user, .value = .{ .media = .{ .source = .{ .blob = request_testing.blob(data) }, .mime = "image/png" } } };
+}
+
+// The Debug assertion in `serialize` checks that the history stays consistent after each failed call.
+test "a block that fails its checks fails each call, and the fixed request resumes" {
+    const invalid = [_]u8{0xff};
+    const calls = [_]struct { blocks: []const ir.Block, valid: bool }{
+        .{ .blocks = &.{text(.user, &invalid)}, .valid = false },
+        .{ .blocks = &.{text(.user, &invalid)}, .valid = false },
+        .{ .blocks = &.{ text(.user, "a"), text(.assistant, "b"), text(.user, "c") }, .valid = true },
+        .{ .blocks = &.{ text(.user, "a"), text(.assistant, "b"), text(.user, "c"), text(.assistant, "d"), text(.user, &invalid) }, .valid = false },
+        .{ .blocks = &.{ text(.user, "a"), text(.assistant, "b"), text(.user, "c"), text(.assistant, "d"), text(.user, &invalid) }, .valid = false },
+        .{ .blocks = &.{ text(.user, "a"), text(.assistant, "b"), text(.user, "c"), text(.assistant, "d"), text(.user, "e") }, .valid = true },
+    };
+    for ([_]ir.Wire{ .{ .anthropic_messages = .{ .cache = true } }, .{ .openai_chat = .{} }, .{ .openai_responses = .{ .cache = true } } }) |wire| {
+        var history: History = .{};
+        defer history.deinit(testing.allocator);
+        for (calls) |call| {
+            var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+            defer arena.deinit();
+            const parts = serialize(testing.allocator, arena.allocator(), .{ .model = "m", .wire = wire, .max_output_tokens = 8 }, call.blocks, &history);
+            if (call.valid) _ = try parts else try testing.expectError(error.InvalidRequest, parts);
+        }
+    }
 }
 
 // `serialize` encodes the whole request again in a Debug build, so this test calls the protocol writers.

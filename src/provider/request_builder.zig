@@ -369,7 +369,7 @@ test "the request shares an image byte budget and keeps only the newest images" 
     try testing.expectEqual(@as(usize, 3), result.media.len);
     try testing.expectEqualStrings("images\n" ++ image_budget_note ++ "\n" ++ image_budget_note ++ "\n" ++ image_budget_note ++ "\n" ++ image_budget_note, result.content);
     try testing.expect(built[4].value == .media);
-    try ir.validate(a, .{ .model = "vision", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 }, built);
+    try ir.validateRequest(a, .{ .model = "vision", .wire = .{ .anthropic_messages = .{} }, .max_output_tokens = 8 }, built);
 }
 
 test "the media type selects the omitted-attachment note" {
