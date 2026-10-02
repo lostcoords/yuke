@@ -4,6 +4,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const zio = @import("zio");
 const bench = @import("js/bench/bench.zig");
+const Run = @import("js/bench/run.zig");
 
 pub fn main(init: std.process.Init) !void {
     const gpa = std.heap.smp_allocator;
@@ -99,6 +100,7 @@ pub fn main(init: std.process.Init) !void {
                 .output_bytes = output_bytes,
                 .js_estimated_bytes = usage.memory_used_size,
                 .js_tracked_bytes = usage.malloc_size,
+                .sqlite = if (harness.run != null) Run.sqliteBytes() else null,
                 .backing_live_bytes = if (bench.metrics_enabled) live_bytes else null,
                 .backing_peak_bytes = if (bench.metrics_enabled) peak_bytes else null,
                 .allocations = if (bench.metrics_enabled) allocations else null,

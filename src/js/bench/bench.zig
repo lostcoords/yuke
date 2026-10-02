@@ -12,6 +12,7 @@ const native_module = @import("../native/module.zig");
 const Tree = @import("agents.zig");
 pub const TreeShape = Tree.Shape;
 const Commit = @import("commit.zig");
+const Run = @import("run.zig");
 const Projection = @import("projection.zig");
 const SocketPeer = @import("../socket_peer.zig").Peer;
 const HttpPeer = @import("../http_peer.zig").Peer;
@@ -80,8 +81,9 @@ pub const Phase = enum {
     fuzzy_rank,
     chat_stream,
     chat_frame,
+    engine_run,
 
-    const Group = enum { transcript, colors, advice, agents, process, tools, hooks, plugins, net, http, utf8, interaction, mcp, fuzzy, chat };
+    const Group = enum { transcript, colors, advice, agents, process, tools, hooks, plugins, net, http, utf8, interaction, mcp, fuzzy, chat, run };
 
     fn group(self: Phase) Group {
         return switch (self) {
@@ -92,6 +94,7 @@ pub const Phase = enum {
             .utf8_reused, .utf8_fresh => .utf8,
             .fuzzy_rank => .fuzzy,
             .chat_stream, .chat_frame => .chat,
+            .engine_run => .run,
             .interaction_reused, .interaction_fresh => .interaction,
             .tool_call => .tools,
             .hook_request_build, .hook_tool_before => .hooks,
@@ -117,6 +120,7 @@ pub const Harness = struct {
     step_fn: quickjs.Value,
     projection: ?*Projection = null,
     commit: ?*Commit = null,
+    run: ?*Run = null,
     tree: ?*Tree = null,
     socket_peer: ?*SocketPeer = null,
     http_peer: ?*HttpPeer = null,
@@ -176,6 +180,7 @@ pub const Harness = struct {
             .http => @embedFile("http.js"),
             .interaction => @embedFile("interaction.js"),
             .tools => tool_source,
+            .run => run_source,
             .hooks => hook_source,
             .plugins => plugin_source,
             .process => @embedFile("process.js"),
@@ -201,6 +206,7 @@ pub const Harness = struct {
         self.host.engine.detach();
         if (self.tree) |tree| tree.destroy();
         if (self.commit) |commit| commit.destroy();
+        if (self.run) |run| run.destroy();
         if (self.projection) |projection| projection.destroy();
         self.host.ctx.freeValue(self.step_fn);
         self.host.ctx.freeValue(self.api);
@@ -224,11 +230,20 @@ pub const Harness = struct {
         self.host.engine.detach();
         if (self.tree) |tree| tree.destroy();
         if (self.commit) |commit| commit.destroy();
+        if (self.run) |run| run.destroy();
         if (self.projection) |projection| projection.destroy();
         self.projection = null;
         self.commit = null;
+        self.run = null;
         self.tree = null;
         if (phase.group() == .agents) self.tree = try Tree.create(self.host, scale, self.tree_shape);
+        // One step is one whole run of `scale` tool rounds on a new session.
+        if (phase == .engine_run) {
+            self.run = try Run.create(self.host, scale);
+            self.allocations.resetPeak();
+            self.phase = phase;
+            return;
+        }
         if (std.meta.stringToEnum(Commit.Mode, @tagName(phase))) |mode| {
             self.commit = try Commit.create(self.host.gpa, scale);
             try self.commit.?.step(mode);
@@ -312,6 +327,8 @@ pub const Harness = struct {
         \\};
     ;
 
+    const run_source = "globalThis.bench = { start: () => 1, step: () => 1, verify: () => 1 };";
+
     const tool_source =
         \\import { defineTool } from "yuke:internal/native/tools";
         \\defineTool("probe", { description: "Benchmark a tool call", parameters: { type: "object", properties: {} }, execute: async (_, signal) => signal.aborted ? "aborted" : "ok" });
@@ -369,6 +386,8 @@ pub const Harness = struct {
         self.output.clearRetainingCapacity();
         if (self.commit) |commit| {
             try commit.step(std.meta.stringToEnum(Commit.Mode, @tagName(phase)).?);
+        } else if (self.run) |run| {
+            try run.step();
         } else if (phase == .gc) {
             self.host.runtime.runGC();
         } else if (phase == .tool_call) {
@@ -414,6 +433,7 @@ pub const Harness = struct {
     pub fn verify(self: *Harness, with_checksum: bool) !i32 {
         std.debug.assert(self.phase != null);
         if (self.commit) |commit| return commit.verify(std.meta.stringToEnum(Commit.Mode, @tagName(self.phase.?)).?);
+        if (self.run) |run| return @intCast(run.served);
         self.output.clearRetainingCapacity();
         const ctx = self.host.ctx;
         const function = ctx.getPropertyStr(self.api, "verify");
@@ -429,6 +449,7 @@ pub const Harness = struct {
 
     pub fn sourceBytes(self: *const Harness) ?u64 {
         if (self.commit) |commit| return commit.source_bytes;
+        if (self.run) |run| return run.last_body_bytes;
         return if (self.projection) |projection| projection.sourceBytes() else null;
     }
 
