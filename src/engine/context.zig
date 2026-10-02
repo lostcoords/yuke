@@ -138,7 +138,7 @@ test "the newest checkpoint leads the request and an older one drops out" {
         event_id[0] = @intCast(i);
         var tx = try db.begin();
         defer tx.deinit();
-        try resident.commit(try database.message.appendCommittedMessage(&db, a, sid, event_id, i + 1, m));
+        _ = try resident.commit(try database.message.appendCommittedMessage(&db, a, sid, event_id, i + 1, m));
         try tx.commit();
     }
 

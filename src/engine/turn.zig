@@ -438,9 +438,8 @@ fn commitRound(
         .canceled => .{ .canceled = .{} },
         .failed => |item| .{ .failed = item },
     };
-    // The committed content borrows the draft. The commit fold frees the draft, so own a copy first.
-    const owned = try proto.dupe(arena, committed);
-    const commit = try message_store.appendCommittedMessage(engine.deps.db, arena, session_id.raw, util.newId(engine.deps.io), ended_at, owned);
+    // The committed content borrows the draft. The store serializes it before `emitCommitted` frees the draft.
+    const commit = try message_store.appendCommittedMessage(engine.deps.db, arena, session_id.raw, util.newId(engine.deps.io), ended_at, committed);
     const done: ?reports.Terminal = if (final) try reports.append(engine, arena, .{
         .session_id = session_id,
         .seq = 0,
@@ -1817,4 +1816,31 @@ test "a section title closes on its second star, across deltas, and only at the 
     try std.testing.expectEqual(none, title.feed("plain **bold**"));
     title.start(0);
     try std.testing.expectEqual(none, title.feed("**two\nlines**"));
+}
+
+test "a committed message stays readable after the commit fold frees the draft" {
+    // The sink copies the text during the emit, as the RPC sink does. The fold frees the draft before the emit.
+    const Copy = struct {
+        text: std.ArrayList(u8) = .empty,
+
+        fn onEvent(raw: *anyopaque, note: proto.rpc.Notification) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            const committed = switch (note.params) {
+                .message_committed_data => |d| d.message,
+                else => return,
+            };
+            if (committed != .assistant) return;
+            for (committed.assistant.content) |part| if (part == .text) self.text.appendSlice(std.testing.allocator, part.text.text) catch unreachable; // The test allocator has room for one reply.
+        }
+    };
+    var f: Resources.Fixture = undefined;
+    try f.init(.{});
+    defer f.deinit();
+    var copy: Copy = .{};
+    defer copy.text.deinit(std.testing.allocator);
+    f.engine.sinks.add(.{ .ctx = &copy, .on_event = Copy.onEvent });
+    defer f.engine.sinks.remove(&copy);
+    _ = try f.send(&.{.{ .text = .{ .text = "go" } }});
+    try f.finish(Resources.Fixture.id);
+    try std.testing.expectEqualStrings("Hello from the mock provider.", copy.text.items);
 }

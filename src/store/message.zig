@@ -225,7 +225,7 @@ test "a committed user then assistant message advances the summary" {
 
     var folded = session_mod.Session.init(testing.allocator, .bytes(sid));
     defer folded.deinit();
-    for ([_]proto.message.MessageCommittedData{ user_commit, assistant_commit }) |item| try folded.commit(item);
+    for ([_]proto.message.MessageCommittedData{ user_commit, assistant_commit }) |item| _ = try folded.commit(item);
     try testing.expectEqual(@as(usize, 2), folded.history.list.items.len);
     try testing.expectEqual(assistant_commit.message.id(), folded.finalized_message_id);
 

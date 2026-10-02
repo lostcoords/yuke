@@ -174,6 +174,8 @@ pub const Draft = struct {
         const t = self.toolPart(d.part_id);
         std.debug.assert(!isTerminal(t.state)); // the engine settles each tool part once
         t.state = try dupeToolState(self.arena.allocator(), d.state);
+        // Only a running tool reads the stream buffer, so a terminal state frees it.
+        if (isTerminal(t.state)) t.output.clearAndFree(self.gpa);
     }
 
     /// Attach the reasoning signature and duration at block stop. A signed block resends on a tool continuation.

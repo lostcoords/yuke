@@ -240,7 +240,9 @@ pub const Session = struct {
             .message_part_finalized_data => |d| self.onFinalized(d),
             .tool_state_changed_data => |d| self.onToolState(d),
             .message_discarded_data => |d| self.onDiscarded(d),
-            .message_committed_data => |d| self.commit(d),
+            .message_committed_data => |d| {
+                _ = try self.commit(d);
+            },
             .input_queued_data => |d| self.onQueued(d),
             .input_canceled_data => |d| self.onCanceled(d),
             .run_started_data => |d| self.advance(d.seq),
@@ -295,11 +297,13 @@ pub const Session = struct {
         self.raiseFinalized(d.message_id);
     }
 
-    pub fn commit(self: *Session, d: message.MessageCommittedData) Error!void {
+    /// Fold a committed message, and return the copy that the history owns. The message of `d` can borrow the draft, which this call frees.
+    pub fn commit(self: *Session, d: message.MessageCommittedData) Error!message.Message {
         std.debug.assert(std.meta.eql(d.session_id, self.id));
         // The engine commits ids in order, which keeps the history oldest-first.
         std.debug.assert(d.message.id() > self.finalized_message_id);
         try self.history.append(d.message); // copy before the draft or queue mutates, so an OOM is clean
+        const held = self.history.list.items[self.history.list.items.len - 1].message; // `append` puts the message last.
         switch (d.message) {
             .user => |u| self.removeQueued(u.input_id),
             .assistant => |a| if (self.draft) |*dr| {
@@ -312,6 +316,7 @@ pub const Session = struct {
         }
         self.raiseFinalized(d.message.id());
         self.advance(d.seq);
+        return held;
     }
 
     fn onQueued(self: *Session, d: proto.input.InputQueuedData) Error!void {

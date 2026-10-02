@@ -58,7 +58,7 @@ fn runWith(extensions: *Extensions, arena: std.mem.Allocator, w: *std.Io.Writer,
     try extensions_mod.forwardNotifications(extensions.host);
 
     const pick = (try pickSession(extensions, arena, err, cwd, opts)) orelse return 1;
-    waiter.bind(pick.id);
+    waiter.session_id = pick.id;
     const sent: call.Answer(proto.session.SessionSendInputResult) = if (pick.input) |input| .{ .ok = input } else try gated(extensions, arena, proto.session.SessionSendInputParams{
         .session_id = pick.id,
         .input = .{ .content = .{ .content = &.{.{ .text = .{ .text = prompt } }} } },
@@ -90,16 +90,28 @@ fn runWith(extensions: *Extensions, arena: std.mem.Allocator, w: *std.Io.Writer,
         .canceled => status_interrupted,
         .compacted, .skipped => unreachable, // A turn run never compacts.
     };
+    // The query returns the messages of the run newest first. A plain run prints only the newest one.
+    var messages: std.ArrayList(proto.message.AssistantMessage) = .empty;
+    var rows = try extensions.app.db.queries.run_report_messages.rows(.{ .session_id = pick.id.raw, .run_id = started.run_id });
+    defer rows.deinit();
+    var row_buffer: std.heap.ArenaAllocator = .init(extensions.app.gpa);
+    defer row_buffer.deinit();
+    while (try rows.next(row_buffer.allocator())) |row| {
+        defer _ = row_buffer.reset(.retain_capacity);
+        const message = try std.json.parseFromSliceLeaky(proto.message.Message, arena, row.value.payload, .{ .allocate = .alloc_always });
+        if (message != .assistant or message.assistant.run_id != started.run_id) return error.CorruptLog;
+        try messages.append(arena, message.assistant);
+        if (!opts.json) break;
+    }
+    std.mem.reverse(proto.message.AssistantMessage, messages.items);
     if (opts.json) {
-        try writeReport(arena, w, &waiter, pick, done.*);
+        try writeReport(arena, w, pick, done.*, messages.items, waiter.notices.items);
         return status;
     }
-    if (waiter.lastOf(started.run_id)) |last| {
-        for (last.content) |part| switch (part) {
-            .text => |t| try w.print("{s}\n", .{t.text}),
-            else => {},
-        };
-    }
+    if (messages.items.len != 0) for (messages.items[messages.items.len - 1].content) |part| switch (part) {
+        .text => |t| try w.print("{s}\n", .{t.text}),
+        else => {},
+    };
     return status;
 }
 
@@ -196,38 +208,22 @@ const RunWait = struct {
     }
 };
 
-/// The events of one session, copied out of the emitter's arena, and the wake of the owner loop.
+/// The run ends and the notices, copied out of the emitter's arena, and the wake of the owner loop.
 const Waiter = struct {
     arena: std.mem.Allocator,
+    /// The session of the run. A run can end before the session is known, so `dones` keeps every session.
     session_id: ?proto.ids.SessionId,
-    buffered: std.ArrayList(proto.rpc.Notification) = .empty,
     wake: *std.Io.Event,
     io: std.Io,
     /// Where a notice goes as it comes. Null keeps the notices for the JSON report.
     err: ?*std.Io.Writer,
-    messages: std.ArrayList(proto.message.AssistantMessage) = .empty,
     dones: std.ArrayList(proto.run.RunDoneData) = .empty,
     notices: std.ArrayList(proto.misc.Notice) = .empty,
 
     fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
         const self: *Waiter = @ptrCast(@alignCast(ctx));
-        if (self.session_id == null and note.method != .notice) {
-            if (note.method == .@"message.committed" or note.method == .@"run.done") self.buffered.append(self.arena, proto.clone.dupe(self.arena, note) catch unreachable) catch unreachable;
-            return;
-        }
         switch (note.params) {
-            .message_committed_data => |d| {
-                if (!self.mine(d.session_id)) return;
-                const assistant = switch (d.message) {
-                    .assistant => |m| m,
-                    else => return,
-                };
-                self.messages.append(self.arena, proto.clone.dupe(self.arena, assistant) catch unreachable) catch unreachable;
-            },
-            .run_done_data => |d| {
-                if (!self.mine(d.session_id)) return;
-                self.dones.append(self.arena, proto.clone.dupe(self.arena, d) catch unreachable) catch unreachable;
-            },
+            .run_done_data => |d| self.dones.append(self.arena, proto.clone.dupe(self.arena, d) catch unreachable) catch unreachable,
             .notice => |n| self.noteNotice(n),
             else => return,
         }
@@ -245,26 +241,8 @@ const Waiter = struct {
         err.flush() catch {};
     }
 
-    fn bind(self: *Waiter, id: proto.ids.SessionId) void {
-        std.debug.assert(self.session_id == null);
-        self.session_id = id;
-        for (self.buffered.items) |note| onEvent(self, note);
-        self.buffered.clearRetainingCapacity();
-    }
-
-    fn mine(self: *const Waiter, id: proto.ids.SessionId) bool {
-        return std.mem.eql(u8, &id.raw, &self.session_id.?.raw);
-    }
-
     fn doneOf(self: *const Waiter, run_id: proto.ids.RunId) ?*const proto.run.RunDoneData {
-        for (self.dones.items) |*d| if (d.run_id == run_id) return d;
-        return null;
-    }
-
-    /// The last assistant message of the run, which holds the reply.
-    fn lastOf(self: *const Waiter, run_id: proto.ids.RunId) ?*const proto.message.AssistantMessage {
-        var i = self.messages.items.len;
-        while (i > 0) : (i -= 1) if (self.messages.items[i - 1].run_id == run_id) return &self.messages.items[i - 1];
+        for (self.dones.items) |*d| if (d.run_id == run_id and std.mem.eql(u8, &d.session_id.raw, &self.session_id.?.raw)) return d;
         return null;
     }
 };
@@ -281,12 +259,9 @@ const Report = struct {
     notices: []const proto.misc.Notice,
 };
 
-fn writeReport(arena: std.mem.Allocator, w: *std.Io.Writer, waiter: *const Waiter, pick: Pick, done: proto.run.RunDoneData) !void {
-    var messages: std.ArrayList(proto.message.AssistantMessage) = .empty;
+fn writeReport(arena: std.mem.Allocator, w: *std.Io.Writer, pick: Pick, done: proto.run.RunDoneData, messages: []const proto.message.AssistantMessage, notices: []const proto.misc.Notice) !void {
     var usage: proto.message.TokenUsage = .zero;
-    for (waiter.messages.items) |m| {
-        if (m.run_id != done.run_id) continue;
-        try messages.append(arena, m);
+    for (messages) |m| {
         const t = m.tokens orelse continue;
         usage.input += t.input;
         usage.output += t.output;
@@ -295,8 +270,8 @@ fn writeReport(arena: std.mem.Allocator, w: *std.Io.Writer, waiter: *const Waite
         usage.cache_write += t.cache_write;
     }
     var text: std.Io.Writer.Allocating = .init(arena);
-    if (waiter.lastOf(done.run_id)) |last| {
-        for (last.content) |part| switch (part) {
+    if (messages.len != 0) {
+        for (messages[messages.len - 1].content) |part| switch (part) {
             .text => |t| {
                 if (text.written().len != 0) try text.writer.writeByte('\n');
                 try text.writer.writeAll(t.text);
@@ -311,8 +286,8 @@ fn writeReport(arena: std.mem.Allocator, w: *std.Io.Writer, waiter: *const Waite
         .text = text.written(),
         .outcome = done.outcome,
         .usage = usage,
-        .messages = messages.items,
-        .notices = waiter.notices.items,
+        .messages = messages,
+        .notices = notices,
     };
     try std.json.Stringify.value(report, .{ .emit_null_optional_fields = false }, w);
     try w.writeByte('\n');

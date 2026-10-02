@@ -157,12 +157,13 @@ pub fn emitDurable(engine: *Engine, rt: *Session, note: proto.rpc.Notification) 
     engine.sinks.emit(note);
 }
 
-/// Fold the committed message into the session, then publish it.
+/// Fold the committed message into the session, then publish the copy that the history owns. The commit message can borrow the draft, and the fold frees the draft.
 pub fn emitCommitted(engine: *Engine, rt: *Session, commit: proto.message.MessageCommittedData) void {
     rt.context_tokens = null;
-    rt.commit(commit) catch |err|
+    var held = commit;
+    held.message = rt.commit(commit) catch |err|
         std.debug.panic("cannot fold the committed message: {t}", .{err});
-    engine.sinks.emit(.{ .method = .@"message.committed", .params = .{ .message_committed_data = commit } });
+    engine.sinks.emit(.{ .method = .@"message.committed", .params = .{ .message_committed_data = held } });
 }
 
 /// Fold and publish committed user messages, then announce the moved summary.
