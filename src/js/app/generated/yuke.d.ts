@@ -1424,8 +1424,8 @@ export function lines(onLine: (line: string) => void, onOverflow?: () => void): 
 
 declare namespace $text_input {
 export type TextInputOptions = {
-    onChange?: (() => void) | null;
-    onEdit?: ((from: number, to: number, insertedLength: number) => void) | null;
+    onChange?: () => void;
+    onEdit?: (from: number, to: number, insertedLength: number) => void;
 };
 /**
  * Limit `s` to `max` terminal cells. With `ellipsis`, a cut ends in "…". Pass `width`, the cell width of `s`, when you already have it.
@@ -1443,11 +1443,11 @@ export class TextInput {
     /**
      * Called after each edit.
      */
-    onChange: (() => void) | null;
+    onChange: (() => void) | undefined;
     /**
      * Reports the range [from, to) that an edit replaced and the inserted length, for an owner that keeps its own offsets.
      */
-    onEdit: ((from: number, to: number, insertedLength: number) => void) | null;
+    onEdit: ((from: number, to: number, insertedLength: number) => void) | undefined;
     constructor(opts?: TextInputOptions);
     /**
      * Replace the whole text and put the caret at the end. `setText("")` clears the buffer.
@@ -1556,15 +1556,15 @@ import TextCursor = $native_engine.TextCursor;
 /**
  * The label of an input from an engine source: the `sources` entry of the renderers, else the source type with spaces.
  */
-export function inputSourceLabel(source: Wire.InputSource | undefined | null): string;
+export function inputSourceLabel(source: Wire.InputSource | undefined): string;
 /**
  * The transcript of one chat pane: the message outline, exact row counts, and a bounded cache of rendered rows.
  * The owner feeds it with `setOutline` and `setActive`. The `pager` scrolls and draws it.
  */
 export class Transcript {
     partsOf: $types_transcript.PartsOf;
-    partOf: $types_transcript.PartOf | null;
-    partTextPage: $types_transcript.PartTextPage | null;
+    partOf: $types_transcript.PartOf | undefined;
+    partTextPage: $types_transcript.PartTextPage | undefined;
     /** The scroll state and the drawn rect. Nav bindings drive it. */
     pager: Pager;
     _messages: MessageDescriptor[];
@@ -1596,7 +1596,7 @@ export class Transcript {
     _pressCol: number;
     _pressEnd: Position | null;
     /** Receives the selected text when a mouse drag ends on a selection that is not empty. */
-    onSelect: ((text: string) => void) | null;
+    onSelect: ((text: string) => void) | undefined;
     constructor(opts?: TranscriptOptions);
     /**
      * Remove the selection and stop a drag in progress.
@@ -1607,7 +1607,7 @@ export class Transcript {
      */
     select(anchor: Position | null, cursor: Position | null, opts?: {
         inclusive?: boolean;
-    } | null | undefined): void;
+    }): void;
     _after(p: Position): Position;
     /**
      * Compare two positions in transcript order: below 0 when `a` comes first, 0 when they are equal, above 0 when `b` comes first.
@@ -1711,7 +1711,7 @@ export class Transcript {
         list: Wire.AssistantPart[];
     };
     _plan(): GroupPlan;
-    _buildPlan(readParts: (message: MessageDescriptor) => readonly Wire.AssistantPart[], ready?: ((last: number) => void) | null): GroupPlan;
+    _buildPlan(readParts: (message: MessageDescriptor) => readonly Wire.AssistantPart[], ready?: (last: number) => void): GroupPlan;
     _refreshGroupRows(oldPlan: GroupPlan | null, oldMessages?: MessageDescriptor[]): void;
     _expandKey(id: number, partId: number): string;
     _reasoningLive(id: number, partId: number): boolean;

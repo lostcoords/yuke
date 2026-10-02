@@ -2,7 +2,7 @@
 import { term } from "yuke:internal/native/term";
 import { strokeOf, textOf } from "yuke:internal/keys";
 
-/** @typedef {{ onChange?: (() => void) | null, onEdit?: ((from: number, to: number, insertedLength: number) => void) | null }} TextInputOptions */
+/** @typedef {{ onChange?: () => void, onEdit?: (from: number, to: number, insertedLength: number) => void }} TextInputOptions */
 /** @typedef {{ at: number, cls: number }} GraphemeCell */
 /** @typedef {{ start: number, end: number, soft: boolean }} WrapRow */
 /**
@@ -158,14 +158,14 @@ export class TextInput {
     this.caret = 0;
     /**
      * Called after each edit.
-     * @type {(() => void) | null}
+     * @type {(() => void) | undefined}
      */
-    this.onChange = opts.onChange || null;
+    this.onChange = opts.onChange;
     /**
      * Reports the range [from, to) that an edit replaced and the inserted length, for an owner that keeps its own offsets.
-     * @type {((from: number, to: number, insertedLength: number) => void) | null}
+     * @type {((from: number, to: number, insertedLength: number) => void) | undefined}
      */
-    this.onEdit = opts.onEdit || null;
+    this.onEdit = opts.onEdit;
   }
 
   /**

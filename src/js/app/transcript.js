@@ -104,7 +104,7 @@ export function toggleExpandAll() {
 
 /**
  * The label of an input from an engine source: the `sources` entry of the renderers, else the source type with spaces.
- * @param {Wire.InputSource | undefined | null} source @returns {string}
+ * @param {Wire.InputSource | undefined} source @returns {string}
  */
 export function inputSourceLabel(source) {
   if (!source) return "";
@@ -132,7 +132,7 @@ function rowAtBase(row, base) {
   return row.src != null ? { ...row, src: row.src + base } : row;
 }
 
-/** @param {RowCache | null | undefined} cache @param {TranscriptRow} row @returns {number} */
+/** @param {RowCache | undefined} cache @param {TranscriptRow} row @returns {number} */
 function rowSourceBase(cache, row) {
   if (!cache || row.partId == null) return 0;
   return cache.partBases.get(String(row.partId)) || 0;
@@ -157,8 +157,8 @@ export class Transcript {
   /** @param {TranscriptOptions} [opts] */
   constructor(opts = {}) {
     this.partsOf = opts.partsOf || (() => []);
-    this.partOf = opts.partOf || null;
-    this.partTextPage = opts.partTextPage || null;
+    this.partOf = opts.partOf;
+    this.partTextPage = opts.partTextPage;
     /** The scroll state and the drawn rect. Nav bindings drive it. */
     this.pager = new Pager();
     this.pager.setSource({
@@ -208,7 +208,7 @@ export class Transcript {
     /** @type {Position | null} */
     this._pressEnd = null; // the caret after the pressed grapheme, read once on the first reverse drag
     /** Receives the selected text when a mouse drag ends on a selection that is not empty. */
-    this.onSelect = opts.onSelect || null;
+    this.onSelect = opts.onSelect;
   }
 
   /**
@@ -224,7 +224,7 @@ export class Transcript {
 
   /**
    * Set both ends of the selection. `{ inclusive: true }` grows the later end by one grapheme. A null end clears the selection.
-   * @param {Position | null} anchor @param {Position | null} cursor @param {{ inclusive?: boolean } | null | undefined} [opts] @returns {void}
+   * @param {Position | null} anchor @param {Position | null} cursor @param {{ inclusive?: boolean }} [opts] @returns {void}
    */
   select(anchor, cursor, opts) {
     if (!anchor || !cursor) {
@@ -829,8 +829,8 @@ export class Transcript {
   }
 
   // Walk the outline once and record each group of consecutive parts that share a `groupKey`. `ready` reports the last message whose groups have closed, so a caller can index its rows before the walk ends.
-  /** @param {(message: MessageDescriptor) => readonly Wire.AssistantPart[]} readParts @param {((last: number) => void) | null} [ready] @returns {GroupPlan} */
-  _buildPlan(readParts, ready = null) {
+  /** @param {(message: MessageDescriptor) => readonly Wire.AssistantPart[]} readParts @param {(last: number) => void} [ready] @returns {GroupPlan} */
+  _buildPlan(readParts, ready) {
     // One flat part list avoids retaining a JS array object for every assistant message.
     /** @type {number[]} */
     const trees = [];

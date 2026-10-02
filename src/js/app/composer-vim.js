@@ -69,10 +69,10 @@ function to(c, caret) {
   return true;
 }
 
-/** @param {ComposerType} c @param {number} from @param {number} to @param {boolean} linewise @param {string | null | undefined} [stored] @returns {true} */
+/** @param {ComposerType} c @param {number} from @param {number} to @param {boolean} linewise @param {string} [stored] @returns {true} */
 function cut(c, from, to, linewise, stored) {
-  if (to <= from && stored == null) return true;
-  register.set(stored == null ? c.input.text.slice(from, to) : stored, linewise);
+  if (to <= from && stored === undefined) return true;
+  register.set(stored === undefined ? c.input.text.slice(from, to) : stored, linewise);
   c.input.replace(from, to, "");
   c.input.caret = clamp(c.input.text, from);
   return true;

@@ -527,8 +527,8 @@ function chained(point, value, replace) {
 installDispatcher(dispatch);
 
 // Fold the input hook before native admission; a proposed session has no id yet.
-/** @param {string | null} sessionId @param {Wire.Input} input @param {Wire.CreateSession | null} [create] @returns {Promise<Wire.Input>} */
-async function prepareInput(sessionId, input, create = null) {
+/** @param {string | null} sessionId @param {Wire.Input} input @param {Wire.CreateSession} [create] @returns {Promise<Wire.Input>} */
+async function prepareInput(sessionId, input, create) {
   if (input.type !== "content") return input;
   const decision = await dispatch("input.before", { session_id: sessionId, content: input.content, ...(create ? { create } : {}) });
   if (decision?.type === "block") {

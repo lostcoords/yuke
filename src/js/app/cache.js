@@ -30,8 +30,8 @@ function percent(share) {
 }
 
 // Build the label and value rows. The engine priced each turn, so only the rate rows need the model in the catalog.
-/** @param {Wire.Session} session @param {ReadonlyArray<Child> | null} [children] @param {Wire.TokenUsage | null} [last] @returns {[string, string][]} */
-export function cacheRows(session, children = [], last = null) {
+/** @param {Wire.Session} session @param {ReadonlyArray<Child> | null} [children] @param {Wire.TokenUsage} [last] @returns {[string, string][]} */
+export function cacheRows(session, children = [], last) {
   const t = session.usage_total;
   const model = modelOf(session.model);
   const fresh = Math.max(0, t.input - t.cache_read - t.cache_write);
@@ -72,16 +72,16 @@ export function cacheRows(session, children = [], last = null) {
 }
 
 // One price per million tokens. A price below a cent keeps its own digits rather than round to zero.
-/** @param {number | null | undefined} price @returns {string} */
+/** @param {number | undefined} price @returns {string} */
 function rate(price) {
-  if (price == null) return "?";
+  if (price === undefined) return "?";
   return "$" + (price > 0 && price < 0.01 ? String(price) : price.toFixed(2));
 }
 
 // The prices of one band per million tokens. An unknown price reads "?", and never the input price.
 /** @param {Wire.PriceBand} band @returns {string} */
 export function rateLabelOf(band) {
-  const write = band.cache_write == null ? "" : " · " + rate(band.cache_write) + " write";
+  const write = band.cache_write === undefined ? "" : " · " + rate(band.cache_write) + " write";
   // Most vendors bill a reasoning token as an output token, so only a different price earns its own entry.
   const reasoning = band.reasoning === band.output ? "" : " · " + rate(band.reasoning) + " reasoning";
   return rate(band.input) + " in · " + rate(band.cache_read) + " cache" + write + " · " + rate(band.output) + " out" + reasoning + ", per 1M";
