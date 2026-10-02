@@ -82,6 +82,7 @@ pub const Phase = enum {
     chat_frame,
     engine_run,
     engine_parallel,
+    engine_images,
 
     const Group = enum { transcript, colors, advice, agents, process, tools, hooks, plugins, net, http, utf8, interaction, mcp, fuzzy, chat, run };
 
@@ -94,7 +95,7 @@ pub const Phase = enum {
             .utf8_reused, .utf8_fresh => .utf8,
             .fuzzy_rank => .fuzzy,
             .chat_stream, .chat_frame => .chat,
-            .engine_run, .engine_parallel => .run,
+            .engine_run, .engine_parallel, .engine_images => .run,
             .interaction_reused, .interaction_fresh => .interaction,
             .tool_call => .tools,
             .hook_request_build, .hook_tool_before => .hooks,
@@ -238,9 +239,14 @@ pub const Harness = struct {
         self.run = null;
         self.tree = null;
         if (phase.group() == .agents) self.tree = try Tree.create(self.host, scale, self.tree_shape);
-        // The parallel phase runs eight sessions, and each answer waits 20 ms like a provider.
         if (phase.group() == .run) {
-            self.run = try Run.create(self.host, scale, if (phase == .engine_parallel) 8 else 1, if (phase == .engine_parallel) 20 else 0);
+            self.run = try Run.create(self.host, scale, switch (phase) {
+                // Eight sessions run at once, and each answer waits 20 ms like a provider.
+                .engine_parallel => .{ .sessions = 8, .latency_ms = 20 },
+                // Each tool output carries a screenshot-sized image.
+                .engine_images => .{ .image_bytes = 256 * 1024 },
+                else => .{},
+            });
             self.allocations.resetPeak();
             return;
         }

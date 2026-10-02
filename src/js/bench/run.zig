@@ -18,6 +18,7 @@ const output_bytes = 38 * 1024;
 /// The reasoning signature of one round. A real provider replays it in every later request.
 const signature_bytes = 2000;
 const frame = ai.testing.sseFrame;
+const png_signature = "\x89PNG\r\n\x1a\n";
 /// The text that names a session in its first prompt. No other part of a body holds it.
 const session_tag = "bench-session-";
 const read_decl = [_]ai.ir.Tool{.{ .name = "read", .description = "Read a part of the corpus.", .input_schema = "{\"type\":\"object\",\"properties\":{\"part\":{\"type\":\"integer\"}},\"required\":[\"part\"]}" }};
@@ -33,6 +34,8 @@ latency_ms: u32,
 replies: []const []const u8,
 /// The text that the tool answers. Each round reads another window of it.
 corpus: []const u8,
+/// The size of the image beside each tool output. Zero answers text alone.
+image_bytes: u32,
 /// The requests of one step, over all sessions.
 served: u32 = 0,
 /// The requests of each session in one step. The prompt of session `i` names `i`.
@@ -42,19 +45,31 @@ reads: u32 = 0,
 /// The largest body of one step, so a report can relate memory to the history size.
 last_body_bytes: usize = 0,
 
+/// The work of one run beside its rounds. The defaults run one session with no answer delay and no image.
+pub const Load = struct {
+    sessions: u32 = 1,
+    latency_ms: u32 = 0,
+    image_bytes: u32 = 0,
+};
+
 /// Own one App on an in-memory database, the canned replies, and the corpus. It fails on OOM or a store error.
-pub fn create(host: *Host, rounds: u32, sessions: u32, latency_ms: u32) !*Run {
-    std.debug.assert(rounds > 0 and sessions > 0);
+pub fn create(host: *Host, rounds: u32, load: Load) !*Run {
+    std.debug.assert(rounds > 0 and load.sessions > 0);
+    std.debug.assert(load.image_bytes == 0 or load.image_bytes > png_signature.len + 4);
     const gpa = host.gpa;
     const self = try gpa.create(Run);
     errdefer gpa.destroy(self);
-    self.* = .{ .gpa = gpa, .app = undefined, .rounds = rounds, .sessions = sessions, .latency_ms = latency_ms, .replies = &.{}, .corpus = &.{}, .progress = &.{} };
-    // The run admits no media, so the blob store never writes this directory.
-    try fixture.init(&self.app, gpa, host.io, "/bench/blobs", .{ .ctx = self, .vtable = &.{ .open = open } }, host.execution);
+    self.* = .{ .gpa = gpa, .app = undefined, .rounds = rounds, .sessions = load.sessions, .latency_ms = load.latency_ms, .image_bytes = load.image_bytes, .replies = &.{}, .corpus = &.{}, .progress = &.{} };
+    var random: [16]u8 = undefined;
+    host.io.random(&random);
+    // The store makes this directory at its first image, so a text run never writes it.
+    const blob_dir = try std.fmt.allocPrint(gpa, "/tmp/yuke-bench-blobs-{s}", .{std.fmt.bytesToHex(random, .lower)});
+    defer gpa.free(blob_dir);
+    try fixture.init(&self.app, gpa, host.io, blob_dir, .{ .ctx = self, .vtable = &.{ .open = open } }, host.execution);
     errdefer self.app.deinit();
     var local = try provider.config.loadBytes(gpa,
         \\{"providers":[{"id":"bench","base_url":"http://bench.invalid","endpoints":[{"protocol":"anthropic_messages"}],
-        \\"models":[{"id":"m","upstream_id":"m","flags":{"supports_tools":true},"limits":{"context_window":100000000,"max_output_tokens":32000}}]}]}
+        \\"models":[{"id":"m","upstream_id":"m","flags":{"supports_tools":true,"supports_vision":true},"limits":{"context_window":100000000,"max_output_tokens":32000}}]}]}
     );
     _ = self.app.store.installLocal(&local) catch |err| {
         local.deinit();
@@ -68,7 +83,7 @@ pub fn create(host: *Host, rounds: u32, sessions: u32, latency_ms: u32) !*Run {
         for (self.replies) |reply| gpa.free(reply);
         gpa.free(self.replies);
     }
-    self.progress = try gpa.alloc(u32, sessions);
+    self.progress = try gpa.alloc(u32, load.sessions);
     // The SQLite high-water mark is global, so each run starts it again.
     var live: i64 = 0;
     var peak: i64 = 0;
@@ -79,6 +94,7 @@ pub fn create(host: *Host, rounds: u32, sessions: u32, latency_ms: u32) !*Run {
 /// Free the App, the replies, and the corpus.
 pub fn destroy(self: *Run) void {
     const gpa = self.gpa;
+    std.Io.Dir.cwd().deleteTree(self.app.io, self.app.blob_dir) catch {}; // A failed delete leaves the directory in /tmp and does not fail the run.
     self.app.deinit();
     for (self.replies) |reply| gpa.free(reply);
     gpa.free(self.replies);
@@ -138,6 +154,12 @@ fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: ai.transport.Request
     if (round.* > self.rounds) return error.UnexpectedRequest;
     if (self.latency_ms != 0) try self.app.io.sleep(.fromMilliseconds(self.latency_ms), .awake);
     self.last_body_bytes = @max(self.last_body_bytes, len);
+    // The final request must carry one image for each tool round, or the phase measures no image.
+    if (self.image_bytes != 0 and round.* == self.rounds) {
+        var images: usize = 0;
+        for (request.body) |part| images += std.mem.count(u8, part, "\"type\":\"image\"");
+        if (images != self.rounds) return error.UnexpectedRequest;
+    }
     const reader = try arena.create(ai.testing.ReplayReader);
     reader.* = .{ .bytes = if (round.* == self.rounds) ai.testing.canned_reply else self.replies[round.*] };
     round.* += 1;
@@ -149,12 +171,27 @@ fn decls(_: *anyopaque, _: std.mem.Allocator) error{OutOfMemory}![]const ai.ir.T
     return &read_decl;
 }
 
-/// Answer a window of the corpus. The window moves each round, so no two outputs are equal.
-fn execute(ctx: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
+/// Answer a window of the corpus, and an image when the run asks for one. The window moves each round, so no two outputs are equal.
+fn execute(ctx: *anyopaque, arena: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
     const self: *Run = @ptrCast(@alignCast(ctx));
     self.reads += 1;
     const start = (self.reads * 997) % (self.corpus.len - output_bytes);
-    return .{ .output = self.corpus[start..][0..output_bytes] };
+    const output = self.corpus[start..][0..output_bytes];
+    if (self.image_bytes == 0) return .{ .output = output };
+    // An MCP tool answers its image as base64, and the engine stores it with `putBase64`.
+    const image = arena.alloc(u8, self.image_bytes) catch @panic("out of memory");
+    @memcpy(image[0..png_signature.len], png_signature);
+    // The full round count keeps each image distinct, so the store writes every one.
+    std.mem.writeInt(u32, image[png_signature.len..][0..4], self.reads, .little);
+    @memset(image[png_signature.len + 4 ..], 0xa5);
+    const encoder = std.base64.standard.Encoder;
+    const text = encoder.encode(arena.alloc(u8, encoder.calcSize(image.len)) catch @panic("out of memory"), image);
+    const blob = self.app.engine.deps.blobs.putBase64(self.app.io, arena, text) catch |err| switch (err) {
+        error.OutOfMemory => @panic("out of memory"),
+        else => std.debug.panic("the bench image did not store: {t}", .{err}),
+    };
+    const media = arena.dupe(proto.content.MediaBlob, &.{blob}) catch @panic("out of memory");
+    return .{ .output = output, .media = media };
 }
 
 /// Source-like lines, so the JSON escaping and the UTF-8 checks do real work.
