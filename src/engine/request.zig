@@ -88,7 +88,7 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
         prepared.transport_request = .{
             .url = try owned.dupe(u8, sent.url),
             .headers = try proto.dupe(owned, sent.headers),
-            // An HTTP writer shifts the body it sends, so it needs bytes it may write to.
+            // The hook result dies with the build arena, so the prepared arena keeps the body for a retry.
             .body = try owned.dupe(u8, sent.body),
         };
         // The stream sends the replacement, so the serialized body can go now.

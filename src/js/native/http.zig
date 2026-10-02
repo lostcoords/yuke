@@ -59,7 +59,7 @@ const Request = struct {
     method: std.http.Method,
     headers: std.http.Client.Request.Headers = .{ .accept_encoding = .omit },
     extra_headers: []const std.http.Header,
-    body: ?[]u8,
+    body: ?[]const u8,
 
     const ParseError = error{ UrlType, Url, Options, Option, Method, Body, BodyMethod, Headers, Header };
 
@@ -343,7 +343,7 @@ fn exchangeOnce(client: *std.http.Client, body: *Body, uri: std.Uri, reused: *bo
     };
     const request = &body.request.?;
     request.accept_encoding = @splat(true);
-    if (req.method.requestHasBody()) try request.sendBodyComplete(req.body orelse &.{}) else try request.sendBodiless();
+    if (req.method.requestHasBody()) try ai.transport.sendBody(request, req.body orelse "") else try request.sendBodiless();
     body.response = response: while (true) {
         // Validate digits before the standard parser converts the untrusted status to u10.
         const prefix = try request.connection.?.reader().peekArray(12);

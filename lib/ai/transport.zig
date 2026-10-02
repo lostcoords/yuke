@@ -7,6 +7,7 @@ const types = @import("types.zig");
 
 pub const HttpTransport = http.HttpTransport;
 pub const HttpError = http.Error;
+pub const sendBody = http.sendBody;
 
 pub const Request = route.Request;
 

@@ -170,7 +170,7 @@ const HttpBody = struct {
     }
 
     /// Open the connection, send the body, and read the head. A failure releases the request.
-    fn exchangeHead(self: *HttpBody, client: *std.http.Client, uri: std.Uri, headers: []const std.http.Header, body: []u8, user_agent: []const u8, info: *transport.AttemptInfo) anyerror!void {
+    fn exchangeHead(self: *HttpBody, client: *std.http.Client, uri: std.Uri, headers: []const std.http.Header, body: []const u8, user_agent: []const u8, info: *transport.AttemptInfo) anyerror!void {
         self.request = client.request(.POST, uri, .{
             .redirect_behavior = .not_allowed, // Never resend the key to another origin.
             .keep_alive = false, // The client sends one request. A mid-stream connection never returns to the pool.
@@ -184,7 +184,7 @@ const HttpBody = struct {
         errdefer self.abandon();
         // The provider may hold the request from this point. A later transport fault is ambiguous.
         info.delivery = .possibly_sent;
-        self.request.sendBodyComplete(body) catch |err| return mapExchange(self.request.connection, err);
+        sendBody(&self.request, body) catch |err| return mapExchange(self.request.connection, err);
         self.response = self.request.receiveHead(&.{}) catch |err| return mapExchange(self.request.connection, err);
     }
 
@@ -292,6 +292,17 @@ fn mapExchange(conn: ?*std.http.Client.Connection, err: std.http.Client.Request.
         error.TlsInitializationFailed,
         => Error.ConnectFailed,
     };
+}
+
+/// Send `body` after the head, then flush the connection. `std.http.Client.Request.sendBodyComplete` uses the body as its buffer and moves it on a partial write, so this writes with no buffer and the caller bytes stay the same.
+/// It fails when the connection cannot take the bytes.
+pub fn sendBody(request: *std.http.Client.Request, body: []const u8) std.Io.Writer.Error!void {
+    request.transfer_encoding = .{ .content_length = body.len };
+    var body_writer = try request.sendBodyUnflushed(&.{});
+    try body_writer.writer.writeAll(body);
+    try body_writer.endUnflushed();
+    // The body writer flushes only the TLS layer, so the connection flush sends the last record to the socket.
+    try request.connection.?.flush();
 }
 
 /// Unwrap a read fault, where every socket and TLS cause names one broken connection.
@@ -434,9 +445,8 @@ fn runClient(out: *ClientOut) !void {
         .{ .name = "x-api-key", .value = "test-key" },
         .{ .name = "User-Agent", .value = "pinned/9" },
     };
-    var request_body: [0]u8 = .{};
     var info: transport.AttemptInfo = .{};
-    const opened = http.transportFor().open(arena.allocator(), .{ .url = url, .headers = &headers, .body = &request_body }, &info);
+    const opened = http.transportFor().open(arena.allocator(), .{ .url = url, .headers = &headers, .body = "" }, &info);
     out.status = info.status;
     if (info.request_id) |id| try out.request_id.appendSlice(out.gpa, id);
     if (info.body) |text| try out.error_body.appendSlice(out.gpa, text);

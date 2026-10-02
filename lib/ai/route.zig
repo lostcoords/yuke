@@ -192,11 +192,11 @@ pub fn headerConflict(generated: ?[]const u8, pinned: []const Header, configured
     return false;
 }
 
-/// The request one route sends. A transport reads it and an HTTP writer shifts the body on a partial write.
+/// The request one route sends. A transport only reads it, so a retry resends the same bytes.
 pub const Request = struct {
     url: []const u8 = "",
     headers: []const Header = &.{},
-    body: []u8,
+    body: []const u8,
 };
 
 /// Build the headers one route sends, in order: the credential, the identity headers, the route headers, the session id.
@@ -246,7 +246,7 @@ pub fn requestHeaders(arena: std.mem.Allocator, p: *const Route, credential: Cre
 }
 
 /// Build the request one route sends, and copy its URL and headers into `arena`.
-pub fn request(arena: std.mem.Allocator, p: *const Route, credential: Credential, session_id: []const u8, body: []u8) Error!Request {
+pub fn request(arena: std.mem.Allocator, p: *const Route, credential: Credential, session_id: []const u8, body: []const u8) Error!Request {
     return .{
         .url = try endpointUrl(arena, p),
         .headers = try requestHeaders(arena, p, credential, session_id),

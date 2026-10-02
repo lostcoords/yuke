@@ -1,6 +1,7 @@
 //! One JSON request and one bounded JSON response. The caller owns the response buffer.
 
 const std = @import("std");
+const ai = @import("ai");
 const util = @import("../util.zig");
 
 pub const Error = error{
@@ -76,7 +77,7 @@ pub const Client = struct {
             .json => null,
         };
         defer if (encoded) |owned| self.inner.allocator.free(owned);
-        const body = encoded orelse @constCast(req.payload.json);
+        const body: []const u8 = encoded orelse req.payload.json;
 
         var leg: PostLeg = .{};
         var future = try io.concurrent(postGrantLeg, .{ self, req, body, &leg });
@@ -94,7 +95,7 @@ pub const Client = struct {
     }
 
     /// The client refuses a redirect, because a credential must never reach another origin.
-    fn sendGrant(self: *Client, req: PostRequest, body: []u8, leg: *PostLeg) !Response {
+    fn sendGrant(self: *Client, req: PostRequest, body: []const u8, leg: *PostLeg) !Response {
         const io = self.inner.io;
         const uri = std.Uri.parse(req.url) catch {
             leg.connected.set(io);
@@ -123,7 +124,7 @@ pub const Client = struct {
         };
         defer request.deinit();
 
-        try request.sendBodyComplete(body);
+        try ai.transport.sendBody(&request, body);
         var response = try request.receiveHead(&.{});
 
         var transfer: [4096]u8 = undefined;
@@ -138,7 +139,7 @@ pub const Client = struct {
 };
 
 /// Run one OAuth POST in a child task. The parent waits for it, so the caller buffers stay valid.
-fn postGrantLeg(self: *Client, req: PostRequest, body: []u8, leg: *PostLeg) !Response {
+fn postGrantLeg(self: *Client, req: PostRequest, body: []const u8, leg: *PostLeg) !Response {
     defer leg.done.set(self.inner.io);
     return self.sendGrant(req, body, leg);
 }
