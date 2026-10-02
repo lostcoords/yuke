@@ -35,7 +35,7 @@ pub const Signal = struct {
             defer ctx.freeValue(result);
             return ctx.isException(result);
         }
-        unreachable;
+        unreachable; // The host table holds a waiter for every signal that reaches this line.
     }
 };
 
@@ -148,7 +148,7 @@ pub fn create(host: *Host) Value {
 }
 
 pub fn cancel(host: *Host, value: Value) void {
-    const signal = get(host.ctx, value) orelse unreachable;
+    const signal = get(host.ctx, value) orelse unreachable; // Callers pass only values created by this host's cancellation class.
     if (signal.aborted) return;
     signal.aborted = true;
     host.ops.abortSignal(host.ctx, value);
@@ -203,7 +203,7 @@ fn jsListen(ctx: Context, _: Value, args: []const Value) Value {
         if (listener.id == id) break true;
     } else false) id = if (id == std.math.maxInt(u32)) 1 else id + 1;
     host.next_listener = if (id == std.math.maxInt(u32)) 1 else id + 1;
-    host.abort_listeners.append(host.gpa, .{ .id = id, .signal = ctx.dupValue(args[0]), .callback = ctx.dupValue(args[1]) }) catch unreachable;
+    host.abort_listeners.append(host.gpa, .{ .id = id, .signal = ctx.dupValue(args[0]), .callback = ctx.dupValue(args[1]) }) catch @panic("out of memory");
     return ctx.newUint32(id);
 }
 
@@ -229,14 +229,14 @@ fn jsDrain(ctx: Context, _: Value, args: []const Value) Value {
         for (host.signal_waiters.items) |waiter| {
             if (ctx.isStrictEqual(waiter.signal, args[0])) return ctx.dupValue(waiter.promise);
         }
-        unreachable;
+        unreachable; // The host table holds a waiter when `signal.has_waiter` is true.
     }
     if (signal.operations == 0) return pending.resolved(ctx, quickjs.UNDEFINED);
     var funcs: [2]Value = undefined;
     const promise = ctx.newPromiseCapability(&funcs);
     if (ctx.isException(promise)) return promise;
     ctx.freeValue(funcs[1]);
-    host.signal_waiters.append(host.gpa, .{ .signal = ctx.dupValue(args[0]), .promise = ctx.dupValue(promise), .resolve = funcs[0] }) catch unreachable;
+    host.signal_waiters.append(host.gpa, .{ .signal = ctx.dupValue(args[0]), .promise = ctx.dupValue(promise), .resolve = funcs[0] }) catch @panic("out of memory");
     signal.has_waiter = true;
     return promise;
 }

@@ -19,7 +19,7 @@ pub const LocalHost = struct {
         var file = std.Io.Dir.cwd().openFile(self.io, full, .{}) catch |err| return mapError(err);
         defer file.close(self.io);
         // One buffered line at a time. The scan never holds the whole file, whatever its size.
-        const buffer = scratch.alloc(u8, @max(blob.sniff_bytes, limits.max_line_bytes)) catch unreachable;
+        const buffer = scratch.alloc(u8, @max(blob.sniff_bytes, limits.max_line_bytes)) catch @panic("out of memory");
         var reader = file.reader(self.io, buffer);
         const head = reader.interface.peek(blob.sniff_bytes) catch |err| switch (err) {
             error.EndOfStream => reader.interface.buffered(),
@@ -27,7 +27,7 @@ pub const LocalHost = struct {
         };
         if (blob.sniff(head) != null) return .{ .image = full };
         // One byte more than the limit lets a line at the limit find its delimiter.
-        const line_buf = scratch.alloc(u8, limits.max_line_bytes + 1) catch unreachable;
+        const line_buf = scratch.alloc(u8, limits.max_line_bytes + 1) catch @panic("out of memory");
         return .{
             .text = scan(scratch, &reader.interface, line_buf, file_size, range, limits) catch |err| switch (err) {
                 error.InvalidUtf8 => return error.InvalidUtf8,
@@ -48,12 +48,12 @@ pub const LocalHost = struct {
         const size = (file.stat(self.io) catch |err| return mapError(err)).size;
         if (max_bytes < 4) return error.HostFailure;
         const start = if (offset) |at| @min(at, size) else size -| max_bytes;
-        const buffer = scratch.alloc(u8, @intCast(@min(max_bytes, size - start))) catch unreachable;
+        const buffer = scratch.alloc(u8, @intCast(@min(max_bytes, size - start))) catch @panic("out of memory");
         const count = file.readPositionalAll(self.io, buffer, start) catch |err| return mapError(err);
         // A writer can stop in the middle of a character, so the cut part waits for the next read.
         const cut = if (complete and start + count == size) count else utf8.whole(buffer[0..count]);
         const bytes = buffer[0..cut];
-        const text = if (std.unicode.utf8ValidateSlice(bytes)) bytes else utf8.sanitize(scratch, bytes) catch unreachable;
+        const text = if (std.unicode.utf8ValidateSlice(bytes)) bytes else utf8.sanitize(scratch, bytes) catch @panic("out of memory");
         return .{ .text = text, .next = start + cut, .size = size, .start = start, .complete = complete and start + cut == size };
     }
 
@@ -149,7 +149,7 @@ fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, file
     }
 
     // The text fits the smaller of the byte cap and the file, so one allocation holds it.
-    var text: std.ArrayList(u8) = std.ArrayList(u8).initCapacity(scratch, @intCast(@min(limits.max_bytes, file_size))) catch unreachable;
+    var text: std.ArrayList(u8) = std.ArrayList(u8).initCapacity(scratch, @intCast(@min(limits.max_bytes, file_size))) catch @panic("out of memory");
     var writer: std.Io.Writer = .fixed(line_buf);
     var long_lines: u32 = 0;
     var kept: u32 = 0;
@@ -162,10 +162,10 @@ fn scan(scratch: std.mem.Allocator, reader: *std.Io.Reader, line_buf: []u8, file
         if (kept == limits.max_lines or text.items.len + prefix.len + line.len + 1 > limits.max_bytes) {
             return .{ .text = text.items, .next_line = std.math.cast(u32, line_no), .long_lines = long_lines };
         }
-        text.appendSlice(scratch, prefix) catch unreachable;
+        text.appendSlice(scratch, prefix) catch @panic("out of memory");
         // `line` borrows `line_buf`. Copy it before the next call reuses that buffer.
-        text.appendSlice(scratch, line) catch unreachable;
-        text.append(scratch, '\n') catch unreachable;
+        text.appendSlice(scratch, line) catch @panic("out of memory");
+        text.append(scratch, '\n') catch @panic("out of memory");
         std.debug.assert(text.items.len <= limits.max_bytes);
         kept += 1;
         line_no += 1;

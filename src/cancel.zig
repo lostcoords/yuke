@@ -36,7 +36,7 @@ pub const Cancel = struct {
 
     /// Run `f` in a child task, so a cancel can interrupt a blocked call; the end of `f` wakes the caller.
     pub fn runChild(self: *Cancel, io: std.Io, comptime f: anytype, args: anytype) ChildResult {
-        return self.runChildTimeout(io, .none, f, args) catch unreachable;
+        return self.runChildTimeout(io, .none, f, args) catch unreachable; // The .none timeout cannot return error.Timeout.
     }
 
     /// A deadline cancels and joins the child before it returns Timeout.

@@ -182,7 +182,9 @@ pub fn publishReport(engine: *Engine, report: proto.input.InputQueuedData, reque
 
 fn emitErrorNotice(engine: *Engine, source: []const u8, log: bool, comptime buffer_size: usize, comptime format: []const u8, args: anytype) void {
     var buffer: [buffer_size]u8 = undefined;
-    const text = std.fmt.bufPrint(&buffer, format, args) catch unreachable;
+    var writer: std.Io.Writer = .fixed(&buffer);
+    writer.print(format, args) catch {}; // A long error name cuts the notice, and `buffered` holds the written bytes.
+    const text = writer.buffered();
     if (log) std.log.err("{s}", .{text});
     engine.sinks.emit(.{ .method = .notice, .params = .{ .notice = .{ .level = .@"error", .source = source, .message = text } } });
 }

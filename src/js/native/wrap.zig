@@ -86,8 +86,7 @@ pub fn graphemeAt(source: []const u8, i: usize) Grapheme {
     if (c >= 0x20 and c < 0x7f and (i + 1 == source.len or source[i + 1] < 0x80)) return .{ .len = 1, .width = 1 };
     const rest = source[i..];
     var it = term.unicode.graphemeIterator(rest);
-    // A text that is not empty starts with a grapheme.
-    const g = it.next() orelse unreachable;
+    const g = it.next() orelse unreachable; // The decoder answers U+FFFD for an invalid byte, so a text that is not empty starts with a grapheme.
     return .{ .len = g.len, .width = term.gwidth.gwidth(g.bytes(rest), .unicode) };
 }
 

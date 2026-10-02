@@ -424,7 +424,7 @@ pub const Reducer = struct {
         const result: event.BlockResult = switch (block.kind) {
             .text => .text,
             .reasoning => .{ .reasoning = .{ .signature = block.data } },
-            .redacted_reasoning => unreachable,
+            .redacted_reasoning => unreachable, // This reducer never creates a redacted reasoning block.
             .tool => .{ .tool = .{
                 .call_id = block.call_id,
                 .name = block.name,

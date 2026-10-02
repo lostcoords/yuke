@@ -166,7 +166,7 @@ fn deliver(host: *Host, proc: *Proc, stream: *Stream, number: i32) bool {
     stream.buffer = stream.spare;
     stream.spare = .empty;
     const cut = if (stream.ended) taken.items.len else utf8.whole(taken.items);
-    stream.buffer.appendSlice(host.gpa, taken.items[cut..]) catch unreachable;
+    stream.buffer.appendSlice(host.gpa, taken.items[cut..]) catch @panic("out of memory");
     const finished = stream.ended and stream.buffer.items.len == 0;
     stream.lock.unlock(host.io);
     stream.space.set(host.io);
@@ -222,7 +222,7 @@ fn readTask(host: *Host, stream: *Stream) void {
             const full = stream.buffer.items.len >= max_buffered_bytes;
             if (!full) {
                 const n = @min(chunk.len, max_buffered_bytes - stream.buffer.items.len);
-                stream.buffer.appendSlice(host.gpa, chunk[0..n]) catch unreachable;
+                stream.buffer.appendSlice(host.gpa, chunk[0..n]) catch @panic("out of memory");
                 reader.interface.toss(n);
             }
             stream.lock.unlock(host.io);
@@ -332,12 +332,12 @@ fn jsSpawn(ctx: Context, _: Value, args: []const Value) Value {
     if (pairs.len % 2 != 0) return ctx.throwTypeError("env must be an array of key and value strings");
     const on_output: Value = if (args.len > 2) args[2] else quickjs.UNDEFINED;
     if (!ctx.isFunction(on_output)) return ctx.throwTypeError("spawn needs an output callback");
-    var env: std.process.Environ.Map = if (pairs.len > 0) host.execution.env.clone(a) catch unreachable else undefined;
+    var env: std.process.Environ.Map = if (pairs.len > 0) host.execution.env.clone(a) catch @panic("out of memory") else undefined;
     var pair: usize = 0;
     while (pair < pairs.len) : (pair += 2) {
         if (!std.process.Environ.Map.validateKeyForPut(pairs[pair]) or std.mem.indexOfScalar(u8, pairs[pair + 1], 0) != null)
             return ctx.throwTypeError("an env key must be non-empty and hold no '=', and no env string may hold a NUL byte");
-        env.put(pairs[pair], pairs[pair + 1]) catch unreachable;
+        env.put(pairs[pair], pairs[pair + 1]) catch @panic("out of memory");
     }
 
     var funcs: [2]Value = undefined;
@@ -365,7 +365,7 @@ pub fn startMessage(err: anyerror) []const u8 {
 pub fn launch(host: *Host, program: runner.Program, on_output: Value, funcs: [2]Value, job: ?*Job) *Proc {
     std.debug.assert(host.procs.live.items.len < max_processes);
     host.procs.last_id += 1;
-    const proc = host.gpa.create(Proc) catch unreachable;
+    const proc = host.gpa.create(Proc) catch @panic("out of memory");
     proc.* = .{
         .id = host.procs.last_id,
         .pid = program.child.id.?,
@@ -378,7 +378,7 @@ pub fn launch(host: *Host, program: runner.Program, on_output: Value, funcs: [2]
         .job = job,
     };
     for (&proc.streams) |*stream| stream.ready.store(stream.ended, .release);
-    host.procs.live.append(host.gpa, proc) catch unreachable;
+    host.procs.live.append(host.gpa, proc) catch @panic("out of memory");
     host.tasks.concurrent(host.io, procTask, .{ host, proc }) catch {
         // No waiter can run, so the owner ends and reaps the child, and the next drain settles it.
         runner.endGroups(host.io, &.{proc.pid});
@@ -418,7 +418,7 @@ fn jsWrite(ctx: Context, _: Value, args: []const Value) Value {
     if (text.len > max_write_bytes - proc.write_bytes or proc.writes.len >= max_writes)
         return pending.rejected(ctx, "the process input queue is full; await write before retry");
     const started = host.ops.start(ctx) orelse return ctx.throw(ctx.getException());
-    proc.writes.pushBack(host.gpa, .{ .bytes = host.gpa.dupe(u8, text) catch unreachable, .op = started.op }) catch unreachable;
+    proc.writes.pushBack(host.gpa, .{ .bytes = host.gpa.dupe(u8, text) catch @panic("out of memory"), .op = started.op }) catch @panic("out of memory");
     proc.write_bytes += text.len;
     if (proc.writing) return started.promise;
     proc.writing = true;
@@ -477,7 +477,7 @@ fn stringList(ctx: Context, a: std.mem.Allocator, value: Value) ?[]const []const
     if (!ctx.isArray(value)) return null;
     const len = ctx.getLength(value) catch return null;
     if (len < 0 or len > 4096) return null;
-    const list = a.alloc([]const u8, @intCast(len)) catch unreachable;
+    const list = a.alloc([]const u8, @intCast(len)) catch @panic("out of memory");
     for (list, 0..) |*slot, i| {
         const item = ctx.getPropertyUint32(value, @intCast(i));
         defer ctx.freeValue(item);

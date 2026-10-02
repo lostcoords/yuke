@@ -83,7 +83,7 @@ pub fn encode(answer: anytype, out: *std.Io.Writer) !?Failure {
 
 pub fn specOf(comptime method: proto.enums.MethodName) proto.rpc.MethodSpec {
     for (proto.rpc.methods) |spec| if (spec.name == method) return spec;
-    unreachable;
+    unreachable; // The compile-time protocol table contains one entry for every method.
 }
 
 const bindings = struct {

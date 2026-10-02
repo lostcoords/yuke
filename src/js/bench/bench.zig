@@ -125,7 +125,7 @@ pub const Harness = struct {
     socket_peer: ?*SocketPeer = null,
     http_peer: ?*HttpPeer = null,
     tree_shape: TreeShape = .wide,
-    phase: ?Phase = null,
+    phase: Phase,
     native_step: usize = 0,
     colors: Colors = .ansi_raw,
     advice_batch_size: u32 = 1000,
@@ -151,6 +151,7 @@ pub const Harness = struct {
             .output = .init(gpa),
             .api = quickjs.UNDEFINED,
             .step_fn = quickjs.UNDEFINED,
+            .phase = phase,
             .phase_group = phase.group(),
         };
         errdefer self.env.deinit();
@@ -225,7 +226,7 @@ pub const Harness = struct {
         std.debug.assert(scale > 0);
         std.debug.assert(self.phase_group == phase.group());
         std.debug.assert(self.advice_batch_size > 0);
-        self.phase = null;
+        self.phase = phase;
         self.native_step = 0;
         self.host.engine.detach();
         if (self.tree) |tree| tree.destroy();
@@ -241,7 +242,6 @@ pub const Harness = struct {
         if (phase.group() == .run) {
             self.run = try Run.create(self.host, scale, if (phase == .engine_parallel) 8 else 1, if (phase == .engine_parallel) 20 else 0);
             self.allocations.resetPeak();
-            self.phase = phase;
             return;
         }
         if (std.meta.stringToEnum(Commit.Mode, @tagName(phase))) |mode| {
@@ -249,7 +249,6 @@ pub const Harness = struct {
             try self.commit.?.step(mode);
             self.allocations.resetPeak();
             if (metrics_enabled) self.host.paint.counters = .{};
-            self.phase = phase;
             return;
         }
         if (phase == .projection or phase == .stream_native or phase == .stream_tool or phase == .stream_part or phase.group() == .chat)
@@ -284,7 +283,6 @@ pub const Harness = struct {
         self.output.clearRetainingCapacity();
         self.allocations.resetPeak();
         if (metrics_enabled) self.host.paint.counters = .{};
-        self.phase = phase;
     }
 
     /// The frontend boots this way, so the phase pays for the runtime, the modules, and the plugins.
@@ -382,7 +380,7 @@ pub const Harness = struct {
     }
 
     pub fn step(self: *Harness) !u64 {
-        const phase = self.phase orelse unreachable;
+        const phase = self.phase;
         self.output.clearRetainingCapacity();
         if (self.commit) |commit| {
             try commit.step(std.meta.stringToEnum(Commit.Mode, @tagName(phase)).?);
@@ -407,11 +405,11 @@ pub const Harness = struct {
                 try self.host.pump();
             }
             if (phase == .stream_native or phase == .chat_stream) {
-                try (self.projection orelse unreachable).appendNative(self.native_step);
+                try (self.projection orelse unreachable).appendNative(self.native_step); // `start` creates a projection for every stream phase before `step` runs.
                 self.native_step += 1;
             }
-            if (phase == .stream_tool) try (self.projection orelse unreachable).appendTool();
-            if (phase == .stream_part) try (self.projection orelse unreachable).appendPart();
+            if (phase == .stream_tool) try (self.projection orelse unreachable).appendTool(); // `start` creates a projection for every stream phase before `step` runs.
+            if (phase == .stream_part) try (self.projection orelse unreachable).appendPart(); // `start` creates a projection for every stream phase before `step` runs.
             const rows = try self.call(self.step_fn, &.{});
             if (rows <= 0) return error.EmptyBenchmarkOutput;
         }
@@ -431,8 +429,7 @@ pub const Harness = struct {
     }
 
     pub fn verify(self: *Harness, with_checksum: bool) !i32 {
-        std.debug.assert(self.phase != null);
-        if (self.commit) |commit| return commit.verify(std.meta.stringToEnum(Commit.Mode, @tagName(self.phase.?)).?);
+        if (self.commit) |commit| return commit.verify(std.meta.stringToEnum(Commit.Mode, @tagName(self.phase)).?);
         if (self.run) |run| return @intCast(run.served);
         self.output.clearRetainingCapacity();
         const ctx = self.host.ctx;

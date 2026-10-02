@@ -42,20 +42,20 @@ fn jsDiff(ctx: Context, _: Value, args: []const Value) Value {
     else
         diff.compare(arena, old, new, .{}) catch |err| switch (err) {
             error.TooDifferent => &.{}, // The change is too large for a reader-friendly view.
-            error.OutOfMemory => unreachable,
+            error.OutOfMemory => @panic("out of memory"),
         };
 
     // The wire carries plain strings. The leading mark identifies the operation.
-    const views = arena.alloc(HunkView, hunks.len) catch unreachable;
+    const views = arena.alloc(HunkView, hunks.len) catch @panic("out of memory");
     for (hunks, views) |hunk, *view| {
-        const lines = arena.alloc([]const u8, hunk.lines.len) catch unreachable;
+        const lines = arena.alloc([]const u8, hunk.lines.len) catch @panic("out of memory");
         for (hunk.lines, lines) |line, *text| {
             const mark: u8 = switch (line.op) {
                 .keep => ' ',
                 .delete => '-',
                 .insert => '+',
             };
-            text.* = std.fmt.allocPrint(arena, "{c}{s}", .{ mark, line.text }) catch unreachable;
+            text.* = std.fmt.allocPrint(arena, "{c}{s}", .{ mark, line.text }) catch @panic("out of memory");
         }
         view.* = .{ .old_start = hunk.old_start, .old_lines = hunk.old_lines, .new_start = hunk.new_start, .new_lines = hunk.new_lines, .lines = lines };
     }

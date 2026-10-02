@@ -115,7 +115,7 @@ fn mouseCell(host: *Host, m: Mouse) Mouse {
 
 /// Join a wheel event into `run` when it is the same button on the same cell.
 pub fn foldWheel(host: *Host, run: *?WheelRun, ev: Event) Error!void {
-    const btn = wheelOf(ev) orelse unreachable;
+    const btn = wheelOf(ev) orelse unreachable; // The driver checks that this event has a wheel button.
     const cell = mouseCell(host, ev.mouse);
     if (run.*) |*w| {
         const prev = mouseCell(host, w.mouse);

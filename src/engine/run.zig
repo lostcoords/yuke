@@ -205,7 +205,7 @@ pub fn finishRunOpen(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, 
     try tx.commit();
     slot.phase = .terminalized;
 
-    const rt = engine.sessions.get(session_id) orelse unreachable;
+    const rt = engine.sessions.get(session_id) orelse unreachable; // The active slot keeps its session in the registry until cleanup completes.
     publishTerminal(engine, rt, done);
 }
 
@@ -227,7 +227,7 @@ fn finishSlot(engine: *Engine, slot: *RunSlot) void {
     slot.work.drain(engine.deps.io);
     std.debug.assert(slot.body == null);
     std.debug.assert(slot.phase == .terminalized or slot.phase == .faulted);
-    const rt = engine.sessions.get(session_id) orelse unreachable;
+    const rt = engine.sessions.get(session_id) orelse unreachable; // The active slot keeps its session in the registry until cleanup completes.
     std.debug.assert(rt.active_run == slot);
     const can_drain = slot.phase == .terminalized and !engine.closing and !rt.faulted;
     const parent = slot.parent_id;

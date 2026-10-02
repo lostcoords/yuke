@@ -37,7 +37,7 @@ const Channel = struct {
                 self.mutex.unlock(peer.io);
                 return;
             }
-            const taken = self.items.toOwnedSlice(peer.gpa) catch unreachable;
+            const taken = self.items.toOwnedSlice(peer.gpa) catch @panic("out of memory");
             self.mutex.unlock(peer.io);
             defer {
                 for (taken) |item| peer.gpa.free(item);
@@ -433,7 +433,7 @@ pub const Peer = struct {
     }
 
     fn currentSession(self: *Peer, buf: *[16]u8) []const u8 {
-        return std.fmt.bufPrint(buf, "s-{d}", .{self.generation.load(.acquire)}) catch unreachable;
+        return std.fmt.bufPrint(buf, "s-{d}", .{self.generation.load(.acquire)}) catch unreachable; // The generation is a u32, so this buffer fits its decimal form.
     }
 };
 

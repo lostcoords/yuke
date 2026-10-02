@@ -212,7 +212,7 @@ fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block, repl
         for (blocks) |block| switch (block.value) {
             .text => |text| try writeTextBlock(jw, text),
             .tool_use, .reasoning, .redacted_reasoning => {},
-            else => unreachable,
+            else => unreachable, // The earlier validation rejects media and tool results for assistant blocks.
         };
         try jw.endArray();
     } else {
@@ -252,7 +252,7 @@ fn writeAssistantMessage(jw: *std.json.Stringify, blocks: []const ir.Block, repl
                 try jw.endObject();
             },
             .text => {},
-            else => unreachable,
+            else => unreachable, // The earlier validation limits assistant blocks to text, reasoning, redacted reasoning, and tool use.
         };
         try jw.endArray();
     }
@@ -372,7 +372,7 @@ fn writeReasoning(
     const switch_shape: []const u8 = if (on) "enabled" else "disabled";
 
     switch (format) {
-        .none => unreachable,
+        .none => unreachable, // The switch receives only non-`.none` formats after the early return.
         .openai => try json.field(jw, "reasoning_effort", level),
         .openrouter => try json.nested(jw, "reasoning", "effort", level),
         .together => try json.nested(jw, "reasoning", "enabled", on),

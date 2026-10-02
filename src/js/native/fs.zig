@@ -46,7 +46,7 @@ fn ownedPath(ctx: Context, gpa: std.mem.Allocator, args: []const Value, idx: usi
     defer ctx.freeCString(raw.ptr);
     // The OS stops at a NUL byte, so the check rejects a different file name.
     if (raw.len == 0 or std.mem.indexOfScalar(u8, raw, 0) != null) return null;
-    return gpa.dupe(u8, raw) catch unreachable;
+    return gpa.dupe(u8, raw) catch @panic("out of memory");
 }
 
 /// One read, copied so the task can use it after the call returns.
@@ -115,7 +115,7 @@ fn readRangeTask(host: *Host, op: *pending.Op, req: ReadRequest) void {
         arena.deinit();
         return op.finish(.{ .failed = .{ .message = errorMessage(err) } });
     };
-    const answer = arena.allocator().create(RangeAnswer) catch unreachable;
+    const answer = arena.allocator().create(RangeAnswer) catch @panic("out of memory");
     answer.* = switch (got) {
         .text => |range| .{ .text = .{ .text = range.text, .next = range.next_line, .long_lines = range.long_lines } },
         .image => |path| .{ .image = .{ .image_path = path } },

@@ -35,7 +35,7 @@ pub fn drain(self: *Work, io: std.Io) void {
     }
     while (self.pending > 0) {
         self.done.reset();
-        self.done.wait(io) catch unreachable;
+        self.done.waitUncancelable(io);
     }
     std.debug.assert(self.operations.first == null);
 }

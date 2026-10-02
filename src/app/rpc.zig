@@ -31,9 +31,9 @@ const OwnedNotification = struct {
     value: proto.rpc.Notification,
 
     fn create(gpa: std.mem.Allocator, value: proto.rpc.Notification) *OwnedNotification {
-        const owned = gpa.create(OwnedNotification) catch unreachable;
+        const owned = gpa.create(OwnedNotification) catch @panic("out of memory");
         owned.* = .{ .arena = std.heap.ArenaAllocator.init(gpa), .value = undefined };
-        owned.value = proto.clone.dupe(owned.arena.allocator(), value) catch unreachable;
+        owned.value = proto.clone.dupe(owned.arena.allocator(), value) catch @panic("out of memory");
         return owned;
     }
 
@@ -45,7 +45,8 @@ const OwnedNotification = struct {
 
 /// A bounded FIFO for notifications from engine sinks.
 pub const NotificationQueue = struct {
-    items: [queue_slots]?*OwnedNotification = .{null} ** queue_slots,
+    /// The slots from `head` for `len` entries hold the queued notifications. The other slots hold no value.
+    items: [queue_slots]*OwnedNotification = undefined,
     head: usize = 0,
     len: usize = 0,
 
@@ -53,18 +54,14 @@ pub const NotificationQueue = struct {
         std.debug.assert(self.head < queue_slots);
         std.debug.assert(self.len <= queue_slots);
         if (self.len == queue_slots) return error.Full;
-        const slot = (self.head + self.len) % queue_slots;
-        std.debug.assert(self.items[slot] == null);
-        self.items[slot] = owned;
+        self.items[(self.head + self.len) % queue_slots] = owned;
         self.len += 1;
     }
 
-    fn pop(self: *NotificationQueue) ?*OwnedNotification {
+    fn pop(self: *NotificationQueue) *OwnedNotification {
         std.debug.assert(self.head < queue_slots);
-        std.debug.assert(self.len <= queue_slots);
-        if (self.len == 0) return null;
-        const owned = self.items[self.head] orelse unreachable;
-        self.items[self.head] = null;
+        std.debug.assert(self.len > 0 and self.len <= queue_slots);
+        const owned = self.items[self.head];
         self.head = (self.head + 1) % queue_slots;
         self.len -= 1;
         if (self.len == 0) self.head = 0;
@@ -118,8 +115,8 @@ pub const Rpc = struct {
         const record = switch (input) {
             inline else => |params| input_gate.submit(self.host, a, params),
         }.?;
-        const id = if (request.id) |value| a.dupe(u8, value) catch unreachable else null;
-        self.inputs.append(self.gpa, .{ .arena = arena, .id = id, .input = input, .call = record }) catch unreachable;
+        const id = if (request.id) |value| a.dupe(u8, value) catch @panic("out of memory") else null;
+        self.inputs.append(self.gpa, .{ .arena = arena, .id = id, .input = input, .call = record }) catch @panic("out of memory");
         return true;
     }
 
@@ -143,7 +140,7 @@ pub const Rpc = struct {
         var body: std.Io.Writer.Allocating = .init(arena);
         const failure = switch (held.input) {
             inline else => |params| if (input_gate.finish(self.app, self.host, arena, params, held.call)) |answer|
-                call.encode(answer, &body.writer) catch unreachable
+                call.encode(answer, &body.writer) catch @panic("out of memory")
             else |err| blk: {
                 std.log.err("rpc: {t} failed: {t}", .{ held.input, err });
                 break :blk call.Failure{ .code = .internal, .message = "the command failed" };
@@ -190,7 +187,7 @@ pub const Rpc = struct {
     pub fn flushNotifications(self: *Rpc) void {
         while (self.notifications.len > 0) {
             // Remove the pointer before writeValue can yield and let a sink append again.
-            const owned = self.notifications.pop() orelse unreachable;
+            const owned = self.notifications.pop();
             defer owned.destroy(self.gpa);
             self.writeValue(owned.value) catch |err| {
                 std.log.warn("rpc: cannot write {t}: {t}", .{ owned.value.method, err });
@@ -404,9 +401,7 @@ fn drainRequests(gpa: std.mem.Allocator, io: std.Io, requests: *std.Io.Queue(Req
 
 /// Free every notification the owner never wrote. Call this after removing the sink.
 pub fn drainNotifications(gpa: std.mem.Allocator, notifications: *NotificationQueue) void {
-    while (notifications.pop()) |owned| {
-        owned.destroy(gpa);
-    }
+    while (notifications.len > 0) notifications.pop().destroy(gpa);
 }
 
 /// Keep the RPC stream alive after a script fault. The owner has consumed the exception.
@@ -558,14 +553,14 @@ test "notification queue is bounded and remains FIFO across wraparound" {
     try testing.expectError(error.Full, queue.append(overflow));
     overflow.destroy(testing.allocator);
 
-    const first = queue.pop() orelse unreachable;
+    const first = queue.pop();
     first.destroy(testing.allocator);
     owned[0] = null;
     owned[queue_slots] = OwnedNotification.create(testing.allocator, note);
     try queue.append(owned[queue_slots].?);
     try testing.expectEqual(@as(usize, queue_slots), queue.len);
     for (1..queue_slots + 1) |i| {
-        const value = queue.pop() orelse unreachable;
+        const value = queue.pop();
         try testing.expect(value == owned[i].?);
         value.destroy(testing.allocator);
         owned[i] = null;
@@ -650,7 +645,7 @@ test "the sink callback queues an owned notification without writing" {
     message[0] = 'x';
     try testing.expectEqual(@as(usize, 0), buf.written().len);
     try testing.expectEqual(@as(usize, 1), notifications.len);
-    const queued = notifications.pop() orelse unreachable;
+    const queued = notifications.pop();
     defer queued.destroy(testing.allocator);
     try testing.expectEqualStrings("queued", queued.value.params.notice.message);
 }

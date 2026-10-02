@@ -217,7 +217,7 @@ fn jsText(ctx: Context, _: Value, args: []const Value) Value {
         .y_off = @intCast(y),
         .width = win.width -| (std.math.cast(u16, x) orelse 0),
         .height = 1,
-    }), s, style) catch unreachable;
+    }), s, style) catch @panic("out of memory");
     return quickjs.UNDEFINED;
 }
 

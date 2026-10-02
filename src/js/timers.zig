@@ -52,7 +52,7 @@ pub const Timers = struct {
                 return std.math.order(context.seq, item.seq);
             }
         }.order);
-        self.entries.insert(gpa, at, timer) catch unreachable;
+        self.entries.insert(gpa, at, timer) catch @panic("out of memory");
     }
 
     fn free(ctx: Context, gpa: std.mem.Allocator, timer: Timer) void {
@@ -118,11 +118,11 @@ pub fn install(host: *Host) void {
     const ctx = host.ctx;
     const global = ctx.getGlobalObject();
     defer ctx.freeValue(global);
-    ctx.setPropertyStr(global, "setTimeout", ctx.newFunction("setTimeout", 2, jsSetTimeout)) catch unreachable;
-    ctx.setPropertyStr(global, "setInterval", ctx.newFunction("setInterval", 2, jsSetInterval)) catch unreachable;
+    ctx.setPropertyStr(global, "setTimeout", ctx.newFunction("setTimeout", 2, jsSetTimeout)) catch @panic("out of memory");
+    ctx.setPropertyStr(global, "setInterval", ctx.newFunction("setInterval", 2, jsSetInterval)) catch @panic("out of memory");
     const clear = ctx.newFunction("clearTimeout", 1, jsClear);
-    ctx.setPropertyStr(global, "clearTimeout", ctx.dupValue(clear)) catch unreachable;
-    ctx.setPropertyStr(global, "clearInterval", clear) catch unreachable;
+    ctx.setPropertyStr(global, "clearTimeout", ctx.dupValue(clear)) catch @panic("out of memory");
+    ctx.setPropertyStr(global, "clearInterval", clear) catch @panic("out of memory");
 }
 
 fn jsSetTimeout(ctx: Context, _: Value, args: []const Value) Value {
@@ -143,7 +143,7 @@ fn set(ctx: Context, args: []const Value, repeat: bool) Value {
     const delay_ms = delayOf(ctx, if (args.len > 1) args[1] else quickjs.UNDEFINED) orelse return ctx.throw(ctx.getException());
 
     const extra = if (args.len > 2) args[2..] else &.{};
-    const owned = host.gpa.alloc(Value, extra.len) catch unreachable;
+    const owned = host.gpa.alloc(Value, extra.len) catch @panic("out of memory");
     for (extra, owned) |arg, *slot| slot.* = ctx.dupValue(arg);
     const timers = &host.timers;
     timers.last_id += 1;

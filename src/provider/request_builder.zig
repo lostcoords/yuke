@@ -195,8 +195,7 @@ fn omittedNote(kind: ai.Modality) []const u8 {
         .image => "[image omitted: this model reads no images]",
         .audio => "[audio omitted: this model reads no audio]",
         .video => "[video omitted: this model reads no video]",
-        .pdf => "[document omitted: this model reads no documents]",
-        .text => unreachable,
+        .pdf, .text => "[document omitted: this model reads no documents]",
     };
 }
 
@@ -246,7 +245,7 @@ fn completedResult(gpa: std.mem.Allocator, call_id: []const u8, c: proto.tool.To
             if (text.items.len != 0) try text.append(gpa, '\n');
             try text.appendSlice(gpa, note);
         },
-        else => unreachable,
+        else => unreachable, // `mediaValue` returns only `.media` blocks or omission text.
     };
     if (text.items.len != 0) result.content = try text.toOwnedSlice(gpa);
     result.media = try media.toOwnedSlice(gpa);

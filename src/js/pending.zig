@@ -151,7 +151,7 @@ pub fn deliverText(host: *Host, function: Value, lead: ?Value, bytes: []const u8
     std.debug.assert(bytes.len > 0);
     // A writer cuts on character boundaries, but a command prints any bytes, so the text becomes valid UTF-8 first.
     const invalid = !std.unicode.utf8ValidateSlice(bytes);
-    const text = if (invalid) utf8.sanitize(host.gpa, bytes) catch unreachable else bytes;
+    const text = if (invalid) utf8.sanitize(host.gpa, bytes) catch @panic("out of memory") else bytes;
     defer if (invalid) host.gpa.free(text);
     host.enterSlice();
     const argv = [_]Value{ lead orelse quickjs.UNDEFINED, host.ctx.newString(text) };
@@ -200,7 +200,7 @@ pub const Op = struct {
         self.live_lock.lockUncancelable(self.io);
         // A stream can end inside a character, so only the cap cuts on a boundary.
         const kept = if (bytes.len <= self.live_room) bytes.len else utf8.floor(bytes, self.live_room);
-        self.live.appendSlice(self.gpa, bytes[0..kept]) catch unreachable;
+        self.live.appendSlice(self.gpa, bytes[0..kept]) catch @panic("out of memory");
         self.live_room = if (kept < bytes.len) 0 else self.live_room - kept;
         self.live_lock.unlock(self.io);
         if (kept == 0) return;
@@ -286,9 +286,9 @@ pub const Ops = struct {
         var funcs: [2]Value = undefined;
         const promise = ctx.newPromiseCapability(&funcs);
         if (ctx.isException(promise)) return null;
-        const op = self.spare.pop() orelse self.gpa.create(Op) catch unreachable;
+        const op = self.spare.pop() orelse self.gpa.create(Op) catch @panic("out of memory");
         op.* = .{ .resolve = funcs[0], .reject = funcs[1], .wake = self.wake, .io = self.io, .gpa = self.gpa };
-        self.live.append(self.gpa, op) catch unreachable;
+        self.live.append(self.gpa, op) catch @panic("out of memory");
         return .{ .op = op, .promise = promise };
     }
 
@@ -336,7 +336,7 @@ pub const Ops = struct {
             ctx.freeValue(op.resolve);
             ctx.freeValue(op.reject);
             ctx.freeValue(op.signal);
-            self.spare.append(self.gpa, op) catch unreachable;
+            self.spare.append(self.gpa, op) catch @panic("out of memory");
         }
         return faulted;
     }

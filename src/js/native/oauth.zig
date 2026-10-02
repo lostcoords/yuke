@@ -95,7 +95,7 @@ fn jsListen(ctx: Context, _: Value, _: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (!host.acceptsIo()) return ctx.throwTypeError("the host is closed");
     if (host.oauth.full(host.gpa, max_listeners)) return ctx.throwTypeError("the host holds 4 sign-in listeners");
-    const address = std.Io.net.IpAddress.parseIp4("127.0.0.1", 0) catch unreachable;
+    const address = std.Io.net.IpAddress.parseIp4("127.0.0.1", 0) catch unreachable; // The literal loopback address is valid IPv4 text.
     const server = address.listen(host.io, .{}) catch return ctx.throwTypeError("the sign-in callback could not listen on a loopback port");
     const port = server.socket.address.getPort();
     const listener = host.oauth.add(host.gpa, .{ .host = host, .server = server });

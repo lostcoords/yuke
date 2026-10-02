@@ -35,7 +35,7 @@ pub fn createHostWith(io: std.Io, cwd: []const u8) *Host {
 }
 
 pub fn createHostWithOptions(io: std.Io, options: host_mod.Options) *Host {
-    const pool = std.testing.allocator.create(Pool) catch unreachable;
+    const pool = std.testing.allocator.create(Pool) catch @panic("out of memory");
     pool.* = .{ .backing_allocator = std.testing.allocator };
     return Host.createWith(pool.allocator(), io, options);
 }

@@ -380,7 +380,7 @@ fn localAvailability(
                 .none => null,
                 // Every grant presents a bearer, whatever header a key would take on this path.
                 .oauth => .authorization_bearer,
-                else => unreachable,
+                else => unreachable, // This switch handles only the `.none` and `.oauth` credential sources.
             };
         }
         break :blk out;

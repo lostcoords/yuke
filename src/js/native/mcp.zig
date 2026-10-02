@@ -35,7 +35,7 @@ fn jsConfigPath(ctx: Context, _: Value, _: []const Value) Value {
     const host = Host.fromContext(ctx);
     const base = (paths.configDir(host.gpa, host.execution.env) catch return ctx.throwTypeError("the MCP config directory is invalid")) orelse return quickjs.UNDEFINED;
     defer host.gpa.free(base);
-    const path = std.Io.Dir.path.join(host.gpa, &.{ base, ".mcp.json" }) catch unreachable;
+    const path = std.Io.Dir.path.join(host.gpa, &.{ base, ".mcp.json" }) catch @panic("out of memory");
     defer host.gpa.free(path);
     return ctx.newString(path);
 }

@@ -156,7 +156,7 @@ fn run(init: std.process.Init) !u8 {
         switch (err) {
             error.ShellNotFound => std.log.err("yuke: no command shell; install bash or provide {s}", .{execution.fallback_shell}),
             error.UnsupportedPlatform => std.log.err("yuke: this platform states no shell contract", .{}),
-            error.OutOfMemory => unreachable,
+            error.OutOfMemory => @panic("out of memory"),
         }
         return 1;
     };
@@ -207,7 +207,7 @@ fn run(init: std.process.Init) !u8 {
             .check => check_cli.boot,
             .print => print_cli.boot,
             .rpc => rpc.boot,
-            .login, .logout => unreachable,
+            .login, .logout => unreachable, // Login and logout return before extension initialization.
         },
         .config_dir = config_dir,
     });

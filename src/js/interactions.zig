@@ -85,9 +85,9 @@ pub const Table = struct {
         try validate(value);
 
         const started = ops.start(ctx) orelse return error.Exception;
-        const request = self.gpa.create(Request) catch unreachable;
+        const request = self.gpa.create(Request) catch @panic("out of memory");
         request.* = .{ .arena = arena, .id = id, .value = value, .op = started.op };
-        self.live.append(self.gpa, request) catch unreachable;
+        self.live.append(self.gpa, request) catch @panic("out of memory");
         return started.promise;
     }
 
@@ -150,12 +150,12 @@ pub const Table = struct {
             .confirm => |answer| .{ .boolean = answer.value },
             .select => |answer| blk: {
                 for (request.value.select.options) |option| {
-                    if (std.mem.eql(u8, option, answer.value)) break :blk .{ .text = self.gpa.dupe(u8, answer.value) catch unreachable };
+                    if (std.mem.eql(u8, option, answer.value)) break :blk .{ .text = self.gpa.dupe(u8, answer.value) catch @panic("out of memory") };
                 } else return error.InvalidSelection;
             },
             .input => |answer| blk: {
                 try validateText(answer.value, .optional);
-                break :blk .{ .text = self.gpa.dupe(u8, answer.value) catch unreachable };
+                break :blk .{ .text = self.gpa.dupe(u8, answer.value) catch @panic("out of memory") };
             },
         };
     }

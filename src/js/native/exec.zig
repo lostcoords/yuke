@@ -146,7 +146,7 @@ fn execWorker(host: *Host, op: *pending.Op, req: Request, result: *pending.Resul
         result.* = if (err == error.Canceled) canceled else .{ .failed = .{ .message = errorMessage(err) } };
         return;
     };
-    const answer = arena.allocator().create(Answer) catch unreachable;
+    const answer = arena.allocator().create(Answer) catch @panic("out of memory");
     answer.* = .of(arena.allocator(), ran);
     // The owner builds the object from the arena, so no JSON text sits between the task and the script.
     result.* = .{ .object = .init(arena, answer) };
@@ -171,8 +171,8 @@ const Answer = struct {
     /// A command prints any bytes, so each stream becomes valid UTF-8 in `scratch` first.
     fn of(scratch: std.mem.Allocator, r: process.Result) Answer {
         return .{
-            .stdout = if (std.unicode.utf8ValidateSlice(r.stdout)) r.stdout else utf8.sanitize(scratch, r.stdout) catch unreachable,
-            .stderr = if (std.unicode.utf8ValidateSlice(r.stderr)) r.stderr else utf8.sanitize(scratch, r.stderr) catch unreachable,
+            .stdout = if (std.unicode.utf8ValidateSlice(r.stdout)) r.stdout else utf8.sanitize(scratch, r.stdout) catch @panic("out of memory"),
+            .stderr = if (std.unicode.utf8ValidateSlice(r.stderr)) r.stderr else utf8.sanitize(scratch, r.stderr) catch @panic("out of memory"),
             .code = if (r.outcome == .exited) r.outcome.exited else null,
             .signal = if (r.outcome == .signaled) r.outcome.signaled else null,
             .timed_out = r.outcome == .timed_out,

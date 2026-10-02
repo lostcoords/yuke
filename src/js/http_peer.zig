@@ -119,7 +119,7 @@ pub const Peer = struct {
                         .put => .PUT,
                         .patch => .PATCH,
                         .delete => .DELETE,
-                        else => unreachable,
+                        else => unreachable, // This arm runs only for the `.put`, `.patch`, and `.delete` modes.
                     };
                     if (expected != request.head.method) return error.UnexpectedRequest;
                     if (expected.requestHasBody() and request.head.content_length != 0) return error.UnexpectedRequest;

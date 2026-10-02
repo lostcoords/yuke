@@ -133,7 +133,7 @@ pub fn hasSkills(db: *Database, arena: std.mem.Allocator, id: [16]u8) !bool {
 }
 
 fn skillEntry(row: anytype) skills.Entry {
-    const scope = std.meta.stringToEnum(instruction_types.InstructionScope, row.scope) orelse unreachable;
+    const scope = std.meta.stringToEnum(instruction_types.InstructionScope, row.scope) orelse unreachable; // The database constraint stores only global or workspace scopes.
     std.debug.assert(skills.nameFault(row.name) == null);
     return .{ .name = row.name, .description = row.description, .scope = scope, .path = row.path, .canonical_path = row.canonical_path };
 }
@@ -157,7 +157,7 @@ pub fn instructionSources(db: *Database, arena: std.mem.Allocator, id: [16]u8) !
 }
 
 fn instructionSource(row: anytype) instruction_types.InstructionSource {
-    const scope = std.meta.stringToEnum(instruction_types.InstructionScope, row.scope) orelse unreachable;
+    const scope = std.meta.stringToEnum(instruction_types.InstructionScope, row.scope) orelse unreachable; // The database constraint stores only global or workspace scopes.
     std.debug.assert(row.path.len > 0 and row.canonical_path.len > 0);
     return .{ .scope = scope, .path = row.path, .canonical_path = row.canonical_path, .content_hash = .bytes(row.content_hash) };
 }

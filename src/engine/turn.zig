@@ -42,7 +42,7 @@ pub fn execute(engine: *Engine, slot: *RunSlot) void {
     std.debug.assert(slot.handle.started.kind == .turn);
     const session_id = slot.sessionId();
 
-    const rt = engine.sessions.get(session_id) orelse unreachable;
+    const rt = engine.sessions.get(session_id) orelse unreachable; // The run launcher keeps the active session resident until execution ends.
     std.debug.assert(rt.active_run == slot);
 
     // Clear a live draft on an early return. A commit fold nulls it first on the normal path.
@@ -127,7 +127,7 @@ fn commitFinal(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, live: 
     std.debug.assert(terminal != .success);
     if (live == null) {
         const outcome: proto.run.RunOutcome = switch (terminal) {
-            .success => unreachable,
+            .success => unreachable, // The assertion above excludes success from this failure-only conversion.
             .canceled => .{ .canceled = .{} },
             .failed => |item| .{ .failed = item },
         };
@@ -455,7 +455,7 @@ fn commitRound(
     slot.progress.current = null;
     if (final) slot.phase = .terminalized;
 
-    const rt = engine.sessions.get(session_id) orelse unreachable;
+    const rt = engine.sessions.get(session_id) orelse unreachable; // The active run keeps its session in the registry until commit publication.
     session_events.emitCommitted(engine, rt, commit);
     session_events.publishUserCommits(engine, rt, inputs);
     if (inputs.len == 0) session_events.announceSummary(engine, session_id);
@@ -802,7 +802,7 @@ const ToolOutput = struct {
             .part_id = self.part_id,
             .delta = kept,
             .offset = self.offset,
-        } } }) catch unreachable;
+        } } }) catch @panic("out of memory");
         self.offset += kept.len;
     }
 };

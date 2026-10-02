@@ -23,7 +23,7 @@ pub fn dupe(a: std.mem.Allocator, value: anytype) std.mem.Allocator.Error!@TypeO
                     break :blk @unionInit(T, f.name, try dupe(a, @field(value, f.name)));
                 }
             }
-            unreachable;
+            unreachable; // Every tagged union value matches one field in this inline scan.
         },
         .array => |info| blk: {
             var out: T = undefined;

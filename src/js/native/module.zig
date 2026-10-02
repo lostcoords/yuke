@@ -27,7 +27,7 @@ pub fn installFunctions(host: *Host, comptime name: [:0]const u8, comptime fns: 
         }
     };
     const m = host.ctx.newModule(name, Init.init).?;
-    inline for (fns) |f| host.ctx.addModuleExport(m, f.name) catch unreachable;
+    inline for (fns) |f| host.ctx.addModuleExport(m, f.name) catch @panic("out of memory");
 }
 
 /// A module with one object export that holds the functions; `extra` adds the constants and any host root.
@@ -60,7 +60,7 @@ pub fn installObject(
         }
     };
     const m = host.ctx.newModule(name, Init.init).?;
-    host.ctx.addModuleExport(m, as) catch unreachable;
+    host.ctx.addModuleExport(m, as) catch @panic("out of memory");
 }
 
 /// Throw the exception QuickJS left pending, and answer the sentinel a native function returns.
@@ -85,7 +85,7 @@ pub fn string(ctx: Context, value: Value) ?[:0]const u8 {
 pub fn owned(ctx: Context, gpa: std.mem.Allocator, value: Value) ?[]u8 {
     const raw = string(ctx, value) orelse return null;
     defer ctx.freeCString(raw.ptr);
-    return gpa.dupe(u8, raw) catch unreachable;
+    return gpa.dupe(u8, raw) catch @panic("out of memory");
 }
 
 /// Read one whole number in `[min, max]`. A fraction, a NaN, or another type answers null.
@@ -105,7 +105,7 @@ pub fn sessionId(ctx: Context, value: Value) ?proto.ids.SessionId {
     defer ctx.freeCString(text.ptr);
     if (!proto.ids.SessionId.validText(text)) return null;
     var raw: [proto.ids.SessionId.byte_len]u8 = undefined;
-    _ = std.fmt.hexToBytes(&raw, text) catch unreachable;
+    _ = std.fmt.hexToBytes(&raw, text) catch unreachable; // `validText` accepts only lowercase hexadecimal session IDs.
     return .bytes(raw);
 }
 
@@ -141,7 +141,7 @@ pub const root_option_message = "the options must be an object, and workspaceRoo
 pub fn rootOption(ctx: Context, gpa: std.mem.Allocator, options: Value, default: []const u8) ?[]u8 {
     const value = property(ctx, options, "workspaceRoot") catch return null;
     defer ctx.freeValue(value);
-    if (ctx.isUndefined(value)) return gpa.dupe(u8, default) catch unreachable;
+    if (ctx.isUndefined(value)) return gpa.dupe(u8, default) catch @panic("out of memory");
     const root = owned(ctx, gpa, value) orelse return null;
     if (std.Io.Dir.path.isAbsolute(root) and std.mem.indexOfScalar(u8, root, 0) == null) return root;
     gpa.free(root);
@@ -156,7 +156,7 @@ pub fn set(ctx: Context, obj: Value, name: [:0]const u8, value: Value) void {
 
 /// Parse the JSON a writer holds. JS_ParseJSON finds the end of the text at a NUL byte, so this appends one.
 pub fn parseWritten(ctx: Context, text: *std.Io.Writer.Allocating, filename: [:0]const u8) Value {
-    text.writer.writeByte(0) catch unreachable;
+    text.writer.writeByte(0) catch @panic("out of memory");
     const json = text.written();
     return ctx.parseJSON(json[0 .. json.len - 1 :0], filename);
 }
@@ -266,12 +266,12 @@ pub fn Table(comptime T: type) type {
         /// Table one record with a fresh id.
         pub fn add(self: *Self, gpa: std.mem.Allocator, init: T) *T {
             std.debug.assert(self.last_id < std.math.maxInt(u32));
-            const record = self.spare orelse gpa.create(T) catch unreachable;
+            const record = self.spare orelse gpa.create(T) catch @panic("out of memory");
             self.spare = null;
             record.* = init;
             self.last_id += 1;
             record.id = self.last_id;
-            self.live.append(gpa, record) catch unreachable;
+            self.live.append(gpa, record) catch @panic("out of memory");
             return record;
         }
 

@@ -125,7 +125,7 @@ fn jsConnect(ctx: Context, _: Value, args: []const Value) Value {
     if (cancellation.aborted(ctx, options.signal)) return pending.rejectedWith(ctx, canceled);
     if (host.net.full(host.gpa, max_connections)) return pending.rejectedWith(ctx, .{ .message = "the socket limit was reached", .code = "LIMIT" });
     const connection = host.net.add(host.gpa, .{ .host = host });
-    const request: Request = .{ .connection = connection, .kind = .connect, .bytes = host.gpa.dupe(u8, path) catch unreachable, .deadline = options.deadline };
+    const request: Request = .{ .connection = connection, .kind = .connect, .bytes = host.gpa.dupe(u8, path) catch @panic("out of memory"), .deadline = options.deadline };
     return host.startTask(Request, connectTask, request, .{ .signal = options.signal });
 }
 
@@ -166,7 +166,7 @@ fn jsWrite(ctx: Context, _: Value, args: []const Value) Value {
     }
     if (connection.write_busy) return pending.rejectedWith(ctx, .{ .message = "a socket write is already pending", .code = "BUSY" });
     connection.write_busy = true;
-    return host.startTask(Request, ioTask, .{ .connection = connection, .kind = .write, .bytes = host.gpa.dupe(u8, bytes) catch unreachable, .deadline = options.deadline }, .{ .signal = options.signal });
+    return host.startTask(Request, ioTask, .{ .connection = connection, .kind = .write, .bytes = host.gpa.dupe(u8, bytes) catch @panic("out of memory"), .deadline = options.deadline }, .{ .signal = options.signal });
 }
 
 fn jsClose(ctx: Context, _: Value, args: []const Value) Value {
@@ -212,7 +212,7 @@ fn ioTask(host: *Host, op: *pending.Op, request: Request) void {
     switch (request.kind) {
         .read => connection.read_op = op,
         .write => connection.write_op = op,
-        .connect => unreachable,
+        .connect => unreachable, // The connect task handles connect requests before this task runs.
     }
     const result = run(host, op, request);
     if (result == .failed) connection.close();
@@ -224,7 +224,7 @@ fn worker(host: *Host, request: Request, result: *pending.Result) error{}!void {
     const connection = request.connection;
     switch (request.kind) {
         .connect => {
-            const address = std.Io.net.UnixAddress.init(request.bytes) catch unreachable;
+            const address = std.Io.net.UnixAddress.init(request.bytes) catch unreachable; // `jsConnect` rejects every path that `UnixAddress.init` rejects.
             connection.stream = address.connect(host.io) catch {
                 result.* = .{ .failed = io_failed };
                 return;
@@ -235,7 +235,7 @@ fn worker(host: *Host, request: Request, result: *pending.Result) error{}!void {
             std.debug.assert(connection.stream != null and request.max_bytes > 0);
             if (connection.buffer.len < request.max_bytes) {
                 host.gpa.free(connection.buffer);
-                connection.buffer = host.gpa.alloc(u8, request.max_bytes) catch unreachable;
+                connection.buffer = host.gpa.alloc(u8, request.max_bytes) catch @panic("out of memory");
             }
             var reader = connection.stream.?.reader(host.io, &.{});
             var slices = [_][]u8{connection.buffer[0..request.max_bytes]};
@@ -246,7 +246,7 @@ fn worker(host: *Host, request: Request, result: *pending.Result) error{}!void {
             std.debug.assert(n > 0 and n <= request.max_bytes);
             // A full read hands the buffer to the answer. A short read copies its bytes and keeps the buffer for the next read.
             const full = n == request.max_bytes;
-            result.* = .{ .bytes = .{ .buffer = if (full) connection.buffer else host.gpa.dupe(u8, connection.buffer[0..n]) catch unreachable, .len = n } };
+            result.* = .{ .bytes = .{ .buffer = if (full) connection.buffer else host.gpa.dupe(u8, connection.buffer[0..n]) catch @panic("out of memory"), .len = n } };
             if (full) connection.buffer = &.{};
         },
         .write => {

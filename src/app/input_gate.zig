@@ -42,7 +42,7 @@ pub fn submit(host: *Host, arena: std.mem.Allocator, params: anytype) ?*tools.Ca
         create.initial_input = null;
         break :blk std.json.Stringify.valueAlloc(arena, .{ .session_id = null, .content = input.content.content, .create = create }, options);
     } else std.json.Stringify.valueAlloc(arena, .{ .session_id = params.session_id, .content = input.content.content }, options);
-    return host.calls.submitHook(point.wireName(), json catch unreachable);
+    return host.calls.submitHook(point.wireName(), json catch @panic("out of memory"));
 }
 
 /// Apply the settled chain of `record` to `params`, then run the command unless a handler refused it. A null record runs the command as it is.

@@ -62,9 +62,9 @@ pub fn outcome(arena: std.mem.Allocator, err: anyerror, info: *const ai.transpor
         .code = detail.code,
         .message = detail.message,
         .status = info.status,
-        .request_id = if (info.request_id) |id| arena.dupe(u8, id) catch unreachable else null,
+        .request_id = if (info.request_id) |id| arena.dupe(u8, id) catch @panic("out of memory") else null,
         // An internal error names itself, because no provider answer explains it.
-        .detail = if (info.body) |body| ai.failure.detailText(arena, body) catch unreachable else if (detail.code == .internal) @errorName(err) else null,
+        .detail = if (info.body) |body| ai.failure.detailText(arena, body) catch @panic("out of memory") else if (detail.code == .internal) @errorName(err) else null,
     };
 }
 

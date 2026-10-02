@@ -34,13 +34,13 @@ pub fn resolve(
     name: []const u8,
 ) ResolveError![]u8 {
     if (name.len == 0) return error.EmptyPath;
-    if (isBaked(name)) return allocator.dupe(u8, name) catch unreachable;
-    if (std.Io.Dir.path.isAbsolute(name)) return std.Io.Dir.path.resolve(allocator, &.{name}) catch unreachable;
+    if (isBaked(name)) return allocator.dupe(u8, name) catch @panic("out of memory");
+    if (std.Io.Dir.path.isAbsolute(name)) return std.Io.Dir.path.resolve(allocator, &.{name}) catch @panic("out of memory");
 
     if (base.len == 0) return error.MissingBase;
     if (isBaked(base)) return error.MissingBase;
     const dir = std.Io.Dir.path.dirname(base) orelse return error.MissingBase;
-    return std.Io.Dir.path.resolve(allocator, &.{ dir, name }) catch unreachable;
+    return std.Io.Dir.path.resolve(allocator, &.{ dir, name }) catch @panic("out of memory");
 }
 
 pub const Loader = struct {

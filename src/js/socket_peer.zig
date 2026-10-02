@@ -31,7 +31,7 @@ pub const Peer = struct {
     pub fn destroy(self: *Peer) void {
         self.tasks.cancel(self.io);
         self.server.deinit(self.io);
-        std.Io.Dir.deleteFileAbsolute(self.io, self.path) catch unreachable;
+        std.Io.Dir.deleteFileAbsolute(self.io, self.path) catch {}; // Cleanup is best effort, so a missing socket file is not a fault.
         self.gpa.free(self.path);
         self.gpa.destroy(self);
     }

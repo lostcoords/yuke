@@ -93,7 +93,7 @@ const Drain = struct {
         const head = if (gap) self.head.items[0..utf8.whole(self.head.items)] else self.head.items;
         // The ring lands after room for the longest notice, then moves back next to the notice.
         const max_notice = noticeLen(std.math.maxInt(u64), log);
-        const joined = scratch.alloc(u8, head.len + max_notice + self.tail_len) catch unreachable;
+        const joined = scratch.alloc(u8, head.len + max_notice + self.tail_len) catch @panic("out of memory");
         @memcpy(joined[0..head.len], head);
         const ring = joined[head.len + max_notice ..];
         const split = @min(self.tail_len, self.tail.len - self.tail_at);
@@ -191,7 +191,7 @@ pub fn run(io: std.Io, root: []const u8, context: execution.Context, scratch: st
     if (err) |e| if (e.err) |failure| if (!abandoned) return mapDrainError(failure);
 
     const cut = out.dropped + err_dropped != 0;
-    const kept: ?[]const u8 = if (log) |*l| if (cut and !l.failed.load(.monotonic)) scratch.dupe(u8, spec.log.?) catch unreachable else blk: {
+    const kept: ?[]const u8 = if (log) |*l| if (cut and !l.failed.load(.monotonic)) scratch.dupe(u8, spec.log.?) catch @panic("out of memory") else blk: {
         std.Io.Dir.deleteFileAbsolute(io, spec.log.?) catch {};
         break :blk null;
     } else null;
@@ -481,7 +481,7 @@ fn take(io: std.Io, scratch: std.mem.Allocator, state: *Drain, bytes: []const u8
     const head_cap = state.limit - state.limit / 2;
     const tail_cap = state.limit / 2;
     const to_head = @min(bytes.len, head_cap -| state.head.items.len);
-    if (to_head != 0) state.head.appendSlice(scratch, bytes[0..to_head]) catch unreachable;
+    if (to_head != 0) state.head.appendSlice(scratch, bytes[0..to_head]) catch @panic("out of memory");
     if (to_head < bytes.len) keepTail(scratch, state, bytes[to_head..], tail_cap);
     if (state.log) |log| log.append(io, bytes);
     if (state.live) |live| live.write(live.ctx, bytes);
@@ -494,7 +494,7 @@ fn keepTail(scratch: std.mem.Allocator, state: *Drain, bytes: []const u8, cap: u
         state.dropped += bytes.len;
         return;
     }
-    if (state.tail.len == 0) state.tail = scratch.alloc(u8, cap) catch unreachable;
+    if (state.tail.len == 0) state.tail = scratch.alloc(u8, cap) catch @panic("out of memory");
     const excess = (state.tail_len + bytes.len) -| cap;
     state.dropped += excess;
     if (bytes.len >= cap) {

@@ -16,7 +16,7 @@ pub const Logs = struct {
             const base = if (std.Io.Dir.path.isAbsolute(tmp)) std.mem.trimEnd(u8, tmp, "/") else "/tmp";
             var random: [4]u8 = undefined;
             io.random(&random);
-            const dir = std.fmt.allocPrint(gpa, "{s}/yuke-{d}-{x}", .{ base, std.c.getpid(), std.mem.readInt(u32, &random, .little) }) catch unreachable;
+            const dir = std.fmt.allocPrint(gpa, "{s}/yuke-{d}-{x}", .{ base, std.c.getpid(), std.mem.readInt(u32, &random, .little) }) catch @panic("out of memory");
             std.Io.Dir.createDirAbsolute(io, dir, .fromMode(0o700)) catch {
                 gpa.free(dir);
                 return error.HostFailure;
@@ -28,7 +28,7 @@ pub const Logs = struct {
             } else self.dir = dir;
         }
         self.count += 1;
-        return std.fmt.allocPrint(gpa, "{s}/{s}-{d}.log", .{ self.dir.?, name, self.count }) catch unreachable;
+        return std.fmt.allocPrint(gpa, "{s}/{s}-{d}.log", .{ self.dir.?, name, self.count }) catch @panic("out of memory");
     }
 
     /// Delete the directory and every log in it. Every task that wrote a log has ended before this call.

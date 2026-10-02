@@ -52,7 +52,7 @@ pub fn abortAll(host: *Host) void {
 
 /// Parse the JSON the submitter wrote. A bad document settles the call and answers null.
 fn parseArguments(host: *Host, call: *table.Call) ?Value {
-    const text = host.gpa.dupeZ(u8, call.arguments) catch unreachable;
+    const text = host.gpa.dupeZ(u8, call.arguments) catch @panic("out of memory");
     defer host.gpa.free(text);
     const parsed = host.ctx.parseJSON(text, "call-arguments.json");
     if (!host.ctx.isException(parsed)) return parsed;
@@ -193,7 +193,7 @@ fn jsOutput(ctx_ptr: ?*c.JSContext, _: c.JSValue, argc: c_int, argv: [*c]c.JSVal
     const kept = utf8.floor(text, tool.output_room);
     tool.output_room = if (kept < text.len) 0 else tool.output_room - kept;
     if (kept == 0) return quickjs.UNDEFINED;
-    tool.output.appendSlice(host.gpa, text[0..kept]) catch unreachable;
+    tool.output.appendSlice(host.gpa, text[0..kept]) catch @panic("out of memory");
     call.wake.set(host.io);
     return quickjs.UNDEFINED;
 }
@@ -237,7 +237,7 @@ const Kind = enum { text, outcome, failed };
 fn settleText(host: *Host, call: *table.Call, text: []const u8, kind: Kind) void {
     std.debug.assert(kind != .outcome or call.kind == .tool); // only a tool answers a ToolOutcome
     if (call.signal()) |signal| cancellation.cancel(host, signal);
-    const owned = utf8.sanitize(host.gpa, text) catch unreachable;
+    const owned = utf8.sanitize(host.gpa, text) catch @panic("out of memory");
     call.settle(host.io, switch (kind) {
         .text => .{ .ok = .{ .text = owned } },
         .outcome => .{ .ok = .{ .text = owned, .outcome = true } },

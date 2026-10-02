@@ -611,9 +611,9 @@ fn bindValue(comptime T: type, statement: zqlite.Stmt, index: usize, value: T) !
         .pointer => |info| switch (info.size) {
             .slice => try bindBytes(statement, index, value, .text),
             .one => try bindBytes(statement, index, value[0..@typeInfo(info.child).array.len], .text),
-            else => unreachable,
+            else => unreachable, // SQL bindings use slices and pointers to fixed arrays only.
         },
-        else => unreachable,
+        else => unreachable, // SQL bindings use supported scalar, array, and pointer types only.
     }
 }
 
@@ -710,7 +710,7 @@ fn scanValue(comptime T: type, statement: zqlite.Stmt, index: usize, allocator: 
             if (storage != .text) return error.StorageTypeMismatch;
             break :blk try allocator.dupe(u8, try columnText(statement, index));
         },
-        else => unreachable,
+        else => unreachable, // SQL rows use supported scalar, array, and pointer types only.
     };
 }
 

@@ -155,7 +155,7 @@ pub const Input = struct {
         return switch (event) {
             .key_press => .{ .key_press = stable },
             .key_release => .{ .key_release = stable },
-            else => unreachable,
+            else => unreachable, // The second switch receives only `.key_press` or `.key_release` events.
         };
     }
 };

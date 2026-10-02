@@ -271,7 +271,7 @@ pub const Draft = struct {
 
     /// Resolve a part by ordinal id. The id is the index, so the engine never names a hole.
     fn partAt(self: *Draft, part_id: ids.PartId) *Part {
-        const idx = std.math.cast(usize, part_id) orelse unreachable;
+        const idx = std.math.cast(usize, part_id) orelse unreachable; // The engine keeps part ids within the host index range.
         std.debug.assert(idx < self.parts.items.len); // the engine opens a part before it changes it
         const part = &self.parts.items[idx];
         std.debug.assert(part.id() == part_id);

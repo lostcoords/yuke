@@ -144,7 +144,7 @@ fn pickSession(extensions: *Extensions, arena: std.mem.Allocator, err: *std.Io.W
         .session => |text| {
             std.debug.assert(proto.ids.SessionId.validText(text)); // The parser accepts only a wire id.
             var id: proto.ids.SessionId = undefined;
-            _ = std.fmt.hexToBytes(&id.raw, text) catch unreachable;
+            _ = std.fmt.hexToBytes(&id.raw, text) catch unreachable; // The assertion above holds only for lowercase hexadecimal text.
             return try configured(engine, arena, err, id);
         },
     }
@@ -223,7 +223,7 @@ const Waiter = struct {
     fn onEvent(ctx: *anyopaque, note: proto.rpc.Notification) void {
         const self: *Waiter = @ptrCast(@alignCast(ctx));
         switch (note.params) {
-            .run_done_data => |d| self.dones.append(self.arena, proto.clone.dupe(self.arena, d) catch unreachable) catch unreachable,
+            .run_done_data => |d| self.dones.append(self.arena, proto.clone.dupe(self.arena, d) catch @panic("out of memory")) catch @panic("out of memory"),
             .notice => |n| self.noteNotice(n),
             else => return,
         }
@@ -233,7 +233,7 @@ const Waiter = struct {
     /// A JSON report carries the notices. A plain run shows them on stderr as they come.
     fn noteNotice(self: *Waiter, n: proto.misc.Notice) void {
         const err = self.err orelse {
-            self.notices.append(self.arena, proto.clone.dupe(self.arena, n) catch unreachable) catch unreachable;
+            self.notices.append(self.arena, proto.clone.dupe(self.arena, n) catch @panic("out of memory")) catch @panic("out of memory");
             return;
         };
         // A notice is advice. A failed write drops it and the run goes on.

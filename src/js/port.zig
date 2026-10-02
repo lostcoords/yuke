@@ -120,8 +120,8 @@ pub fn outcomeOf(out: std.mem.Allocator, set: toolset.ToolSet, answer: tools.Cal
         .closed => return fault(out, "the tool call did not finish"),
     };
     if (!reply.outcome) {
-        const capped = toolset.cut(set, out, reply.text) catch unreachable;
-        return .{ .output = capped orelse out.dupe(u8, reply.text) catch unreachable };
+        const capped = toolset.cut(set, out, reply.text) catch @panic("out of memory");
+        return .{ .output = capped orelse out.dupe(u8, reply.text) catch @panic("out of memory") };
     }
     return std.json.parseFromSliceLeaky(toolset.Outcome, out, reply.text, .{ .allocate = .alloc_always }) catch
         fault(out, "the tool answered an object that is not a ToolOutcome");

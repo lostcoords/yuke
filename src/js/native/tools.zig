@@ -62,7 +62,7 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
         ctx.freeValue(execute);
         return ctx.throwTypeError("the tool defer flag must be a boolean");
     }
-    const defer_loading = ctx.isBool(deferred) and (ctx.toBool(deferred) catch unreachable);
+    const defer_loading = ctx.isBool(deferred) and (ctx.toBool(deferred) catch unreachable); // `ctx.isBool` returns true, so `ctx.toBool` cannot fail.
     host.tools.register(name, description_text, schema_text, defer_loading, execute) catch |err| {
         ctx.freeValue(execute);
         return ctx.throwTypeError(registerMessage(err));

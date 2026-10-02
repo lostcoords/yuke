@@ -116,9 +116,9 @@ const Request = struct {
                 const raw_name = ctx.atomToCStringLen(key.atom) catch return error.Header;
                 defer ctx.freeCString(raw_name.ptr);
                 if (!ai.route.validHeaderName(raw_name)) return error.Header;
-                const name = a.alloc(u8, raw_name.len) catch unreachable;
+                const name = a.alloc(u8, raw_name.len) catch @panic("out of memory");
                 _ = std.ascii.lowerString(name, raw_name);
-                const entry = seen.getOrPut(a, name) catch unreachable;
+                const entry = seen.getOrPut(a, name) catch @panic("out of memory");
                 if (entry.found_existing) return error.Header;
                 inline for (.{ "host", "connection", "content-length", "transfer-encoding" }) |managed| {
                     if (std.mem.eql(u8, name, managed)) return error.Header;
@@ -135,7 +135,7 @@ const Request = struct {
                 } else if (std.mem.eql(u8, name, "user-agent")) {
                     headers.user_agent = .{ .override = value };
                 } else {
-                    extra.append(a, .{ .name = name, .value = value }) catch unreachable;
+                    extra.append(a, .{ .name = name, .value = value }) catch @panic("out of memory");
                 }
             }
         }
@@ -305,7 +305,7 @@ fn httpWorker(host: *Host, body: *Body, result: *pending.Result) error{}!void {
 
 fn exchange(host: *Host, body: *Body) !pending.Http {
     std.debug.assert(body.request == null);
-    const uri = std.Uri.parse(body.parsed.url) catch unreachable;
+    const uri = std.Uri.parse(body.parsed.url) catch unreachable; // Request.parse already accepted this URL.
     const client = host.http.acquire(host.gpa, host.io);
     var reused = false;
     return exchangeOnce(client, body, uri, &reused) catch |err| {
@@ -476,14 +476,14 @@ fn readWorker(host: *Host, read: Read, result: *pending.Result) error{}!void {
         // A declared length sizes the list once, so a complete body needs no second allocation.
         const head = &body.response.head;
         const expected: usize = if (head.transfer_encoding == .none) @intCast(@min(head.content_length orelse 0, max_response_bytes + 1)) else 0;
-        list.ensureTotalCapacityPrecise(gpa, @max(expected, body.carry_len)) catch unreachable;
+        list.ensureTotalCapacityPrecise(gpa, @max(expected, body.carry_len)) catch @panic("out of memory");
         list.appendSliceAssumeCapacity(body.carry[0..body.carry_len]);
         body.carry_len = 0;
         // The limit is exclusive, so one extra byte distinguishes the cap from overflow.
         reader.appendRemaining(gpa, &list, .limited(max_response_bytes + 1 - list.items.len)) catch |err| {
             result.* = switch (err) {
                 error.StreamTooLong => too_long,
-                error.OutOfMemory => unreachable,
+                error.OutOfMemory => @panic("out of memory"),
                 else => io_failed,
             };
             return;
@@ -494,13 +494,13 @@ fn readWorker(host: *Host, read: Read, result: *pending.Result) error{}!void {
             return;
         }
         // Valid text moves out of the list; only a repair copies.
-        result.* = .{ .text = if (std.unicode.utf8ValidateSlice(list.items)) list.toOwnedSlice(gpa) catch unreachable else utf8.sanitize(gpa, list.items) catch unreachable };
+        result.* = .{ .text = if (std.unicode.utf8ValidateSlice(list.items)) list.toOwnedSlice(gpa) catch @panic("out of memory") else utf8.sanitize(gpa, list.items) catch @panic("out of memory") };
         return;
     }
     // `busy` keeps one read at a time, so the body reuses one buffer and a read allocates only its answer.
     if (body.buffer.len < read.max_bytes) {
         gpa.free(body.buffer);
-        body.buffer = gpa.alloc(u8, read.max_bytes) catch unreachable;
+        body.buffer = gpa.alloc(u8, read.max_bytes) catch @panic("out of memory");
     }
     const buffer = body.buffer[0..read.max_bytes];
     var filled: usize = body.carry_len;
@@ -524,7 +524,7 @@ fn readWorker(host: *Host, read: Read, result: *pending.Result) error{}!void {
     };
     body.carry_len = @intCast(filled - cut);
     @memcpy(body.carry[0..body.carry_len], buffer[cut..filled]);
-    result.* = .{ .text = utf8.sanitize(gpa, buffer[0..cut]) catch unreachable };
+    result.* = .{ .text = utf8.sanitize(gpa, buffer[0..cut]) catch @panic("out of memory") };
 }
 
 /// A stream that ended with declared bytes or chunks still due was cut short.

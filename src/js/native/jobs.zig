@@ -93,7 +93,7 @@ pub const Jobs = struct {
         const a = arena.allocator();
         var local: LocalHost = .{ .io = host.io, .root = job.cwd, .env = host.execution.env };
         const tail = if (local.readFrom(a, job.log, null, 8192, true)) |read| lastLines(read.text, 20) else |_| "";
-        const body = std.fmt.allocPrint(a, "Log: {s}\n{s}", .{ job.log, if (tail.len == 0) "[no output]" else tail }) catch unreachable;
+        const body = std.fmt.allocPrint(a, "Log: {s}\n{s}", .{ job.log, if (tail.len == 0) "[no output]" else tail }) catch @panic("out of memory");
         reports.jobEnded(&app.engine, a, job.session_id, .{ .job_id = job.id, .command = job.command, .exit_code = job.code, .signal = job.signal }, body) catch |err|
             std.log.err("the end of job {d} did not reach its session: {t}", .{ job.id, err });
     }
@@ -209,19 +209,19 @@ pub fn toValue(ctx: Context, job: *const Job) Value {
     defer text.deinit();
     var jw: std.json.Stringify = .{ .writer = &text.writer };
     const view = wire(job);
-    jw.beginObject() catch unreachable;
+    jw.beginObject() catch @panic("out of memory");
     inline for (@typeInfo(proto.job.Job).@"struct".fields) |field| {
         const value = @field(view, field.name);
         // The wire omits an absent field, so the view leaves it undefined too.
         const present = if (@typeInfo(field.type) == .optional) value != null else true;
         if (present) {
-            jw.objectField(field.name) catch unreachable;
-            jw.write(value) catch unreachable;
+            jw.objectField(field.name) catch @panic("out of memory");
+            jw.write(value) catch @panic("out of memory");
         }
     }
-    jw.objectField("log") catch unreachable;
-    jw.write(job.log) catch unreachable;
-    jw.endObject() catch unreachable;
+    jw.objectField("log") catch @panic("out of memory");
+    jw.write(job.log) catch @panic("out of memory");
+    jw.endObject() catch @panic("out of memory");
     return module.parseWritten(ctx, &text, "yuke:internal/jobs");
 }
 
@@ -243,8 +243,8 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
     if (host.procs.live.items.len >= process.max_processes) return pending.rejected(ctx, "the host runs 64 processes");
 
     // A job writes to a file, and Python buffers a file in blocks, so the variable keeps its output live.
-    var env = host.execution.env.clone(a) catch unreachable;
-    env.put("PYTHONUNBUFFERED", "1") catch unreachable;
+    var env = host.execution.env.clone(a) catch @panic("out of memory");
+    env.put("PYTHONUNBUFFERED", "1") catch @panic("out of memory");
     const log = host.logs.next(host.gpa, host.io, host.execution.env, "job") catch return pending.rejected(ctx, "the host could not create the log directory");
     var funcs: [2]Value = undefined;
     const ended = ctx.newPromiseCapability(&funcs);
@@ -261,17 +261,17 @@ fn jsStart(ctx: Context, _: Value, args: []const Value) Value {
     };
 
     const jobs = &host.jobs;
-    const job = host.gpa.create(Job) catch unreachable;
+    const job = host.gpa.create(Job) catch @panic("out of memory");
     job.* = .{
         .id = jobs.newId(host.io),
         .session_id = session_id,
-        .command = host.gpa.dupe(u8, command.?) catch unreachable,
-        .cwd = host.gpa.dupe(u8, root) catch unreachable,
+        .command = host.gpa.dupe(u8, command.?) catch @panic("out of memory"),
+        .cwd = host.gpa.dupe(u8, root) catch @panic("out of memory"),
         .log = log,
         .started_at_ms = util.nowMillis(host.io),
         .proc = null,
     };
-    jobs.list.append(host.gpa, job) catch unreachable;
+    jobs.list.append(host.gpa, job) catch @panic("out of memory");
     job.proc = process.launch(host, program, quickjs.UNDEFINED, funcs, job).id;
     emitChanged(host, job);
 
@@ -338,7 +338,7 @@ fn jsRead(ctx: Context, _: Value, args: []const Value) Value {
     const offset = if (args.len > 1 and !tail) module.integer(ctx, args[1], 0, (1 << 53) - 1) else null;
     const max_bytes = if (args.len > 2) module.integer(ctx, args[2], 4, max_read_bytes) else null;
     if ((!tail and offset == null) or max_bytes == null) return pending.rejected(ctx, "read needs a byte offset and a byte count from 4 to 262144");
-    return host.startTask(Read, readTask, .{ .log = host.gpa.dupe(u8, job.log) catch unreachable, .offset = offset, .complete = job.state != .running, .max_bytes = @intCast(max_bytes.?) }, .{});
+    return host.startTask(Read, readTask, .{ .log = host.gpa.dupe(u8, job.log) catch @panic("out of memory"), .offset = offset, .complete = job.state != .running, .max_bytes = @intCast(max_bytes.?) }, .{});
 }
 
 fn readTask(host: *Host, op: *pending.Op, req: Read) void {
@@ -349,7 +349,7 @@ fn readTask(host: *Host, op: *pending.Op, req: Read) void {
         arena.deinit();
         return op.finish(.{ .failed = .{ .message = "the host could not read the job log" } });
     };
-    const read = arena.allocator().create(@TypeOf(got)) catch unreachable;
+    const read = arena.allocator().create(@TypeOf(got)) catch @panic("out of memory");
     read.* = got;
     op.finish(.{ .object = .init(arena, read) });
 }

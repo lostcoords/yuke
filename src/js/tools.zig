@@ -56,13 +56,13 @@ pub const Tools = struct {
         // The provider caches on the request prefix, so the advertised order must not follow load order.
         self.entries.insert(self.gpa, slot.at, .{
             .decl = .{
-                .name = self.gpa.dupe(u8, name) catch unreachable,
-                .description = utf8.sanitize(self.gpa, description) catch unreachable,
-                .input_schema = utf8.sanitize(self.gpa, input_schema) catch unreachable,
+                .name = self.gpa.dupe(u8, name) catch @panic("out of memory"),
+                .description = utf8.sanitize(self.gpa, description) catch @panic("out of memory"),
+                .input_schema = utf8.sanitize(self.gpa, input_schema) catch @panic("out of memory"),
                 .defer_loading = defer_loading,
             },
             .handler = handler,
-        }) catch unreachable;
+        }) catch @panic("out of memory");
     }
 
     /// Where `name` sits in the sorted table, and whether a tool already holds it.
@@ -203,9 +203,9 @@ pub const Calls = struct {
     }
 
     fn add(self: *Calls, value: Call) *Call {
-        const call = self.gpa.create(Call) catch unreachable;
+        const call = self.gpa.create(Call) catch @panic("out of memory");
         call.* = value;
-        self.live.append(self.gpa, call) catch unreachable;
+        self.live.append(self.gpa, call) catch @panic("out of memory");
         return call;
     }
 

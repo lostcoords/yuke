@@ -81,7 +81,7 @@ const CompactionPrompt = struct {
         std.debug.assert(point == .@"compaction.prompt");
         const merge = std.mem.indexOf(u8, payload, "\"mode\":\"merge\"") != null;
         const text = if (merge) "{\"prompt\":\"Merge the context summary with the new messages.\"}" else "{\"prompt\":\"You are a context summarization assistant. Write a context checkpoint.\"}";
-        return .{ .replace = std.json.parseFromSliceLeaky(std.json.Value, out, text, .{}) catch unreachable };
+        return .{ .replace = std.json.parseFromSliceLeaky(std.json.Value, out, text, .{}) catch @panic("out of memory") };
     }
 };
 

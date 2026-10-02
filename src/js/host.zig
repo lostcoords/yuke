@@ -148,9 +148,9 @@ pub const Host = struct {
     /// Allocate a host and install its limits, interrupt handler, and loader.
     pub fn createWith(gpa: std.mem.Allocator, io: std.Io, opts: Options) *Host {
         std.debug.assert(opts.plugin_stop_timeout_ms > 0);
-        const self = gpa.create(Host) catch unreachable;
+        const self = gpa.create(Host) catch @panic("out of memory");
         self.memory = .{ .backing = gpa };
-        const runtime = memory.createRuntime(&self.memory) catch unreachable;
+        const runtime = memory.createRuntime(&self.memory) catch @panic("out of memory");
         runtime.setMemoryLimit(memory_limit);
         runtime.setMaxStackSize(stack_limit);
         const ctx = quickjs.Context.init(runtime);
@@ -162,7 +162,7 @@ pub const Host = struct {
             .baked = &default_baked,
             .max_file_bytes = loader_mod.default_max_file_bytes,
         };
-        const eng = engine_module.Engine.create(gpa, ctx, io, &self.wake) catch unreachable;
+        const eng = engine_module.Engine.create(gpa, ctx, io, &self.wake) catch @panic("out of memory");
 
         self.* = .{
             .gpa = gpa,
@@ -503,7 +503,7 @@ pub const Host = struct {
 
     /// Recover the host from a QuickJS context opaque pointer.
     pub fn fromContext(ctx: quickjs.Context) *Host {
-        const ptr = ctx.getContextOpaque() orelse unreachable;
+        const ptr = ctx.getContextOpaque() orelse unreachable; // Host creation installs the opaque pointer before native callbacks run.
         return @ptrCast(@alignCast(ptr));
     }
 
@@ -523,7 +523,7 @@ pub const Host = struct {
     pub fn evalModule(self: *Host, source: [:0]const u8, filename: [:0]const u8) Error!void {
         std.debug.assert(self.phase == .open);
         std.debug.assert(filename.len > 0);
-        const name = std.fmt.allocPrintSentinel(self.gpa, "{s}{s}", .{ loader_mod.host_module_prefix, filename }, 0) catch unreachable;
+        const name = std.fmt.allocPrintSentinel(self.gpa, "{s}{s}", .{ loader_mod.host_module_prefix, filename }, 0) catch @panic("out of memory");
         defer self.gpa.free(name);
         try self.evalModuleSource(source, name);
     }

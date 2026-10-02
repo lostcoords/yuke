@@ -114,7 +114,7 @@ pub const Engine = struct {
         const self: *Engine = @ptrCast(@alignCast(ctx));
         if (!delivers(note.method)) return;
         self.activity_dirty = true;
-        if (note.params == .session_removed_data) self.removed.append(self.gpa, note.params.session_removed_data.session_id) catch unreachable;
+        if (note.params == .session_removed_data) self.removed.append(self.gpa, note.params.session_removed_data.session_id) catch @panic("out of memory");
         const id = sessionOf(note) orelse {
             self.index_dirty = true;
             self.index_facts.insert(note.method);
@@ -136,14 +136,14 @@ pub const Engine = struct {
     fn keepAuth(self: *Engine, note: proto.rpc.Notification) void {
         if (note.method != .@"auth.login_finished") return;
         if (self.index_auth.items.len >= max_auth_notes) self.gpa.free(self.index_auth.orderedRemove(0));
-        self.index_auth.append(self.gpa, noteOf(self.gpa, note)) catch unreachable;
+        self.index_auth.append(self.gpa, noteOf(self.gpa, note)) catch @panic("out of memory");
     }
 
     /// Keep the notice body because a fact name cannot carry its text.
     fn keepNotice(self: *Engine, note: proto.rpc.Notification) void {
         if (note.method != .notice) return;
         if (self.index_notices.items.len >= max_notice_notes) self.gpa.free(self.index_notices.orderedRemove(0));
-        self.index_notices.append(self.gpa, noteOf(self.gpa, note.params.notice)) catch unreachable;
+        self.index_notices.append(self.gpa, noteOf(self.gpa, note.params.notice)) catch @panic("out of memory");
     }
 
     fn markDirty(self: *Engine, id: SessionId, change: Change) void {
@@ -166,8 +166,8 @@ const Note = [:0]u8;
 
 fn noteOf(gpa: std.mem.Allocator, value: anytype) Note {
     var text: std.Io.Writer.Allocating = .init(gpa);
-    std.json.Stringify.value(value, .{ .emit_null_optional_fields = false }, &text.writer) catch unreachable;
-    return text.toOwnedSliceSentinel(0) catch unreachable;
+    std.json.Stringify.value(value, .{ .emit_null_optional_fields = false }, &text.writer) catch @panic("out of memory");
+    return text.toOwnedSliceSentinel(0) catch @panic("out of memory");
 }
 
 /// How one session changed since the last drain. A view redraws differently for each kind.
