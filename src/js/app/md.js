@@ -31,6 +31,17 @@ const HEADING_TAIL = /[ \t]+#+[ \t]*$/;
 const SPACE = /\s/u;
 const PUNCT = /[\p{P}\p{S}]/u;
 const NOT_SPACE = /[^ ]/;
+/** The first characters of a fence, a heading, a rule, a quote, a bullet item, and a setext underline. A digit starts an ordered item. */
+const BLOCK_MARKERS = "`~#-*_>+=";
+
+// The block patterns accept a marker after at most three spaces. Other lines skip those patterns.
+/** @param {string} line @returns {boolean} */
+function mayStartBlock(line) {
+  let i = 0;
+  while (i < 3 && line[i] === " ") i++;
+  const c = line[i];
+  return c != null && (BLOCK_MARKERS.includes(c) || (c >= "0" && c <= "9"));
+}
 
 /** @param {string} line @returns {Fence | null} */
 function fenceOpen(line) {
@@ -43,7 +54,7 @@ function fenceOpen(line) {
 
 /** @param {string} line @returns {Fence | boolean} */
 function isBlockStart(line) {
-  return fenceOpen(line) || HEADING.test(line) || HR.test(line) || QUOTE.test(line) || UL_ITEM.test(line) || OL_ITEM.test(line);
+  return mayStartBlock(line) && (fenceOpen(line) || HEADING.test(line) || HR.test(line) || QUOTE.test(line) || UL_ITEM.test(line) || OL_ITEM.test(line));
 }
 
 /** @param {string} line @returns {boolean} */
@@ -54,7 +65,8 @@ function hasUnescapedPipe(line) {
 
 /** @param {StringList} lines @param {number} i @returns {boolean} */
 function isSetextHeading(lines, i) {
-  return i + 1 < lines.length && /** @type {string} */ (lines[i]).trim() !== "" && !isBlockStart(/** @type {string} */ (lines[i])) && SETEXT.test(/** @type {string} */ (lines[i + 1]));
+  const next = lines[i + 1];
+  return next != null && mayStartBlock(next) && /** @type {string} */ (lines[i]).trim() !== "" && !isBlockStart(/** @type {string} */ (lines[i])) && SETEXT.test(next);
 }
 
 /** @param {InlineSource} s @param {string} text @param {number} src @returns {void} */
@@ -124,7 +136,8 @@ function segment(text, base) {
       continue;
     }
 
-    const fence = fenceOpen(line);
+    const canStartBlock = mayStartBlock(line);
+    const fence = canStartBlock ? fenceOpen(line) : null;
     if (fence) {
       const marker = fence.marker;
       const body = /** @type {StringList} */ (/** @type {unknown} */ ([]));
@@ -150,7 +163,7 @@ function segment(text, base) {
       continue;
     }
 
-    const heading = HEADING.exec(line);
+    const heading = canStartBlock ? HEADING.exec(line) : null;
     if (heading) {
       const m = /** @type {HeadingMatch} */ (/** @type {unknown} */ (heading));
       const headingText = (m[4] || "").replace(HEADING_TAIL, "").trim();
@@ -170,13 +183,13 @@ function segment(text, base) {
       continue;
     }
 
-    if (HR.test(line)) {
+    if (canStartBlock && HR.test(line)) {
       push(/** @type {RuleBlock} */ ({ kind: "hr" }), i, i + 1);
       i++;
       continue;
     }
 
-    if (QUOTE.test(line)) {
+    if (canStartBlock && QUOTE.test(line)) {
       let j = i;
       const body = /** @type {InlineSource} */ ({ text: "", runs: [] });
       let markEnd = /** @type {number} */ (starts[i]);
@@ -193,7 +206,7 @@ function segment(text, base) {
       continue;
     }
 
-    if (UL_ITEM.test(line) || OL_ITEM.test(line)) {
+    if (canStartBlock && (UL_ITEM.test(line) || OL_ITEM.test(line))) {
       let j = i;
       const items = /** @type {ListItem[]} */ ([]);
       let ordered = !!OL_ITEM.exec(line);

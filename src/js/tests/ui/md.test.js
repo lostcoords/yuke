@@ -11,6 +11,13 @@ check("code", has(renderRows("```js\nx=1\n```", 80), "MdCodeBlock", "x=1"));
 check("hr", renderRows("---", 80).some((r) => r.segments.some((s) => s.group === "MdRule")));
 check("list", has(renderRows("- a\n- b", 80), "MdListMark", "• "));
 check("quote", renderRows("> hi", 80).some((r) => r.segments.some((s) => s.group === "MdQuote")));
+// Each block marker still opens its block after three spaces of indent.
+{
+  const kinds = (src) => { const doc = new Document(); doc.setText(src); return doc.blocks().map((b) => b.kind).join(","); };
+  check("indented-markers", kinds("   ```\nx\n```") === "code" && kinds("   ~~~\nx\n~~~") === "code" && kinds("   # H") === "heading" &&
+    kinds("   - a") === "list" && kinds("   * a") === "list" && kinds("   + a") === "list" && kinds("p\n   1. a") === "paragraph,list" &&
+    kinds("   ___") === "hr" && kinds("   > q") === "quote" && kinds("x\n   ===") === "heading" && kinds("x\n   ---") === "heading");
+}
 const noGroup = (rows, group) => !rows.some((r) => r.segments.some((s) => s.group === group));
 // An underscore inside a word is not emphasis (code identifiers stay literal).
 check("intraword-underscore", noGroup(renderRows("call foo_bar_baz now", 80), "MdEm"));
