@@ -147,4 +147,3 @@ test "the newest checkpoint leads the request and an older one drops out" {
     try t.expectEqualStrings("second summary", projected.messages[0].compaction.summary);
     try t.expectEqual(@as(u64, 4), projected.messages[1].id());
 }
-
