@@ -462,7 +462,7 @@ test "parse drops a trailing comment that belongs to the next query" {
 test "resolve uses SQLite names and requires ambiguous types to be annotated" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex);
+    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create);
     defer conn.tryClose() catch unreachable;
     try conn.execNoArgs("CREATE TABLE widget (id INTEGER NOT NULL, name TEXT)");
 
@@ -518,7 +518,7 @@ test "emit rejects normalized collisions and Zig keywords" {
 test "resolve rejects a second SQL statement in every build mode" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex);
+    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create);
     defer conn.tryClose() catch unreachable;
 
     const definitions = try parse(arena.allocator(),
@@ -533,7 +533,7 @@ test "shared rows resolve forward references and preserve result annotations" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex);
+    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create);
     defer conn.tryClose() catch unreachable;
     const definitions = try parse(a,
         \\-- name: Page :many
@@ -562,7 +562,7 @@ test "shared rows reject shape drift and keep parameter checks" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex);
+    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create);
     defer conn.tryClose() catch unreachable;
     const base =
         \\-- name: Record :one
@@ -594,7 +594,7 @@ test "shared rows reject invalid references and declarations" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex);
+    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create);
     defer conn.tryClose() catch unreachable;
     const cases = [_]struct { source: []const u8, err: anyerror }{
         .{ .source = "-- name: Page :many\n-- row-from: Missing\nSELECT 1 AS id;", .err = error.UnknownRowSource },

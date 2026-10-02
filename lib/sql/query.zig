@@ -753,7 +753,7 @@ fn deinitValue(comptime T: type, value: *T, allocator: std.mem.Allocator) void {
 const testing = std.testing;
 
 fn testConnection() !zqlite.Conn {
-    return zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode);
+    return zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.EXResCode);
 }
 
 test "typed query binds by name and owns a strict row" {

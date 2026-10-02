@@ -29,7 +29,7 @@ const Fixture = struct {
         const root = root_buf[0..try self.tmp.dir.realPath(testing.io, &root_buf)];
         const path = try std.fmt.allocPrintSentinel(testing.allocator, "{s}/yuke.db", .{root}, 0);
         defer testing.allocator.free(path);
-        const flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode;
+        const flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.EXResCode;
         self.db = try database.Database.open(try zqlite.open(path, flags));
         errdefer self.db.deinit();
         self.other_db = try database.Database.open(try zqlite.open(path, flags));

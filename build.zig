@@ -13,8 +13,21 @@ pub fn build(b: *std.Build) void {
 
     // A Debug test run spends most of its time in QuickJS and SQLite, so the C dependencies build optimized.
     const dep_optimize: std.builtin.OptimizeMode = if (optimize == .Debug) .ReleaseSafe else optimize;
-    const zqlite = b.dependency("zqlite", .{ .target = target, .optimize = dep_optimize });
-    const zqlite_host = b.dependency("zqlite", .{ .target = host, .optimize = dep_optimize });
+    // One executor makes every SQLite call, so SQLite builds with no mutex. The other flags drop features that yuke does not use.
+    const sqlite3_flags: []const []const u8 = &.{
+        "-std=c99",
+        "-DSQLITE_THREADSAFE=0",
+        "-DSQLITE_DQS=0",
+        "-DSQLITE_OMIT_SHARED_CACHE",
+        "-DSQLITE_OMIT_DEPRECATED",
+        "-DSQLITE_OMIT_PROGRESS_CALLBACK",
+        "-DSQLITE_MAX_EXPR_DEPTH=0",
+        "-DSQLITE_STRICT_SUBTYPE=1",
+        "-DSQLITE_USE_ALLOCA",
+        "-DSQLITE_LIKE_DOESNT_MATCH_BLOBS",
+    };
+    const zqlite = b.dependency("zqlite", .{ .target = target, .optimize = dep_optimize, .sqlite3 = sqlite3_flags });
+    const zqlite_host = b.dependency("zqlite", .{ .target = host, .optimize = dep_optimize, .sqlite3 = sqlite3_flags });
     const zio = b.dependency("zio", .{ .target = target, .optimize = optimize });
     const uucode = b.dependency("uucode", .{
         .target = target,

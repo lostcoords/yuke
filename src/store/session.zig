@@ -437,7 +437,7 @@ test "prompt sections and the composed text survive a database restart, and a re
     const sources = [_]instructions.Snapshot{.{ .source = .{ .scope = .workspace, .path = "/w/AGENTS.md", .canonical_path = "/w/AGENTS.md", .content_hash = .bytes(.{42} ** 32) }, .text = "literal ${workspace}" }};
     const text = try prompt_mod.render(a, &sections);
     {
-        var db = try Database.open(try zqlite.open(path, zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex));
+        var db = try Database.open(try zqlite.open(path, zqlite.OpenFlags.Create));
         defer db.deinit();
         var tx = try db.begin();
         defer tx.deinit();
@@ -446,7 +446,7 @@ test "prompt sections and the composed text survive a database restart, and a re
         try testing.expectEqualStrings(text, try setPrompt(&db, a, id, &sections, 7));
         try tx.commit();
     }
-    var db = try Database.open(try zqlite.open(path, zqlite.OpenFlags.NoMutex));
+    var db = try Database.open(try zqlite.open(path, zqlite.OpenFlags.ReadWrite));
     defer db.deinit();
     const saved = try promptSections(&db, a, id);
     try testing.expectEqual(@as(usize, 3), saved.len);

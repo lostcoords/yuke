@@ -30,7 +30,7 @@ fn run(init: std.process.Init) !void {
         std.process.exit(2);
     };
 
-    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex);
+    const conn = try zqlite.open(":memory:", zqlite.OpenFlags.Create);
     defer conn.tryClose() catch unreachable;
     const migration_count = try applyMigrations(a, init.io, conn, options.migrations);
 

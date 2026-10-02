@@ -18,7 +18,7 @@ const provider_idle_timeout = std.Io.Duration.fromMilliseconds(300_000);
 /// The name every provider request carries. A gateway wants an agent name, not a library name.
 const user_agent = "yuke/" ++ build_info.version;
 
-const open_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode;
+const open_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.EXResCode;
 
 /// The process and every resource it owns.
 pub const App = struct {

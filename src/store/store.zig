@@ -13,7 +13,7 @@ pub const run = @import("run.zig");
 pub const input = @import("input.zig");
 pub const blob = @import("blob.zig");
 
-const test_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.NoMutex | zqlite.OpenFlags.EXResCode;
+const test_flags = zqlite.OpenFlags.Create | zqlite.OpenFlags.EXResCode;
 
 /// A yuke database carries this id in the SQLite application_id header slot.
 const APPLICATION_ID: i64 = 0x79756B65; // "yuke"
@@ -137,8 +137,6 @@ fn configurePragmas(conn: sql.Connection, fresh: bool) !void {
 
     // FULL keeps a committed event durable after a power loss. The event log must not lose a commit.
     try conn.execNoArgs("PRAGMA synchronous = FULL");
-    try conn.execNoArgs("PRAGMA wal_autocheckpoint = 1000");
-    try conn.execNoArgs("PRAGMA cache_size = -32768"); // A negative value sets KiB rather than pages.
 
     // Foreign keys enforce projection pointers; set the pragma outside a transaction because SQLite ignores it inside one, then confirm that the build supports it.
     try conn.execNoArgs("PRAGMA foreign_keys = ON");
