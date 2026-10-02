@@ -28,6 +28,7 @@ globalThis.done = 0;
   const path = { toString() { coerced = true; return "hello.txt"; } };
   const wrongPath = async (call) => { try { await call(); return ""; } catch (e) { return e.message; } };
   check("stat-non-string-rejects", await wrongPath(() => fs.stat(path)) === "the path must be a non-empty string with no NUL byte");
+  check("range-null-rejects", await wrongPath(() => fs.readRange("hello.txt", { start: null })) === "the read range is invalid");
   check("stat-missing-path-rejects", await wrongPath(() => fs.stat()) === "the path must be a non-empty string with no NUL byte");
   check("stat-empty-rejects", await wrongPath(() => fs.stat("")) === "the path must be a non-empty string with no NUL byte");
   check("write-non-string-rejects", await wrongPath(() => fs.writeFile(path, "x")) === "the path must be a non-empty string with no NUL byte" && !coerced);

@@ -132,11 +132,12 @@ function expandAll(map) {
 // Expand the configuration into what it runs. A missing variable throws here.
 /** @param {ServerConfig} config @returns {Endpoint} */
 function stdioEndpoint(config) {
-  const argv = [expand(config.command ?? ""), ...(config.args ?? []).map(expand)];
+  // `checkStdio` proved `command` a nonempty string.
+  const argv = [expand(/** @type {string} */ (config.command)), ...(config.args ?? []).map(expand)];
   const { entries, values: env } = expandAll(config.env);
   const launch = { argv, env, ...(config.cwd !== undefined ? { cwd: expand(config.cwd) } : {}) };
   return {
-    identity: JSON.stringify([config.command, config.args ?? [], config.cwd ?? null, entries, launch]),
+    identity: JSON.stringify([config.command, config.args ?? [], config.cwd, entries, launch]),
     describe: "runs: " + argv.map((arg) => JSON.stringify(arg)).join(" "),
     mirrorsParams: false,
     open: (sink) => openStdio(launch, sink),

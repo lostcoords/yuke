@@ -8,7 +8,7 @@ const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 const offA = status.add({ side: "left", order: 10, render: () => "a" });
 status.add({ side: "left", order: 1, render: () => "b" });
 status.add({ side: "right", order: 0, render: () => "r" });
-status.add({ side: "left", order: 5, render: () => null });
+status.add({ side: "left", order: 5, render: () => undefined });
 check("status-order", status.side("left") === "b · a");
 check("status-side", status.side("right") === "r");
 check("status-bad-side", throws(() => status.add({ side: "up", render: () => "x" })));

@@ -26,7 +26,7 @@ plugins.use({
         side: "left",
         render: () => {
           const entry = currentEntry();
-          return focused === null ? null : entry?.session.title || "new chat";
+          return focused === null ? undefined : entry?.session.title || "new chat";
         },
       });
     });

@@ -94,7 +94,7 @@ function startLogin(ctx, p) {
 }
 
 // `/login` lists every provider with its state; `/login codex` starts that one. A reload shows a login from another process.
-/** @param {Ctx} ctx @param {string} [query] @returns {void} */
+/** @param {Ctx} ctx @param {string | undefined} query @returns {void} */
 function openLogin(ctx, query) {
   reloadCatalog().then(({ catalog: { providers: rows } }) => {
     if (query) {
@@ -108,7 +108,7 @@ function openLogin(ctx, query) {
 }
 
 // `/logout` lists the providers that hold a credential; `/logout codex` drops that one.
-/** @param {Ctx} ctx @param {string} [query] @returns {void} */
+/** @param {Ctx} ctx @param {string | undefined} query @returns {void} */
 function openLogout(ctx, query) {
   catalogRefresh.run().then((catalog) => {
     const rows = catalog.providers.filter((p) => p.credential_kind != null);

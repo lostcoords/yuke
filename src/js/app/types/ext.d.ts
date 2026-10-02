@@ -29,9 +29,9 @@ export type AdviceFunction = (...args: any[]) => any;
 export type AdviceWhere = "before" | "after" | "around" | "filterArgs" | "filterReturn";
 /** The keys of `T` that hold a method, so advice cannot name a field, an accessor value, or a missing key. */
 export type MethodKey<T> = { [P in keyof T]-?: T[P] extends AdviceFunction ? P : never }[keyof T] & string;
-/** The advice for one `where` on method `F`, as `applyAdvice` calls it. `this` is the object whose method runs. A falsy `filterArgs` or an undefined `filterReturn` keeps the value. */
+/** The advice for one `where` on method `F`, as `applyAdvice` calls it. `this` is the object whose method runs. An undefined `filterArgs` or `filterReturn` result keeps the value. */
 export type AdviceFor<F extends AdviceFunction, W extends AdviceWhere, This = unknown> =
-  W extends "filterArgs" ? (this: This, args: Parameters<F>) => Parameters<F> | null | void :
+  W extends "filterArgs" ? (this: This, args: Parameters<F>) => Parameters<F> | void :
   W extends "before" | "after" ? (this: This, ...args: Parameters<F>) => void :
   W extends "around" ? (this: This, next: F, ...args: Parameters<F>) => ReturnType<F> :
   W extends "filterReturn" ? (this: This, result: ReturnType<F>) => ReturnType<F> | void :

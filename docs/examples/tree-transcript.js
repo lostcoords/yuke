@@ -26,7 +26,7 @@ function headerAttrs(group) {
 
 /** @param {PartEnv["group"]} group @returns {Row} */
 function bodyAttrs(group) {
-  return { indent: group ? TREE_INDENT : GUTTER, marker: group && !group.last ? "  │" : null, markerGroup: "TxMeta" };
+  return { indent: group ? TREE_INDENT : GUTTER, marker: group && !group.last ? "  │" : undefined, markerGroup: "TxMeta" };
 }
 
 // The segments of a body row at source offset `base`: a markdown row has its own, and a wrapped text row is one segment.
@@ -153,7 +153,7 @@ const treeLook = {
     let image = 0;
     const text = parts.map((p) => (p.type === "text" ? p.text : p.type === "image" || p.type === "audio" || p.type === "file" ? mediaLabel(p.source, p.type === "image" ? ++image : 0) : "")).join("");
     /** @type {Row[]} */
-    const rows = wrapRows(text, width, "TxUser", GUTTER).map((r, i) => ({ ...r, bg: "TxUser", marker: i === 0 ? "⟩" : null, markerGroup: "TreeUserMarker", stop: i === 0 }));
+    const rows = wrapRows(text, width, "TxUser", GUTTER).map((r, i) => ({ ...r, bg: "TxUser", marker: i === 0 ? "⟩" : undefined, markerGroup: "TreeUserMarker", stop: i === 0 }));
     // A parent-sent task reads like user input, so one label row says where it came from.
     if (m.source) rows.unshift({ text: inputSourceLabel(m.source), group: "TxMeta", indent: GUTTER });
     return { rows, source: text };

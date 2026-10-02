@@ -213,7 +213,7 @@ function sessionSendInput(id, content, parentTool) {
 
 /**
  * Send an explicit skill invocation. The engine loads the body and appends one user message with the arguments after it.
- * @param {string} id @param {string} name @param {string} [args] @returns {Promise<Wire.SessionSendInputResult>}
+ * @param {string} id @param {string} name @param {string} args - An empty string sends no arguments. @returns {Promise<Wire.SessionSendInputResult>}
  */
 function sessionSendSkill(id, name, args) {
   return request("session.send_input", { session_id: id, input: { type: "skill", name, ...(args ? { arguments: args } : {}) } });
@@ -262,7 +262,7 @@ function sessionPatch(sessionId, patch) {
 
 /**
  * The provider and model catalog. An `unchanged` result means the caller keeps the models it holds.
- * @param {Wire.CatalogRev | null | undefined} sinceRev @returns {Promise<Wire.CatalogListResult>}
+ * @param {Wire.CatalogRev | null} sinceRev @returns {Promise<Wire.CatalogListResult>}
  */
 function catalogList(sinceRev) {
   return request("catalog.list", sinceRev ? { since_rev: sinceRev } : {});

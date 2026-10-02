@@ -901,12 +901,12 @@ export const route = {
 
 /**
  * Write `text` to the clipboard, tell the user the result, and emit `clipboard.copied`.
- * @param {string | null | undefined} text - null, undefined, or "" copies nothing.
+ * @param {string} text - An empty string copies nothing.
  * @param {string | undefined} what - the name of the text in the notice. The default is "text".
  * @returns {number} the byte count, 0 for empty text, or -1 when the text is larger than the clipboard limit.
  */
 export function copy(text, what) {
-  const s = text == null ? "" : String(text);
+  const s = text;
   const bytes = s === "" ? 0 : term.copy(s);
   const label = what || "text";
   if (s === "") notify("info", "nothing to copy", "clipboard");
@@ -1048,10 +1048,9 @@ export class Node {
     return new Node({ type: "leaf", view });
   }
 
-  /** @param {"row" | "col"} kind @param {Node} a @param {Node} b @param {number | undefined} ratio @returns {Node} */
-  static branch(kind, a, b, ratio) {
-    const n = new Node({ type: "split", kind, a, b, ratio: ratio == null ? 0.5 : ratio });
-    return n;
+  /** @param {"row" | "col"} kind @param {Node} a @param {Node} b @param {number} [ratio] - The share of `a`. The default is 0.5. @returns {Node} */
+  static branch(kind, a, b, ratio = 0.5) {
+    return new Node({ type: "split", kind, a, b, ratio });
   }
 
   /** @param {"row" | "col"} kind @param {Node} a @param {Node} b @returns {void} */
@@ -1140,9 +1139,9 @@ export const status = {
    */
   add(seg) {
     if (typeof seg.render !== "function") throw new TypeError("status.add needs a render function");
-    const side = seg.side == null ? "left" : seg.side;
+    const side = seg.side === undefined ? "left" : seg.side;
     if (side !== "left" && side !== "right") throw new TypeError("status.add: side must be left or right");
-    const order = seg.order == null ? 0 : seg.order;
+    const order = seg.order === undefined ? 0 : seg.order;
     if (!Number.isFinite(order)) throw new TypeError("status.add: order must be a finite number");
     const entry = { side, order, render: seg.render };
     this._list.push(entry);
@@ -1166,7 +1165,7 @@ export const status = {
       const seg = /** @type {StatusSegment} */ (list[i]);
       if (seg.side !== which) continue;
       // One bad provider must not take the frame with it.
-      /** @type {string | null | undefined} */
+      /** @type {string | undefined} */
       let t = "";
       try {
         t = seg.render();

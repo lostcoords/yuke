@@ -16,7 +16,7 @@ export interface TranscriptRow {
   src?: number | undefined;
   /** The base highlight group of the complete row. Its background wins, and explicit text fields win every other field. */
   bg?: string | undefined;
-  marker?: string | null | undefined;
+  marker?: string | undefined;
   markerGroup?: string | undefined;
   indent?: number | undefined;
   key?: ItemKey | undefined;

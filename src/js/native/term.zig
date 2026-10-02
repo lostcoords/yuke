@@ -371,7 +371,7 @@ fn jsSetNeedsTick(ctx: Context, _: Value, args: []const Value) Value {
     const enabled = ctx.toBool(args[0]) catch return rethrow(ctx);
 
     var period = host.paint.tick_period_ms;
-    if (args.len >= 2 and !ctx.isUndefined(args[1]) and !ctx.isNull(args[1])) {
+    if (args.len >= 2 and !ctx.isUndefined(args[1])) {
         const ms = ctx.toInt32(args[1]) catch return rethrow(ctx);
         period = std.math.clamp(@as(u32, @intCast(@max(ms, 0))), tick_ms_min, tick_ms_max);
     }
@@ -453,7 +453,7 @@ fn boolProp(ctx: Context, obj: Value, name: [*:0]const u8) error{Exception}!bool
     const v = ctx.getPropertyStr(obj, name);
     defer ctx.freeValue(v);
     if (ctx.isException(v)) return error.Exception;
-    if (ctx.isUndefined(v) or ctx.isNull(v)) return false;
+    if (ctx.isUndefined(v)) return false;
     return ctx.toBool(v) catch error.Exception;
 }
 

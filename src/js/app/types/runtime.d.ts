@@ -58,7 +58,7 @@ export interface PluginAsync {
   settle?: () => void;
   timer?: number;
   /** The parent's release for a plugin that `ctx.use` started. It releases once, so a second call does nothing. */
-  owner?: Disposer | undefined;
+  owner?: Disposer;
 }
 
 export interface ScopeEntry {

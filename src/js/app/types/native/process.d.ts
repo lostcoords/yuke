@@ -22,7 +22,7 @@ declare module "yuke:internal/native/process" {
   }
 
   /** Starts an argument array with no shell in a new process group. */
-  export function spawn(argv: string[], options: SpawnOptions | undefined, onOutput: (stream: 1 | 2, text: string) => void): NativeProcess;
+  export function spawn(argv: string[], options: SpawnOptions, onOutput: (stream: 1 | 2, text: string) => void): NativeProcess;
   /** Resolves after the pipe accepts every byte; rejects above 1 MiB or 1024 queued writes. */
   export function write(id: number, text: string): Promise<void>;
   export function closeStdin(id: number): void;

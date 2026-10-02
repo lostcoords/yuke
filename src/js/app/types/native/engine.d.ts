@@ -31,7 +31,7 @@ declare module "yuke:internal/native/engine" {
   export type TextCursor = { generation: number; bytes: number };
 
   /** One read of a part. With `tail`, `part.text` is only the text after the cursor of the read, and the holder appends it. `cursor` is the end of the whole text, for the next read. */
-  export type PartRead = { part: MessagePart; cursor?: TextCursor | null; tail?: boolean };
+  export type PartRead = { part: MessagePart; cursor: TextCursor | null; tail: boolean };
 
   /** One part as the read surface returns it: the wire part plus every value the projection cut. */
   export type PagedPart = MessagePart & { cut?: readonly FieldCut[]; text_generation?: number; text_bytes?: number; text_offset?: number };
@@ -76,7 +76,7 @@ declare module "yuke:internal/native/engine" {
     /** The parts of one message as JSON. A user part takes its position as its id. */
     sessionParts(sessionId: string, messageId: number): string;
     /** One part as JSON; a draft cursor reads the suffix at a byte offset within the same lifetime. */
-    sessionPart(sessionId: string, messageId: number, partId: number, generation?: number, offset?: number): string;
+    sessionPart(sessionId: string, messageId: number, partId: number, generation: number | undefined, offset: number | undefined): string;
     /** One page of one field of a part, as JSON `TextPage`. `field` is the address a `FieldCut` names. */
     partText(sessionId: string, messageId: number, partId: number, field: string, offset: number, limit: number): string;
   };

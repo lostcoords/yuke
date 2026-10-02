@@ -52,10 +52,11 @@ function stringArg(args, key) {
   return /** @type {string} */ (args[key]);
 }
 
-/** @param {ToolArgs} args @param {string} key @returns {number | null} */
+// The model may send null for a missing bound, so both read as absent.
+/** @param {ToolArgs} args @param {string} key @returns {number | undefined} */
 function lineArg(args, key) {
   const value = args[key];
-  if (value == null) return null;
+  if (value == null) return undefined;
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > MAX_LINE) invalid(`Set ${key} to an integer from 1 to ${MAX_LINE}.`);
   return value;
 }

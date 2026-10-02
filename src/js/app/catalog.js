@@ -20,7 +20,7 @@ export const catalog = {
 /** @type {{ selector: string, models: readonly Wire.ModelInfo[] | null, model: Wire.ModelInfo | null }} */
 let last = { selector: "", models: null, model: null };
 
-/** @param {string | null | undefined} selector @returns {Wire.ModelInfo | null} */
+/** @param {string | null} selector @returns {Wire.ModelInfo | null} */
 export function modelOf(selector) {
   if (!selector) return null;
   if (last.selector !== selector || last.models !== catalog.models) last = { selector, models: catalog.models, model: catalog.models.find((x) => x.selector === selector) || null };

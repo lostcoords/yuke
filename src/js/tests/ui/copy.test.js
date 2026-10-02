@@ -1,5 +1,6 @@
 import { check } from "yuke:internal/test";
 import { term } from "yuke:internal/native/term";
+import { copy } from "yuke:internal/core";
 // term.copy writes OSC 52 and returns the byte count. It refuses a payload over the cap.
 check("copy-ok", term.copy("hi") === 2);
 check("copy-utf8-bytes", term.copy("héllo 🙂") === 11);
@@ -9,3 +10,5 @@ const throws = (fn) => { try { fn(); return false; } catch (e) { return true; } 
 check("copy-number", throws(() => term.copy(42)));
 check("copy-null", throws(() => term.copy(null)));
 check("copy-object", throws(() => term.copy({ toString: () => "x" })));
+// `ui.copy` passes its argument on unchanged, so a number fails there too.
+check("ui-copy-number", throws(() => copy(/** @type {any} */ (42))));

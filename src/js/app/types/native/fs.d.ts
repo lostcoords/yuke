@@ -25,7 +25,7 @@ declare module "yuke:internal/native/fs" {
      * When `lineNumbers` is true, prefix each line with `N: `. The 48 KiB limit includes each prefix. `lineNumbers` defaults to false.
      * An image file answers its path. `next` names the first line that a limit left out, or null. `longLines` counts the cut lines.
      */
-    readRange(path: string, options?: RootOptions & { start?: number | null; end?: number | null; lineNumbers?: boolean }): Promise<RangeRead | { imagePath: string }>;
+    readRange(path: string, options?: RootOptions & { start?: number | undefined; end?: number | undefined; lineNumbers?: boolean }): Promise<RangeRead | { imagePath: string }>;
     /** Replace the whole file in one atomic rename, and resolve the byte count. It creates a missing file in an existing directory. A link or a directory rejects. */
     writeFile(path: string, contents: string, options?: RootOptions): Promise<number>;
     /** Describe one path. It resolves null when nothing is at the path. */

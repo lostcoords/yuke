@@ -129,7 +129,7 @@ function options() {
     partOf: (id, pid, cursor) => {
       if (nativeStream() && id === NATIVE_STREAM_MESSAGE_ID) return client.sessionPart(session, id, pid, cursor);
       const part = (id === activeId ? live : parts.get(id) || []).find(p => p.id === pid);
-      return part ? { part } : null;
+      return part ? { part, cursor: null, tail: false } : null;
     },
   };
 }

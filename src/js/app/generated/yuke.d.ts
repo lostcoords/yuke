@@ -392,8 +392,9 @@ function textContent(text: string): Wire.ContentPart[];
 function sessionSendInput(id: string, content: readonly Wire.ContentPart[], parentTool?: Wire.ToolSite): Promise<Wire.SessionSendInputResult>;
 /**
  * Send an explicit skill invocation. The engine loads the body and appends one user message with the arguments after it.
+ * @param args - An empty string sends no arguments.
  */
-function sessionSendSkill(id: string, name: string, args?: string): Promise<Wire.SessionSendInputResult>;
+function sessionSendSkill(id: string, name: string, args: string): Promise<Wire.SessionSendInputResult>;
 /**
  * Stop the active run. The queue survives unless `clearQueue` asks otherwise, and the next queued input starts at once.
  * With `report` false, the caller returns the stop result, so the parent gets no report.
@@ -418,7 +419,7 @@ function sessionPatch(sessionId: string, patch: Wire.SessionPatch): Promise<Wire
 /**
  * The provider and model catalog. An `unchanged` result means the caller keeps the models it holds.
  */
-function catalogList(sinceRev: Wire.CatalogRev | null | undefined): Promise<Wire.CatalogListResult>;
+function catalogList(sinceRev: Wire.CatalogRev | null): Promise<Wire.CatalogListResult>;
 /**
  * Read providers.json again. `changed` reports whether the catalog revision moved.
  */
@@ -585,11 +586,11 @@ export const route: {
 };
 /**
  * Write `text` to the clipboard, tell the user the result, and emit `clipboard.copied`.
- * @param text - null, undefined, or "" copies nothing.
+ * @param text - An empty string copies nothing.
  * @param what - the name of the text in the notice. The default is "text".
  * @returns the byte count, 0 for empty text, or -1 when the text is larger than the clipboard limit.
  */
-export function copy(text: string | null | undefined, what: string | undefined): number;
+export function copy(text: string, what: string | undefined): number;
 /** A base class for a pane view. Each hook does nothing, and `layout` keeps the rect. A subclass overrides the hooks it needs. */
 export class View {
     rect: Rect;
@@ -618,7 +619,8 @@ export class Node {
     shape: NodeShape;
     constructor(shape: NodeShape);
     static leaf(view: ViewLike): Node;
-    static branch(kind: "row" | "col", a: Node, b: Node, ratio: number | undefined): Node;
+    /** @param [ratio] - The share of `a`. The default is 0.5. */
+    static branch(kind: "row" | "col", a: Node, b: Node, ratio?: number): Node;
     becomeSplit(kind: "row" | "col", a: Node, b: Node): void;
     leafAt(col: number, row: number): Node | null;
     leaves(out?: Node[] | undefined): Node[];
@@ -2403,7 +2405,7 @@ export type MessagePart = Wire.AssistantPart | (Wire.ContentPart & { id: number 
 export type TextCursor = { generation: number; bytes: number };
 
 /** One read of a part. With `tail`, `part.text` is only the text after the cursor of the read, and the holder appends it. `cursor` is the end of the whole text, for the next read. */
-export type PartRead = { part: MessagePart; cursor?: TextCursor | null; tail?: boolean };
+export type PartRead = { part: MessagePart; cursor: TextCursor | null; tail: boolean };
 
 /** The QuickJS allocation counters exclude unused memory in the backing allocator. */
 export type MemoryUsage = {
@@ -2500,7 +2502,7 @@ export const fs: {
    * When `lineNumbers` is true, prefix each line with `N: `. The 48 KiB limit includes each prefix. `lineNumbers` defaults to false.
    * An image file answers its path. `next` names the first line that a limit left out, or null. `longLines` counts the cut lines.
    */
-  readRange(path: string, options?: RootOptions & { start?: number | null; end?: number | null; lineNumbers?: boolean }): Promise<RangeRead | { imagePath: string }>;
+  readRange(path: string, options?: RootOptions & { start?: number | undefined; end?: number | undefined; lineNumbers?: boolean }): Promise<RangeRead | { imagePath: string }>;
   /** Replace the whole file in one atomic rename, and resolve the byte count. It creates a missing file in an existing directory. A link or a directory rejects. */
   writeFile(path: string, contents: string, options?: RootOptions): Promise<number>;
   /** Describe one path. It resolves null when nothing is at the path. */
@@ -2724,7 +2726,7 @@ export type HostMouseEvent = Extract<HostEvent, { type: "mouse" }>;
 export interface ViewLike {
   rect: Rect;
   layout: (rect: Rect) => void;
-  draw: (focused?: boolean) => unknown;
+  draw: (focused: boolean) => unknown;
   name?: string;
   onKey?: (event: HostEvent) => boolean;
   onMouse?: (event: HostMouseEvent) => boolean;
@@ -2773,7 +2775,7 @@ export interface CommandSpec {
    * The command runs, and lists, only while this answers true. It gets the same arguments as `run`.
    * A result `[true, ...args]` gives `run` those arguments. While it answers false, an older command of the same name can run.
    */
-  when?: CommandPredicate | null;
+  when?: CommandPredicate;
   /** The text that the palette and the slash menu show. A command without it does not show in a listing. */
   desc?: string;
   /** A slash word needs `desc`, else `add` throws a TypeError. */
@@ -2834,8 +2836,8 @@ export type ContextNode =
   | { t: "and"; a: ContextNode; b: ContextNode }
   | { t: "or"; a: ContextNode; b: ContextNode };
 
-/** A flag value, or a function that reads it at each key. A result of null or undefined, or a throw, makes the flag absent. */
-export type ContextFlag = string | (() => string | null | undefined);
+/** A flag value, or a function that reads it at each key. A result of undefined, or a throw, makes the flag absent. */
+export type ContextFlag = string | (() => string | undefined);
 
 export interface ContextExpr {
   source: string;
@@ -2918,14 +2920,14 @@ export interface StatusSegment {
   side?: "left" | "right";
   /** The position in its side, low first. The default is 0. It must be finite. */
   order?: number;
-  /** Answer the text at each draw. An empty string, null, or undefined hides the segment. A throw hides it and reports a fault. */
-  render: () => string | null | undefined;
+  /** Answer the text at each draw. An empty string or undefined hides the segment. A throw hides it and reports a fault. */
+  render: () => string | undefined;
 }
 
 export interface StatusEntry {
   side: "left" | "right";
   order: number;
-  render: () => string | null | undefined;
+  render: () => string | undefined;
 }
 
 export type RootEvent = { type: "start" } | { type: "input_closed" } | HostEvent;
@@ -2967,9 +2969,9 @@ export type AdviceFunction = (...args: any[]) => any;
 export type AdviceWhere = "before" | "after" | "around" | "filterArgs" | "filterReturn";
 /** The keys of `T` that hold a method, so advice cannot name a field, an accessor value, or a missing key. */
 export type MethodKey<T> = { [P in keyof T]-?: T[P] extends AdviceFunction ? P : never }[keyof T] & string;
-/** The advice for one `where` on method `F`, as `applyAdvice` calls it. `this` is the object whose method runs. A falsy `filterArgs` or an undefined `filterReturn` keeps the value. */
+/** The advice for one `where` on method `F`, as `applyAdvice` calls it. `this` is the object whose method runs. An undefined `filterArgs` or `filterReturn` result keeps the value. */
 export type AdviceFor<F extends AdviceFunction, W extends AdviceWhere, This = unknown> =
-  W extends "filterArgs" ? (this: This, args: Parameters<F>) => Parameters<F> | null | void :
+  W extends "filterArgs" ? (this: This, args: Parameters<F>) => Parameters<F> | void :
   W extends "before" | "after" ? (this: This, ...args: Parameters<F>) => void :
   W extends "around" ? (this: This, next: F, ...args: Parameters<F>) => ReturnType<F> :
   W extends "filterReturn" ? (this: This, result: ReturnType<F>) => ReturnType<F> | void :
@@ -3475,7 +3477,7 @@ export interface TranscriptRow {
   src?: number | undefined;
   /** The base highlight group of the complete row. Its background wins, and explicit text fields win every other field. */
   bg?: string | undefined;
-  marker?: string | null | undefined;
+  marker?: string | undefined;
   markerGroup?: string | undefined;
   indent?: number | undefined;
   key?: ItemKey | undefined;
@@ -3527,7 +3529,7 @@ export interface PluginAsync {
   settle?: () => void;
   timer?: number;
   /** The parent's release for a plugin that `ctx.use` started. It releases once, so a second call does nothing. */
-  owner?: Disposer | undefined;
+  owner?: Disposer;
 }
 
 export interface ScopeEntry {
@@ -3622,10 +3624,10 @@ export type PartTextPage = (id: number, partId: number, field: string, offset?: 
 
 /** The readers of a transcript. Without `partsOf` the transcript shows no parts. `onSelect` receives the text of each finished mouse selection. */
 export interface TranscriptOptions {
-  partsOf?: PartsOf | null | undefined;
-  partOf?: PartOf | null | undefined;
-  partTextPage?: PartTextPage | null | undefined;
-  onSelect?: ((text: string) => void) | null | undefined;
+  partsOf?: PartsOf;
+  partOf?: PartOf;
+  partTextPage?: PartTextPage;
+  onSelect?: (text: string) => void;
 }
 
 export interface GroupPlan {
@@ -3735,7 +3737,7 @@ export interface ListItem {
   right?: string;
   rightGroup?: string;
   rightSelGroup?: string;
-  marker?: string | null;
+  marker?: string;
   markerGroup?: string;
   markerSelGroup?: string;
   indent?: number;
@@ -3784,9 +3786,9 @@ export interface WrapRow {
 /** The options of a `Composer`. */
 export interface ComposerOptions {
   /** The dim text that shows while the buffer is empty. */
-  placeholder?: string | undefined;
+  placeholder?: string;
   /** Gets the content on enter. A result of false keeps the buffer; any other result clears it. */
-  onSubmit?: ((content: Wire.ContentPart[]) => boolean | void) | null | undefined;
+  onSubmit?: (content: Wire.ContentPart[]) => boolean | void;
 }
 
 /** The glyphs of a border: the corners tl, tr, br, bl and the edges t, r, b, l. */
@@ -3808,7 +3810,7 @@ export type ContentHeight = number | ((maxRows: number, width: number) => number
 
 export interface WindowContent {
   layout: (rect: Rect) => void;
-  draw: (focused?: boolean) => void;
+  draw: (focused: boolean) => void;
   cursor?: () => { x: number; y: number; visible: boolean } | null;
   onKey?: (event: HostEvent) => boolean;
   onMouse?: (event: HostMouseEvent) => boolean;
@@ -3825,7 +3827,7 @@ export interface WindowOptions {
   /** The default is "single". "none" draws no border and no padding. */
   border?: Border;
   /** The view inside the border. The window lays it out, draws it, and passes the keys and the clicks to it. */
-  content?: WindowContent | null;
+  content?: WindowContent | undefined;
   /** The outer width in cells, or a function of the available width. The default is 60% of the screen, or the anchor width. */
   width?: Dimension;
   /** The outer height in rows, or a function of the available rows. The default is 60% of the available rows. */
@@ -3833,9 +3835,9 @@ export interface WindowOptions {
   /** The content row count, before the border, padding, and footer; height takes precedence. */
   contentHeight?: ContentHeight;
   /** Answer a rect to sit on: the window takes its x and its width, and its bottom row is just above the rect. */
-  anchor?: (() => Rect) | null;
+  anchor?: (() => Rect) | undefined;
   /** Place the window in `bounds`. The layout keeps it inside. It replaces the center and the anchor placement. */
-  place?: ((bounds: Rect, w: number, h: number) => { x: number; y: number }) | null;
+  place?: ((bounds: Rect, w: number, h: number) => { x: number; y: number }) | undefined;
   /** A press outside a modal window cancels it, as esc does. `"ignore"` keeps a window that holds typed text or a running task. */
   outsidePress?: "cancel" | "ignore";
   /** The blank cells between the border and the content. The default is `{ x: 2, y: 1 }`. */
@@ -3863,7 +3865,7 @@ export interface ListOptions<T> {
   format?: ((item: T, index: number) => string | ListItem) | undefined;
   key?: ((item: T) => ListKey) | undefined;
   isSelectable?: ((item: T) => boolean) | undefined;
-  onMove?: ((item: T, index: number) => void) | null | undefined;
+  onMove?: ((item: T, index: number) => void) | undefined;
   itemHeight?: number | undefined;
   group?: string | undefined;
   selGroup?: string | undefined;
@@ -3875,43 +3877,43 @@ export interface ListOptions<T> {
 /** The options of `ui.pick` and `ui.select`: the window options and the picker options. */
 export type PickOptions<T> = WindowOptions & {
   /** The source items. `ui.select` sets them from its argument. */
-  items?: T[] | undefined;
+  items?: T[];
   /** Answer the items for a query, in their final order, in place of the fuzzy rank. undefined gives no items. */
-  suggest?: ((query: string) => T[] | undefined) | undefined;
+  suggest?: (query: string) => T[] | undefined;
   /** The text that the fuzzy rank matches for an item. The default is `String(item)`. */
-  filterText?: ((item: T) => string) | undefined;
+  filterText?: (item: T) => string;
   /** The row of an item. The default is `String(item)`. */
-  format?: ((item: T, index: number) => string | ListItem) | undefined;
+  format?: (item: T, index: number) => string | ListItem;
   /** A stable identity for an item, so the selection follows it. The default is the item itself. */
-  key?: ((item: T) => ListKey) | undefined;
+  key?: (item: T) => ListKey;
   /** False makes a row that the selection skips. */
-  isSelectable?: ((item: T) => boolean) | undefined;
+  isSelectable?: (item: T) => boolean;
   /** The default is "UIItem". */
-  itemGroup?: string | undefined;
+  itemGroup?: string;
   /** The highlight group of the selected row. The default is "UIItemSel". */
-  selGroup?: string | undefined;
+  selGroup?: string;
   /** The screen rows for each item. The default is 1. */
-  itemHeight?: number | undefined;
+  itemHeight?: number;
   /** Called when a key or a click moves the selection. */
-  onMove?: ((item: T, index: number) => void) | null | undefined;
+  onMove?: (item: T, index: number) => void;
   /** Called with the selected item on enter. The window closes first, unless `closeOnAccept` is false. */
-  onAccept?: ((item: T, index: number) => void) | null | undefined;
+  onAccept?: (item: T, index: number) => void;
   /** Called after esc closes the window. */
-  onCancel?: (() => void) | null | undefined;
+  onCancel?: () => void;
   /** False keeps the picker open on enter, and `onAccept` does not run. */
-  validate?: ((item: T) => boolean) | null | undefined;
+  validate?: (item: T) => boolean;
   /** Strokes that run before the default keys: a `PickerAction` name, a function, or false to ignore the key. */
-  keymap?: Record<string, string | false | ((event: HostEvent, content: Picker<T>) => void)> | null | undefined;
+  keymap?: Record<string, string | false | ((event: HostEvent, content: Picker<T>) => void)> | undefined;
   /** False keeps the window open after an accept. The default is true. */
-  closeOnAccept?: boolean | undefined;
+  closeOnAccept?: boolean;
   /** A redraw period while the picker shows, for rows whose `format` reads live values. */
-  needsTick?: { periodMs: number } | null | undefined;
+  needsTick?: { periodMs: number };
   /** False removes the query line, as `ui.select` does. The default is true. */
-  filter?: boolean | undefined;
+  filter?: boolean;
   /** Text above the list. It wraps, and the wheel and the page keys scroll it. */
-  body?: string | undefined;
+  body?: string;
   /** Fit the window to the query line and at most this many rows. */
-  maxRows?: number | undefined;
+  maxRows?: number;
 };
 
 export type NavAction = (target: NavTarget) => void;

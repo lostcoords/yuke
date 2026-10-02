@@ -75,7 +75,7 @@ export type HostMouseEvent = Extract<HostEvent, { type: "mouse" }>;
 export interface ViewLike {
   rect: Rect;
   layout: (rect: Rect) => void;
-  draw: (focused?: boolean) => unknown;
+  draw: (focused: boolean) => unknown;
   name?: string;
   onKey?: (event: HostEvent) => boolean;
   onMouse?: (event: HostMouseEvent) => boolean;
@@ -124,7 +124,7 @@ export interface CommandSpec {
    * The command runs, and lists, only while this answers true. It gets the same arguments as `run`.
    * A result `[true, ...args]` gives `run` those arguments. While it answers false, an older command of the same name can run.
    */
-  when?: CommandPredicate | null;
+  when?: CommandPredicate;
   /** The text that the palette and the slash menu show. A command without it does not show in a listing. */
   desc?: string;
   /** A slash word needs `desc`, else `add` throws a TypeError. */
@@ -185,8 +185,8 @@ export type ContextNode =
   | { t: "and"; a: ContextNode; b: ContextNode }
   | { t: "or"; a: ContextNode; b: ContextNode };
 
-/** A flag value, or a function that reads it at each key. A result of null or undefined, or a throw, makes the flag absent. */
-export type ContextFlag = string | (() => string | null | undefined);
+/** A flag value, or a function that reads it at each key. A result of undefined, or a throw, makes the flag absent. */
+export type ContextFlag = string | (() => string | undefined);
 
 export interface ContextExpr {
   source: string;
@@ -269,14 +269,14 @@ export interface StatusSegment {
   side?: "left" | "right";
   /** The position in its side, low first. The default is 0. It must be finite. */
   order?: number;
-  /** Answer the text at each draw. An empty string, null, or undefined hides the segment. A throw hides it and reports a fault. */
-  render: () => string | null | undefined;
+  /** Answer the text at each draw. An empty string or undefined hides the segment. A throw hides it and reports a fault. */
+  render: () => string | undefined;
 }
 
 export interface StatusEntry {
   side: "left" | "right";
   order: number;
-  render: () => string | null | undefined;
+  render: () => string | undefined;
 }
 
 export type RootEvent = { type: "start" } | { type: "input_closed" } | HostEvent;

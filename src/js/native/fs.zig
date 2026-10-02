@@ -146,7 +146,7 @@ fn rangeArg(ctx: Context, args: []const Value, idx: usize) error{InvalidOption}!
 fn boundArg(ctx: Context, obj: Value, name: [:0]const u8) error{InvalidOption}!?u32 {
     const value = ctx.getPropertyStr(obj, name);
     defer ctx.freeValue(value);
-    if (ctx.isUndefined(value) or ctx.isNull(value)) return null;
+    if (ctx.isUndefined(value)) return null;
     return @intCast(module.integer(ctx, value, 1, std.math.maxInt(u32)) orelse return error.InvalidOption);
 }
 

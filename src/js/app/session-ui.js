@@ -9,7 +9,7 @@ import { catalog, reloadCatalog, providerState, providerStateLabel } from "yuke:
 /** @import { SessionPane, SessionRow } from "yuke:internal/session" */
 
 // Load the catalog, then pick a model and its effort for `pane`. A `query` names the model and skips the picker.
-/** @param {InjectContext} ctx @param {SessionPane} pane @param {string | null} currentId @param {string} [query] @returns {void} */
+/** @param {InjectContext} ctx @param {SessionPane} pane @param {string | null} currentId @param {string | undefined} query @returns {void} */
 export function openModelPicker(ctx, pane, currentId, query) {
   const show = () => {
     // Code-unit order: localeCompare NFC-normalizes and traps in ReleaseSafe QuickJS.
@@ -28,7 +28,7 @@ export function openModelPicker(ctx, pane, currentId, query) {
       footer: "type to filter · ↵ select · esc close",
       border: "none",
       panelGroup: "UIFloat",
-      anchor: pane.composer ? () => /** @type {Composer} */ (pane.composer).rect : null,
+      anchor: pane.composer ? () => /** @type {Composer} */ (pane.composer).rect : undefined,
       maxRows: 6,
       items: models,
       // The catalog owns the selector format. The picker keys on it and never builds one.
@@ -74,7 +74,7 @@ function pickReasoning(ctx, model, pane) {
     footer: "↵ select · esc close",
     border: "none",
     panelGroup: "UIFloat",
-    anchor: composer ? () => composer.rect : null,
+    anchor: composer ? () => composer.rect : undefined,
     maxRows: 6,
     items: levels.map((id) => ({ id })),
     key: l => l.id,

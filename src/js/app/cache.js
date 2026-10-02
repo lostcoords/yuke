@@ -106,7 +106,7 @@ export const cachePlugin = {
             .catch(() => null);
           // A failed read drops only the last-turn row, because every other row reads the session.
           const info = await client.sessionContextInfo(entry.session.id).catch(() => null);
-          showInfo(ctx, "cache", cacheRows(entry.session, children, info?.usage_last ?? null));
+          showInfo(ctx, "cache", cacheRows(entry.session, children, info?.usage_last));
         },
       });
     });

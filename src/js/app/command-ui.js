@@ -169,7 +169,7 @@ export const commandUi = {
           name: "commands",
           border: "none",
           panelGroup: "UIFloat",
-          anchor: chat ? () => chat.composer.rect : null,
+          anchor: chat ? () => chat.composer.rect : undefined,
           maxRows: 6,
           items: all,
           key: (e) => e.name,

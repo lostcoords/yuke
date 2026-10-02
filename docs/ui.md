@@ -63,7 +63,7 @@ Do not bind these unless the user asks you to replace one.
 
 ## Status bar
 
-`c.tui.status.add({ side?, order?, render })`. `render` returns a string. `null`, `undefined`, or `""` hides the item, and a throw hides it and reports a fault. It runs on each frame, so keep it cheap. Items on one side join with ` · `.
+`c.tui.status.add({ side?, order?, render })`. `render` returns a string. `undefined` or `""` hides the item, and a throw hides it and reports a fault. It runs on each frame, so keep it cheap. Items on one side join with ` · `.
 
 ## Styles
 

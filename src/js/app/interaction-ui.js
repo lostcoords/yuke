@@ -27,8 +27,8 @@ class DeviceDialog {
     this.rect = rect;
   }
 
-  /** @param {boolean} [_focused] @returns {void} */
-  draw(_focused = false) {
+  /** @param {boolean} _focused @returns {void} */
+  draw(_focused) {
     const { x, y, w, h } = this.rect;
     if (w <= 0 || h <= 0) return;
     text(x, y, clip("open  ", w), "UIDim");

@@ -38,7 +38,7 @@ plugins.use({
       // A bare name becomes `example:hello`. A `desc` lists it in the ctrl+p palette, and `slash` adds /hello.
       c.tui.command.add("hello", { desc: "Say hello", slash: true, run: () => { c.interaction.notify("hello from example"); } });
       c.tui.keymap.add({ "ctrl+g": "example:hello" });
-      c.tui.status.add({ side: "right", render: () => (sent > 0 ? "sent " + sent + " · done " + completed : null) });
+      c.tui.status.add({ side: "right", render: () => (sent > 0 ? "sent " + sent + " · done " + completed : undefined) });
     });
   },
 });

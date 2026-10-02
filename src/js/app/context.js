@@ -40,8 +40,8 @@ function contextLine() {
 }
 
 // Build the label and value rows of the breakdown window. The engine priced each turn, so the cost row reads the session.
-/** @param {Reading} r @param {Wire.TokenUsage} u @param {ReadonlyArray<Wire.InstructionSource>} [sources] @param {ReadonlyArray<Wire.SkillInfo>} [skills] @returns {[string, string][]} */
-function contextRows(r, u, sources = [], skills = []) {
+/** @param {Reading} r @param {Wire.TokenUsage} u @param {ReadonlyArray<Wire.InstructionSource>} sources @param {ReadonlyArray<Wire.SkillInfo>} skills @returns {[string, string][]} */
+function contextRows(r, u, sources, skills) {
   const t = r.total;
   const model = modelOf(r.model);
   const window = (model && model.context_window) || 0;

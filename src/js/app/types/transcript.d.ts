@@ -78,10 +78,10 @@ export type PartTextPage = (id: number, partId: number, field: string, offset?: 
 
 /** The readers of a transcript. Without `partsOf` the transcript shows no parts. `onSelect` receives the text of each finished mouse selection. */
 export interface TranscriptOptions {
-  partsOf?: PartsOf | null | undefined;
-  partOf?: PartOf | null | undefined;
-  partTextPage?: PartTextPage | null | undefined;
-  onSelect?: ((text: string) => void) | null | undefined;
+  partsOf?: PartsOf;
+  partOf?: PartOf;
+  partTextPage?: PartTextPage;
+  onSelect?: (text: string) => void;
 }
 
 export interface GroupPlan {

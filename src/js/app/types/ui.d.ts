@@ -15,7 +15,7 @@ export interface ListItem {
   right?: string;
   rightGroup?: string;
   rightSelGroup?: string;
-  marker?: string | null;
+  marker?: string;
   markerGroup?: string;
   markerSelGroup?: string;
   indent?: number;
@@ -64,9 +64,9 @@ export interface WrapRow {
 /** The options of a `Composer`. */
 export interface ComposerOptions {
   /** The dim text that shows while the buffer is empty. */
-  placeholder?: string | undefined;
+  placeholder?: string;
   /** Gets the content on enter. A result of false keeps the buffer; any other result clears it. */
-  onSubmit?: ((content: Wire.ContentPart[]) => boolean | void) | null | undefined;
+  onSubmit?: (content: Wire.ContentPart[]) => boolean | void;
 }
 
 /** The glyphs of a border: the corners tl, tr, br, bl and the edges t, r, b, l. */
@@ -88,7 +88,7 @@ export type ContentHeight = number | ((maxRows: number, width: number) => number
 
 export interface WindowContent {
   layout: (rect: Rect) => void;
-  draw: (focused?: boolean) => void;
+  draw: (focused: boolean) => void;
   cursor?: () => { x: number; y: number; visible: boolean } | null;
   onKey?: (event: HostEvent) => boolean;
   onMouse?: (event: HostMouseEvent) => boolean;
@@ -105,7 +105,7 @@ export interface WindowOptions {
   /** The default is "single". "none" draws no border and no padding. */
   border?: Border;
   /** The view inside the border. The window lays it out, draws it, and passes the keys and the clicks to it. */
-  content?: WindowContent | null;
+  content?: WindowContent | undefined;
   /** The outer width in cells, or a function of the available width. The default is 60% of the screen, or the anchor width. */
   width?: Dimension;
   /** The outer height in rows, or a function of the available rows. The default is 60% of the available rows. */
@@ -113,9 +113,9 @@ export interface WindowOptions {
   /** The content row count, before the border, padding, and footer; height takes precedence. */
   contentHeight?: ContentHeight;
   /** Answer a rect to sit on: the window takes its x and its width, and its bottom row is just above the rect. */
-  anchor?: (() => Rect) | null;
+  anchor?: (() => Rect) | undefined;
   /** Place the window in `bounds`. The layout keeps it inside. It replaces the center and the anchor placement. */
-  place?: ((bounds: Rect, w: number, h: number) => { x: number; y: number }) | null;
+  place?: ((bounds: Rect, w: number, h: number) => { x: number; y: number }) | undefined;
   /** A press outside a modal window cancels it, as esc does. `"ignore"` keeps a window that holds typed text or a running task. */
   outsidePress?: "cancel" | "ignore";
   /** The blank cells between the border and the content. The default is `{ x: 2, y: 1 }`. */
@@ -143,7 +143,7 @@ export interface ListOptions<T> {
   format?: ((item: T, index: number) => string | ListItem) | undefined;
   key?: ((item: T) => ListKey) | undefined;
   isSelectable?: ((item: T) => boolean) | undefined;
-  onMove?: ((item: T, index: number) => void) | null | undefined;
+  onMove?: ((item: T, index: number) => void) | undefined;
   itemHeight?: number | undefined;
   group?: string | undefined;
   selGroup?: string | undefined;
@@ -155,43 +155,43 @@ export interface ListOptions<T> {
 /** The options of `ui.pick` and `ui.select`: the window options and the picker options. */
 export type PickOptions<T> = WindowOptions & {
   /** The source items. `ui.select` sets them from its argument. */
-  items?: T[] | undefined;
+  items?: T[];
   /** Answer the items for a query, in their final order, in place of the fuzzy rank. undefined gives no items. */
-  suggest?: ((query: string) => T[] | undefined) | undefined;
+  suggest?: (query: string) => T[] | undefined;
   /** The text that the fuzzy rank matches for an item. The default is `String(item)`. */
-  filterText?: ((item: T) => string) | undefined;
+  filterText?: (item: T) => string;
   /** The row of an item. The default is `String(item)`. */
-  format?: ((item: T, index: number) => string | ListItem) | undefined;
+  format?: (item: T, index: number) => string | ListItem;
   /** A stable identity for an item, so the selection follows it. The default is the item itself. */
-  key?: ((item: T) => ListKey) | undefined;
+  key?: (item: T) => ListKey;
   /** False makes a row that the selection skips. */
-  isSelectable?: ((item: T) => boolean) | undefined;
+  isSelectable?: (item: T) => boolean;
   /** The default is "UIItem". */
-  itemGroup?: string | undefined;
+  itemGroup?: string;
   /** The highlight group of the selected row. The default is "UIItemSel". */
-  selGroup?: string | undefined;
+  selGroup?: string;
   /** The screen rows for each item. The default is 1. */
-  itemHeight?: number | undefined;
+  itemHeight?: number;
   /** Called when a key or a click moves the selection. */
-  onMove?: ((item: T, index: number) => void) | null | undefined;
+  onMove?: (item: T, index: number) => void;
   /** Called with the selected item on enter. The window closes first, unless `closeOnAccept` is false. */
-  onAccept?: ((item: T, index: number) => void) | null | undefined;
+  onAccept?: (item: T, index: number) => void;
   /** Called after esc closes the window. */
-  onCancel?: (() => void) | null | undefined;
+  onCancel?: () => void;
   /** False keeps the picker open on enter, and `onAccept` does not run. */
-  validate?: ((item: T) => boolean) | null | undefined;
+  validate?: (item: T) => boolean;
   /** Strokes that run before the default keys: a `PickerAction` name, a function, or false to ignore the key. */
-  keymap?: Record<string, string | false | ((event: HostEvent, content: Picker<T>) => void)> | null | undefined;
+  keymap?: Record<string, string | false | ((event: HostEvent, content: Picker<T>) => void)> | undefined;
   /** False keeps the window open after an accept. The default is true. */
-  closeOnAccept?: boolean | undefined;
+  closeOnAccept?: boolean;
   /** A redraw period while the picker shows, for rows whose `format` reads live values. */
-  needsTick?: { periodMs: number } | null | undefined;
+  needsTick?: { periodMs: number };
   /** False removes the query line, as `ui.select` does. The default is true. */
-  filter?: boolean | undefined;
+  filter?: boolean;
   /** Text above the list. It wraps, and the wheel and the page keys scroll it. */
-  body?: string | undefined;
+  body?: string;
   /** Fit the window to the query line and at most this many rows. */
-  maxRows?: number | undefined;
+  maxRows?: number;
 };
 
 export type NavAction = (target: NavTarget) => void;
