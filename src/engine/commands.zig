@@ -371,7 +371,7 @@ pub fn sessionSendInputForRpc(engine: *Engine, arena: std.mem.Allocator, params:
     if (available and rt.active_run == null) {
         const config = try run.slotConfig(engine, arena, rt, context, .turn);
         const started = try run.beginTurn(engine.deps.db, engine.deps.io, arena, sid, .{ .content = content, .source = source, .skill_name = skill_name }, snapshot.config_rev);
-        const slot = try run.createSlot(engine, context, started, config);
+        const slot = try run.createSlot(engine, rt, context, started, config);
         run.bindStarted(engine, rt, slot, started);
         launch.* = .{ .slot = slot };
         return .{ .started = .{ .input_id = started.handle.input_id, .run_id = started.handle.started.run_id } };

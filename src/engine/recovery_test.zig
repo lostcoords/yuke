@@ -10,7 +10,6 @@ const run = @import("run.zig");
 const testing = std.testing;
 const Resources = @import("test_resources.zig");
 const util = @import("../util.zig");
-const context = @import("context.zig");
 const ownership = @import("ownership.zig");
 
 const Fixture = struct {
@@ -103,9 +102,6 @@ test "skill input survives admission teardown and recovery through another conne
     try testing.expectEqual(@as(usize, 1), page.messages.len);
     try testing.expectEqualStrings("pdf", page.messages[0].user.skill_name.?);
     try testing.expectEqualStrings(text, page.messages[0].user.content[0].text.text);
-    const projected = try context.project(std.testing.allocator, arena.allocator(), &f.db, sid, .{ .window = 40_000, .fixed = 0, .compact_at = 40_000, .model = "" });
-    try testing.expectEqualStrings("pdf", projected.messages[0].user.skill_name.?);
-    try testing.expectEqualStrings(text, projected.messages[0].user.content[0].text.text);
 }
 
 test "repair wakes an idle intermediate parent after a grandchild interruption" {
@@ -261,7 +257,7 @@ test "recovery preserves promoted steering and leaves later input pending" {
         defer tx.deinit();
         const messages = try run.consumeQueued(&f.db, f.resources.runtime.io(), a, sid);
         try tx.commit();
-        break :blk messages[0].data.message.user.input_id;
+        break :blk messages[0].message.user.input_id;
     };
     try queued(&f.db, a, sid);
     f.engine.close();

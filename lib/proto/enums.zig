@@ -29,8 +29,6 @@ pub const BroadcastName = enum {
     @"run.done",
     /// A session's run config changed.
     @"config.changed",
-    /// The engine truncated older transcript messages.
-    @"transcript.truncated",
     /// A new streaming message started.
     @"message.started",
     /// The engine discarded an unfinished message.

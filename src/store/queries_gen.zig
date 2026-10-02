@@ -110,7 +110,7 @@ pub const AppendEvent = sql.ExecQuery(
 );
 
 pub const ReadHigh = sql.OptionalQuery(
-    \\SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high, message_count
+    \\SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
     \\    FROM sessions WHERE id = :id;
 ,
     struct {
@@ -122,7 +122,6 @@ pub const ReadHigh = sql.OptionalQuery(
         run_id_high: u64,
         input_id_high: u64,
         config_rev_high: u64,
-        message_count: u64,
     },
 );
 
@@ -368,19 +367,21 @@ pub const MessagePage = sql.ManyQuery(
     },
 );
 
-pub const MessageTail = sql.ManyQuery(
-    \\SELECT t.message_id AS message_id, e.payload AS payload
-    \\FROM (
-    \\    SELECT session_id, message_id, seq FROM messages
-    \\    WHERE session_id = :session_id
-    \\    ORDER BY message_id DESC
-    \\    LIMIT :limit
-    \\) t JOIN events e ON e.session_id = t.session_id AND e.seq = t.seq
-    \\ORDER BY t.message_id ASC;
+pub const MessageResident = sql.ManyQuery(
+    \\SELECT m.message_id AS message_id, e.payload AS payload
+    \\FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
+    \\WHERE m.session_id = :session_id AND m.message_id >= MIN(COALESCE((
+    \\    SELECT first_kept_id FROM messages WHERE session_id = :session_id AND role = 'compaction'
+    \\    ORDER BY message_id DESC LIMIT 1
+    \\), 0), COALESCE((
+    \\    SELECT message_id FROM messages WHERE session_id = :session_id
+    \\    ORDER BY message_id DESC LIMIT 1 OFFSET :window - 1
+    \\), 0))
+    \\ORDER BY m.message_id ASC;
 ,
     struct {
         session_id: [16]u8,
-        limit: i64,
+        window: i64,
     },
     MessagePage.Row,
 );
@@ -450,37 +451,6 @@ pub const ContextCount = sql.OneQuery(
     },
     struct {
         tokens: u64,
-    },
-);
-
-pub const ContextMessages = sql.ManyQuery(
-    \\SELECT m.message_id, e.payload
-    \\FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
-    \\WHERE m.session_id = :session_id AND m.message_id >= :first_message_id
-    \\AND m.message_id < COALESCE(:stop_message_id, 9223372036854775807)
-    \\ORDER BY m.message_id ASC;
-,
-    struct {
-        session_id: [16]u8,
-        first_message_id: u64,
-        stop_message_id: ?u64 = null,
-    },
-    MessagePage.Row,
-);
-
-pub const NewestCompaction = sql.OptionalQuery(
-    \\SELECT m.message_id, e.payload
-    \\FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
-    \\WHERE m.session_id = :session_id AND m.role = 'compaction'
-    \\ORDER BY m.message_id DESC
-    \\LIMIT 1;
-,
-    struct {
-        session_id: [16]u8,
-    },
-    struct {
-        message_id: u64,
-        payload: []const u8,
     },
 );
 
@@ -996,12 +966,10 @@ pub const Queries = struct {
     insert_message: InsertMessage,
     advance_message: AdvanceMessage,
     message_page: MessagePage,
-    message_tail: MessageTail,
+    message_resident: MessageResident,
     run_report_messages: RunReportMessages,
     context_sizes: ContextSizes,
     context_count: ContextCount,
-    context_messages: ContextMessages,
-    newest_compaction: NewestCompaction,
     insert_session: InsertSession,
     session_exists: SessionExists,
     session_snapshot: SessionSnapshot,

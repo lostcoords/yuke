@@ -29,7 +29,7 @@ pub const RunSlot = session.RunSlot;
 /// Publish these arena-owned user commits before run.started and before arena release.
 pub const Started = struct {
     handle: RunHandle,
-    user_commits: []const message_store.Commit,
+    user_commits: []const proto.message.MessageCommittedData,
 };
 
 /// Append the `run.started` event for a turn. Both turn paths share this record shape.
@@ -59,7 +59,7 @@ pub fn beginTurnInTransaction(db: *Database, io: std.Io, arena: std.mem.Allocato
     const input_id = try event_store.allocInputId(db, arena, session_id);
     const run_id = try event_store.allocRunId(db, arena, session_id);
     const now = util.nowMillis(io);
-    const commits = try arena.alloc(message_store.Commit, 1);
+    const commits = try arena.alloc(proto.message.MessageCommittedData, 1);
     commits[0] = try commitInput(db, io, arena, session_id, input, input_id, now, now);
     return .{
         .handle = .{ .input_id = input_id, .started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, now) },
@@ -83,20 +83,20 @@ pub fn beginQueuedTurn(
     const started = try appendRunStarted(db, arena, io, session_id, run_id, config_rev, util.nowMillis(io));
     try tx.commit();
     return .{
-        .handle = .{ .input_id = commits[0].data.message.user.input_id, .started = started },
+        .handle = .{ .input_id = commits[0].message.user.input_id, .started = started },
         .user_commits = commits,
     };
 }
 
 /// Append pending inputs in FIFO order and remove them in the caller's transaction.
-pub fn consumeQueued(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8) ![]const message_store.Commit {
+pub fn consumeQueued(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8) ![]const proto.message.MessageCommittedData {
     return consumeEntries(db, io, arena, session_id, try input_store.list(db, arena, session_id));
 }
 
 /// Commit the listed inputs as user messages inside the caller's transaction.
-pub fn consumeEntries(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, queued: []const input_store.Entry) ![]const message_store.Commit {
+pub fn consumeEntries(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, queued: []const input_store.Entry) ![]const proto.message.MessageCommittedData {
     std.debug.assert(sql.inTransaction(db.conn));
-    const commits = try arena.alloc(message_store.Commit, queued.len);
+    const commits = try arena.alloc(proto.message.MessageCommittedData, queued.len);
     const now = util.nowMillis(io);
 
     for (queued, commits) |entry, *commit| {
@@ -108,7 +108,7 @@ pub fn consumeEntries(db: *Database, io: std.Io, arena: std.mem.Allocator, sessi
 }
 
 /// Commit one input as a user message in the caller's transaction.
-fn commitInput(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, input: Input, input_id: ids.InputId, created_at_ms: u64, now: u64) !message_store.Commit {
+fn commitInput(db: *Database, io: std.Io, arena: std.mem.Allocator, session_id: [16]u8, input: Input, input_id: ids.InputId, created_at_ms: u64, now: u64) !proto.message.MessageCommittedData {
     std.debug.assert(sql.inTransaction(db.conn));
     const message: proto.message.Message = .{ .user = .{
         .id = try event_store.allocMessageId(db, arena, session_id),
@@ -278,9 +278,12 @@ pub fn slotConfig(engine: *Engine, arena: std.mem.Allocator, rt: *Session, conte
     return .{ .model = context.snapshot.model, .reasoning = context.snapshot.reasoning, .system_prompt = prompt, .max_rounds = if (kind == .turn) context.snapshot.max_rounds else null, .root = context.snapshot.root, .name = context.snapshot.name };
 }
 
-/// Create the slot of a committed start. Only an allocation follows the commit.
-pub fn createSlot(engine: *Engine, context: Preparation, started: Started, config: session.Config) !*RunSlot {
-    return RunSlot.create(engine.deps.gpa, started.handle, if (context.snapshot.parent_id) |id| .bytes(id) else null, context.tree, config);
+/// Create the slot of a committed start. A failure faults the session, because the store holds commits that its history did not fold.
+pub fn createSlot(engine: *Engine, rt: *Session, context: Preparation, started: Started, config: session.Config) !*RunSlot {
+    return RunSlot.create(engine.deps.gpa, started.handle, if (context.snapshot.parent_id) |id| .bytes(id) else null, context.tree, config) catch |err| {
+        rt.faulted = true;
+        return err;
+    };
 }
 
 /// Bind a committed turn to its session, then publish it: the user commits first, then `run.started`.
@@ -309,7 +312,7 @@ pub fn prepareQueued(engine: *Engine, rt: *Session) !*RunSlot {
     const session_id = rt.id;
     const config = try slotConfig(engine, arena, rt, context, .turn);
     const started = try beginQueuedTurn(engine.deps.db, engine.deps.io, arena, session_id.raw, context.snapshot.config_rev);
-    const slot = try createSlot(engine, context, started, config);
+    const slot = try createSlot(engine, rt, context, started, config);
     bindStarted(engine, rt, slot, started);
     std.debug.assert(rt.queueDepth() == 0); // The commits retired the whole queue.
     return slot;
@@ -353,7 +356,7 @@ pub fn prepareCompaction(engine: *Engine, rt: *Session, reason: proto.enums.Comp
     try tx.commit();
 
     const started_result: Started = .{ .handle = .{ .input_id = 0, .started = started }, .user_commits = &.{} };
-    const slot = try createSlot(engine, context, started_result, config);
+    const slot = try createSlot(engine, rt, context, started_result, config);
     bindStarted(engine, rt, slot, started_result);
     session_events.announceActivity(engine, rt); // A compaction opens no round, so nothing else says it runs.
     return slot;
@@ -468,10 +471,10 @@ test "beginQueuedTurn drains all durable inputs in FIFO order" {
     try testing.expectEqual(@as(u64, 1), handle.input_id);
     // The drain returns one committed user message per input in FIFO order with contiguous sequences.
     try testing.expectEqual(@as(usize, 2), started.user_commits.len);
-    try testing.expectEqual(@as(u64, 1), started.user_commits[0].data.message.user.id);
-    try testing.expectEqual(@as(u64, 2), started.user_commits[1].data.message.user.id);
-    try testing.expectEqual(started.user_commits[0].data.seq + 1, started.user_commits[1].data.seq);
-    try testing.expect(started.user_commits[1].data.seq < handle.started.seq); // run.started follows the commits
+    try testing.expectEqual(@as(u64, 1), started.user_commits[0].message.user.id);
+    try testing.expectEqual(@as(u64, 2), started.user_commits[1].message.user.id);
+    try testing.expectEqual(started.user_commits[0].seq + 1, started.user_commits[1].seq);
+    try testing.expect(started.user_commits[1].seq < handle.started.seq); // run.started follows the commits
     try testing.expectEqual(@as(i64, 0), blk: {
         const row = (try db.conn.row("SELECT count(*) FROM pending_inputs", .{})) orelse return error.NoRow;
         defer row.deinit();

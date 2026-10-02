@@ -8,7 +8,6 @@ const RunSlot = @import("../session/session.zig").RunSlot;
 const context = @import("context.zig");
 const database = @import("../store/store.zig");
 
-const message_store = database.message;
 const session_store = database.session;
 
 /// Map a durable session row to its origin. A broken schema invariant is database corruption.
@@ -158,16 +157,16 @@ pub fn emitDurable(engine: *Engine, rt: *Session, note: proto.rpc.Notification) 
     engine.sinks.emit(note);
 }
 
-/// Fold the known stored size and publish only the public event data.
-pub fn emitCommitted(engine: *Engine, rt: *Session, commit: message_store.Commit) void {
+/// Fold the committed message into the session, then publish it.
+pub fn emitCommitted(engine: *Engine, rt: *Session, commit: proto.message.MessageCommittedData) void {
     rt.context_tokens = null;
-    rt.commit(commit.data, commit.bytes) catch |err|
+    rt.commit(commit) catch |err|
         std.debug.panic("cannot fold the committed message: {t}", .{err});
-    engine.sinks.emit(.{ .method = .@"message.committed", .params = .{ .message_committed_data = commit.data } });
+    engine.sinks.emit(.{ .method = .@"message.committed", .params = .{ .message_committed_data = commit } });
 }
 
 /// Fold and publish committed user messages, then announce the moved summary.
-pub fn publishUserCommits(engine: *Engine, rt: *Session, commits: []const message_store.Commit) void {
+pub fn publishUserCommits(engine: *Engine, rt: *Session, commits: []const proto.message.MessageCommittedData) void {
     for (commits) |commit| emitCommitted(engine, rt, commit);
     if (commits.len > 0) announceSummary(engine, rt.id);
 }

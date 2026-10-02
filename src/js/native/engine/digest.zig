@@ -211,7 +211,6 @@ const Change = struct {
             .message_started_data,
             .message_discarded_data,
             .message_committed_data,
-            .transcript_truncated_data,
             => .reload,
             // The rest carries no transcript state. The activity, the queue, and the run draw elsewhere.
             .session_summary_changed_data,

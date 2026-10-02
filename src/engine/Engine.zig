@@ -8,7 +8,7 @@ const provider_store = @import("../provider/provider_store.zig");
 const Session = @import("../session/session.zig").Session;
 const session = @import("../session/session.zig");
 const retry = @import("ai").retry;
-const transcript = @import("../session/transcript.zig");
+const history = @import("../session/history.zig");
 const util = @import("../util.zig");
 const Sinks = @import("sink.zig").Sinks;
 const toolset = @import("toolset.zig");
@@ -253,7 +253,7 @@ fn repair(self: *Engine, arena: std.mem.Allocator, id: proto.ids.SessionId) !voi
     }
     if (done) |data| {
         self.sinks.emit(.{ .method = .@"run.done", .params = .{ .run_done_data = data.done } });
-        if (data.notice) |notice| self.sinks.emit(.{ .method = .@"message.committed", .params = .{ .message_committed_data = notice.data } });
+        if (data.notice) |notice| self.sinks.emit(.{ .method = .@"message.committed", .params = .{ .message_committed_data = notice } });
         if (data.report) |report| reports.publishReport(self, report, false);
         session_events.announceSummary(self, id);
     }
@@ -310,15 +310,14 @@ fn loadSession(self: *Engine, session_id: proto.ids.SessionId) !Session {
     defer scratch.deinit();
     const sid = session_id.raw;
     const hw = (try database.event.highWater(self.deps.db, scratch.allocator(), sid)) orelse return resident;
-    const limit = transcript.default_max_messages;
-    var history = try database.message.tail(self.deps.db, sid, limit);
-    defer history.deinit();
+    var stored = try database.message.resident(self.deps.db, sid, history.default_max_messages);
+    defer stored.deinit();
     // The scratch holds one message at a time, so the load peak follows the largest message, not the history.
-    while (try history.next(scratch.allocator())) |m| {
-        try resident.transcript.appendSized(m.message, m.bytes);
+    while (try stored.next(scratch.allocator())) |m| {
+        try resident.history.append(m);
         _ = scratch.reset(.retain_capacity);
     }
-    resident.sealHistory(hw.seq_high, hw.message_count > limit);
+    resident.sealHistory(hw.seq_high);
     // Pending inputs are historical. Fold them directly, so they do not advance the durable cursor.
     const pending = try database.input.list(self.deps.db, scratch.allocator(), sid);
     for (pending) |entry| try resident.queueOnQueued(entry.input);

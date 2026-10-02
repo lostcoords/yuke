@@ -13,7 +13,7 @@ const toolset = @import("toolset.zig");
 pub const Terminal = struct {
     done: proto.run.RunDoneData,
     report: ?proto.input.InputQueuedData = null,
-    notice: ?store.message.Commit = null,
+    notice: ?proto.message.MessageCommittedData = null,
 };
 
 /// Lower limits preserve old reservations and refuse new work until space returns.

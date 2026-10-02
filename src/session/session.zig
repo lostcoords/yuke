@@ -1,9 +1,8 @@
-//! One resident session owns its draft, queue, transcript, durable cursors, and active run.
+//! One resident session owns its draft, queue, history, durable cursors, and active run.
 
 const std = @import("std");
 const proto = @import("proto");
 const draftmod = @import("draft.zig");
-const transcriptmod = @import("transcript.zig");
 const transport = @import("ai").transport;
 const transport_ir = @import("ai").ir;
 const ai_model = @import("ai").model;
@@ -13,7 +12,7 @@ const work = @import("work.zig");
 const ids = proto.ids;
 const message = proto.message;
 const Draft = draftmod.Draft;
-const Transcript = transcriptmod.Transcript;
+const History = @import("history.zig").History;
 const BroadcastData = proto.rpc.BroadcastData;
 const content = proto.content;
 const input = proto.input;
@@ -163,7 +162,7 @@ pub const Session = struct {
     draft: ?Draft = null,
     /// The inputs in the durable queue, oldest first; the store owns their content.
     pending: std.ArrayList(Queued) = .empty,
-    transcript: Transcript,
+    history: History,
     base_seq: ids.Seq = 0,
     finalized_message_id: ids.MessageId = 0,
     active_run: ?*RunSlot = null,
@@ -175,14 +174,14 @@ pub const Session = struct {
     pins: u32 = 0,
 
     pub fn init(gpa: std.mem.Allocator, id: ids.SessionId) Session {
-        return .{ .gpa = gpa, .id = id, .transcript = Transcript.init(gpa) };
+        return .{ .gpa = gpa, .id = id, .history = History.init(gpa) };
     }
 
     pub fn deinit(self: *Session) void {
         std.debug.assert(self.active_run == null);
         if (self.draft) |*d| d.deinit();
         self.pending.deinit(self.gpa);
-        self.transcript.deinit();
+        self.history.deinit();
         self.* = undefined;
     }
 
@@ -216,12 +215,11 @@ pub const Session = struct {
         try self.pending.append(self.gpa, .{ .input_id = queued.input_id, .protected = protected });
     }
 
-    /// Seal the projection after the store history is in the transcript. Call once before the first fold on a fresh Session.
-    pub fn sealHistory(self: *Session, base_seq: ids.Seq, has_more: bool) void {
+    /// Seal the projection after the stored messages are in the history. Call once before the first fold on a fresh Session.
+    pub fn sealHistory(self: *Session, base_seq: ids.Seq) void {
         std.debug.assert(self.base_seq == 0 and self.finalized_message_id == 0); // a fresh projection
         std.debug.assert(self.draft == null and self.pending.items.len == 0);
-        const items = self.transcript.list.items;
-        self.transcript.has_more = self.transcript.has_more or has_more;
+        const items = self.history.list.items;
         self.base_seq = base_seq;
         // The newest resident message is the finalized one. Eviction drops from the oldest end, so it stays resident.
         self.finalized_message_id = if (items.len > 0) items[items.len - 1].message.id() else 0;
@@ -239,10 +237,9 @@ pub const Session = struct {
             .message_part_finalized_data => |d| self.onFinalized(d),
             .tool_state_changed_data => |d| self.onToolState(d),
             .message_discarded_data => |d| self.onDiscarded(d),
-            .message_committed_data => |d| self.commit(d, try transcriptmod.messageBytes(d.message)),
+            .message_committed_data => |d| self.commit(d),
             .input_queued_data => |d| self.onQueued(d),
             .input_canceled_data => |d| self.onCanceled(d),
-            .transcript_truncated_data => |d| self.onTruncated(d),
             .run_started_data => |d| self.advance(d.seq),
             .run_done_data => |d| self.advance(d.seq),
             .config_changed_data => |d| self.advance(d.seq),
@@ -295,12 +292,11 @@ pub const Session = struct {
         self.raiseFinalized(d.message_id);
     }
 
-    pub fn commit(self: *Session, d: message.MessageCommittedData, bytes: usize) Error!void {
+    pub fn commit(self: *Session, d: message.MessageCommittedData) Error!void {
         std.debug.assert(std.meta.eql(d.session_id, self.id));
-        std.debug.assert(bytes > 0);
-        // The engine commits ids in order, which keeps the transcript oldest-first for the trim.
+        // The engine commits ids in order, which keeps the history oldest-first.
         std.debug.assert(d.message.id() > self.finalized_message_id);
-        try self.transcript.appendSized(d.message, bytes); // cache before the draft or queue mutates, so an OOM is clean
+        try self.history.append(d.message); // copy before the draft or queue mutates, so an OOM is clean
         switch (d.message) {
             .user => |u| self.removeQueued(u.input_id),
             .assistant => |a| if (self.draft) |*dr| {
@@ -322,12 +318,6 @@ pub const Session = struct {
 
     fn onCanceled(self: *Session, d: proto.input.InputCanceledData) void {
         self.removeQueued(d.input_id);
-        self.advance(d.seq);
-    }
-
-    fn onTruncated(self: *Session, d: proto.misc.TranscriptTruncatedData) void {
-        self.raiseFinalized(d.first_removed_id); // truncated ids reject a late draft
-        self.transcript.trimFrom(d.first_removed_id); // drop the truncated messages from the cache
         self.advance(d.seq);
     }
 

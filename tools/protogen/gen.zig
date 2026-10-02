@@ -21,7 +21,6 @@ const field_aliases = std.StaticStringMap([]const u8).initComptime(.{
     .{ "seq", "Seq" },
     .{ "run_id", "RunId" },
     .{ "config_rev", "ConfigRev" },
-    .{ "first_removed_id", "MessageId" },
     .{ "message_id", "MessageId" },
     .{ "part_id", "PartId" },
     .{ "input_id", "InputId" },

@@ -32,7 +32,7 @@ test {
     _ = @import("engine/sink.zig");
     _ = @import("session/session.zig");
     _ = @import("session/draft.zig");
-    _ = @import("session/transcript.zig");
+    _ = @import("session/history.zig");
     _ = @import("session/tokens.zig");
     _ = @import("diff/diff.zig");
     _ = @import("provider/provider.zig");

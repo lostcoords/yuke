@@ -7,7 +7,6 @@ const Database = @import("store.zig").Database;
 const event = @import("event.zig");
 const blob = @import("blob.zig");
 const queries_gen = @import("queries_gen.zig");
-const transcript = @import("../session/transcript.zig");
 const token_estimate = @import("../session/tokens.zig");
 
 /// The metadata that a committed message adds for its role.
@@ -29,12 +28,6 @@ const Meta = struct {
     created_at_ms: u64,
 };
 
-/// The event borrows the input message; bytes is the exact stored JSON size.
-pub const Commit = struct {
-    data: proto.message.MessageCommittedData,
-    bytes: usize,
-};
-
 /// Append a committed message, store its body and metadata, and advance the session summary inside a write transaction; the caller mints event_id.
 pub fn appendCommittedMessage(
     db: *Database,
@@ -43,7 +36,7 @@ pub fn appendCommittedMessage(
     event_id: [16]u8,
     committed_at_ms: u64,
     message: proto.message.Message,
-) !Commit {
+) !proto.message.MessageCommittedData {
     std.debug.assert(sql.inTransaction(db.conn)); // The event and projection must commit together.
     const payload = try std.json.Stringify.valueAlloc(arena, message, .{ .emit_null_optional_fields = false });
     const seq = try event.append(db, arena, session_id, event_id, committed_at_ms, "message.committed", payload);
@@ -91,7 +84,8 @@ pub fn appendCommittedMessage(
         .cost_without_cache = m.cost_without_cache,
         .updated_at_ms = committed_at_ms,
     });
-    return .{ .data = .{ .session_id = .bytes(session_id), .seq = seq, .message = message }, .bytes = payload.len };
+    // The event borrows the input message.
+    return .{ .session_id = .bytes(session_id), .seq = seq, .message = message };
 }
 
 /// Extract the projection metadata from one message. Only an assistant turn carries tokens.
@@ -131,34 +125,28 @@ fn metaOf(message: proto.message.Message) Meta {
 /// Return one oldest-first page of committed messages and whether older messages remain.
 pub const History = struct { messages: []const proto.message.Message, has_more: bool };
 
-/// Return the message id shared by every message arm.
-fn messageId(message: proto.message.Message) u64 {
-    return switch (message) {
-        inline else => |m| m.id,
-    };
-}
+/// The messages one session loads, oldest-first: every message the model reads, and the newest view window. The caller gives `next` the allocator for one row.
+pub const Resident = struct {
+    rows: queries_gen.MessageResident.Rows,
 
-/// The newest messages of one session, oldest-first. The caller gives `next` the allocator for one row.
-pub const Tail = struct {
-    rows: queries_gen.MessageTail.Rows,
-
-    /// One message beside its stored size, which is the same serialization the transcript measures.
-    pub fn next(self: *Tail, scratch: std.mem.Allocator) !?transcript.Sized {
+    /// Parse the next row into `scratch`. It fails with `CorruptLog` when the row id and the body id differ.
+    pub fn next(self: *Resident, scratch: std.mem.Allocator) !?proto.message.Message {
         const row = (try self.rows.next(scratch)) orelse return null;
         const msg = try std.json.parseFromSliceLeaky(proto.message.Message, scratch, row.value.payload, .{});
-        if (messageId(msg) != row.value.message_id) return error.CorruptLog; // The row and body disagree.
-        return .{ .message = msg, .bytes = row.value.payload.len };
+        if (msg.id() != row.value.message_id) return error.CorruptLog; // The row and body disagree.
+        return msg;
     }
 
-    pub fn deinit(self: *Tail) void {
+    /// Finish the statement.
+    pub fn deinit(self: *Resident) void {
         self.rows.deinit();
     }
 };
 
-/// Open the newest `limit` committed messages oldest-first. The caller must `deinit` the tail.
-pub fn tail(db: *Database, session_id: [16]u8, limit: usize) !Tail {
-    std.debug.assert(limit > 0);
-    return .{ .rows = try db.queries.message_tail.rows(.{ .session_id = session_id, .limit = @as(i64, @intCast(limit)) }) };
+/// Open every message from the first kept id of the newest checkpoint, or from the first message without one, and the newest `window` messages. The caller must `deinit` the result.
+pub fn resident(db: *Database, session_id: [16]u8, window: usize) !Resident {
+    std.debug.assert(window > 0);
+    return .{ .rows = try db.queries.message_resident.rows(.{ .session_id = session_id, .window = @as(i64, @intCast(window)) }) };
 }
 
 /// Read a backward page from the log and return it oldest first; before_message_id is exclusive, 0 means the newest page, and the result borrows `arena`.
@@ -177,7 +165,7 @@ pub fn historyPage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, 
     var newest_first: std.ArrayList(proto.message.Message) = .empty;
     while (try it.next(arena)) |row| {
         const msg = try std.json.parseFromSliceLeaky(proto.message.Message, arena, row.value.payload, .{});
-        if (messageId(msg) != row.value.message_id) return error.CorruptLog; // The row and body disagree.
+        if (msg.id() != row.value.message_id) return error.CorruptLog; // The row and body disagree.
         try newest_first.append(arena, msg);
     }
 
@@ -188,6 +176,7 @@ pub fn historyPage(db: *Database, arena: std.mem.Allocator, session_id: [16]u8, 
 }
 
 const testing = std.testing;
+const zqlite = @import("zqlite");
 const session = @import("session.zig");
 const session_mod = @import("../session/session.zig");
 
@@ -227,26 +216,18 @@ test "a committed user then assistant message advances the summary" {
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
     const user_commit = try appendCommittedMessage(&db, a, sid, [_]u8{1} ** 16, 150, user);
     const assistant_commit = try appendCommittedMessage(&db, a, sid, [_]u8{2} ** 16, 160, assistant);
-    try testing.expectEqual(@as(u64, 1), user_commit.data.seq);
-    try testing.expectEqual(@as(u64, 2), assistant_commit.data.seq);
+    try testing.expectEqual(@as(u64, 1), user_commit.seq);
+    try testing.expectEqual(@as(u64, 2), assistant_commit.seq);
     try db.conn.execNoArgs("COMMIT");
 
     try testing.expectEqual(@as(i64, 2), try scalar(&db, "SELECT count(*) FROM messages"));
     try testing.expectEqual(@as(i64, 1), try scalar(&db, "SELECT count(*) FROM messages WHERE role = 'assistant'"));
 
-    var stored = try tail(&db, sid, 2);
-    defer stored.deinit();
-    var resident = session_mod.Session.init(testing.allocator, .bytes(sid));
-    defer resident.deinit();
-    resident.transcript.max_bytes = user_commit.bytes + assistant_commit.bytes - 1;
-    for ([_]Commit{ user_commit, assistant_commit }) |item| {
-        try testing.expectEqual(try transcript.messageBytes(item.data.message), item.bytes);
-        try testing.expectEqual((try stored.next(a)).?.bytes, item.bytes);
-        try resident.commit(item.data, item.bytes);
-    }
-    try testing.expectEqual(assistant_commit.bytes, resident.transcript.total_bytes);
-    try testing.expect(resident.transcript.has_more);
-    try testing.expectEqual(assistant_commit.data.message.id(), resident.finalized_message_id);
+    var folded = session_mod.Session.init(testing.allocator, .bytes(sid));
+    defer folded.deinit();
+    for ([_]proto.message.MessageCommittedData{ user_commit, assistant_commit }) |item| try folded.commit(item);
+    try testing.expectEqual(@as(usize, 2), folded.history.list.items.len);
+    try testing.expectEqual(assistant_commit.message.id(), folded.finalized_message_id);
 
     const snap = (try session.snapshot(&db, a, sid)).?;
     try testing.expectEqual(@as(u64, 2), snap.message_count);
@@ -427,7 +408,7 @@ test "historyPage returns a page oldest-first with has_more" {
     try testing.expect(!older.has_more);
 }
 
-test "tail streams the newest messages oldest-first" {
+test "a load reads the model range and the newest window" {
     var db = try Database.openTest();
     defer db.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -437,24 +418,35 @@ test "tail streams the newest messages oldest-first" {
     const sid = [_]u8{4} ** 16;
     try session.seedSession(&db, sid);
     try db.conn.execNoArgs("BEGIN IMMEDIATE");
-    for (1..4) |i| {
+    for (1..5) |i| {
         const n: u8 = @intCast(i);
         const m: proto.message.Message = .{ .user = .{ .id = i, .content = &.{}, .input_id = i, .time = .{ .created_at_ms = 100 + i } } };
         _ = try appendCommittedMessage(&db, a, sid, [_]u8{n} ** 16, 100 + i, m);
     }
     try db.conn.execNoArgs("COMMIT");
 
-    // The newest two arrive as 2 then 3, each parsed into a scratch the caller resets between rows.
-    var scratch = std.heap.ArenaAllocator.init(testing.allocator);
-    defer scratch.deinit();
-    var it = try tail(&db, sid, 2);
-    defer it.deinit();
-    var seen: [4]u64 = undefined;
-    var n: usize = 0;
-    while (try it.next(scratch.allocator())) |m| : (n += 1) {
-        seen[n] = messageId(m.message);
-        _ = scratch.reset(.retain_capacity);
-    }
-    try testing.expectEqual(2, n);
-    try testing.expectEqualSlices(u64, &.{ 2, 3 }, seen[0..n]);
+    const Load = struct {
+        fn ids(store: *Database, arena_: std.mem.Allocator, id: [16]u8, window: usize) ![]const u64 {
+            var it = try resident(store, id, window);
+            defer it.deinit();
+            var seen: std.ArrayList(u64) = .empty;
+            while (try it.next(arena_)) |m| try seen.append(arena_, m.id());
+            return seen.items;
+        }
+    };
+    // Without a checkpoint the model reads every message, so the window adds nothing.
+    try testing.expectEqualSlices(u64, &.{ 1, 2, 3, 4 }, try Load.ids(&db, a, sid, 2));
+    try db.conn.execNoArgs("BEGIN IMMEDIATE");
+    _ = try appendCommittedMessage(&db, a, sid, [_]u8{5} ** 16, 105, .{ .compaction = .{ .id = 5, .run_id = 1, .reason = .manual, .summary = "s", .first_kept_id = 3, .tokens_before = 2, .tokens_after = 1, .time = .{ .created_at_ms = 105 } } });
+    try db.conn.execNoArgs("COMMIT");
+    // The model range reaches below the window in the first load, and the window reaches below it in the second.
+    try testing.expectEqualSlices(u64, &.{ 3, 4, 5 }, try Load.ids(&db, a, sid, 1));
+    try testing.expectEqualSlices(u64, &.{ 2, 3, 4, 5 }, try Load.ids(&db, a, sid, 4));
+    // The row id is valid, but its payload names another message.
+    try db.conn.exec("UPDATE events SET payload = json_set(payload, '$.id', 99) WHERE session_id = ? AND seq = 3", .{zqlite.blob(&sid)});
+    var corrupt = try resident(&db, sid, 1);
+    defer corrupt.deinit();
+    while (corrupt.next(a)) |m| {
+        if (m == null) return error.TestExpectedError;
+    } else |err| try testing.expectEqual(error.CorruptLog, err);
 }

@@ -76,19 +76,21 @@ WHERE m.session_id = :session_id AND m.message_id < :cursor_message_id
 ORDER BY m.message_id DESC
 LIMIT :limit;
 
--- name: MessageTail :many
+-- name: MessageResident :many
 -- row-from: MessagePage
--- Return the newest `limit` committed messages oldest-first, so a load appends them in order.
+-- Return every message from the first kept id of the newest checkpoint, and the newest `window` messages, oldest-first, so a load appends them in order. Without a checkpoint the model reads every message.
 -- session_id: [16]u8!
--- limit: i64!
-SELECT t.message_id AS message_id, e.payload AS payload
-FROM (
-    SELECT session_id, message_id, seq FROM messages
-    WHERE session_id = :session_id
-    ORDER BY message_id DESC
-    LIMIT :limit
-) t JOIN events e ON e.session_id = t.session_id AND e.seq = t.seq
-ORDER BY t.message_id ASC;
+-- window: i64!
+SELECT m.message_id AS message_id, e.payload AS payload
+FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
+WHERE m.session_id = :session_id AND m.message_id >= MIN(COALESCE((
+    SELECT first_kept_id FROM messages WHERE session_id = :session_id AND role = 'compaction'
+    ORDER BY message_id DESC LIMIT 1
+), 0), COALESCE((
+    SELECT message_id FROM messages WHERE session_id = :session_id
+    ORDER BY message_id DESC LIMIT 1 OFFSET :window - 1
+), 0))
+ORDER BY m.message_id ASC;
 
 -- name: RunReportMessages :many
 -- Read only this run's committed assistant output, newest first.
@@ -145,26 +147,3 @@ FROM messages
 WHERE session_id = :session_id
     AND (role <> 'compaction' OR message_id = (SELECT message_id FROM head))
     AND message_id >= COALESCE((SELECT message_id FROM anchor), (SELECT kept FROM head), 0);
-
--- name: ContextMessages :many
--- row-from: MessagePage
--- Read the selected committed range in transcript order.
--- session_id: [16]u8!
--- first_message_id: u64!
--- stop_message_id: u64
-SELECT m.message_id, e.payload
-FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
-WHERE m.session_id = :session_id AND m.message_id >= :first_message_id
-AND m.message_id < COALESCE(:stop_message_id, 9223372036854775807)
-ORDER BY m.message_id ASC;
-
--- name: NewestCompaction :optional
--- Read the newest compaction row, which stands for every message it covers.
--- session_id: [16]u8!
--- message_id: u64!
--- payload: []const u8!
-SELECT m.message_id, e.payload
-FROM messages m JOIN events e ON e.session_id = m.session_id AND e.seq = m.seq
-WHERE m.session_id = :session_id AND m.role = 'compaction'
-ORDER BY m.message_id DESC
-LIMIT 1;

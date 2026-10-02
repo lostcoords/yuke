@@ -22,8 +22,7 @@ INSERT INTO events(session_id, seq, event_id, committed_at_ms, name, payload)
 -- run_id_high: u64!
 -- input_id_high: u64!
 -- config_rev_high: u64!
--- message_count: u64!
-SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high, message_count
+SELECT seq_high, message_id_high, run_id_high, input_id_high, config_rev_high
     FROM sessions WHERE id = :id;
 
 -- name: AllocRunId :one

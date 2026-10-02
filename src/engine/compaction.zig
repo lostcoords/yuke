@@ -139,17 +139,19 @@ fn summarize(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: ro
     const sid = slot.sessionId().raw;
     const db = engine.deps.db;
     const budget = held.budget;
-    const head = try context.readHead(engine.deps.gpa, arena, db, sid);
+    const history = &(engine.sessions.get(slot.sessionId()) orelse return error.UnknownSession).history;
+    const head = history.head();
     // A small window takes a small tail, so one compaction always reclaims a useful share of it.
     const tail_target = @max(1, @min(default_keep_recent_tokens, budget.window / 10));
-    var cut = (try selectCut(engine.deps.gpa, db, sid, budget.model, if (head) |h| h.from_id else 0, tail_target)) orelse
+    var cut = (try selectCut(engine.deps.gpa, db, sid, budget.model, history.keep_from, tail_target)) orelse
         return .{ .skipped = .{ .reason = .too_few_messages } };
-    if (head) |h| cut.tokens_before += token_estimate.ofSummary(h.message.compaction.summary);
+    if (head) |h| cut.tokens_before += token_estimate.ofSummary(h.summary);
     // A tail that alone reaches the compaction point would compact again at once.
     if (budget.fixed + cut.tokens_kept >= budget.compact_at) return error.TurnTooLarge;
     // The record states the count that the gauge showed before the summary.
     const count_before = try context.count(engine.deps.gpa, db, sid, budget.model, budget.fixed);
-    const covered = try context.collect(engine.deps.gpa, arena, db, sid, head, cut.first_kept_id);
+    // The summary request copies the covered range before the checkpoint commits and moves the history.
+    const covered = try history.model(arena, cut.first_kept_id);
     // The summary reads no blob, so a text-only modality set turns every attachment into its note.
     const built = (try provider.request_builder.build(arena, covered, .{
         .target = .{ .protocol = held.route.route.protocol, .model = slot.config.model },
@@ -433,7 +435,7 @@ test "a compaction commits one checkpoint and ends its run" {
     try testing.expectEqual(@as(?u64, null), snapshot.open_run_id);
 
     // The next request reads the checkpoint first, then the tail the cut kept.
-    const projected = try context.project(testing.allocator, a, &f.db, TaskFixture.sid, unmeasured);
+    const projected = try context.project(testing.allocator, a, &f.db, try f.engine.activate(.bytes(TaskFixture.sid)), unmeasured);
     try testing.expectEqual(@as(usize, 3), projected.messages.len);
     try testing.expectEqual(@as(u64, 5), projected.messages[0].compaction.id);
     try testing.expectEqual(@as(u64, 3), projected.messages[1].id());
@@ -462,8 +464,8 @@ test "the compaction record starts from the provider count of the session model"
     try seedCommitted(&f.db, a, TaskFixture.sid, 4, answer);
     try testing.expect(try f.run(.manual) == .compacted);
     // The provider input holds messages 1 to 3 and the prompt, so only the answer adds to it.
-    const head = (try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid)).?;
-    try testing.expectEqual(50_000 + token_estimate.ofMessage(answer).tokens, head.message.compaction.tokens_before);
+    const head = (try newestCheckpoint(&f)).?;
+    try testing.expectEqual(50_000 + token_estimate.ofMessage(answer).tokens, head.tokens_before);
 }
 
 test "a listed session that is not resident shows its count" {
@@ -617,6 +619,11 @@ test "the session starts the compaction it held once its run ends" {
     try testing.expectEqual(@as(i64, 1), row.int(0));
 }
 
+/// The newest checkpoint of the loaded session, or null without one.
+fn newestCheckpoint(f: *TaskFixture) !?proto.message.CompactionMessage {
+    return (try f.engine.activate(.bytes(TaskFixture.sid))).history.head();
+}
+
 fn sendAndWait(f: *TaskFixture, arena: std.mem.Allocator, text: []const u8) !void {
     var gate: ?runs.Launch = null;
     _ = try commands.sessionSendInputForRpc(&f.engine, arena, .{
@@ -638,16 +645,15 @@ test "a send runs each context statement a fixed number of times" {
     f.engine.deps.route_transport = capture.transport();
     const c = zqlite.c;
     const statements = .{
-        f.db.queries.newest_compaction.statement.statement.stmt,
         f.db.queries.context_count.statement.statement.stmt,
-        f.db.queries.context_messages.statement.statement.stmt,
+        f.db.queries.message_resident.statement.statement.stmt,
     };
     inline for (statements) |stmt| _ = c.sqlite3_stmt_status(stmt, c.SQLITE_STMTSTATUS_RUN, 1);
     try sendAndWait(&f, a, "one context read");
     try testing.expectEqual(@as(usize, 1), capture.requests.items.len);
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[0], "one context read") != null);
-    // The build counts once, and the gauge reuses that count until the commit clears it.
-    const runs_of = [_]c_int{ 1, 2, 1 };
+    // The send loads the idle session once, and each round then reads its resident history. The build counts once, and the gauge reuses that count until the commit clears it.
+    const runs_of = [_]c_int{ 2, 1 };
     inline for (statements, runs_of) |stmt, want| try testing.expectEqual(want, c.sqlite3_stmt_status(stmt, c.SQLITE_STMTSTATUS_RUN, 0));
 }
 
@@ -678,7 +684,7 @@ test "automatic compaction preserves the exact tail and the next assistant id" {
     try testing.expectEqual(@as(u64, 7), page.messages[6].assistant.id);
     try testing.expectEqual(page.messages[5].compaction.run_id, page.messages[6].assistant.run_id);
     try testing.expectEqual(@as(?u64, null), (try database.session.snapshot(&f.db, a, TaskFixture.sid)).?.open_run_id);
-    const projected = try context.project(testing.allocator, a, &f.db, TaskFixture.sid, .{ .window = 20_000, .fixed = 0, .compact_at = 11_000, .model = "mock/m" });
+    const projected = try context.project(testing.allocator, a, &f.db, try f.engine.activate(.bytes(TaskFixture.sid)), .{ .window = 20_000, .fixed = 0, .compact_at = 11_000, .model = "mock/m" });
     try testing.expectEqual(@as(usize, 5), projected.messages.len);
     try testing.expectEqualSlices(u8, page.messages[3].assistant.content[0].text.text, projected.messages[2].assistant.content[0].text.text);
 }
@@ -875,8 +881,8 @@ test "an incomplete or empty summary leaves the checkpoint unchanged" {
             changed;
         const outcome = try f.run(.manual);
         try testing.expect(outcome == .failed);
-        const head = (try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid)).?;
-        try testing.expectEqual(@as(u64, 5), head.message.compaction.id);
+        const head = (try newestCheckpoint(&f)).?;
+        try testing.expectEqual(@as(u64, 5), head.id);
         const page = try database.message.historyPage(&f.db, a, TaskFixture.sid, 0, 20);
         try testing.expectEqual(@as(usize, 7), page.messages.len);
     }
@@ -901,7 +907,7 @@ test "oversized summary sources and tails fail before a model request" {
         try testing.expect(outcome == .failed);
         try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, outcome.failed.code);
         try testing.expectEqual(@as(usize, 0), capture.requests.items.len);
-        try testing.expectEqual(@as(?context.Head, null), try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid));
+        try testing.expect(try newestCheckpoint(&f) == null);
     }
 }
 
@@ -951,7 +957,7 @@ test "a summary that grows the context does not replace the checkpoint" {
     const outcome = try f.run(.manual);
     try testing.expect(outcome == .failed);
     try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, outcome.failed.code);
-    try testing.expectEqual(@as(?context.Head, null), try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid));
+    try testing.expect(try newestCheckpoint(&f) == null);
 }
 
 test "a cancel interrupts a blocked summary and leaves the history intact" {
@@ -1003,7 +1009,7 @@ test "a cancel interrupts a blocked summary and leaves the history intact" {
     try testing.expect(try f.run(.manual) == .canceled);
     try testing.expect(blocked.closed);
     try testing.expect(!blocked.timed_out);
-    try testing.expectEqual(@as(?context.Head, null), try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid));
+    try testing.expect(try newestCheckpoint(&f) == null);
     try testing.expectEqual(@as(usize, 4), (try database.message.historyPage(&f.db, a, TaskFixture.sid, 0, 10)).messages.len);
 }
 
@@ -1023,17 +1029,17 @@ test "repeated compaction merges the prior summary and charges only the active c
     try seedMessage(&f.db, a, TaskFixture.sid, 7, .assistant, 90_000);
     const before = try context.count(testing.allocator, &f.db, TaskFixture.sid, "mock/m", 0);
     try testing.expect(try f.run(.manual) == .compacted);
-    const head = (try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid)).?;
-    try testing.expectEqual(@as(u64, 8), head.message.compaction.id);
-    try testing.expectEqual(@as(u64, 6), head.from_id);
+    const head = (try newestCheckpoint(&f)).?;
+    try testing.expectEqual(@as(u64, 8), head.id);
+    try testing.expectEqual(@as(u64, 6), head.first_kept_id);
     // The record and the count share one scale: the record drops what the new checkpoint removed.
     const after = try context.count(testing.allocator, &f.db, TaskFixture.sid, "mock/m", 0);
-    try testing.expectEqual(before - after, head.message.compaction.tokens_before - head.message.compaction.tokens_after);
+    try testing.expectEqual(before - after, head.tokens_before - head.tokens_after);
     // The merge call carries the wrapped earlier summary and the merge instruction the stub answered.
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "<context_summary>") != null);
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "Merge the context summary") != null);
     try testing.expect(std.mem.indexOf(u8, capture.requests.items[1], "Hello from the mock provider.") != null);
-    const projected = try context.project(testing.allocator, a, &f.db, TaskFixture.sid, unmeasured);
+    const projected = try context.project(testing.allocator, a, &f.db, try f.engine.activate(.bytes(TaskFixture.sid)), unmeasured);
     try testing.expectEqual(@as(usize, 3), projected.messages.len);
     try testing.expectEqual(@as(u64, 6), projected.messages[1].id());
     try testing.expectEqual(@as(u64, 7), projected.messages[2].id());
@@ -1078,5 +1084,5 @@ test "a smaller summary that still exceeds the request budget does not commit" {
     try testing.expect(outcome == .failed);
     try testing.expectEqual(@as(usize, 1), capture.requests.items.len);
     try testing.expectEqual(proto.enums.RunErrorCode.context_overflow, outcome.failed.code);
-    try testing.expectEqual(@as(?context.Head, null), try context.readHead(testing.allocator, a, &f.db, TaskFixture.sid));
+    try testing.expect(try newestCheckpoint(&f) == null);
 }

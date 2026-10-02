@@ -4639,13 +4639,6 @@ export interface Session {
   readonly name?: string;
 }
 
-/** This payload describes `transcript.truncated`. */
-export interface TranscriptTruncatedData {
-  readonly session_id: SessionId;
-  readonly seq: Seq;
-  readonly first_removed_id: MessageId;
-}
-
 /** The start and end times of one run. Every run that ends has started. */
 export interface RunTiming {
   readonly started_at_ms: number;
@@ -5066,8 +5059,6 @@ export type BroadcastName =
   | "run.done"
   /** A session's run config changed. */
   | "config.changed"
-  /** The engine truncated older transcript messages. */
-  | "transcript.truncated"
   /** A new streaming message started. */
   | "message.started"
   /** The engine discarded an unfinished message. */
@@ -5469,7 +5460,6 @@ export type BroadcastData =
   | RunStartedData
   | RunDoneData
   | ConfigChangedData
-  | TranscriptTruncatedData
   | MessageStartedData
   | MessageDiscardedData
   | MessagePartAddedData
@@ -5623,8 +5613,6 @@ export interface Broadcasts {
   "run.done": RunDoneData;
   /** A session's run config changed. */
   "config.changed": ConfigChangedData;
-  /** The engine truncated older transcript messages. */
-  "transcript.truncated": TranscriptTruncatedData;
   /** A new streaming message started. */
   "message.started": MessageStartedData;
   /** The engine discarded an unfinished message. */

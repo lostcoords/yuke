@@ -41,7 +41,6 @@ pub const Phase = enum {
     boot,
     commit,
     commit_serialize,
-    commit_size,
     agents_open,
     agents_activity,
     agents_burst,

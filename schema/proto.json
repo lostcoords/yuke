@@ -304,12 +304,6 @@
       "direction": "serverToClient"
     },
     {
-      "name": "transcript.truncated",
-      "doc": "The engine truncated older transcript messages.",
-      "params": "TranscriptTruncatedData",
-      "direction": "serverToClient"
-    },
-    {
       "name": "message.started",
       "doc": "A new streaming message started.",
       "params": "MessageStartedData",
@@ -2477,27 +2471,6 @@
       ]
     },
     {
-      "name": "TranscriptTruncatedData",
-      "doc": "This payload describes `transcript.truncated`.",
-      "fields": [
-        {
-          "name": "session_id",
-          "type": "SessionId",
-          "presence": "required"
-        },
-        {
-          "name": "seq",
-          "type": "Seq",
-          "presence": "required"
-        },
-        {
-          "name": "first_removed_id",
-          "type": "MessageId",
-          "presence": "required"
-        }
-      ]
-    },
-    {
       "name": "RunTiming",
       "doc": "The start and end times of one run. Every run that ends has started.",
       "fields": [
@@ -4068,9 +4041,6 @@
           "type": "ConfigChangedData"
         },
         {
-          "type": "TranscriptTruncatedData"
-        },
-        {
           "type": "MessageStartedData"
         },
         {
@@ -4243,11 +4213,6 @@
           "name": "config.changed",
           "wire": "config.changed",
           "doc": "A session's run config changed."
-        },
-        {
-          "name": "transcript.truncated",
-          "wire": "transcript.truncated",
-          "doc": "The engine truncated older transcript messages."
         },
         {
           "name": "message.started",

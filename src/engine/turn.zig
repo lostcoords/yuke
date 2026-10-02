@@ -299,12 +299,14 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, diagn
     const resolved = engine.deps.providers.merged.resolveModel(model) orelse return error.UnknownModel;
 
     const held = try round_request.snapshot(arena, engine, slot, resolved);
+    // An active run keeps its session resident.
+    const rt = engine.sessions.get(slot.sessionId()).?;
     // The provider refused the last request as too large, so this build compacts before it counts.
     const projected = if (slot.progress.overflow == .compact) compacted: {
         slot.progress.overflow = .spent;
-        break :compacted try compactAndProject(engine, arena, slot, held, diagnostics);
-    } else request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget) catch |err| switch (err) {
-        error.ContextHistoryTooLarge => try compactAndProject(engine, arena, slot, held, diagnostics),
+        break :compacted try compactAndProject(engine, arena, slot, rt, held, diagnostics);
+    } else request_context.project(engine.deps.gpa, arena, engine.deps.db, rt, held.budget) catch |err| switch (err) {
+        error.ContextHistoryTooLarge => try compactAndProject(engine, arena, slot, rt, held, diagnostics),
         else => return err,
     };
     const request = try round_request.prepare(arena, engine, slot, held, projected);
@@ -312,9 +314,9 @@ fn roundRequest(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, diagn
 }
 
 /// Summarize the oldest history, then project the request again under the same budget.
-fn compactAndProject(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, held: round_request.Snapshot, diagnostics: *ai.Diagnostics) !request_context.Projection {
+fn compactAndProject(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, rt: *const Session, held: round_request.Snapshot, diagnostics: *ai.Diagnostics) !request_context.Projection {
     try compaction.compactForRequest(engine, arena, slot, held, diagnostics);
-    return request_context.project(engine.deps.gpa, arena, engine.deps.db, slot.sessionId().raw, held.budget);
+    return request_context.project(engine.deps.gpa, arena, engine.deps.db, rt, held.budget);
 }
 
 /// Open the response and stream it into the draft, in a child so a cancel can interrupt a blocked read.
@@ -1076,7 +1078,7 @@ test "a capped tool round reloads with an assistant error and failed outcome" {
 
     const restored = try fixture.engine.activate(.bytes(StreamerFixture.session_id));
     var saved_message: ?proto.message.Message = null;
-    for (restored.transcript.list.items) |item| if (item.message == .assistant) {
+    for (restored.history.list.items) |item| if (item.message == .assistant) {
         saved_message = item.message;
         break;
     };
@@ -1328,7 +1330,7 @@ test "a build hook can discard the live registry and tools before the request se
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const held = try round_request.snapshot(arena.allocator(), &f.engine, f.slot, .{ .provider = row, .model = model });
-    const projected = try request_context.project(std.testing.allocator, arena.allocator(), &f.db, f.slot.sessionId().raw, held.budget);
+    const projected = try request_context.project(std.testing.allocator, arena.allocator(), &f.db, f.engine.sessions.get(f.slot.sessionId()).?, held.budget);
     var prepared = try round_request.prepare(arena.allocator(), &f.engine, f.slot, held, projected);
     defer prepared.deinit();
     try std.testing.expect(state.discarded);

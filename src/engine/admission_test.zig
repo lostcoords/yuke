@@ -434,7 +434,7 @@ test "child completion stays queued across an active parent interrupt" {
     try f.engine.turn_tasks.await(f.engine.deps.io);
     const parent = f.engine.sessions.get(f.parent).?;
     try testing.expectEqual(@as(usize, 1), parent.queueDepth());
-    try testing.expectEqual(@as(usize, 1), parent.transcript.list.items.len);
+    try testing.expectEqual(@as(usize, 1), parent.history.list.items.len);
     const pending = (try database.input.list(&f.db, a, f.parent.raw))[0].input;
     try testing.expectEqual(child.session.id, pending.source.?.child_report.session_id);
     try testing.expectEqual(proto.enums.RunErrorCode.unknown_model, pending.source.?.child_report.outcome.failed.code);

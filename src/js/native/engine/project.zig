@@ -5,7 +5,6 @@ const proto = @import("proto");
 const utf8 = @import("../../../utf8.zig");
 const domain_session = @import("../../../session/session.zig");
 const domain_draft = @import("../../../session/draft.zig");
-const transcript = @import("../../../session/transcript.zig");
 
 const SessionId = proto.ids.SessionId;
 const paging = @import("paging.zig");
@@ -13,10 +12,10 @@ const request_builder = @import("../../../provider/request_builder.zig");
 
 const max_page_bytes = paging.max_page_bytes;
 
-/// Write the message ids and roles of one session. The list is small, so it is not paged.
+/// Write the message ids and roles of the resident history. Each entry is a few bytes, so the list is not paged.
 pub fn writeOutline(w: *std.Io.Writer, s: *domain_session.Session) !void {
     try w.writeAll("{\"messages\":[");
-    for (s.transcript.list.items, 0..) |entry, i| {
+    for (s.history.list.items, 0..) |entry, i| {
         if (i > 0) try w.writeByte(',');
         const role = switch (entry.message) {
             .user => "user",
@@ -319,7 +318,7 @@ pub fn writeMessageParts(w: *std.Io.Writer, s: *domain_session.Session, mid: pro
         }
         return w.writeByte(']');
     };
-    for (s.transcript.list.items) |entry| {
+    for (s.history.list.items) |entry| {
         if (entry.message.id() != mid) continue;
         switch (entry.message) {
             .assistant => |a| for (a.content) |p| {
@@ -517,19 +516,12 @@ test "many huge parts each stay inside the part budget and none is dropped" {
         .content = content,
         .time = .{ .created_at_ms = 1 },
     } }};
-    const structure_bytes = try transcript.messageBytes(messages[0]);
-    for (content) |*part| {
-        part.tool.arguments = huge[0..1];
-        part.tool.state.completed.output = huge[0..1];
-    }
-    try testing.expectEqual(structure_bytes + part_count * 2, try transcript.messageBytes(messages[0]));
     for (content) |*part| {
         part.tool.arguments = huge;
         part.tool.state.completed.output = huge;
     }
-    // ASCII x needs no JSON escape, so its byte count adds directly to the measured structure.
-    try sess.transcript.appendSized(messages[0], structure_bytes + part_count * 2 * huge.len);
-    sess.sealHistory(1, false);
+    try sess.history.append(messages[0]);
+    sess.sealHistory(1);
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
@@ -669,7 +661,7 @@ test "the outline carries report and skill identity without their bodies" {
     try std.testing.expectEqualStrings("pdf", skill.get("skill_name").?.string);
     try std.testing.expect(!skill.contains("source"));
     try std.testing.expect(std.mem.indexOf(u8, buffer.written(), body) == null);
-    const stored = session.transcript.list.items[0].message;
+    const stored = session.history.list.items[0].message;
     const built = try request_builder.build(a, &.{stored}, .{});
     defer a.free(built.blocks);
     defer a.free(built.added);
@@ -760,11 +752,11 @@ test "a compaction projects its summary as one text part" {
     try session.apply(.{ .message_committed_data = .{
         .session_id = session.id,
         .seq = 1,
-        .message = .{ .compaction = .{ .id = 1, .run_id = 1, .reason = .manual, .summary = "the work so far", .first_kept_id = 1, .tokens_before = 9, .tokens_after = 3, .time = .{ .created_at_ms = 1 } } },
+        .message = .{ .compaction = .{ .id = 2, .run_id = 1, .reason = .manual, .summary = "the work so far", .first_kept_id = 1, .tokens_before = 9, .tokens_after = 3, .time = .{ .created_at_ms = 1 } } },
     } });
     var buffer: std.Io.Writer.Allocating = .init(a);
     defer buffer.deinit();
-    try writeMessageParts(&buffer.writer, &session, 1, null, null);
+    try writeMessageParts(&buffer.writer, &session, 2, null, null);
     try std.testing.expectEqualStrings("[{\"type\":\"text\",\"id\":0,\"text\":\"the work so far\"}]", buffer.written());
 }
 

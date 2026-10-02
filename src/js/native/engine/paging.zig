@@ -60,7 +60,7 @@ pub fn partTextOf(s: *domain_session.Session, mid: u64, part_id: u64, field: []c
         }
         return null;
     };
-    for (s.transcript.list.items) |entry| {
+    for (s.history.list.items) |entry| {
         if (entry.message.id() != mid) continue;
         switch (entry.message) {
             .assistant => |a| for (a.content) |p| {
@@ -93,8 +93,8 @@ const testing = std.testing;
 
 /// Seed a test session with committed messages the way hydrate does.
 pub fn seedHistory(sess: *domain_session.Session, messages: []const proto.message.Message) !void {
-    for (messages) |m| try sess.transcript.append(m);
-    sess.sealHistory(1, false);
+    for (messages) |m| try sess.history.append(m);
+    sess.sealHistory(1);
 }
 
 test "a page limit always holds one whole character" {

@@ -94,10 +94,3 @@ pub const Session = struct {
     origin: session.SessionOrigin,
     name: ?[]const u8 = null,
 };
-
-/// This payload describes `transcript.truncated`.
-pub const TranscriptTruncatedData = struct {
-    session_id: ids.SessionId,
-    seq: ids.Seq,
-    first_removed_id: ids.MessageId,
-};
