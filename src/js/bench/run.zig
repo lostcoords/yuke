@@ -100,7 +100,8 @@ pub fn sqliteBytes() struct { live: i64, peak: i64 } {
 fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: ai.transport.Request, _: *ai.transport.AttemptInfo) !ai.transport.ResponseBody {
     const self: *Run = @ptrCast(@alignCast(ctx));
     if (self.served > self.rounds) return error.UnexpectedRequest;
-    self.last_body_bytes = request.body.len;
+    self.last_body_bytes = 0;
+    for (request.body) |part| self.last_body_bytes += part.len;
     const reader = try arena.create(ai.testing.ReplayReader);
     reader.* = .{ .bytes = if (self.served == self.rounds) ai.testing.canned_reply else self.replies[self.served] };
     self.served += 1;

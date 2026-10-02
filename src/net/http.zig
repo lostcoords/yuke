@@ -124,7 +124,7 @@ pub const Client = struct {
         };
         defer request.deinit();
 
-        try ai.transport.sendBody(&request, body);
+        try ai.transport.sendBody(&request, &.{body});
         var response = try request.receiveHead(&.{});
 
         var transfer: [4096]u8 = undefined;

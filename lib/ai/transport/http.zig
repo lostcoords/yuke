@@ -170,7 +170,7 @@ const HttpBody = struct {
     }
 
     /// Open the connection, send the body, and read the head. A failure releases the request.
-    fn exchangeHead(self: *HttpBody, client: *std.http.Client, uri: std.Uri, headers: []const std.http.Header, body: []const u8, user_agent: []const u8, info: *transport.AttemptInfo) anyerror!void {
+    fn exchangeHead(self: *HttpBody, client: *std.http.Client, uri: std.Uri, headers: []const std.http.Header, body: []const []const u8, user_agent: []const u8, info: *transport.AttemptInfo) anyerror!void {
         self.request = client.request(.POST, uri, .{
             .redirect_behavior = .not_allowed, // Never resend the key to another origin.
             .keep_alive = false, // The client sends one request. A mid-stream connection never returns to the pool.
@@ -294,12 +294,14 @@ fn mapExchange(conn: ?*std.http.Client.Connection, err: std.http.Client.Request.
     };
 }
 
-/// Send `body` after the head, then flush the connection. `std.http.Client.Request.sendBodyComplete` uses the body as its buffer and moves it on a partial write, so this writes with no buffer and the caller bytes stay the same.
+/// Send the body parts in order after the head, then flush the connection. `std.http.Client.Request.sendBodyComplete` uses the body as its buffer and moves it on a partial write, so this writes with no buffer and the caller bytes stay the same.
 /// It fails when the connection cannot take the bytes.
-pub fn sendBody(request: *std.http.Client.Request, body: []const u8) std.Io.Writer.Error!void {
-    request.transfer_encoding = .{ .content_length = body.len };
+pub fn sendBody(request: *std.http.Client.Request, parts: []const []const u8) std.Io.Writer.Error!void {
+    var len: usize = 0;
+    for (parts) |part| len += part.len;
+    request.transfer_encoding = .{ .content_length = len };
     var body_writer = try request.sendBodyUnflushed(&.{});
-    try body_writer.writer.writeAll(body);
+    for (parts) |part| try body_writer.writer.writeAll(part);
     try body_writer.endUnflushed();
     // The body writer flushes only the TLS layer, so the connection flush sends the last record to the socket.
     try request.connection.?.flush();
@@ -446,7 +448,7 @@ fn runClient(out: *ClientOut) !void {
         .{ .name = "User-Agent", .value = "pinned/9" },
     };
     var info: transport.AttemptInfo = .{};
-    const opened = http.transportFor().open(arena.allocator(), .{ .url = url, .headers = &headers, .body = "" }, &info);
+    const opened = http.transportFor().open(arena.allocator(), .{ .url = url, .headers = &headers, .body = &.{} }, &info);
     out.status = info.status;
     if (info.request_id) |id| try out.request_id.appendSlice(out.gpa, id);
     if (info.body) |text| try out.error_body.appendSlice(out.gpa, text);
@@ -575,13 +577,12 @@ test "invalid headers return an error before std HTTP sees them" {
     defer client.deinit();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    var body: [0]u8 = .{};
     var info: transport.AttemptInfo = .{};
 
     try testing.expectError(Error.InvalidHeaders, client.transportFor().open(arena.allocator(), .{
         .url = "https://example.com/v1/messages",
         .headers = &.{.{ .name = "bad:name", .value = "x" }},
-        .body = &body,
+        .body = &.{},
     }, &info));
     try testing.expectEqual(transport.AttemptInfo.Delivery.definitely_unsent, info.delivery);
 }

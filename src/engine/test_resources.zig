@@ -210,7 +210,7 @@ pub const Capture = struct {
     fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: ai.transport.Request, _: *ai.transport.AttemptInfo) !ai.transport.ResponseBody {
         const self: *Capture = @ptrCast(@alignCast(ctx));
         const index = self.requests.items.len;
-        try self.requests.append(self.arena, try self.arena.dupe(u8, request.body));
+        try self.requests.append(self.arena, try std.mem.concat(self.arena, u8, request.body));
         const copied = try self.arena.alloc(ai.Header, request.headers.len);
         for (request.headers, 0..) |h, i| copied[i] = try h.cloneLeaky(self.arena);
         try self.headers.append(self.arena, copied);

@@ -85,14 +85,14 @@ pub const Result = struct {
 /// Own the request bytes and the route data it needs, so a retry can resend it unchanged.
 pub const PreparedRequest = struct {
     arena: std.heap.ArenaAllocator,
-    /// The serialized body. The arena's child allocator owns it, so a body that grows takes no outgrown copy.
-    body: std.ArrayList(u8),
+    /// The history that a one-shot call owns. A call with a caller history borrows that history instead.
+    owned: request_wire.History = .{},
     protocol: types.Protocol,
     transport_request: transport.Request,
 
     /// Release the request bytes and route data.
     pub fn deinit(self: *PreparedRequest) void {
-        self.body.deinit(self.arena.child_allocator);
+        self.owned.deinit(self.arena.child_allocator);
         self.arena.deinit();
         self.* = undefined;
     }
@@ -194,7 +194,7 @@ pub const Response = struct {
 pub fn openWithTransport(gpa: std.mem.Allocator, route_transport: transport.Transport, model: Model, request: Request, diagnostics: ?*Diagnostics) !Response {
     const state = try gpa.create(Response.State);
     errdefer gpa.destroy(state);
-    state.prepared = try prepare(gpa, model, request);
+    state.prepared = try prepare(gpa, model, request, null);
     errdefer state.prepared.deinit();
     state.attempt = .init(gpa);
     errdefer state.attempt.deinit();
@@ -220,25 +220,27 @@ pub const Diagnostics = struct {
 };
 
 /// Use `gpa` to own the validated request and route data until `PreparedRequest.deinit` runs.
-pub fn prepare(gpa: std.mem.Allocator, model: Model, request: Request) !PreparedRequest {
+/// A `history` from the caller keeps the encoded elements for the next request, and the body borrows it until then.
+pub fn prepare(gpa: std.mem.Allocator, model: Model, request: Request, history: ?*request_wire.History) !PreparedRequest {
     if (request.blocks.len == 0) return error.EmptyRequest;
     var call_arena: std.heap.ArenaAllocator = .init(gpa);
     errdefer call_arena.deinit();
     const arena = call_arena.allocator();
 
-    var body = try requestBody(gpa, arena, model, request);
-    errdefer body.deinit(gpa);
+    var owned: request_wire.History = .{};
+    errdefer owned.deinit(gpa);
+    const body = try requestBody(gpa, arena, model, request, history orelse &owned);
     // `route.request` copies the URL and every header, so the route and the credential may change.
-    const http_request = try route.request(arena, &model.route, model.credential, request.options.session_id, body.items);
+    const http_request = try route.request(arena, &model.route, model.credential, request.options.session_id, body);
     return .{
         .arena = call_arena,
-        .body = body,
+        .owned = owned,
         .protocol = model.route.protocol,
         .transport_request = http_request,
     };
 }
 
-fn requestBody(gpa: std.mem.Allocator, arena: std.mem.Allocator, model: Model, request: Request) !std.ArrayList(u8) {
+fn requestBody(gpa: std.mem.Allocator, arena: std.mem.Allocator, model: Model, request: Request, history: *request_wire.History) ![]const []const u8 {
     const options = request.options;
     const protocol = model.route.protocol;
     const cache = route.CachePolicy.breakpoint(model.route.cache, protocol, model.caps.cache_breakpoint);
@@ -267,7 +269,7 @@ fn requestBody(gpa: std.mem.Allocator, arena: std.mem.Allocator, model: Model, r
         .top_p = options.top_p,
         .tool_choice = options.tool_choice,
     };
-    return request_wire.serialize(gpa, arena, value, request.blocks);
+    return request_wire.serialize(gpa, arena, value, request.blocks, history);
 }
 
 const Collector = struct {
@@ -551,12 +553,11 @@ test "prepare and a stream split the request lifecycle" {
     var prepared = try prepare(std.testing.allocator, testModel(.anthropic_messages), .{
         .blocks = &.{.{ .role = .user, .value = .{ .text = "hello" } }},
         .options = .{ .max_output_tokens = 1 },
-    });
+    }, null);
     defer prepared.deinit();
 
     try std.testing.expectEqual(types.Protocol.anthropic_messages, prepared.protocol);
     try std.testing.expect(std.mem.endsWith(u8, prepared.transport_request.url, "/messages"));
-    try std.testing.expect(prepared.transport_request.body.len > 0);
 
     var attempt: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer attempt.deinit();
@@ -572,17 +573,17 @@ test "prepare and a stream split the request lifecycle" {
 
 test "a request without a limit takes the model limit, and an absent one leaves the endpoint default" {
     const blocks = [_]ir.Block{.{ .role = .user, .value = .{ .text = "hello" } }};
-    var from_model = try prepare(std.testing.allocator, testModel(.anthropic_messages), .{ .blocks = &blocks });
+    var from_model = try prepare(std.testing.allocator, testModel(.anthropic_messages), .{ .blocks = &blocks }, null);
     defer from_model.deinit();
-    try std.testing.expect(std.mem.indexOf(u8, from_model.transport_request.body, "\"max_tokens\":64") != null);
+    try std.testing.expect(std.mem.indexOf(u8, try std.mem.concat(from_model.arena.allocator(), u8, from_model.transport_request.body), "\"max_tokens\":64") != null);
     var bare = testModel(.openai_chat);
     bare.limits = .{};
-    var omitted = try prepare(std.testing.allocator, bare, .{ .blocks = &blocks });
+    var omitted = try prepare(std.testing.allocator, bare, .{ .blocks = &blocks }, null);
     defer omitted.deinit();
-    try std.testing.expect(std.mem.indexOf(u8, omitted.transport_request.body, "max_tokens") == null);
+    try std.testing.expect(std.mem.indexOf(u8, try std.mem.concat(omitted.arena.allocator(), u8, omitted.transport_request.body), "max_tokens") == null);
     // Anthropic has no endpoint default, so a model without a limit needs one in the request.
     bare.route.protocol = .anthropic_messages;
-    try std.testing.expectError(error.InvalidRequest, prepare(std.testing.allocator, bare, .{ .blocks = &blocks }));
+    try std.testing.expectError(error.InvalidRequest, prepare(std.testing.allocator, bare, .{ .blocks = &blocks }, null));
 }
 
 test "prepare owns route and credential strings" {
@@ -598,7 +599,7 @@ test "prepare owns route and credential strings" {
             .headers = &.{.{ .name = "x-test", .value = &header_value }},
         },
         .credential = .{ .api_key = &token },
-    }, .{ .blocks = &.{.{ .role = .user, .value = .{ .text = "hello" } }} });
+    }, .{ .blocks = &.{.{ .role = .user, .value = .{ .text = "hello" } }} }, null);
     defer prepared.deinit();
 
     @memset(&base_url, 'x');

@@ -1334,7 +1334,7 @@ test "a build hook can discard the live registry and tools before the request se
     var prepared = try round_request.prepare(arena.allocator(), &f.engine, f.slot, held, projected);
     defer prepared.deinit();
     try std.testing.expect(state.discarded);
-    const body = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, prepared.transport_request.body, .{});
+    const body = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, try std.mem.concat(arena.allocator(), u8, prepared.transport_request.body), .{});
     defer body.deinit();
     try std.testing.expectEqualStrings("model-before", body.value.object.get("model").?.string);
     const tool = body.value.object.get("tools").?.array.items[0].object.get("function").?;

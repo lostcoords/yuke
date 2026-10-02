@@ -11,6 +11,13 @@ const default_instructions = "You are a helpful assistant.";
 
 /// Write the OpenAI Responses request body for `request` and `blocks`.
 pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block) ir.SerializeError!void {
+    try writeHead(w, request);
+    try writeItems(w, request, blocks, 0, false, null);
+    try w.writeAll("]}");
+}
+
+/// Write the request up to the open `input` array.
+pub fn writeHead(w: *std.Io.Writer, request: ir.Request) ir.SerializeError!void {
     const wire = request.wire.openai_responses;
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
@@ -22,9 +29,6 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
 
     // A stable key sends every round of one session to the same cache node.
     if (wire.cache_key.len != 0) try json.field(&jw, "prompt_cache_key", wire.cache_key);
-
-    // An explicit breakpoint pins the last user text; the implicit one still tracks the tail of a tool loop.
-    const cache_index = if (wire.cache) lastUserText(blocks) else null;
 
     // The Codex backend refuses the sampling limits an API key accepts.
     switch (wire.dialect) {
@@ -47,9 +51,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
     }
 
     // A deferred tool needs the native search tool, so a request that defers declares the search tool natively.
-    const native = for (request.tools) |tool| {
-        if (tool.defer_loading) break true;
-    } else false;
+    const native = defersTools(request.tools);
     if (request.tools.len != 0) {
         try jw.objectField("tools");
         try jw.beginArray();
@@ -70,12 +72,24 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
 
     try jw.objectField("input");
     try jw.beginArray();
+}
+
+/// Write the items of `blocks[from..]`. `comma` is true when an element comes before them.
+pub fn writeItems(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block, from: usize, comma: bool, starts: ir.Starts) ir.SerializeError!void {
+    const native = defersTools(request.tools);
+    const cache_index = cacheIndex(request, blocks);
+    var separate = comma;
+    // One writer serves the open element, so a message can span several blocks.
+    var jw: std.json.Stringify = .{ .writer = w };
     var message: ?ir.Role = null;
-    for (blocks, 0..) |block, index| {
+    for (blocks[from..], from..) |block, index| {
+        if (message == null) if (starts) |offsets| {
+            offsets[index] = w.end;
+        };
         switch (block.value) {
             .text => |text| switch (block.role) {
                 .user => {
-                    try ensureMessage(&jw, &message, .user);
+                    try ensureMessage(&jw, &message, &separate, .user);
                     try jw.beginObject();
                     try json.field(&jw, "type", "input_text");
                     try json.field(&jw, "text", text);
@@ -83,7 +97,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
                     try jw.endObject();
                 },
                 .assistant => {
-                    try ensureMessage(&jw, &message, .assistant);
+                    try ensureMessage(&jw, &message, &separate, .assistant);
                     try jw.beginObject();
                     try json.field(&jw, "type", "output_text");
                     try json.field(&jw, "text", text);
@@ -92,23 +106,26 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
             },
             .media => |media| {
                 std.debug.assert(block.role == .user); // `validate` gives media the user role.
-                try ensureMessage(&jw, &message, .user);
+                try ensureMessage(&jw, &message, &separate, .user);
                 try writeMedia(&jw, media);
             },
             .reasoning => |reasoning| {
                 // Omit reasoning state when it has no encrypted content.
                 if (reasoning.signature.len == 0) continue;
                 try closeMessage(&jw, &message);
+                jw = try beginElement(w, &separate);
                 try writeReasoningItem(&jw, reasoning.text, reasoning.signature);
             },
             .redacted_reasoning => |data| {
                 // Omit reasoning state when it has no encrypted content.
                 if (data.len == 0) continue;
                 try closeMessage(&jw, &message);
+                jw = try beginElement(w, &separate);
                 try writeReasoningItem(&jw, null, data);
             },
             .tool_use => |tool_use| {
                 try closeMessage(&jw, &message);
+                jw = try beginElement(w, &separate);
                 try jw.beginObject();
                 if (native and std.mem.eql(u8, tool_use.name, ir.search_tool_name)) {
                     try json.field(&jw, "type", "tool_search_call");
@@ -128,6 +145,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
             },
             .tool_result => |tool_result| {
                 try closeMessage(&jw, &message);
+                jw = try beginElement(w, &separate);
                 if (native and answersSearch(blocks[0..index], tool_result.call_id)) {
                     try writeSearchOutput(&jw, request.tools, tool_result);
                     continue;
@@ -156,12 +174,11 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
         }
     }
     try closeMessage(&jw, &message);
-    try jw.endArray();
-    try jw.endObject();
 }
 
-/// Return the last user text block. A breakpoint on a tool result is accepted but never writes a cache.
-fn lastUserText(blocks: []const ir.Block) ?usize {
+/// Return the block that carries the explicit cache breakpoint, or null without a cache. A breakpoint on a tool result never writes a cache, so it goes on the last user text.
+pub fn cacheIndex(request: ir.Request, blocks: []const ir.Block) ?usize {
+    if (!request.wire.openai_responses.cache) return null;
     var i = blocks.len;
     while (i > 0) {
         i -= 1;
@@ -170,9 +187,23 @@ fn lastUserText(blocks: []const ir.Block) ?usize {
     return null;
 }
 
-fn ensureMessage(jw: *std.json.Stringify, message: *?ir.Role, role: ir.Role) ir.SerializeError!void {
+/// True when a request defers a tool, so it declares the search tool natively.
+fn defersTools(tools: []const ir.Tool) bool {
+    for (tools) |tool| if (tool.defer_loading) return true;
+    return false;
+}
+
+/// Write the comma before an element of the input array, then return a writer for that element.
+fn beginElement(w: *std.Io.Writer, separate: *bool) std.Io.Writer.Error!std.json.Stringify {
+    if (separate.*) try w.writeByte(',');
+    separate.* = true;
+    return .{ .writer = w };
+}
+
+fn ensureMessage(jw: *std.json.Stringify, message: *?ir.Role, separate: *bool, role: ir.Role) ir.SerializeError!void {
     if (message.* == role) return;
     try closeMessage(jw, message);
+    jw.* = try beginElement(jw.writer, separate);
     try beginMessage(jw, role);
     message.* = role;
 }

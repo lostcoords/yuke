@@ -90,6 +90,8 @@ pub const RunSlot = struct {
     work: work = .{},
     /// The tools this run may see, chosen once at its first request. A table change applies to the next run.
     tools: ?Loadout = null,
+    /// The encoded history of the last request. The next round encodes only what changed since then.
+    encoded: @import("ai").RequestHistory = .{},
 
     pub const Phase = enum { pending_start, running, terminalized, faulted };
 
@@ -140,6 +142,7 @@ pub const RunSlot = struct {
 
     pub fn destroy(self: *RunSlot) void {
         if (self.tools) |*held| held.arena.deinit();
+        self.encoded.deinit(self.arena.child_allocator);
         std.debug.assert(self.body == null);
         std.debug.assert(self.round == .none); // every round closes before the run ends
         std.debug.assert(self.work.pending == 0);

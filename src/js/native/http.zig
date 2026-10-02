@@ -343,7 +343,7 @@ fn exchangeOnce(client: *std.http.Client, body: *Body, uri: std.Uri, reused: *bo
     };
     const request = &body.request.?;
     request.accept_encoding = @splat(true);
-    if (req.method.requestHasBody()) try ai.transport.sendBody(request, req.body orelse "") else try request.sendBodiless();
+    if (req.method.requestHasBody()) try ai.transport.sendBody(request, &.{req.body orelse ""}) else try request.sendBodiless();
     body.response = response: while (true) {
         // Validate digits before the standard parser converts the untrusted status to u10.
         const prefix = try request.connection.?.reader().peekArray(12);

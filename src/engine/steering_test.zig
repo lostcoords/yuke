@@ -111,7 +111,7 @@ const Fixture = struct {
     fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: ai.transport.Request, _: *ai.transport.AttemptInfo) !ai.transport.ResponseBody {
         const self: *Fixture = @ptrCast(@alignCast(ctx));
         const index = self.requests.items.len;
-        try self.requests.append(self.base.arena.allocator(), try self.base.arena.allocator().dupe(u8, request.body));
+        try self.requests.append(self.base.arena.allocator(), try std.mem.concat(self.base.arena.allocator(), u8, request.body));
         if (index > 5) return error.UnexpectedRequest;
         if (self.stage == .retry and index == 0) {
             self.waiting_with_draft = self.activity.?.state == .waiting and self.base.engine.sessions.get(id).?.draft != null;

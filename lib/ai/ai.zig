@@ -22,6 +22,8 @@ pub const Result = call.Result;
 pub const Content = call.Content;
 pub const PreparedRequest = call.PreparedRequest;
 pub const prepare = call.prepare;
+/// The encoded history array that a series of requests resumes.
+pub const RequestHistory = @import("request.zig").History;
 pub const Diagnostics = call.Diagnostics;
 pub const generateWithTransport = call.generateWithTransport;
 pub const generateTextWithTransport = call.generateTextWithTransport;

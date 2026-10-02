@@ -75,24 +75,25 @@ pub fn prepare(arena: std.mem.Allocator, engine: *Engine, slot: *RunSlot, held: 
             // Every round of one session repeats a prefix, so the session id keeps them on one cache and one upstream.
             .session_id = &session_hex,
         },
-    });
+    }, &slot.encoded);
     errdefer prepared.deinit();
 
     // A replaced field lives in the prepared arena, so a retry resends it after the build arena is gone.
     const owned = prepared.arena.allocator();
-    if (try engine.deps.hooks.decide(RequestSend, arena, slot.runId(), .@"request.send", RequestSend{
+    const hooks = engine.deps.hooks;
+    // The send hook reads one string, so only a held hook point joins the parts.
+    if (!hooks.holds(hooks.ctx, .@"request.send")) return prepared;
+    if (try hooks.decide(RequestSend, arena, slot.runId(), .@"request.send", RequestSend{
         .url = prepared.transport_request.url,
         .headers = prepared.transport_request.headers,
-        .body = prepared.transport_request.body,
+        .body = try std.mem.concat(arena, u8, prepared.transport_request.body),
     })) |sent| {
         prepared.transport_request = .{
             .url = try owned.dupe(u8, sent.url),
             .headers = try proto.dupe(owned, sent.headers),
             // The hook result dies with the build arena, so the prepared arena keeps the body for a retry.
-            .body = try owned.dupe(u8, sent.body),
+            .body = try owned.dupe([]const u8, &.{try owned.dupe(u8, sent.body)}),
         };
-        // The stream sends the replacement, so the serialized body can go now.
-        prepared.body.clearAndFree(engine.deps.gpa);
     }
     return prepared;
 }

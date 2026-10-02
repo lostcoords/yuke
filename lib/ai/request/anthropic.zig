@@ -8,7 +8,13 @@ const types = @import("../types.zig");
 
 /// Write the request JSON to `w`.
 pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block) ir.SerializeError!void {
-    std.debug.assert(blocks.len != 0); // Anthropic needs at least one message.
+    try writeHead(w, request);
+    try writeItems(w, request, blocks, 0, false, null);
+    try w.writeAll("]}");
+}
+
+/// Write the request up to the open `messages` array.
+pub fn writeHead(w: *std.Io.Writer, request: ir.Request) ir.SerializeError!void {
     var jw: std.json.Stringify = .{ .writer = w };
     try jw.beginObject();
 
@@ -20,7 +26,6 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
 
     try writeThinking(&jw, request.reasoning.thinking);
     try writeOutputConfig(&jw, request.reasoning.effort, request.output_schema);
-    const cache = request.wire.anthropic_messages.cache;
 
     if (request.system.len != 0) {
         try jw.objectField("system");
@@ -28,7 +33,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
         try jw.beginObject();
         try json.field(&jw, "type", "text");
         try json.field(&jw, "text", request.system);
-        if (cache) try writeCacheControl(&jw);
+        if (request.wire.anthropic_messages.cache) try writeCacheControl(&jw);
         try jw.endObject();
         try jw.endArray();
     }
@@ -50,24 +55,28 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
         if (request.tool_choice == .none) try json.nested(&jw, "tool_choice", "type", "none");
     }
 
-    // A thinking block cannot carry the marker. Mark the last eligible block.
-    const cache_index = if (cache) lastCacheable(blocks) else null;
-
     try jw.objectField("messages");
     try jw.beginArray();
-    var role: ?ir.Role = null;
-    for (blocks, 0..) |block, i| {
-        if (role == null or role.? != block.role) {
-            if (role != null) try endMessage(&jw);
-            try beginMessage(&jw, block.role);
-            role = block.role;
-        }
-        try writeBlock(&jw, block, cache_index == i);
-    }
-    if (role != null) try endMessage(&jw);
-    try jw.endArray();
+}
 
-    try jw.endObject();
+/// Write one message for each run of blocks with one role, from `blocks[from]`. `comma` is true when an element comes before it.
+pub fn writeItems(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block, from: usize, comma: bool, starts: ir.Starts) ir.SerializeError!void {
+    std.debug.assert(blocks.len != 0); // Anthropic needs at least one message.
+    const cache_index = cacheIndex(request, blocks);
+    var separate = comma;
+    var start = from;
+    while (start < blocks.len) {
+        if (starts) |offsets| offsets[start] = w.end;
+        var end = start + 1;
+        while (end < blocks.len and blocks[end].role == blocks[start].role) end += 1;
+        if (separate) try w.writeByte(',');
+        separate = true;
+        var jw: std.json.Stringify = .{ .writer = w };
+        try beginMessage(&jw, blocks[start].role);
+        for (blocks[start..end], start..) |block, i| try writeBlock(&jw, block, cache_index == i);
+        try endMessage(&jw);
+        start = end;
+    }
 }
 
 /// Write the thinking control and its display. The effort rides on `output_config`.
@@ -227,8 +236,9 @@ fn writeMedia(jw: *std.json.Stringify, media: ir.Block.Media, cache: bool) ir.Se
     try jw.endObject();
 }
 
-/// Return the last block that Anthropic accepts for a marker, or null. Skip thinking and redacted thinking blocks.
-fn lastCacheable(blocks: []const ir.Block) ?usize {
+/// Return the block that carries the cache marker, or null without a cache. A thinking block cannot carry it, so the marker goes on the last other block.
+pub fn cacheIndex(request: ir.Request, blocks: []const ir.Block) ?usize {
+    if (!request.wire.anthropic_messages.cache) return null;
     var i = blocks.len;
     while (i > 0) {
         i -= 1;

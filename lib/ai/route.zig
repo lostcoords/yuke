@@ -196,7 +196,8 @@ pub fn headerConflict(generated: ?[]const u8, pinned: []const Header, configured
 pub const Request = struct {
     url: []const u8 = "",
     headers: []const Header = &.{},
-    body: []const u8,
+    /// The body in parts, sent in order. A long history stays in one part across requests.
+    body: []const []const u8,
 };
 
 /// Build the headers one route sends, in order: the credential, the identity headers, the route headers, the session id.
@@ -245,8 +246,8 @@ pub fn requestHeaders(arena: std.mem.Allocator, p: *const Route, credential: Cre
     return out;
 }
 
-/// Build the request one route sends, and copy its URL and headers into `arena`.
-pub fn request(arena: std.mem.Allocator, p: *const Route, credential: Credential, session_id: []const u8, body: []const u8) Error!Request {
+/// Build the request one route sends, and copy its URL and headers into `arena`. The request borrows `body`.
+pub fn request(arena: std.mem.Allocator, p: *const Route, credential: Credential, session_id: []const u8, body: []const []const u8) Error!Request {
     return .{
         .url = try endpointUrl(arena, p),
         .headers = try requestHeaders(arena, p, credential, session_id),
@@ -399,7 +400,7 @@ test "the route names the header that carries the session id, and a plain route 
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    var body = "{}".*;
+    const body: []const []const u8 = &.{"{}"};
 
     const codex: Route = .{
         .base_url = "https://chatgpt.com/backend-api/codex",
@@ -408,7 +409,7 @@ test "the route names the header that carries the session id, and a plain route 
         .responses_dialect = .codex,
         .session_header = .session_id,
     };
-    const carried = try request(a, &codex, .none, "0123456789abcdef", &body);
+    const carried = try request(a, &codex, .none, "0123456789abcdef", body);
     try testing.expectEqualStrings("0123456789abcdef", findHeader(carried.headers, "session-id").?);
     try testing.expect(findHeader(carried.headers, "x-opencode-session") == null);
 
@@ -420,7 +421,7 @@ test "the route names the header that carries the session id, and a plain route 
             .auth = .none,
             .session_header = .x_opencode_session,
         };
-        const sent = try request(a, &opencode, .none, "0123456789abcdef", &body);
+        const sent = try request(a, &opencode, .none, "0123456789abcdef", body);
         try testing.expectEqualStrings("0123456789abcdef", findHeader(sent.headers, "x-opencode-session").?);
         try testing.expect(findHeader(sent.headers, "session-id") == null);
     }
@@ -431,19 +432,19 @@ test "the route names the header that carries the session id, and a plain route 
         .protocol = .openai_responses,
         .auth = .none,
     };
-    const plain = try request(a, &standard, .none, "0123456789abcdef", &body);
+    const plain = try request(a, &standard, .none, "0123456789abcdef", body);
     try testing.expect(findHeader(plain.headers, "session-id") == null);
     try testing.expect(findHeader(plain.headers, "x-opencode-session") == null);
 
     // A caller that names no session leaves the header off rather than sending an empty one.
-    const absent = try request(a, &codex, .none, "", &body);
+    const absent = try request(a, &codex, .none, "", body);
     try testing.expect(findHeader(absent.headers, "session-id") == null);
 }
 
 test "a source that pins the session header is a conflict, not a silent override" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    var body = "{}".*;
+    const body: []const []const u8 = &.{"{}"};
     const route: Route = .{
         .base_url = "https://chatgpt.com/backend-api/codex",
         .protocol = .openai_responses,
@@ -453,10 +454,10 @@ test "a source that pins the session header is a conflict, not a silent override
         // A header name is case-insensitive, so a different spelling is the same header.
         .headers = &.{.{ .name = "Session-ID", .value = "from-the-route" }},
     };
-    try testing.expectError(error.HeaderConflict, request(arena.allocator(), &route, .none, "0123456789abcdef", &body));
+    try testing.expectError(error.HeaderConflict, request(arena.allocator(), &route, .none, "0123456789abcdef", body));
 
     // The same route serves a caller that names no session, because nothing is generated to collide.
-    const built = try request(arena.allocator(), &route, .none, "", &body);
+    const built = try request(arena.allocator(), &route, .none, "", body);
     try testing.expectEqualStrings("from-the-route", findHeader(built.headers, "session-id").?);
     try testing.expect(validHeaders(built.headers));
 }
@@ -464,7 +465,7 @@ test "a source that pins the session header is a conflict, not a silent override
 test "a route header std.http would abort on fails before any transport sees it" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    var body = "{}".*;
+    const body: []const []const u8 = &.{"{}"};
     for ([_]Header{
         .{ .name = "bad name", .value = "x" },
         .{ .name = "x-note", .value = "a\r\nb" },
@@ -474,14 +475,14 @@ test "a route header std.http would abort on fails before any transport sees it"
             .protocol = .openai_chat,
             .auth = .none,
             .headers = &.{pinned},
-        }, .none, "", &body));
+        }, .none, "", body));
     }
 }
 
 test "one call turns a route and a credential into a request that owns its strings" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    var body = "{}".*;
+    const body: []const []const u8 = &.{"{}"};
     var version = "2023-06-01".*;
     var key = "sk-secret".*;
 
@@ -490,7 +491,7 @@ test "one call turns a route and a credential into a request that owns its strin
         .protocol = .anthropic_messages,
         .auth = .{ .api_key = .x_api_key },
         .headers = &.{.{ .name = "anthropic-version", .value = &version }},
-    }, .{ .api_key = &key }, "", &body);
+    }, .{ .api_key = &key }, "", body);
 
     // The request outlives the route and the credential, so a later overwrite must not reach it.
     @memset(&version, 'x');
@@ -498,5 +499,5 @@ test "one call turns a route and a credential into a request that owns its strin
     try testing.expectEqualStrings("https://api.anthropic.com/v1/messages", built.url);
     try testing.expectEqualStrings("sk-secret", findHeader(built.headers, "x-api-key").?);
     try testing.expectEqualStrings("2023-06-01", findHeader(built.headers, "anthropic-version").?);
-    try testing.expectEqualStrings("{}", built.body);
+    try testing.expectEqualStrings("{}", built.body[0]);
 }

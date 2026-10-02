@@ -196,6 +196,10 @@ pub const Unsupported = error{ UnsupportedContent, UnsupportedLoadedTools, Unsup
 /// A serializer fails on a write, or on content that its endpoint cannot carry.
 pub const SerializeError = std.Io.Writer.Error || Unsupported;
 
+/// The byte offset of each element of the history array, before its comma, by the index of its first block. Null marks a block inside an element.
+/// A later request can encode again from an element start. A null outer slice records no offsets.
+pub const Starts = ?[]?usize;
+
 /// Check one request, and bound the input bytes it carries before a serializer reads it.
 /// It fails with `InvalidRequest` on a broken rule, `RequestTooLarge` past the byte limit, and `OutOfMemory` in the schema check.
 pub fn validate(arena: std.mem.Allocator, request: Request, blocks: []const Block) ValidateError!void {

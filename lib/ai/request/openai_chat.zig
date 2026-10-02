@@ -8,6 +8,14 @@ const types = @import("../types.zig");
 
 /// Write the OpenAI Chat Completions request body to `w`.
 pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block) ir.SerializeError!void {
+    // Every block group writes a message, so blocks mean that elements follow the system message.
+    try writeHead(w, request, blocks.len != 0);
+    try writeItems(w, request, blocks, 0, false, null);
+    try w.writeAll("]}");
+}
+
+/// Write the request up to the open `messages` array, with the system message. `more` is true when elements follow it, so the head writes their comma.
+pub fn writeHead(w: *std.Io.Writer, request: ir.Request, more: bool) ir.SerializeError!void {
     for (request.tools) |tool| if (tool.defer_loading) return error.UnsupportedDeferredTools;
     const wire = request.wire.openai_chat;
     var jw: std.json.Stringify = .{ .writer = w };
@@ -50,15 +58,21 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
 
     try jw.objectField("messages");
     try jw.beginArray();
-    if (request.system.len != 0) {
-        try jw.beginObject();
-        try json.field(&jw, "role", "system");
-        try json.field(&jw, "content", request.system);
-        try jw.endObject();
-    }
+    if (request.system.len == 0) return;
+    try jw.beginObject();
+    try json.field(&jw, "role", "system");
+    try json.field(&jw, "content", request.system);
+    try jw.endObject();
+    if (more) try w.writeByte(',');
+}
 
-    var block_index: usize = 0;
+/// Write the message elements for `blocks[from..]`. One run of tool results can write several. `comma` is true when an element comes before them.
+pub fn writeItems(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Block, from: usize, comma: bool, starts: ir.Starts) ir.SerializeError!void {
+    const wire = request.wire.openai_chat;
+    var separate = comma;
+    var block_index = from;
     while (block_index < blocks.len) {
+        if (starts) |offsets| offsets[block_index] = w.end;
         const block = blocks[block_index];
         switch (block.value) {
             .tool_result => {
@@ -68,6 +82,7 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
                 for (results) |result| {
                     std.debug.assert(result.role == .user and result.value == .tool_result);
                     const tool_result = result.value.tool_result;
+                    var jw = try beginElement(w, &separate);
                     try writeToolResult(&jw, tool_result);
                     has_media = has_media or tool_result.media.len != 0;
                 }
@@ -75,26 +90,33 @@ pub fn serialize(w: *std.Io.Writer, request: ir.Request, blocks: []const ir.Bloc
                 if (!has_media) continue;
                 // A strict host refuses two user messages in a row, so the images join the user text that follows.
                 const user_end = if (block_index < blocks.len and blocks[block_index].role == .user) userMessageEnd(blocks, block_index) else block_index;
+                var jw = try beginElement(w, &separate);
                 try writeUserMessage(&jw, results, blocks[block_index..user_end]);
                 block_index = user_end;
             },
             else => switch (block.role) {
                 .user => {
                     const end_index = userMessageEnd(blocks, block_index);
+                    var jw = try beginElement(w, &separate);
                     try writeUserMessage(&jw, &.{}, blocks[block_index..end_index]);
                     block_index = end_index;
                 },
                 .assistant => {
                     const end_index = assistantMessageEnd(blocks, block_index);
+                    var jw = try beginElement(w, &separate);
                     try writeAssistantMessage(&jw, blocks[block_index..end_index], wire.reasoning_replay);
                     block_index = end_index;
                 },
             },
         }
     }
-    try jw.endArray();
+}
 
-    try jw.endObject();
+/// Write the comma before an element of the history array, then return a writer for that element.
+fn beginElement(w: *std.Io.Writer, separate: *bool) std.Io.Writer.Error!std.json.Stringify {
+    if (separate.*) try w.writeByte(',');
+    separate.* = true;
+    return .{ .writer = w };
 }
 
 fn userMessageEnd(blocks: []const ir.Block, start: usize) usize {
