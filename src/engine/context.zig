@@ -10,6 +10,8 @@ const token_estimate = @import("../session/tokens.zig");
 
 pub const default_context_window: u64 = 128_000;
 pub const default_max_output: u32 = 8192;
+/// The JSON around one tool declaration. The widest wire, Responses with deferred loading, writes 97 bytes, and the rest covers escaped characters.
+const tool_frame_bytes = 128;
 
 /// The limits of one request. The history compacts above `compact_at`. The rest of the window holds the answer and the estimate error.
 pub const Budget = struct {
@@ -21,13 +23,14 @@ pub const Budget = struct {
     model: []const u8,
 
     /// Fail when the prompt and tools alone reach the compaction point, because no compaction can make room.
-    pub fn forRequest(window_limit: ?u64, model: []const u8, max_output: u32, system: []const u8, tools: []const ai.ir.Tool) !Budget {
+    pub fn forRequest(window_limit: ?u64, model: []const u8, max_output: u32, system: []const u8, tools: []const ai.ir.Tool) error{ContextTooLarge}!Budget {
         const window = window_limit orelse default_context_window;
         // Reserve a tenth of the window. A small window reserves up to a quarter.
         const reserve = @max(window / 10, @min(16_384, window / 4));
-        var tools_json = std.Io.Writer.Discarding.init(&.{});
-        try std.json.Stringify.value(tools, .{ .emit_null_optional_fields = false }, &tools_json.writer);
-        const fixed = token_estimate.ofBytes(system.len) + token_estimate.ofBytes(tools_json.fullCount());
+        // The request writes each schema as raw JSON, and the frame covers the keys and escapes of each tool.
+        var tool_bytes: u64 = 0;
+        for (tools) |tool| tool_bytes += tool.name.len + tool.description.len + tool.input_schema.len + tool_frame_bytes;
+        const fixed = token_estimate.ofBytes(system.len) + token_estimate.ofBytes(tool_bytes);
         // A zero reserve leaves no room for the answer.
         if (max_output == 0 or reserve == 0 or fixed >= window - reserve) return error.ContextTooLarge;
         return .{ .window = window, .fixed = fixed, .compact_at = window - reserve, .model = model };
