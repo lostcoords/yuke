@@ -43,7 +43,7 @@ plugins.use(agents({ catalog: { research: { tools: ["read"] } }, maxDepth: 2 }))
 fs.readFile("x", { workspaceRoot: "/tmp" }).then((text) => text.toUpperCase());
 exec("true", { workspaceRoot: "/tmp" }).then((result) => result.code);
 new Promise((resolve) => setTimeout(resolve, 1));
-inputSourceLabel(null).length;
+inputSourceLabel(undefined).length;
 currentSession()?.sessionId;
 // @ts-expect-error A merged event checks its arguments.
 events.emit("demo:ping", "one");
