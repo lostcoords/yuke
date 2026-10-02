@@ -85,11 +85,14 @@ pub const Result = struct {
 /// Own the request bytes and the route data it needs, so a retry can resend it unchanged.
 pub const PreparedRequest = struct {
     arena: std.heap.ArenaAllocator,
+    /// The serialized body. The arena's child allocator owns it, so a body that grows takes no outgrown copy.
+    body: std.ArrayList(u8),
     protocol: types.Protocol,
     transport_request: transport.Request,
 
     /// Release the request bytes and route data.
     pub fn deinit(self: *PreparedRequest) void {
+        self.body.deinit(self.arena.child_allocator);
         self.arena.deinit();
         self.* = undefined;
     }
@@ -223,17 +226,19 @@ pub fn prepare(gpa: std.mem.Allocator, model: Model, request: Request) !Prepared
     errdefer call_arena.deinit();
     const arena = call_arena.allocator();
 
-    const body_bytes = try requestBody(arena, model, request);
+    var body = try requestBody(gpa, arena, model, request);
+    errdefer body.deinit(gpa);
     // `route.request` copies the URL and every header, so the route and the credential may change.
-    const http_request = try route.request(arena, &model.route, model.credential, request.options.session_id, body_bytes);
+    const http_request = try route.request(arena, &model.route, model.credential, request.options.session_id, body.items);
     return .{
         .arena = call_arena,
+        .body = body,
         .protocol = model.route.protocol,
         .transport_request = http_request,
     };
 }
 
-fn requestBody(arena: std.mem.Allocator, model: Model, request: Request) ![]u8 {
+fn requestBody(gpa: std.mem.Allocator, arena: std.mem.Allocator, model: Model, request: Request) !std.ArrayList(u8) {
     const options = request.options;
     const protocol = model.route.protocol;
     const cache = route.CachePolicy.breakpoint(model.route.cache, protocol, model.caps.cache_breakpoint);
@@ -262,7 +267,7 @@ fn requestBody(arena: std.mem.Allocator, model: Model, request: Request) ![]u8 {
         .top_p = options.top_p,
         .tool_choice = options.tool_choice,
     };
-    return request_wire.serialize(arena, value, request.blocks);
+    return request_wire.serialize(gpa, arena, value, request.blocks);
 }
 
 const Collector = struct {
