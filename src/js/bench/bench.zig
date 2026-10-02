@@ -81,6 +81,7 @@ pub const Phase = enum {
     chat_stream,
     chat_frame,
     engine_run,
+    engine_parallel,
 
     const Group = enum { transcript, colors, advice, agents, process, tools, hooks, plugins, net, http, utf8, interaction, mcp, fuzzy, chat, run };
 
@@ -93,7 +94,7 @@ pub const Phase = enum {
             .utf8_reused, .utf8_fresh => .utf8,
             .fuzzy_rank => .fuzzy,
             .chat_stream, .chat_frame => .chat,
-            .engine_run => .run,
+            .engine_run, .engine_parallel => .run,
             .interaction_reused, .interaction_fresh => .interaction,
             .tool_call => .tools,
             .hook_request_build, .hook_tool_before => .hooks,
@@ -236,9 +237,9 @@ pub const Harness = struct {
         self.run = null;
         self.tree = null;
         if (phase.group() == .agents) self.tree = try Tree.create(self.host, scale, self.tree_shape);
-        // One step is one whole run of `scale` tool rounds on a new session.
-        if (phase == .engine_run) {
-            self.run = try Run.create(self.host, scale);
+        // The parallel phase runs eight sessions, and each answer waits 20 ms like a provider.
+        if (phase.group() == .run) {
+            self.run = try Run.create(self.host, scale, if (phase == .engine_parallel) 8 else 1, if (phase == .engine_parallel) 20 else 0);
             self.allocations.resetPeak();
             self.phase = phase;
             return;
@@ -504,8 +505,8 @@ test "benchmark scenarios preserve the transcript across updates and cache evict
     var pool: support.Pool = .{ .backing_allocator = std.testing.allocator };
     defer _ = pool.deinit();
     for (phases) |phase| {
-        // Process phases use the single-executor benchmark runtime.
-        if (phase.group() == .process or phase.group() == .net or phase.group() == .http) continue;
+        // Process phases and concurrent runs use the single-executor benchmark runtime.
+        if (phase.group() == .process or phase.group() == .net or phase.group() == .http or phase == .engine_parallel) continue;
         const harness = try Harness.create(pool.allocator(), std.testing.io, "", 40, 12, phase);
         defer harness.destroy();
         harness.advice_batch_size = 32;

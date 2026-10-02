@@ -1,6 +1,7 @@
-//! One long agent run drives the production engine, store, and request path with no network.
+//! Long agent runs drive the production engine, store, and request path with no network. Several sessions can run at the same time.
 
 const std = @import("std");
+const proto = @import("proto");
 const ai = @import("ai");
 const zqlite = @import("zqlite");
 const fixture = @import("../../app/fixture.zig");
@@ -17,26 +18,37 @@ const output_bytes = 38 * 1024;
 /// The reasoning signature of one round. A real provider replays it in every later request.
 const signature_bytes = 2000;
 const frame = ai.testing.sseFrame;
+/// The text that names a session in its first prompt. No other part of a body holds it.
+const session_tag = "bench-session-";
 const read_decl = [_]ai.ir.Tool{.{ .name = "read", .description = "Read a part of the corpus.", .input_schema = "{\"type\":\"object\",\"properties\":{\"part\":{\"type\":\"integer\"}},\"required\":[\"part\"]}" }};
 
 gpa: std.mem.Allocator,
 app: App,
 rounds: u32,
+/// The sessions that one step runs at the same time.
+sessions: u32,
+/// The wait before each answer, as a provider takes before its first byte. Sessions overlap during it.
+latency_ms: u32,
 /// The tool rounds of one run. The final text answer is `ai.testing.canned_reply`.
 replies: []const []const u8,
 /// The text that the tool answers. Each round reads another window of it.
 corpus: []const u8,
+/// The requests of one step, over all sessions.
 served: u32 = 0,
-/// The body size of the newest request, so a report can relate memory to the history size.
+/// The requests of each session in one step. The prompt of session `i` names `i`.
+progress: []u32,
+/// The tool calls of one step. Each call reads another window of the corpus.
+reads: u32 = 0,
+/// The largest body of one step, so a report can relate memory to the history size.
 last_body_bytes: usize = 0,
 
 /// Own one App on an in-memory database, the canned replies, and the corpus. It fails on OOM or a store error.
-pub fn create(host: *Host, rounds: u32) !*Run {
-    std.debug.assert(rounds > 0);
+pub fn create(host: *Host, rounds: u32, sessions: u32, latency_ms: u32) !*Run {
+    std.debug.assert(rounds > 0 and sessions > 0);
     const gpa = host.gpa;
     const self = try gpa.create(Run);
     errdefer gpa.destroy(self);
-    self.* = .{ .gpa = gpa, .app = undefined, .rounds = rounds, .replies = &.{}, .corpus = &.{} };
+    self.* = .{ .gpa = gpa, .app = undefined, .rounds = rounds, .sessions = sessions, .latency_ms = latency_ms, .replies = &.{}, .corpus = &.{}, .progress = &.{} };
     // The run admits no media, so the blob store never writes this directory.
     try fixture.init(&self.app, gpa, host.io, "/bench/blobs", .{ .ctx = self, .vtable = &.{ .open = open } }, host.execution);
     errdefer self.app.deinit();
@@ -52,6 +64,11 @@ pub fn create(host: *Host, rounds: u32) !*Run {
     self.corpus = try makeCorpus(gpa);
     errdefer gpa.free(self.corpus);
     self.replies = try makeReplies(gpa, rounds);
+    errdefer {
+        for (self.replies) |reply| gpa.free(reply);
+        gpa.free(self.replies);
+    }
+    self.progress = try gpa.alloc(u32, sessions);
     // The SQLite high-water mark is global, so each run starts it again.
     var live: i64 = 0;
     var peak: i64 = 0;
@@ -66,27 +83,35 @@ pub fn destroy(self: *Run) void {
     for (self.replies) |reply| gpa.free(reply);
     gpa.free(self.replies);
     gpa.free(self.corpus);
+    gpa.free(self.progress);
     gpa.destroy(self);
 }
 
-/// Run one session from its first input to its final answer, then remove it, so each step starts from an empty store.
+/// Run each session from its first input to its final answer, then remove them, so each step starts from an empty store.
 pub fn step(self: *Run) !void {
     var arena: std.heap.ArenaAllocator = .init(self.gpa);
     defer arena.deinit();
     const a = arena.allocator();
     self.served = 0;
-    // `/bench` holds no AGENTS.md and no skills, so the prompt does not depend on the host.
-    const created = try commands.sessionCreate(&self.app.engine, a, .{
-        .workspace_path = "/bench",
-        .model = "bench/m",
-        .initial_input = .{ .content = .{ .content = &.{.{ .text = .{ .text = "Read the corpus part by part." } }} } },
-    });
+    self.last_body_bytes = 0;
+    @memset(self.progress, 0);
+    const ids = try a.alloc(proto.ids.SessionId, self.sessions);
+    for (ids, 0..) |*id, i| {
+        // `/bench` holds no AGENTS.md and no skills, so the prompt does not depend on the host.
+        id.* = (try commands.sessionCreate(&self.app.engine, a, .{
+            .workspace_path = "/bench",
+            .model = "bench/m",
+            .initial_input = .{ .content = .{ .content = &.{.{ .text = .{ .text = try std.fmt.allocPrint(a, "Read the corpus part by part. {s}{d}.", .{ session_tag, i }) } }} } },
+        })).session.id;
+    }
     try self.app.engine.turn_tasks.await(self.app.io);
-    const sid = created.session.id;
-    // A failed request also ends the run, so only a stored final answer proves that every round ran.
-    const last = (try store.message.historyPage(&self.app.db, a, sid.raw, 0, 1)).messages;
-    if (self.served != self.rounds + 1 or last.len != 1 or last[0] != .assistant or last[0].assistant.finish != .stop) return error.RunDidNotFinish;
-    _ = try commands.sessionRemove(&self.app.engine, a, .{ .session_id = sid });
+    if (self.served != self.sessions * (self.rounds + 1)) return error.RunDidNotFinish;
+    for (ids) |id| {
+        // A failed request also ends the run, so only a stored final answer proves that every round ran.
+        const last = (try store.message.historyPage(&self.app.db, a, id.raw, 0, 1)).messages;
+        if (last.len != 1 or last[0] != .assistant or last[0].assistant.finish != .stop) return error.RunDidNotFinish;
+        _ = try commands.sessionRemove(&self.app.engine, a, .{ .session_id = id });
+    }
 }
 
 /// The live bytes and the high-water mark that SQLite holds outside the engine allocator. With the `:memory:` database, this includes the stored history.
@@ -97,13 +122,25 @@ pub fn sqliteBytes() struct { live: i64, peak: i64 } {
     return .{ .live = live, .peak = peak };
 }
 
+/// Answer the next round of the session that sent `request`. Its first prompt names the session near the start of the body.
 fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: ai.transport.Request, _: *ai.transport.AttemptInfo) !ai.transport.ResponseBody {
     const self: *Run = @ptrCast(@alignCast(ctx));
-    if (self.served > self.rounds) return error.UnexpectedRequest;
-    self.last_body_bytes = 0;
-    for (request.body) |part| self.last_body_bytes += part.len;
+    var len: usize = 0;
+    var session: ?usize = null;
+    for (request.body) |part| {
+        len += part.len;
+        if (session != null) continue;
+        const near = part[0..@min(part.len, 64 * 1024)];
+        const at = (std.mem.indexOf(u8, near, session_tag) orelse continue) + session_tag.len;
+        session = std.fmt.parseInt(usize, near[at .. std.mem.indexOfScalarPos(u8, near, at, '.') orelse return error.UnexpectedRequest], 10) catch return error.UnexpectedRequest;
+    }
+    const round = &self.progress[session orelse return error.UnexpectedRequest];
+    if (round.* > self.rounds) return error.UnexpectedRequest;
+    if (self.latency_ms != 0) try self.app.io.sleep(.fromMilliseconds(self.latency_ms), .awake);
+    self.last_body_bytes = @max(self.last_body_bytes, len);
     const reader = try arena.create(ai.testing.ReplayReader);
-    reader.* = .{ .bytes = if (self.served == self.rounds) ai.testing.canned_reply else self.replies[self.served] };
+    reader.* = .{ .bytes = if (round.* == self.rounds) ai.testing.canned_reply else self.replies[round.*] };
+    round.* += 1;
     self.served += 1;
     return reader.body();
 }
@@ -115,8 +152,8 @@ fn decls(_: *anyopaque, _: std.mem.Allocator) error{OutOfMemory}![]const ai.ir.T
 /// Answer a window of the corpus. The window moves each round, so no two outputs are equal.
 fn execute(ctx: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: toolset.Context) toolset.Outcome {
     const self: *Run = @ptrCast(@alignCast(ctx));
-    std.debug.assert(self.served > 0);
-    const start = (self.served * 997) % (self.corpus.len - output_bytes);
+    self.reads += 1;
+    const start = (self.reads * 997) % (self.corpus.len - output_bytes);
     return .{ .output = self.corpus[start..][0..output_bytes] };
 }
 
