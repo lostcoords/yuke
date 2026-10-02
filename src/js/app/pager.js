@@ -22,6 +22,10 @@ export class Pager {
     this._w = 0;
     /** @type {Rect | null} */
     this._rect = null; // the last drawn rect, for the mouse hit test
+    /** @type {TranscriptRow[]} */
+    this._rows = []; // each draw fills these two lists again, so a frame allocates no row list
+    /** @type {number[]} */
+    this._sel = [];
   }
 
   /**
@@ -136,7 +140,12 @@ export class Pager {
     this._rect = rect;
     this._clamp();
 
-    const rows = this.source.rows(w, this.scroll, h);
+    const rows = this._rows;
+    const sel = this._sel;
+    rows.length = 0;
+    sel.length = 0;
+    this.source.rows(w, this.scroll, h, rows, sel);
+    let next = 0;
     for (let row = 0; row < h && row < rows.length; row++) {
       const r = rows[row];
       if (!r) break;
@@ -149,7 +158,11 @@ export class Pager {
       }
       const ind = r.indent || 0;
       let segs = r.segments || (r.text ? segmentsOf(r) : undefined);
-      if (segs && r.sel) segs = markSelection(segs, r.sel.from, r.sel.to, r.selGroup || "TxSelect");
+      // The selection entries follow the row order, so one cursor finds the next selected row.
+      if (next < sel.length && sel[next] === row) {
+        if (segs) segs = markSelection(segs, /** @type {number} */ (sel[next + 1]), /** @type {number} */ (sel[next + 2]));
+        next += 3;
+      }
       if (segs) drawSegments(x + ind, sy, Math.max(0, w - ind), segs, r.bg);
     }
   }
@@ -276,9 +289,9 @@ export function rowSourceAt(row, col, base = 0) {
   return last < 0 ? last : base + last;
 }
 
-// Repaint the string range [from, to) of `segments` with an overlay.
-/** @param {Segment[]} segments @param {number} from @param {number} to @param {string} group @returns {Segment[]} */
-function markSelection(segments, from, to, group) {
+// Repaint the string range [from, to) of `segments` with the selection overlay. Only a row with a selection pays for the copy.
+/** @param {Segment[]} segments @param {number} from @param {number} to @returns {Segment[]} */
+function markSelection(segments, from, to) {
   if (to <= from) return segments;
   const out = [];
   let at = 0;
@@ -290,7 +303,7 @@ function markSelection(segments, from, to, group) {
       out.push(seg);
     } else {
       if (a > at) out.push({ ...seg, text: seg.text.slice(0, a - at) });
-      out.push({ ...seg, text: seg.text.slice(a - at, b - at), group: overlayStyleGroup(seg.group, group) });
+      out.push({ ...seg, text: seg.text.slice(a - at, b - at), group: overlayStyleGroup(seg.group, "TxSelect") });
       if (b < end) out.push({ ...seg, text: seg.text.slice(b - at) });
     }
     at = end;
@@ -364,8 +377,9 @@ function staticRowSource(list) {
     rowCount() {
       return list.length;
     },
-    rows(_w, top, height) {
-      return list.slice(top, top + height);
+    rows(_w, top, height, out) {
+      const end = Math.min(list.length, top + height);
+      for (let i = top; i < end; i++) out.push(/** @type {TranscriptRow} */ (list[i]));
     },
   };
 }

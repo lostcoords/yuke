@@ -65,7 +65,7 @@ function createAnswerer(frontend) {
         case "confirm": {
           const labels = options?.labels || {};
           const width = () => Math.min(term.width, Math.max(8, Math.min(72, Math.round(term.width * 0.8))));
-          const picked = ui.select([true, false], {
+          const picked = ui.pick({ items: [true, false], filter: false,
             title,
             footer: "↵ answer · pgup/pgdn scroll · esc cancel",
             border: "rounded",

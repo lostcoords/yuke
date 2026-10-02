@@ -144,7 +144,7 @@ test "a transcript row composes its background, text, and selection" {
     try support.eval(fixture.host, "ui/row-background.test.js");
 
     const green = term_pkg.Color{ .rgb = .{ 48, 64, 48 } };
-    for ([_][2]u16{ .{ 0, 0 }, .{ 4, 0 }, .{ 1, 1 }, .{ 4, 1 } }) |point| {
+    for ([_][2]u16{ .{ 0, 0 }, .{ 4, 0 }, .{ 4, 1 } }) |point| {
         const cell = fixture.paint.render.window().readCell(point[0], point[1]).?;
         try std.testing.expect(term_pkg.Color.eql(green, cell.style.bg));
     }
@@ -154,8 +154,10 @@ test "a transcript row composes its background, text, and selection" {
     try std.testing.expect(selected.style.bold);
     try std.testing.expect(!selected.style.reverse);
 
+    // A row without a marker composes the same selection over its background.
     const plain_selected = fixture.paint.render.window().readCell(1, 1).?;
-    try std.testing.expect(plain_selected.style.reverse);
+    try std.testing.expect(term_pkg.Color.eql(.{ .rgb = .{ 68, 85, 102 } }, plain_selected.style.bg));
+    try std.testing.expect(!plain_selected.style.reverse);
 
     const metadata = fixture.paint.render.window().readCell(0, 2).?;
     try std.testing.expect(term_pkg.Color.eql(.{ .rgb = .{ 170, 170, 170 } }, metadata.style.fg));

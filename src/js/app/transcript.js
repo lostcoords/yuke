@@ -145,6 +145,10 @@ function partKey(part) {
   return hook("groupKey", part) ?? null;
 }
 
+// A snapshot reads no selection, so its selection entries land here and nobody reads them.
+/** @type {number[]} */
+const snapshotSel = [];
+
 /**
  * The transcript of one chat pane: the message outline, exact row counts, and a bounded cache of rendered rows.
  * The owner feeds it with `setOutline` and `setActive`. The `pager` scrolls and draws it.
@@ -159,7 +163,7 @@ export class Transcript {
     this.pager = new Pager();
     this.pager.setSource({
       rowCount: (width) => this.rowCount(width),
-      rows: (width, top, height) => this._rowsRange(width, top, height, false),
+      rows: (width, top, height, out, sel) => this._rowsRange(width, top, height, false, out, sel),
     });
     /** @type {MessageDescriptor[]} */
     this._messages = []; // committed descriptors, oldest first
@@ -1238,15 +1242,14 @@ export class Transcript {
     return this._offset(this._prefix.length - 1);
   }
 
-  /** @param {number} width @param {number} top @param {number} height @param {boolean} absolute @returns {TranscriptRow[]} */
-  _rowsRange(width, top, height, absolute) {
-    if (width <= 0 || height <= 0) return [];
+  /** @param {number} width @param {number} top @param {number} height @param {boolean} absolute @param {TranscriptRow[]} out @param {number[]} sel @returns {void} */
+  _rowsRange(width, top, height, absolute, out, sel) {
+    if (width <= 0 || height <= 0) return;
     this._invalidate(width);
     this._indexRowsThrough(Infinity);
     const first = this._messageAtRow(top);
     this._viewport.clear();
     const range = this._range();
-    const out = [];
     for (let i = first; i + 1 < this._prefix.length && this._offset(i) < top + height; i++) {
       const m = /** @type {MessageDescriptor} */ (this._at(i));
       // A message joins the viewport before its read, so the read trims nothing this pass draws.
@@ -1257,20 +1260,25 @@ export class Transcript {
       for (let k = Math.max(0, top - base); k < rows.length && base + k < top + height; k++) {
         const local = /** @type {TranscriptRow} */ (rows[k]);
         const row = absolute ? rowAtBase(local, rowSourceBase(cache, local)) : local;
+        out.push(row);
+        // The pager paints the selection from `sel`, so a cached row never carries one.
         const r = range && this._rowRange(range, i, k, rowText(row).length);
-        out.push(r && r.to > r.from ? { ...row, sel: r } : row);
+        if (r && r.to > r.from) sel.push(out.length - 1, r.from, r.to);
       }
     }
     this._trimCaches();
-    return out;
   }
 
   /**
-   * The rendered rows from row `top` for `height` rows at `width`, with the selection marked. Source offsets count from the start of each message source.
+   * A new list of the rendered rows from row `top` for `height` rows at `width`. Source offsets count from the start of each message source.
    * @param {number} width @param {number} top @param {number} height @returns {TranscriptRow[]}
    */
   rows(width, top, height) {
-    return this._rowsRange(width, top, height, true);
+    /** @type {TranscriptRow[]} */
+    const out = [];
+    snapshotSel.length = 0;
+    this._rowsRange(width, top, height, true, out, snapshotSel);
+    return out;
   }
 
   /**

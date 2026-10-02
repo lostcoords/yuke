@@ -92,7 +92,9 @@ check("strip-folds", many.length === 3 && many[2].text === " ↳ … 2 more queu
 command.perform("context:show");
 await settle();
 check("context-open", dialogs().length === 1);
-const windowRows = dialogs()[0].content.pager.source.rows(80, 0, 100).map(rowText);
+const shownRows = [];
+dialogs()[0].content.pager.source.rows(80, 0, 100, shownRows, []);
+const windowRows = shownRows.map(rowText);
 check("context-instructions", windowRows.some((row) => /^workspace AGENTS +\/work\/AGENTS\.md$/.test(row)));
 check("context-count", windowRows.some((row) => /^context +300 \/ 1,000 · 30%$/.test(row)));
 check("context-last-turn", windowRows.some((row) => /^last turn +in 200 · out 30 · reasoning 5$/.test(row)));

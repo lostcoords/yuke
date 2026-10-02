@@ -26,11 +26,13 @@ export interface TranscriptRow {
   header?: boolean | undefined;
   /** A stop of the part motion, such as the first row of a part. */
   stop?: boolean | undefined;
-  sel?: { from: number; to: number } | undefined;
-  selGroup?: string | undefined;
 }
 
 export interface RowSource {
   rowCount: (width: number) => number;
-  rows: (width: number, top: number, height: number) => TranscriptRow[];
+  /**
+   * Push the rows from `top` for `height` rows onto `out`. For each row with a selection, in row order, push three numbers onto `sel`: the row index in `out`, then the selected range [from, to) in UTF-16 code units of the row text without its indent.
+   * The pager owns both lists and fills them again on each draw.
+   */
+  rows: (width: number, top: number, height: number, out: TranscriptRow[], sel: number[]) => void;
 }

@@ -68,7 +68,9 @@ root.flush();
 const history = root.overlays.find((o) => o.opts?.title === "notifications");
 notify("error", "late entry", "t");
 root.flush();
-const rowTexts = history.content.pager.source.rows(80, 0, 400).map((r) => r.text).join("\n");
+const historyRows = [];
+history.content.pager.source.rows(80, 0, 400, historyRows, []);
+const rowTexts = historyRows.map((r) => r.text).join("\n");
 check("history-refreshes", rowTexts.indexOf("late entry") >= 0);
 root.popOverlay(history);
 

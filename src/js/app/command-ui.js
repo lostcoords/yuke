@@ -93,7 +93,7 @@ export const commandUi = {
 
       /** @param {ChatView} chat @param {Entry[]} ranked @param {number} col @param {string} query @returns {void} */
       const open = (chat, ranked, col, query) => {
-        const p = ui.select(ranked, {
+        const p = ui.pick({ items: ranked, filter: false,
           name: "slash",
           modal: false,
           border: "none",

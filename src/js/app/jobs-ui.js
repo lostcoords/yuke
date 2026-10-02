@@ -46,16 +46,14 @@ export class JobOutput extends ScrollView {
     this.closed = false;
     this.pager.setSource({
       rowCount: () => Math.min(OUTPUT_LINES, this.rows.length + (this.partial ? 1 : 0)) + (this.complete ? 1 : 0),
-      rows: (_width, top, height) => {
+      rows: (_width, top, height, out) => {
         const skip = this.partial && this.rows.length === OUTPUT_LINES ? 1 : 0;
         const count = this.rows.length - skip;
         const end = count + (this.partial ? 1 : 0);
-        const shown = [];
         for (let i = top; i < Math.min(top + height, end + (this.complete ? 1 : 0)); i++) {
-          if (i < count) shown.push(/** @type {TranscriptRow} */ (this.rows[(this.first + skip + i) % this.rows.length]));
-          else shown.push({ text: i < end ? this.partial ?? "" : `[${endLabel(this.job)}]`, group: "UIDim" });
+          if (i < count) out.push(/** @type {TranscriptRow} */ (this.rows[(this.first + skip + i) % this.rows.length]));
+          else out.push({ text: i < end ? this.partial ?? "" : `[${endLabel(this.job)}]`, group: "UIDim" });
         }
-        return shown;
       },
     });
     /** The unfinished last line; null marks a first read that began inside a line. */
@@ -149,7 +147,7 @@ export function openOutput(ctx, job) {
 export function openJobs(ctx) {
   const current = currentSession()?.sessionId;
   let items = list();
-  const picker = ui.select(items, {
+  const picker = ui.pick({ items, filter: false,
     title: summary(items), footer: "↵ output · x stop · X stop all · esc close",
     border: "rounded", width: (max) => Math.round(max * 0.9), height: (max) => Math.round(max * 0.6),
     key: (job) => job.id,

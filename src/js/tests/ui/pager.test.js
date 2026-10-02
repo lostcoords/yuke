@@ -28,7 +28,7 @@ check("tail-sticks-again", p.stuck === true && p.scroll === 26);
 // `rowCount` walks every message, so one frame must ask for it exactly once.
 let asked = 0;
 const q = new Pager();
-q.setSource({ rowCount: () => { asked++; return 30; }, rows: () => [] });
+q.setSource({ rowCount: () => { asked++; return 30; }, rows: () => {} });
 asked = 0;
 frame(q);
 check("one-row-count-per-frame", asked === 1);

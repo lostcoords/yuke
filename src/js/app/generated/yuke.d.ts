@@ -1194,6 +1194,8 @@ export class Pager {
     _h: number;
     _w: number;
     _rect: Rect | null;
+    _rows: TranscriptRow[];
+    _sel: number[];
     constructor();
     /**
      * The last drawn rect, or null before a draw or after `clearRect`.
@@ -1765,9 +1767,9 @@ export class Transcript {
      * The total number of rendered rows at `width`. It renders each message whose count it does not know yet.
      */
     rowCount(width: number): number;
-    _rowsRange(width: number, top: number, height: number, absolute: boolean): TranscriptRow[];
+    _rowsRange(width: number, top: number, height: number, absolute: boolean, out: TranscriptRow[], sel: number[]): void;
     /**
-     * The rendered rows from row `top` for `height` rows at `width`, with the selection marked. Source offsets count from the start of each message source.
+     * A new list of the rendered rows from row `top` for `height` rows at `width`. Source offsets count from the start of each message source.
      */
     rows(width: number, top: number, height: number): TranscriptRow[];
     /**
@@ -2221,7 +2223,7 @@ export class Window {
 }
 /**
  * A picker window's content: a List with accept, cancel, and validate, an optional keymap over the default actions, and an optional query line.
- * `ui.pick` and `ui.select` build one. Enter accepts, and esc cancels.
+ * `ui.pick` builds one. Enter accepts, and esc cancels.
  */
 export class Picker<T> {
     opts: PickOptions<T>;
@@ -2328,17 +2330,10 @@ export class Prompt {
     onKey(event: HostEvent): boolean;
 }
 /**
- * The picker builders. `select` navigates a set, `pick` adds the query line, and both build `{ win, content }`.
+ * The picker builder. `pick` builds `{ win, content }`; `filter: false` makes a menu with no query line.
  * A builder shows nothing; `tui.overlay(win)` shows the window, so a plugin owns every overlay it opens.
  */
 export const ui: {
-    /**
-     * Build a menu over `items` with no query line. The nav keys move it. It shows nothing until `tui.overlay(win)`.
-     */
-    select<T>(items: T[], opts?: PickOptions<T>): {
-        win: Window;
-        content: Picker<T>;
-    };
     /**
      * Build a finder: a query line over the fuzzy-ranked items, or over the items that `suggest` returns.
      * It shows nothing until `tui.overlay(win)`.
@@ -3487,13 +3482,15 @@ export interface TranscriptRow {
   header?: boolean | undefined;
   /** A stop of the part motion, such as the first row of a part. */
   stop?: boolean | undefined;
-  sel?: { from: number; to: number } | undefined;
-  selGroup?: string | undefined;
 }
 
 export interface RowSource {
   rowCount: (width: number) => number;
-  rows: (width: number, top: number, height: number) => TranscriptRow[];
+  /**
+   * Push the rows from `top` for `height` rows onto `out`. For each row with a selection, in row order, push three numbers onto `sel`: the row index in `out`, then the selected range [from, to) in UTF-16 code units of the row text without its indent.
+   * The pager owns both lists and fills them again on each draw.
+   */
+  rows: (width: number, top: number, height: number, out: TranscriptRow[], sel: number[]) => void;
 }
 }
 
@@ -3874,9 +3871,9 @@ export interface ListOptions<T> {
   drawCursor?: boolean | undefined;
 }
 
-/** The options of `ui.pick` and `ui.select`: the window options and the picker options. */
+/** The options of `ui.pick`: the window options and the picker options. */
 export type PickOptions<T> = WindowOptions & {
-  /** The source items. `ui.select` sets them from its argument. */
+  /** The source items. */
   items?: T[];
   /** Answer the items for a query, in their final order, in place of the fuzzy rank. undefined gives no items. */
   suggest?: (query: string) => T[] | undefined;
@@ -3908,7 +3905,7 @@ export type PickOptions<T> = WindowOptions & {
   closeOnAccept?: boolean;
   /** A redraw period while the picker shows, for rows whose `format` reads live values. */
   needsTick?: { periodMs: number };
-  /** False removes the query line, as `ui.select` does. The default is true. */
+  /** False removes the query line and makes a menu. The default is true. */
   filter?: boolean;
   /** Text above the list. It wraps, and the wheel and the page keys scroll it. */
   body?: string;

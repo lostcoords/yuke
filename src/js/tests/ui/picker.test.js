@@ -3,7 +3,7 @@ import { root, keymap } from "yuke:internal/core";
 import { ui } from "yuke:internal/ui";
 const key = (code, char) => ({ type: "key", code: code || "char", char: char || "", text: char || "", event: "press", mods: 0 });
 // The boundary checks below press outside this picker, so it ignores an outside press instead of closing.
-const { win, content } = ui.select(["a", "b", "c", "d", "e"], { format: (x) => ({ text: String(x) }), outsidePress: "ignore" });
+const { win, content } = ui.pick({ items: ["a", "b", "c", "d", "e"], filter: false, format: (x) => ({ text: String(x) }), outsidePress: "ignore" });
 root.pushOverlay(win);
 const press = (code, char) => root.onEvent(key(code, char));
 const sel = () => content.list.selected();
@@ -41,10 +41,10 @@ content.setSource(["x", "y"]);
 check("menu-set-source", content.list.selected() === "x");
 check("menu-no-query", content.query === "");
 
-// A plugin may destructure the kit, so `select` must not depend on its receiver.
-const { select } = ui;
-const loose = select(["p", "q"], { format: x => ({ text: String(x) }) });
-check("detached-select", loose.content.list.selected() === "p");
+// A plugin may destructure the kit, so `pick` must not depend on its receiver.
+const { pick } = ui;
+const loose = pick({ items: ["p", "q"], filter: false, format: x => ({ text: String(x) }) });
+check("detached-pick", loose.content.list.selected() === "p");
 
 // A menu edits no query, so the setter changes neither the text nor the rows.
 content.query = "zz";
@@ -53,7 +53,7 @@ check("menu-query-setter", content.query === "" && content.list.selected() === "
 // A cancel always closes, in both modes, and `onCancel` only reports it.
 let told = 0;
 const deep = root.overlays.length;
-root.pushOverlay(ui.select(["m"], { format: x => ({ text: String(x) }), onCancel: () => { told++; } }).win);
+root.pushOverlay(ui.pick({ items: ["m"], filter: false, format: x => ({ text: String(x) }), onCancel: () => { told++; } }).win);
 press("esc");
 check("menu-cancel-closes", root.overlays.length === deep && told === 1);
 root.pushOverlay(ui.pick({ items: ["f"], format: x => ({ text: String(x) }), onCancel: () => { told++; } }).win);

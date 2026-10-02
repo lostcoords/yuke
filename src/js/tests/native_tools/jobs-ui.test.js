@@ -47,7 +47,7 @@ plugins.use({ name: "jobs-ui-test", apply(ctx) { ctx.inject(["tui"], (ctx) => { 
   check("esc-closes", root.overlays.length === 0);
 
   // The output view follows a growing log, keeps the unfinished last line, and ends with the exit line.
-  const texts = (view) => view.pager.source.rows(200, 0, 100000).map((r) => r.text);
+  const texts = (view) => { const out = []; view.pager.source.rows(200, 0, 100000, out, []); return out.map((r) => r.text); };
   const talky = await start(`sleep 30 & child=$!; stage=1
 trap 'stage=$((stage + 1)); case "$stage" in
   2) printf "line2\\n" ;;

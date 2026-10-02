@@ -31,12 +31,16 @@ t.onMouse(at(2, 2, "press"));
 t.onMouse(at(2, 0, "drag"));
 check("reverse-drag", t.selectedText() === "lpha\n\nbr");
 
-// The selected part of a visible row carries a range, and the rest of the row does not.
-const rows = t.rows(40, 0, 12);
-check("row-sel", rows[0].sel && rows[0].sel.from === 1 && rows[0].sel.to === 5);
-// The visible row is a copy, so a selection never sticks to the cached row.
+// The pager gets the selected range of each visible row beside the row, so a cached row never carries one.
+const shown = [];
+const sel = [];
+t.pager.source.rows(40, 0, 12, shown, sel);
+check("row-sel", sel.join() === "0,1,5,2,0,2" && !("sel" in shown[0]) && !("sel" in t.rows(40, 0, 12)[0]));
 t.clearSelection();
-check("row-sel-copy", t.rows(40, 0, 12)[0].sel === undefined);
+shown.length = 0;
+sel.length = 0;
+t.pager.source.rows(40, 0, 12, shown, sel);
+check("row-sel-cleared", sel.length === 0);
 
 // A bare click drops the selection instead of copying an empty string.
 copied = null;

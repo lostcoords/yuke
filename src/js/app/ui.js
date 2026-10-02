@@ -1074,7 +1074,7 @@ const PICKER_PROMPT = "\u203a ";
 
 /**
  * A picker window's content: a List with accept, cancel, and validate, an optional keymap over the default actions, and an optional query line.
- * `ui.pick` and `ui.select` build one. Enter accepts, and esc cancels.
+ * `ui.pick` builds one. Enter accepts, and esc cancels.
  * @template T
  */
 export class Picker {
@@ -1426,21 +1426,10 @@ export class Prompt {
 }
 
 /**
- * The picker builders. `select` navigates a set, `pick` adds the query line, and both build `{ win, content }`.
+ * The picker builder. `pick` builds `{ win, content }`; `filter: false` makes a menu with no query line.
  * A builder shows nothing; `tui.overlay(win)` shows the window, so a plugin owns every overlay it opens.
  */
 export const ui = {
-  /**
-   * Build a menu over `items` with no query line. The nav keys move it. It shows nothing until `tui.overlay(win)`.
-   * @template T
-   * @param {T[]} items
-   * @param {PickOptions<T>} [opts]
-   * @returns {{ win: Window, content: Picker<T> }}
-   */
-  select(items, opts = {}) {
-    return ui.pick({ ...opts, items: items || [], filter: false });
-  },
-
   /**
    * Build a finder: a query line over the fuzzy-ranked items, or over the items that `suggest` returns.
    * It shows nothing until `tui.overlay(win)`.

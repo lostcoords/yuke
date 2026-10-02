@@ -152,9 +152,9 @@ export interface ListOptions<T> {
   drawCursor?: boolean | undefined;
 }
 
-/** The options of `ui.pick` and `ui.select`: the window options and the picker options. */
+/** The options of `ui.pick`: the window options and the picker options. */
 export type PickOptions<T> = WindowOptions & {
-  /** The source items. `ui.select` sets them from its argument. */
+  /** The source items. */
   items?: T[];
   /** Answer the items for a query, in their final order, in place of the fuzzy rank. undefined gives no items. */
   suggest?: (query: string) => T[] | undefined;
@@ -186,7 +186,7 @@ export type PickOptions<T> = WindowOptions & {
   closeOnAccept?: boolean;
   /** A redraw period while the picker shows, for rows whose `format` reads live values. */
   needsTick?: { periodMs: number };
-  /** False removes the query line, as `ui.select` does. The default is true. */
+  /** False removes the query line and makes a menu. The default is true. */
   filter?: boolean;
   /** Text above the list. It wraps, and the wheel and the page keys scroll it. */
   body?: string;

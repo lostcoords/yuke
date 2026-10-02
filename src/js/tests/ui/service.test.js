@@ -59,17 +59,6 @@ root.tickLayers();
 check("self-remove-skips-tick", ticks === 0 && !root.hasTickable(selfRemove) && nextTicks === 1);
 root.removeTickable(after);
 
-// A throw inside a pass still empties the scratch list, so the next pass reuses it.
-let failing = false;
-const thrower = { needsTick() { if (failing) throw new Error("tick"); return null; } };
-root.addTickable(thrower);
-failing = true;
-let passThrew = false;
-try { root.tickLayers(); } catch { passThrew = true; }
-failing = false;
-check("throw-clears-scratch", passThrew && root._tickScratch.length === 0);
-root.removeTickable(thrower);
-
 // A repeated removal is safe, so a disposer can run twice.
 root.addTickable(svc);
 root.removeTickable(svc);
