@@ -72,6 +72,8 @@ pub const Peer = struct {
     drop_listens: u32 = 0,
     drop_again: std.Io.Event = .unset,
     end_listens: u32 = 0,
+    /// The count of `server/discover` requests on the old SSE endpoint. The legacy transport sends none.
+    sse_discovers: u32 = 0,
     changed: std.atomic.Value(bool) = .init(false),
     /// The legacy session is "s-<generation>"; an `expire` call moves to the next one, so the old id answers 404.
     generation: std.atomic.Value(u32) = .init(1),
@@ -309,6 +311,7 @@ pub const Peer = struct {
         }
 
         if (std.mem.startsWith(u8, target, "/sse/messages")) {
+            if (std.mem.eql(u8, method, "server/discover")) self.sse_discovers += 1;
             // Every answer rides the event stream; the POST only accepts the message.
             if (id) |reply_id| {
                 var reply: std.Io.Writer.Allocating = .init(self.gpa);

@@ -619,12 +619,13 @@ class Server {
     this.instructions = typeof answer.instructions === "string" ? answer.instructions.slice(0, INSTRUCTIONS_MAX) : "";
   }
 
-  // Probe the modern era first. A modern answer settles it; a version error that names a legacy version, any other error, or a timeout means a legacy server.
+  // An old HTTP+SSE endpoint exists only in the legacy era, so it skips the probe and keeps the whole startup budget for `initialize`.
+  // Every other endpoint probes the modern era first. A modern answer settles it. A version error that names a legacy version, any other error, or a timeout means a legacy server.
   /** @param {number} deadline */
   async handshake(deadline) {
-    this.era = "modern";
+    this.era = this.endpoint?.legacy ? "legacy" : "modern";
     let found;
-    try {
+    if (this.era === "modern") try {
       found = await this.request("server/discover", {}, { timeoutMs: Math.min(deadline - Date.now(), this.limits.startupMs / 2), cancelable: false });
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === UNSUPPORTED_VERSION) {

@@ -69,9 +69,9 @@ function checkStdio(config) {
 // `send` settles when the transport has carried the whole exchange; a request whose answer never came rejects.
 // `negotiated` names the legacy version after `initialize`; a transport that never hears it speaks the modern era.
 /** @typedef {{ send(message: Record<string, unknown>, headers?: Record<string, string>): Promise<void>, cancel(id: number, reason: string): void, negotiated(version: string): void, close(): Promise<void>, diagnostics(failed: boolean): string[] }} Transport */
-// What a trusted configuration runs. `identity` keys the trust record, `describe` names the action in the prompt, and `mirrorsParams` means the tool headers apply.
+// What a trusted configuration runs. `identity` keys the trust record, `describe` names the action in the prompt, `mirrorsParams` means the tool headers apply, and `legacy` means the transport exists only in the legacy protocol era.
 // A remote endpoint names its `url`, and `signsIn` means an OAuth sign-in can give it a token.
-/** @typedef {{ identity: string, describe: string, mirrorsParams: boolean, url?: string, signsIn?: boolean, open(sink: Sink): Transport }} Endpoint */
+/** @typedef {{ identity: string, describe: string, mirrorsParams: boolean, legacy: boolean, url?: string, signsIn?: boolean, open(sink: Sink): Transport }} Endpoint */
 
 // One child process per server. Each stdout line is one message; a line that is not JSON is noise.
 /** @param {{ argv: string[], env: Record<string, string>, cwd?: string }} launch @param {Sink} sink @returns {Transport} */
@@ -140,6 +140,7 @@ function stdioEndpoint(config) {
     identity: JSON.stringify([config.command, config.args ?? [], config.cwd, entries, launch]),
     describe: "runs: " + argv.map((arg) => JSON.stringify(arg)).join(" "),
     mirrorsParams: false,
+    legacy: false,
     open: (sink) => openStdio(launch, sink),
   };
 }
@@ -449,6 +450,7 @@ function remoteEndpoint(config, type) {
     identity: JSON.stringify([type, config.url, entries, url]),
     describe: "connects to: " + url,
     mirrorsParams: type === "http",
+    legacy: type === "sse",
     url,
     signsIn: target.auth !== null,
     open: (sink) => type === "http" ? openHttp(target, sink) : openSse(target, sink),

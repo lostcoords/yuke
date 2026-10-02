@@ -258,6 +258,8 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     // The modern probe fails outside a session, so the client falls back to `initialize` and keeps the session.
     try expectState(host, "legacy", "connected · legacy · 1 tool: echo");
     try expectState(host, "old", "connected · legacy · 1 tool: echo");
+    // The old SSE transport starts with `initialize`, so no modern probe spends its startup budget.
+    try std.testing.expectEqual(@as(u32, 0), peer.sse_discovers);
     // A 401 with no stored grant waits for a sign-in.
     try expectState(host, "denied", "needs auth · run /mcp-login denied");
 
