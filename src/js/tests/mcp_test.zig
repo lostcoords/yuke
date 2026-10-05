@@ -247,7 +247,7 @@ test "a search tool name conflict leaves the other tool and reports the conflict
     try support.expectTool(host, "tool_search", "{}", .{ .text = .{ .equals = "other" } });
 }
 
-test "a run waits for an eager server only, and a search waits for a deferred one" {
+test "a run waits for an eager and a deferred server, so a later run declares no new tool" {
     var f: Fixture = undefined;
     try f.init("slow");
     defer f.deinit();
@@ -255,7 +255,8 @@ test "a run waits for an eager server only, and a search waits for a deferred on
     try support.pumpUntilTrue(host, "mcpLoaded()");
     try askSelect(host);
     try std.testing.expect(support.hasTool(host, "mcp_eager_echo"));
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("mcpStates().lazy.startsWith('connecting') ? 1 : 0"));
+    try std.testing.expect(support.hasTool(host, "mcp_lazy_echo"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("mcpStates().lazy.startsWith('connected') ? 1 : 0"));
     // The gate has no more work, so a later run makes no JS call for it.
     try std.testing.expect(!host.hooks.points.contains(.@"tools.select"));
     try expectSearch(host, "{\"query\":\"echo\"}", "Found 2 MCP tools:", &.{"mcp_lazy_echo"}, "mcp_eager_echo");

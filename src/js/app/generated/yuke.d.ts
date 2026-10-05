@@ -1148,7 +1148,7 @@ export type McpPlugin = Plugin & {
 };
 /**
  * Build the `mcp` plugin. It starts MCP servers and gives the model their tools. A tool stays deferred until the tool_search tool loads it, unless its server sets `alwaysLoad`.
- * A run waits for an eager server that still connects. A search waits for every server that still connects.
+ * A run and a search wait for every server that still connects.
  * The servers come from `options.servers`, then `.mcp.json` in `$XDG_CONFIG_HOME` or `~/.config`, then `.mcp.json` in the workspace. The first entry of a name wins.
  * A workspace server starts only after the user trusts it. It throws a TypeError for a timeout that is not a positive integer.
  * @param [options] - `servers` has the shape of `mcpServers` in `.mcp.json`. `startupMs` limits the start of each server (default 10000).

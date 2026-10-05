@@ -172,7 +172,7 @@ if (mcpCase === "search-conflict") {
   plugins.use(globalThis.mcpPlugin);
 }
 
-// Two slow servers: a run waits for the eager one only, and a search waits for the deferred one.
+// Two slow servers: a run waits for both, because a provider with native tool search declares the deferred tools too.
 if (mcpCase === "slow") {
   globalThis.mcpPlugin = mcp({ startupMs: 5000, servers: { eager: { ...sh("sleep 0.5\n" + LEGACY), alwaysLoad: true }, lazy: sh("sleep 1.5\n" + LEGACY) } });
   plugins.use(globalThis.mcpPlugin);

@@ -289,7 +289,7 @@ async function searchCatalog(servers, args) {
   if (only !== undefined && typeof only !== "string") throw new Error("server must be a string");
   if (asked !== undefined && (typeof asked !== "number" || !Number.isSafeInteger(asked) || asked < 1 || asked > LIMIT_MAX)) throw new Error("limit must be an integer from 1 to " + LIMIT_MAX);
   const limit = asked === undefined ? LIMIT_DEFAULT : asked;
-  // A deferred server does not delay a run, so the search waits for each server that still connects. A start ends within the startup limit.
+  // A server that restarted after the run began may still connect, so the search waits for each server that still connects. A start ends within the startup limit.
   // A restart replaces a server, so the wait reads the list again until no server connects.
   for (let starting = servers.filter(connecting); starting.length !== 0; starting = servers.filter(connecting)) await Promise.all(starting.map((server) => server.started));
   const wanted = query.toLowerCase().split(/[^a-z0-9]+/).filter((term) => term.length > 1);
@@ -361,7 +361,7 @@ class Server {
   /** @param {string} name @param {ServerConfig} config @param {Limits} limits @param {boolean} trusted @param {Context} ctx @param {() => void} openGate */
   constructor(name, config, limits, trusted, ctx, openGate) {
     this.name = name;
-    // An eager server opens the run gate at each start, so a run waits for its tools after a reconnect too.
+    // A server opens the run gate at each start, so a run waits for its tools after a reconnect too.
     this.openGate = openGate;
     this.config = config;
     this.limits = limits;
@@ -450,7 +450,7 @@ class Server {
   /** @returns {Promise<void>} */
   start() {
     this.started = this.connect();
-    if (this.config.alwaysLoad === true) this.openGate();
+    this.openGate();
     return this.started;
   }
 
@@ -857,7 +857,7 @@ async function readServers(path, problems) {
 
 /**
  * Build the `mcp` plugin. It starts MCP servers and gives the model their tools. A tool stays deferred until the tool_search tool loads it, unless its server sets `alwaysLoad`.
- * A run waits for an eager server that still connects. A search waits for every server that still connects.
+ * A run and a search wait for every server that still connects.
  * The servers come from `options.servers`, then `.mcp.json` in `$XDG_CONFIG_HOME` or `~/.config`, then `.mcp.json` in the workspace. The first entry of a name wins.
  * A workspace server starts only after the user trusts it. It throws a TypeError for a timeout that is not a positive integer.
  * @param {McpOptions} [options] - `servers` has the shape of `mcpServers` in `.mcp.json`. `startupMs` limits the start of each server (default 10000).
@@ -947,12 +947,10 @@ export function mcp(options = {}) {
       };
       loaded = load();
 
-      // The gate asks the trust questions at the first run and waits for each eager server that still connects, because its tools must be in the request.
-      // A deferred server never delays a run. The search waits for it.
+      // The gate asks the trust questions at the first run and waits for each server that still connects, because its tools must be in the request.
+      // A provider with native tool search declares deferred tools too, so a server that joins a later run changes the declarations and the provider cache misses.
       /** @type {(() => void) | null} */
       let gate = null;
-      /** @param {Server} server */
-      const eagerConnecting = (server) => server.config.alwaysLoad === true && server.state === "connecting";
       openGate = () => {
         if (gate !== null || !ctx.alive) return;
         gate = ctx.hook("tools.select", async () => {
@@ -971,9 +969,9 @@ export function mcp(options = {}) {
               if (ok) server.start(); else server.fail("disabled", "not trusted");
             }
           }
-          // A restart replaces a server, so the wait reads the list again until no eager server connects.
-          for (let eager = servers.filter(eagerConnecting); eager.length !== 0; eager = servers.filter(eagerConnecting)) await Promise.all(eager.map((server) => server.started));
-          // The gate has no more work until a trust reset or an eager start opens it again.
+          // A restart replaces a server, so the wait reads the list again until no server connects.
+          for (let starting = servers.filter(connecting); starting.length !== 0; starting = servers.filter(connecting)) await Promise.all(starting.map((server) => server.started));
+          // The gate has no more work until a trust reset or a server start opens it again.
           gate?.();
           gate = null;
         });
