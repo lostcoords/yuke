@@ -7,6 +7,7 @@ const term = @import("term");
 const Host = @import("../host.zig").Host;
 const Allocations = @import("../../allocations.zig");
 const Work = @import("../../session/work.zig");
+const toolset = @import("../../engine/toolset.zig");
 const native_term = @import("../native/term.zig");
 const native_module = @import("../native/module.zig");
 const Tree = @import("agents.zig");
@@ -133,6 +134,8 @@ pub const Harness = struct {
     phase_group: Phase.Group,
     /// The run slot of the tool phase. The probe tool starts no native operation.
     work: Work = .{},
+    /// The registration of the probe tool. A run loadout resolves it once, so a step does not look it up.
+    probe_tool: ?toolset.Id = null,
 
     /// The benchmark borrows its own environment and runs no command of its own.
     fn context(self: *Harness) execution.Context {
@@ -375,7 +378,12 @@ pub const Harness = struct {
     }
 
     fn toolOnce(self: *Harness) !void {
-        const invocation = self.host.calls.submit("probe", "{}", .{ .workspace_root = "", .site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 }, .work = &self.work, .output = .discard });
+        const tool = self.probe_tool orelse blk: {
+            const id = self.host.tools.entries.items[self.host.tools.find("probe").?].id;
+            self.probe_tool = id;
+            break :blk id;
+        };
+        const invocation = self.host.calls.submit("probe", "{}", .{ .tool = tool, .workspace_root = "", .site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 }, .work = &self.work, .output = .discard });
         defer {
             invocation.finish();
             self.host.calls.sweep(self.host.ctx);

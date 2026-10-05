@@ -21,7 +21,7 @@ const frame = ai.testing.sseFrame;
 const png_signature = "\x89PNG\r\n\x1a\n";
 /// The text that names a session in its first prompt. No other part of a body holds it.
 const session_tag = "bench-session-";
-const read_decl = [_]ai.ir.Tool{.{ .name = "read", .description = "Read a part of the corpus.", .input_schema = "{\"type\":\"object\",\"properties\":{\"part\":{\"type\":\"integer\"}},\"required\":[\"part\"]}" }};
+const read_decl = [_]toolset.Served{.{ .decl = .{ .name = "read", .description = "Read a part of the corpus.", .input_schema = "{\"type\":\"object\",\"properties\":{\"part\":{\"type\":\"integer\"}},\"required\":[\"part\"]}" }, .id = 0 }};
 
 gpa: std.mem.Allocator,
 app: App,
@@ -167,7 +167,7 @@ fn open(ctx: *anyopaque, arena: std.mem.Allocator, request: ai.transport.Request
     return reader.body();
 }
 
-fn decls(_: *anyopaque, _: std.mem.Allocator) error{OutOfMemory}![]const ai.ir.Tool {
+fn decls(_: *anyopaque, _: std.mem.Allocator) error{OutOfMemory}![]const toolset.Served {
     return &read_decl;
 }
 

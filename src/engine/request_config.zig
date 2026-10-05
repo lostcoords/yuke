@@ -117,21 +117,31 @@ pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*Load
     // A run without a tools.select handler keeps the whole table, so it builds no name list.
     var chosen: ?Chosen = null;
     if (engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"tools.select")) {
-        const names = try arena.alloc([]const u8, served.len);
-        for (served, names) |decl, *name| name.* = decl.name;
-        chosen = try engine.deps.hooks.decide(Chosen, arena, slot.runId(), .@"tools.select", .{ .tools = names, .context = hookContext(engine, slot) });
-        // A handler may start a server while it runs, so the table is read again after it answers.
-        served = try tools.decls(tools.ctx, arena);
+        // A handler may register a tool while it runs. A changed table gets one more ask, so the choice covers the late tool.
+        for (0..2) |_| {
+            const names = try arena.alloc([]const u8, served.len);
+            for (served, names) |entry, *name| name.* = entry.decl.name;
+            chosen = try engine.deps.hooks.decide(Chosen, arena, slot.runId(), .@"tools.select", .{ .tools = names, .context = hookContext(engine, slot) });
+            const fresh = try tools.decls(tools.ctx, arena);
+            const changed = fresh.len != served.len or for (served, fresh) |old, new| {
+                if (old.id != new.id) break true;
+            } else false;
+            served = fresh;
+            if (!changed) break;
+        }
     }
-    var held: Loadout = .{ .arena = .init(engine.deps.gpa), .decls = &.{} };
+    var held: Loadout = .{ .arena = .init(engine.deps.gpa), .decls = &.{}, .ids = &.{} };
     errdefer held.arena.deinit();
     const own = held.arena.allocator();
-    var kept: std.ArrayList(ai.ir.Tool) = .empty;
-    for (served) |decl| {
-        if (chosen) |answer| if (!named(answer.tools, decl.name)) continue;
-        try kept.append(own, try proto.dupe(own, decl));
+    var kept: std.ArrayList(ai.ir.Tool) = try .initCapacity(own, served.len);
+    var ids: std.ArrayList(u32) = try .initCapacity(own, served.len);
+    for (served) |entry| {
+        if (chosen) |answer| if (!named(answer.tools, entry.decl.name)) continue;
+        kept.appendAssumeCapacity(try proto.dupe(own, entry.decl));
+        ids.appendAssumeCapacity(entry.id);
     }
     held.decls = kept.items;
+    held.ids = ids.items;
     slot.tools = held;
     return &slot.tools.?;
 }
@@ -199,7 +209,8 @@ test "deferral needs a deferred tool and the search tool, and the route picks th
     try std.testing.expect(!deferralApplies(decls[0..1]));
 
     var spec: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tool_search = true } };
-    var held: Loadout = .{ .arena = .init(std.testing.allocator), .decls = &decls };
+    const ids = [_]u32{ 0, 1, 2, 3 };
+    var held: Loadout = .{ .arena = .init(std.testing.allocator), .decls = &decls, .ids = &ids };
     defer held.arena.deinit();
     try decideDeferral(&held, &spec);
     try std.testing.expectEqual(Loadout.Deferral.native, held.deferral);
@@ -215,6 +226,7 @@ test "deferral needs a deferred tool and the search tool, and the route picks th
 
     // Without the search tool every declaration is eager, with one copy that clears the flags.
     held.decls = decls[0..3];
+    held.ids = ids[0..3];
     held.request_tools = null;
     held.deferral = .none;
     try decideDeferral(&held, &spec);

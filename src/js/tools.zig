@@ -26,9 +26,12 @@ pub const RegisterError = error{
 pub const Tools = struct {
     gpa: std.mem.Allocator,
     entries: std.ArrayList(Entry) = .empty,
+    /// The id of the next registration. It only grows, so an id names one registration for the life of the host.
+    next_id: toolset.Id = 0,
 
     const Entry = struct {
         decl: ir.Tool,
+        id: toolset.Id,
         handler: Value,
     };
 
@@ -54,7 +57,10 @@ pub const Tools = struct {
         if (slot.found) return error.DuplicateName;
 
         // The provider caches on the request prefix, so the advertised order must not follow load order.
+        const id = self.next_id;
+        self.next_id = std.math.add(toolset.Id, id, 1) catch @panic("the tool registration ids are exhausted");
         self.entries.insert(self.gpa, slot.at, .{
+            .id = id,
             .decl = .{
                 .name = self.gpa.dupe(u8, name) catch @panic("out of memory"),
                 .description = utf8.sanitize(self.gpa, description) catch @panic("out of memory"),
@@ -68,17 +74,19 @@ pub const Tools = struct {
     /// Where `name` sits in the sorted table, and whether a tool already holds it.
     const Lookup = struct { at: usize, found: bool };
 
-    /// One ordered scan answers the insert position and the duplicate question together.
+    /// One binary search answers the insert position and the duplicate question together.
     fn lookup(self: *const Tools, name: []const u8) Lookup {
-        for (self.entries.items, 0..) |entry, i| {
-            const decl = entry.decl;
-            switch (std.mem.order(u8, name, decl.name)) {
-                .lt => return .{ .at = i, .found = false },
-                .eq => return .{ .at = i, .found = true },
-                .gt => {},
+        var low: usize = 0;
+        var high = self.entries.items.len;
+        while (low < high) {
+            const mid = low + (high - low) / 2;
+            switch (std.mem.order(u8, name, self.entries.items[mid].decl.name)) {
+                .lt => high = mid,
+                .gt => low = mid + 1,
+                .eq => return .{ .at = mid, .found = true },
             }
         }
-        return .{ .at = self.entries.items.len, .found = false };
+        return .{ .at = low, .found = false };
     }
 
     /// Return the index of the tool with `name`, or null.
@@ -114,6 +122,8 @@ pub const Call = struct {
 
     /// The part of a call that only a tool has.
     pub const Tool = struct {
+        /// The registration the run loadout resolved. The owner runs this one, even when another tool took the name since.
+        id: toolset.Id,
         /// The workspace the tool runs against. The submitter owns these bytes, and only a start reads them.
         workspace_root: []const u8,
         site: toolset.Site,
@@ -194,7 +204,7 @@ pub const Calls = struct {
 
     /// Queue one tool call. This runs on a turn task, so it enters no JavaScript. The call borrows `name`, `arguments`, `context.workspace_root`, and `context.work`.
     pub fn submit(self: *Calls, name: []const u8, arguments: []const u8, context: toolset.Context) *Call {
-        return self.add(.{ .name = name, .arguments = arguments, .kind = .{ .tool = .{ .workspace_root = context.workspace_root, .site = context.site, .work = context.work } } });
+        return self.add(.{ .name = name, .arguments = arguments, .kind = .{ .tool = .{ .id = context.tool, .workspace_root = context.workspace_root, .site = context.site, .work = context.work } } });
     }
 
     /// Queue one hook question. The point names it, and the payload is the JSON that point defines.

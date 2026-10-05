@@ -14,12 +14,12 @@ pub fn toolSet(host: *Host) toolset.ToolSet {
     return .{ .ctx = host, .decls = declsFor, .run = runFor, .spill = spillFor };
 }
 
-/// Answer every declaration in table order, which is sorted, so the advertised order never follows load order.
-fn declsFor(ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const ir.Tool {
+/// Answer every tool in table order, which is sorted, so the advertised order never follows load order.
+fn declsFor(ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const toolset.Served {
     const host: *Host = @ptrCast(@alignCast(ctx));
-    const decls = try arena.alloc(ir.Tool, host.tools.entries.items.len);
-    for (host.tools.entries.items, decls) |entry, *decl| decl.* = try proto.dupe(arena, entry.decl);
-    return decls;
+    const served = try arena.alloc(toolset.Served, host.tools.entries.items.len);
+    for (host.tools.entries.items, served) |entry, *out| out.* = .{ .decl = try proto.dupe(arena, entry.decl), .id = entry.id };
+    return served;
 }
 
 /// Submit one call and wait at the turn cancellation point for the owner to answer it.
@@ -148,6 +148,26 @@ test "a tool outcome owns its data after the call answer leaves, and an unknown 
     // Plain text is model text, even when it reads as JSON.
     const plain = try arena.allocator().dupe(u8, "{\"text\":\"y\"}");
     try std.testing.expectEqualStrings("{\"text\":\"y\"}", outcomeOf(arena.allocator(), .{}, .{ .ok = .{ .text = plain } }).output);
+}
+
+test "the served tools pair each declaration with its own registration, not its table position" {
+    const support = @import("tests/support.zig");
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try host.evalModule(
+        \\import { defineTool } from "yuke:internal/native/tools";
+        \\for (const name of ["beta", "alpha"]) defineTool(name, { description: name, parameters: { type: "object", properties: {} }, execute: async () => name });
+    , "order.js");
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const set = toolSet(host);
+    const served = try set.decls(set.ctx, arena.allocator());
+    for (served) |entry| try std.testing.expectEqual(host.tools.entries.items[host.tools.find(entry.decl.name).?].id, entry.id);
+    // `beta` registered first, so it holds the smaller id, though it sorts after `alpha`.
+    const alpha = host.tools.entries.items[host.tools.find("alpha").?].id;
+    const beta = host.tools.entries.items[host.tools.find("beta").?].id;
+    try std.testing.expect(beta < alpha);
+    try std.testing.expect(host.tools.find("alpha").? < host.tools.find("beta").?);
 }
 
 test "a spill writes the whole text to a new file in the host log directory" {

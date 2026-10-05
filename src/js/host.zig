@@ -867,7 +867,7 @@ test "an unhandled rejection is reported once after the jobs run, and a late han
     // The host answers a failed tool and a rejected module itself, so the tracker stays silent about both.
     try support.expectTool(host, "failing", "{}", .{ .is_error = true, .text = .{ .contains = "tool broke" } });
     // A canceled turn leaves its tool running. The host frees the call at once, and the late rejection is no fault.
-    const left = host.calls.submit("late", "{}", support.toolContext(host.cwd));
+    const left = support.submitTool(host, "late", "{}", support.toolContext(host.cwd));
     try host.pump();
     left.finish();
     try host.pump();

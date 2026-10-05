@@ -172,7 +172,7 @@ test "headless extensions pump an async JavaScript tool" {
     const advertised = try installed.decls(installed.ctx, arena.allocator());
     try std.testing.expectEqual(extensions.host.tools.entries.items.len, advertised.len);
     const found = for (advertised) |d| {
-        if (std.mem.eql(u8, d.name, "read_note")) break true;
+        if (std.mem.eql(u8, d.decl.name, "read_note")) break true;
     } else false;
     try std.testing.expect(found);
     try support.expectTool(extensions.host, "read_note", "{\"path\":\"note.txt\"}", .{ .root = "", .text = .{ .equals = "from rpc" } });
@@ -195,7 +195,7 @@ test "the tool port answers the declarations in table order, and a removed tool 
     defer arena.deinit();
     const decls = try installed.decls(installed.ctx, arena.allocator());
     try std.testing.expect(decls.len >= 2);
-    for (decls[1..], 0..) |decl, i| try std.testing.expect(std.mem.order(u8, decls[i].name, decl.name) == .lt);
+    for (decls[1..], 0..) |served, i| try std.testing.expect(std.mem.order(u8, decls[i].decl.name, served.decl.name) == .lt);
     try host.evalModule(
         \\import { removeTool } from "yuke:internal/native/tools";
         \\globalThis.removed = removeTool("hidden_tool") ? 1 : 0;

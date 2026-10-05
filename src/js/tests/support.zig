@@ -184,9 +184,17 @@ pub const Answer = struct {
 /// The run slot of every test tool call. Each native operation releases it when it ends.
 var test_work: Work = .{};
 
-/// The context of a tool call from session 01…01 against `root`. A test that reads the run slot sets its own `work`.
+/// The context of a tool call from session 01…01 against `root`. Its registration names no tool, so `submitTool` resolves one. A test that reads the run slot sets its own `work`.
 pub fn toolContext(root: []const u8) toolset.Context {
-    return .{ .workspace_root = root, .site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 }, .work = &test_work, .output = .discard };
+    return .{ .tool = std.math.maxInt(toolset.Id), .workspace_root = root, .site = .{ .session_id = .bytes([_]u8{1} ** 16), .message_id = 2, .part_id = 0 }, .work = &test_work, .output = .discard };
+}
+
+/// Queue a call to the registration that holds `name` now. A run loadout resolves a name the same way.
+/// An unknown name gets no registration. The call borrows `name`, `arguments`, and the context bytes.
+pub fn submitTool(host: *Host, name: []const u8, arguments: []const u8, context: toolset.Context) *tools_table.Call {
+    var resolved = context;
+    if (host.tools.find(name)) |at| resolved.tool = host.tools.entries.items[at].id;
+    return host.calls.submit(name, arguments, resolved);
 }
 
 /// What a test reads of a settled answer.
@@ -212,7 +220,7 @@ pub fn outcome(arena: std.mem.Allocator, call: *const tools_table.Call) !toolset
 
 /// Submit one tool call from session 01…01, wait for it, check its answer, and drop it.
 pub fn expectTool(host: *Host, name: []const u8, args: []const u8, want: Answer) !void {
-    const call = host.calls.submit(name, args, toolContext(want.root orelse host.cwd));
+    const call = submitTool(host, name, args, toolContext(want.root orelse host.cwd));
     try pumpUntilSettled(host, call);
     const answer = reply(call);
     errdefer std.debug.print("{s} {s} -> {s}\n", .{ name, args, answer.text });

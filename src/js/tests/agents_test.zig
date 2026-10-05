@@ -16,7 +16,7 @@ test "child pages return a complete list or refuse" {
 const ToolAnswer = struct { text: []u8, is_error: bool };
 
 fn invokeAgent(host: *Host, name: []const u8, args: []const u8) !ToolAnswer {
-    const call = host.calls.submit(name, args, support.toolContext("/work"));
+    const call = support.submitTool(host, name, args, support.toolContext("/work"));
     defer call.finish();
     for (0..4) |_| try host.pump();
     try std.testing.expect(call.state == .settled);
@@ -253,7 +253,7 @@ test "TUI tool questions show their owner and device login closes on completion"
     const host = support.createHost();
     defer support.destroyHost(host);
     try support.eval(host, "agents/owner-question.test.js");
-    const call = host.calls.submit("question", "{}", support.toolContext("/work"));
+    const call = support.submitTool(host, "question", "{}", support.toolContext("/work"));
     defer call.finish();
     try host.pump();
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("root.overlays[0].opts.title.includes('01010101') ? 1 : 0"));

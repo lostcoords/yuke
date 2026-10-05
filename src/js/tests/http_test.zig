@@ -37,7 +37,7 @@ fn run(mode: Mode, options: struct { cleanup: Cleanup = .none, pool: ?PoolCase =
     var work: Work = .{};
     var context = support.toolContext("/");
     context.work = &work;
-    const call = if (cleanup == .tool) host.calls.submit("fetch_probe", "{}", context) else null;
+    const call = if (cleanup == .tool) support.submitTool(host, "fetch_probe", "{}", context) else null;
     defer if (call) |held| held.finish();
     if (options.pool == .concurrent) {
         try support.pumpUntil(host, peer, struct {

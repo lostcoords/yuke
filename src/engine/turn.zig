@@ -840,8 +840,9 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
     }
 
     const tools = engine.deps.tools;
-    if (!held.allows(call.name)) return .{ .output = "The tool is unavailable in this session.", .is_error = true };
+    const id = held.idOf(call.name) orelse return .{ .output = "The tool is unavailable in this session.", .is_error = true };
     const res = tools.run(tools.ctx, arena, call.name, call.arguments, .{
+        .tool = id,
         .workspace_root = slot.config.root,
         .site = .{ .session_id = slot.sessionId(), .message_id = slot.progress.current.?.message_id, .part_id = pt.part_id },
         .work = &slot.work,
@@ -873,7 +874,7 @@ fn runHooked(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, pt: Pend
 fn admitAdditions(arena: std.mem.Allocator, held: *const Loadout, outcome: toolset.Outcome) toolset.Outcome {
     if (outcome.is_error) return outcome;
     for (outcome.tools_added) |definition| {
-        if (!held.allows(definition.name)) return .{ .output = "The tool answered a definition outside the run loadout.", .is_error = true };
+        if (held.idOf(definition.name) == null) return .{ .output = "The tool answered a definition outside the run loadout.", .is_error = true };
         const schema = std.json.parseFromSliceLeaky(std.json.Value, arena, definition.input_schema, .{}) catch return .{ .output = "The tool answered a definition with an unreadable schema.", .is_error = true };
         if (schema != .object) return .{ .output = "The tool answered a definition with an unreadable schema.", .is_error = true };
     }
@@ -1267,9 +1268,11 @@ test "a build hook can discard the live registry and tools before the request se
         session_id: ids.SessionId,
         discarded: bool = false,
 
-        fn decls(ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const ai.ir.Tool {
+        fn decls(ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const toolset.Served {
             const self: *@This() = @ptrCast(@alignCast(ctx));
-            return proto.dupe(arena, self.tools);
+            const served = try arena.alloc(toolset.Served, self.tools.len);
+            for (self.tools, served, 0..) |decl, *out, i| out.* = .{ .decl = try proto.dupe(arena, decl), .id = @intCast(i) };
+            return served;
         }
 
         fn holds(_: *anyopaque, point: proto.hook.Point) bool {
@@ -1605,10 +1608,10 @@ test "a tool that appears while tools.select runs joins the same run" {
     const State = struct {
         reads: usize = 0,
 
-        fn decls(raw: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const ai.ir.Tool {
+        fn decls(raw: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const toolset.Served {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.reads += 1;
-            // The first read happens before the hook, the second after it, when the late tool exists.
+            // The first read happens before the hook. The late tool exists from the second read on.
             return if (self.reads == 1) Resources.serveTools(&.{"read"})(raw, arena) else Resources.serveTools(&.{ "read", "late" })(raw, arena);
         }
 
@@ -1616,8 +1619,11 @@ test "a tool that appears while tools.select runs joins the same run" {
             return point == .@"tools.select";
         }
 
-        fn ask(_: *anyopaque, _: std.mem.Allocator, _: proto.hook.Point, _: []const u8) hookset.Decision {
-            return .proceed;
+        // The handler keeps exactly the names it saw, as a filter does, so only a second ask can keep the late tool.
+        fn ask(_: *anyopaque, arena: std.mem.Allocator, _: proto.hook.Point, payload: []const u8) hookset.Decision {
+            const sent = std.json.parseFromSliceLeaky(std.json.Value, arena, payload, .{}) catch unreachable;
+            const text = std.json.Stringify.valueAlloc(arena, .{ .tools = sent.object.get("tools").? }, .{}) catch unreachable;
+            return .{ .replace = std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{}) catch unreachable };
         }
     };
     var fixture: StreamerFixture = undefined;
@@ -1629,8 +1635,43 @@ test "a tool that appears while tools.select runs joins the same run" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const held = try request_config_mod.loadout(&fixture.engine, arena.allocator(), fixture.slot);
-    try std.testing.expectEqual(@as(usize, 2), state.reads);
-    try std.testing.expect(held.allows("late"));
+    try std.testing.expectEqual(@as(usize, 3), state.reads);
+    try std.testing.expect(held.idOf("late") != null);
+}
+
+test "a table that changes on every read gets two tools.select asks, not more" {
+    const State = struct {
+        reads: u32 = 0,
+        asks: u32 = 0,
+
+        fn decls(raw: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const toolset.Served {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.reads += 1;
+            const out = try arena.alloc(toolset.Served, 1);
+            out[0] = .{ .decl = .{ .name = "read", .description = "read", .input_schema = "{}" }, .id = self.reads };
+            return out;
+        }
+
+        fn holds(_: *anyopaque, point: proto.hook.Point) bool {
+            return point == .@"tools.select";
+        }
+
+        fn ask(raw: *anyopaque, _: std.mem.Allocator, _: proto.hook.Point, _: []const u8) hookset.Decision {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.asks += 1;
+            return .proceed;
+        }
+    };
+    var fixture: StreamerFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    var state: State = .{};
+    fixture.engine.installTools(.{ .ctx = &state, .decls = State.decls });
+    fixture.engine.deps.hooks = .{ .ctx = &state, .holds = State.holds, .ask = State.ask };
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    _ = try request_config_mod.loadout(&fixture.engine, arena.allocator(), fixture.slot);
+    try std.testing.expectEqual(@as(u32, 2), state.asks);
 }
 
 test "the run loadout gates a tool call, and a tool.before rewrite lands inside it" {

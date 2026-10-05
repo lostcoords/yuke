@@ -1,4 +1,5 @@
-//! The process supplies the port that runs tools. The engine sends `decls` to the provider and calls `run` with the name the provider chose, so a built-in and an extension tool share one path.
+//! The process supplies the port that runs tools. A built-in and an extension tool share one path.
+//! The engine sends `decls` to the provider. It calls `run` with the registration that the run loadout holds for the chosen name.
 
 const std = @import("std");
 const proto = @import("proto");
@@ -8,7 +9,16 @@ const work = @import("../session/work.zig");
 
 pub const Site = proto.input.ToolSite;
 
+/// The id of one tool registration. The process never reuses an id, so a call never runs a newer registration of the same name.
+pub const Id = u32;
+
+/// One served tool: the declaration the provider reads and the registration that runs it.
+/// Each registration keeps one id for its life, and no other registration takes that id.
+pub const Served = struct { decl: ir.Tool, id: Id };
+
 pub const Context = struct {
+    /// The registration that the run loadout holds for the called name.
+    tool: Id,
     workspace_root: []const u8,
     site: Site,
     work: *work,
@@ -42,9 +52,9 @@ pub const Outcome = struct {
 
 pub const ToolSet = struct {
     ctx: *anyopaque = undefined,
-    /// Answer every declaration the process serves, in table order. The result belongs to `arena`.
-    decls: *const fn (ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const ir.Tool = noDecls,
-    /// Run one tool by the name the provider chose.
+    /// Answer every tool the process serves, in table order. The result belongs to `arena`.
+    decls: *const fn (ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const Served = noDecls,
+    /// Run the registration `context.tool`. `name` is the name the provider chose.
     run: *const fn (
         ctx: *anyopaque,
         out: std.mem.Allocator,
@@ -57,7 +67,7 @@ pub const ToolSet = struct {
 };
 
 /// A process without extensions advertises no tool.
-fn noDecls(_: *anyopaque, _: std.mem.Allocator) error{OutOfMemory}![]const ir.Tool {
+fn noDecls(_: *anyopaque, _: std.mem.Allocator) error{OutOfMemory}![]const Served {
     return &.{};
 }
 

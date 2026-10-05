@@ -33,6 +33,8 @@ pub const Config = struct {
 pub const Loadout = struct {
     arena: std.heap.ArenaAllocator,
     decls: []const transport_ir.Tool,
+    /// The registration id of each declaration, at the same index. A call runs the registration its run advertised.
+    ids: []const u32,
     /// The tools the request declares. The first build decides it once from `decls`, and it holds for the run.
     request_tools: ?[]const transport_ir.Tool = null,
     /// How a deferred definition reaches the model: not at all, an Anthropic reference, or an addition after a search.
@@ -40,9 +42,11 @@ pub const Loadout = struct {
 
     pub const Deferral = enum { none, native, omitted };
 
-    pub fn allows(self: *const Loadout, name: []const u8) bool {
-        for (self.decls) |decl| if (std.mem.eql(u8, decl.name, name)) return true;
-        return false;
+    /// Return the registration of `name` in this run, or null when the run does not hold it.
+    pub fn idOf(self: *const Loadout, name: []const u8) ?u32 {
+        std.debug.assert(self.decls.len == self.ids.len);
+        for (self.decls, self.ids) |decl, id| if (std.mem.eql(u8, decl.name, name)) return id;
+        return null;
     }
 };
 

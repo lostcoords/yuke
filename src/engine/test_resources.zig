@@ -6,6 +6,7 @@ const zio = @import("zio");
 const ai = @import("ai");
 const proto = @import("proto");
 const hookset = @import("hookset.zig");
+const toolset = @import("toolset.zig");
 const Engine = @import("Engine.zig");
 const commands = @import("commands.zig");
 const runs = @import("run.zig");
@@ -46,11 +47,11 @@ pub fn deinit(self: *Resources) void {
 }
 
 /// A tool port answer for tests: the tools a canned reply calls, so the run loadout admits them.
-pub fn serveTools(comptime list: []const []const u8) *const fn (*anyopaque, std.mem.Allocator) error{OutOfMemory}![]const ai.ir.Tool {
+pub fn serveTools(comptime list: []const []const u8) *const fn (*anyopaque, std.mem.Allocator) error{OutOfMemory}![]const toolset.Served {
     return struct {
-        fn decls(_: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const ai.ir.Tool {
-            const out = try arena.alloc(ai.ir.Tool, list.len);
-            for (list, out) |name, *decl| decl.* = .{ .name = name, .description = name, .input_schema = "{}" };
+        fn decls(_: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const toolset.Served {
+            const out = try arena.alloc(toolset.Served, list.len);
+            for (list, out, 0..) |name, *served, i| served.* = .{ .decl = .{ .name = name, .description = name, .input_schema = "{}" }, .id = @intCast(i) };
             return out;
         }
     }.decls;

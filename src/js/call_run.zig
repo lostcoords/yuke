@@ -84,8 +84,10 @@ fn startHook(host: *Host, call: *table.Call) void {
 
 fn startTool(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
+    // The registration that the run advertised runs, so a later tool with the same name never stands in for it.
     const at = host.tools.find(call.name) orelse
         return settleText(host, call, "the tool is not registered", .failed);
+    if (host.tools.entries.items[at].id != call.kind.tool.id) return settleText(host, call, "the tool is not registered", .failed);
     const parsed = parseArguments(host, call) orelse return;
     defer ctx.freeValue(parsed);
 
@@ -270,9 +272,30 @@ test "a tool signal aborts at settlement before its submitter leaves" {
         \\import { defineTool } from "yuke:internal/native/tools";
         \\defineTool("probe", { description: "Probe", parameters: { type: "object", properties: {} }, execute: async (_, signal) => { await 0; globalThis.signal = signal; return "ok"; } });
     , "settled-signal.js");
-    const invocation = host.calls.submit("probe", "{}", support.toolContext(""));
+    const invocation = support.submitTool(host, "probe", "{}", support.toolContext(""));
     try host.pump();
     try std.testing.expect(invocation.state == .settled);
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.signal.aborted"));
     try support.dropCall(host, invocation);
+}
+
+test "a call runs the registration its run resolved, never a newer one with the same name" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try host.evalModule(
+        \\import { defineTool } from "yuke:internal/native/tools";
+        \\defineTool("swap", { description: "Old", parameters: { type: "object", properties: {} }, execute: async () => "old" });
+    , "swap-old.js");
+    var context = support.toolContext("");
+    context.tool = host.tools.entries.items[host.tools.find("swap").?].id;
+    try host.evalModule(
+        \\import { defineTool, removeTool } from "yuke:internal/native/tools";
+        \\removeTool("swap");
+        \\defineTool("swap", { description: "New", parameters: { type: "object", properties: {} }, execute: async () => "new" });
+    , "swap-new.js");
+    const call = host.calls.submit("swap", "{}", context);
+    try support.pumpUntilSettled(host, call);
+    try std.testing.expect(support.reply(call).is_error);
+    try std.testing.expectEqualStrings("the tool is not registered", support.reply(call).text);
+    try support.dropCall(host, call);
 }

@@ -770,12 +770,12 @@ test "the summary call repeats the prefix of the turn and refuses a tool" {
     try seedCompactableHistory(&f.db, a);
     // A turn declares tools, so the summary call declares the same ones.
     const Tools = struct {
-        fn decls(_: *anyopaque, tool_arena: std.mem.Allocator) error{OutOfMemory}![]const ai.ir.Tool {
-            return proto.dupe(tool_arena, @as([]const ai.ir.Tool, &.{.{
+        fn decls(_: *anyopaque, tool_arena: std.mem.Allocator) error{OutOfMemory}![]const toolset.Served {
+            return proto.dupe(tool_arena, @as([]const toolset.Served, &.{.{ .decl = .{
                 .name = "read",
                 .description = "Read a file.",
                 .input_schema = "{\"type\":\"object\"}",
-            }}));
+            }, .id = 0 }}));
         }
     };
     var tool_ctx: u8 = 0;

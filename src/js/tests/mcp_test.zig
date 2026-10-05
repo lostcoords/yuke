@@ -70,7 +70,7 @@ fn deferred(host: *Host, name: []const u8) bool {
 }
 
 fn expectSearch(host: *Host, args: []const u8, prefix: []const u8, loaded: []const []const u8, not_loaded: []const u8) !void {
-    const call = host.calls.submit("tool_search", args, support.toolContext(host.cwd));
+    const call = support.submitTool(host, "tool_search", args, support.toolContext(host.cwd));
     try support.pumpUntilSettled(host, call);
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -124,7 +124,7 @@ test "an MCP call timeout cancels the request and ignores its late reply" {
     try support.pumpUntilTrue(host, "mcpLoaded() && mcpSettled()");
     try expectState(host, "modern", "connected · modern · 3 tools: a.tool, a_tool, echo");
     const start = std.Io.Timestamp.now(host.io, .awake);
-    const call = host.calls.submit("mcp_modern_echo", "{\"text\":\"slow\"}", support.toolContext(host.cwd));
+    const call = support.submitTool(host, "mcp_modern_echo", "{\"text\":\"slow\"}", support.toolContext(host.cwd));
     try support.pumpUntilSettled(host, call);
     try std.testing.expect(support.reply(call).is_error);
     try std.testing.expectEqualStrings("the request timed out", support.reply(call).text);
@@ -187,7 +187,7 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try support.expectTool(host, "mcp_modern_echo", "[]", .{ .is_error = true, .text = .{ .equals = "MCP tool arguments must be an object" } });
     try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"fail\"}", .{ .is_error = true, .text = .{ .equals = "no such thing" } });
     // The image block also attaches as media, beside the line that names it.
-    const media = host.calls.submit("mcp_modern_echo", "{\"text\":\"media\"}", support.toolContext(host.cwd));
+    const media = support.submitTool(host, "mcp_modern_echo", "{\"text\":\"media\"}", support.toolContext(host.cwd));
     try support.pumpUntilSettled(host, media);
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -224,7 +224,7 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try std.testing.expectEqualStrings(search_description, host.tools.entries.items[host.tools.find("tool_search").?].decl.description);
 
     // A stop answers a pending call at once; it does not wait for the server to exit.
-    const slow = host.calls.submit("mcp_modern_echo", "{\"text\":\"slow\"}", support.toolContext(host.cwd));
+    const slow = support.submitTool(host, "mcp_modern_echo", "{\"text\":\"slow\"}", support.toolContext(host.cwd));
     try host.pump();
     try std.testing.expect(slow.state == .running);
     try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpDisposed = false; Promise.resolve(plugins.dispose(\"mcp\")).then(() => { globalThis.mcpDisposed = true; });", "mcp-dispose.js");
@@ -286,7 +286,7 @@ test "MCP servers over Streamable HTTP and the old SSE transport connect, call, 
     try support.expectTool(host, "mcp_modern_region", "{\"region\":\"世界\"}", .{ .text = .{ .equals = "region header: =?base64?5LiW55WM?=" } });
     try support.expectTool(host, "mcp_old_echo", "{\"text\":\"hi\"}", .{ .text = .{ .equals = "old sse: hi" } });
     // Each progress report restarts the 200 ms timer, so a 400 ms call ends with its answer.
-    const progress = host.calls.submit("mcp_modern_echo", "{\"text\":\"progress\"}", support.toolContext(host.cwd));
+    const progress = support.submitTool(host, "mcp_modern_echo", "{\"text\":\"progress\"}", support.toolContext(host.cwd));
     try support.pumpUntilSettled(host, progress);
     try std.testing.expectEqualStrings("modern http: progress", support.reply(progress).text);
     // Each report shows as one live line of the tool part.
