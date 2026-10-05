@@ -32,6 +32,8 @@ pub const Tools = struct {
     const Entry = struct {
         decl: ir.Tool,
         id: toolset.Id,
+        /// A variant serves only a session that its `when` accepts. A name holds at most one entry that is not a variant.
+        conditional: bool,
         handler: Value,
     };
 
@@ -50,17 +52,20 @@ pub const Tools = struct {
         self.gpa.free(decl.input_schema);
     }
 
-    /// Add one tool: copy the text as valid UTF-8 and take the handler reference on success only.
-    pub fn register(self: *Tools, name: []const u8, description: []const u8, input_schema: []const u8, defer_loading: bool, handler: Value) RegisterError!void {
+    /// Add one tool: copy the text as valid UTF-8 and take the handler reference on success only. Answer the new registration id.
+    /// A variant may share its name with any number of entries. Another entry without `when` refuses the name.
+    pub fn register(self: *Tools, name: []const u8, description: []const u8, input_schema: []const u8, defer_loading: bool, conditional: bool, handler: Value) RegisterError!toolset.Id {
         if (!validName(name)) return error.InvalidName;
-        const slot = self.lookup(name);
-        if (slot.found) return error.DuplicateName;
+        const group = self.groupOf(name);
+        if (!conditional) for (self.entries.items[group.first..group.end]) |entry| if (!entry.conditional) return error.DuplicateName;
 
         // The provider caches on the request prefix, so the advertised order must not follow load order.
+        // A name group keeps registration order, so the newest variant sorts last in its group.
         const id = self.next_id;
         self.next_id = std.math.add(toolset.Id, id, 1) catch @panic("the tool registration ids are exhausted");
-        self.entries.insert(self.gpa, slot.at, .{
+        self.entries.insert(self.gpa, group.end, .{
             .id = id,
+            .conditional = conditional,
             .decl = .{
                 .name = self.gpa.dupe(u8, name) catch @panic("out of memory"),
                 .description = utf8.sanitize(self.gpa, description) catch @panic("out of memory"),
@@ -69,42 +74,72 @@ pub const Tools = struct {
             },
             .handler = handler,
         }) catch @panic("out of memory");
+        return id;
     }
 
-    /// Where `name` sits in the sorted table, and whether a tool already holds it.
-    const Lookup = struct { at: usize, found: bool };
+    /// The entries of one name: indices `first` to `end`, in registration order. Both bounds are insert positions.
+    const Group = struct { first: usize, end: usize };
 
-    /// One binary search answers the insert position and the duplicate question together.
-    fn lookup(self: *const Tools, name: []const u8) Lookup {
+    /// A binary search finds where `name` starts. A group almost always holds one entry, so a short scan finds its end.
+    inline fn groupOf(self: *const Tools, name: []const u8) Group {
+        const items = self.entries.items;
         var low: usize = 0;
-        var high = self.entries.items.len;
+        var high = items.len;
         while (low < high) {
             const mid = low + (high - low) / 2;
-            switch (std.mem.order(u8, name, self.entries.items[mid].decl.name)) {
-                .lt => high = mid,
-                .gt => low = mid + 1,
-                .eq => return .{ .at = mid, .found = true },
+            if (std.mem.order(u8, items[mid].decl.name, name) == .lt) low = mid + 1 else high = mid;
+        }
+        var end = low;
+        while (end < items.len and std.mem.eql(u8, items[end].decl.name, name)) end += 1;
+        return .{ .first = low, .end = end };
+    }
+
+    /// Return the index of the global entry of `name`, the one that is not a variant, or null.
+    pub fn find(self: *const Tools, name: []const u8) ?usize {
+        const group = self.groupOf(name);
+        for (self.entries.items[group.first..group.end], group.first..) |entry, i| if (!entry.conditional) return i;
+        return null;
+    }
+
+    /// Return the index of registration `id` under `name`, or null when it left the table.
+    /// A name almost always holds one entry, so the first match of the search answers most calls.
+    pub fn findRegistration(self: *const Tools, name: []const u8, id: toolset.Id) ?usize {
+        const items = self.entries.items;
+        var low: usize = 0;
+        var high = items.len;
+        while (low < high) {
+            const mid = low + (high - low) / 2;
+            switch (std.mem.order(u8, items[mid].decl.name, name)) {
+                .lt => low = mid + 1,
+                .gt => high = mid,
+                .eq => {
+                    if (items[mid].id == id) return mid;
+                    // A name group is contiguous, so the registration sits beside the match.
+                    var i = mid;
+                    while (i > 0 and std.mem.eql(u8, items[i - 1].decl.name, name)) {
+                        i -= 1;
+                        if (items[i].id == id) return i;
+                    }
+                    i = mid + 1;
+                    while (i < items.len and std.mem.eql(u8, items[i].decl.name, name)) : (i += 1) if (items[i].id == id) return i;
+                    return null;
+                },
             }
         }
-        return .{ .at = low, .found = false };
+        return null;
     }
 
-    /// Return the index of the tool with `name`, or null.
-    pub fn find(self: *const Tools, name: []const u8) ?usize {
-        const slot = self.lookup(name);
-        return if (slot.found) slot.at else null;
-    }
-
-    /// Remove the tool named `name` and answer false when no tool holds it.
-    pub fn remove(self: *Tools, ctx: Context, name: []const u8) bool {
-        const slot = self.lookup(name);
-        if (!slot.found) return false;
-
-        // Ordered, so the sorted advertisement holds.
-        const entry = self.entries.orderedRemove(slot.at);
-        self.freeDecl(entry.decl);
-        ctx.freeValue(entry.handler);
-        return true;
+    /// Remove registration `id` and answer false when it left the table already.
+    pub fn remove(self: *Tools, ctx: Context, id: toolset.Id) bool {
+        for (self.entries.items, 0..) |entry, i| {
+            if (entry.id != id) continue;
+            // Ordered, so the sorted advertisement holds.
+            _ = self.entries.orderedRemove(i);
+            self.freeDecl(entry.decl);
+            ctx.freeValue(entry.handler);
+            return true;
+        }
+        return false;
     }
 };
 
@@ -347,12 +382,16 @@ test "the table refuses a duplicate name, a bad name, and a late registration" {
     var tools: Tools = .{ .gpa = testing.allocator };
     defer tools.deinit(bare.ctx);
 
-    try tools.register("probe", "a test tool", "{\"type\":\"object\"}", false, quickjs.UNDEFINED);
-    try testing.expectError(error.DuplicateName, tools.register("probe", "d", "{}", false, quickjs.UNDEFINED));
-    try testing.expectError(error.InvalidName, tools.register("bad name", "d", "{}", false, quickjs.UNDEFINED));
+    const global = try tools.register("probe", "a test tool", "{\"type\":\"object\"}", false, false, quickjs.UNDEFINED);
+    try testing.expectError(error.DuplicateName, tools.register("probe", "d", "{}", false, false, quickjs.UNDEFINED));
+    try testing.expectError(error.InvalidName, tools.register("bad name", "d", "{}", false, false, quickjs.UNDEFINED));
+    // A variant shares the name, and the name still answers its global entry.
+    const variant = try tools.register("probe", "a variant", "{}", false, true, quickjs.UNDEFINED);
+    try testing.expectEqual(global, tools.entries.items[tools.find("probe").?].id);
+    try testing.expectEqual(variant, tools.entries.items[tools.findRegistration("probe", variant).?].id);
 
     // A tool registers at any time, so a plugin can add one after boot.
-    try tools.register("late", "d", "{}", false, quickjs.UNDEFINED);
+    _ = try tools.register("late", "d", "{}", false, false, quickjs.UNDEFINED);
 }
 
 test "the declarations follow the registered tools" {
@@ -362,9 +401,9 @@ test "the declarations follow the registered tools" {
     defer tools.deinit(bare.ctx);
 
     // Register out of order, because the load order of a plugin must not move the sorted prefix.
-    try tools.register("beta", "the second", "{\"type\":\"object\",\"properties\":{}}", true, quickjs.UNDEFINED);
-    try tools.register("alpha", "the first", "{\"type\":\"object\"}", false, quickjs.UNDEFINED);
-    try tools.register("gamma", "the third", "{\"type\":\"object\"}", false, quickjs.UNDEFINED);
+    _ = try tools.register("beta", "the second", "{\"type\":\"object\",\"properties\":{}}", true, false, quickjs.UNDEFINED);
+    _ = try tools.register("alpha", "the first", "{\"type\":\"object\"}", false, false, quickjs.UNDEFINED);
+    _ = try tools.register("gamma", "the third", "{\"type\":\"object\"}", false, false, quickjs.UNDEFINED);
 
     try testing.expectEqual(@as(usize, 3), tools.entries.items.len);
     try testing.expectEqualStrings("alpha", tools.entries.items[0].decl.name);

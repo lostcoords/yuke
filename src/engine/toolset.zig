@@ -14,7 +14,8 @@ pub const Id = u32;
 
 /// One served tool: the declaration the provider reads and the registration that runs it.
 /// Each registration keeps one id for its life, and no other registration takes that id.
-pub const Served = struct { decl: ir.Tool, id: Id };
+/// A conditional entry is a variant. It serves a session only when `accept` names its id.
+pub const Served = struct { decl: ir.Tool, id: Id, conditional: bool = false };
 
 pub const Context = struct {
     /// The registration that the run loadout holds for the called name.
@@ -62,12 +63,20 @@ pub const ToolSet = struct {
         arguments: []const u8,
         context: Context,
     ) Outcome = unknownTool,
+    /// Answer the variant ids that one session takes. `payload` is `{ context, ids }`, with the run hook context and the variant ids.
+    /// The answer is a subsequence of `ids` in their order. The result belongs to `arena`.
+    accept: *const fn (ctx: *anyopaque, arena: std.mem.Allocator, payload: []const u8) error{ OutOfMemory, Canceled }![]const Id = acceptNone,
     /// Save the whole text of a result that the engine cuts. Return its absolute path, allocated with `out`, or null when the save fails.
     spill: *const fn (ctx: *anyopaque, out: std.mem.Allocator, text: []const u8) ?[]const u8 = noSpill,
 };
 
 /// A process without extensions advertises no tool.
 fn noDecls(_: *anyopaque, _: std.mem.Allocator) error{OutOfMemory}![]const Served {
+    return &.{};
+}
+
+/// A process without extensions serves no variant.
+fn acceptNone(_: *anyopaque, _: std.mem.Allocator, _: []const u8) error{ OutOfMemory, Canceled }![]const Id {
     return &.{};
 }
 

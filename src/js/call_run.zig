@@ -85,9 +85,8 @@ fn startHook(host: *Host, call: *table.Call) void {
 fn startTool(host: *Host, call: *table.Call) void {
     const ctx = host.ctx;
     // The registration that the run advertised runs, so a later tool with the same name never stands in for it.
-    const at = host.tools.find(call.name) orelse
+    const at = host.tools.findRegistration(call.name, call.kind.tool.id) orelse
         return settleText(host, call, "the tool is not registered", .failed);
-    if (host.tools.entries.items[at].id != call.kind.tool.id) return settleText(host, call, "the tool is not registered", .failed);
     const parsed = parseArguments(host, call) orelse return;
     defer ctx.freeValue(parsed);
 
@@ -284,13 +283,13 @@ test "a call runs the registration its run resolved, never a newer one with the 
     defer support.destroyHost(host);
     try host.evalModule(
         \\import { defineTool } from "yuke:internal/native/tools";
-        \\defineTool("swap", { description: "Old", parameters: { type: "object", properties: {} }, execute: async () => "old" });
+        \\globalThis.old = defineTool("swap", { description: "Old", parameters: { type: "object", properties: {} }, execute: async () => "old" });
     , "swap-old.js");
     var context = support.toolContext("");
     context.tool = host.tools.entries.items[host.tools.find("swap").?].id;
     try host.evalModule(
         \\import { defineTool, removeTool } from "yuke:internal/native/tools";
-        \\removeTool("swap");
+        \\removeTool(globalThis.old);
         \\defineTool("swap", { description: "New", parameters: { type: "object", properties: {} }, execute: async () => "new" });
     , "swap-new.js");
     const call = host.calls.submit("swap", "{}", context);
@@ -298,4 +297,23 @@ test "a call runs the registration its run resolved, never a newer one with the 
     try std.testing.expect(support.reply(call).is_error);
     try std.testing.expectEqualStrings("the tool is not registered", support.reply(call).text);
     try support.dropCall(host, call);
+}
+
+test "a call runs the variant or the global tool that its id names" {
+    const host = support.createHost();
+    defer support.destroyHost(host);
+    try host.evalModule(
+        \\import { defineTool } from "yuke:internal/native/tools";
+        \\const parameters = { type: "object", properties: {} };
+        \\globalThis.variant = defineTool("pick", { description: "Variant", parameters, when: () => true, execute: async () => "variant" });
+        \\globalThis.global = defineTool("pick", { description: "Global", parameters, execute: async () => "global" });
+    , "pick.js");
+    for ([_]struct { [:0]const u8, []const u8 }{ .{ "globalThis.variant", "variant" }, .{ "globalThis.global", "global" } }) |case| {
+        var context = support.toolContext("");
+        context.tool = @intCast(try host.evalInt(case[0]));
+        const call = host.calls.submit("pick", "{}", context);
+        try support.pumpUntilSettled(host, call);
+        try std.testing.expectEqualStrings(case[1], support.reply(call).text);
+        try support.dropCall(host, call);
+    }
 }

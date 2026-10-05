@@ -1639,6 +1639,69 @@ test "a tool that appears while tools.select runs joins the same run" {
     try std.testing.expect(held.idOf("late") != null);
 }
 
+test "a run takes the newest variant its session accepts, else the global tool" {
+    const State = struct {
+        accepted: []const toolset.Id = &.{},
+        asks: u32 = 0,
+
+        fn decls(_: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const toolset.Served {
+            const tool = struct {
+                fn of(name: []const u8, id: toolset.Id, conditional: bool) toolset.Served {
+                    return .{ .decl = .{ .name = name, .description = name, .input_schema = "{}" }, .id = id, .conditional = conditional };
+                }
+            }.of;
+            // A name group keeps registration order: the global spawn first, then two variants.
+            return proto.dupe(arena, @as([]const toolset.Served, &.{ tool("only", 3, true), tool("spawn", 0, false), tool("spawn", 1, true), tool("spawn", 2, true) }));
+        }
+
+        fn accept(raw: *anyopaque, arena: std.mem.Allocator, payload: []const u8) error{ OutOfMemory, Canceled }![]const toolset.Id {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.asks += 1;
+            std.debug.assert(std.mem.indexOf(u8, payload, "\"ids\":[3,1,2]") != null);
+            return arena.dupe(toolset.Id, self.accepted);
+        }
+
+        fn holds(_: *anyopaque, point: proto.hook.Point) bool {
+            return point == .@"tools.select";
+        }
+
+        fn proceed(_: *anyopaque, _: std.mem.Allocator, _: proto.hook.Point, _: []const u8) hookset.Decision {
+            return .proceed;
+        }
+    };
+    var fixture: StreamerFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    const Case = struct { accepted: []const toolset.Id, spawn: toolset.Id, only: bool };
+    for ([_]Case{
+        .{ .accepted = &.{ 1, 2 }, .spawn = 2, .only = false },
+        .{ .accepted = &.{1}, .spawn = 1, .only = false },
+        .{ .accepted = &.{3}, .spawn = 0, .only = true },
+    }) |case| {
+        var state: State = .{ .accepted = case.accepted };
+        fixture.engine.installTools(.{ .ctx = &state, .decls = State.decls, .accept = State.accept });
+        if (fixture.slot.tools) |*held| held.arena.deinit();
+        fixture.slot.tools = null;
+        var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+        defer arena.deinit();
+        const held = try request_config_mod.loadout(&fixture.engine, arena.allocator(), fixture.slot);
+        try std.testing.expectEqual(@as(u32, 1), state.asks);
+        try std.testing.expectEqual(case.spawn, held.idOf("spawn").?);
+        try std.testing.expectEqual(case.only, held.idOf("only") != null);
+    }
+    // A tools.select handler that leaves the table unchanged keeps the variant choice, so each `when` answers once.
+    var state: State = .{ .accepted = &.{2} };
+    fixture.engine.installTools(.{ .ctx = &state, .decls = State.decls, .accept = State.accept });
+    fixture.engine.deps.hooks = .{ .ctx = &state, .holds = State.holds, .ask = State.proceed };
+    if (fixture.slot.tools) |*held| held.arena.deinit();
+    fixture.slot.tools = null;
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const held = try request_config_mod.loadout(&fixture.engine, arena.allocator(), fixture.slot);
+    try std.testing.expectEqual(@as(u32, 1), state.asks);
+    try std.testing.expectEqual(@as(toolset.Id, 2), held.idOf("spawn").?);
+}
+
 test "a table that changes on every read gets two tools.select asks, not more" {
     const State = struct {
         reads: u32 = 0,

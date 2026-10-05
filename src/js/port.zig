@@ -11,15 +11,38 @@ const tools = @import("tools.zig");
 /// Build the port the process installs. The set answers from the live host table.
 pub fn toolSet(host: *Host) toolset.ToolSet {
     std.debug.assert(host.phase == .open);
-    return .{ .ctx = host, .decls = declsFor, .run = runFor, .spill = spillFor };
+    return .{ .ctx = host, .decls = declsFor, .run = runFor, .accept = acceptFor, .spill = spillFor };
 }
 
 /// Answer every tool in table order, which is sorted, so the advertised order never follows load order.
 fn declsFor(ctx: *anyopaque, arena: std.mem.Allocator) error{OutOfMemory}![]const toolset.Served {
     const host: *Host = @ptrCast(@alignCast(ctx));
     const served = try arena.alloc(toolset.Served, host.tools.entries.items.len);
-    for (host.tools.entries.items, served) |entry, *out| out.* = .{ .decl = try proto.dupe(arena, entry.decl), .id = entry.id };
+    for (host.tools.entries.items, served) |entry, *out| out.* = .{ .decl = try proto.dupe(arena, entry.decl), .id = entry.id, .conditional = entry.conditional };
     return served;
+}
+
+/// Ask the plugins which variants one session takes, and wait for the answer. A failed or unreadable answer takes no variant.
+fn acceptFor(ctx: *anyopaque, arena: std.mem.Allocator, payload: []const u8) error{ OutOfMemory, Canceled }![]const toolset.Id {
+    const host: *Host = @ptrCast(@alignCast(ctx));
+    // The hook folder answers this internal question. No plugin can hold it, because no hook point has the name.
+    const call = host.calls.submitHook("tools.when", payload);
+    defer finishCall(host, call);
+    host.wake.set(host.io);
+    call.wake.wait(host.io) catch return error.Canceled;
+    if (host.phase != .open) return error.Canceled;
+    const text = switch (call.state.settled) {
+        .ok => |reply| reply.text,
+        .failed => |text| {
+            std.log.warn("the tool variant check faulted: {s}", .{text});
+            return &.{};
+        },
+        .closed => return error.Canceled,
+    };
+    return std.json.parseFromSliceLeaky([]const toolset.Id, arena, text, .{ .allocate = .alloc_always }) catch {
+        std.log.warn("the tool variant check answered an unreadable list", .{});
+        return &.{};
+    };
 }
 
 /// Submit one call and wait at the turn cancellation point for the owner to answer it.

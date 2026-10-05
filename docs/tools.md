@@ -4,13 +4,34 @@ A model tool is a function that the model calls. Define it with `ctx.tools.defin
 
 ## Definition
 
-`definition` is `ToolDefinition`: `name`, `description`, `parameters`, `execute(args, signal, toolCtx)`, and optional `defer`.
+`definition` is `ToolDefinition`: `name`, `description`, `parameters`, `execute(args, signal, toolCtx)`, and optional `defer` and `when`.
 
 - `name` is 1 to 64 characters of a-z, A-Z, 0-9, `_`, or `-`.
 - `description` tells the model when to call the tool. Use the imperative mood. State each limit the model must know.
 - `parameters` is a JSON Schema object. It needs `type: "object"` and `properties`. Set `additionalProperties: false`.
 - `defer: true` waits for a `tool_search` tool to load the tool. Without a search tool, the engine loads it at once.
-- A tool that `index.js` defines at startup replaces a built-in tool with the same name: `read`, `write`, `edit`, `exec`, or `stop`.
+- A global tool that `index.js` defines at startup replaces a built-in tool with the same name: `read`, `write`, `edit`, `exec`, or `stop`. A variant does not replace it.
+
+## Variants
+
+A definition with `when` is a variant of its name. A definition without `when` is global. A name holds at most one global tool and any number of variants.
+
+At the start of each run, the engine asks each variant `when(session)`. `session` holds `id`, `parentId`, `depth`, `agentName`, and `workspace`. `when` can return a promise.
+
+- The run takes the newest variant that answers `true`. Without one, it takes the global tool. Without a global tool, the run does not have the name.
+- A throw counts as `false`. yuke reports it once for each variant.
+- Keep the answer the same for the life of a session. A changed answer changes the tool declarations, and the provider cache misses.
+- A call runs the variant that its run took, also when a plugin replaces it during the run.
+
+```js
+ctx.tools.define({
+  name: "spawn_agent",
+  when: async (session) => isDevMode(session.id),
+  description: "Start a child with an explicit model and reasoning level.",
+  parameters: { type: "object", properties: { message: { type: "string" } }, required: ["message"] },
+  execute: async (args, signal, toolCtx) => startChild(args, toolCtx),
+});
+```
 
 ## Arguments
 

@@ -196,12 +196,50 @@ test "the tool port answers the declarations in table order, and a removed tool 
     const decls = try installed.decls(installed.ctx, arena.allocator());
     try std.testing.expect(decls.len >= 2);
     for (decls[1..], 0..) |served, i| try std.testing.expect(std.mem.order(u8, decls[i].decl.name, served.decl.name) == .lt);
-    try host.evalModule(
-        \\import { removeTool } from "yuke:internal/native/tools";
-        \\globalThis.removed = removeTool("hidden_tool") ? 1 : 0;
-    , "remove.js");
+    const hidden = host.tools.entries.items[host.tools.find("hidden_tool").?].id;
+    const source = try std.fmt.allocPrintSentinel(std.testing.allocator, "import {{ removeTool }} from \"yuke:internal/native/tools\"; globalThis.removed = removeTool({d}) ? 1 : 0;", .{hidden}, 0);
+    defer std.testing.allocator.free(source);
+    try host.evalModule(source, "remove.js");
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.removed"));
     try std.testing.expect(host.tools.find("hidden_tool") == null);
+}
+
+test "a tool variant serves the sessions its when accepts, and the built-in keeps its global entry" {
+    var f: Fixture = undefined;
+    try f.init(
+        \\import { plugins } from "yuke";
+        \\const parameters = { type: "object", properties: {} };
+        \\plugins.use({ name: "variants", apply(ctx) {
+        \\  ctx.tools.define({ name: "read", when: (session) => session.depth === 1, description: "child read", parameters, execute: async () => "child" });
+        \\  ctx.tools.define({ name: "read", when: () => { throw new Error("broken when"); }, description: "broken read", parameters, execute: async () => "broken" });
+        \\} });
+    , kernel_boot);
+    defer f.deinit();
+    const host = f.extensions.host;
+    var ids: [2]u32 = undefined;
+    var count: usize = 0;
+    var globals: usize = 0;
+    for (host.tools.entries.items) |entry| {
+        if (!std.mem.eql(u8, entry.decl.name, "read")) continue;
+        if (!entry.conditional) {
+            globals += 1;
+            continue;
+        }
+        ids[count] = entry.id;
+        count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), count);
+    // The variants do not hide the built-in read, so a session that takes no variant still reads.
+    try std.testing.expectEqual(@as(usize, 1), globals);
+    const context = "\"context\":{\"session_id\":\"01010101010101010101010101010101\",\"parent_id\":null,\"depth\":1,\"max_agent_depth\":2,\"agent_name\":\"root\",\"workspace\":\"/w\"}";
+    const payload = try std.fmt.allocPrint(std.testing.allocator, "{{{s},\"ids\":[{d},{d}]}}", .{ context, ids[0], ids[1] });
+    defer std.testing.allocator.free(payload);
+    // The depth matches the first variant. The second throws, which counts as false.
+    const answer = try settleHook(&f.extensions, "tools.when", payload);
+    defer std.testing.allocator.free(answer);
+    const want = try std.fmt.allocPrint(std.testing.allocator, "[{d}]", .{ids[0]});
+    defer std.testing.allocator.free(want);
+    try std.testing.expectEqualStrings(want, answer);
 }
 
 test "a user entry fault reaches a frontend that attaches after the load" {

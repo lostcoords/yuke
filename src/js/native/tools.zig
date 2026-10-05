@@ -18,7 +18,8 @@ pub fn install(host: *Host) void {
     });
 }
 
-/// `defineTool(name, {description, parameters, execute})`. The host rejects a parameter shape the provider refuses at boot.
+/// `defineTool(name, {description, parameters, execute, defer, when})` answers the registration id. A function `when` makes the tool a variant.
+/// The host rejects a parameter shape the provider refuses at boot.
 fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     if (args.len < 2) return ctx.throwTypeError("defineTool needs a name and a definition");
@@ -63,22 +64,27 @@ fn jsDefineTool(ctx: Context, _: Value, args: []const Value) Value {
         return ctx.throwTypeError("the tool defer flag must be a boolean");
     }
     const defer_loading = ctx.isBool(deferred) and (ctx.toBool(deferred) catch unreachable); // `ctx.isBool` returns true, so `ctx.toBool` cannot fail.
-    host.tools.register(name, description_text, schema_text, defer_loading, execute) catch |err| {
+    const when = ctx.getPropertyStr(args[1], "when");
+    defer ctx.freeValue(when);
+    if (!ctx.isStrictEqual(when, quickjs.UNDEFINED) and !ctx.isFunction(when)) {
+        ctx.freeValue(execute);
+        return ctx.throwTypeError("the tool when must be a function");
+    }
+    const id = host.tools.register(name, description_text, schema_text, defer_loading, ctx.isFunction(when), execute) catch |err| {
         ctx.freeValue(execute);
         return ctx.throwTypeError(registerMessage(err));
     };
-    return quickjs.UNDEFINED;
+    return ctx.newUint32(id);
 }
 
-/// `removeTool(name)` withdraws one tool. It answers true when a tool held that name.
+/// `removeTool(id)` withdraws one registration. It answers true when the registration was in the table.
 fn jsRemoveTool(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
-    const name = (if (args.len > 0) module.string(ctx, args[0]) else null) orelse return ctx.throwTypeError("removeTool needs a name string");
-    defer ctx.freeCString(name.ptr);
-    return ctx.newBool(host.tools.remove(ctx, name));
+    const id = (if (args.len > 0) module.integer(ctx, args[0], 0, std.math.maxInt(u32)) else null) orelse return ctx.throwTypeError("removeTool needs a registration id");
+    return ctx.newBool(host.tools.remove(ctx, @intCast(id)));
 }
 
-/// `hasTool(name)` answers true when a tool holds that name.
+/// `hasTool(name)` answers true when a global tool holds that name. A variant alone does not.
 fn jsHasTool(ctx: Context, _: Value, args: []const Value) Value {
     const host = Host.fromContext(ctx);
     const name = (if (args.len > 0) module.string(ctx, args[0]) else null) orelse return ctx.throwTypeError("hasTool needs a name string");

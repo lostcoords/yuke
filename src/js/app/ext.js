@@ -5,7 +5,7 @@ import { bindInteraction } from "yuke:internal/interaction";
 import { defineTool, removeTool } from "yuke:internal/native/tools";
 import { installDispatcher, installLifecycle, setPoints } from "yuke:internal/native/hooks";
 
-/** @import { AdviceFor, AdviceFunction, AdviceOptions, AdviceWhere, Disposer, EventName, EventOptions, Events, FreeName, HookAnswer, HookHandler, HookPoint, HookReplacements, InjectApply, InjectContext, InteractionSurface, MethodKey, Plugin, PluginHandle, Provider, Release, ToolDefinition } from "./types/ext.js" */
+/** @import { AdviceFor, AdviceFunction, AdviceOptions, AdviceWhere, Disposer, EventName, EventOptions, Events, FreeName, HookAnswer, HookHandler, HookPoint, HookReplacements, InjectApply, InjectContext, InteractionSurface, MethodKey, Plugin, PluginHandle, Provider, Release, ToolDefinition, ToolSession, ToolWhen, HookContext } from "./types/ext.js" */
 /** @import { AdviceEntry, AdviceInfo, AdviceRecord, HookDecision, HookEntry, PluginAsync, ReleaseEntry, ScopeEntry, ScopeLife } from "./types/runtime.js" */
 
 const NOOP = () => {};
@@ -472,11 +472,33 @@ function addHook(point, owner, fn) {
   });
 }
 
+// The `when` of each tool variant, by registration id. The engine asks which variants one session takes. The first variant creates the map.
+/** @type {Map<number, { owner: string, when: ToolWhen, reported: boolean }> | null} */
+let VARIANTS = null;
+
+// Evaluate the `when` of each asked variant in parallel. A throw counts as false, and the host reports it once for each variant.
+/** @param {{ context: HookContext, ids: number[] }} payload @returns {Promise<number[]>} */
+async function takenVariants(payload) {
+  const context = payload.context;
+  /** @type {ToolSession} */
+  const session = { id: context.session_id, parentId: context.parent_id, depth: context.depth, agentName: context.agent_name, workspace: context.workspace };
+  const taken = await Promise.all(payload.ids.map(async (id) => {
+    const variant = VARIANTS?.get(id);
+    if (!variant) return false;
+    try { return (await variant.when(session)) === true; } catch (e) {
+      if (!variant.reported) { variant.reported = true; fault(e, variant.owner); }
+      return false;
+    }
+  }));
+  return payload.ids.filter((_, i) => taken[i]);
+}
+
 // Fold one chain and answer one decision. The runtime calls this, and it never throws.
+// The internal `tools.when` question has no chain, so it costs a hook point nothing. Only the native runtime reads its id list.
 /** @param {string} point @param {any} payload @returns {Promise<HookDecision | undefined>} */
 async function dispatch(point, payload) {
   const list = HOOKS[point];
-  if (!list) return undefined;
+  if (!list) return point === "tools.when" ? /** @type {any} */ (takenVariants(payload)) : undefined;
 
   let value = payload;
   /** @type {object | null} */
@@ -661,16 +683,22 @@ export class Context {
     // The scope owns each tool until its disposer runs or the scope closes.
     const tools = {
       /**
-       * Register one tool that the model can call. It throws a TypeError for a name that another tool has, an invalid name,
-       * an empty description, parameters without `type: "object"` and a `properties` object, or a missing `execute`.
+       * Register one tool that the model can call. A definition with `when` is a variant. A run takes the newest variant whose `when` answers true, else the tool without `when`.
+       * It throws a TypeError for a name that another tool without `when` has, an invalid name, an empty description,
+       * parameters without `type: "object"` and a `properties` object, a missing `execute`, or a `when` that is not a function.
        * @param {ToolDefinition} definition @returns {Disposer} A disposer that removes the tool.
        */
       define(definition) {
         if (definition == null || typeof definition !== "object") throw new TypeError("tools.define expects a tool definition object");
         const name = definition.name;
         return scope.effect(() => {
-          defineTool(name, definition);
-          return () => removeTool(name);
+          const id = defineTool(name, definition);
+          const when = definition.when;
+          if (when !== undefined) (VARIANTS ??= new Map()).set(id, { owner: scope.name, when, reported: false });
+          return () => {
+            removeTool(id);
+            VARIANTS?.delete(id);
+          };
         });
       },
     };

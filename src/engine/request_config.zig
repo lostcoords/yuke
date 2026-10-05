@@ -6,6 +6,7 @@ const ai = @import("ai");
 const Engine = @import("Engine.zig");
 const Loadout = @import("../session/session.zig").Loadout;
 const RunSlot = @import("run.zig").RunSlot;
+const toolset = @import("toolset.zig");
 const registry = @import("../provider/registry.zig");
 const context = @import("context.zig");
 
@@ -112,22 +113,25 @@ pub fn hookContext(engine: *const Engine, slot: *const RunSlot) HookContext {
 pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*Loadout {
     if (slot.tools) |*held| return held;
     const tools = engine.deps.tools;
-    var served = try tools.decls(tools.ctx, arena);
+    var table = try tools.decls(tools.ctx, arena);
+    var served = try resolveVariants(engine, arena, slot, table);
     const Chosen = struct { tools: []const []const u8 };
     // A run without a tools.select handler keeps the whole table, so it builds no name list.
     var chosen: ?Chosen = null;
     if (engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"tools.select")) {
         // A handler may register a tool while it runs. A changed table gets one more ask, so the choice covers the late tool.
+        // An unchanged table keeps its variant choice, so each `when` answers once for each table.
         for (0..2) |_| {
             const names = try arena.alloc([]const u8, served.len);
             for (served, names) |entry, *name| name.* = entry.decl.name;
             chosen = try engine.deps.hooks.decide(Chosen, arena, slot.runId(), .@"tools.select", .{ .tools = names, .context = hookContext(engine, slot) });
             const fresh = try tools.decls(tools.ctx, arena);
-            const changed = fresh.len != served.len or for (served, fresh) |old, new| {
+            const changed = fresh.len != table.len or for (table, fresh) |old, new| {
                 if (old.id != new.id) break true;
             } else false;
-            served = fresh;
             if (!changed) break;
+            table = fresh;
+            served = try resolveVariants(engine, arena, slot, table);
         }
     }
     var held: Loadout = .{ .arena = .init(engine.deps.gpa), .decls = &.{}, .ids = &.{} };
@@ -144,6 +148,37 @@ pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*Load
     held.ids = ids.items;
     slot.tools = held;
     return &slot.tools.?;
+}
+
+/// Keep one entry per name: the newest variant that the session takes, else the global entry, else none.
+/// A table without variants asks nothing.
+fn resolveVariants(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, served: []const toolset.Served) ![]const toolset.Served {
+    var variants: std.ArrayList(toolset.Id) = .empty;
+    for (served) |entry| if (entry.conditional) try variants.append(arena, entry.id);
+    if (variants.items.len == 0) return served;
+    const payload = try std.json.Stringify.valueAlloc(arena, .{ .context = hookContext(engine, slot), .ids = variants.items }, .{});
+    const accepted = try engine.deps.tools.accept(engine.deps.tools.ctx, arena, payload);
+    var kept: std.ArrayList(toolset.Served) = try .initCapacity(arena, served.len);
+    // The answer keeps the asked order, and the asked ids follow the table, so one cursor walks it.
+    var next: usize = 0;
+    var first: usize = 0;
+    while (first < served.len) {
+        var end = first + 1;
+        while (end < served.len and std.mem.eql(u8, served[end].decl.name, served[first].decl.name)) end += 1;
+        // A name group keeps registration order, so a later accepted variant replaces an earlier pick.
+        var pick: ?toolset.Served = null;
+        for (served[first..end]) |entry| {
+            if (!entry.conditional) {
+                if (pick == null) pick = entry;
+            } else if (next < accepted.len and accepted[next] == entry.id) {
+                next += 1;
+                pick = entry;
+            }
+        }
+        if (pick) |entry| kept.appendAssumeCapacity(entry);
+        first = end;
+    }
+    return kept.items;
 }
 
 fn named(names: []const []const u8, name: []const u8) bool {

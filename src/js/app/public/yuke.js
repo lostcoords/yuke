@@ -19,6 +19,8 @@ export { client } from "yuke:internal/client";
 /** @typedef {import("../types/ext.js").ToolContext} ToolContext */
 /** @typedef {import("../types/ext.js").ToolDefinition} ToolDefinition */
 /** @typedef {import("../types/ext.js").ToolExecute} ToolExecute */
+/** @typedef {import("../types/ext.js").ToolSession} ToolSession */
+/** @typedef {import("../types/ext.js").ToolWhen} ToolWhen */
 /** @typedef {import("../types/ext.js").AgentLimits} AgentLimits */
 /** @typedef {import("../types/ext.js").Plugin} Plugin */
 /** @typedef {import("../types/ext.js").PluginHandle} PluginHandle */

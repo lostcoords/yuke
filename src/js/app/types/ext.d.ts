@@ -153,7 +153,7 @@ export type ToolExecute = (
 
 /** One tool for `ctx.tools.define`. */
 export interface ToolDefinition {
-  /** 1 to 64 characters of a-z, A-Z, 0-9, _ or -. No other tool may have the name. */
+  /** 1 to 64 characters of a-z, A-Z, 0-9, _ or -. No other global tool may have the name. A variant may share it. */
   name: string;
   /** The text the model reads to decide when to call the tool. It must not be empty. */
   description: string;
@@ -162,7 +162,24 @@ export interface ToolDefinition {
   execute: ToolExecute;
   /** Request deferred loading until a tool search names the definition. */
   defer?: boolean;
+  /** Make this definition a variant of its name. A run takes the newest variant whose `when` answers true, else the tool without `when`. */
+  when?: ToolWhen;
 }
+
+/** The session facts that a tool variant reads. */
+export interface ToolSession {
+  readonly id: string;
+  readonly parentId: string | null;
+  readonly depth: number;
+  readonly agentName: string;
+  readonly workspace: string;
+}
+
+/**
+ * Decide whether a tool variant serves one session. The engine asks once at the start of each run. A throw counts as false.
+ * Keep the answer the same for the life of a session. A change changes the tool declarations, so the provider cache misses.
+ */
+export type ToolWhen = (session: ToolSession) => boolean | Promise<boolean>;
 
 /** The child limits for `children.limits`. An absent field keeps the current value. Each value is an integer from 1 to 4294967295. */
 export interface AgentLimits {

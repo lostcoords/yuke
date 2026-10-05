@@ -97,6 +97,8 @@ export interface Capabilities extends $types_ext.CapabilitiesBase {}
 export type ToolContext = $types_ext.ToolContext;
 export type ToolDefinition = $types_ext.ToolDefinition;
 export type ToolExecute = $types_ext.ToolExecute;
+export type ToolSession = $types_ext.ToolSession;
+export type ToolWhen = $types_ext.ToolWhen;
 export type AgentLimits = $types_ext.AgentLimits;
 export type Plugin = $types_ext.Plugin;
 export type PluginHandle = $types_ext.PluginHandle;
@@ -888,8 +890,9 @@ export class Context {
     /** The tools of this plugin. An unload of the plugin removes each tool it defines. */
     get tools(): {
         /**
-         * Register one tool that the model can call. It throws a TypeError for a name that another tool has, an invalid name,
-         * an empty description, parameters without `type: "object"` and a `properties` object, or a missing `execute`.
+         * Register one tool that the model can call. A definition with `when` is a variant. A run takes the newest variant whose `when` answers true, else the tool without `when`.
+         * It throws a TypeError for a name that another tool without `when` has, an invalid name, an empty description,
+         * parameters without `type: "object"` and a `properties` object, a missing `execute`, or a `when` that is not a function.
          * @returns A disposer that removes the tool.
          */
         define(definition: ToolDefinition): Disposer;
@@ -3126,7 +3129,7 @@ export type ToolExecute = (
 
 /** One tool for `ctx.tools.define`. */
 export interface ToolDefinition {
-  /** 1 to 64 characters of a-z, A-Z, 0-9, _ or -. No other tool may have the name. */
+  /** 1 to 64 characters of a-z, A-Z, 0-9, _ or -. No other global tool may have the name. A variant may share it. */
   name: string;
   /** The text the model reads to decide when to call the tool. It must not be empty. */
   description: string;
@@ -3135,7 +3138,24 @@ export interface ToolDefinition {
   execute: ToolExecute;
   /** Request deferred loading until a tool search names the definition. */
   defer?: boolean;
+  /** Make this definition a variant of its name. A run takes the newest variant whose `when` answers true, else the tool without `when`. */
+  when?: ToolWhen;
 }
+
+/** The session facts that a tool variant reads. */
+export interface ToolSession {
+  readonly id: string;
+  readonly parentId: string | null;
+  readonly depth: number;
+  readonly agentName: string;
+  readonly workspace: string;
+}
+
+/**
+ * Decide whether a tool variant serves one session. The engine asks once at the start of each run. A throw counts as false.
+ * Keep the answer the same for the life of a session. A change changes the tool declarations, so the provider cache misses.
+ */
+export type ToolWhen = (session: ToolSession) => boolean | Promise<boolean>;
 
 /** The child limits for `children.limits`. An absent field keeps the current value. Each value is an integer from 1 to 4294967295. */
 export interface AgentLimits {
