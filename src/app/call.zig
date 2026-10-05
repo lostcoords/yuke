@@ -95,7 +95,6 @@ const bindings = struct {
     pub const @"session.patch" = commands.sessionPatch;
     pub const @"session.config" = commands.sessionConfig;
     pub const @"session.reload_context" = commands.sessionReloadContext;
-    pub const @"skill.load" = commands.skillLoad;
     pub const @"blob.put" = commands.blobPut;
     pub const @"session.history" = commands.sessionHistory;
     pub const @"session.send_input" = commands.sessionSendInputForRpc;

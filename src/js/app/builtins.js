@@ -214,14 +214,6 @@ async function exec(args, signal, context) {
   return text;
 }
 
-// The engine wraps the body, so the tool and an explicit `/skill:name` produce one form in the transcript.
-/** @param {ToolArgs} args @param {ToolSignal} _signal @param {ToolContext} context @returns {Promise<string>} */
-async function skill(args, _signal, context) {
-  const skillName = stringArg(args, "name");
-  const loaded = await client.skillLoad(context.sessionId, skillName);
-  return loaded.content;
-}
-
 export const builtins = {
   name: "builtins",
   /** @param {Context} ctx */
@@ -264,14 +256,5 @@ export const builtins = {
         id: { type: "string" },
       }, required: ["id"], additionalProperties: false }, execute: (args, _signal, context) => stop(stringArg(args, "id"), context),
     });
-    builtin(ctx, "skill", {
-      description: "Load one listed skill by name. Skip if its instructions are already in the transcript.",
-      parameters: { type: "object", properties: {
-        name: { type: "string", description: "Name from an available_skills entry." },
-      }, required: ["name"], additionalProperties: false }, execute: skill,
-    });
-
-    // The skill tool has nothing to load in a session that lists no skill, so that session never sees it.
-    ctx.hook("tools.select", (selection) => selection.context.has_skills ? undefined : { replace: { tools: selection.tools.filter((name) => name !== "skill") } });
   },
 };

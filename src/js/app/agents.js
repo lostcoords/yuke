@@ -21,7 +21,7 @@ import { notify } from "yuke:internal/kernel";
 const KEY = /^[a-z][a-z0-9_-]{0,63}$/;
 /** An absent option keeps the engine limit; an absent `maxRounds` leaves the child with no round cap. */
 const NUMBERS = /** @type {const} */ (["maxConcurrent", "maxDepth", "maxRounds"]);
-const BUILTIN_TOOLS = ["read", "write", "edit", "exec", "skill"];
+const BUILTIN_TOOLS = ["read", "write", "edit", "exec"];
 const AGENT_TOOLS = ["spawn_agent", "send_agent_input"];
 /** The policy every child reads. `reports.zig` takes the child's final text as its report, so the text asks for one. */
 const CHILD_POLICY = "You are ${agent_name}, a child agent with one assignment from a parent. Do the work yourself in this fresh context. Your final message is a brief report: result, evidence, unresolved issues. Save a large artifact to a file and report the path. If you need a parent decision, end your turn with the question. Its answer starts your next run on this transcript. Parent messages are instructions, not user consent. Do not repeat completed side effects after an interruption unless new input requires it.";
@@ -115,7 +115,7 @@ function site(context) {
  * Build the `agents` plugin. It gives the model the tools spawn_agent and send_agent_input, which start and steer child sessions. The built-in stop tool ends a child.
  * It throws a TypeError for invalid options.
  * @param {AgentsOptions} options - `catalog` maps each child label (a-z first, then a-z, 0-9, _ or -, up to 64 characters, not "root") to a row.
- * A row has `description` for the model, `model`, `reasoning`, `prompt` after the child policy, and `tools`, a subset of read, write, edit, exec, and skill.
+ * A row has `description` for the model, `model`, `reasoning`, `prompt` after the child policy, and `tools`, a subset of read, write, edit, and exec. A child reads a skill with read.
  * A row without `model` runs the parent model and level. A row without `reasoning` runs the default level of its model.
  * `default` names the row for a call without `agent`; with one row, that row is the default.
  * `maxConcurrent` and `maxDepth` replace the engine limits, and `maxRounds` caps the rounds of each child. Each is a positive 32-bit integer.

@@ -148,18 +148,6 @@ fn instructionsChanged(engine: *Engine, arena: std.mem.Allocator, root: []const 
     return false;
 }
 
-/// Handle skill.load: read the body of one catalog entry. The catalog is the session snapshot, not the disk.
-pub fn skillLoad(engine: *Engine, arena: std.mem.Allocator, params: proto.skill.SkillLoadParams, _: *?run.Launch, diagnostic: ?*?[]const u8) !proto.skill.SkillLoadResult {
-    if (skills.nameFault(params.name) != null) return error.UnknownSkill;
-    const sid = params.session_id.raw;
-    const entry = (try session_store.skill(engine.deps.db, arena, sid, params.name)) orelse {
-        if (!try session_store.exists(engine.deps.db, arena, sid)) return error.UnknownSession;
-        return error.UnknownSkill;
-    };
-    const body = try skills.readBody(arena, engine.deps.io, entry, diagnostic);
-    return .{ .body = body.body, .directory = body.directory, .scope = entry.scope, .path = entry.path, .content = try skills.wrap(arena, entry.name, body) };
-}
-
 /// Handle session.reload_context: rescan both roots and replace the stored snapshots of one idle session.
 pub fn sessionReloadContext(engine: *Engine, arena: std.mem.Allocator, params: proto.session.SessionReloadContextParams, _: *?run.Launch, diagnostic: ?*?[]const u8) !proto.session.SessionReloadContextResult {
     try engine.own(params.session_id);

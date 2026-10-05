@@ -412,23 +412,6 @@ export interface SkillInfo {
   readonly canonical_path: string;
 }
 
-/** These are the parameters for `skill.load`. */
-export interface SkillLoadParams {
-  readonly session_id: SessionId;
-  readonly name: string;
-}
-
-/** This result carries the body of one skill without its frontmatter. */
-export interface SkillLoadResult {
-  readonly body: string;
-  /** This directory holds SKILL.md. Relative paths in the body resolve against it. */
-  readonly directory: string;
-  readonly scope: InstructionScope;
-  readonly path: string;
-  /** The model sees this form: the body inside `skill_content` with the directory line. */
-  readonly content: string;
-}
-
 /** This is the assistant draft that a run streams. Its fields borrow their data. */
 export interface ActiveDraft {
   readonly message: AssistantMessage;
@@ -1201,8 +1184,6 @@ export type MethodName =
   | "session.config"
   /** Rescan AGENTS.md and the skill roots and replace the stored snapshots of one session. */
   | "session.reload_context"
-  /** Read the body of one skill from the session catalog. */
-  | "skill.load"
   /** Copy one image file into the blob store and return its ref. */
   | "blob.put"
   /** List the model catalog. */
@@ -1479,7 +1460,6 @@ export type RequestParams =
   | SessionHistoryParams
   | SessionConfigParams
   | SessionReloadContextParams
-  | SkillLoadParams
   | BlobPutParams
   | CatalogListParams
   | Empty
@@ -1509,7 +1489,6 @@ export type ResponseResult =
   | SessionHistoryResult
   | SessionConfigResult
   | SessionReloadContextResult
-  | SkillLoadResult
   | MediaBlob
   | CatalogListResult
   | CatalogReloadResult
@@ -1637,8 +1616,6 @@ export interface Methods {
   "session.config": { paramsType: [SessionConfigParams]; returnType: SessionConfigResult };
   /** Rescan AGENTS.md and the skill roots and replace the stored snapshots of one session. */
   "session.reload_context": { paramsType: [SessionReloadContextParams]; returnType: SessionReloadContextResult };
-  /** Read the body of one skill from the session catalog. */
-  "skill.load": { paramsType: [SkillLoadParams]; returnType: SkillLoadResult };
   /** Copy one image file into the blob store and return its ref. */
   "blob.put": { paramsType: [BlobPutParams]; returnType: MediaBlob };
   /** List the model catalog. */

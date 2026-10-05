@@ -134,7 +134,7 @@ ctx.inject(["chat"], (c) => {
 });
 ```
 
-- `tools` sets one complete tool heading: `verb`, `subject`, and `input`. `input` holds the raw source of `subject`. A nonempty `input` with each line feed replaced by a space must equal `subject`. Normalization drops an `input` that does not match. Use an empty `input` when there is no hidden input. The default look sets headings for `read`, `write`, `edit`, `exec`, and `skill`.
+- `tools` sets one complete tool heading: `verb`, `subject`, and `input`. `input` holds the raw source of `subject`. A nonempty `input` with each line feed replaced by a space must equal `subject`. Normalization drops an `input` that does not match. Use an empty `input` when there is no hidden input. The default look sets headings for `read`, `write`, `edit`, `exec`, and `stop`.
 - `sources` sets the label of an input from an engine source, such as a child report.
 - `part(part, env)` answers `{ rows, source }` for one tool or reasoning part. The core builds text parts as markdown, indented by `indent`. `gap` blank rows separate two parts.
 - `message`, `error`, `fold`, `activate`, `sameVisible`, `groupKey`, and `groupHeader` change the rest. Search `interface Render` in `yuke.d.ts`.

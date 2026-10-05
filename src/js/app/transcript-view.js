@@ -285,7 +285,6 @@ export const defaultRender = {
       const command = String(o.command || "");
       return { verb: "$", subject: displayCommand(command), input: command };
     },
-    skill: (o) => ({ verb: "skill", subject: String(o.name || ""), input: "" }),
     stop: (o) => ({ verb: "stop", subject: String(o.id || ""), input: "" }),
   },
 

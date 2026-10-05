@@ -7,7 +7,6 @@ const Engine = @import("Engine.zig");
 const Loadout = @import("../session/session.zig").Loadout;
 const RunSlot = @import("run.zig").RunSlot;
 const registry = @import("../provider/registry.zig");
-const database = @import("../store/store.zig");
 const context = @import("context.zig");
 
 /// Use the advertised ceiling unless it reaches the known context, when yuke's safe default leaves room for input.
@@ -102,12 +101,11 @@ pub const HookContext = struct {
     max_agent_depth: u32,
     agent_name: []const u8,
     workspace: []const u8,
-    has_skills: bool,
 };
 
-pub fn hookContext(engine: *const Engine, slot: *const RunSlot, has_skills: bool) HookContext {
+pub fn hookContext(engine: *const Engine, slot: *const RunSlot) HookContext {
     std.debug.assert(engine.max_agent_depth > 0);
-    return .{ .session_id = slot.sessionId(), .parent_id = slot.parent_id, .depth = slot.depth, .max_agent_depth = engine.max_agent_depth, .agent_name = slot.config.name orelse "root", .workspace = slot.config.root, .has_skills = has_skills };
+    return .{ .session_id = slot.sessionId(), .parent_id = slot.parent_id, .depth = slot.depth, .max_agent_depth = engine.max_agent_depth, .agent_name = slot.config.name orelse "root", .workspace = slot.config.root };
 }
 
 /// The tools this run may see, chosen once at its first request. `tools.select` may narrow the list; the answer holds for the run.
@@ -115,15 +113,17 @@ pub fn loadout(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !*Load
     if (slot.tools) |*held| return held;
     const tools = engine.deps.tools;
     var served = try tools.decls(tools.ctx, arena);
-    const has_skills = try database.session.hasSkills(engine.deps.db, arena, slot.sessionId().raw);
-    const names = try arena.alloc([]const u8, served.len);
-    for (served, names) |decl, *name| name.* = decl.name;
     const Chosen = struct { tools: []const []const u8 };
-    const selects = engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"tools.select");
-    const chosen = try engine.deps.hooks.decide(Chosen, arena, slot.runId(), .@"tools.select", .{ .tools = names, .context = hookContext(engine, slot, has_skills) });
-    // A handler may start a server while it runs, so the table is read again after it answers.
-    if (selects) served = try tools.decls(tools.ctx, arena);
-    var held: Loadout = .{ .arena = .init(engine.deps.gpa), .decls = &.{}, .has_skills = has_skills };
+    // A run without a tools.select handler keeps the whole table, so it builds no name list.
+    var chosen: ?Chosen = null;
+    if (engine.deps.hooks.holds(engine.deps.hooks.ctx, .@"tools.select")) {
+        const names = try arena.alloc([]const u8, served.len);
+        for (served, names) |decl, *name| name.* = decl.name;
+        chosen = try engine.deps.hooks.decide(Chosen, arena, slot.runId(), .@"tools.select", .{ .tools = names, .context = hookContext(engine, slot) });
+        // A handler may start a server while it runs, so the table is read again after it answers.
+        served = try tools.decls(tools.ctx, arena);
+    }
+    var held: Loadout = .{ .arena = .init(engine.deps.gpa), .decls = &.{} };
     errdefer held.arena.deinit();
     const own = held.arena.allocator();
     var kept: std.ArrayList(ai.ir.Tool) = .empty;
@@ -199,7 +199,7 @@ test "deferral needs a deferred tool and the search tool, and the route picks th
     try std.testing.expect(!deferralApplies(decls[0..1]));
 
     var spec: registry.ModelSpec = .{ .id = "m", .upstream_id = "m", .name = "M", .protocol = .anthropic_messages, .caps = .{ .tool_search = true } };
-    var held: Loadout = .{ .arena = .init(std.testing.allocator), .decls = &decls, .has_skills = false };
+    var held: Loadout = .{ .arena = .init(std.testing.allocator), .decls = &decls };
     defer held.arena.deinit();
     try decideDeferral(&held, &spec);
     try std.testing.expectEqual(Loadout.Deferral.native, held.deferral);
@@ -241,7 +241,7 @@ pub fn buildConfig(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, mo
         .system = build.system,
         .tools = build.tools,
         .max_output_tokens = build.max_output_tokens,
-        .context = hookContext(engine, slot, held.has_skills),
+        .context = hookContext(engine, slot),
     })) |answer| build = answer;
 
     if (build.system.len > proto.meta.limits.max_message_string_bytes) return error.PromptTooLarge;

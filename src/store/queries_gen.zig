@@ -849,34 +849,6 @@ pub const SelectSkills = sql.ManyQuery(
     },
 );
 
-pub const SelectSkill = sql.OptionalQuery(
-    \\SELECT name, description, scope, path, canonical_path FROM session_skills
-    \\WHERE session_id = :session_id AND name = :name;
-,
-    struct {
-        session_id: [16]u8,
-        name: []const u8,
-    },
-    struct {
-        name: []const u8,
-        description: []const u8,
-        scope: []const u8,
-        path: []const u8,
-        canonical_path: []const u8,
-    },
-);
-
-pub const SessionHasSkills = sql.OptionalQuery(
-    \\SELECT 1 AS present FROM session_skills WHERE session_id = :session_id LIMIT 1;
-,
-    struct {
-        session_id: [16]u8,
-    },
-    struct {
-        present: i64,
-    },
-);
-
 pub const DeleteSkills = sql.ExecQuery(
     \\DELETE FROM session_skills WHERE session_id = :session_id;
 ,
@@ -992,8 +964,6 @@ pub const Queries = struct {
     delete_instructions: DeleteInstructions,
     insert_skill: InsertSkill,
     select_skills: SelectSkills,
-    select_skill: SelectSkill,
-    session_has_skills: SessionHasSkills,
     delete_skills: DeleteSkills,
     insert_instruction: InsertInstruction,
     select_instructions: SelectInstructions,

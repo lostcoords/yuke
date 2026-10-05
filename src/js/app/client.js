@@ -103,13 +103,6 @@ function sessionReloadContext(sessionId) {
   return request("session.reload_context", { session_id: sessionId });
 }
 
-/**
- * Read the body of one skill from the session catalog. The engine reads the file now.
- * @param {string} sessionId @param {string} name @returns {Promise<Wire.SkillLoadResult>}
- */
-function skillLoad(sessionId, name) {
-  return request("skill.load", { session_id: sessionId, name });
-}
 
 /**
  * The queued inputs of a session, oldest first.
@@ -372,7 +365,6 @@ export const client = {
   sessionCheckContext,
   sessionContextInfo,
   sessionReloadContext,
-  skillLoad,
   sessionQueue,
   blobPut,
   blobPutData,

@@ -120,18 +120,6 @@ pub fn skillCatalog(db: *Database, arena: std.mem.Allocator, id: [16]u8) ![]cons
     return result.items;
 }
 
-/// Return the catalog entry with `name`, or null when the session does not list it.
-pub fn skill(db: *Database, arena: std.mem.Allocator, id: [16]u8, name: []const u8) !?skills.Entry {
-    const row = (try db.queries.select_skill.maybeOne(arena, .{ .session_id = id, .name = name })) orelse return null;
-    return skillEntry(row.value);
-}
-
-pub fn hasSkills(db: *Database, arena: std.mem.Allocator, id: [16]u8) !bool {
-    var row = (try db.queries.session_has_skills.maybeOne(arena, .{ .session_id = id })) orelse return false;
-    defer row.deinit();
-    return true;
-}
-
 fn skillEntry(row: anytype) skills.Entry {
     const scope = std.meta.stringToEnum(instruction_types.InstructionScope, row.scope) orelse unreachable; // The database constraint stores only global or workspace scopes.
     std.debug.assert(skills.nameFault(row.name) == null);

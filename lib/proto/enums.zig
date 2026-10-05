@@ -100,8 +100,6 @@ pub const MethodName = enum {
     @"session.config",
     /// Rescan AGENTS.md and the skill roots and replace the stored snapshots of one session.
     @"session.reload_context",
-    /// Read the body of one skill from the session catalog.
-    @"skill.load",
     /// Copy one image file into the blob store and return its ref.
     @"blob.put",
     /// List the model catalog.

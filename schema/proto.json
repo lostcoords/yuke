@@ -147,14 +147,6 @@
       "paramsOptional": false
     },
     {
-      "name": "skill.load",
-      "doc": "Read the body of one skill from the session catalog.",
-      "params": "SkillLoadParams",
-      "result": "SkillLoadResult",
-      "direction": "clientToServer",
-      "paramsOptional": false
-    },
-    {
       "name": "blob.put",
       "doc": "Copy one image file into the blob store and return its ref.",
       "params": "BlobPutParams",
@@ -1547,55 +1539,6 @@
         },
         {
           "name": "canonical_path",
-          "type": "string",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "SkillLoadParams",
-      "doc": "These are the parameters for `skill.load`.",
-      "fields": [
-        {
-          "name": "session_id",
-          "type": "SessionId",
-          "presence": "required"
-        },
-        {
-          "name": "name",
-          "type": "string",
-          "presence": "required"
-        }
-      ]
-    },
-    {
-      "name": "SkillLoadResult",
-      "doc": "This result carries the body of one skill without its frontmatter.",
-      "fields": [
-        {
-          "name": "body",
-          "type": "string",
-          "presence": "required"
-        },
-        {
-          "name": "directory",
-          "doc": "This directory holds SKILL.md. Relative paths in the body resolve against it.",
-          "type": "string",
-          "presence": "required"
-        },
-        {
-          "name": "scope",
-          "type": "InstructionScope",
-          "presence": "required"
-        },
-        {
-          "name": "path",
-          "type": "string",
-          "presence": "required"
-        },
-        {
-          "name": "content",
-          "doc": "The model sees this form: the body inside `skill_content` with the directory line.",
           "type": "string",
           "presence": "required"
         }
@@ -3897,9 +3840,6 @@
           "type": "SessionReloadContextParams"
         },
         {
-          "type": "SkillLoadParams"
-        },
-        {
           "type": "BlobPutParams"
         },
         {
@@ -3980,9 +3920,6 @@
         },
         {
           "type": "SessionReloadContextResult"
-        },
-        {
-          "type": "SkillLoadResult"
         },
         {
           "type": "MediaBlob"
@@ -4409,11 +4346,6 @@
           "name": "session.reload_context",
           "wire": "session.reload_context",
           "doc": "Rescan AGENTS.md and the skill roots and replace the stored snapshots of one session."
-        },
-        {
-          "name": "skill.load",
-          "wire": "skill.load",
-          "doc": "Read the body of one skill from the session catalog."
         },
         {
           "name": "blob.put",

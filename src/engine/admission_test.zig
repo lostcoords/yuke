@@ -665,9 +665,6 @@ test "skill catalogs snapshot at creation, children inherit them, and bodies loa
     try testing.expectEqual(@as(usize, 1), notices.count);
     try testing.expect(std.mem.indexOf(u8, notices.last(), "bad/SKILL.md") != null);
     try testing.expect(std.mem.indexOf(u8, notices.last(), "description is missing") != null);
-    // The loadout reads the catalog once per run, so the hook context can say whether the skill tool has work.
-    try testing.expect((try request_config.loadout(&f.engine, a, root_launch.?.slot)).has_skills);
-    try testing.expect(!(try request_config.loadout(&f.engine, a, f.engine.sessions.get(f.parent).?.active_run.?)).has_skills);
 
     const item = try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id });
     try testing.expectEqual(@as(usize, 1), item.skills.?.len);
@@ -677,15 +674,8 @@ test "skill catalogs snapshot at creation, children inherit them, and bodies loa
 
     var unused: ?runs.Launch = null;
     var diagnostic: ?[]const u8 = null;
-    const loaded = try commands.skillLoad(&f.engine, a, .{ .session_id = root.session.id, .name = "pdf" }, &unused, &diagnostic);
-    try testing.expectEqualStrings("Do the pdf thing.", loaded.body);
-    try testing.expect(std.mem.startsWith(u8, loaded.content, "<skill_content name=\"pdf\">\nDo the pdf thing.\n\nSkill directory: "));
-    try testing.expect(std.mem.endsWith(u8, loaded.directory, ".agents/skills/pdf"));
-    try testing.expectError(error.UnknownSkill, commands.skillLoad(&f.engine, a, .{ .session_id = root.session.id, .name = "missing" }, &unused, &diagnostic));
-    try testing.expectError(error.UnknownSkill, commands.skillLoad(&f.engine, a, .{ .session_id = root.session.id, .name = "Bad Name" }, &unused, &diagnostic));
-    try testing.expectError(error.UnknownSession, commands.skillLoad(&f.engine, a, .{ .session_id = .bytes(.{7} ** 16), .name = "pdf" }, &unused, &diagnostic));
 
-    // The child copies the catalog and never rescans, so a deleted skill stays listed and fails only at load.
+    // The child copies the catalog and never rescans, so a deleted skill stays listed.
     try tmp.dir.deleteTree(testing.io, ".agents/skills/pdf");
     f.engine.max_agent_depth = 2;
     var params = f.params("worker");
@@ -697,8 +687,6 @@ test "skill catalogs snapshot at creation, children inherit them, and bodies loa
     try testing.expectEqual(@as(usize, 1), inherited.len);
     try testing.expectEqualStrings("pdf", inherited[0].name);
     try testing.expectEqualStrings("Handle PDFs & forms", inherited[0].description);
-    try testing.expectError(error.SkillUnreadable, commands.skillLoad(&f.engine, a, .{ .session_id = child.session.id, .name = "pdf" }, &unused, &diagnostic));
-    try testing.expect(std.mem.indexOf(u8, diagnostic.?, "pdf/SKILL.md") != null);
     const checked = try commands.sessionGet(&f.engine, a, .{ .session_id = root.session.id, .check_files = true });
     try testing.expect(checked.context_changes.?.skills);
     try testing.expect(!checked.context_changes.?.instructions);
@@ -751,11 +739,11 @@ test "reload replaces both snapshots of an idle session and the stale check trac
     try testing.expect(!settled.context_changes.?.skills and !settled.context_changes.?.instructions);
     try testing.expectEqual(@as(usize, 1), settled.instruction_sources.?.len);
 
-    // A root left without skills renders no component and hides the tool on the next run.
+    // A root left without skills stores an empty catalog.
     try tmp.dir.deleteTree(testing.io, ".agents");
     const emptied = try commands.sessionReloadContext(&f.engine, a, .{ .session_id = root.session.id }, &unused, &diagnostic);
     try testing.expectEqual(@as(usize, 0), emptied.skills.len);
-    try testing.expect(!try database.session.hasSkills(&f.db, a, root.session.id.raw));
+    try testing.expectEqual(@as(usize, 0), (try database.session.skillCatalog(&f.db, a, root.session.id.raw)).len);
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "AGENTS.md", .data = "\xff" });
     try testing.expectError(error.InvalidInstructions, commands.sessionReloadContext(&f.engine, a, .{ .session_id = root.session.id }, &unused, &diagnostic));
     try testing.expect(std.mem.indexOf(u8, diagnostic.?, "AGENTS.md") != null);

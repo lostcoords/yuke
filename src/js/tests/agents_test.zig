@@ -196,7 +196,7 @@ test "the plugin ends a root prompt with the rule and scopes a child by its row"
     // tools.select runs once per run: a child at the depth limit keeps only its row tools, and agent tools never reach it.
     const Select = struct { type: []const u8, value: struct { tools: []const []const u8 } };
     const every = "\"tools\":[\"edit\",\"exec\",\"read\",\"send_agent_input\",\"spawn_agent\",\"stop\",\"write\"]";
-    const review = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"review\",\"workspace\":\"/w\",\"max_agent_depth\":1,\"has_skills\":true}}");
+    const review = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"review\",\"workspace\":\"/w\",\"max_agent_depth\":1}}");
     defer std.testing.allocator.free(review);
     const review_select = try std.json.parseFromSlice(Select, std.testing.allocator, review, .{ .ignore_unknown_fields = true });
     defer review_select.deinit();
@@ -206,20 +206,20 @@ test "the plugin ends a root prompt with the rule and scopes a child by its row"
     try std.testing.expectEqualStrings("read", review_select.value.value.tools[1]);
     try std.testing.expectEqualStrings("stop", review_select.value.value.tools[2]);
     // A row without exec gets no stop.
-    const look = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"look\",\"workspace\":\"/w\",\"max_agent_depth\":1,\"has_skills\":true}}");
+    const look = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"look\",\"workspace\":\"/w\",\"max_agent_depth\":1}}");
     defer std.testing.allocator.free(look);
     const look_select = try std.json.parseFromSlice(Select, std.testing.allocator, look, .{ .ignore_unknown_fields = true });
     defer look_select.deinit();
     try std.testing.expectEqual(@as(usize, 1), look_select.value.value.tools.len);
     try std.testing.expectEqualStrings("read", look_select.value.value.tools[0]);
-    const small = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"small\",\"workspace\":\"/w\",\"max_agent_depth\":1,\"has_skills\":true}}");
+    const small = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ child_id ++ "\",\"parent_id\":\"" ++ root_id ++ "\",\"depth\":1,\"agent_name\":\"small\",\"workspace\":\"/w\",\"max_agent_depth\":1}}");
     defer std.testing.allocator.free(small);
     const small_select = try std.json.parseFromSlice(Select, std.testing.allocator, small, .{ .ignore_unknown_fields = true });
     defer small_select.deinit();
     try std.testing.expectEqual(@as(usize, 5), small_select.value.value.tools.len);
     try std.testing.expectEqualStrings("write", small_select.value.value.tools[4]);
     // A root below the depth limit keeps every tool.
-    const root_select = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ root_id ++ "\",\"parent_id\":null,\"depth\":0,\"agent_name\":\"root\",\"workspace\":\"/w\",\"max_agent_depth\":1,\"has_skills\":true}}");
+    const root_select = try answerHook(host, "tools.select", "{" ++ every ++ ",\"context\":{\"session_id\":\"" ++ root_id ++ "\",\"parent_id\":null,\"depth\":0,\"agent_name\":\"root\",\"workspace\":\"/w\",\"max_agent_depth\":1}}");
     defer std.testing.allocator.free(root_select);
     try std.testing.expectEqualStrings("", root_select);
 }

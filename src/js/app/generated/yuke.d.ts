@@ -135,7 +135,7 @@ export type AgentsOptions = {
  * Build the `agents` plugin. It gives the model the tools spawn_agent and send_agent_input, which start and steer child sessions. The built-in stop tool ends a child.
  * It throws a TypeError for invalid options.
  * @param options - `catalog` maps each child label (a-z first, then a-z, 0-9, _ or -, up to 64 characters, not "root") to a row.
- * A row has `description` for the model, `model`, `reasoning`, `prompt` after the child policy, and `tools`, a subset of read, write, edit, exec, and skill.
+ * A row has `description` for the model, `model`, `reasoning`, `prompt` after the child policy, and `tools`, a subset of read, write, edit, and exec. A child reads a skill with read.
  * A row without `model` runs the parent model and level. A row without `reasoning` runs the default level of its model.
  * `default` names the row for a call without `agent`; with one row, that row is the default.
  * `maxConcurrent` and `maxDepth` replace the engine limits, and `maxRounds` caps the rounds of each child. Each is a positive 32-bit integer.
@@ -392,10 +392,6 @@ function sessionContextInfo(sessionId: string): Promise<Wire.SessionListItem>;
  */
 function sessionReloadContext(sessionId: string): Promise<Wire.SessionReloadContextResult>;
 /**
- * Read the body of one skill from the session catalog. The engine reads the file now.
- */
-function skillLoad(sessionId: string, name: string): Promise<Wire.SkillLoadResult>;
-/**
  * The queued inputs of a session, oldest first.
  */
 function sessionQueue(sessionId: string): Promise<Wire.SessionQueueResult>;
@@ -508,7 +504,6 @@ export const client: {
     sessionCheckContext: typeof sessionCheckContext;
     sessionContextInfo: typeof sessionContextInfo;
     sessionReloadContext: typeof sessionReloadContext;
-    skillLoad: typeof skillLoad;
     sessionQueue: typeof sessionQueue;
     blobPut: typeof blobPut;
     blobPutData: typeof blobPutData;
@@ -1150,6 +1145,7 @@ export type McpPlugin = Plugin & {
 };
 /**
  * Build the `mcp` plugin. It starts MCP servers and gives the model their tools. A tool stays deferred until the tool_search tool loads it, unless its server sets `alwaysLoad`.
+ * A run waits for an eager server that still connects. A search waits for every server that still connects.
  * The servers come from `options.servers`, then `.mcp.json` in `$XDG_CONFIG_HOME` or `~/.config`, then `.mcp.json` in the workspace. The first entry of a name wins.
  * A workspace server starts only after the user trusts it. It throws a TypeError for a timeout that is not a positive integer.
  * @param [options] - `servers` has the shape of `mcpServers` in `.mcp.json`. `startupMs` limits the start of each server (default 10000).
@@ -3204,7 +3200,6 @@ export interface HookContext {
   max_agent_depth: number;
   agent_name: string;
   workspace: string;
-  has_skills: boolean;
 }
 
 /** One tool as the provider request declares it. `input_schema` is JSON Schema text. */
@@ -3246,7 +3241,8 @@ export interface PromptContext {
 export interface PromptBuild {
   context: PromptContext;
   instructions: { scope: Wire.InstructionScope; path: string; text: string }[];
-  skills: { name: string; description: string }[];
+  /** `location` is the absolute path of SKILL.md. The model reads it with the read tool. */
+  skills: { name: string; description: string; location: string }[];
   sections: PromptSection[];
 }
 
@@ -4391,23 +4387,6 @@ export interface SkillInfo {
   readonly canonical_path: string;
 }
 
-/** These are the parameters for `skill.load`. */
-export interface SkillLoadParams {
-  readonly session_id: SessionId;
-  readonly name: string;
-}
-
-/** This result carries the body of one skill without its frontmatter. */
-export interface SkillLoadResult {
-  readonly body: string;
-  /** This directory holds SKILL.md. Relative paths in the body resolve against it. */
-  readonly directory: string;
-  readonly scope: InstructionScope;
-  readonly path: string;
-  /** The model sees this form: the body inside `skill_content` with the directory line. */
-  readonly content: string;
-}
-
 /** This is the assistant draft that a run streams. Its fields borrow their data. */
 export interface ActiveDraft {
   readonly message: AssistantMessage;
@@ -5180,8 +5159,6 @@ export type MethodName =
   | "session.config"
   /** Rescan AGENTS.md and the skill roots and replace the stored snapshots of one session. */
   | "session.reload_context"
-  /** Read the body of one skill from the session catalog. */
-  | "skill.load"
   /** Copy one image file into the blob store and return its ref. */
   | "blob.put"
   /** List the model catalog. */
@@ -5458,7 +5435,6 @@ export type RequestParams =
   | SessionHistoryParams
   | SessionConfigParams
   | SessionReloadContextParams
-  | SkillLoadParams
   | BlobPutParams
   | CatalogListParams
   | Empty
@@ -5488,7 +5464,6 @@ export type ResponseResult =
   | SessionHistoryResult
   | SessionConfigResult
   | SessionReloadContextResult
-  | SkillLoadResult
   | MediaBlob
   | CatalogListResult
   | CatalogReloadResult
@@ -5616,8 +5591,6 @@ export interface Methods {
   "session.config": { paramsType: [SessionConfigParams]; returnType: SessionConfigResult };
   /** Rescan AGENTS.md and the skill roots and replace the stored snapshots of one session. */
   "session.reload_context": { paramsType: [SessionReloadContextParams]; returnType: SessionReloadContextResult };
-  /** Read the body of one skill from the session catalog. */
-  "skill.load": { paramsType: [SkillLoadParams]; returnType: SkillLoadResult };
   /** Copy one image file into the blob store and return its ref. */
   "blob.put": { paramsType: [BlobPutParams]; returnType: MediaBlob };
   /** List the model catalog. */

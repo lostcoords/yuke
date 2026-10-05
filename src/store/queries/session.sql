@@ -297,21 +297,6 @@ VALUES (:session_id, :name, :description, :scope, :path, :canonical_path);
 SELECT name, description, scope, path, canonical_path FROM session_skills
 WHERE session_id = :session_id ORDER BY name;
 
--- name: SelectSkill :optional
--- session_id: [16]u8!
--- name: []const u8!
--- description: []const u8!
--- scope: []const u8!
--- path: []const u8!
--- canonical_path: []const u8!
-SELECT name, description, scope, path, canonical_path FROM session_skills
-WHERE session_id = :session_id AND name = :name;
-
--- name: SessionHasSkills :optional
--- session_id: [16]u8!
--- present: i64!
-SELECT 1 AS present FROM session_skills WHERE session_id = :session_id LIMIT 1;
-
 -- name: DeleteSkills :exec
 -- session_id: [16]u8!
 DELETE FROM session_skills WHERE session_id = :session_id;

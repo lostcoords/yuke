@@ -128,7 +128,7 @@ const Instruction = struct { prompt: []const u8 };
 /// The instruction that trails the covered range. A `compaction.prompt` handler writes it; the engine holds no text of its own.
 fn instruction(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot, mode: Mode) ![]const u8 {
     std.debug.assert(slot.tools != null);
-    const answer = try engine.deps.hooks.decide(Instruction, arena, slot.runId(), .@"compaction.prompt", .{ .context = request_config.hookContext(engine, slot, slot.tools.?.has_skills), .mode = mode, .prompt = "" }) orelse return error.CompactionPromptMissing;
+    const answer = try engine.deps.hooks.decide(Instruction, arena, slot.runId(), .@"compaction.prompt", .{ .context = request_config.hookContext(engine, slot), .mode = mode, .prompt = "" }) orelse return error.CompactionPromptMissing;
     if (answer.prompt.len == 0 or answer.prompt.len > proto.meta.limits.max_message_string_bytes) return error.HookAnswerInvalid;
     return answer.prompt;
 }

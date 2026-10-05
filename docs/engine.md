@@ -67,6 +67,8 @@ Call `defineConfig(patch)` in `index.js`. An unknown key throws.
 
 Use `prompt.build` to add text while you keep the built-in prompt. Search `PromptBuild` and `PromptSection` for the exact shape.
 
+The built-in prompt lists each skill with its name, its description, and the location of its `SKILL.md`. The model reads a matching skill with `read`. `/skill:name` puts the body of one skill in the next message.
+
 ## Subagents
 
 The optional `agents` plugin adds child sessions and two model tools: `spawn_agent` and `send_agent_input`. The built-in `stop` tool ends a child. This is a complete `index.js`:
@@ -82,11 +84,11 @@ plugins.use(agents({
       model: "provider/model", // Replace this selector, or omit it to use the parent model and level.
       reasoning: "low", // Omit it for the model default. It needs a model.
       prompt: "Do not edit files.",
-      tools: ["read", "exec", "skill"],
+      tools: ["read", "exec"],
     },
     edit: {
       description: "Make one focused code change and verify it.",
-      tools: ["read", "write", "edit", "exec", "skill"],
+      tools: ["read", "write", "edit", "exec"],
     },
   },
   default: "research",
@@ -104,7 +106,7 @@ Each catalog key names a child kind. It matches `^[a-z][a-z0-9_-]{0,63}$`; `root
 | `model` | Selects the child model. Without it, the child uses the parent model and the parent reasoning level. |
 | `reasoning` | Selects the child reasoning level. It needs `model`. Without it, the child uses the default level of `model`. |
 | `prompt` | Appends instructions after the fixed child policy. |
-| `tools` | Restricts the child to a nonempty unique subset of `read`, `write`, `edit`, `exec`, and `skill`. |
+| `tools` | Restricts the child to a nonempty unique subset of `read`, `write`, `edit`, and `exec`. A child reads a skill with `read`. |
 
 A restricted `tools` row also removes the spawn tools from that child. Omit `tools` to keep the normal loadout. `default` selects the row when `spawn_agent` omits `agent`. A one-row catalog needs no `default`.
 

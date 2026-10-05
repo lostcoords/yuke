@@ -126,7 +126,6 @@ const treeLook = {
     write: (o) => ({ verb: "Write", subject: displayPath(o.path), input: "" }),
     edit: (o) => ({ verb: "Edit", subject: displayPath(o.path) + (o.replace_all ? " (all)" : ""), input: "" }),
     exec: (o) => ({ verb: "Run", subject: displayCommand(o.command), input: "" }),
-    skill: (o) => ({ verb: "Skill", subject: String(o.name || ""), input: "" }),
   },
   // Tool calls and thoughts group as actions, and text closes the group.
   groupKey: (part) => (part.type === "text" ? null : "actions"),

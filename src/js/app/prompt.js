@@ -75,7 +75,7 @@ const COMPACTION_MERGE = SUMMARIZER + [
   "",
 ].join("\n") + SUMMARY_FORMAT;
 const INSTRUCTIONS_LEAD = "Project instructions follow. Explicit user instructions take precedence. Workspace instructions override global instructions where they conflict.";
-const SKILLS_LEAD = "Skills are specialized instructions. Load a matching skill by name unless its body is already in the transcript.";
+const SKILLS_LEAD = "Skills are specialized instructions for specific tasks. When a task matches a skill description, read its SKILL.md at the listed location with the read tool before you start. Skip a skill whose body is already in the transcript. A relative path in a skill starts at the directory of its SKILL.md. Give each tool call an absolute path.";
 
 // A value inside a delimited block must never close the block, so the delimiters and line breaks are escaped.
 /** @param {string} text @returns {string} */
@@ -100,7 +100,7 @@ function sections(build) {
     out.push({ key: "instructions", text: INSTRUCTIONS_LEAD + "\n\n" + blocks.join("\n\n") });
   }
   if (build.skills.length) {
-    const rows = build.skills.map((skill) => "  <skill>\n    <name>" + skill.name + "</name>\n    <description>" + escape(skill.description) + "</description>\n  </skill>\n");
+    const rows = build.skills.map((skill) => "  <skill>\n    <name>" + skill.name + "</name>\n    <description>" + escape(skill.description) + "</description>\n    <location>" + escape(skill.location) + "</location>\n  </skill>\n");
     out.push({ key: "skills", text: SKILLS_LEAD + "\n\n<available_skills>\n" + rows.join("") + "</available_skills>" });
   }
   out.push({ key: "environment", text: "<environment>\nworkspace: " + escape(ctx.workspace) + "\noperating_system: " + ctx.operating_system + "\nshell: " + escape(ctx.shell) + "\nsession_start_date_utc: " + ctx.session_start_date_utc + "\n</environment>" });

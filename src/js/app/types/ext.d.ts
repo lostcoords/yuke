@@ -226,7 +226,6 @@ export interface HookContext {
   max_agent_depth: number;
   agent_name: string;
   workspace: string;
-  has_skills: boolean;
 }
 
 /** One tool as the provider request declares it. `input_schema` is JSON Schema text. */
@@ -268,7 +267,8 @@ export interface PromptContext {
 export interface PromptBuild {
   context: PromptContext;
   instructions: { scope: Wire.InstructionScope; path: string; text: string }[];
-  skills: { name: string; description: string }[];
+  /** `location` is the absolute path of SKILL.md. The model reads it with the read tool. */
+  skills: { name: string; description: string; location: string }[];
   sections: PromptSection[];
 }
 

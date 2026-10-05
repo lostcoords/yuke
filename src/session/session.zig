@@ -33,8 +33,6 @@ pub const Config = struct {
 pub const Loadout = struct {
     arena: std.heap.ArenaAllocator,
     decls: []const transport_ir.Tool,
-    /// The session catalog lists at least one skill. Read once, because a reload refuses an active run.
-    has_skills: bool,
     /// The tools the request declares. The first build decides it once from `decls`, and it holds for the run.
     request_tools: ?[]const transport_ir.Tool = null,
     /// How a deferred definition reaches the model: not at all, an Anthropic reference, or an addition after a search.

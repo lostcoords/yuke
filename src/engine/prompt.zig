@@ -12,8 +12,8 @@ const Section = prompts.Section;
 
 /// One AGENTS.md snapshot as the hook payload carries it.
 const Instruction = struct { scope: proto.instructions.InstructionScope, path: []const u8, text: []const u8 };
-/// One skill as the hook payload carries it. The body loads through the skill tool.
-const Skill = struct { name: []const u8, description: []const u8 };
+/// One skill as the hook payload carries it. The model reads the body at `location`, the path of SKILL.md.
+const Skill = struct { name: []const u8, description: []const u8, location: []const u8 };
 
 /// The facts every prompt starts from. The date is the session start, so a rebuild never moves it.
 const Context = struct {
@@ -46,7 +46,7 @@ pub fn refresh(engine: *Engine, arena: std.mem.Allocator, slot: *RunSlot) !void 
     for (sources, instructions) |source, *out| out.* = .{ .scope = source.source.scope, .path = source.source.path, .text = source.text };
     const catalog = try database.session.skillCatalog(db, arena, sid);
     const skills = try arena.alloc(Skill, catalog.len);
-    for (catalog, skills) |entry, *out| out.* = .{ .name = entry.name, .description = entry.description };
+    for (catalog, skills) |entry, *out| out.* = .{ .name = entry.name, .description = entry.description, .location = entry.path };
     const seed = try database.session.promptSections(db, arena, sid);
     var sections = seed;
     // A handler may register another during the ask, which bumps the counter. The build is stored under the value it was asked for.

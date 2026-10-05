@@ -10,7 +10,7 @@ A model tool is a function that the model calls. Define it with `ctx.tools.defin
 - `description` tells the model when to call the tool. Use the imperative mood. State each limit the model must know.
 - `parameters` is a JSON Schema object. It needs `type: "object"` and `properties`. Set `additionalProperties: false`.
 - `defer: true` waits for a `tool_search` tool to load the tool. Without a search tool, the engine loads it at once.
-- A tool that `index.js` defines at startup replaces a built-in tool with the same name: `read`, `write`, `edit`, `exec`, `stop`, or `skill`.
+- A tool that `index.js` defines at startup replaces a built-in tool with the same name: `read`, `write`, `edit`, `exec`, or `stop`.
 
 ## Arguments
 

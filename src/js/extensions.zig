@@ -78,13 +78,11 @@ pub fn evalUserEntry(host: *Host, config_dir: ?[]const u8) (host_mod.Error || er
 // ---------------------------------------------------------------- tests
 
 const ai = @import("ai");
-const database = @import("../store/store.zig");
 const app_fixture = @import("../app/fixture.zig");
 const support = @import("tests/support.zig");
 const proto = @import("proto");
 const rpc = @import("../app/rpc.zig");
 const hookset = @import("../engine/hookset.zig");
-const commands = @import("../engine/commands.zig");
 const app_call = @import("../app/call.zig");
 const zio = @import("zio");
 
@@ -298,7 +296,7 @@ test "the prompt plugin writes the default sections, and a user handler appends 
     defer f.deinit();
     const payload =
         \\{"context":{"session_id":"01010101010101010101010101010101","parent_id":null,"depth":0,"agent_name":"root","workspace":"/w","operating_system":"macos","shell":"/bin/sh","session_start_date_utc":"2026-09-19"},
-        \\ "instructions":[{"scope":"workspace","path":"/w/AGENTS.md","text":"rules"}],"skills":[{"name":"pdf","description":"Handle PDFs & forms"}],"sections":[]}
+        \\ "instructions":[{"scope":"workspace","path":"/w/AGENTS.md","text":"rules"}],"skills":[{"name":"pdf","description":"Handle PDFs & forms","location":"/w/.agents/skills/a&b/SKILL.md"}],"sections":[]}
     ;
     const answer = try settleHook(&f.extensions, "prompt.build", payload);
     defer std.testing.allocator.free(answer);
@@ -313,7 +311,7 @@ test "the prompt plugin writes the default sections, and a user handler appends 
     try std.testing.expect(std.mem.startsWith(u8, sections[1].text, "Project instructions follow."));
     try std.testing.expect(std.mem.indexOf(u8, sections[1].text, "## AGENTS.md (/w/AGENTS.md)\nScope: workspace.\n\nrules") != null);
     try std.testing.expectEqualStrings("skills", sections[2].key);
-    try std.testing.expect(std.mem.indexOf(u8, sections[2].text, "<description>Handle PDFs &amp; forms</description>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sections[2].text, "<description>Handle PDFs &amp; forms</description>\n    <location>/w/.agents/skills/a&amp;b/SKILL.md</location>") != null);
     try std.testing.expectEqualStrings("environment", sections[3].key);
     try std.testing.expectEqualStrings("<environment>\nworkspace: /w\noperating_system: macos\nshell: /bin/sh\nsession_start_date_utc: 2026-09-19\n</environment>", sections[3].text);
     try std.testing.expectEqualStrings("tail", sections[4].key);
@@ -374,10 +372,6 @@ test "a hook chain replaces a payload and the first block ends it" {
     try std.testing.expect(extensions.host.hooks.holds(.@"tool.after"));
     try std.testing.expect(extensions.host.hooks.holds(.@"request.build"));
     try std.testing.expect(extensions.host.hooks.holds(.@"input.before"));
-    // The built-in tool owner holds tools.select until disposal.
-    try std.testing.expect(extensions.host.hooks.holds(.@"tools.select"));
-    try extensions.host.evalModule("import { plugins } from \"yuke\"; plugins.dispose(\"builtins\");", "drop-builtins.js");
-    try std.testing.expect(!extensions.host.hooks.holds(.@"tools.select"));
     // A throwing handler fails closed: the point answers a block, never a pass.
     const failed = try settleHook(extensions, "request.send", "{\"url\":\"u\",\"headers\":[],\"body\":\"{}\"}");
     defer std.testing.allocator.free(failed);
@@ -661,36 +655,11 @@ test "extensions install no agent tool without the agents plugin" {
     for ([_][]const u8{ "spawn_agent", "send_agent_input" }) |name| try std.testing.expect(f.extensions.host.tools.find(name) == null);
 }
 
-test "the skill tool answers a catalog body through skill.load" {
+test "the builtins hold no tools.select hook, so a run without a plugin hook makes no JS call for it" {
     var f: Fixture = undefined;
     try f.init("", kernel_boot);
     defer f.deinit();
-    try f.tmp.dir.createDirPath(std.testing.io, ".agents/skills/pdf");
-    try f.tmp.dir.writeFile(std.testing.io, .{ .sub_path = ".agents/skills/pdf/SKILL.md", .data = "---\ndescription: Handle PDFs\n---\nRead the pdf.\n" });
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const host = f.extensions.host;
-    const created = try commands.sessionCreate(&f.app.engine, a, .{ .workspace_path = host.cwd, .model = "test/model" });
-    try std.testing.expect(try database.session.hasSkills(&f.app.db, a, created.session.id.raw));
-
-    var context = support.toolContext(host.cwd);
-    context.site = .{ .session_id = created.session.id, .message_id = 1, .part_id = 0 };
-    const call = host.calls.submit("skill", "{\"name\":\"pdf\"}", context);
-    try support.pumpUntilSettled(host, call);
-    try std.testing.expect(!support.reply(call).is_error);
-    try std.testing.expect(std.mem.startsWith(u8, support.reply(call).text, "<skill_content name=\"pdf\">\nRead the pdf.\n\nSkill directory: "));
-    try std.testing.expect(std.mem.endsWith(u8, support.reply(call).text, ".agents/skills/pdf\nResolve relative paths against this directory.\n</skill_content>"));
-    call.finish();
-    try host.pump();
-
-    // The catalog decides what a name means, so an unknown name is an error the model can read.
-    const missing = host.calls.submit("skill", "{\"name\":\"nope\"}", context);
-    try support.pumpUntilSettled(host, missing);
-    try std.testing.expect(support.reply(missing).is_error);
-    try std.testing.expect(std.mem.indexOf(u8, support.reply(missing).text, "has no skill with this name") != null);
-    missing.finish();
-    try host.pump();
+    try std.testing.expect(!f.extensions.host.hooks.points.contains(.@"tools.select"));
 }
 
 test "session create returns the invalid instruction path through the call API" {
