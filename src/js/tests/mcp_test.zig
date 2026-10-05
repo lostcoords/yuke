@@ -148,7 +148,11 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try f.init("servers");
     defer f.deinit();
     const host = f.host;
-    try support.pumpUntilTrue(host, "mcpLoaded() && mcpSettled()");
+    // The search tool exists once the configuration loads, before the servers connect.
+    try support.pumpUntilTrue(host, "mcpLoaded()");
+    const search_description = try std.testing.allocator.dupe(u8, host.tools.entries.items[host.tools.find("tool_search").?].decl.description);
+    defer std.testing.allocator.free(search_description);
+    try support.pumpUntilTrue(host, "mcpSettled()");
     try expectState(host, "legacy", "connected · legacy · 1 tool: echo · 1 stray stdout line");
     try expectState(host, "modern", "connected · modern · 3 tools: a.tool, a_tool, echo");
     try expectState(host, "dies", "connected · legacy · 1 tool: echo");
@@ -166,13 +170,15 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     // An MCP tool defers by default; `alwaysLoad` keeps the legacy server's tool eager.
     try std.testing.expect(deferred(host, "mcp_modern_echo"));
     try std.testing.expect(!deferred(host, "mcp_legacy_echo"));
-    // One search tool names the connected servers and loads the tools that match.
+    // One search tool names the configured servers and loads the tools that match.
     try std.testing.expect(support.hasTool(host, "tool_search"));
     try std.testing.expect(!deferred(host, "tool_search"));
+    // The connections did not change the search declaration, so the provider cache holds.
+    try std.testing.expectEqualStrings(search_description, host.tools.entries.items[host.tools.find("tool_search").?].decl.description);
     // The eager legacy tool is listed but not loaded; the two deferred ones are.
     try expectSearch(host, "{\"query\":\"echo\"}", "Found 4 MCP tools:", &.{ "mcp_dies_echo", "mcp_downgrade_echo", "mcp_modern_echo" }, "mcp_legacy_echo");
     try expectSearch(host, "{\"query\":\"echo\",\"server\":\"modern\",\"limit\":1}", "Found 1 MCP tool:", &.{"mcp_modern_echo"}, "mcp_legacy_echo");
-    try support.expectTool(host, "tool_search", "{\"query\":\"nothing_like_this\"}", .{ .text = .{ .equals = "No MCP tool matches \"nothing_like_this\". Connected servers: legacy, modern, dies, downgrade." } });
+    try support.expectTool(host, "tool_search", "{\"query\":\"nothing_like_this\"}", .{ .text = .{ .equals = "No MCP tool matches \"nothing_like_this\". Connected servers: legacy, modern, dies, downgrade.\n\nServer instructions:\nlegacy: Use echo for greetings.\n\nUnavailable servers: modernonly (failed), oldver (failed), missing (failed), badargs (failed), socket (failed), ftp (failed)." } });
     try support.expectTool(host, "tool_search", "{\"query\":\"\"}", .{ .is_error = true, .text = .{ .equals = "query must be a nonempty string" } });
 
     // The legacy server sent a ping after the handshake and received the empty answer.
@@ -214,6 +220,8 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try support.expectTool(host, "mcp_dies_echo", "{}", .{ .is_error = true, .text = .{ .equals = "the server exited with code 3" } });
     try support.pumpUntilTrue(host, "mcpStates().dies === 'failed · legacy · the server exited with code 3 · stderr: boom'");
     try std.testing.expect(!support.hasTool(host, "mcp_dies_echo"));
+    // A lost server does not change the search declaration, so the provider cache holds.
+    try std.testing.expectEqualStrings(search_description, host.tools.entries.items[host.tools.find("tool_search").?].decl.description);
 
     // A stop answers a pending call at once; it does not wait for the server to exit.
     const slow = host.calls.submit("mcp_modern_echo", "{\"text\":\"slow\"}", support.toolContext(host.cwd));
@@ -229,20 +237,28 @@ test "the MCP plugin connects both eras, names every failure, and answers each r
     try std.testing.expect(!support.hasTool(host, "mcp_modern_echo"));
 }
 
-test "a search tool name conflict clears on the next catalog change" {
+test "a search tool name conflict leaves the other tool and reports the conflict" {
     var f: Fixture = undefined;
     try f.init("search-conflict");
     defer f.deinit();
     const host = f.host;
     try support.pumpUntilTrue(host, "mcpLoaded() && mcpSettled()");
     try support.pumpUntilTrue(host, "(mcpStates().config ?? '').includes('tool_search: another tool already has this name')");
-    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.mcpHeld = true; Promise.resolve(plugins.dispose(\"search-holder\")).then(() => { globalThis.mcpHeld = false; });", "mcp-release.js");
-    try support.pumpUntilTrue(host, "mcpHeld === false");
-    try std.testing.expect(!support.hasTool(host, "tool_search"));
-    try support.expectTool(host, "mcp_modern_echo", "{\"text\":\"change\"}", .{ .text = .{ .equals = "changed" } });
-    try support.pumpUntilTrue(host, "mcpStates().modern === 'connected · modern · 2 tools: added, echo'");
-    try std.testing.expect(support.hasTool(host, "tool_search"));
-    try std.testing.expect(!deferred(host, "tool_search"));
+    try support.expectTool(host, "tool_search", "{}", .{ .text = .{ .equals = "other" } });
+}
+
+test "a run waits for an eager server only, and a search waits for a deferred one" {
+    var f: Fixture = undefined;
+    try f.init("slow");
+    defer f.deinit();
+    const host = f.host;
+    try support.pumpUntilTrue(host, "mcpLoaded()");
+    try askSelect(host);
+    try std.testing.expect(support.hasTool(host, "mcp_eager_echo"));
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("mcpStates().lazy.startsWith('connecting') ? 1 : 0"));
+    // The gate has no more work, so a later run makes no JS call for it.
+    try std.testing.expect(!host.hooks.points.contains(.@"tools.select"));
+    try expectSearch(host, "{\"query\":\"echo\"}", "Found 2 MCP tools:", &.{"mcp_lazy_echo"}, "mcp_eager_echo");
 }
 
 test "MCP servers over Streamable HTTP and the old SSE transport connect, call, cancel, and end the session" {
@@ -332,8 +348,12 @@ test "an MCP server behind OAuth signs in through the browser, refreshes its tok
     peer.fault = .bad_issuer;
     try login(host, "the sign-in answer names another issuer");
     try std.testing.expectEqual(@as(u32, 0), peer.token_requests);
+    // A run closes the gate, and the eager start after the sign-in opens it again.
+    try askSelect(host);
+    try std.testing.expect(!host.hooks.points.contains(.@"tools.select"));
     peer.fault = .none;
     try login(host, "");
+    try std.testing.expect(host.hooks.points.contains(.@"tools.select"));
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("callbackPage.includes('sign-in is complete') ? 1 : 0"));
     try support.pumpUntilTrue(host, "mcpStates().secure === 'connected · modern · 1 tool: echo'");
     try support.expectTool(host, "mcp_secure_echo", "{\"text\":\"hi\"}", .{ .text = .{ .equals = "secure: hi" } });
@@ -343,6 +363,10 @@ test "an MCP server behind OAuth signs in through the browser, refreshes its tok
     try std.testing.expectEqual(@as(u32, 1), peer.refreshes);
     try host.evalModule("globalThis.signedOut = false; mcpPlugin.logout('secure').then(() => { globalThis.signedOut = true; });", "mcp-logout.js");
     try support.pumpUntilTrue(host, "signedOut && mcpStates().secure === 'needs auth · run /mcp-login secure'");
+    // An unload during the restart of a sign-out starts no fresh server after the plugin is gone.
+    try host.evalModule("import { plugins } from \"yuke:internal/ext\"; globalThis.signedOut = false; mcpPlugin.logout('secure').then(() => { globalThis.signedOut = true; }); plugins.dispose(\"mcp\");", "mcp-logout-dispose.js");
+    try support.pumpUntilTrue(host, "signedOut");
+    try expectState(host, "secure", "stopped · run /mcp-login secure");
 }
 
 /// Sign in to `secure` and expect the error text, or success for an empty one.

@@ -27,7 +27,7 @@ done`;
 const server = (cases, setup = "") => setup + READ + cases + END;
 // A legacy server: it logs to stdout once, refuses `server/discover`, needs `initialize` first, then pings the client.
 const LEGACY = server(String.raw`    server/discover) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"Method not found"}}\n' "$id" ;;
-    initialize) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"legacy","version":"1"}}}\r\n' "$id" ;;
+    initialize) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"legacy","version":"1"},"instructions":"Use echo for greetings."}}\r\n' "$id" ;;
     notifications/initialized) printf '{"jsonrpc":"2.0","id":777,"method":"ping"}\n' ;;
     tools/list) printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"echo","description":"Echo the text.","inputSchema":{"type":"object","properties":{"text":{"type":"string"}}}}]}}\n' "$id" ;;
     tools/call) printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"%s says %s%s"}]}}\n' "$id" "$GREETING" "$text" "$pinged" ;;
@@ -142,7 +142,7 @@ if (mcpCase === "http") {
 // One server behind OAuth. The test browser follows the authorization redirect to the loopback callback, as a real browser does.
 if (mcpCase === "oauth") {
   globalThis.mcpPlugin = mcp({ startupMs: 3000, callMs: 2000, servers: {
-    secure: { type: "http", url: mcpHttpBase + "/secure" },
+    secure: { type: "http", url: mcpHttpBase + "/secure", alwaysLoad: true },
     lockedsse: { type: "sse", url: mcpHttpBase + "/secure-sse" },
   } });
   globalThis.browse = async (/** @type {string} */ url) => {
@@ -165,10 +165,16 @@ if (mcpCase === "oauth-secret") {
   plugins.use(globalThis.mcpPlugin);
 }
 
-// Another plugin holds the search tool name first, so the MCP plugin must try again on the next change.
+// Another plugin holds the search tool name first, so the MCP plugin reports the conflict and leaves that tool.
 if (mcpCase === "search-conflict") {
-  plugins.use({ name: "search-holder", apply(ctx) { ctx.tools.define({ name: "tool_search", description: "Occupied name.", parameters: { type: "object", properties: {} }, execute() { return "other"; } }); } });
+  plugins.use({ name: "search-holder", apply(ctx) { ctx.tools.define({ name: "tool_search", description: "Occupied name.", parameters: { type: "object", properties: {} }, async execute() { return "other"; } }); } });
   globalThis.mcpPlugin = mcp({ startupMs: 3000, callMs: 500, servers: { modern: sh(MODERN) } });
+  plugins.use(globalThis.mcpPlugin);
+}
+
+// Two slow servers: a run waits for the eager one only, and a search waits for the deferred one.
+if (mcpCase === "slow") {
+  globalThis.mcpPlugin = mcp({ startupMs: 5000, servers: { eager: { ...sh("sleep 0.5\n" + LEGACY), alwaysLoad: true }, lazy: sh("sleep 1.5\n" + LEGACY) } });
   plugins.use(globalThis.mcpPlugin);
 }
 

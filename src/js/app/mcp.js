@@ -281,14 +281,17 @@ function score(definition, wanted) {
 }
 
 // The search reads the whole catalog here; the request declares only what it loads, so the context stays small.
-/** @param {Server[]} servers @param {unknown} args @returns {string | ToolOutcome} */
-function searchCatalog(servers, args) {
+/** @param {Server[]} servers @param {unknown} args @returns {Promise<string | ToolOutcome>} */
+async function searchCatalog(servers, args) {
   const { query, server: only, limit: asked } = /** @type {{ query?: unknown, server?: unknown, limit?: unknown }} */ (record(args) ? args : {});
   if (typeof query !== "string" || query.trim() === "") throw new Error("query must be a nonempty string");
   if (query.length > QUERY_MAX) throw new Error("query must be at most " + QUERY_MAX + " characters");
   if (only !== undefined && typeof only !== "string") throw new Error("server must be a string");
   if (asked !== undefined && (typeof asked !== "number" || !Number.isSafeInteger(asked) || asked < 1 || asked > LIMIT_MAX)) throw new Error("limit must be an integer from 1 to " + LIMIT_MAX);
   const limit = asked === undefined ? LIMIT_DEFAULT : asked;
+  // A deferred server does not delay a run, so the search waits for each server that still connects. A start ends within the startup limit.
+  // A restart replaces a server, so the wait reads the list again until no server connects.
+  for (let starting = servers.filter(connecting); starting.length !== 0; starting = servers.filter(connecting)) await Promise.all(starting.map((server) => server.started));
   const wanted = query.toLowerCase().split(/[^a-z0-9]+/).filter((term) => term.length > 1);
   /** @type {{ server: string, definition: ToolDefinition, score: number }[]} */
   const hits = [];
@@ -307,12 +310,15 @@ function searchCatalog(servers, args) {
   const best = hits[0];
   const floor = best === undefined ? 0 : Math.ceil(best.score / 2);
   while ((hits.at(-1)?.score ?? floor) < floor) hits.pop();
-  if (hits.length === 0) return "No MCP tool matches " + JSON.stringify(query) + ". Connected servers: " + (connected.length ? connected.join(", ") : "none") + ".";
+  if (hits.length === 0) return "No MCP tool matches " + JSON.stringify(query) + ". Connected servers: " + (connected.length ? connected.join(", ") : "none") + "." + serverNotes(servers, new Set(connected));
   /** @type {string[]} */
   const lines = [];
   /** @type {Wire.ToolDefinition[]} */
   const added = [];
+  /** @type {Set<string>} */
+  const shown = new Set();
   for (const hit of hits.slice(0, limit)) {
+    shown.add(hit.server);
     const description = hit.definition.description.slice(0, DESCRIPTION_MAX);
     // An eager tool is in the context already, so only a deferred one is loaded.
     const schema = hit.definition.defer === true ? JSON.stringify(hit.definition.parameters) : "";
@@ -320,7 +326,20 @@ function searchCatalog(servers, args) {
     lines.push(line);
     if (schema !== "" && schema.length <= SCHEMA_MAX) added.push({ name: hit.definition.name, description, input_schema: schema });
   }
-  return { output: "Found " + lines.length + " MCP tool" + (lines.length === 1 ? "" : "s") + ":\n" + lines.join("\n"), tools_added: added };
+  return { output: "Found " + lines.length + " MCP tool" + (lines.length === 1 ? "" : "s") + ":\n" + lines.join("\n") + serverNotes(servers, shown), tools_added: added };
+}
+
+/** @param {Server} server */
+function connecting(server) {
+  return server.state === "connecting";
+}
+
+// The fixed tool description holds no server instructions or states, so each result carries them.
+/** @param {Server[]} servers @param {Set<string>} named @returns {string} */
+function serverNotes(servers, named) {
+  const notes = servers.filter((server) => named.has(server.name) && server.instructions !== "").map((server) => server.name + ": " + server.instructions);
+  const down = servers.filter((server) => server.state !== "connected" && server.state !== "disabled").map((server) => server.name + " (" + server.state + ")");
+  return (notes.length === 0 ? "" : "\n\nServer instructions:\n" + notes.join("\n")) + (down.length === 0 ? "" : "\n\nUnavailable servers: " + down.join(", ") + ".");
 }
 
 // A trust record keeps a digest of the server identity, so a changed command or URL asks again.
@@ -339,9 +358,11 @@ function writeTrust(name, identity, approved) {
 }
 
 class Server {
-  /** @param {string} name @param {ServerConfig} config @param {Limits} limits @param {boolean} trusted @param {Context} ctx */
-  constructor(name, config, limits, trusted, ctx) {
+  /** @param {string} name @param {ServerConfig} config @param {Limits} limits @param {boolean} trusted @param {Context} ctx @param {() => void} openGate */
+  constructor(name, config, limits, trusted, ctx, openGate) {
     this.name = name;
+    // An eager server opens the run gate at each start, so a run waits for its tools after a reconnect too.
+    this.openGate = openGate;
     this.config = config;
     this.limits = limits;
     this.ctx = ctx;
@@ -351,8 +372,6 @@ class Server {
     /** @type {ServerState} */
     this.state = "pending";
     this.error = "";
-    // The plugin swaps its search tool when a server or its catalog changes.
-    this.onChange = () => {};
     /** @type {"" | "modern" | "legacy"} */
     this.era = "";
     this.instructions = "";
@@ -421,7 +440,6 @@ class Server {
     const transport = this.transport;
     this.transport = null;
     if (transport) transport.close().catch(() => {});
-    this.onChange();
   }
 
   /** @param {string} reason */
@@ -432,6 +450,7 @@ class Server {
   /** @returns {Promise<void>} */
   start() {
     this.started = this.connect();
+    if (this.config.alwaysLoad === true) this.openGate();
     return this.started;
   }
 
@@ -451,7 +470,6 @@ class Server {
     } catch (error) {
       if (this.state === "connecting") this.refuse(error);
     }
-    this.onChange();
   }
 
   // A 401 that no stored grant fixes asks for a sign-in; any other error fails the server.
@@ -664,7 +682,6 @@ class Server {
         catch (error) { this.error = errorText(error); }
       }
     } finally { this.refreshing = false; }
-    this.onChange();
   }
 
   // List every page, then swap the tool set. The run loadout is chosen once, so a change lands on the next run.
@@ -798,7 +815,6 @@ class Server {
     clearTimeout(this.listenTimer);
     this.undefineTools();
     this.settleAll("the MCP server stopped");
-    this.onChange();
     const transport = this.transport;
     this.transport = null;
     if (transport) await transport.close();
@@ -841,6 +857,7 @@ async function readServers(path, problems) {
 
 /**
  * Build the `mcp` plugin. It starts MCP servers and gives the model their tools. A tool stays deferred until the tool_search tool loads it, unless its server sets `alwaysLoad`.
+ * A run waits for an eager server that still connects. A search waits for every server that still connects.
  * The servers come from `options.servers`, then `.mcp.json` in `$XDG_CONFIG_HOME` or `~/.config`, then `.mcp.json` in the workspace. The first entry of a name wins.
  * A workspace server starts only after the user trusts it. It throws a TypeError for a timeout that is not a positive integer.
  * @param {McpOptions} [options] - `servers` has the shape of `mcpServers` in `.mcp.json`. `startupMs` limits the start of each server (default 10000).
@@ -856,6 +873,8 @@ export function mcp(options = {}) {
   /** @type {string[]} */
   const problems = [];
   let asked = false;
+  // The run gate exists only while it has work, so a run without that work makes no JS call. `apply` sets it.
+  let openGate = NOOP;
   // The configuration load. A command and a method wait for it, because they read the server list.
   // A command ignores a failed load, because the registry already reports it under this plugin.
   /** @type {Promise<void>} */
@@ -865,8 +884,9 @@ export function mcp(options = {}) {
   const restart = async (index) => {
     const server = /** @type {Server} */ (servers[index]);
     await server.close();
-    const fresh = new Server(server.name, server.config, limits, !server.workspace, server.ctx);
-    fresh.onChange = server.onChange;
+    // An unload during the close owns the server list, so no fresh server outlives the plugin.
+    if (!server.ctx.alive) return server;
+    const fresh = new Server(server.name, server.config, limits, !server.workspace, server.ctx, server.openGate);
     servers[index] = fresh;
     if (fresh.state === "pending") fresh.start();
     return fresh;
@@ -900,66 +920,65 @@ export function mcp(options = {}) {
         for (const [configs, trusted] of sources) for (const [name, config] of Object.entries(configs)) {
           if (servers.some((server) => server.name === name)) continue;
           if (!record(config)) { problems.push(name + ": the server entry must be an object"); continue; }
-          servers.push(new Server(name, config, limits, trusted, ctx));
+          servers.push(new Server(name, config, limits, trusted, ctx, () => openGate()));
         }
-        /** @type {(() => void) | null} */
-        let disposeSearch = null;
-        let searchDescription = "";
-        // One search tool covers every connected server. Its description names them, so the model knows when to search.
-        const refreshSearchTool = () => {
-          if (!ctx.alive) return;
-          const connected = servers.filter((server) => server.state === "connected");
-          const description = connected.length === 0 ? "" : ("Search the MCP tool catalog by keywords and load the matching tools. Servers: " + connected.map((server) => server.name + (server.instructions ? " (" + server.instructions + ")" : "")).join("; ") + ".").slice(0, SEARCH_DESCRIPTION_MAX);
-          if (description === searchDescription) return;
-          if (disposeSearch) { disposeSearch(); disposeSearch = null; }
-          searchDescription = "";
-          if (description === "") return;
-          // A refused name leaves no search tool; the next change tries again.
-          try { disposeSearch = ctx.tools.define({
-            name: SEARCH_TOOL,
-            description,
-            parameters: {
-              type: "object",
-              properties: {
-                query: { type: "string", description: "Keywords that describe the tool you need." },
-                server: { type: "string", description: "Search one server only." },
-                limit: { type: "integer", description: "How many tools to load, 1 to " + LIMIT_MAX + ". The default is " + LIMIT_DEFAULT + "." },
+        // One search tool covers every server. Its description names the configured servers and never changes, so a connection never changes the declarations.
+        const listed = servers.filter((server) => server.state !== "disabled" && server.state !== "failed");
+        if (listed.length !== 0) {
+          try {
+            ctx.tools.define({
+              name: SEARCH_TOOL,
+              description: ("Search the MCP tool catalog by keywords and load the matching tools. Servers: " + listed.map((server) => server.name).join(", ") + ".").slice(0, SEARCH_DESCRIPTION_MAX),
+              parameters: {
+                type: "object",
+                properties: {
+                  query: { type: "string", description: "Keywords that describe the tool you need." },
+                  server: { type: "string", description: "Search one server only." },
+                  limit: { type: "integer", description: "How many tools to load, 1 to " + LIMIT_MAX + ". The default is " + LIMIT_DEFAULT + "." },
+                },
+                required: ["query"],
+                additionalProperties: false,
               },
-              required: ["query"],
-              additionalProperties: false,
-            },
-            execute: async (args) => searchCatalog(servers, args),
-          }); } catch (error) {
-            problems.push(SEARCH_TOOL + ": " + errorText(error));
-            return;
-          }
-          searchDescription = description;
-        };
-        for (const server of servers) server.onChange = refreshSearchTool;
+              execute: (args) => searchCatalog(servers, args),
+            });
+          } catch (error) { problems.push(SEARCH_TOOL + ": " + errorText(error)); }
+        }
         for (const server of servers) if (server.state === "pending") server.start();
       };
       loaded = load();
 
-      // The hook waits for the configuration reads, the trust prompts, and the server starts before it answers.
-      ctx.hook("tools.select", async () => {
-        // A failed load closes the plugin, so this turn goes on without MCP instead of failing closed.
-        try { await loaded; } catch { return; }
-        if (!asked) {
-          asked = true;
-          for (const server of servers) {
-            if (server.state !== "untrusted") continue;
-            if (!ctx.interaction.interactive) { server.fail("disabled", "not trusted"); continue; }
-            const endpoint = /** @type {Endpoint} */ (server.endpoint);
-            const ok = await ctx.interaction.confirm("Start the MCP server " + server.name + "?", WORKSPACE_FILE + " " + endpoint.describe + "\nRemember this decision for this workspace and server configuration.");
-            if (ok === undefined || !ctx.alive || server.state !== "untrusted") continue;
-            try { writeTrust(server.name, endpoint.identity, ok); }
-            catch (error) { problems.push(server.name + ": " + errorText(error)); }
-            if (ok) server.start(); else server.fail("disabled", "not trusted");
+      // The gate asks the trust questions at the first run and waits for each eager server that still connects, because its tools must be in the request.
+      // A deferred server never delays a run. The search waits for it.
+      /** @type {(() => void) | null} */
+      let gate = null;
+      /** @param {Server} server */
+      const eagerConnecting = (server) => server.config.alwaysLoad === true && server.state === "connecting";
+      openGate = () => {
+        if (gate !== null || !ctx.alive) return;
+        gate = ctx.hook("tools.select", async () => {
+          // A failed load closes the plugin, so this turn goes on without MCP instead of failing closed.
+          try { await loaded; } catch { return; }
+          if (!asked) {
+            asked = true;
+            for (const server of servers) {
+              if (server.state !== "untrusted") continue;
+              if (!ctx.interaction.interactive) { server.fail("disabled", "not trusted"); continue; }
+              const endpoint = /** @type {Endpoint} */ (server.endpoint);
+              const ok = await ctx.interaction.confirm("Start the MCP server " + server.name + "?", WORKSPACE_FILE + " " + endpoint.describe + "\nRemember this decision for this workspace and server configuration.");
+              if (ok === undefined || !ctx.alive || server.state !== "untrusted") continue;
+              try { writeTrust(server.name, endpoint.identity, ok); }
+              catch (error) { problems.push(server.name + ": " + errorText(error)); }
+              if (ok) server.start(); else server.fail("disabled", "not trusted");
+            }
           }
-        }
-        const starting = servers.filter((server) => server.state === "connecting");
-        if (starting.length !== 0) await Promise.all(starting.map((server) => server.started));
-      });
+          // A restart replaces a server, so the wait reads the list again until no eager server connects.
+          for (let eager = servers.filter(eagerConnecting); eager.length !== 0; eager = servers.filter(eagerConnecting)) await Promise.all(eager.map((server) => server.started));
+          // The gate has no more work until a trust reset or an eager start opens it again.
+          gate?.();
+          gate = null;
+        });
+      };
+      openGate();
 
       ctx.inject(["tui"], (ctx) => {
         ctx.tui.command.add("mcp:show", { desc: "show the MCP servers and their tools", slash: "mcp", run: () => loaded.then(() => showInfo(ctx, "mcp", plugin.rows()), NOOP) });
@@ -1021,6 +1040,7 @@ export function mcp(options = {}) {
         if (server.endpoint) await restart(index);
       }
       asked = false;
+      openGate();
     },
     /** @returns {[string, string][]} */
     rows() {
