@@ -843,7 +843,12 @@ test "background jobs start, and stop answers the end of a running or an ended j
         \\globalThis.quickEnded = false;
         \\globalThis.longEnded = false;
         \\import { events } from "yuke:internal/kernel";
+        \\import { client } from "yuke:internal/client";
         \\events.on("job.changed", job => { if (job.state === "running") return; if (job.command === "sleep 30") longEnded = true; else quickEnded = true; });
+        \\// No plugin made this child, and the built-in stop still owns it.
+        \\const child = { session: { id: "0192aaaa000000000000000000c0ffee", name: "custom" } };
+        \\client.sessionList = async (params) => ({ items: params.population.parent_id === "01".repeat(16) ? [child] : [], next_cursor: null, total: 1 });
+        \\client.sessionCancelRun = async (id, clear, report) => { if (id !== child.session.id || !clear || report !== false) throw new Error("stop scope"); return { canceled_run: null, cleared_inputs: [] }; };
     , "job-messages.js");
 
     const a = std.testing.allocator;
@@ -857,9 +862,10 @@ test "background jobs start, and stop answers the end of a running or an ended j
     try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true}", .{ .text = .{ .contains = again } });
     try support.expectTool(host, "exec", "{\"command\":\"sleep 30\",\"background\":true,\"timeout_ms\":5}", .{ .is_error = true, .text = .{ .equals = "Remove timeout_ms, or set background to false." } });
     // An unknown id lists the running ids, so the model can correct it.
-    const missing = try std.fmt.allocPrint(a, "The id job-zzzz does not exist. The ids are: {s}.", .{j1});
+    const missing = try std.fmt.allocPrint(a, "The id job-zzzz does not exist. The ids are: {s}, custom-00c0ffee.", .{j1});
     defer a.free(missing);
     try support.expectTool(host, "stop", "{\"id\":\"job-zzzz\"}", .{ .is_error = true, .text = .{ .equals = missing } });
+    try support.expectTool(host, "stop", "{\"id\":\"custom-00c0ffee\"}", .{ .text = .{ .equals = "[custom-00c0ffee was not running.]" } });
     // A running job: stop waits for the end and answers it.
     const stop1 = try std.fmt.allocPrint(a, "{{\"id\":\"{s}\"}}", .{j1});
     defer a.free(stop1);

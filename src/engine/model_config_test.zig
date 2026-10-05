@@ -139,27 +139,3 @@ test "a patch lands on the next turn while a run holds its own config" {
     try testing.expectEqualStrings("high", patched.reasoning);
     try testing.expectEqualStrings("medium", f.engine.sessions.get(id).?.active_run.?.config.reasoning);
 }
-
-test "an inherited level crosses only to a model that names it" {
-    var f: Fixture = undefined;
-    try f.init();
-    defer f.deinit();
-    const a = f.arena.allocator();
-
-    // The level the parent holds survives when the child model names it.
-    const same = try model_config.validate(&f.engine, a, chosen, .{ .inherit = "low" });
-    try testing.expectEqualStrings("low", same.reasoning);
-    const named = try model_config.validate(&f.engine, a, "local/high-only", .{ .inherit = "high" });
-    try testing.expectEqualStrings("high", named.reasoning);
-
-    // A level the child model does not name falls back to that model's default.
-    const fallback = try model_config.validate(&f.engine, a, "local/high-only", .{ .inherit = "low" });
-    try testing.expectEqualStrings("high", fallback.reasoning);
-    const none = try model_config.validate(&f.engine, a, "local/flat", .{ .inherit = "medium" });
-    try testing.expectEqualStrings("", none.reasoning);
-    const empty = try model_config.validate(&f.engine, a, chosen, .{ .inherit = "" });
-    try testing.expectEqualStrings("medium", empty.reasoning);
-
-    // An explicit level is a claim, so the same mismatch refuses instead.
-    try testing.expectError(error.ReasoningUnsupported, model_config.validate(&f.engine, a, "local/high-only", .{ .explicit = "low" }));
-}

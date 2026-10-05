@@ -587,31 +587,28 @@ pub fn sessionCreateForRpc(engine: *Engine, arena: std.mem.Allocator, params: pr
     } else null;
     if (content) |parts| try engine.deps.blobs.admit(engine.deps.io, arena, parts);
     var parent_tree: ?admission.Location = null;
-    var selected: ?model_config.Resolved = null;
     if (params.child) |child| {
         if (content == null) return error.BadChild;
         if (!admission.validName(child.name)) return error.BadChildName;
-        // A child derives both settings, so an explicit choice is a caller mistake, not a preference.
-        if (params.reasoning != null) return error.ChildReasoningDerived;
         try engine.own(child.site.session_id);
         const row = (try session_store.snapshot(engine.deps.db, arena, child.site.session_id.raw)) orelse return error.UnknownSession;
         if (!std.mem.eql(u8, row.root, root)) return error.BadChild;
         parent_tree = try admission.location(engine, arena, child.site.session_id);
-        selected = try model_config.validate(engine, arena, params.model orelse return error.NoModel, .{ .inherit = row.reasoning });
         if (parent_tree.?.depth >= engine.max_agent_depth) return error.AgentDepthLimit;
         try validateParentSite(engine, child.site);
     }
-    const id: proto.ids.SessionId = .bytes(util.newId(engine.deps.io));
-    if (content != null and parent == null) try engine.ownNewRoot(id);
-    errdefer if (content != null and parent == null) engine.releaseRoot(id);
-    const base = std.Io.Dir.path.basename(root);
-    const title = if (params.child) |child| child.name else if (base.len == 0) root else base;
-    const resolved = selected orelse try model_config.validate(
+    // A child takes its settings like a root: the caller names them, or the model default applies.
+    const resolved = try model_config.validate(
         engine,
         arena,
         params.model orelse return error.NoModel,
         if (params.reasoning) |level| .{ .explicit = level } else .default,
     );
+    const id: proto.ids.SessionId = .bytes(util.newId(engine.deps.io));
+    if (content != null and parent == null) try engine.ownNewRoot(id);
+    errdefer if (content != null and parent == null) engine.releaseRoot(id);
+    const base = std.Io.Dir.path.basename(root);
+    const title = if (params.child) |child| child.name else if (base.len == 0) root else base;
     const model = resolved.model;
     const reasoning = resolved.reasoning;
     const birth_config: proto.run.RunConfig = .{ .config_rev = 0, .model = model, .reasoning = reasoning, .max_rounds = params.max_rounds };

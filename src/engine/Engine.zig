@@ -64,7 +64,7 @@ closing: bool = false,
 /// A claim spans repair, turns, idle periods, and native cleanup.
 owners: std.AutoHashMapUnmanaged([16]u8, ownership.Guard) = .empty,
 owner_mutex: std.Io.Mutex = .init,
-max_concurrent_children: u32 = 8,
+max_concurrent_children: u32 = std.math.maxInt(u32),
 max_agent_depth: u32 = 1,
 
 /// Claim a fresh root before its creation transaction can expose it.

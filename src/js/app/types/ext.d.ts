@@ -164,6 +164,14 @@ export interface ToolDefinition {
   defer?: boolean;
 }
 
+/** The child limits for `children.limits`. An absent field keeps the current value. Each value is an integer from 1 to 4294967295. */
+export interface AgentLimits {
+  /** The active descendant runs of one root. Extra runs wait in the durable queue. The engine default is no limit. */
+  maxConcurrent?: number;
+  /** The deepest child level. The root is depth zero. The engine default is 1. */
+  maxDepth?: number;
+}
+
 /** The value `inject` gives each capability name. A plugin declares its own through `declare module "yuke"`; an undeclared name is `unknown`. */
 /** The `chat` capability. The shell asks it for each new pane, and plugins render the transcript through it. */
 export interface ChatService {

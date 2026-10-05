@@ -158,7 +158,6 @@ fn failureFor(err: anyerror) ?Failure {
         error.ModelToolsUnsupported => .{ .code = .unsupported_model, .message = "the model must have known tool support" },
         error.ReasoningUnsupported => .{ .code = .unsupported_reasoning, .message = "the model does not support the selected reasoning level" },
         error.BadChild => .{ .code = .bad_request, .message = "a child needs initial input and a parent in the same workspace" },
-        error.ChildReasoningDerived => .{ .code = .bad_request, .message = "a child takes the reasoning level of its parent; it cannot name one" },
         error.AgentDepthLimit => .{ .code = .bad_request, .message = "the parent has reached the agent depth limit" },
         error.BadChildName => .{ .code = .bad_request, .message = "the child name is invalid" },
         error.BadToolSite => .{ .code = .bad_request, .message = "the parent tool site is not active" },

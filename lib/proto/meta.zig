@@ -8,6 +8,7 @@ pub const limits = struct {
     pub const default_page_size: u64 = 50;
     pub const default_session_list_page_size: u64 = 25;
     pub const max_blob_bytes: u64 = 7 << 20;
+    pub const max_child_report_credits: u64 = 136;
     pub const max_input_images: u64 = 8;
     pub const max_message_string_bytes: u64 = 1048576;
     pub const max_page_size: u64 = 500;

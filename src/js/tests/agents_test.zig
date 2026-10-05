@@ -42,10 +42,10 @@ const tool_fixture =
     \\plugins.use(tuiPlugin);
     \\plugins.use(sessionsPlugin);
     \\plugins.use(chatPlugin);
-    \\plugins.use(agents({ default: "small", maxRounds: 7, catalog: { small: { description: "Narrow research.", model: "p/family/model" }, review: { description: "Read-only review.", prompt: "Review only. Do not edit.", tools: ["read", "exec"] }, look: { description: "Reads only.", tools: ["read"] } } }));
+    \\plugins.use(agents({ default: "small", maxRounds: 7, catalog: { small: { description: "Narrow research.", model: "p/family/model", reasoning: "low" }, review: { description: "Read-only review.", prompt: "Review only. Do not edit.", tools: ["read", "exec"] }, look: { description: "Reads only.", tools: ["read"] } } }));
     \\globalThis.child = { session: { id: "0192aaaa00000000000000000a91c07d", name: "small", root: "/work", model: "p/family/model", origin: { type: "child", site: { session_id: "01".repeat(16), message_id: 1, part_id: 0 } } }, activity: { state: { type: "idle" }, queued: 0 }, last_run: { type: "turn" } };
     \\client.sessionList = async (params) => { return { items: params.population.parent_id === "01".repeat(16) ? [child] : [], next_cursor: null, total: 1 }; };
-    \\client.sessionGet = async (id) => id === child.session.id ? child : { session: { id, title: "Main conversation", root: "/work", model: "parent/large", origin: { type: "root" } }, activity: { state: { type: "idle" }, queued: 0 } };
+    \\client.sessionGet = async (id) => id === child.session.id ? child : { session: { id, title: "Main conversation", root: "/work", model: "parent/large", reasoning: "high", origin: { type: "root" } }, activity: { state: { type: "idle" }, queued: 0 } };
     \\client.sessionSendInput = async (id, content, site) => { if (id !== child.session.id || site.message_id !== 2) throw new Error("instruction"); return content[0].text === "go" ? { type: "started", input_id: 3, run_id: 1 } : { type: "queued", reason: "session_busy", input_id: 2 }; };
     \\client.sessionCancelRun = async (id, clear, report) => { if (id !== child.session.id || !clear || report !== false) throw new Error("stop scope"); return { canceled_run: null, cleared_inputs: [2] }; };
 ;
@@ -103,12 +103,13 @@ test "agent tools list the catalog, inherit the parent model, and address a chil
     const spawn = try invokeAgent(host, "spawn_agent", "{\"message\":\"task\"}");
     defer std.testing.allocator.free(spawn.text);
     try std.testing.expect(!spawn.is_error);
-    try std.testing.expectEqualStrings("Queued small-0a91c07d. Its report arrives as a new message.", spawn.text);
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("created.child.name === 'small' && created.child.site.session_id === '01'.repeat(16) && created.child.site.message_id === 2 && created.child.site.part_id === 0 && created.model === 'p/family/model' && created.reasoning === undefined && created.max_rounds === 7 && Object.keys(created.child).length === 2 ? 1 : 0"));
+    try std.testing.expectEqualStrings("Queued small-0a91c07d. Its report arrives as a new message. Use stop with small-0a91c07d to end it.", spawn.text);
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("created.child.name === 'small' && created.child.site.session_id === '01'.repeat(16) && created.child.site.message_id === 2 && created.child.site.part_id === 0 && created.model === 'p/family/model' && created.reasoning === 'low' && created.max_rounds === 7 && Object.keys(created.child).length === 2 ? 1 : 0"));
     const inherited = try invokeAgent(host, "spawn_agent", "{\"message\":\"task\",\"agent\":\"review\"}");
     defer std.testing.allocator.free(inherited.text);
     try std.testing.expect(!inherited.is_error);
-    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("created.child.name === 'review' && created.model === 'parent/large' && stats.creates === 2 ? 1 : 0"));
+    // A row without a model runs the parent pair.
+    try std.testing.expectEqual(@as(i32, 1), try host.evalInt("created.child.name === 'review' && created.model === 'parent/large' && created.reasoning === 'high' && stats.creates === 2 ? 1 : 0"));
     const by_name = try invokeAgent(host, "send_agent_input", "{\"child\":\"small\",\"message\":\"more\"}");
     defer std.testing.allocator.free(by_name.text);
     try std.testing.expect(by_name.is_error);

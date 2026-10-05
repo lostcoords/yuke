@@ -11,8 +11,6 @@ pub const Reasoning = union(enum) {
     default,
     /// Take this level, or refuse when the model does not name it.
     explicit: []const u8,
-    /// Take this level when the model names it, else the level the model prefers.
-    inherit: []const u8,
 };
 
 /// The settings one session runs with. Both fields borrow the caller's arena.
@@ -37,7 +35,6 @@ pub fn validate(engine: *Engine, arena: std.mem.Allocator, model: []const u8, re
     const wanted: []const u8 = switch (reasoning) {
         .default => normal,
         .explicit => |level| level,
-        .inherit => |level| if (named(names, level)) level else normal,
     };
     if (wanted.len == 0) {
         // A model with an effort to prefer must run with one.

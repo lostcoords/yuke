@@ -1,15 +1,13 @@
 // Child sessions from a user catalog. Native stays policy-free; this plugin owns every rule.
-import { client, allChildren } from "yuke:internal/client";
-import { native } from "yuke:internal/native/engine";
+import { client } from "yuke:internal/client";
+import { children as childSessions } from "yuke:internal/children";
 import { currentSession, sessions } from "yuke:internal/session";
 import { errorText, tokenLabel } from "yuke:internal/format";
 import { childState, openAgents } from "yuke:internal/agents-ui";
 import { notify } from "yuke:internal/kernel";
-import { list as listJobs, stop as stopJob } from "yuke:internal/jobs";
-import { own } from "yuke:internal/stop";
 
 /** @import { Context } from "yuke:internal/ext" */
-/** @typedef {{ description?: string, model?: string, prompt?: string, tools?: string[] }} AgentRow */
+/** @typedef {{ description?: string, model?: string, reasoning?: string, prompt?: string, tools?: string[] }} AgentRow */
 /** @typedef {{ default?: string, catalog: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} AgentsOptions */
 /** @typedef {{ default: string, rows: Record<string, AgentRow>, maxConcurrent?: number, maxDepth?: number, maxRounds?: number }} Catalog */
 /** @import { ToolContext } from "./types/ext.js" */
@@ -41,12 +39,6 @@ function reportLabel(source) {
         + " · " + usage.rounds + (usage.rounds === 1 ? " round" : " rounds") + " · " + usage.tool_calls + (usage.tool_calls === 1 ? " tool" : " tools") + " · " + usage.tokens.input + "/" + usage.tokens.output + " tokens" + seconds;
 }
 
-/** The child ID the model reads: the catalog name and the last 8 hex digits of the session ID, which are random. */
-/** @param {string} name @param {string} sessionId @returns {string} */
-function childId(name, sessionId) {
-    return name + "-" + sessionId.slice(-8);
-}
-
 /** A settled spawn row names the child ID, or this returns null. The spawn text starts with `Started <id>` or `Queued <id>`. */
 /** @param {ToolPart} part @returns {string | null} */
 function spawnedId(part) {
@@ -75,8 +67,10 @@ function validate(raw) {
     for (const [key, row] of Object.entries(given)) {
         if (!KEY.test(key) || key === "root") throw invalid("bad key " + JSON.stringify(key));
         if (!row || typeof row !== "object" || Array.isArray(row)) throw invalid("row " + key + " must be an object");
-        for (const field of Object.keys(row)) if (!["description", "model", "prompt", "tools"].includes(field)) throw invalid("row " + key + " has an unknown field " + field);
-        for (const field of /** @type {const} */ (["description", "model", "prompt"])) if (row[field] !== undefined && (typeof row[field] !== "string" || !row[field].trim())) throw invalid("row " + key + " needs a nonempty string " + field);
+        for (const field of Object.keys(row)) if (!["description", "model", "reasoning", "prompt", "tools"].includes(field)) throw invalid("row " + key + " has an unknown field " + field);
+        for (const field of /** @type {const} */ (["description", "model", "reasoning", "prompt"])) if (row[field] !== undefined && (typeof row[field] !== "string" || !row[field].trim())) throw invalid("row " + key + " needs a nonempty string " + field);
+        // A row without a model runs the parent pair, so a level alone would name a level of another model.
+        if (row.reasoning !== undefined && row.model === undefined) throw invalid("row " + key + " needs a model for its reasoning");
         const tools = row.tools;
         if (tools !== undefined && (!Array.isArray(tools) || !tools.length || new Set(tools).size !== tools.length || tools.some((t) => !BUILTIN_TOOLS.includes(t)))) throw invalid("row " + key + " tools must be a nonempty unique subset of " + BUILTIN_TOOLS.join(", "));
         rows[key] = tools ? { ...row, tools: [...tools] } : { ...row };
@@ -117,26 +111,12 @@ function required(args, key) {
 function site(context) {
     return { session_id: context.sessionId, message_id: context.messageId, part_id: context.partId };
 }
-/** Find a child of `parentId` by its child ID, or answer null. A known session is checked first. */
-/** @param {string} parentId @param {string} target @param {string | undefined} known @returns {Promise<Wire.SessionListItem | null>} */
-async function findChild(parentId, target, known) {
-    if (known) {
-        const child = await client.sessionGet(known);
-        if (child.session.origin.type === "child" && child.session.origin.site.session_id === parentId) return child;
-    }
-    return (await allChildren(parentId)).find((item) => childId(item.session.name ?? "", item.session.id) === target) ?? null;
-}
-
-/** The child IDs of `parentId`. @param {string} parentId @returns {Promise<string[]>} */
-async function childIds(parentId) {
-    return (await allChildren(parentId)).map((item) => childId(item.session.name ?? "", item.session.id));
-}
-
 /**
  * Build the `agents` plugin. It gives the model the tools spawn_agent and send_agent_input, which start and steer child sessions. The built-in stop tool ends a child.
  * It throws a TypeError for invalid options.
  * @param {AgentsOptions} options - `catalog` maps each child label (a-z first, then a-z, 0-9, _ or -, up to 64 characters, not "root") to a row.
- * A row has `description` for the model, `model` (the parent model without it), `prompt` after the child policy, and `tools`, a subset of read, write, edit, exec, and skill.
+ * A row has `description` for the model, `model`, `reasoning`, `prompt` after the child policy, and `tools`, a subset of read, write, edit, exec, and skill.
+ * A row without `model` runs the parent model and level. A row without `reasoning` runs the default level of its model.
  * `default` names the row for a call without `agent`; with one row, that row is the default.
  * `maxConcurrent` and `maxDepth` replace the engine limits, and `maxRounds` caps the rounds of each child. Each is a positive 32-bit integer.
  */
@@ -147,11 +127,8 @@ export function agents(options) {
         name: "agents",
         /** @param {Context} ctx */
         apply(ctx) {
-            // The engine limits are process state, so a dispose puts the previous pair back; an absent option keeps the engine value.
-            ctx.effect(() => {
-                const previous = native.setAgentLimits(catalog.maxConcurrent, catalog.maxDepth);
-                return () => { native.setAgentLimits(previous[0], previous[1]); };
-            });
+            // The catalog holds `maxConcurrent` and `maxDepth`. An absent option keeps the engine value.
+            ctx.effect(() => childSessions.limits(catalog));
 
             // Once per run: no agent tool at the depth limit, and a child sees only its row tools.
             ctx.hook("tools.select", (selection) => {
@@ -173,7 +150,7 @@ export function agents(options) {
 
             // The model reads a child ID. A spawn records its session. A spawn row of a resumed transcript looks the ID up.
             /** @type {Map<string, string>} */
-            const childSessions = new Map();
+            const sessionOf = new Map();
             ctx.tools.define({
                 name: "spawn_agent", description: spawnDescription(catalog),
                 parameters: {
@@ -189,17 +166,19 @@ export function agents(options) {
                     const row = catalog.rows[key];
                     if (!row) throw new Error("Unknown agent: " + key);
                     const parent = await client.sessionGet(parentSite.session_id);
+                    // Without a row model, the child runs the parent pair, which the engine validated for the parent.
+                    const settings = row.model === undefined ? { model: parent.session.model, reasoning: parent.session.reasoning } : { model: row.model, ...(row.reasoning === undefined ? {} : { reasoning: row.reasoning }) };
                     const result = await client.sessionCreate({
                         workspace_path: parent.session.root,
-                        model: row.model ?? parent.session.model,
+                        ...settings,
                         ...(catalog.maxRounds === undefined ? {} : { max_rounds: catalog.maxRounds }),
                         initial_input: { type: "content", content: client.textContent(required(args, "message")) },
                         child: { name: key, site: parentSite },
                     });
                     if (!result.input) throw new Error("The child session has no initial run.");
-                    const id = childId(key, result.session.id);
-                    childSessions.set(id, result.session.id);
-                    return (result.input.type === "queued" ? "Queued " : "Started ") + id + ". Its report arrives as a new message.";
+                    const id = childSessions.id(key, result.session.id);
+                    sessionOf.set(id, result.session.id);
+                    return (result.input.type === "queued" ? "Queued " : "Started ") + id + ". Its report arrives as a new message. Use stop with " + id + " to end it.";
                 },
             });
             ctx.tools.define({
@@ -209,32 +188,15 @@ export function agents(options) {
                     const args = argsOf(raw, ["child", "message"]);
                     const parentSite = site(context);
                     const target = required(args, "child");
-                    const child = await findChild(parentSite.session_id, target, childSessions.get(target));
+                    const child = await childSessions.find(parentSite.session_id, target);
                     if (!child) {
-                        const ids = await childIds(parentSite.session_id);
+                        const ids = (await childSessions.list(parentSite.session_id)).map((item) => childSessions.id(item.session.name ?? "", item.session.id));
                         throw new Error("The child " + target + " does not exist. " + (ids.length === 0 ? "No child exists." : "The children are: " + ids.join(", ") + "."));
                     }
                     const result = await client.sessionSendInput(child.session.id, client.textContent(required(args, "message")), parentSite);
-                    const id = required(args, "child");
-                    return result.type === "queued" ? "Queued for " + id + " after its current run." : "Sent to " + id + ".";
+                    return result.type === "queued" ? "Queued for " + target + " after its current run." : "Sent to " + target + ".";
                 },
             });
-            // The built-in stop tool ends a child through this owner of the catalog names.
-            ctx.effect(() => own({
-                owns: (id) => { const name = /^([a-z][a-z0-9_-]*)-[0-9a-f]{8}$/.exec(id)?.[1]; return name !== undefined && name in catalog.rows; },
-                stop: async (id, context) => {
-                    const child = await findChild(context.sessionId, id, childSessions.get(id));
-                    if (!child) return null;
-                    // The stop answers the parent itself, so the engine sends the parent no report.
-                    const result = await client.sessionCancelRun(child.session.id, true, false);
-                    // A job end would start a new child run, so the stop also ends the jobs of the child.
-                    for (const job of listJobs()) if (job.session_id === child.session.id && job.state === "running") await stopJob(job.id);
-                    const dropped = result.cleared_inputs.length;
-                    return "[" + id + " " + (result.canceled_run == null ? "was not running" : "stopped") + "." + (dropped === 0 ? "" : " Dropped " + dropped + " queued input" + (dropped === 1 ? "" : "s") + ".") + "]";
-                },
-                ids: (context) => childIds(context.sessionId),
-            }));
-
             // The spawn row reads its child from this cache. A first sight starts one read, and the read rebuilds the row.
             /** @type {Map<string, ChildEntry>} */
             const children = new Map();
@@ -266,7 +228,7 @@ export function agents(options) {
             function liveSuffix(part) {
                 const short = spawnedId(part);
                 if (!short) return "";
-                const id = childSessions.get(short);
+                const id = sessionOf.get(short);
                 if (!id) {
                     lookUp(short);
                     return "";
@@ -289,9 +251,9 @@ export function agents(options) {
                     const parent = session.sessionId;
                     if (!parent || asked.has(parent)) continue;
                     asked.add(parent);
-                    allChildren(parent).then((items) => {
-                        for (const item of items) childSessions.set(childId(item.session.name ?? "", item.session.id), item.session.id);
-                        const id = childSessions.get(short);
+                    childSessions.list(parent).then((items) => {
+                        for (const item of items) sessionOf.set(childSessions.id(item.session.name ?? "", item.session.id), item.session.id);
+                        const id = sessionOf.get(short);
                         if (!id || children.has(id)) return;
                         children.set(id, { view: null, reading: false, again: false });
                         read(id);
@@ -304,7 +266,7 @@ export function agents(options) {
                 if (ev.kind === "gone") { children.delete(ev.session); rebuild(entry); return; }
                 if (ev.facts.some((fact) => fact === "session.activity_changed" || fact === "run.done" || fact === "session.summary_changed")) read(ev.session);
             });
-            ctx.effect(() => () => { children.clear(); childSessions.clear(); asked.clear(); });
+            ctx.effect(() => () => { children.clear(); sessionOf.clear(); asked.clear(); });
 
             // The header words name agent calls in any transcript look, so they live as long as the chat service does.
             ctx.inject(["chat"], (ctx) => {

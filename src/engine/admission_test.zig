@@ -40,7 +40,7 @@ const Fixture = struct {
         try self.resources.env.put("XDG_CONFIG_HOME", path[0..try self.tmp.dir.realPath(testing.io, &path)]);
         try self.resources.env.put("YUKE_APPNAME", "agents-test");
         var local = try provider.config.loadBytes(testing.allocator,
-            \\{"providers":[{"id":"test","base_url":"http://localhost:1/v1","endpoints":[{"protocol":"openai_chat"}],"models":[{"id":"model","upstream_id":"model","flags":{"supports_tools":true}}]}]}
+            \\{"providers":[{"id":"test","base_url":"http://localhost:1/v1","endpoints":[{"protocol":"openai_chat"}],"models":[{"id":"model","upstream_id":"model","flags":{"supports_tools":true}},{"id":"levels","upstream_id":"levels","reasoning_levels":["low","medium","high"],"flags":{"supports_tools":true}}]}]}
         );
         _ = self.resources.providers.installLocal(&local) catch |err| {
             local.deinit();
@@ -474,7 +474,7 @@ test "a quiet stop of an active child sends the parent no report" {
     try testing.expectEqual(@as(usize, 0), (try database.input.list(&f.db, a, f.parent.raw)).len);
 }
 
-test "native child admission derives the level and preserves parent instruction sources" {
+test "native child admission takes the named level and preserves parent instruction sources" {
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
@@ -484,10 +484,23 @@ test "native child admission derives the level and preserves parent instruction 
     params.model = null;
     try testing.expectError(error.NoModel, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
     params = f.params("guarded");
-    params.reasoning = "high";
-    try testing.expectError(error.ChildReasoningDerived, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
+    params.model = "test/levels";
+    params.reasoning = "max";
+    try testing.expectError(error.ReasoningUnsupported, commands.sessionCreateForRpc(&f.engine, a, params, &gate, null));
     try testing.expectEqual(@as(u64, 1), (try commands.sessionList(&f.engine, a, .{ .population = .{ .all = .{} } })).total);
+    // The parent runs with no level, so the child level comes from the request alone.
+    params.reasoning = "high";
+    var named_gate: ?runs.Launch = null;
+    const named = try commands.sessionCreateForRpc(&f.engine, a, params, &named_gate, null);
+    try testing.expectEqualStrings("high", named.session.reasoning);
+    try testing.expectEqualStrings("high", named_gate.?.slot.config.reasoning);
+    // Without a level, the child takes the model default, not the parent level.
+    _ = try commands.sessionPatch(&f.engine, a, .{ .session_id = f.parent, .patch = .{ .model = "test/levels", .reasoning = "high" } });
     params.reasoning = null;
+    var default_gate: ?runs.Launch = null;
+    const by_default = try commands.sessionCreateForRpc(&f.engine, a, params, &default_gate, null);
+    try testing.expectEqualStrings("medium", by_default.session.reasoning);
+    params = f.params("guarded");
     params.system_prompt = "custom child prompt";
     const child = try commands.sessionCreateForRpc(&f.engine, a, params, &gate, null);
     try testing.expectEqualStrings("test/model", child.session.model);

@@ -635,6 +635,7 @@ export interface CreateSession {
   /** The workspace root. The caller names it; the engine holds no default directory. */
   readonly workspace_path: string;
   readonly model?: string;
+  /** The reasoning level the model must name. Without it, a root or a child takes the model default. */
   readonly reasoning?: string;
   /** Replace the base prompt; child policy remains separate. Resolve placeholders at creation. */
   readonly system_prompt?: string;

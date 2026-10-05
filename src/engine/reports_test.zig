@@ -145,12 +145,12 @@ test "a full user queue cannot block a terminal report or clear protected input"
     try testing.expectEqual(input_id, queue[0].input.input_id);
 }
 
-test "report credits bound accepted work and preserve capacity after a lower limit" {
+test "report credits bound accepted work whatever the concurrency limit" {
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
     const a = f.arena.allocator();
-    for (0..136) |_| _ = try f.terminal(try f.start(), &.{}, success);
+    for (0..proto.meta.limits.max_child_report_credits) |_| _ = try f.terminal(try f.start(), &.{}, success);
     try testing.expectError(error.ReportCapacityFull, reports.reserve(&f.engine, a, root));
     var launch: ?run.Launch = null;
     const before = (try database.event.highWater(&f.db, a, child.raw)).?.input_id_high;

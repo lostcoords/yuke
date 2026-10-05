@@ -16,12 +16,11 @@ pub const Terminal = struct {
     notice: ?proto.message.MessageCommittedData = null,
 };
 
-/// Lower limits preserve old reservations and refuse new work until space returns.
+/// A tree holds at most a fixed number of report credits, whatever the concurrency limit.
 pub fn reserve(engine: *Engine, arena: std.mem.Allocator, root: proto.ids.SessionId) !void {
     const row = try engine.deps.db.queries.child_report_credits.one(arena, .{ .parent_id = root.raw });
-    const limit = proto.meta.limits.max_queued_inputs + @as(u64, engine.max_concurrent_children);
     std.debug.assert(row.value.used >= 0);
-    if (row.value.used >= limit) return error.ReportCapacityFull;
+    if (row.value.used >= proto.meta.limits.max_child_report_credits) return error.ReportCapacityFull;
 }
 
 /// Append the terminal record. A child turn also reports to its parent when `report` holds.

@@ -21,6 +21,7 @@ pub const CreateSession = struct {
     /// The workspace root. The caller names it; the engine holds no default directory.
     workspace_path: []const u8,
     model: ?[]const u8 = null,
+    /// The reasoning level the model must name. Without it, a root or a child takes the model default.
     reasoning: ?[]const u8 = null,
     /// Replace the base prompt; child policy remains separate. Resolve placeholders at creation.
     system_prompt: ?[]const u8 = null,

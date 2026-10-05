@@ -88,6 +88,7 @@ export import exec = $native_exec.exec;
 export import spawn = $spawn.spawn;
 export import lines = $spawn.lines;
 export import jobs = $jobs.jobs;
+export import children = $children.children;
 export import diff = $native_diff.diff;
 export import client = $client.client;
 export type Context = $ext.Context;
@@ -96,6 +97,7 @@ export interface Capabilities extends $types_ext.CapabilitiesBase {}
 export type ToolContext = $types_ext.ToolContext;
 export type ToolDefinition = $types_ext.ToolDefinition;
 export type ToolExecute = $types_ext.ToolExecute;
+export type AgentLimits = $types_ext.AgentLimits;
 export type Plugin = $types_ext.Plugin;
 export type PluginHandle = $types_ext.PluginHandle;
 export type CancellationSignal = $native_cancellation.CancellationSignal;
@@ -118,6 +120,7 @@ import Context = $ext.Context;
 export type AgentRow = {
     description?: string;
     model?: string;
+    reasoning?: string;
     prompt?: string;
     tools?: string[];
 };
@@ -132,7 +135,8 @@ export type AgentsOptions = {
  * Build the `agents` plugin. It gives the model the tools spawn_agent and send_agent_input, which start and steer child sessions. The built-in stop tool ends a child.
  * It throws a TypeError for invalid options.
  * @param options - `catalog` maps each child label (a-z first, then a-z, 0-9, _ or -, up to 64 characters, not "root") to a row.
- * A row has `description` for the model, `model` (the parent model without it), `prompt` after the child policy, and `tools`, a subset of read, write, edit, exec, and skill.
+ * A row has `description` for the model, `model`, `reasoning`, `prompt` after the child policy, and `tools`, a subset of read, write, edit, exec, and skill.
+ * A row without `model` runs the parent model and level. A row without `reasoning` runs the default level of its model.
  * `default` names the row for a call without `agent`; with one row, that row is the default.
  * `maxConcurrent` and `maxDepth` replace the engine limits, and `maxRounds` caps the rounds of each child. Each is a positive 32-bit integer.
  */
@@ -312,6 +316,42 @@ export class ChatSurface {
 }
 }
 
+declare namespace $children {
+import allChildren = $client.allChildren;
+import AgentLimits = $types_ext.AgentLimits;
+/**
+ * The child ID that the model reads. It is the child name and the last 8 hex digits of the session ID. The engine report header uses the same ID.
+ */
+function id(name: string, sessionId: string): string;
+/**
+ * The direct child of `parentId` that the child ID `childId` names, or null when no direct child has that ID.
+ */
+function find(parentId: string, childId: string): Promise<Wire.SessionListItem | null>;
+/**
+ * Stop a child for its parent: cancel its run, drop its queued input, and end its running jobs. The caller returns the result, so the parent gets no report.
+ * A job end would start a new run, so the stop also ends the jobs. The transcript and completed side effects remain.
+ */
+function stop(sessionId: string): Promise<Wire.SessionCancelRunResult>;
+/**
+ * Set the child limits of the engine, and answer the function that puts the previous pair back. Call it in `ctx.effect`, so an unload of the plugin restores the limits.
+ * It throws a TypeError for a value that is not an integer from 1 to 4294967295.
+ */
+function limits(next: AgentLimits): () => void;
+/** The child sessions of a parent. A child is a session that `client.sessionCreate` makes with `child`. */
+export const children: {
+    /** List every direct child of a parent. It throws when the list exceeds 32 pages of 100 or a page cursor does not advance. */
+    list: typeof allChildren;
+    /** Make the child ID that the model reads. */
+    id: typeof id;
+    /** Find the direct child that a child ID names. The answer is null for an unknown ID or a child of another parent. */
+    find: typeof find;
+    /** Stop a child. The parent gets no report. */
+    stop: typeof stop;
+    /** Set the engine child limits. Call it in `ctx.effect`. */
+    limits: typeof limits;
+};
+}
+
 declare namespace $client {
 import MessagePart = $native_engine.MessagePart;
 import PartRead = $native_engine.PartRead;
@@ -325,6 +365,7 @@ function request<M extends keyof Wire.Methods>(method: M, ...args: Wire.Methods[
  * List one page of sessions. The default population is the top-level sessions.
  */
 function sessionList(params?: Wire.SessionListParams): Promise<Wire.SessionListResult>;
+export function allChildren(parentId: string): Promise<Wire.SessionListItem[]>;
 /**
  * The transcript outline (message ids, roles, and the draft), or null when the session is not open.
  */
@@ -3100,6 +3141,14 @@ export interface ToolDefinition {
   defer?: boolean;
 }
 
+/** The child limits for `children.limits`. An absent field keeps the current value. Each value is an integer from 1 to 4294967295. */
+export interface AgentLimits {
+  /** The active descendant runs of one root. Extra runs wait in the durable queue. The engine default is no limit. */
+  maxConcurrent?: number;
+  /** The deepest child level. The root is depth zero. The engine default is 1. */
+  maxDepth?: number;
+}
+
 /** The value `inject` gives each capability name. A plugin declares its own through `declare module "yuke"`; an undeclared name is `unknown`. */
 /** The `chat` capability. The shell asks it for each new pane, and plugins render the transcript through it. */
 export interface ChatService {
@@ -4565,6 +4614,7 @@ export interface CreateSession {
   /** The workspace root. The caller names it; the engine holds no default directory. */
   readonly workspace_path: string;
   readonly model?: string;
+  /** The reasoning level the model must name. Without it, a root or a child takes the model default. */
   readonly reasoning?: string;
   /** Replace the base prompt; child policy remains separate. Resolve placeholders at creation. */
   readonly system_prompt?: string;

@@ -627,7 +627,7 @@ test "a blocked input answers its code and reaches no store" {
     try std.testing.expectEqual(@as(i32, 1), try host.evalInt("globalThis.empty"));
 }
 
-test "the agents plugin sets the native limits from its options and a dispose restores them" {
+test "the agents plugin sets the engine limits from its options and a dispose restores the unlimited default" {
     var f: Fixture = undefined;
     try f.init(
         \\import { plugins } from "yuke";
@@ -638,21 +638,8 @@ test "the agents plugin sets the native limits from its options and a dispose re
     try std.testing.expectEqual(@as(u32, 2), f.app.engine.max_concurrent_children);
     try std.testing.expectEqual(@as(u32, 3), f.app.engine.max_agent_depth);
     try f.extensions.host.evalModule("import { plugins } from \"yuke\"; plugins.dispose(\"agents\");", "dispose.js");
-    try std.testing.expectEqual(@as(u32, 8), f.app.engine.max_concurrent_children);
+    try std.testing.expectEqual(@as(u32, std.math.maxInt(u32)), f.app.engine.max_concurrent_children);
     try std.testing.expectEqual(@as(u32, 1), f.app.engine.max_agent_depth);
-}
-
-test "the largest agent limit survives the answer a dispose reads" {
-    var f: Fixture = undefined;
-    try f.init(
-        \\import { plugins } from "yuke";
-        \\import { agents } from "yuke:plugins";
-        \\plugins.use(agents({ catalog: { only: {} }, maxConcurrent: 0xffffffff }));
-    , kernel_boot);
-    defer f.deinit();
-    try std.testing.expectEqual(@as(u32, 0xffffffff), f.app.engine.max_concurrent_children);
-    try f.extensions.host.evalModule("import { plugins } from \"yuke\"; plugins.dispose(\"agents\");", "dispose.js");
-    try std.testing.expectEqual(@as(u32, 8), f.app.engine.max_concurrent_children);
 }
 
 test "an agents catalog with no limit option keeps the engine limits" {

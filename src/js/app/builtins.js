@@ -3,10 +3,10 @@
 import { fs } from "yuke:internal/native/fs";
 import { exec as runCommand } from "yuke:internal/native/exec";
 import { start as startJob, stop as stopJob, wait as waitJob, list as listJobs, get as getJob, name as jobName, endLabel, shortCommand } from "yuke:internal/jobs";
-import { own, stop } from "yuke:internal/stop";
 import { diff } from "yuke:internal/native/diff";
 import { hasTool } from "yuke:internal/native/tools";
 import { client } from "yuke:internal/client";
+import { children as childSessions } from "yuke:internal/children";
 import { byteLabel } from "yuke:internal/format";
 import { utf8Length } from "yuke:internal/interaction";
 
@@ -172,18 +172,26 @@ async function startBackground(command, context) {
   return `[${name} started: ${shortCommand(command)}. Log: ${job.log}. Its end arrives as a message, so never sleep or poll. Use stop with ${name} to end it.]`;
 }
 
-/** The stop owner of `job-` ids. A job of another session reads as absent. @type {import("./stop.js").StopOwner} */
-const jobOwner = {
-  owns: (id) => /^job-[0-9a-z]{4}$/.test(id),
-  stop: async (id, context) => {
-    const found = getJob(parseInt(id.slice(4), 36));
-    if (!found || found.session_id !== context.sessionId) return null;
+/** Stop a job or a direct child of the caller, and answer the end text. A job or child of another session reads as absent, and an unknown id throws an error that lists the live ids. @param {string} id @param {ToolContext} context @returns {Promise<string>} */
+async function stop(id, context) {
+  // A partial number parses too, so only the exact name names the job.
+  const found = getJob(parseInt(id.slice(4), 36));
+  if (found && found.session_id === context.sessionId && jobName(found) === id) {
     if (found.state === "running") await stopJob(found.id);
     const job = /** @type {Job} */ (await waitJob(found.id));
     return `[${id} ${endLabel(job)}.] Log: ${job.log}`;
-  },
-  ids: async (context) => sessionJobs(context.sessionId).filter(j => j.state === "running").map(jobName),
-};
+  }
+  const children = await childSessions.list(context.sessionId);
+  const childIds = children.map((item) => childSessions.id(item.session.name ?? "", item.session.id));
+  const child = children[childIds.indexOf(id)];
+  if (child) {
+    const result = await childSessions.stop(child.session.id);
+    const dropped = result.cleared_inputs.length;
+    return "[" + id + " " + (result.canceled_run == null ? "was not running" : "stopped") + "." + (dropped === 0 ? "" : " Dropped " + dropped + " queued input" + (dropped === 1 ? "" : "s") + ".") + "]";
+  }
+  const ids = [...sessionJobs(context.sessionId).filter((job) => job.state === "running").map(jobName), ...childIds];
+  throw new Error("The id " + id + " does not exist. " + (ids.length === 0 ? "Nothing runs." : "The ids are: " + ids.join(", ") + "."));
+}
 
 /** @param {ToolArgs} args @param {ToolSignal} signal @param {ToolContext} context @returns {Promise<string>} */
 async function exec(args, signal, context) {
@@ -251,12 +259,11 @@ export const builtins = {
       }, required: ["command"], additionalProperties: false }, execute: exec,
     });
     builtin(ctx, "stop", {
-      description: "Stop a background job or a child agent by its id, such as job-k3x9 or explore-a91c07d2. The result is the end of the work. No end message follows.",
+      description: "Stop background work by the id that its start result names. The result is the end of the work. No end message follows.",
       parameters: { type: "object", properties: {
         id: { type: "string" },
       }, required: ["id"], additionalProperties: false }, execute: (args, _signal, context) => stop(stringArg(args, "id"), context),
     });
-    ctx.effect(() => own(jobOwner));
     builtin(ctx, "skill", {
       description: "Load one listed skill by name. Skip if its instructions are already in the transcript.",
       parameters: { type: "object", properties: {

@@ -4,6 +4,7 @@
     "default_page_size": 50,
     "default_session_list_page_size": 25,
     "max_blob_bytes": 7340032,
+    "max_child_report_credits": 136,
     "max_input_images": 8,
     "max_message_string_bytes": 1048576,
     "max_page_size": 500,
@@ -2234,6 +2235,7 @@
         },
         {
           "name": "reasoning",
+          "doc": "The reasoning level the model must name. Without it, a root or a child takes the model default.",
           "type": "string",
           "presence": "optional"
         },

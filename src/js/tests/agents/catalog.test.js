@@ -4,7 +4,7 @@ const bad = [
   [{ catalog: {} }, "at least one agent"], [{ catalog: { Root: {} } }, "bad key"], [{ catalog: { root: {} } }, "bad key"], [{ catalog: { "a b": {} } }, "bad key"],
   [{ catalog: { a: {}, b: {} } }, "default must name"], [{ catalog: { a: {} }, default: "b" }, "default must name"], [{ catalog: { a: {} }, default: "toString" }, "default must name"],
   [{ catalog: { a: { tools: [] } } }, "tools must be"], [{ catalog: { a: { tools: ["bash"] } } }, "tools must be"], [{ catalog: { a: { tools: ["read", "read"] } } }, "tools must be"],
-  [{ catalog: { a: { model: "" } } }, "nonempty string model"], [{ catalog: { a: { prompt: 3 } } }, "nonempty string prompt"], [{ catalog: { a: { extra: 1 } } }, "unknown field extra"], [{ catalog: { a: null } }, "must be an object"],
+  [{ catalog: { a: { model: "" } } }, "nonempty string model"], [{ catalog: { a: { reasoning: "high" } } }, "needs a model for its reasoning"], [{ catalog: { a: { prompt: 3 } } }, "nonempty string prompt"], [{ catalog: { a: { extra: 1 } } }, "unknown field extra"], [{ catalog: { a: null } }, "must be an object"],
   [{ catalog: { a: {} }, maxConcurrent: 0 }, "maxConcurrent must be"], [{ catalog: { a: {} }, maxRounds: 0 }, "maxRounds must be"], [{ catalog: { a: {} }, maxDepth: 1.5 }, "maxDepth must be"], [{ catalog: { a: {} }, nope: 1 }, "unknown option nope"],
 ];
 const failures = [];

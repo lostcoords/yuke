@@ -79,7 +79,8 @@ plugins.use(agents({
   catalog: {
     research: {
       description: "Inspect the requested area and report evidence.",
-      model: "provider/model", // Replace this selector, or omit it to inherit the parent model.
+      model: "provider/model", // Replace this selector, or omit it to use the parent model and level.
+      reasoning: "low", // Omit it for the model default. It needs a model.
       prompt: "Do not edit files.",
       tools: ["read", "exec", "skill"],
     },
@@ -100,7 +101,8 @@ Each catalog key names a child kind. It matches `^[a-z][a-z0-9_-]{0,63}$`; `root
 | Row field | Meaning |
 |---|---|
 | `description` | Tells the parent model when to choose this kind. |
-| `model` | Selects the child model. Without it, the child uses the parent model. |
+| `model` | Selects the child model. Without it, the child uses the parent model and the parent reasoning level. |
+| `reasoning` | Selects the child reasoning level. It needs `model`. Without it, the child uses the default level of `model`. |
 | `prompt` | Appends instructions after the fixed child policy. |
 | `tools` | Restricts the child to a nonempty unique subset of `read`, `write`, `edit`, `exec`, and `skill`. |
 
@@ -109,7 +111,7 @@ A restricted `tools` row also removes the spawn tools from that child. Omit `too
 | Limit | Behavior |
 |---|---|
 | `maxDepth` | Defaults to `1`. The root is depth zero. At the limit, spawn tools are absent. |
-| `maxConcurrent` | Defaults to `8`. It counts active descendants across the tree, not the root. Extra runs wait in the durable queue. |
+| `maxConcurrent` | Without it, the engine sets no limit. It counts active descendants across the tree, not the root. Extra runs wait in the durable queue. |
 | `maxRounds` | Caps each child run. Without it, the plugin sets no child round cap. A capped run reports partial output. |
 
 All three values are positive 32-bit integers.
@@ -121,7 +123,7 @@ All three values are positive 32-bit integers.
 | `spawn_agent` | `{ message, agent? }` | Starts or queues a new child and returns one line with its child ID. It does not wait for completion. |
 | `send_agent_input` | `{ child, message }` | Sends a follow-up to the child. The child keeps its transcript. |
 
-The built-in `stop` tool ends a child: `stop { id: "explore-a91c07d2" }`. It stops the current run and drops the queued input. It also stops the background jobs of the child. It returns one line, such as `[explore-a91c07d2 stopped. Dropped 1 queued input.]`. No report follows. The transcript stays, and completed side effects remain.
+The `spawn_agent` result names the child ID. The built-in `stop` tool ends a direct child of the caller: `stop { id: "explore-a91c07d2" }`. It stops the current run and drops the queued input. It also stops the background jobs of the child. It returns one line, such as `[explore-a91c07d2 stopped. Dropped 1 queued input.]`. No report follows. The transcript stays, and completed side effects remain.
 
 `message` must be nonempty. `agent` must name a catalog row. `child` is a child ID such as `explore-a91c07d2`: the catalog name and the last 8 hex digits of the child session ID. It must name a direct child of the calling parent. An error for an unknown child ID lists the child IDs.
 
@@ -130,6 +132,19 @@ A child uses the parent workspace in a separate session and transcript. When a r
 `/agents` shows the root and all descendants of the current session. It can switch to a child or stop its work. Disposing the plugin removes its tools and restores the previous depth and concurrency limits. Existing sessions and durable queued records remain.
 
 See [`examples/agents.js`](examples/agents.js) and search `AgentRow` and `AgentsOptions` for exact types.
+
+### A custom delegation plugin
+
+A profile plugin can replace `agents` with its own tools. Do not run both in one profile.
+
+- Create a child with `client.sessionCreate`. Set `workspace_path` to `toolCtx.workspaceRoot`, and set `initial_input`. Set `child` to `{ name, site: { session_id: toolCtx.sessionId, message_id: toolCtx.messageId, part_id: toolCtx.partId } }`.
+- `model` is required. `reasoning` is the level the model must name. Without it, the child uses the model default. The engine does not use the parent level.
+- `children.id(name, sessionId)` gives the child ID. The engine report header and the built-in `stop` tool use the same ID. Import `children` from `"yuke"`.
+- `children.find(parentId, id)` gives the direct child that the ID names, or null. `children.list(parentId)` gives every direct child.
+- `children.stop(sessionId)` stops a child like the built-in `stop` tool. The parent gets no report.
+- `ctx.effect(() => children.limits({ maxConcurrent, maxDepth }))` sets the engine limits until the plugin unloads. An absent field keeps the current value. The engine default depth is `1`, and the engine sets no concurrency limit.
+- A child at the depth limit cannot create a child. Remove your spawn tools there with a `tools.select` hook: compare `context.depth` with `context.max_agent_depth`.
+- Add the child policy with a `prompt.build` hook. `context.parent_id` is set in a child, and `context.agent_name` is the child name. The engine sends the last text of a child run to the parent as its report.
 
 ## MCP servers
 

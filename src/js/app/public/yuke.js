@@ -9,6 +9,7 @@ export { net } from "yuke:internal/net";
 export { exec } from "yuke:internal/native/exec";
 export { spawn, lines } from "yuke:internal/spawn";
 export { jobs } from "yuke:internal/jobs";
+export { children } from "yuke:internal/children";
 export { diff } from "yuke:internal/native/diff";
 export { client } from "yuke:internal/client";
 
@@ -18,6 +19,7 @@ export { client } from "yuke:internal/client";
 /** @typedef {import("../types/ext.js").ToolContext} ToolContext */
 /** @typedef {import("../types/ext.js").ToolDefinition} ToolDefinition */
 /** @typedef {import("../types/ext.js").ToolExecute} ToolExecute */
+/** @typedef {import("../types/ext.js").AgentLimits} AgentLimits */
 /** @typedef {import("../types/ext.js").Plugin} Plugin */
 /** @typedef {import("../types/ext.js").PluginHandle} PluginHandle */
 /** @typedef {import("yuke:internal/native/cancellation").CancellationSignal} CancellationSignal */
