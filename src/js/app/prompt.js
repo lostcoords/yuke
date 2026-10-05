@@ -75,7 +75,7 @@ const COMPACTION_MERGE = SUMMARIZER + [
   "",
 ].join("\n") + SUMMARY_FORMAT;
 const INSTRUCTIONS_LEAD = "Project instructions follow. Explicit user instructions take precedence. Workspace instructions override global instructions where they conflict.";
-const SKILLS_LEAD = "Skills are specialized instructions for specific tasks. When a task matches a skill description, read its SKILL.md at the listed location with the read tool before you start. Skip a skill whose body is already in the transcript. A relative path in a skill starts at the directory of its SKILL.md. Give each tool call an absolute path.";
+const SKILLS_LEAD = "Skills are specialized instructions for specific tasks. When a task matches a skill description, read its SKILL.md with the read tool. A relative path in a skill starts at the directory of its SKILL.md, so give each tool call the absolute path.";
 
 // A value inside a delimited block must never close the block, so the delimiters and line breaks are escaped.
 /** @param {string} text @returns {string} */
