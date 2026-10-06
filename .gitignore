@@ -1,0 +1,12 @@
+# Build output can exist in the workspace or in a crate.
+**/target/
+
+# rustfmt can create backup files.
+**/*.rs.bk
+
+# Profiling runs create local data.
+*.profraw
+*.profdata
+
+# macOS creates local directory metadata.
+.DS_Store
