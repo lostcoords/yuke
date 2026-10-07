@@ -1,0 +1,11 @@
+//! Behavior tests of the engine. One binary links once, so the suite stays fast.
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a test fails by panicking"
+)]
+
+mod conversation;
+mod drive;
+mod support;
