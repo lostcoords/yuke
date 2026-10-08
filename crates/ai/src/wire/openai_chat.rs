@@ -174,7 +174,7 @@ pub(crate) fn write_group(
             let results = &blocks[start..g.results_end];
             for result in results {
                 if let Block::ToolResult(result) = result {
-                    write_tool_result(&mut elements.next(), result)?;
+                    write_tool_result(&mut elements.next(), result);
                 }
             }
             if g.images {
@@ -353,17 +353,13 @@ fn write_attachment_label(jw: &mut JsonWriter<'_>, call_id: &str) {
     jw.end_object();
 }
 
-fn write_tool_result(jw: &mut JsonWriter<'_>, result: &ToolResult) -> Result<(), EncodeError> {
-    if !result.loaded.is_empty() {
-        return Err(EncodeError::Unsupported);
-    }
+fn write_tool_result(jw: &mut JsonWriter<'_>, result: &ToolResult) {
     jw.begin_object();
     jw.field_str("role", "tool");
     jw.field_str("tool_call_id", &result.call_id);
     jw.key("content");
     jw.tool_text(&result.content, result.is_error);
     jw.end_object();
-    Ok(())
 }
 
 /// Write one attachment. This endpoint names a different part for each kind.

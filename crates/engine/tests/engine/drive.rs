@@ -5,8 +5,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason, ToolCall, ToolResult};
 use yuke_engine::{
-    CancellationToken, Conversation, Driver, DuplicateToolName, Hooks, Outcome, RoundDecision, Tool, ToolContent,
-    ToolContext, ToolDecision, Toolset, TurnEvent,
+    CancellationToken, Conversation, Driver, Hooks, Outcome, RoundDecision, Tool, ToolContent, ToolContext,
+    ToolDecision, ToolNameError, Toolset, TurnEvent,
 };
 
 use crate::support::{
@@ -80,12 +80,7 @@ fn a_second_tool_of_a_taken_name_is_refused_and_the_first_tool_runs() {
 
     let refused = toolset.add(definition("echo"), second.clone());
 
-    assert_eq!(
-        refused,
-        Err(DuplicateToolName {
-            name: "echo".to_owned()
-        })
-    );
+    assert_eq!(refused, Err(ToolNameError::Duplicate("echo".to_owned())));
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
     let mut conversation = Conversation::new();
     block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run()).unwrap();

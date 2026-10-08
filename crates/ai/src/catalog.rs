@@ -360,6 +360,8 @@ impl Entry<'_> {
             route: self.route()?,
             credential,
             wire: self.wire()?,
+            // Chat Completions has no native search of deferred tools, whatever the model can do elsewhere.
+            tool_search: self.model.caps.tool_search == Some(true) && self.model.protocol != Protocol::OpenaiChat,
         })
     }
 }
@@ -459,6 +461,58 @@ mod tests {
                 "{malformed}"
             );
         }
+    }
+
+    #[test]
+    fn bind_marks_native_tool_search_only_for_a_capable_model_off_chat_completions() {
+        let endpoints = [
+            endpoint(
+                Protocol::AnthropicMessages,
+                CredentialHeader::XApiKey,
+                Cache::Breakpoint,
+            ),
+            endpoint(
+                Protocol::OpenaiChat,
+                CredentialHeader::AuthorizationBearer,
+                Cache::Automatic,
+            ),
+        ];
+        let searching = Caps {
+            tool_search: Some(true),
+            ..Caps::default()
+        };
+        let limits = Limits {
+            max_output_tokens: Some(64),
+            ..Limits::default()
+        };
+        let models = [
+            Model {
+                caps: searching,
+                limits,
+                ..model("capable", Protocol::AnthropicMessages)
+            },
+            Model {
+                limits,
+                ..model("unknown", Protocol::AnthropicMessages)
+            },
+            Model {
+                caps: searching,
+                ..model("chat", Protocol::OpenaiChat)
+            },
+        ];
+        let host = provider(&endpoints, &models);
+        let tool_search = |index: usize| {
+            Entry {
+                provider: &host,
+                model: &models[index],
+            }
+            .bind(Credential::None)
+            .unwrap()
+            .tool_search
+        };
+        assert!(tool_search(0));
+        assert!(!tool_search(1));
+        assert!(!tool_search(2));
     }
 
     #[test]

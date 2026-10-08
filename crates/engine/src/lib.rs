@@ -8,10 +8,12 @@
 mod conversation;
 mod drive;
 mod hooks;
+mod search;
 mod tool;
 
 pub use conversation::{Action, Conversation, Outcome, ToolCalls, ToolCallsIter};
 pub use drive::{Driver, Inbox, Observer, Timer, Turn, TurnEvent};
 pub use hooks::{Hooks, RoundDecision, RoundPlan, ToolDecision};
+pub use search::{Bm25, ToolSearch};
 pub use tokio_util::sync::CancellationToken;
-pub use tool::{DuplicateToolName, Tool, ToolContent, ToolContext, Toolset, parse_arguments};
+pub use tool::{TOOL_CALL_NAME, Tool, ToolContent, ToolContext, ToolNameError, Toolset, parse_arguments};

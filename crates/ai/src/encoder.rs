@@ -230,16 +230,15 @@ impl Encoder {
     }
 }
 
-/// Hash the settings that the elements read: the protocol, the origin, the Chat replay mode, and a Responses deferral.
-/// Every other setting writes only the head, so a change to it keeps the elements.
+/// Hash the settings that the elements read: the protocol, the origin, the Chat replay mode, and the deferral of a
+/// tool. Every other setting writes only the head, so a change to it keeps the elements.
 fn element_key(target: &Target, request: &Request<'_>) -> u64 {
     let mut hasher = Wyhash::default();
     target.wire.protocol().hash(&mut hasher);
     OriginRef::of(target).hash(&mut hasher);
-    match &target.wire {
-        Wire::AnthropicMessages(_) => {}
-        Wire::OpenaiChat(chat) => chat.reasoning_replay.hash(&mut hasher),
-        Wire::OpenaiResponses(_) => wire::defers_tools(request).hash(&mut hasher),
+    wire::defers_tools(request).hash(&mut hasher);
+    if let Wire::OpenaiChat(chat) = &target.wire {
+        chat.reasoning_replay.hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -458,8 +457,8 @@ mod tests {
         }
     }
 
-    // Elements read the Chat replay mode and, on Responses, whether a tool defers, so a change to either encodes them
-    // again. `encode_checked` compares each body with a fresh encoding.
+    // Elements read the Chat replay mode and whether a tool defers, so a change to either encodes them again. A switch
+    // between a native and a bridge target changes the deferral. `encode_checked` compares each body with a fresh one.
     #[test]
     fn element_setting_change_reencodes_elements() {
         let replayed = [
@@ -480,17 +479,21 @@ mod tests {
             encode_checked(&mut chat, "m", wire, Request::new(&replayed)).unwrap();
         }
 
+        let plain = [ToolDefinition::new(SEARCH_TOOL_NAME, "Find.", "{}")];
+        let deferred = [plain[0].clone(), ToolDefinition::new("read", "Read.", "{}").deferred()];
         let searched = [
             text(U, "go"),
             Block::ToolCall(ToolCall::new("call_1", SEARCH_TOOL_NAME, "{}")),
-            Block::ToolResult(ToolResult::success("call_1", "found")),
+            Block::ToolResult(ToolResult::success("call_1", "found").with_loaded(deferred[1..].to_vec())),
+            // Later blocks keep the cache marker off the result, so only the key can encode it again.
+            text(A, "done"),
+            text(U, "next"),
         ];
-        let plain = [ToolDefinition::new(SEARCH_TOOL_NAME, "Find.", "{}")];
-        let deferred = [plain[0].clone(), ToolDefinition::new("read", "Read.", "{}").deferred()];
-        let mut responses = Encoder::new();
-        for tools in [&plain[..], &deferred[..]] {
-            let wire = Wire::OpenaiResponses(ResponsesWire::default());
-            encode_checked(&mut responses, "m", wire, Request::new(&searched).tools(tools)).unwrap();
+        for wire in [ALL_WIRES[0], Wire::OpenaiResponses(ResponsesWire::default())] {
+            let mut encoder = Encoder::new();
+            for tools in [&deferred[..], &plain[..], &deferred[..]] {
+                encode_checked(&mut encoder, "m", wire, Request::new(&searched).tools(tools)).unwrap();
+            }
         }
     }
 
@@ -744,6 +747,7 @@ mod tests {
                 },
                 credential: Credential::ApiKey(secret.into()),
                 wire: Wire::OpenaiChat(ChatWire::default()),
+                tool_search: false,
             };
             encoder.encode(&target, Request::new(&blocks).system(&system)).unwrap()
         };

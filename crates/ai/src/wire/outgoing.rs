@@ -143,6 +143,7 @@ mod tests {
             route: route.clone(),
             credential: credential.clone(),
             wire,
+            tool_search: false,
         };
         let mut head = HeadText::default();
         head.build(&target, session_id)?;
@@ -456,6 +457,7 @@ mod tests {
                 route,
                 credential: Credential::None,
                 wire: Wire::OpenaiChat(ChatWire::default()),
+                tool_search: false,
             };
             head.build(&target, "").unwrap();
             assert_eq!(head.headers(), want);

@@ -404,7 +404,7 @@ pub struct ToolResult {
     pub media: Vec<Media>,
 
     /// The deferred tools this result loads. Anthropic references each one by name. Responses answers its search
-    /// with the declarations.
+    /// with the declarations. A request that defers no tool writes only the text of the result.
     pub loaded: Vec<ToolDefinition>,
 }
 
@@ -454,7 +454,8 @@ pub struct ToolDefinition {
     pub description: String,
     /// A JSON Schema object text, written verbatim. The caller checks it.
     pub input_schema: String,
-    /// Exclude the definition from the prompt until a tool search names it.
+    /// Exclude the definition from the prompt until a tool search names it. A request with a deferred tool asks for
+    /// the native search, so send it only to a target with [`Target::tool_search`]. The encoder does not check it.
     pub defer_loading: bool,
     /// Constrain the arguments to `input_schema`, as OpenAI and Anthropic both offer. A schema that strict mode does
     /// not admit returns 400 when it is on.
@@ -716,6 +717,9 @@ pub struct Target {
     /// How the request is written for this host and model. Its variant selects the protocol.
     /// [`crate::catalog::Entry::wire`] derives it from the catalog.
     pub wire: Wire,
+    /// The model searches deferred tools natively: Anthropic tool references, or the Responses client search. Chat
+    /// Completions has no such search. The encoder does not read it. A caller defers a tool only when it is true.
+    pub tool_search: bool,
 }
 
 /// The settings of a request apart from its conversation, its tools, and its blobs. A caller can store one for each
@@ -1066,6 +1070,7 @@ mod tests {
                 },
                 credential: Credential::None,
                 wire: Wire::OpenaiChat(ChatWire::default()),
+                tool_search: false,
             }
         }
         let origin = Origin::from(OriginRef::of(&at("m", "https://h/v1/")));

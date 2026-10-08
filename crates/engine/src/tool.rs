@@ -109,20 +109,28 @@ impl From<&str> for ToolContent {
     }
 }
 
-/// The error of [`Toolset::add`] when another tool already has the name.
+/// The error of [`Toolset::add`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DuplicateToolName {
-    /// The name that two tools share.
-    pub name: String,
+pub enum ToolNameError {
+    /// Another tool already has the name. One name can select only one handler.
+    Duplicate(String),
+    /// The engine owns the name: [`yuke_ai::SEARCH_TOOL_NAME`] or [`TOOL_CALL_NAME`].
+    Reserved(String),
 }
 
-impl std::fmt::Display for DuplicateToolName {
+impl std::fmt::Display for ToolNameError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "another tool already has the name \"{}\"", self.name)
+        match self {
+            ToolNameError::Duplicate(name) => write!(f, "another tool already has the name \"{name}\""),
+            ToolNameError::Reserved(name) => write!(f, "the engine reserves the tool name \"{name}\""),
+        }
     }
 }
 
-impl std::error::Error for DuplicateToolName {}
+impl std::error::Error for ToolNameError {}
+
+/// The name of the bridge tool that calls a deferred tool, on a target without a native tool search.
+pub const TOOL_CALL_NAME: &str = "tool_call";
 
 /// The tools that a driver offers to the model.
 #[derive(Default)]
@@ -153,15 +161,14 @@ impl Toolset {
     ///
     /// # Errors
     ///
-    /// Returns [`DuplicateToolName`] if the toolset already holds a tool of that name. The toolset stays unchanged. One
-    /// name can select only one handler.
-    pub fn add(
-        &mut self,
-        definition: yuke_ai::ToolDefinition,
-        tool: impl Tool + 'static,
-    ) -> Result<(), DuplicateToolName> {
+    /// Returns [`ToolNameError`] if the toolset already holds a tool of that name, or if the engine reserves the
+    /// name. The toolset stays unchanged.
+    pub fn add(&mut self, definition: yuke_ai::ToolDefinition, tool: impl Tool + 'static) -> Result<(), ToolNameError> {
+        if [yuke_ai::SEARCH_TOOL_NAME, TOOL_CALL_NAME].contains(&definition.name.as_str()) {
+            return Err(ToolNameError::Reserved(definition.name));
+        }
         if self.definitions.iter().any(|held| held.name == definition.name) {
-            return Err(DuplicateToolName { name: definition.name });
+            return Err(ToolNameError::Duplicate(definition.name));
         }
         self.definitions.push(definition);
         self.handlers.push(Box::new(tool));
@@ -171,6 +178,17 @@ impl Toolset {
     /// The definitions, in the order of [`Toolset::add`].
     pub(crate) fn definitions(&self) -> &[yuke_ai::ToolDefinition] {
         &self.definitions
+    }
+
+    /// The definitions that stay out of the model's context until a search finds them, in the order of
+    /// [`Toolset::add`]. The search tool names no tool, so a caller can list these in its system prompt.
+    pub fn deferred(&self) -> impl Iterator<Item = &yuke_ai::ToolDefinition> {
+        self.definitions.iter().filter(|definition| definition.defer_loading)
+    }
+
+    /// The definition of the tool `name`.
+    pub(crate) fn definition(&self, name: &str) -> Option<&yuke_ai::ToolDefinition> {
+        self.definitions.iter().find(|definition| definition.name == name)
     }
 
     /// Run `call`, and return its result. The tool sees `context`.

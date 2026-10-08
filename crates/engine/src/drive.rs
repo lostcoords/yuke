@@ -11,13 +11,14 @@ use tokio_util::sync::CancellationToken;
 use yuke_ai::retry::{self, Attempt};
 use yuke_ai::transport::Transport;
 use yuke_ai::{
-    AttemptError, BlobStore, Block, Encoder, Options, Partial, Reply, Request, Response, Settings, Target, ToolCall,
-    ToolResult,
+    AttemptError, BlobStore, Block, Encoder, Options, Partial, Reply, Request, Response, SEARCH_TOOL_NAME, Settings,
+    Target, ToolCall, ToolDefinition, ToolResult,
 };
 
 use crate::conversation::{Action, CANCELLED_REASON, Conversation, Outcome, not_executed};
 use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundPlan, ToolDecision};
-use crate::tool::{ToolContext, Toolset};
+use crate::search::{self, Bm25, Declared, ToolSearch};
+use crate::tool::{TOOL_CALL_NAME, ToolContext, Toolset};
 
 /// One fact of a turn, for an observer. It borrows turn data until the observer returns, so an observer copies the
 /// data that it keeps.
@@ -114,6 +115,7 @@ pub struct Driver<'a> {
     inbox: &'a dyn Inbox,
     settings: &'a Settings,
     blob_store: Option<&'a dyn BlobStore>,
+    tool_search: &'a dyn ToolSearch,
 }
 
 /// The toolset of a driver without tools.
@@ -144,6 +146,7 @@ impl<'a> Driver<'a> {
             inbox: &NoInput,
             settings: &NO_SETTINGS,
             blob_store: None,
+            tool_search: &Bm25,
         }
     }
 
@@ -169,6 +172,7 @@ impl<'a> Driver<'a> {
     async fn call_tool(
         &self,
         call: &ToolCall,
+        native: bool,
         observer: &mut dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> ToolResult {
@@ -178,8 +182,16 @@ impl<'a> Driver<'a> {
         }
         match race(self.hooks.before_tool(call), pin!(cancellation_token.cancelled())).await {
             Raced::Done(ToolDecision::Run) => {
-                let mut context = ToolContext::new(call, cancellation_token, observer);
-                let result = self.toolset.call(call, &mut context).await;
+                let result = if call.name == SEARCH_TOOL_NAME && self.toolset.deferred().next().is_some() {
+                    let searched = search::search(self.tool_search, self.toolset, call, native);
+                    match race(searched, pin!(cancellation_token.cancelled())).await {
+                        Raced::Done(result) => result,
+                        Raced::Cancelled => not_executed(call, CANCELLED_REASON),
+                    }
+                } else {
+                    let mut context = ToolContext::new(call, cancellation_token, observer);
+                    self.toolset.call(call, &mut context).await
+                };
                 match race(
                     self.hooks.after_tool(call, &result),
                     pin!(cancellation_token.cancelled()),
@@ -214,6 +226,12 @@ impl<'a> Driver<'a> {
         }
     }
 
+    /// Set the ranker of the deferred tools for each search. The default ranker is [`Bm25`].
+    #[must_use]
+    pub fn tool_search(self, tool_search: &'a dyn ToolSearch) -> Self {
+        Driver { tool_search, ..self }
+    }
+
     /// The turn of `input` on `conversation`. [`Turn::run`] runs it.
     pub fn turn<'t>(&self, conversation: &'t mut Conversation, input: Vec<Block>) -> Turn<'t>
     where
@@ -234,9 +252,10 @@ impl<'a> Driver<'a> {
         &self,
         conversation: &mut Conversation,
         encoder: &mut Encoder,
+        declared: &Declared<'_>,
         observer: &mut dyn Observer,
         cancellation_token: &CancellationToken,
-    ) -> Sent {
+    ) -> (Sent, bool) {
         let mut failure: Option<yuke_ai::Error> = None;
         loop {
             let Raced::Done(mut plan) = race(
@@ -245,25 +264,34 @@ impl<'a> Driver<'a> {
             )
             .await
             else {
-                return Sent::Cancelled(Vec::new());
+                return (Sent::Cancelled(Vec::new()), false);
             };
             if let Some(error) = failure
                 && plan.target.is_none()
             {
-                return Sent::Finished(Err(error));
+                return (Sent::Finished(Err(error)), false);
             }
             if let Some(history) = plan.history.take() {
                 conversation.replace_history(history);
             }
+            let native = plan.target.as_ref().unwrap_or(self.target).tool_search;
+            let tools = declared.tools(native);
             match self
-                .send(encoder, conversation.history(), &plan, observer, cancellation_token)
+                .send(
+                    encoder,
+                    conversation.history(),
+                    tools,
+                    &plan,
+                    observer,
+                    cancellation_token,
+                )
                 .await
             {
                 Sent::Finished(Err(error)) => {
                     observer.event(&TurnEvent::RoundFailed(&error));
                     failure = Some(error);
                 }
-                sent => return sent,
+                sent => return (sent, native),
             }
         }
     }
@@ -274,15 +302,14 @@ impl<'a> Driver<'a> {
         &self,
         encoder: &mut Encoder,
         blocks: &[Block],
+        tools: &[ToolDefinition],
         plan: &RoundPlan,
         observer: &mut dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> Sent {
         let target = plan.target.as_ref().unwrap_or(self.target);
         let settings = plan.settings.as_ref().unwrap_or(self.settings);
-        let mut request = Request::new(blocks)
-            .tools(self.toolset.definitions())
-            .settings(settings);
+        let mut request = Request::new(blocks).tools(tools).settings(settings);
         if let Some(blob_store) = self.blob_store {
             request = request.blobs(blob_store);
         }
@@ -394,6 +421,9 @@ impl<'a> Turn<'a> {
             Some(observer) => observer,
             None => &mut ignore,
         };
+        let declared = Declared::new(driver.toolset);
+        // The calls of a round use the kind of search of the target of that round.
+        let mut native = false;
         // The encoder lives for one turn. Its first request encodes the whole history, and each later request of the
         // turn encodes only the changed elements.
         let mut encoder = Encoder::new();
@@ -402,8 +432,9 @@ impl<'a> Turn<'a> {
         loop {
             match action {
                 Action::Send(_) => {
-                    let sent = driver
-                        .send_round(conversation, &mut encoder, observer, &cancellation_token)
+                    let sent;
+                    (sent, native) = driver
+                        .send_round(conversation, &mut encoder, &declared, observer, &cancellation_token)
                         .await;
                     action = match sent {
                         Sent::Finished(result) => conversation.model_finished(result),
@@ -414,9 +445,24 @@ impl<'a> Turn<'a> {
                 Action::CallTools(calls) => {
                     let mut results = Vec::new();
                     for call in calls {
-                        observer.event(&TurnEvent::ToolStarted(call));
-                        let result = driver.call_tool(call, observer, &cancellation_token).await;
-
+                        // The model calls a deferred tool through the bridge, but the hooks and the observer see the
+                        // real call.
+                        let bridged = (call.name == TOOL_CALL_NAME && driver.toolset.deferred().next().is_some())
+                            .then(|| search::unwrap_call(driver.toolset, call));
+                        let result = match bridged {
+                            Some(Err(refused)) => {
+                                observer.event(&TurnEvent::ToolStarted(call));
+                                refused
+                            }
+                            Some(Ok(real)) => {
+                                observer.event(&TurnEvent::ToolStarted(&real));
+                                driver.call_tool(&real, native, observer, &cancellation_token).await
+                            }
+                            None => {
+                                observer.event(&TurnEvent::ToolStarted(call));
+                                driver.call_tool(call, native, observer, &cancellation_token).await
+                            }
+                        };
                         observer.event(&TurnEvent::ToolFinished(&result));
                         results.push(result);
                     }

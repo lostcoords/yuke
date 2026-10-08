@@ -49,6 +49,7 @@ pub(crate) fn target(protocol: Protocol) -> Target {
             Protocol::OpenaiChat => Wire::OpenaiChat(ChatWire::default()),
             Protocol::OpenaiResponses => Wire::OpenaiResponses(ResponsesWire::default()),
         },
+        tool_search: false,
     }
 }
 

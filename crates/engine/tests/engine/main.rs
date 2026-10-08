@@ -9,6 +9,7 @@
 mod after_tool;
 mod before_round;
 mod conversation;
+mod deferred;
 mod drive;
 mod support;
 mod tool_api;

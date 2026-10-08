@@ -186,7 +186,13 @@ fn write_block(
             jw.field_str("type", "tool_result");
             jw.field_str("tool_use_id", &result.call_id);
             jw.key("content");
-            if result.media.is_empty() && result.loaded.is_empty() {
+            // A reference needs the deferred tools of a native target. A request without them keeps the result text.
+            let loaded = if super::defers_tools(request) {
+                result.loaded.as_slice()
+            } else {
+                &[]
+            };
+            if result.media.is_empty() && loaded.is_empty() {
                 jw.string(&result.content);
             } else {
                 // The API refuses an empty text block, so a result of media or references alone writes no text.
@@ -200,7 +206,7 @@ fn write_block(
                 for media in &result.media {
                     write_media(jw, request, media, false)?;
                 }
-                for tool in &result.loaded {
+                for tool in loaded {
                     jw.begin_object();
                     jw.field_str("type", "tool_reference");
                     jw.field_str("tool_name", &tool.name);
@@ -443,13 +449,20 @@ mod tests {
         ];
         let blocks = [
             call("toolu_1", "tool_search", "{}"),
-            Block::ToolResult(result("toolu_1", "", false).with_loaded(tools[1..].to_vec())),
+            Block::ToolResult(result("toolu_1", "found", false).with_loaded(tools[1..].to_vec())),
         ];
         expect_json(
-            r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"tool_search","description":"Find.","input_schema":{}},{"name":"mcp_read","description":"Read.","defer_loading":true,"input_schema":{}},{"name":"mcp_write","description":"Write.","defer_loading":true,"input_schema":{}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"tool_search","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"tool_reference","tool_name":"mcp_read"},{"type":"tool_reference","tool_name":"mcp_write"}],"is_error":false}]}]}"#,
+            r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"tool_search","description":"Find.","input_schema":{}},{"name":"mcp_read","description":"Read.","defer_loading":true,"input_schema":{}},{"name":"mcp_write","description":"Write.","defer_loading":true,"input_schema":{}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"tool_search","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"found"},{"type":"tool_reference","tool_name":"mcp_read"},{"type":"tool_reference","tool_name":"mcp_write"}],"is_error":false}]}]}"#,
             "claude",
             anthropic(8),
             Request::new(&blocks).tools(&tools).max_output_tokens(8),
+        );
+        // Without a deferred tool, as on a bridge target, a reference would name an undeclared tool, so none is written.
+        expect_json(
+            r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"tool_search","description":"Find.","input_schema":{}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"tool_search","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"found","is_error":false}]}]}"#,
+            "claude",
+            anthropic(8),
+            Request::new(&blocks).tools(&tools[..1]).max_output_tokens(8),
         );
     }
 

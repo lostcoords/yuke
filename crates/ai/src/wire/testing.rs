@@ -15,6 +15,7 @@ pub(crate) fn target_of(model: &str, wire: Wire) -> Target {
         route: Route::default(),
         credential: Credential::None,
         wire,
+        tool_search: false,
     }
 }
 

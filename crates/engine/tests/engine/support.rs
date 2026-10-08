@@ -29,6 +29,7 @@ pub(crate) fn target() -> Target {
             max_tokens: 64,
             cache: false,
         }),
+        tool_search: false,
     }
 }
 

@@ -219,9 +219,6 @@ fn write_item(
                 write_search_output(&mut jw, result);
                 return Ok(());
             }
-            if !result.loaded.is_empty() {
-                return Err(EncodeError::Unsupported);
-            }
             jw.begin_object();
             jw.field_str("type", "function_call_output");
             jw.field_str("call_id", &result.call_id);
@@ -506,9 +503,9 @@ mod tests {
             responses(),
             Request::new(&blocks).tools(&tools).max_output_tokens(8),
         );
-        // Without a deferred tool the search tool is an ordinary function and a loaded definition has no place.
-        expect_error(
-            EncodeError::Unsupported,
+        // Without a deferred tool, as on a bridge target, the search is an ordinary call and its result keeps its text.
+        expect_json(
+            r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"function","name":"tool_search","description":"Find.","parameters":{"type":"object"},"strict":false}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]},{"type":"function_call","call_id":"call_1","name":"tool_search","arguments":"{\"query\":\"read\"}"},{"type":"function_call_output","call_id":"call_1","output":"found"}]}"#,
             "gpt-5",
             responses(),
             Request::new(&blocks).tools(&tools[..1]).max_output_tokens(8),
