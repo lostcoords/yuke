@@ -99,6 +99,12 @@ impl Conversation {
         &self.history
     }
 
+    /// Replace the history, for example with a summary and the recent blocks. Call it between turns, or before the
+    /// request of [`Action::Send`]. The next request sends the new history.
+    pub fn replace_history(&mut self, history: Vec<Block>) {
+        self.history = history;
+    }
+
     /// Start a turn with the blocks of `input`, such as a text and its attachments. Call it after the previous turn
     /// returned [`Action::Done`].
     pub fn start(&mut self, input: Vec<Block>) -> Action<'_> {

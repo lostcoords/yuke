@@ -29,6 +29,9 @@ impl Observer for PrintText {
     }
 }
 
+/// The system prompt of each request.
+const SYSTEM: &str = "You are a concise assistant. Answer in at most three sentences.";
+
 /// The note that tells the model about a cancel. It goes first in the input of the next turn.
 const INTERRUPTED: &str = "[The user interrupted the previous answer.]";
 
@@ -48,7 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target = ai::catalog::resolve("minimax/MiniMax-M3", ai::route::Credential::ApiKey(key.into()))?;
     let http = HttpTransport::new(HttpOptions::new("engine-example"))?;
 
-    let driver = Driver::new(&http, &target, &TokioTimer);
+    let settings = ai::Settings::new().system(SYSTEM);
+    let driver = Driver::new(&http, &target, &TokioTimer).settings(&settings);
     let mut conversation = Conversation::new();
     let mut observer = PrintText;
 

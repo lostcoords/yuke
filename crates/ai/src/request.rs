@@ -718,6 +718,133 @@ pub struct Target {
     pub wire: Wire,
 }
 
+/// The settings of a request apart from its conversation, its tools, and its blobs. A caller can store one for each
+/// session, and [`Request::settings`] applies it. It names no model and holds no secret.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Settings {
+    /// The system prompt. An empty prompt writes none.
+    pub system: String,
+    /// The output limit. `None` leaves the endpoint default.
+    pub max_output_tokens: Option<u32>,
+    /// The reasoning settings.
+    pub reasoning: ReasoningSettings,
+    /// The sampling temperature. `None` leaves the endpoint default.
+    pub temperature: Option<f64>,
+    /// The nucleus sampling mass. `None` leaves the endpoint default.
+    pub top_p: Option<f64>,
+    /// The tool control.
+    pub tool_choice: ToolChoice,
+    /// A stable session ID for routing and the Responses cache key. An empty ID writes none.
+    pub session_id: String,
+}
+
+impl Settings {
+    /// Settings that leave every value at its endpoint default.
+    pub const fn new() -> Self {
+        Settings {
+            system: String::new(),
+            max_output_tokens: None,
+            reasoning: ReasoningSettings {
+                thinking: None,
+                effort: None,
+            },
+            temperature: None,
+            top_p: None,
+            tool_choice: ToolChoice::Auto,
+            session_id: String::new(),
+        }
+    }
+
+    /// The system prompt. An empty prompt writes none.
+    #[must_use]
+    pub fn system(self, system: impl Into<String>) -> Self {
+        Settings {
+            system: system.into(),
+            ..self
+        }
+    }
+
+    /// The output limit.
+    #[must_use]
+    pub fn max_output_tokens(self, tokens: u32) -> Self {
+        Settings {
+            max_output_tokens: Some(tokens),
+            ..self
+        }
+    }
+
+    /// The reasoning settings, both at once.
+    #[must_use]
+    pub fn reasoning(self, reasoning: ReasoningSettings) -> Self {
+        Settings { reasoning, ..self }
+    }
+
+    /// Whether and how the model thinks.
+    #[must_use]
+    pub fn thinking(self, thinking: Thinking) -> Self {
+        Settings {
+            reasoning: ReasoningSettings {
+                thinking: Some(thinking),
+                ..self.reasoning
+            },
+            ..self
+        }
+    }
+
+    /// How hard the model thinks.
+    #[must_use]
+    pub fn effort(self, effort: Effort) -> Self {
+        Settings {
+            reasoning: ReasoningSettings {
+                effort: Some(effort),
+                ..self.reasoning
+            },
+            ..self
+        }
+    }
+
+    /// The sampling temperature. A NaN or an infinity fails the encode.
+    #[must_use]
+    pub fn temperature(self, temperature: f64) -> Self {
+        Settings {
+            temperature: Some(temperature),
+            ..self
+        }
+    }
+
+    /// The nucleus sampling mass. Anthropic asks that a request set this or the temperature, not both. A NaN or an
+    /// infinity fails the encode.
+    #[must_use]
+    pub fn top_p(self, top_p: f64) -> Self {
+        Settings {
+            top_p: Some(top_p),
+            ..self
+        }
+    }
+
+    /// The tool control.
+    #[must_use]
+    pub fn tool_choice(self, tool_choice: ToolChoice) -> Self {
+        Settings { tool_choice, ..self }
+    }
+
+    /// A stable session ID for routing and the Responses cache key. A route can send it as a header, so it must be a
+    /// valid header value. The ChatGPT host refuses a key longer than 64 bytes.
+    #[must_use]
+    pub fn session_id(self, session_id: impl Into<String>) -> Self {
+        Settings {
+            session_id: session_id.into(),
+            ..self
+        }
+    }
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// One request: the conversation, its generation settings, and its call settings. [`crate::Encoder::encode`] borrows
 /// it only until it returns. [`Request::new`] takes the conversation, and each setter changes one setting.
 #[derive(Clone, Copy)]
@@ -751,6 +878,22 @@ impl<'a> Request<'a> {
             top_p: None,
             tool_choice: ToolChoice::Auto,
             session_id: "",
+        }
+    }
+
+    /// Replace each setting that [`Settings`] holds with its value in `settings`. A `None` value clears the setting.
+    /// The request borrows its strings from `settings`.
+    #[must_use]
+    pub fn settings(self, settings: &'a Settings) -> Self {
+        Request {
+            system: &settings.system,
+            max_output_tokens: settings.max_output_tokens,
+            reasoning: settings.reasoning,
+            temperature: settings.temperature,
+            top_p: settings.top_p,
+            tool_choice: settings.tool_choice,
+            session_id: &settings.session_id,
+            ..self
         }
     }
 

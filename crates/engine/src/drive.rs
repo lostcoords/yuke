@@ -8,12 +8,15 @@ use std::time::Duration;
 
 use ai::retry::{self, Attempt};
 use ai::transport::Transport;
-use ai::{AttemptError, Block, Encoder, Options, Partial, Reply, Request, Response, Target, ToolCall, ToolResult};
+use ai::{
+    AttemptError, BlobStore, Block, Encoder, Options, Partial, Reply, Request, Response, Settings, Target, ToolCall,
+    ToolResult,
+};
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::conversation::{Action, CANCELLED_REASON, Conversation, Outcome, not_executed};
-use crate::hooks::{Hooks, NoHooks, RoundDecision, ToolDecision};
+use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundPlan, ToolDecision};
 use crate::tool::Toolset;
 
 /// One fact of a turn, for an observer. It borrows turn data until the observer returns, so an observer copies the
@@ -29,6 +32,10 @@ pub enum TurnEvent<'a> {
 
     /// A call finished with this result.
     ToolFinished(&'a ToolResult),
+
+    /// A round failed after its retries. The model events of the round came before it, and the history keeps none of
+    /// them. The driver then asks [`Hooks::before_round`] whether the round runs again.
+    RoundFailed(&'a ai::Error),
 
     /// An attempt failed, and the driver plans to send the same request again after `after`.
     RetryScheduled {
@@ -95,10 +102,15 @@ pub struct Driver<'a> {
     toolset: &'a Toolset,
     hooks: &'a dyn Hooks,
     inbox: &'a dyn Inbox,
+    settings: &'a Settings,
+    blob_store: Option<&'a dyn BlobStore>,
 }
 
 /// The toolset of a driver without tools.
 static NO_TOOLS: Toolset = Toolset::new();
+
+/// The settings of a driver without settings. Each value stays at its endpoint default.
+static NO_SETTINGS: Settings = Settings::new();
 
 impl std::fmt::Debug for Driver<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -120,6 +132,8 @@ impl<'a> Driver<'a> {
             toolset: &NO_TOOLS,
             hooks: &NoHooks,
             inbox: &NoInput,
+            settings: &NO_SETTINGS,
+            blob_store: None,
         }
     }
 
@@ -165,6 +179,21 @@ impl<'a> Driver<'a> {
         }
     }
 
+    /// Send each request with `settings`, unless a [`RoundPlan`] gives other settings for its round.
+    #[must_use]
+    pub fn settings(self, settings: &'a Settings) -> Self {
+        Driver { settings, ..self }
+    }
+
+    /// Read the media of each request from `blob_store`. Without a store, a request with media fails to encode.
+    #[must_use]
+    pub fn blobs(self, blob_store: &'a dyn BlobStore) -> Self {
+        Driver {
+            blob_store: Some(blob_store),
+            ..self
+        }
+    }
+
     /// The turn of `input` on `conversation`. [`Turn::run`] runs it.
     pub fn turn<'t>(&self, conversation: &'t mut Conversation, input: Vec<Block>) -> Turn<'t>
     where
@@ -179,17 +208,65 @@ impl<'a> Driver<'a> {
         }
     }
 
+    /// Send the request of one round. Ask [`Hooks::before_round`] for the plan first. After a failure, ask again, and
+    /// send the round again when the plan names a target.
+    async fn send_round(
+        &self,
+        conversation: &mut Conversation,
+        encoder: &mut Encoder,
+        observer: &mut dyn Observer,
+        cancellation_token: &CancellationToken,
+    ) -> Sent {
+        let mut failure: Option<ai::Error> = None;
+        loop {
+            let Raced::Done(mut plan) = race(
+                self.hooks.before_round(conversation.history(), failure.as_ref()),
+                pin!(cancellation_token.cancelled()),
+            )
+            .await
+            else {
+                return Sent::Cancelled(Vec::new());
+            };
+            if let Some(error) = failure
+                && plan.target.is_none()
+            {
+                return Sent::Finished(Err(error));
+            }
+            if let Some(history) = plan.history.take() {
+                conversation.replace_history(history);
+            }
+            match self
+                .send(encoder, conversation.history(), &plan, observer, cancellation_token)
+                .await
+            {
+                Sent::Finished(Err(error)) => {
+                    observer.event(&TurnEvent::RoundFailed(&error));
+                    failure = Some(error);
+                }
+                sent => return sent,
+            }
+        }
+    }
+
     /// Send one request of `blocks`, and give each event of the reply to `observer`. If [`retry::decide`] permits a
     /// retry, the driver waits with the caller's timer, then sends the same encoded bytes.
     async fn send(
         &self,
         encoder: &mut Encoder,
         blocks: &[Block],
+        plan: &RoundPlan,
         observer: &mut dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> Sent {
-        let request = Request::new(blocks).tools(self.toolset.definitions());
-        let encoded = match encoder.encode(self.target, request) {
+        let target = plan.target.as_ref().unwrap_or(self.target);
+        let settings = plan.settings.as_ref().unwrap_or(self.settings);
+        let mut request = Request::new(blocks)
+            .tools(self.toolset.definitions())
+            .settings(settings);
+        if let Some(blob_store) = self.blob_store {
+            request = request.blobs(blob_store);
+        }
+        let encoded = match encoder.encode(target, request) {
             Ok(encoded) => encoded,
             Err(error) => return Sent::Finished(Err(error.into())),
         };
@@ -304,8 +381,11 @@ impl<'a> Turn<'a> {
         let mut action = conversation.start(input);
         loop {
             match action {
-                Action::Send(blocks) => {
-                    action = match driver.send(&mut encoder, blocks, observer, &cancellation_token).await {
+                Action::Send(_) => {
+                    let sent = driver
+                        .send_round(conversation, &mut encoder, observer, &cancellation_token)
+                        .await;
+                    action = match sent {
                         Sent::Finished(result) => conversation.model_finished(result),
                         Sent::Cancelled(partial) => conversation.model_cancelled(partial),
                     };

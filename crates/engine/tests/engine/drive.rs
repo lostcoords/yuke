@@ -160,6 +160,7 @@ fn label(event: &TurnEvent<'_>) -> String {
         TurnEvent::Model(ai::Event::Done(done)) => format!("done {:?}", done.finish_reason),
         TurnEvent::ToolStarted(call) => format!("tool {}", call.call_id),
         TurnEvent::ToolFinished(result) => format!("result {} {}", result.call_id, result.content),
+        TurnEvent::RoundFailed(_) => "round failed".to_owned(),
         other => format!("other {other:?}"),
     }
 }
@@ -231,7 +232,7 @@ fn failed_reply_delivers_its_events_then_fails_with_the_partial_output() {
             .run(),
     );
 
-    assert_eq!(seen, ["start 0 Text", "text cut"]);
+    assert_eq!(seen, ["start 0 Text", "text cut", "round failed"]);
     let Err(ai::Error::Attempt(error)) = outcome else {
         panic!("expected a failed attempt, got {outcome:?}");
     };

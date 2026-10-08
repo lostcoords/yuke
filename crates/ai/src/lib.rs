@@ -28,8 +28,8 @@ pub use reply::Reply;
 pub use request::{
     AnthropicWire, Blob, BlobStore, Block, ChatDialect, ChatWire, Effort, MaxTokensField, Media, Modality, Origin,
     OriginRef, OutputSchema, Protocol, Reasoning, ReasoningReplay, ReasoningReplayMode, ReasoningReplayRef,
-    ReasoningSettings, ReplayKind, Request, ResponsesDialect, ResponsesWire, Role, SEARCH_TOOL_NAME, Target, Thinking,
-    ThinkingDisplay, ThinkingFormat, ToolCall, ToolCallRef, ToolChoice, ToolDefinition, ToolResult, Wire,
+    ReasoningSettings, ReplayKind, Request, ResponsesDialect, ResponsesWire, Role, SEARCH_TOOL_NAME, Settings, Target,
+    Thinking, ThinkingDisplay, ThinkingFormat, ToolCall, ToolCallRef, ToolChoice, ToolDefinition, ToolResult, Wire,
 };
 pub use response::{
     AttemptError, AttemptInfo, BlockId, BlockKind, BlockResult, BlockStarted, BlockStopped, Completion, Content,

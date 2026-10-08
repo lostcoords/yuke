@@ -1,13 +1,20 @@
 //! Caller decisions during a turn. The driver awaits each hook, and the answer decides the next step. An observer
 //! only watches.
 
-use ai::{Block, ToolCall, ToolResult};
+use ai::{Block, Settings, Target, ToolCall, ToolResult};
 use async_trait::async_trait;
 
 /// The decisions of a caller at the boundaries of a turn. Each method has a default that changes nothing, so a
 /// caller implements only the hooks that it needs.
 #[async_trait]
 pub trait Hooks: Send + Sync {
+    /// Prepare the request of a round. The driver asks before the first attempt of each round, not before a retry.
+    /// After a round fails and its retries end, the driver asks again with the `failure`. A plan with a target then
+    /// sends the round again in the same turn. A plan without a target ends the turn with the failure.
+    async fn before_round(&self, _history: &[Block], _failure: Option<&ai::Error>) -> RoundPlan {
+        RoundPlan::default()
+    }
+
     /// Decide whether `call` runs. The driver asks before each call.
     async fn before_tool(&self, _call: &ToolCall) -> ToolDecision {
         ToolDecision::Run
@@ -25,6 +32,19 @@ pub trait Hooks: Send + Sync {
     async fn after_round(&self, _history: &[Block]) -> RoundDecision {
         RoundDecision::Proceed
     }
+}
+
+/// The answer of [`Hooks::before_round`]. A `None` history keeps the history. A `None` target or settings keeps the
+/// driver's value.
+#[derive(Debug, Clone, Default)]
+pub struct RoundPlan {
+    /// The new history of the conversation, for example a summary and the recent blocks. It replaces the history before
+    /// the request, and the replacement stays after the round.
+    pub history: Option<Vec<Block>>,
+    /// The model of this round. The next round uses the driver's target again.
+    pub target: Option<Target>,
+    /// The settings of this round. The next round uses the driver's settings again.
+    pub settings: Option<Settings>,
 }
 
 /// The answer of [`Hooks::before_tool`].

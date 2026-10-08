@@ -282,6 +282,31 @@ mod tests {
         }),
     ];
 
+    #[test]
+    fn settings_write_the_body_of_their_setters() {
+        let blocks = [Block::user_text("hi")];
+        let settings = crate::Settings::new()
+            .system("be brief")
+            .max_output_tokens(100)
+            .effort(crate::Effort::High)
+            .temperature(0.5)
+            .tool_choice(crate::ToolChoice::None)
+            .session_id("s1");
+        for wire in ALL_WIRES {
+            let by_setters = Request::new(&blocks)
+                .system("be brief")
+                .max_output_tokens(100)
+                .effort(crate::Effort::High)
+                .temperature(0.5)
+                .tool_choice(crate::ToolChoice::None)
+                .session_id("s1");
+            let by_settings = Request::new(&blocks).settings(&settings);
+            let encode = |request| body(&Encoder::new().encode(&target_of("m", wire), request).unwrap());
+            assert_eq!(encode(by_settings), encode(by_setters), "{wire:?}");
+            assert_ne!(encode(by_settings), encode(Request::new(&blocks)), "{wire:?}");
+        }
+    }
+
     fn plain_wires() -> [Wire; 3] {
         [
             Wire::AnthropicMessages(AnthropicWire {
