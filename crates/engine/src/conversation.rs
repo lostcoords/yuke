@@ -1,7 +1,7 @@
 //! The decisions of one conversation. A [`Conversation`] does no I/O, reads no clock, and never awaits. Each call
 //! that feeds it a fact returns the next [`Action`].
 
-use ai::{Block, FinishReason, Partial, Response, Role, ToolCall, ToolResult};
+use yuke_ai::{Block, FinishReason, Partial, Response, Role, ToolCall, ToolResult};
 
 /// The history of one conversation.
 #[derive(Debug, Default)]
@@ -29,7 +29,7 @@ pub enum Action<'a> {
     AfterRound(&'a [Block]),
 
     /// The turn ended. `Err` holds the failure of a request, and the history keeps the input and no answer.
-    Done(Result<Outcome, ai::Error>),
+    Done(Result<Outcome, yuke_ai::Error>),
 }
 
 /// The tool calls of one answer. It borrows the blocks of the answer, so the calls are not copied.
@@ -113,7 +113,7 @@ impl Conversation {
     }
 
     /// Take the result of the request that [`Action::Send`] asked for.
-    pub fn model_finished(&mut self, result: Result<Response, ai::Error>) -> Action<'_> {
+    pub fn model_finished(&mut self, result: Result<Response, yuke_ai::Error>) -> Action<'_> {
         let completion = match result {
             Ok(response) => response.completion,
             Err(error) => return Action::Done(Err(error)),

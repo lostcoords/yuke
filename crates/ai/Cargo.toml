@@ -1,5 +1,5 @@
 [package]
-name = "ai"
+name = "yuke-ai"
 version = "0.0.1-dev"
 description = "Provider-neutral model calls over three wire protocols."
 edition.workspace = true

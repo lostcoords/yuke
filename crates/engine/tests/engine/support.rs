@@ -9,12 +9,12 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 use std::time::Instant;
 
-use ai::route::{Credential, Route};
-use ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
-use ai::{AnthropicWire, Encoder, Request, Target, Wire};
 use async_trait::async_trait;
 use bytes::Bytes;
-use engine::{Action, CancellationToken, Inbox, Timer, Tool};
+use yuke_ai::route::{Credential, Route};
+use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
+use yuke_ai::{AnthropicWire, Encoder, Request, Target, Wire};
+use yuke_engine::{Action, CancellationToken, Inbox, Timer, Tool};
 
 /// An Anthropic target at a test host, with no credential.
 pub(crate) fn target() -> Target {
@@ -126,8 +126,8 @@ pub(crate) fn cut_reply(calls: &[(&str, &str, &str)]) -> String {
 }
 
 /// A definition of `name` that takes any object.
-pub(crate) fn definition(name: &str) -> ai::ToolDefinition {
-    ai::ToolDefinition::new(name, "A test tool.", r#"{"type":"object"}"#)
+pub(crate) fn definition(name: &str) -> yuke_ai::ToolDefinition {
+    yuke_ai::ToolDefinition::new(name, "A test tool.", r#"{"type":"object"}"#)
 }
 
 /// A tool that records the arguments of each call, and answers the call with "result N", counted from 1.
@@ -155,11 +155,11 @@ impl Tool for Recorder {
 /// An inbox that hands out one scripted batch for each take, then nothing.
 #[derive(Debug, Default)]
 pub(crate) struct Batches {
-    batches: Mutex<VecDeque<Vec<ai::Block>>>,
+    batches: Mutex<VecDeque<Vec<yuke_ai::Block>>>,
 }
 
 impl Batches {
-    pub(crate) fn new(batches: impl IntoIterator<Item = Vec<ai::Block>>) -> Self {
+    pub(crate) fn new(batches: impl IntoIterator<Item = Vec<yuke_ai::Block>>) -> Self {
         Batches {
             batches: Mutex::new(batches.into_iter().collect()),
         }
@@ -167,7 +167,7 @@ impl Batches {
 }
 
 impl Inbox for Batches {
-    fn take(&self) -> Vec<ai::Block> {
+    fn take(&self) -> Vec<yuke_ai::Block> {
         self.batches.lock().unwrap().pop_front().unwrap_or_default()
     }
 }

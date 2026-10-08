@@ -1,7 +1,7 @@
 //! Give the model a tool, run any calls it returns, then ask it to summarize the results.
 #![expect(clippy::print_stdout, reason = "an example prints its answer")]
 
-use ai::{
+use yuke_ai::{
     Block, Effort, FinishReason, HttpOptions, HttpTransport, Request, ToolCall, ToolChoice, ToolDefinition, ToolResult,
 };
 
@@ -17,7 +17,7 @@ const SCHEMA: &str = r#"{
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = std::env::var("OPENAI_API_KEY")?;
-    let target = ai::catalog::resolve("openai/gpt-6-astra", ai::route::Credential::ApiKey(key.into()))?;
+    let target = yuke_ai::catalog::resolve("openai/gpt-6-astra", yuke_ai::route::Credential::ApiKey(key.into()))?;
     let http = HttpTransport::new(HttpOptions::new("ai-example"))?;
     let tools = [ToolDefinition::new(
         "uppercase_ascii",
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .tools(&tools)
         .max_output_tokens(4096)
         .effort(Effort::Low);
-    let first = ai::generate(&http, &target, request).await?.completion;
+    let first = yuke_ai::generate(&http, &target, request).await?.completion;
 
     // Only a `ToolCalls` finish proves complete calls. After a `Length` finish, a call can hold cut-off arguments.
     if first.finish_reason != FinishReason::ToolCalls {
@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .tool_choice(ToolChoice::None)
         .max_output_tokens(4096)
         .effort(Effort::Low);
-    let last = ai::generate(&http, &target, request).await?.completion;
+    let last = yuke_ai::generate(&http, &target, request).await?.completion;
     println!("{}", last.text());
     Ok(())
 }

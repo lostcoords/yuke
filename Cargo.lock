@@ -3,24 +3,6 @@
 version = 4
 
 [[package]]
-name = "ai"
-version = "0.0.1-dev"
-dependencies = [
- "bytes",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "memchr",
- "rustls",
- "rustls-platform-verifier",
- "serde",
- "serde_json",
- "tokio",
- "tokio-rustls",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -130,18 +112,6 @@ name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
-
-[[package]]
-name = "engine"
-version = "0.0.1-dev"
-dependencies = [
- "ai",
- "async-trait",
- "bytes",
- "fastrand",
- "tokio",
- "tokio-util",
-]
 
 [[package]]
 name = "errno"
@@ -910,6 +880,36 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+
+[[package]]
+name = "yuke-ai"
+version = "0.0.1-dev"
+dependencies = [
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "memchr",
+ "rustls",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
+name = "yuke-engine"
+version = "0.0.1-dev"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "fastrand",
+ "tokio",
+ "tokio-util",
+ "yuke-ai",
+]
 
 [[package]]
 name = "zeroize"

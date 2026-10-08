@@ -10,9 +10,9 @@ use std::io::Write;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use ai::{Block, HttpOptions, HttpTransport, ToolCall};
 use async_trait::async_trait;
-use engine::{
+use yuke_ai::{Block, HttpOptions, HttpTransport, ToolCall};
+use yuke_engine::{
     CancellationToken, Conversation, Driver, Hooks, Observer, Outcome, RoundDecision, Timer, Tool, ToolDecision,
     Toolset, TurnEvent,
 };
@@ -72,7 +72,7 @@ struct PrintText {
 impl Observer for PrintText {
     fn event(&mut self, event: &TurnEvent<'_>) {
         match event {
-            TurnEvent::Model(ai::Event::TextDelta(delta)) => {
+            TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => {
                 print!("{}", delta.text);
                 std::io::stdout().flush().expect("Couldn't flush");
                 self.line_open = true;
@@ -99,11 +99,11 @@ impl Timer for TokioTimer {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = std::env::var("MINIMAX_API_KEY")?;
-    let target = ai::catalog::resolve("minimax/MiniMax-M3", ai::route::Credential::ApiKey(key.into()))?;
+    let target = yuke_ai::catalog::resolve("minimax/MiniMax-M3", yuke_ai::route::Credential::ApiKey(key.into()))?;
     let http = HttpTransport::new(HttpOptions::new("engine-example"))?;
     let mut toolset = Toolset::new();
     toolset.add(
-        ai::ToolDefinition::new(
+        yuke_ai::ToolDefinition::new(
             "uppercase",
             "Convert text to uppercase.",
             r#"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}"#,

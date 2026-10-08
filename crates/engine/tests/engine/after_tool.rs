@@ -1,9 +1,9 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ai::{Block, ToolCall, ToolResult};
 use async_trait::async_trait;
-use engine::{CancellationToken, Conversation, Driver, Hooks, Outcome, Tool, ToolDecision, Toolset, TurnEvent};
+use yuke_ai::{Block, ToolCall, ToolResult};
+use yuke_engine::{CancellationToken, Conversation, Driver, Hooks, Outcome, Tool, ToolDecision, Toolset, TurnEvent};
 
 use crate::support::{NoWait, ScriptedTransport, block_on, definition, target, text_reply, tool_reply};
 

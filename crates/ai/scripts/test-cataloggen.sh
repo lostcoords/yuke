@@ -89,7 +89,7 @@ fn catalog_translation_preserves_strings_nulls_false_and_zero() {
 RUST
 printf '\n#[cfg(test)]\nmod fixture;\n#[cfg(test)]\nmod fixture_test;\n' >> "$tmp/crates/ai/src/catalog.rs"
 CARGO_TARGET_DIR="$workspace/target/cataloggen" "${CARGO:-cargo}" test --quiet \
-    --manifest-path "$tmp/Cargo.toml" -p ai --lib catalog_translation_preserves
+    --manifest-path "$tmp/Cargo.toml" -p yuke-ai --lib catalog_translation_preserves
 
 # A failed input must not replace the last generated table.
 cp -- "$tmp/crates/ai/src/catalog/fixture.rs" "$tmp/expected.rs"

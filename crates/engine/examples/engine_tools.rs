@@ -3,9 +3,9 @@
 
 use std::time::Duration;
 
-use ai::{Block, HttpOptions, HttpTransport};
 use async_trait::async_trait;
-use engine::{CancellationToken, Conversation, Driver, Observer, Timer, Tool, Toolset, TurnEvent};
+use yuke_ai::{Block, HttpOptions, HttpTransport};
+use yuke_engine::{CancellationToken, Conversation, Driver, Observer, Timer, Tool, Toolset, TurnEvent};
 
 /// Return the argument text in uppercase.
 struct Uppercase;
@@ -30,11 +30,11 @@ impl Timer for TokioTimer {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = std::env::var("MINIMAX_API_KEY")?;
-    let target = ai::catalog::resolve("minimax/MiniMax-M3", ai::route::Credential::ApiKey(key.into()))?;
+    let target = yuke_ai::catalog::resolve("minimax/MiniMax-M3", yuke_ai::route::Credential::ApiKey(key.into()))?;
     let http = HttpTransport::new(HttpOptions::new("engine-example"))?;
     let mut toolset = Toolset::new();
     toolset.add(
-        ai::ToolDefinition::new(
+        yuke_ai::ToolDefinition::new(
             "uppercase",
             "Convert text to uppercase.",
             r#"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}"#,
@@ -72,7 +72,7 @@ impl Observer for Transcript {
                 println!("result {}", result.content);
                 self.tool_runs += 1;
             }
-            TurnEvent::Model(ai::Event::TextDelta(delta)) => self.answer.push_str(delta.text),
+            TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => self.answer.push_str(delta.text),
             _ => {}
         }
     }

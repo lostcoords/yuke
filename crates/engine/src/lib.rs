@@ -1,5 +1,5 @@
 //! Conversation execution through model and tool calls. A [`Conversation`] decides each step without I/O. A
-//! [`Driver`] carries out the steps over the caller's [`ai::transport::Transport`] and [`Toolset`], and asks the caller's
+//! [`Driver`] carries out the steps over the caller's [`yuke_ai::transport::Transport`] and [`Toolset`], and asks the caller's
 //! [`Hooks`] for decisions. The crate creates no async runtime.
 //!
 //! The engine sets no cap on the size of a tool result. A caller bounds a large result in [`Hooks::after_tool`]. A

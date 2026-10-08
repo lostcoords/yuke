@@ -1,9 +1,9 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ai::{Block, Settings, Target};
 use async_trait::async_trait;
-use engine::{CancellationToken, Conversation, Driver, Hooks, Outcome, RoundPlan, Toolset, TurnEvent};
+use yuke_ai::{Block, Settings, Target};
+use yuke_engine::{CancellationToken, Conversation, Driver, Hooks, Outcome, RoundPlan, Toolset, TurnEvent};
 
 use crate::support::{
     NoWait, Recorder, ScriptedTransport, block_on, definition, failed_reply, target, text_reply, tool_reply,
@@ -55,7 +55,7 @@ struct FirstRoundOnly {
 
 #[async_trait]
 impl Hooks for FirstRoundOnly {
-    async fn before_round(&self, _: &[Block], _: Option<&ai::Error>) -> RoundPlan {
+    async fn before_round(&self, _: &[Block], _: Option<&yuke_ai::Error>) -> RoundPlan {
         if self.rounds.fetch_add(1, Ordering::Relaxed) > 0 {
             return RoundPlan::default();
         }
@@ -100,7 +100,7 @@ struct SummarizeSecondRound {
 
 #[async_trait]
 impl Hooks for SummarizeSecondRound {
-    async fn before_round(&self, _: &[Block], _: Option<&ai::Error>) -> RoundPlan {
+    async fn before_round(&self, _: &[Block], _: Option<&yuke_ai::Error>) -> RoundPlan {
         if self.rounds.fetch_add(1, Ordering::Relaxed) != 1 {
             return RoundPlan::default();
         }
@@ -154,7 +154,7 @@ impl FallBack {
 
 #[async_trait]
 impl Hooks for FallBack {
-    async fn before_round(&self, _: &[Block], failure: Option<&ai::Error>) -> RoundPlan {
+    async fn before_round(&self, _: &[Block], failure: Option<&yuke_ai::Error>) -> RoundPlan {
         let Some(failure) = failure else {
             return RoundPlan::default();
         };
@@ -180,7 +180,7 @@ fn a_failed_round_runs_again_on_the_plan_target_in_the_same_turn() {
         driver
             .turn(&mut conversation, vec![Block::user_text("go")])
             .observer(&mut |event: &TurnEvent<'_>| match event {
-                TurnEvent::Model(ai::Event::TextDelta(delta)) => texts.push(delta.text.to_string()),
+                TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => texts.push(delta.text.to_string()),
                 TurnEvent::RoundFailed(_) => texts.push("[failed]".to_owned()),
                 _ => {}
             })
@@ -226,7 +226,7 @@ struct CancelBeforeRound(CancellationToken);
 
 #[async_trait]
 impl Hooks for CancelBeforeRound {
-    async fn before_round(&self, _: &[Block], _: Option<&ai::Error>) -> RoundPlan {
+    async fn before_round(&self, _: &[Block], _: Option<&yuke_ai::Error>) -> RoundPlan {
         self.0.cancel();
         std::future::pending().await
     }

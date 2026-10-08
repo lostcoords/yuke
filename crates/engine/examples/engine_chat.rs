@@ -13,16 +13,16 @@
 use std::io::{BufRead, Write};
 use std::time::Duration;
 
-use ai::{Block, HttpOptions, HttpTransport};
 use async_trait::async_trait;
-use engine::{CancellationToken, Conversation, Driver, Observer, Outcome, Timer, TurnEvent};
+use yuke_ai::{Block, HttpOptions, HttpTransport};
+use yuke_engine::{CancellationToken, Conversation, Driver, Observer, Outcome, Timer, TurnEvent};
 
 /// Print each piece of answer text when it arrives.
 struct PrintText;
 
 impl Observer for PrintText {
     fn event(&mut self, event: &TurnEvent<'_>) {
-        if let TurnEvent::Model(ai::Event::TextDelta(delta)) = event {
+        if let TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) = event {
             print!("{}", delta.text);
             std::io::stdout().flush().expect("Couldn't flush");
         }
@@ -48,10 +48,10 @@ impl Timer for TokioTimer {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = std::env::var("MINIMAX_API_KEY")?;
-    let target = ai::catalog::resolve("minimax/MiniMax-M3", ai::route::Credential::ApiKey(key.into()))?;
+    let target = yuke_ai::catalog::resolve("minimax/MiniMax-M3", yuke_ai::route::Credential::ApiKey(key.into()))?;
     let http = HttpTransport::new(HttpOptions::new("engine-example"))?;
 
-    let settings = ai::Settings::new().system(SYSTEM);
+    let settings = yuke_ai::Settings::new().system(SYSTEM);
     let driver = Driver::new(&http, &target, &TokioTimer).settings(&settings);
     let mut conversation = Conversation::new();
     let mut observer = PrintText;

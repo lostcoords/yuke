@@ -1,8 +1,8 @@
-use ai::{
+use yuke_ai::{
     AttemptError, AttemptInfo, Block, Completion, Content, Failure, FinishReason, Partial, ProviderKind, Reasoning,
     Response, ToolCall, ToolResult, Usage,
 };
-use engine::{Action, Conversation, Outcome};
+use yuke_engine::{Action, Conversation, Outcome};
 
 use crate::support::{assert_in_order, called_names, sent_body};
 

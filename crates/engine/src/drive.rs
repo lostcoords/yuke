@@ -6,14 +6,14 @@ use std::sync::{Mutex, PoisonError};
 use std::task::Poll;
 use std::time::Duration;
 
-use ai::retry::{self, Attempt};
-use ai::transport::Transport;
-use ai::{
+use async_trait::async_trait;
+use tokio_util::sync::CancellationToken;
+use yuke_ai::retry::{self, Attempt};
+use yuke_ai::transport::Transport;
+use yuke_ai::{
     AttemptError, BlobStore, Block, Encoder, Options, Partial, Reply, Request, Response, Settings, Target, ToolCall,
     ToolResult,
 };
-use async_trait::async_trait;
-use tokio_util::sync::CancellationToken;
 
 use crate::conversation::{Action, CANCELLED_REASON, Conversation, Outcome, not_executed};
 use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundPlan, ToolDecision};
@@ -25,7 +25,7 @@ use crate::tool::Toolset;
 #[non_exhaustive]
 pub enum TurnEvent<'a> {
     /// One event of a model reply, in source order.
-    Model(ai::Event<'a>),
+    Model(yuke_ai::Event<'a>),
 
     /// The driver handles this call. This event comes before [`Hooks::before_tool`], so a blocked call also has it.
     ToolStarted(&'a ToolCall),
@@ -35,7 +35,7 @@ pub enum TurnEvent<'a> {
 
     /// A round failed after its retries. The model events of the round came before it, and the history keeps none of
     /// them. The driver then asks [`Hooks::before_round`] whether the round runs again.
-    RoundFailed(&'a ai::Error),
+    RoundFailed(&'a yuke_ai::Error),
 
     /// An attempt failed, and the driver plans to send the same request again after `after`.
     RetryScheduled {
@@ -217,7 +217,7 @@ impl<'a> Driver<'a> {
         observer: &mut dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> Sent {
-        let mut failure: Option<ai::Error> = None;
+        let mut failure: Option<yuke_ai::Error> = None;
         loop {
             let Raced::Done(mut plan) = race(
                 self.hooks.before_round(conversation.history(), failure.as_ref()),
@@ -359,9 +359,9 @@ impl<'a> Turn<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an [`ai::Error`] when a request cannot be encoded, or when its last attempt fails. The history keeps the
+    /// Returns an [`yuke_ai::Error`] when a request cannot be encoded, or when its last attempt fails. The history keeps the
     /// input and no answer.
-    pub async fn run(self) -> Result<Outcome, ai::Error> {
+    pub async fn run(self) -> Result<Outcome, yuke_ai::Error> {
         let Turn {
             driver,
             conversation,
@@ -426,7 +426,7 @@ impl<'a> Turn<'a> {
 /// How a request ended.
 enum Sent {
     /// The request finished with this result.
-    Finished(Result<Response, ai::Error>),
+    Finished(Result<Response, yuke_ai::Error>),
     /// A cancel stopped the request. The output that the reply kept is here.
     Cancelled(Vec<Partial>),
 }

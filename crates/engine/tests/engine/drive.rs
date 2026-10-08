@@ -2,9 +2,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use ai::{Block, FinishReason, ToolCall, ToolResult};
 use async_trait::async_trait;
-use engine::{
+use yuke_ai::{Block, FinishReason, ToolCall, ToolResult};
+use yuke_engine::{
     CancellationToken, Conversation, Driver, DuplicateToolName, Hooks, Outcome, RoundDecision, Tool, ToolDecision,
     Toolset, TurnEvent,
 };
@@ -153,11 +153,13 @@ fn tool_error_reaches_the_model_and_the_turn_continues() {
 /// A short label for `event`, so a test can compare whole event lists.
 fn label(event: &TurnEvent<'_>) -> String {
     match event {
-        TurnEvent::Model(ai::Event::BlockStarted(started)) => format!("start {} {:?}", started.block, started.kind),
-        TurnEvent::Model(ai::Event::TextDelta(delta)) => format!("text {}", delta.text),
-        TurnEvent::Model(ai::Event::ToolInputDelta(delta)) => format!("arguments {} {}", delta.block, delta.text),
-        TurnEvent::Model(ai::Event::BlockStopped(stopped)) => format!("stop {}", stopped.block),
-        TurnEvent::Model(ai::Event::Done(done)) => format!("done {:?}", done.finish_reason),
+        TurnEvent::Model(yuke_ai::Event::BlockStarted(started)) => {
+            format!("start {} {:?}", started.block, started.kind)
+        }
+        TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => format!("text {}", delta.text),
+        TurnEvent::Model(yuke_ai::Event::ToolInputDelta(delta)) => format!("arguments {} {}", delta.block, delta.text),
+        TurnEvent::Model(yuke_ai::Event::BlockStopped(stopped)) => format!("stop {}", stopped.block),
+        TurnEvent::Model(yuke_ai::Event::Done(done)) => format!("done {:?}", done.finish_reason),
         TurnEvent::ToolStarted(call) => format!("tool {}", call.call_id),
         TurnEvent::ToolFinished(result) => format!("result {} {}", result.call_id, result.content),
         TurnEvent::RoundFailed(_) => "round failed".to_owned(),
@@ -233,10 +235,10 @@ fn failed_reply_delivers_its_events_then_fails_with_the_partial_output() {
     );
 
     assert_eq!(seen, ["start 0 Text", "text cut", "round failed"]);
-    let Err(ai::Error::Attempt(error)) = outcome else {
+    let Err(yuke_ai::Error::Attempt(error)) = outcome else {
         panic!("expected a failed attempt, got {outcome:?}");
     };
-    assert_eq!(error.partial, [ai::Partial::Text("cut".to_owned())]);
+    assert_eq!(error.partial, [yuke_ai::Partial::Text("cut".to_owned())]);
     assert_eq!(conversation.history(), [Block::user_text("go")]);
 }
 
@@ -272,7 +274,7 @@ fn retry_sends_the_same_request_bytes_and_the_observer_sees_the_wait() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0], requests[1]);
     assert_eq!(waits.waits(), retries);
-    assert_eq!(causes, [ai::Failure::Provider(ai::ProviderKind::ServerError)]);
+    assert_eq!(causes, [yuke_ai::Failure::Provider(yuke_ai::ProviderKind::ServerError)]);
     // The first backoff keeps 75% to 100% of 500 ms.
     assert_eq!(retries.len(), 1);
     assert!((Duration::from_millis(375)..=Duration::from_millis(500)).contains(&retries[0]));
@@ -619,7 +621,7 @@ fn cancel_during_the_stream_keeps_the_partial_text_and_delivers_every_event() {
             .turn(&mut conversation, vec![Block::user_text("go")])
             .observer(&mut |event: &TurnEvent<'_>| {
                 seen.push(label(event));
-                if matches!(event, TurnEvent::Model(ai::Event::TextDelta(_))) {
+                if matches!(event, TurnEvent::Model(yuke_ai::Event::TextDelta(_))) {
                     cancellation_token.cancel();
                 }
             })
