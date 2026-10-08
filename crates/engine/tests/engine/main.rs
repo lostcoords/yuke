@@ -6,6 +6,7 @@
     reason = "a test fails by panicking"
 )]
 
+mod after_tool;
 mod conversation;
 mod drive;
 mod support;

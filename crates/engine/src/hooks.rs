@@ -1,7 +1,7 @@
 //! Caller decisions during a turn. The driver awaits each hook, and the answer decides the next step. An observer
 //! only watches.
 
-use ai::{Block, ToolCall};
+use ai::{Block, ToolCall, ToolResult};
 use async_trait::async_trait;
 
 /// The decisions of a caller at the boundaries of a turn. Each method has a default that changes nothing, so a
@@ -11,6 +11,13 @@ pub trait Hooks: Send + Sync {
     /// Decide whether `call` runs. The driver asks before each call.
     async fn before_tool(&self, _call: &ToolCall) -> ToolDecision {
         ToolDecision::Run
+    }
+
+    /// Return a replacement for the `result` of `call`, or `None` to keep it. The driver asks after each call that
+    /// [`Hooks::before_tool`] lets run. A replacement keeps the call id. A cancel during this hook keeps the result.
+    /// The engine sets no cap on a result, so a caller bounds a large result here.
+    async fn after_tool(&self, _call: &ToolCall, _result: &ToolResult) -> Option<ToolResult> {
+        None
     }
 
     /// Decide whether the turn continues. The driver asks after each answer, when the answer and its tool results are

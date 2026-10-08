@@ -393,12 +393,16 @@ impl From<ToolCallRef<'_>> for ToolCall {
 pub struct ToolResult {
     /// The call this result answers.
     pub call_id: String,
+
     /// The result text.
     pub content: String,
+
     /// The call failed.
     pub is_error: bool,
+
     /// Attachments beside the text. Each protocol places them where its result shape allows.
     pub media: Vec<Media>,
+
     /// The deferred tools this result loads. Anthropic references each one by name. Responses answers its search
     /// with the declarations.
     pub loaded: Vec<ToolDefinition>,

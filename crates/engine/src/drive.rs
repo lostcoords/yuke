@@ -141,6 +141,30 @@ impl<'a> Driver<'a> {
         Driver { inbox, ..self }
     }
 
+    /// Run `call` when the hooks let it run, and return its result.
+    async fn call_tool(&self, call: &ToolCall, cancellation_token: &CancellationToken) -> ToolResult {
+        match race(self.hooks.before_tool(call), pin!(cancellation_token.cancelled())).await {
+            Raced::Done(ToolDecision::Run) => {
+                let result = self.toolset.call(call, cancellation_token).await;
+                match race(
+                    self.hooks.after_tool(call, &result),
+                    pin!(cancellation_token.cancelled()),
+                )
+                .await
+                {
+                    // The result answers this call, so a replacement keeps its call id.
+                    Raced::Done(Some(replacement)) => ToolResult {
+                        call_id: result.call_id,
+                        ..replacement
+                    },
+                    Raced::Done(None) | Raced::Cancelled => result,
+                }
+            }
+            Raced::Done(ToolDecision::Block(reason)) => ToolResult::error(&call.call_id, reason),
+            Raced::Cancelled => not_executed(call, CANCELLED_REASON),
+        }
+    }
+
     /// The turn of `input` on `conversation`. [`Turn::run`] runs it.
     pub fn turn<'t>(&self, conversation: &'t mut Conversation, input: Vec<Block>) -> Turn<'t>
     where
@@ -291,12 +315,7 @@ impl<'a> Turn<'a> {
                     let mut results = Vec::new();
                     for call in calls {
                         observer.event(&TurnEvent::ToolStarted(call));
-                        let result =
-                            match race(driver.hooks.before_tool(call), pin!(cancellation_token.cancelled())).await {
-                                Raced::Done(ToolDecision::Run) => driver.toolset.call(call, &cancellation_token).await,
-                                Raced::Done(ToolDecision::Block(reason)) => ToolResult::error(&call.call_id, reason),
-                                Raced::Cancelled => not_executed(call, CANCELLED_REASON),
-                            };
+                        let result = driver.call_tool(call, &cancellation_token).await;
 
                         observer.event(&TurnEvent::ToolFinished(&result));
                         results.push(result);
