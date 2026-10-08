@@ -31,7 +31,7 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: AnthropicWire
             jw.key("format");
             jw.begin_object();
             jw.field_str("type", "json_schema");
-            jw.field_raw("schema", output.schema);
+            jw.field_raw("schema", &output.schema);
             jw.end_object();
         }
         jw.end_object();
@@ -546,7 +546,7 @@ mod tests {
             anthropic(8),
             Request::new(&blocks)
                 .max_output_tokens(8)
-                .output_schema(OutputSchema::new(r#"{"type":"object"}"#)),
+                .output_schema(&OutputSchema::new(r#"{"type":"object"}"#)),
         );
     }
 
@@ -560,7 +560,7 @@ mod tests {
             Request::new(&blocks)
                 .max_output_tokens(8)
                 .effort(Effort::High)
-                .output_schema(OutputSchema::new(r#"{"type":"object"}"#)),
+                .output_schema(&OutputSchema::new(r#"{"type":"object"}"#)),
         );
     }
 

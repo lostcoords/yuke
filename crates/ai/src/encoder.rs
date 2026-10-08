@@ -290,7 +290,9 @@ mod tests {
             .effort(crate::Effort::High)
             .temperature(0.5)
             .tool_choice(crate::ToolChoice::None)
-            .session_id("s1");
+            .session_id("s1")
+            .output_schema(crate::OutputSchema::new(r#"{"type":"object"}"#));
+        let schema = crate::OutputSchema::new(r#"{"type":"object"}"#);
         for wire in ALL_WIRES {
             let by_setters = Request::new(&blocks)
                 .system("be brief")
@@ -298,7 +300,8 @@ mod tests {
                 .effort(crate::Effort::High)
                 .temperature(0.5)
                 .tool_choice(crate::ToolChoice::None)
-                .session_id("s1");
+                .session_id("s1")
+                .output_schema(&schema);
             let by_settings = Request::new(&blocks).settings(&settings);
             let encode = |request| body(&Encoder::new().encode(&target_of("m", wire), request).unwrap());
             assert_eq!(encode(by_settings), encode(by_setters), "{wire:?}");

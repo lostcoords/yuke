@@ -490,23 +490,24 @@ impl ToolDefinition {
     }
 }
 
-/// Constrain the response to a JSON Schema. The provider enforces it while it samples.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct OutputSchema<'a> {
+/// Ask for a response that matches a JSON Schema. Anthropic, and OpenAI with a strict schema, enforce it while
+/// they sample.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OutputSchema {
     /// The schema name OpenAI requires. Anthropic takes no name.
-    pub name: &'a str,
+    pub name: String,
     /// A JSON Schema object text, written verbatim. The caller checks it.
-    pub schema: &'a str,
+    pub schema: String,
     /// OpenAI strict mode. A non-strict schema gives no guarantee.
     pub strict: bool,
 }
 
-impl<'a> OutputSchema<'a> {
+impl OutputSchema {
     /// A strict schema named `response`.
-    pub fn new(schema: &'a str) -> Self {
+    pub fn new(schema: impl Into<String>) -> Self {
         OutputSchema {
-            name: "response",
-            schema,
+            name: "response".to_owned(),
+            schema: schema.into(),
             strict: true,
         }
     }
@@ -740,6 +741,8 @@ pub struct Settings {
     pub tool_choice: ToolChoice,
     /// A stable session ID for routing and the Responses cache key. An empty ID writes none.
     pub session_id: String,
+    /// The schema of the response. `None` leaves the response free.
+    pub output_schema: Option<OutputSchema>,
 }
 
 impl Settings {
@@ -756,6 +759,7 @@ impl Settings {
             top_p: None,
             tool_choice: ToolChoice::Auto,
             session_id: String::new(),
+            output_schema: None,
         }
     }
 
@@ -841,6 +845,15 @@ impl Settings {
             ..self
         }
     }
+
+    /// The schema of the response.
+    #[must_use]
+    pub fn output_schema(self, schema: OutputSchema) -> Self {
+        Settings {
+            output_schema: Some(schema),
+            ..self
+        }
+    }
 }
 
 impl Default for Settings {
@@ -859,7 +872,7 @@ pub struct Request<'a> {
     pub(crate) blobs: Option<&'a dyn BlobStore>,
     pub(crate) max_output_tokens: Option<u32>,
     pub(crate) reasoning: ReasoningSettings,
-    pub(crate) output_schema: Option<OutputSchema<'a>>,
+    pub(crate) output_schema: Option<&'a OutputSchema>,
     pub(crate) temperature: Option<f64>,
     pub(crate) top_p: Option<f64>,
     pub(crate) tool_choice: ToolChoice,
@@ -897,6 +910,7 @@ impl<'a> Request<'a> {
             top_p: settings.top_p,
             tool_choice: settings.tool_choice,
             session_id: &settings.session_id,
+            output_schema: settings.output_schema.as_ref(),
             ..self
         }
     }
@@ -964,7 +978,7 @@ impl<'a> Request<'a> {
 
     /// Constrain the response to a schema. Without one, the response is free.
     #[must_use]
-    pub fn output_schema(self, schema: OutputSchema<'a>) -> Self {
+    pub fn output_schema(self, schema: &'a OutputSchema) -> Self {
         Request {
             output_schema: Some(schema),
             ..self

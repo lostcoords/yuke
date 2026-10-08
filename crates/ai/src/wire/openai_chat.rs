@@ -48,8 +48,8 @@ pub(crate) fn write_head(
         jw.field_str("type", "json_schema");
         jw.key("json_schema");
         jw.begin_object();
-        jw.field_str("name", output.name);
-        jw.field_raw("schema", output.schema);
+        jw.field_str("name", &output.name);
+        jw.field_raw("schema", &output.schema);
         jw.field_bool("strict", output.strict);
         jw.end_object();
         jw.end_object();
@@ -814,24 +814,22 @@ mod tests {
     #[test]
     fn schema_uses_response_format() {
         let blocks = [Block::user_text("go")];
-        let person = OutputSchema {
-            name: "person",
+        let mut schema = OutputSchema {
+            name: "person".to_owned(),
             ..OutputSchema::new(r#"{"type":"object"}"#)
         };
-        for (schema, expected) in [
+        for (strict, expected) in [
             (
-                person,
+                true,
                 r#"{"model":"m","stream":true,"stream_options":{"include_usage":true},"max_tokens":8,"response_format":{"type":"json_schema","json_schema":{"name":"person","schema":{"type":"object"},"strict":true}},"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}"#,
             ),
             (
-                OutputSchema {
-                    strict: false,
-                    ..person
-                },
+                false,
                 r#"{"model":"m","stream":true,"stream_options":{"include_usage":true},"max_tokens":8,"response_format":{"type":"json_schema","json_schema":{"name":"person","schema":{"type":"object"},"strict":false}},"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}"#,
             ),
         ] {
-            expect_json(expected, "m", chat(), request(&blocks).output_schema(schema));
+            schema.strict = strict;
+            expect_json(expected, "m", chat(), request(&blocks).output_schema(&schema));
         }
     }
 

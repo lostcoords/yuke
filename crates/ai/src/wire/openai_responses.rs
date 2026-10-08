@@ -42,8 +42,8 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire
         jw.key("format");
         jw.begin_object();
         jw.field_str("type", "json_schema");
-        jw.field_str("name", output.name);
-        jw.field_raw("schema", output.schema);
+        jw.field_str("name", &output.name);
+        jw.field_raw("schema", &output.schema);
         jw.field_bool("strict", output.strict);
         jw.end_object();
         jw.end_object();
@@ -532,7 +532,7 @@ mod tests {
         let blocks = [Block::user_text("go")];
         let request = Request::new(&blocks).max_output_tokens(8);
         let mut schema = OutputSchema {
-            name: "person",
+            name: "person".to_owned(),
             ..OutputSchema::new(r#"{"type":"object"}"#)
         };
         for (strict, expected) in [
@@ -546,7 +546,7 @@ mod tests {
             ),
         ] {
             schema.strict = strict;
-            expect_json(expected, "gpt-5", responses(), request.output_schema(schema));
+            expect_json(expected, "gpt-5", responses(), request.output_schema(&schema));
         }
     }
 
