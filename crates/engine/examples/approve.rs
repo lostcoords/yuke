@@ -13,7 +13,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use yuke_ai::{Block, HttpOptions, HttpTransport, ToolCall};
 use yuke_engine::{
-    CancellationToken, Conversation, Driver, Hooks, Observer, Outcome, RoundDecision, Timer, Tool, ToolDecision,
+    Conversation, Driver, Hooks, Observer, Outcome, RoundDecision, Timer, Tool, ToolContent, ToolContext, ToolDecision,
     Toolset, TurnEvent,
 };
 
@@ -25,8 +25,8 @@ struct Uppercase;
 
 #[async_trait]
 impl Tool for Uppercase {
-    async fn call(&self, arguments: &str, _: &CancellationToken) -> Result<String, String> {
-        Ok(arguments.to_uppercase())
+    async fn call(&self, arguments: &str, _: &mut ToolContext<'_>) -> Result<ToolContent, String> {
+        Ok(arguments.to_uppercase().into())
     }
 }
 

@@ -14,7 +14,7 @@ use bytes::Bytes;
 use yuke_ai::route::{Credential, Route};
 use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 use yuke_ai::{AnthropicWire, Encoder, Request, Target, Wire};
-use yuke_engine::{Action, CancellationToken, Inbox, Timer, Tool};
+use yuke_engine::{Action, CancellationToken, Inbox, Timer, Tool, ToolContent, ToolContext};
 
 /// An Anthropic target at a test host, with no credential.
 pub(crate) fn target() -> Target {
@@ -145,10 +145,10 @@ impl Recorder {
 
 #[async_trait]
 impl Tool for Recorder {
-    async fn call(&self, arguments: &str, _: &CancellationToken) -> Result<String, String> {
+    async fn call(&self, arguments: &str, _: &mut ToolContext<'_>) -> Result<ToolContent, String> {
         let mut calls = self.calls.lock().unwrap();
         calls.push(arguments.to_owned());
-        Ok(format!("result {}", calls.len()))
+        Ok(format!("result {}", calls.len()).into())
     }
 }
 

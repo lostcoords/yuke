@@ -5,15 +5,24 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use yuke_ai::{Block, HttpOptions, HttpTransport};
-use yuke_engine::{CancellationToken, Conversation, Driver, Observer, Timer, Tool, Toolset, TurnEvent};
+use yuke_engine::{
+    Conversation, Driver, Observer, Timer, Tool, ToolContent, ToolContext, Toolset, TurnEvent, parse_arguments,
+};
 
-/// Return the argument text in uppercase.
+/// Return the text in uppercase. The tool parses its arguments into a struct first.
 struct Uppercase;
+
+/// The arguments of [`Uppercase`].
+#[derive(serde::Deserialize)]
+struct UppercaseArguments {
+    text: String,
+}
 
 #[async_trait]
 impl Tool for Uppercase {
-    async fn call(&self, arguments: &str, _: &CancellationToken) -> Result<String, String> {
-        Ok(arguments.to_uppercase())
+    async fn call(&self, arguments: &str, _: &mut ToolContext<'_>) -> Result<ToolContent, String> {
+        let arguments: UppercaseArguments = parse_arguments(arguments)?;
+        Ok(arguments.text.to_uppercase().into())
     }
 }
 

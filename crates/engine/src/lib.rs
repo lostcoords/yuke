@@ -14,4 +14,4 @@ pub use conversation::{Action, Conversation, Outcome, ToolCalls, ToolCallsIter};
 pub use drive::{Driver, Inbox, Observer, Timer, Turn, TurnEvent};
 pub use hooks::{Hooks, RoundDecision, RoundPlan, ToolDecision};
 pub use tokio_util::sync::CancellationToken;
-pub use tool::{DuplicateToolName, Tool, Toolset};
+pub use tool::{DuplicateToolName, Tool, ToolContent, ToolContext, Toolset, parse_arguments};

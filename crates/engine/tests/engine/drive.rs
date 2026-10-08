@@ -5,8 +5,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason, ToolCall, ToolResult};
 use yuke_engine::{
-    CancellationToken, Conversation, Driver, DuplicateToolName, Hooks, Outcome, RoundDecision, Tool, ToolDecision,
-    Toolset, TurnEvent,
+    CancellationToken, Conversation, Driver, DuplicateToolName, Hooks, Outcome, RoundDecision, Tool, ToolContent,
+    ToolContext, ToolDecision, Toolset, TurnEvent,
 };
 
 use crate::support::{
@@ -123,7 +123,7 @@ struct Fails;
 
 #[async_trait]
 impl Tool for Fails {
-    async fn call(&self, _: &str, _: &CancellationToken) -> Result<String, String> {
+    async fn call(&self, _: &str, _: &mut ToolContext<'_>) -> Result<ToolContent, String> {
         Err("disk full".to_owned())
     }
 }
@@ -549,9 +549,9 @@ struct CancelDuringCall(CancellationToken);
 
 #[async_trait]
 impl Tool for CancelDuringCall {
-    async fn call(&self, _: &str, cancellation_token: &CancellationToken) -> Result<String, String> {
+    async fn call(&self, _: &str, context: &mut ToolContext<'_>) -> Result<ToolContent, String> {
         self.0.cancel();
-        assert!(cancellation_token.is_cancelled());
+        assert!(context.cancellation_token().is_cancelled());
         yield_once().await;
         Err("step 1 done\nCommand aborted".to_owned())
     }

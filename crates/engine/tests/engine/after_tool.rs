@@ -3,7 +3,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use yuke_ai::{Block, ToolCall, ToolResult};
-use yuke_engine::{CancellationToken, Conversation, Driver, Hooks, Outcome, Tool, ToolDecision, Toolset, TurnEvent};
+use yuke_engine::{
+    CancellationToken, Conversation, Driver, Hooks, Outcome, Tool, ToolContent, ToolContext, ToolDecision, Toolset,
+    TurnEvent,
+};
 
 use crate::support::{NoWait, ScriptedTransport, block_on, definition, target, text_reply, tool_reply};
 
@@ -12,8 +15,8 @@ struct Answers(&'static str);
 
 #[async_trait]
 impl Tool for Answers {
-    async fn call(&self, _: &str, _: &CancellationToken) -> Result<String, String> {
-        Ok(self.0.to_owned())
+    async fn call(&self, _: &str, _: &mut ToolContext<'_>) -> Result<ToolContent, String> {
+        Ok(self.0.into())
     }
 }
 

@@ -17,7 +17,7 @@ use yuke_ai::{
 
 use crate::conversation::{Action, CANCELLED_REASON, Conversation, Outcome, not_executed};
 use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundPlan, ToolDecision};
-use crate::tool::Toolset;
+use crate::tool::{ToolContext, Toolset};
 
 /// One fact of a turn, for an observer. It borrows turn data until the observer returns, so an observer copies the
 /// data that it keeps.
@@ -30,6 +30,15 @@ pub enum TurnEvent<'a> {
     /// The driver handles this call. This event comes before [`Hooks::before_tool`], so a blocked call also has it.
     ToolStarted(&'a ToolCall),
 
+    /// A running call showed live output through [`ToolContext::output`]. The model never sees it.
+    ToolOutput {
+        /// The id of the call.
+        call_id: &'a str,
+
+        /// The output text.
+        text: &'a str,
+    },
+
     /// A call finished with this result.
     ToolFinished(&'a ToolResult),
 
@@ -41,6 +50,7 @@ pub enum TurnEvent<'a> {
     RetryScheduled {
         /// The wait before the next attempt.
         after: Duration,
+
         /// The failed attempt.
         error: &'a AttemptError,
     },
@@ -155,11 +165,21 @@ impl<'a> Driver<'a> {
         Driver { inbox, ..self }
     }
 
-    /// Run `call` when the hooks let it run, and return its result.
-    async fn call_tool(&self, call: &ToolCall, cancellation_token: &CancellationToken) -> ToolResult {
+    /// Run `call` when its arguments are valid JSON and the hooks let it run, and return its result.
+    async fn call_tool(
+        &self,
+        call: &ToolCall,
+        observer: &mut dyn Observer,
+        cancellation_token: &CancellationToken,
+    ) -> ToolResult {
+        // The parse error goes to the model before a hook or the tool receives the call. The model can send it again.
+        if let Err(error) = serde_json::from_str::<serde::de::IgnoredAny>(&call.arguments) {
+            return not_executed(call, &format!("its arguments are not valid JSON: {error}."));
+        }
         match race(self.hooks.before_tool(call), pin!(cancellation_token.cancelled())).await {
             Raced::Done(ToolDecision::Run) => {
-                let result = self.toolset.call(call, cancellation_token).await;
+                let mut context = ToolContext::new(call, cancellation_token, observer);
+                let result = self.toolset.call(call, &mut context).await;
                 match race(
                     self.hooks.after_tool(call, &result),
                     pin!(cancellation_token.cancelled()),
@@ -395,7 +415,7 @@ impl<'a> Turn<'a> {
                     let mut results = Vec::new();
                     for call in calls {
                         observer.event(&TurnEvent::ToolStarted(call));
-                        let result = driver.call_tool(call, &cancellation_token).await;
+                        let result = driver.call_tool(call, observer, &cancellation_token).await;
 
                         observer.event(&TurnEvent::ToolFinished(&result));
                         results.push(result);
