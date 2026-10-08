@@ -8,7 +8,7 @@ use crate::response::{BlockKind, BlockResult, Event, ResponseLimits};
 use crate::testing::block_on;
 use crate::wire::json::escape_into;
 
-use super::turn::{DecodeError, Turn};
+use super::draft::{DecodeError, Draft};
 use super::{Reduce, Stream};
 
 /// A test harness. It holds a reducer, the trace of its events, and the first provider failure of any payload.
@@ -31,24 +31,24 @@ impl<R: Reduce> Harness<R> {
             base_url: "https://example.test/v1".into(),
         };
         Harness {
-            reducer: R::new(Turn::new(origin, limits)),
+            reducer: R::new(Draft::new(origin, limits)),
             failed: None,
             lines: Vec::new(),
         }
     }
 
-    /// Decode each payload. The turn keeps every event, because the harness never clears them. The first failure
+    /// Decode each payload, and record its events as trace lines before the draft clears them. The first failure
     /// stays.
     pub(crate) fn feed(&mut self, payloads: &[&str]) -> Result<(), DecodeError> {
         for payload in payloads {
             // A stream reads nothing after the end of an answer.
-            assert!(!self.reducer.turn().done, "a payload after the end of the answer");
-            self.reducer.turn_mut().begin_payload(payload);
+            assert!(!self.reducer.draft().done, "a payload after the end of the answer");
+            self.reducer.draft_mut().begin_payload(payload);
             let decoded = self.reducer.decode(payload);
-            let turn = self.reducer.turn();
+            let draft = self.reducer.draft();
             self.lines
-                .extend((0..turn.pending()).map(|i| trace_line(&turn.event(i, payload))));
-            self.reducer.turn_mut().clear_events();
+                .extend((0..draft.pending()).map(|i| trace_line(&draft.event(i, payload))));
+            self.reducer.draft_mut().clear_events();
             self.failed = self.failed.or(decoded?);
         }
         Ok(())

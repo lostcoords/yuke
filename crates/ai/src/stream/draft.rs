@@ -1,5 +1,5 @@
-//! The block table and turn end that the three reducers share. A pending delta borrows the payload that holds its
-//! text, and the turn copies any other text.
+//! The block table and the response end that the three reducers share. A pending delta borrows the payload that
+//! holds its text, and the draft copies any other text.
 
 use std::ops::Range;
 
@@ -51,7 +51,7 @@ pub(crate) struct Block {
 enum Text {
     /// A range of the current payload.
     Payload(Range<usize>),
-    /// A range of [`Turn::text`]: an escaped string or a separator.
+    /// A range of [`Draft::text`]: an escaped string or a separator.
     Copied(Range<usize>),
 }
 
@@ -66,19 +66,19 @@ enum Pending {
     Done,
 }
 
-/// Which field of a tool block [`Turn::identify`] sets.
+/// Which field of a tool block [`Draft::identify`] sets.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ToolField {
     CallId,
     Name,
 }
 
-/// The blocks and the turn end of one response.
+/// The blocks and the end of one response, while the response streams.
 #[derive(Debug)]
-pub(crate) struct Turn {
+pub(crate) struct Draft {
     /// The model and host that answer. Every reasoning state names it.
     origin: Origin,
-    /// The bounds on the blocks and the tool arguments of this turn.
+    /// The bounds on the blocks and the tool arguments of this draft.
     pub(crate) limits: ResponseLimits,
     pub(crate) blocks: Vec<Block>,
     /// The events of the current payload. The stream clears them once it has handed out every event.
@@ -93,9 +93,9 @@ pub(crate) struct Turn {
     pub(crate) done: bool,
 }
 
-impl Turn {
+impl Draft {
     pub(crate) fn new(origin: Origin, limits: ResponseLimits) -> Self {
-        Turn {
+        Draft {
             origin,
             limits,
             blocks: Vec::new(),
@@ -126,7 +126,7 @@ impl Turn {
         self.payload = start..start + payload.len();
     }
 
-    /// Lend the pending event at `index`. `payload` is the payload that [`Turn::begin_payload`] began.
+    /// Lend the pending event at `index`. `payload` is the payload that [`Draft::begin_payload`] began.
     pub(crate) fn event<'t>(&'t self, index: usize, payload: &'t str) -> Event<'t> {
         debug_assert_eq!(
             payload.as_ptr().addr()..payload.as_ptr().addr() + payload.len(),
@@ -319,7 +319,7 @@ impl Turn {
         self.finish_reason = finish_reason;
     }
 
-    /// Close every open block, then end the turn. An open tool holds partial arguments, so `drop_open_tools` drops it
+    /// Close every open block, then end the draft. An open tool holds partial arguments, so `drop_open_tools` drops it
     /// rather than reporting an unfinished call.
     pub(crate) fn close_and_finish(&mut self, drop_open_tools: bool) -> Result<(), DecodeError> {
         for index in 0..self.blocks.len() {
@@ -338,7 +338,7 @@ impl Turn {
         Ok(())
     }
 
-    /// End the turn, which holds no open block. A stopped refusal turns `Stop` or `ToolCalls` into `Refusal`, but a
+    /// End the draft, which holds no open block. A stopped refusal turns `Stop` or `ToolCalls` into `Refusal`, but a
     /// token limit or a content filter stays the reason, as in the OpenAI SDK.
     pub(crate) fn finish(&mut self) {
         debug_assert!(!self.done);
@@ -359,8 +359,8 @@ impl Turn {
 mod tests {
     use super::*;
 
-    fn turn(limits: ResponseLimits) -> Turn {
-        Turn::new(
+    fn draft(limits: ResponseLimits) -> Draft {
+        Draft::new(
             Origin {
                 model: "m".into(),
                 base_url: "https://example.test/v1".into(),
@@ -371,35 +371,35 @@ mod tests {
 
     #[test]
     fn tool_argument_limit_rejects_before_mutation() {
-        let mut turn = turn(ResponseLimits {
+        let mut draft = draft(ResponseLimits {
             max_tool_arg_bytes: 8,
             ..ResponseLimits::default()
         });
-        let id = turn.start(BlockKind::ToolCall).unwrap();
-        turn.tool_delta(id, "xxxxxxxx").unwrap();
-        let before = turn.pending();
-        assert_eq!(turn.tool_delta(id, "x"), Err(DecodeError::TooLarge));
-        assert_eq!(turn.blocks[id as usize].bytes.len(), 8);
-        assert_eq!(turn.pending(), before);
+        let id = draft.start(BlockKind::ToolCall).unwrap();
+        draft.tool_delta(id, "xxxxxxxx").unwrap();
+        let before = draft.pending();
+        assert_eq!(draft.tool_delta(id, "x"), Err(DecodeError::TooLarge));
+        assert_eq!(draft.blocks[id as usize].bytes.len(), 8);
+        assert_eq!(draft.pending(), before);
     }
 
     #[test]
     fn delta_borrows_payload_or_copies() {
-        let mut turn = turn(ResponseLimits::default());
+        let mut draft = draft(ResponseLimits::default());
         let payload = String::from("{\"text\":\"Hello\"}");
-        turn.begin_payload(&payload);
-        let id = turn.start(BlockKind::Text).unwrap();
-        turn.delta(id, &payload[9..14]).unwrap();
-        turn.delta(id, "\n\n").unwrap();
-        let Event::TextDelta(inside) = turn.event(1, &payload) else {
+        draft.begin_payload(&payload);
+        let id = draft.start(BlockKind::Text).unwrap();
+        draft.delta(id, &payload[9..14]).unwrap();
+        draft.delta(id, "\n\n").unwrap();
+        let Event::TextDelta(inside) = draft.event(1, &payload) else {
             panic!()
         };
         assert_eq!(inside.text, "Hello");
         assert_eq!(inside.text.as_ptr(), payload[9..].as_ptr());
-        let Event::TextDelta(outside) = turn.event(2, &payload) else {
+        let Event::TextDelta(outside) = draft.event(2, &payload) else {
             panic!()
         };
         assert_eq!(outside.text, "\n\n");
-        assert_eq!(turn.text, "\n\n");
+        assert_eq!(draft.text, "\n\n");
     }
 }

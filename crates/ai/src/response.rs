@@ -7,7 +7,7 @@ use crate::encoder::EncodeError;
 use crate::failure::Failure;
 use crate::request::{Block, Reasoning, ReasoningReplayRef, ToolCall, ToolCallRef};
 
-/// Why a turn ended. At `Length` a tool call can hold cut-off arguments, so do not run a call of that turn.
+/// Why a response ended. At `Length` a tool call can hold cut-off arguments, so do not run such a call.
 /// `Pause` marks an Anthropic server-tool loop at its iteration cap. The same content resumes the loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -70,7 +70,7 @@ pub struct ResponseLimits {
     pub max_event_bytes: usize,
     /// The joined arguments of one tool call. No model emits more than its output limit.
     pub max_tool_arg_bytes: usize,
-    /// The blocks of one turn, with the provider blocks and output items that the library ignores.
+    /// The blocks of one response, with the provider blocks and output items that the library ignores.
     pub max_blocks: u32,
     /// The bytes of an error answer that [`AttemptInfo::error_body`] keeps.
     pub max_error_body_bytes: usize,
@@ -155,7 +155,7 @@ pub enum Event<'a> {
     ToolInputDelta(Delta<'a>),
     /// A block finishes, with what deltas cannot carry.
     BlockStopped(BlockStopped<'a>),
-    /// The turn ends. The stream reads nothing after it.
+    /// The response ends. The stream reads nothing after it.
     Done(Done<'a>),
 }
 
@@ -200,7 +200,7 @@ pub struct BlockStopped<'a> {
     pub result: BlockResult<'a>,
 }
 
-/// The end of the turn. `finish_reason` uses the closed set. `raw_finish_reason` keeps the provider value.
+/// The end of the response. `finish_reason` uses the closed set. `raw_finish_reason` keeps the provider value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Done<'a> {
     /// The reason in the closed set.

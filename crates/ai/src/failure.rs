@@ -58,12 +58,16 @@ impl fmt::Display for ProviderKind {
 pub enum Failure {
     /// The provider answered with an error.
     Provider(ProviderKind),
+
     /// The transport failed.
     Transport(Fault),
+
     /// The stream broke the protocol.
     Protocol,
+
     /// The response exceeded a bound in [`crate::ResponseLimits`].
     ResponseTooLarge,
+
     /// The stream ended before its terminal event.
     IncompleteStream,
 }

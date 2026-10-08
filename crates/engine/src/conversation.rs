@@ -1,7 +1,7 @@
 //! The decisions of one conversation. A [`Conversation`] does no I/O, reads no clock, and never awaits. Each call
 //! that feeds it a fact returns the next [`Action`].
 
-use ai::{Block, FinishReason, Response, ToolCall, ToolResult};
+use ai::{Block, FinishReason, Partial, Response, Role, ToolCall, ToolResult};
 
 /// The history of one conversation.
 #[derive(Debug, Default)]
@@ -28,29 +28,49 @@ pub enum Action<'a> {
     /// [`Conversation::stop`]. The blocks are the whole history.
     AfterRound(&'a [Block]),
 
-    /// The turn ended.
-    Done(Outcome),
+    /// The turn ended. `Err` holds the failure of a request, and the history keeps the input and no answer.
+    Done(Result<Outcome, ai::Error>),
 }
 
 /// The tool calls of one answer. It borrows the blocks of the answer, so the calls are not copied.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct ToolCalls<'a> {
     blocks: &'a [Block],
 }
 
-impl<'a> ToolCalls<'a> {
-    /// The calls, in answer order.
-    pub fn iter(&self) -> impl Iterator<Item = &'a ToolCall> + use<'a> {
-        self.blocks.iter().filter_map(|block| match block {
+impl<'a> IntoIterator for ToolCalls<'a> {
+    type Item = &'a ToolCall;
+    type IntoIter = ToolCallsIter<'a>;
+
+    fn into_iter(self) -> ToolCallsIter<'a> {
+        ToolCallsIter {
+            blocks: self.blocks.iter(),
+        }
+    }
+}
+
+/// The iterator over the calls of [`ToolCalls`], in answer order.
+#[derive(Debug, Clone)]
+pub struct ToolCallsIter<'a> {
+    blocks: std::slice::Iter<'a, Block>,
+}
+
+// The slice iterator stays empty after its end, so this iterator does too.
+impl std::iter::FusedIterator for ToolCallsIter<'_> {}
+
+impl<'a> Iterator for ToolCallsIter<'a> {
+    type Item = &'a ToolCall;
+
+    fn next(&mut self) -> Option<&'a ToolCall> {
+        self.blocks.find_map(|block| match block {
             Block::ToolCall(call) => Some(call),
             _ => None,
         })
     }
 }
 
-/// How a turn ended.
+/// How a turn ended without a failure.
 #[derive(Debug, Clone)]
-#[must_use = "a turn can fail, so check the outcome"]
 pub enum Outcome {
     /// The turn ended with an answer of the model, and the answer joined the history. A filter or a refusal answer
     /// can hold calls that did not run.
@@ -63,23 +83,9 @@ pub enum Outcome {
     /// results of that round.
     Stopped,
 
-    /// The request failed. The history keeps the input and no answer.
-    Failed(ai::Error),
-}
-
-/// Holds the input that arrives during a turn. [`Conversation::proceed`] takes it after each round. Thus input never
-/// changes a request in flight.
-pub trait Inbox: Send {
-    /// Remove and return the input that arrived since the last call. Return at once, with an empty `Vec` when none
-    /// arrived.
-    fn take(&mut self) -> Vec<Block>;
-}
-
-// A `Vec` is the simplest inbox. An empty one means no input.
-impl Inbox for Vec<Block> {
-    fn take(&mut self) -> Vec<Block> {
-        std::mem::take(self)
-    }
+    /// The caller cancelled the turn. The history keeps the model output of the turn and a result for each tool call.
+    /// It has no note about the cancel, so the caller can put one in the input of the next turn.
+    Cancelled,
 }
 
 impl Conversation {
@@ -104,7 +110,7 @@ impl Conversation {
     pub fn model_finished(&mut self, result: Result<Response, ai::Error>) -> Action<'_> {
         let completion = match result {
             Ok(response) => response.completion,
-            Err(error) => return Action::Done(Outcome::Failed(error)),
+            Err(error) => return Action::Done(Err(error)),
         };
 
         let finish_reason = completion.finish_reason;
@@ -125,14 +131,13 @@ impl Conversation {
         }
 
         // No call runs, but each call gets a result, so the next request stays valid.
+        let reason = match finish_reason {
+            FinishReason::Length => OUTPUT_LIMIT_REASON.to_owned(),
+            _ => format!("the response ended with finish reason {}.", finish_reason.as_str()),
+        };
         let results: Vec<Block> = completion
             .tool_calls()
-            .map(|call| {
-                Block::ToolResult(ToolResult::error(
-                    &call.call_id,
-                    not_executed(&call.name, finish_reason),
-                ))
-            })
+            .map(|call| Block::ToolResult(not_executed(call, &reason)))
             .collect();
 
         self.history.extend(completion.into_blocks());
@@ -152,15 +157,14 @@ impl Conversation {
         Action::AfterRound(&self.history)
     }
 
-    /// Continue after [`Action::AfterRound`]. Take the input of `inbox`, and send it after the round. After an answer
-    /// that needs no other request, the turn ends only when `inbox` holds no input.
-    pub fn proceed(&mut self, inbox: &mut dyn Inbox) -> Action<'_> {
-        let input = inbox.take();
+    /// Continue after [`Action::AfterRound`], and send `input` after the round. After an answer that needs no other
+    /// request, the turn ends only when `input` is empty.
+    pub fn proceed(&mut self, input: Vec<Block>) -> Action<'_> {
         // Input that arrived during the final answer continues the turn, so the model answers it in this turn.
         if let Some(finish_reason) = self.turn_end.take()
             && input.is_empty()
         {
-            return Action::Done(Outcome::Completed { finish_reason });
+            return Action::Done(Ok(Outcome::Completed { finish_reason }));
         }
 
         self.history.extend(input);
@@ -171,22 +175,63 @@ impl Conversation {
     /// [`Outcome::Completed`].
     pub fn stop(&mut self) -> Action<'_> {
         match self.turn_end.take() {
-            Some(finish_reason) => Action::Done(Outcome::Completed { finish_reason }),
-            None => Action::Done(Outcome::Stopped),
+            Some(finish_reason) => Action::Done(Ok(Outcome::Completed { finish_reason })),
+            None => Action::Done(Ok(Outcome::Stopped)),
         }
+    }
+
+    /// End the turn as [`Outcome::Cancelled`] after [`Action::Send`]. The `partial` output of the cancelled attempt
+    /// joins the history, except its reasoning, which has no provider state. Each tool call in it gets an error result.
+    pub fn model_cancelled(&mut self, partial: Vec<Partial>) -> Action<'_> {
+        self.history.extend(
+            partial
+                .into_iter()
+                .filter(|part| !matches!(part, Partial::Reasoning(_)))
+                .map(Block::from),
+        );
+        self.tools_cancelled(Vec::new())
+    }
+
+    /// End the turn as [`Outcome::Cancelled`] after [`Action::CallTools`]. Give the `results` of the tool calls that
+    /// ran, in call order. Each tool call that did not run gets an error result.
+    pub fn tools_cancelled(&mut self, results: Vec<ToolResult>) -> Action<'_> {
+        let answer = self
+            .history
+            .iter()
+            .rposition(|block| block.role() != Role::Assistant)
+            .map_or(0, |index| index + 1);
+        let not_run: Vec<Block> = self.history[answer..]
+            .iter()
+            .filter_map(|block| match block {
+                Block::ToolCall(call) => Some(Block::ToolResult(not_executed(call, CANCELLED_REASON))),
+                _ => None,
+            })
+            .skip(results.len())
+            .collect();
+
+        self.history.extend(results.into_iter().map(Block::ToolResult));
+        self.history.extend(not_run);
+        self.cancel()
+    }
+
+    /// End the turn as [`Outcome::Cancelled`] after [`Action::AfterRound`].
+    pub fn cancel(&mut self) -> Action<'_> {
+        self.turn_end = None;
+        Action::Done(Ok(Outcome::Cancelled))
     }
 }
 
-/// The text that tells the model why the call of `name` did not run.
-fn not_executed(name: &str, finish_reason: FinishReason) -> String {
-    match finish_reason {
-        FinishReason::Length => format!(
-            "Tool call \"{name}\" was not executed: the response hit the output token limit, so its arguments may be \
-             truncated. Re-issue the tool call with complete arguments."
-        ),
-        _ => format!(
-            "Tool call \"{name}\" was not executed: the response ended with finish reason {}.",
-            finish_reason.as_str()
-        ),
-    }
+/// The reason of a call that did not run, because the user cancelled the turn.
+pub(crate) const CANCELLED_REASON: &str = "the user cancelled the turn.";
+
+/// The reason of a call that did not run, because the output limit can cut its arguments.
+const OUTPUT_LIMIT_REASON: &str = "the response hit the output token limit, so its arguments may be truncated. \
+                                   Re-issue the tool call with complete arguments.";
+
+/// The error result of `call` when it did not run. `reason` tells the model why.
+pub(crate) fn not_executed(call: &ToolCall, reason: &str) -> ToolResult {
+    ToolResult::error(
+        &call.call_id,
+        format!("Tool call \"{}\" was not executed: {reason}", call.name),
+    )
 }

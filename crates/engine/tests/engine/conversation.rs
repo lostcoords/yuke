@@ -23,7 +23,7 @@ fn second_turn_sends_the_first_turn_history() {
     let mut conversation = Conversation::new();
     let _ = conversation.start(vec![Block::user_text("one")]);
     let _ = conversation.model_finished(Ok(answer("first answer")));
-    let _ = conversation.proceed(&mut Vec::new());
+    let _ = conversation.proceed(Vec::new());
 
     let body = sent_body(conversation.start(vec![Block::user_text("two")]));
 
@@ -40,9 +40,9 @@ fn stop_after_the_final_answer_ends_the_turn_as_completed() {
 
     assert!(matches!(
         action,
-        Action::Done(Outcome::Completed {
+        Action::Done(Ok(Outcome::Completed {
             finish_reason: FinishReason::Stop
-        })
+        }))
     ));
 }
 
@@ -58,7 +58,7 @@ fn failed_attempt_adds_no_assistant_block() {
 
     let action = conversation.model_finished(Err(failure.into()));
 
-    assert!(matches!(action, Action::Done(Outcome::Failed(_))));
+    assert!(matches!(action, Action::Done(Err(_))));
     assert_eq!(conversation.history(), [Block::user_text("one")]);
 }
 
@@ -98,8 +98,7 @@ fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_ne
     ];
     let action = conversation.tools_finished(results);
     assert!(matches!(action, Action::AfterRound(_)));
-    let mut inbox = vec![Block::user_text("also run the tests")];
-    let body = sent_body(conversation.proceed(&mut inbox));
+    let body = sent_body(conversation.proceed(vec![Block::user_text("also run the tests")]));
     assert_in_order(
         &body,
         &["one", "c1", "c2", "file text", "written", "also run the tests"],
@@ -124,7 +123,7 @@ fn length_finish_runs_no_tool_and_asks_the_model_again() {
     let action = conversation.model_finished(Ok(tool_answer(FinishReason::Length)));
     assert!(matches!(action, Action::AfterRound(_)));
 
-    let body = sent_body(conversation.proceed(&mut Vec::new()));
+    let body = sent_body(conversation.proceed(Vec::new()));
     assert_in_order(&body, &["one", "c1", "c2"]);
     assert_eq!(
         body.matches("was not executed: the response hit the output token limit")
@@ -141,13 +140,13 @@ fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
     let _ = conversation.start(vec![Block::user_text("one")]);
     let _ = conversation.model_finished(Ok(tool_answer(FinishReason::ContentFilter)));
 
-    let action = conversation.proceed(&mut Vec::new());
+    let action = conversation.proceed(Vec::new());
 
     assert!(matches!(
         action,
-        Action::Done(Outcome::Completed {
+        Action::Done(Ok(Outcome::Completed {
             finish_reason: FinishReason::ContentFilter
-        })
+        }))
     ));
     let results: Vec<(&str, bool)> = conversation
         .history()
@@ -169,4 +168,30 @@ fn start_sends_every_block_of_the_input() {
     let body = sent_body(conversation.start(vec![Block::user_text("look at this"), Block::user_text("and this")]));
 
     assert_in_order(&body, &["look at this", "and this"]);
+}
+
+#[test]
+fn cancelled_request_keeps_its_text_and_calls_but_not_its_reasoning() {
+    let mut conversation = Conversation::new();
+    let _ = conversation.start(vec![Block::user_text("one")]);
+
+    let action = conversation.model_cancelled(vec![
+        Partial::Reasoning("Two files.".to_owned()),
+        Partial::Text("Let me check.".to_owned()),
+        Partial::ToolCall(ToolCall::new("c1", "read", "{}")),
+    ]);
+
+    assert!(matches!(action, Action::Done(Ok(Outcome::Cancelled))));
+    assert_eq!(
+        conversation.history(),
+        [
+            Block::user_text("one"),
+            Block::assistant_text("Let me check."),
+            Block::ToolCall(ToolCall::new("c1", "read", "{}")),
+            Block::ToolResult(ToolResult::error(
+                "c1",
+                "Tool call \"read\" was not executed: the user cancelled the turn."
+            )),
+        ]
+    );
 }

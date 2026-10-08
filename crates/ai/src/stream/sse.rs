@@ -35,7 +35,7 @@ enum Line {
     reason = "each flag is one state of the line and event machine"
 )]
 pub(crate) struct Sse {
-    /// Bound the whole response so one turn cannot grow memory without bound.
+    /// Bound the whole response, so it cannot grow memory without bound.
     max_total: usize,
     /// Bound one line and the joined data of one event. The escaped JSON envelope counts toward this bound.
     max_event: usize,

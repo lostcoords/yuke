@@ -88,7 +88,7 @@ impl<'a> Value<'a> {
     }
 
     /// Read a token count. Usage is no part of the answer, so an absent, null, negative, or malformed count reads as
-    /// zero rather than failing the turn.
+    /// zero rather than failing the response.
     pub(crate) fn count(&self, key: &str) -> u64 {
         match self.get(key) {
             Some(Value::Integer(n)) => u64::try_from(*n).unwrap_or(0),

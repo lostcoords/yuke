@@ -1,4 +1,5 @@
-//! Chat through the engine. The answer text prints while it streams. Press Ctrl-D to exit.
+//! Chat through the engine. The answer text prints while it streams. Press Ctrl-C to cancel an answer. Press Ctrl-D
+//! to exit.
 #![expect(
     clippy::print_stdout,
     clippy::print_stderr,
@@ -14,7 +15,7 @@ use std::time::Duration;
 
 use ai::{Block, HttpOptions, HttpTransport};
 use async_trait::async_trait;
-use engine::{Conversation, Driver, Observer, Outcome, Timer, TurnEvent};
+use engine::{CancellationToken, Conversation, Driver, Observer, Outcome, Timer, TurnEvent};
 
 /// Print each piece of answer text when it arrives.
 struct PrintText;
@@ -27,6 +28,9 @@ impl Observer for PrintText {
         }
     }
 }
+
+/// The note that tells the model about a cancel. It goes first in the input of the next turn.
+const INTERRUPTED: &str = "[The user interrupted the previous answer.]";
 
 /// Wait with the Tokio timer.
 struct TokioTimer;
@@ -43,26 +47,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = std::env::var("MINIMAX_API_KEY")?;
     let target = ai::catalog::resolve("minimax/MiniMax-M3", ai::route::Credential::ApiKey(key.into()))?;
     let http = HttpTransport::new(HttpOptions::new("engine-example"))?;
-    let mut driver = Driver::new(&http, &target, &TokioTimer);
+
+    let driver = Driver::new(&http, &target, &TokioTimer);
     let mut conversation = Conversation::new();
     let mut observer = PrintText;
+
+    let mut cancelled = false;
 
     print!("You> ");
     std::io::stdout().flush()?;
     for line in std::io::stdin().lock().lines() {
         print!("AI> ");
-        match driver
-            .run(
-                &mut conversation,
-                vec![Block::user_text(line?)],
-                &mut observer,
-                &mut Vec::new(),
-            )
-            .await
-        {
-            Outcome::Completed { .. } | Outcome::Stopped => println!(),
-            Outcome::Failed(error) => eprintln!("{error}"),
+        // A cancelled token cannot be reset, so each turn gets a new token.
+        let cancellation_token = CancellationToken::new();
+
+        let ctrl_c = tokio::spawn({
+            let cancellation_token = cancellation_token.clone();
+            async move {
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    cancellation_token.cancel();
+                }
+            }
+        });
+
+        let mut input = Vec::new();
+        if std::mem::take(&mut cancelled) {
+            input.push(Block::user_text(INTERRUPTED));
         }
+        input.push(Block::user_text(line?));
+        let outcome = driver
+            .turn(&mut conversation, input)
+            .observer(&mut observer)
+            .cancellation_token(cancellation_token)
+            .run()
+            .await;
+        ctrl_c.abort();
+
+        match outcome {
+            // this is handled by the observer
+            Ok(Outcome::Completed { .. } | Outcome::Stopped) => println!(),
+            Ok(Outcome::Cancelled) => {
+                println!(" [cancelled]");
+                cancelled = true;
+            }
+            Err(error) => eprintln!("{error}"),
+        }
+
         print!("You> ");
         std::io::stdout().flush()?;
     }

@@ -7,7 +7,8 @@ mod drive;
 mod hooks;
 mod tool;
 
-pub use conversation::{Action, Conversation, Inbox, Outcome, ToolCalls};
-pub use drive::{Driver, Observer, Timer, TurnEvent};
+pub use conversation::{Action, Conversation, Outcome, ToolCalls, ToolCallsIter};
+pub use drive::{Driver, Inbox, Observer, Timer, Turn, TurnEvent};
 pub use hooks::{Hooks, RoundDecision, ToolDecision};
-pub use tool::{Tool, Toolset};
+pub use tokio_util::sync::CancellationToken;
+pub use tool::{DuplicateToolName, Tool, Toolset};

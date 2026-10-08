@@ -8,7 +8,7 @@ use crate::request::ReplayKind;
 use crate::response::{BlockId, BlockKind, FinishReason};
 
 use super::Reduce;
-use super::turn::{DecodeError, Turn};
+use super::draft::{DecodeError, Draft};
 
 /// A delta of one block, read with no tree. Other events take the tree path. The typed read rejects a duplicate of a
 /// field that it reads, and ignores a duplicate of another field.
@@ -48,7 +48,7 @@ struct DeltaView<'v> {
 
 #[derive(Debug)]
 pub(crate) struct Reducer {
-    turn: Turn,
+    draft: Draft,
     /// The neutral block of each provider block index, or `None` for a block the reducer ignores, whose events it
     /// drops.
     slots: Vec<Option<BlockId>>,
@@ -57,15 +57,15 @@ pub(crate) struct Reducer {
 }
 
 impl Reduce for Reducer {
-    fn new(turn: Turn) -> Self {
+    fn new(draft: Draft) -> Self {
         Reducer {
-            turn,
+            draft,
             slots: Vec::new(),
             uncached_input: 0,
         }
     }
 
-    /// Parse one SSE `data` payload and append its neutral events to the turn. Return the provider failure that an
+    /// Parse one SSE `data` payload and append its neutral events to the draft. Return the provider failure that an
     /// error event names.
     fn decode(&mut self, data: &str) -> Result<Option<ProviderKind>, DecodeError> {
         // A derived struct also reads a JSON array by position, so only an object takes the typed path.
@@ -100,12 +100,12 @@ impl Reduce for Reducer {
         Ok(None)
     }
 
-    fn turn(&self) -> &Turn {
-        &self.turn
+    fn draft(&self) -> &Draft {
+        &self.draft
     }
 
-    fn turn_mut(&mut self) -> &mut Turn {
-        &mut self.turn
+    fn draft_mut(&mut self) -> &mut Draft {
+        &mut self.draft
     }
 }
 
@@ -122,7 +122,7 @@ impl Reducer {
     /// Keep the larger of each cumulative prompt count, so a repeat counts once and counts from different events add
     /// up. The neutral input adds the cache counts, which Anthropic keeps apart from `input_tokens`.
     fn fold_prompt_usage(&mut self, usage: &Value<'_>) {
-        let total = &mut self.turn.usage;
+        let total = &mut self.draft.usage;
         self.uncached_input = self.uncached_input.max(usage.count("input_tokens"));
         total.cache_read = total.cache_read.max(usage.count("cache_read_input_tokens"));
         total.cache_write = total.cache_write.max(usage.count("cache_creation_input_tokens"));
@@ -138,7 +138,7 @@ impl Reducer {
             return Err(DecodeError::Protocol); // Block indexes must arrive in dense order.
         }
         // An ignored block opens no neutral block, so the slots need their own bound.
-        if self.slots.len() >= self.turn.limits.max_blocks as usize {
+        if self.slots.len() >= self.draft.limits.max_blocks as usize {
             return Err(DecodeError::TooLarge);
         }
 
@@ -151,9 +151,9 @@ impl Reducer {
         };
         let id = match kind {
             BlockKind::ToolCall => self
-                .turn
+                .draft
                 .start_tool(block.require_str("id")?, block.require_str("name")?)?,
-            _ => self.turn.start(kind)?,
+            _ => self.draft.start(kind)?,
         };
         self.slots.push(Some(id));
         match kind {
@@ -161,24 +161,24 @@ impl Reducer {
                 if let Some(text) = block.get_str("text")
                     && !text.is_empty()
                 {
-                    self.turn.delta(id, text)?;
+                    self.draft.delta(id, text)?;
                 }
             }
             // MiniMax (and some Anthropic-compatible hosts) put the whole trace on start, with no deltas.
             BlockKind::Reasoning => {
                 if block_type == "redacted_thinking" {
-                    let open = self.turn.open(id)?;
+                    let open = self.draft.open(id)?;
                     open.replay = Some(ReplayKind::AnthropicRedacted);
                     open.bytes.push_str(block.get_str("data").unwrap_or_default());
                 } else {
                     // A compatible host may never sign the block, so even an empty signature replays to this protocol.
-                    self.turn.open(id)?.replay = Some(ReplayKind::AnthropicSignature);
+                    self.draft.open(id)?.replay = Some(ReplayKind::AnthropicSignature);
                     if let Some(text) = block.get_str("thinking")
                         && !text.is_empty()
                     {
-                        self.turn.delta(id, text)?;
+                        self.draft.delta(id, text)?;
                     }
-                    self.turn
+                    self.draft
                         .open(id)?
                         .bytes
                         .push_str(block.get_str("signature").unwrap_or_default());
@@ -210,7 +210,7 @@ impl Reducer {
         let Some(id) = self.slots.get(index).copied().ok_or(DecodeError::Protocol)? else {
             return Ok(());
         };
-        let block = self.turn.open(id)?;
+        let block = self.draft.open(id)?;
         let (block_kind, replay) = (block.kind, block.replay);
 
         let delta = delta?;
@@ -228,46 +228,46 @@ impl Reducer {
             return Err(DecodeError::Protocol);
         }
         match delta.kind {
-            "text_delta" => self.turn.delta(id, required(delta.text)?),
-            "thinking_delta" => self.turn.delta(id, required(delta.thinking)?),
+            "text_delta" => self.draft.delta(id, required(delta.text)?),
+            "thinking_delta" => self.draft.delta(id, required(delta.thinking)?),
             "signature_delta" => {
                 let signature = required(delta.signature)?;
-                self.turn.open(id)?.bytes.push_str(signature);
+                self.draft.open(id)?.bytes.push_str(signature);
                 Ok(())
             }
-            _ => self.turn.tool_delta(id, required(delta.partial_json)?),
+            _ => self.draft.tool_delta(id, required(delta.partial_json)?),
         }
     }
 
     fn on_block_stop(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
         match self.slot_of(root)? {
-            Some(id) => self.turn.stop(id),
+            Some(id) => self.draft.stop(id),
             None => Ok(()),
         }
     }
 
     fn on_message_delta(&mut self, root: &Value<'_>) {
         if let Some(raw) = root.get("delta").and_then(|delta| delta.get_str("stop_reason")) {
-            self.turn.set_finish(finish_reason(raw), raw);
+            self.draft.set_finish(finish_reason(raw), raw);
         }
         // The final message_delta reports thinking tokens as a subset of output_tokens.
         if let Some(usage) = root.get_object("usage") {
             // A compatible host may leave the count out of a later event, which keeps the one it sent.
             if usage.get("output_tokens").is_some() {
-                self.turn.usage.output = usage.count("output_tokens");
+                self.draft.usage.output = usage.count("output_tokens");
             }
             if let Some(details) = usage.get_object("output_tokens_details") {
-                self.turn.usage.reasoning = details.count("thinking_tokens");
+                self.draft.usage.reasoning = details.count("thinking_tokens");
             }
             self.fold_prompt_usage(usage);
         }
     }
 
     fn on_message_stop(&mut self) -> Result<(), DecodeError> {
-        if self.turn.any_open() {
+        if self.draft.any_open() {
             return Err(DecodeError::Protocol); // An emitted block closes before the done event.
         }
-        self.turn.finish();
+        self.draft.finish();
         Ok(())
     }
 
@@ -359,7 +359,7 @@ mod tests {
     }
 
     // Usage is no part of the answer, so a malformed or null count reads as zero. Anthropic declares every count
-    // nullable, so a null count must not fail the turn.
+    // nullable, so a null count must not fail the response.
     #[test]
     fn invalid_or_null_usage_count_reads_as_zero() {
         let cases: [(&[&str], &str); 2] = [
@@ -388,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_turn() {
+    fn tool_reply() {
         let mut h = Harness::<Reducer>::new();
         h.feed(&[
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"run"}}"#,
@@ -462,7 +462,7 @@ mod tests {
         h.expect_trace("done stop \"end_turn\" output=40 reasoning=25");
     }
 
-    // Claude 4 returns this when a safety classifier stops the turn. It is not a content filter.
+    // Claude 4 returns this when a safety classifier stops the response. It is not a content filter.
     #[test]
     fn refusal_stop_reason() {
         let mut h = Harness::<Reducer>::new();

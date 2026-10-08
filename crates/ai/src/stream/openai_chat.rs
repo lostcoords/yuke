@@ -13,7 +13,7 @@ use crate::response::{BlockId, BlockKind, FinishReason};
 use crate::wire::json::JsonWriter;
 
 use super::Reduce;
-use super::turn::{DecodeError, ToolField, Turn};
+use super::draft::{DecodeError, Draft, ToolField};
 
 /// The kind of one OpenRouter `reasoning_details` entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,7 +181,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for One<T> {
 /// This dialect sends no block-stop event, so every block stays open until `[DONE]`.
 #[derive(Debug)]
 pub(crate) struct Reducer {
-    turn: Turn,
+    draft: Draft,
     /// The one block of each text channel: `content`, `refusal`, and reasoning. Their deltas interleave in no fixed
     /// order. The wire message has one string per channel, so a block never splits.
     channels: [Option<BlockId>; 3],
@@ -194,9 +194,9 @@ pub(crate) struct Reducer {
 }
 
 impl Reduce for Reducer {
-    fn new(turn: Turn) -> Self {
+    fn new(draft: Draft) -> Self {
         Reducer {
-            turn,
+            draft,
             channels: [None; 3],
             tools: Vec::new(),
             details: Vec::new(),
@@ -204,7 +204,7 @@ impl Reduce for Reducer {
         }
     }
 
-    /// Parse one SSE `data` payload and append its neutral events to the turn. Return the provider failure that an
+    /// Parse one SSE `data` payload and append its neutral events to the draft. Return the provider failure that an
     /// error event names.
     fn decode(&mut self, data: &str) -> Result<Option<ProviderKind>, DecodeError> {
         if data == "[DONE]" {
@@ -238,12 +238,12 @@ impl Reduce for Reducer {
         Ok(None)
     }
 
-    fn turn(&self) -> &Turn {
-        &self.turn
+    fn draft(&self) -> &Draft {
+        &self.draft
     }
 
-    fn turn_mut(&mut self) -> &mut Turn {
-        &mut self.turn
+    fn draft_mut(&mut self) -> &mut Draft {
+        &mut self.draft
     }
 }
 
@@ -261,7 +261,7 @@ impl Reducer {
         if is_interrupted(raw) {
             return Some(ProviderKind::ServerError);
         }
-        self.turn.set_finish(finish_reason(raw), raw);
+        self.draft.set_finish(finish_reason(raw), raw);
         None
     }
 
@@ -333,7 +333,7 @@ impl Reducer {
             .last()
             .is_some_and(|last| last.kind == kind && kind != DetailKind::Encrypted);
         if !reuse {
-            if self.details.len() >= self.turn.limits.max_blocks as usize {
+            if self.details.len() >= self.draft.limits.max_blocks as usize {
                 return Err(DecodeError::TooLarge);
             }
             self.details.push(Detail {
@@ -365,8 +365,8 @@ impl Reducer {
             return Ok(());
         }
         let id = self.channels[channel_index(BlockKind::Reasoning)].ok_or(DecodeError::Protocol)?;
-        let max = self.turn.limits.max_event_bytes;
-        let block = self.turn.open(id)?;
+        let max = self.draft.limits.max_event_bytes;
+        let block = self.draft.open(id)?;
         block.replay = Some(ReplayKind::OpenrouterDetails);
         let mut bytes = std::mem::take(&mut block.bytes).into_bytes();
         write_details(&mut bytes, &self.details);
@@ -383,7 +383,7 @@ impl Reducer {
             return Ok(());
         }
         let id = self.channel(kind)?;
-        self.turn.delta(id, text)
+        self.draft.delta(id, text)
     }
 
     /// The block of a text channel, started on first use.
@@ -393,7 +393,7 @@ impl Reducer {
         if let Some(id) = self.channels[index] {
             return Ok(id);
         }
-        let id = self.turn.start(kind)?;
+        let id = self.draft.start(kind)?;
         self.channels[index] = Some(id);
         Ok(id)
     }
@@ -425,10 +425,10 @@ impl Reducer {
         arguments: Option<&str>,
     ) -> Result<(), DecodeError> {
         let block = self.tool_block(index)?;
-        self.turn.identify(block, ToolField::CallId, id.unwrap_or_default())?;
-        self.turn.identify(block, ToolField::Name, name.unwrap_or_default())?;
+        self.draft.identify(block, ToolField::CallId, id.unwrap_or_default())?;
+        self.draft.identify(block, ToolField::Name, name.unwrap_or_default())?;
         match arguments {
-            Some(fragment) => self.turn.tool_delta(block, fragment),
+            Some(fragment) => self.draft.tool_delta(block, fragment),
             None => Ok(()),
         }
     }
@@ -437,14 +437,14 @@ impl Reducer {
         if let Some(&(_, id)) = self.tools.iter().find(|(tool, _)| *tool == index) {
             return Ok(id);
         }
-        let id = self.turn.start(BlockKind::ToolCall)?;
+        let id = self.draft.start(BlockKind::ToolCall)?;
         self.tools.push((index, id));
         Ok(id)
     }
 
     fn read_usage(&mut self, root: &Value<'_>) {
         let Some(usage) = root.get_object("usage") else { return };
-        let total = &mut self.turn.usage;
+        let total = &mut self.draft.usage;
         total.input = usage.count("prompt_tokens");
         total.output = usage.count("completion_tokens");
         let prompt = usage.get_object("prompt_tokens_details");
@@ -476,7 +476,7 @@ impl Reducer {
         // A signature can arrive after the text, so the entries are final only here.
         self.store_details()?;
         // This dialect stops no block before `[DONE]`, so every call is complete here.
-        self.turn.close_and_finish(false)
+        self.draft.close_and_finish(false)
     }
 }
 
@@ -542,7 +542,7 @@ mod tests {
     use crate::stream::testing::Harness;
 
     #[test]
-    fn text_turn() {
+    fn text_reply() {
         let mut h = Harness::<Reducer>::new();
         h.feed(&[
             r#"{"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#,
@@ -702,7 +702,7 @@ mod tests {
         );
     }
 
-    // This dialect reports `stop` for a refusal, so only the refusal field marks the turn.
+    // This dialect reports `stop` for a refusal, so only the refusal field marks the draft.
     #[test]
     fn refusal_streams_in_own_block() {
         let mut h = Harness::<Reducer>::new();

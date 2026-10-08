@@ -5,14 +5,14 @@ use std::time::Duration;
 
 use ai::{Block, HttpOptions, HttpTransport};
 use async_trait::async_trait;
-use engine::{Conversation, Driver, Observer, Outcome, Timer, Tool, Toolset, TurnEvent};
+use engine::{CancellationToken, Conversation, Driver, Observer, Timer, Tool, Toolset, TurnEvent};
 
 /// Return the argument text in uppercase.
 struct Uppercase;
 
 #[async_trait]
 impl Tool for Uppercase {
-    async fn call(&self, arguments: &str) -> Result<String, String> {
+    async fn call(&self, arguments: &str, _: &CancellationToken) -> Result<String, String> {
         Ok(arguments.to_uppercase())
     }
 }
@@ -40,24 +40,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             r#"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}"#,
         ),
         Uppercase,
-    );
-    let mut driver = Driver::new(&http, &target, &TokioTimer).toolset(&toolset);
+    )?;
+    let driver = Driver::new(&http, &target, &TokioTimer).toolset(&toolset);
     let mut conversation = Conversation::new();
     let mut transcript = Transcript::default();
 
     let input = vec![Block::user_text(
         "Use the uppercase tool on 'Hello, Rust!' and report its result.",
     )];
-    match driver
-        .run(&mut conversation, input, &mut transcript, &mut Vec::new())
-        .await
-    {
-        Outcome::Completed { .. } | Outcome::Stopped => {
-            println!("{} ({} tool runs)", transcript.answer, transcript.tool_runs);
-            Ok(())
-        }
-        Outcome::Failed(error) => Err(error.into()),
-    }
+    driver
+        .turn(&mut conversation, input)
+        .observer(&mut transcript)
+        .run()
+        .await?;
+    println!("{} ({} tool runs)", transcript.answer, transcript.tool_runs);
+    Ok(())
 }
 
 /// Print each call and its result, and keep the answer text.

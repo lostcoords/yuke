@@ -2,12 +2,12 @@
 //! It owns the response body and every buffer.
 
 mod anthropic;
+pub(crate) mod draft;
 mod openai_chat;
 mod openai_responses;
 mod sse;
 #[cfg(test)]
 pub(crate) mod testing;
-pub(crate) mod turn;
 
 use std::time::Instant;
 
@@ -16,19 +16,19 @@ use crate::failure::{self, Failure, ProviderKind};
 use crate::request::{Origin, Protocol};
 use crate::response::{AttemptInfo, Delivery, Event, ResponseLimits};
 use crate::transport::{self, BoxBody, Transport};
+use draft::{DecodeError, Draft};
 use sse::{Sse, Step};
-use turn::{DecodeError, Turn};
 
-/// The rules of one protocol. A reducer decodes one SSE payload into the events of its turn.
+/// The rules of one protocol. A reducer decodes one SSE payload into the events of its draft.
 pub(crate) trait Reduce {
-    fn new(turn: Turn) -> Self;
+    fn new(draft: Draft) -> Self;
 
-    /// Decode one payload into the turn events, or return the provider failure it names.
+    /// Decode one payload into the draft events, or return the provider failure it names.
     fn decode(&mut self, data: &str) -> Result<Option<ProviderKind>, DecodeError>;
 
-    fn turn(&self) -> &Turn;
+    fn draft(&self) -> &Draft;
 
-    fn turn_mut(&mut self) -> &mut Turn;
+    fn draft_mut(&mut self) -> &mut Draft;
 }
 
 /// One reducer per closed protocol.
@@ -40,16 +40,16 @@ enum Reducer {
 }
 
 impl Reducer {
-    fn new(protocol: Protocol, turn: Turn) -> Self {
+    fn new(protocol: Protocol, draft: Draft) -> Self {
         match protocol {
-            Protocol::AnthropicMessages => Reducer::Anthropic(Reduce::new(turn)),
-            Protocol::OpenaiChat => Reducer::Chat(Reduce::new(turn)),
-            Protocol::OpenaiResponses => Reducer::Responses(Reduce::new(turn)),
+            Protocol::AnthropicMessages => Reducer::Anthropic(Reduce::new(draft)),
+            Protocol::OpenaiChat => Reducer::Chat(Reduce::new(draft)),
+            Protocol::OpenaiResponses => Reducer::Responses(Reduce::new(draft)),
         }
     }
 
     fn decode(&mut self, data: &str) -> Result<Option<ProviderKind>, DecodeError> {
-        self.turn_mut().begin_payload(data);
+        self.draft_mut().begin_payload(data);
         match self {
             Reducer::Anthropic(reducer) => reducer.decode(data),
             Reducer::Chat(reducer) => reducer.decode(data),
@@ -57,19 +57,19 @@ impl Reducer {
         }
     }
 
-    fn turn(&self) -> &Turn {
+    fn draft(&self) -> &Draft {
         match self {
-            Reducer::Anthropic(reducer) => reducer.turn(),
-            Reducer::Chat(reducer) => reducer.turn(),
-            Reducer::Responses(reducer) => reducer.turn(),
+            Reducer::Anthropic(reducer) => reducer.draft(),
+            Reducer::Chat(reducer) => reducer.draft(),
+            Reducer::Responses(reducer) => reducer.draft(),
         }
     }
 
-    fn turn_mut(&mut self) -> &mut Turn {
+    fn draft_mut(&mut self) -> &mut Draft {
         match self {
-            Reducer::Anthropic(reducer) => reducer.turn_mut(),
-            Reducer::Chat(reducer) => reducer.turn_mut(),
-            Reducer::Responses(reducer) => reducer.turn_mut(),
+            Reducer::Anthropic(reducer) => reducer.draft_mut(),
+            Reducer::Chat(reducer) => reducer.draft_mut(),
+            Reducer::Responses(reducer) => reducer.draft_mut(),
         }
     }
 }
@@ -108,7 +108,7 @@ pub struct Stream {
     payload: String,
     /// `payload` holds the buffer of the parser, which the parser needs back before it reads on.
     payload_lent: bool,
-    /// The index of the next unread event of the turn.
+    /// The index of the next unread event of the draft.
     next_event: usize,
 }
 
@@ -127,13 +127,13 @@ impl Stream {
     pub async fn open(transport: &dyn Transport, request: &Encoded<'_>, options: Options) -> Stream {
         let limits = options.limits;
         // The stream keeps no request bytes, so the reasoning origin is its own copy.
-        let turn = Turn::new(Origin::from(request.origin), limits);
+        let draft = Draft::new(Origin::from(request.origin), limits);
         let mut stream = Stream {
             info: AttemptInfo::default(),
             body: None,
             body_ended: false,
             state: State::Streaming,
-            reducer: Reducer::new(request.protocol, turn),
+            reducer: Reducer::new(request.protocol, draft),
             parser: Sse::new(limits.max_response_bytes, limits.max_event_bytes),
             payload: String::new(),
             payload_lent: false,
@@ -181,7 +181,7 @@ impl Stream {
                 Ok(true) => {
                     let index = self.next_event;
                     self.next_event += 1;
-                    let event = self.reducer.turn().event(index, &self.payload);
+                    let event = self.reducer.draft().event(index, &self.payload);
                     self.info.output_seen |= event.carries_output();
                     Some(Ok(event))
                 }
@@ -203,13 +203,13 @@ impl Stream {
 
     /// Decode payloads until an event is pending. Return false at the end of the answer.
     async fn fill(&mut self) -> Result<bool, Failure> {
-        while self.next_event == self.reducer.turn().pending() {
+        while self.next_event == self.reducer.draft().pending() {
             // Nothing after the end of an answer counts, as the OpenAI SDK stops at `[DONE]`.
-            if self.reducer.turn().done {
+            if self.reducer.draft().done {
                 self.state = State::Ended;
                 return Ok(false);
             }
-            self.reducer.turn_mut().clear_events();
+            self.reducer.draft_mut().clear_events();
             self.next_event = 0;
             let utf8 = self.next_payload().await?;
             // A payload that is no UTF-8 text is no JSON document.
@@ -221,7 +221,7 @@ impl Stream {
             match decoded {
                 Ok(None) => {}
                 Ok(Some(kind)) => {
-                    let max_error_body = self.reducer.turn().limits.max_error_body_bytes;
+                    let max_error_body = self.reducer.draft().limits.max_error_body_bytes;
                     let data = self.payload.as_bytes();
                     self.info.error_body = Some(data[..data.len().min(max_error_body)].to_vec());
                     return Err(Failure::Provider(kind));
@@ -306,7 +306,7 @@ mod tests {
     use crate::transport::{Fault, Outgoing};
     use testing::read_trace;
 
-    fn canned_text_turn() -> String {
+    fn canned_text_reply() -> String {
         [
             r#"{"type":"message_start","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":20}}}"#,
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn events_survive_fragmented_reads() {
         // A 7-byte chunk splits SSE events across reads, so the parser holds state across reads.
-        let canned = CannedTransport::new(canned_text_turn()).chunk_size(7);
+        let canned = CannedTransport::new(canned_text_reply()).chunk_size(7);
         let mut stream = open_canned(&canned);
         // The cache subsets belong to input.
         assert_eq!(
@@ -357,9 +357,9 @@ mod tests {
     // Some servers close the stream right after the last `data:` line (openai/openai-node#2725).
     #[test]
     fn unterminated_last_event_vs_truncation() {
-        let turn = canned_text_turn();
-        let whole = &turn[..turn.len() - 2];
-        let prefix: String = turn.split_inclusive("\n\n").take(3).collect();
+        let reply = canned_text_reply();
+        let whole = &reply[..reply.len() - 2];
+        let prefix: String = reply.split_inclusive("\n\n").take(3).collect();
         for (bytes, expected) in [
             (
                 whole,
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn output_seen_turns_on_with_the_first_output() {
-        let canned = CannedTransport::new(canned_text_turn());
+        let canned = CannedTransport::new(canned_text_reply());
         let mut stream = open_canned(&canned);
         assert!(!stream.info().output_seen);
         assert!(matches!(block_on(stream.next()), Some(Ok(Event::BlockStarted(_)))));
@@ -543,7 +543,7 @@ mod tests {
     #[test]
     fn dropped_next_loses_no_event() {
         // One byte per chunk puts a wait between every line and the blank line that ends its event.
-        let canned = CannedTransport::new(canned_text_turn()).chunk_size(1).wait_first();
+        let canned = CannedTransport::new(canned_text_reply()).chunk_size(1).wait_first();
         let mut stream = open_canned(&canned);
         let mut lines = Vec::new();
         let mut drops = 0;

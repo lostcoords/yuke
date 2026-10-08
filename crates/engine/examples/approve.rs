@@ -13,7 +13,8 @@ use std::time::Duration;
 use ai::{Block, HttpOptions, HttpTransport, ToolCall};
 use async_trait::async_trait;
 use engine::{
-    Conversation, Driver, Hooks, Observer, Outcome, RoundDecision, Timer, Tool, ToolDecision, Toolset, TurnEvent,
+    CancellationToken, Conversation, Driver, Hooks, Observer, Outcome, RoundDecision, Timer, Tool, ToolDecision,
+    Toolset, TurnEvent,
 };
 
 /// The number of rounds before the hooks stop the turn.
@@ -24,7 +25,7 @@ struct Uppercase;
 
 #[async_trait]
 impl Tool for Uppercase {
-    async fn call(&self, arguments: &str) -> Result<String, String> {
+    async fn call(&self, arguments: &str, _: &CancellationToken) -> Result<String, String> {
         Ok(arguments.to_uppercase())
     }
 }
@@ -108,9 +109,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             r#"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}"#,
         ),
         Uppercase,
-    );
+    )?;
     let hooks = Approve::default();
-    let mut driver = Driver::new(&http, &target, &TokioTimer).toolset(&toolset).hooks(&hooks);
+    let driver = Driver::new(&http, &target, &TokioTimer).toolset(&toolset).hooks(&hooks);
     let mut conversation = Conversation::new();
     let mut observer = PrintText::default();
 
@@ -118,13 +119,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Use the uppercase tool on 'Hello, Rust!' and report its result.",
     )];
     let outcome = driver
-        .run(&mut conversation, input, &mut observer, &mut Vec::new())
-        .await;
+        .turn(&mut conversation, input)
+        .observer(&mut observer)
+        .run()
+        .await?;
 
     match outcome {
         Outcome::Completed { .. } => println!(),
         Outcome::Stopped => println!("\nstopped after {ROUND_LIMIT} rounds"),
-        Outcome::Failed(error) => return Err(error.into()),
+        Outcome::Cancelled => println!("\ncancelled"),
     }
     Ok(())
 }

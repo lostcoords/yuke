@@ -110,6 +110,12 @@ impl Reply {
             End::Open => unreachable!("a stream ends with `done` or a failure"),
         }
     }
+
+    /// Stop the attempt, close its stream, and return the partial output of the events so far. A call cut off in its
+    /// arguments is not in the output.
+    pub fn cancel(self) -> Vec<Partial> {
+        partial(self.parts)
+    }
 }
 
 /// Keep what one event says.
@@ -231,6 +237,19 @@ mod tests {
     }
 
     #[test]
+    fn cancel_returns_the_text_that_streamed_and_closes_the_stream() {
+        let canned = CannedTransport::new(canned_reply());
+        let mut reply = open_canned(&canned);
+        assert!(matches!(block_on(reply.next()), Some(Ok(Event::BlockStarted(_)))));
+        assert!(matches!(block_on(reply.next()), Some(Ok(Event::TextDelta(_)))));
+
+        let partial = reply.cancel();
+
+        assert_eq!(partial, [Partial::Text("Hello from the mock provider.".to_owned())]);
+        assert_eq!(canned.closes(), 1);
+    }
+
+    #[test]
     fn failed_reply_keeps_text_and_complete_calls() {
         let mut bytes = [
             r#"{"type":"message_start","message":{"usage":{}}}"#,
@@ -250,7 +269,7 @@ mod tests {
         ]
         .map(frame)
         .concat();
-        bytes.push_str(&canned_reply()); // A complete turn after the failure is never read.
+        bytes.push_str(&canned_reply()); // The reader never reaches the complete response after the failure.
         let canned = CannedTransport::new(bytes);
         let response = block_on(open_canned(&canned).finish());
         let failed = failed(&response);

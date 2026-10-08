@@ -1,13 +1,18 @@
 //! The standard driver. It carries out each [`Action`] of a [`Conversation`] over a caller's transport.
 
+use std::future::poll_fn;
+use std::pin::{Pin, pin};
+use std::sync::{Mutex, PoisonError};
+use std::task::Poll;
 use std::time::Duration;
 
 use ai::retry::{self, Attempt};
 use ai::transport::Transport;
-use ai::{AttemptError, Block, Encoder, Options, Reply, Request, Response, Target, ToolCall, ToolResult};
+use ai::{AttemptError, Block, Encoder, Options, Partial, Reply, Request, Response, Target, ToolCall, ToolResult};
 use async_trait::async_trait;
+use tokio_util::sync::CancellationToken;
 
-use crate::conversation::{Action, Conversation, Inbox, Outcome};
+use crate::conversation::{Action, CANCELLED_REASON, Conversation, Outcome, not_executed};
 use crate::hooks::{Hooks, NoHooks, RoundDecision, ToolDecision};
 use crate::tool::Toolset;
 
@@ -35,7 +40,7 @@ pub enum TurnEvent<'a> {
 }
 
 /// Receives the events of a turn. The driver calls it on the turn's task, so it copies or records the data that it
-/// needs, and it returns without a wait. A closure that takes a `&TurnEvent` is an observer.
+/// needs, and it returns without a wait. A `Send` closure that takes a `&TurnEvent` is an observer.
 pub trait Observer: Send {
     /// Receive one event.
     fn event(&mut self, event: &TurnEvent<'_>);
@@ -55,15 +60,41 @@ pub trait Timer: Send + Sync {
     async fn sleep(&self, duration: Duration);
 }
 
-/// Run conversations against one target. The driver keeps one encoder, so a later request re-encodes only the
-/// changed elements. Use one driver for each conversation.
+/// Holds the input that arrives during a turn. The driver takes it after a round only when the turn continues, so
+/// input never changes a request in flight. An inbox is `Sync`, so another task can add input while a turn runs.
+pub trait Inbox: Send + Sync {
+    /// Remove and return the input that arrived since the last call. Return at once, with an empty `Vec` when none
+    /// arrived.
+    fn take(&self) -> Vec<Block>;
+}
+
+// A locked `Vec` is the simplest inbox: one task pushes, and the driver takes.
+impl Inbox for Mutex<Vec<Block>> {
+    fn take(&self) -> Vec<Block> {
+        // A panic of another holder leaves a valid `Vec`, so its input stays usable.
+        std::mem::take(&mut *self.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+}
+
+/// The inbox of a driver without an inbox. It never holds input.
+struct NoInput;
+
+impl Inbox for NoInput {
+    fn take(&self) -> Vec<Block> {
+        Vec::new()
+    }
+}
+
+/// The settings of the turns against one target. A driver borrows each value and keeps no state. Make a new driver
+/// when a setting changes.
+#[derive(Clone, Copy)]
 pub struct Driver<'a> {
     transport: &'a dyn Transport,
     target: &'a Target,
     timer: &'a dyn Timer,
     toolset: &'a Toolset,
     hooks: &'a dyn Hooks,
-    encoder: Encoder,
+    inbox: &'a dyn Inbox,
 }
 
 /// The toolset of a driver without tools.
@@ -79,8 +110,8 @@ impl std::fmt::Debug for Driver<'_> {
 }
 
 impl<'a> Driver<'a> {
-    /// A driver that sends to `target` through `transport`, and waits with `timer` before a retry. It offers no tools.
-    /// Its hooks run each call and continue each turn.
+    /// A driver that sends to `target` through `transport`, and waits with `timer` before a retry. It offers no tools,
+    /// and it takes no input during a turn. Its hooks run each call and continue each turn.
     pub fn new(transport: &'a dyn Transport, target: &'a Target, timer: &'a dyn Timer) -> Self {
         Driver {
             transport,
@@ -88,7 +119,7 @@ impl<'a> Driver<'a> {
             timer,
             toolset: &NO_TOOLS,
             hooks: &NoHooks,
-            encoder: Encoder::new(),
+            inbox: &NoInput,
         }
     }
 
@@ -104,65 +135,63 @@ impl<'a> Driver<'a> {
         Driver { hooks, ..self }
     }
 
-    /// Run the turn of `input` on `conversation` until it ends. Give each event to `observer`, and take new input
-    /// from `inbox` between rounds.
-    pub async fn run(
-        &mut self,
-        conversation: &mut Conversation,
-        input: Vec<Block>,
-        observer: &mut dyn Observer,
-        inbox: &mut dyn Inbox,
-    ) -> Outcome {
-        let mut action = conversation.start(input);
-        loop {
-            match action {
-                Action::Send(blocks) => {
-                    let result = self.send(blocks, observer).await;
-                    action = conversation.model_finished(result);
-                }
+    /// Take new input from `inbox` after a round when the turn continues.
+    #[must_use]
+    pub fn inbox(self, inbox: &'a dyn Inbox) -> Self {
+        Driver { inbox, ..self }
+    }
 
-                Action::CallTools(calls) => {
-                    let mut results = Vec::new();
-                    for call in calls.iter() {
-                        observer.event(&TurnEvent::ToolStarted(call));
-                        let result = match self.hooks.before_tool(call).await {
-                            ToolDecision::Run => self.toolset.call(call).await,
-                            ToolDecision::Block(reason) => ToolResult::error(&call.call_id, reason),
-                        };
-                        observer.event(&TurnEvent::ToolFinished(&result));
-                        results.push(result);
-                    }
-                    action = conversation.tools_finished(results);
-                }
-
-                Action::AfterRound(history) => {
-                    action = match self.hooks.after_round(history).await {
-                        RoundDecision::Proceed => conversation.proceed(inbox),
-                        RoundDecision::Stop => conversation.stop(),
-                    };
-                }
-
-                Action::Done(outcome) => return outcome,
-            }
+    /// The turn of `input` on `conversation`. [`Turn::run`] runs it.
+    pub fn turn<'t>(&self, conversation: &'t mut Conversation, input: Vec<Block>) -> Turn<'t>
+    where
+        'a: 't,
+    {
+        Turn {
+            driver: *self,
+            conversation,
+            input,
+            observer: None,
+            cancellation_token: CancellationToken::new(),
         }
     }
 
     /// Send one request of `blocks`, and give each event of the reply to `observer`. If [`retry::decide`] permits a
     /// retry, the driver waits with the caller's timer, then sends the same encoded bytes.
-    async fn send(&mut self, blocks: &[Block], observer: &mut dyn Observer) -> Result<Response, ai::Error> {
+    async fn send(
+        &self,
+        encoder: &mut Encoder,
+        blocks: &[Block],
+        observer: &mut dyn Observer,
+        cancellation_token: &CancellationToken,
+    ) -> Sent {
         let request = Request::new(blocks).tools(self.toolset.definitions());
-        let encoded = self.encoder.encode(self.target, request)?;
+        let encoded = match encoder.encode(self.target, request) {
+            Ok(encoded) => encoded,
+            Err(error) => return Sent::Finished(Err(error.into())),
+        };
+        // One waiter serves the whole request, so a stream event costs no new registration.
+        let mut cancelled = pin!(cancellation_token.cancelled());
         let mut number = 1;
         loop {
-            let mut reply = Reply::open(self.transport, &encoded, Options::default()).await;
+            let opened = race(
+                Reply::open(self.transport, &encoded, Options::default()),
+                cancelled.as_mut(),
+            );
+            let Raced::Done(mut reply) = opened.await else {
+                return Sent::Cancelled(Vec::new());
+            };
 
             // No await comes between an event and its delivery, so a cancel cannot lose an event.
-            while let Some(Ok(event)) = reply.next().await {
-                observer.event(&TurnEvent::Model(event));
+            loop {
+                match race(reply.next(), cancelled.as_mut()).await {
+                    Raced::Done(Some(Ok(event))) => observer.event(&TurnEvent::Model(event)),
+                    Raced::Done(_) => break,
+                    Raced::Cancelled => return Sent::Cancelled(reply.cancel()),
+                }
             }
 
             let error = match reply.finish().await {
-                Ok(response) => return Ok(response),
+                Ok(response) => return Sent::Finished(Ok(response)),
                 Err(error) => error,
             };
             // The reply sets `output_seen` when it yields a showable event, and the observer gets that event at once.
@@ -174,13 +203,152 @@ impl<'a> Driver<'a> {
             };
 
             let Some(delay) = retry::decide(retry::Policy::default(), &attempt, fastrand::f64()) else {
-                return Err(error.into());
+                return Sent::Finished(Err(error.into()));
             };
 
             let after = Duration::from_millis(delay);
             observer.event(&TurnEvent::RetryScheduled { after, error: &error });
-            self.timer.sleep(after).await;
+            if let Raced::Cancelled = race(self.timer.sleep(after), cancelled.as_mut()).await {
+                return Sent::Cancelled(Vec::new());
+            }
             number += 1;
         }
     }
+}
+
+/// One assistant turn. It does nothing until [`Turn::run`].
+#[must_use = "a turn does nothing until the caller runs it"]
+pub struct Turn<'a> {
+    driver: Driver<'a>,
+    conversation: &'a mut Conversation,
+    input: Vec<Block>,
+    observer: Option<&'a mut dyn Observer>,
+    cancellation_token: CancellationToken,
+}
+
+impl std::fmt::Debug for Turn<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Turn")
+            .field("driver", &self.driver)
+            .field("input", &self.input)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a> Turn<'a> {
+    /// Give each event of the turn to `observer`. A turn without an observer drops its events.
+    pub fn observer(self, observer: &'a mut dyn Observer) -> Self {
+        Turn {
+            observer: Some(observer),
+            ..self
+        }
+    }
+
+    /// Stop the turn when `cancellation_token` is cancelled. A cancelled token cannot be reset, so use a new token for
+    /// each turn. A turn without a token runs until it ends.
+    pub fn cancellation_token(self, cancellation_token: CancellationToken) -> Self {
+        Turn {
+            cancellation_token,
+            ..self
+        }
+    }
+
+    /// Run the turn until it ends. A cancel interrupts each wait that the driver owns. A tool that runs gets the token,
+    /// and the driver waits for its return. A later tool call does not run.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`ai::Error`] when a request cannot be encoded, or when its last attempt fails. The history keeps the
+    /// input and no answer.
+    pub async fn run(self) -> Result<Outcome, ai::Error> {
+        let Turn {
+            driver,
+            conversation,
+            input,
+            observer,
+            cancellation_token,
+        } = self;
+        let mut ignore = |_: &TurnEvent<'_>| {};
+        let observer: &mut dyn Observer = match observer {
+            Some(observer) => observer,
+            None => &mut ignore,
+        };
+        // The encoder lives for one turn. Its first request encodes the whole history, and each later request of the
+        // turn encodes only the changed elements.
+        let mut encoder = Encoder::new();
+
+        let mut action = conversation.start(input);
+        loop {
+            match action {
+                Action::Send(blocks) => {
+                    action = match driver.send(&mut encoder, blocks, observer, &cancellation_token).await {
+                        Sent::Finished(result) => conversation.model_finished(result),
+                        Sent::Cancelled(partial) => conversation.model_cancelled(partial),
+                    };
+                }
+
+                Action::CallTools(calls) => {
+                    let mut results = Vec::new();
+                    for call in calls {
+                        observer.event(&TurnEvent::ToolStarted(call));
+                        let result =
+                            match race(driver.hooks.before_tool(call), pin!(cancellation_token.cancelled())).await {
+                                Raced::Done(ToolDecision::Run) => driver.toolset.call(call, &cancellation_token).await,
+                                Raced::Done(ToolDecision::Block(reason)) => ToolResult::error(&call.call_id, reason),
+                                Raced::Cancelled => not_executed(call, CANCELLED_REASON),
+                            };
+
+                        observer.event(&TurnEvent::ToolFinished(&result));
+                        results.push(result);
+                    }
+
+                    action = if cancellation_token.is_cancelled() {
+                        conversation.tools_cancelled(results)
+                    } else {
+                        conversation.tools_finished(results)
+                    };
+                }
+
+                Action::AfterRound(history) => {
+                    action = match race(driver.hooks.after_round(history), pin!(cancellation_token.cancelled())).await {
+                        // The driver takes the input only when the turn goes on, so a stop or a cancel leaves it.
+                        Raced::Done(RoundDecision::Proceed) => conversation.proceed(driver.inbox.take()),
+                        Raced::Done(RoundDecision::Stop) => conversation.stop(),
+                        Raced::Cancelled => conversation.cancel(),
+                    };
+                }
+
+                Action::Done(result) => return result,
+            }
+        }
+    }
+}
+
+/// How a request ended.
+enum Sent {
+    /// The request finished with this result.
+    Finished(Result<Response, ai::Error>),
+    /// A cancel stopped the request. The output that the reply kept is here.
+    Cancelled(Vec<Partial>),
+}
+
+/// How a wait ended.
+enum Raced<T> {
+    /// The work finished first.
+    Done(T),
+    /// The cancel came first.
+    Cancelled,
+}
+
+/// Wait for `work`, unless `cancelled` ends first. Each poll checks `cancelled` before `work`, and the drop of `work`
+/// stops it.
+async fn race<T>(work: impl Future<Output = T>, mut cancelled: Pin<&mut impl Future<Output = ()>>) -> Raced<T> {
+    let mut work = pin!(work);
+    poll_fn(|context| {
+        if cancelled.as_mut().poll(context).is_ready() {
+            return Poll::Ready(Raced::Cancelled);
+        }
+        work.as_mut().poll(context).map(Raced::Done)
+    })
+    .await
 }

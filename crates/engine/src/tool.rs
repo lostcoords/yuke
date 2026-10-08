@@ -2,13 +2,32 @@
 
 use ai::{ToolCall, ToolResult};
 use async_trait::async_trait;
+use tokio_util::sync::CancellationToken;
 
 /// A tool that the model can call.
 #[async_trait]
 pub trait Tool: Send + Sync {
     /// Run one call with its JSON `arguments`. `Err` reaches the model as an error result, and the turn continues.
-    async fn call(&self, arguments: &str) -> Result<String, String>;
+    ///
+    /// When `cancellation_token` is cancelled, stop the work. Return a result that describes the stopped work, for
+    /// example the output so far and "Command aborted". The driver waits for the return.
+    async fn call(&self, arguments: &str, cancellation_token: &CancellationToken) -> Result<String, String>;
 }
+
+/// The error of [`Toolset::add`] when another tool already has the name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateToolName {
+    /// The name that two tools share.
+    pub name: String,
+}
+
+impl std::fmt::Display for DuplicateToolName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "another tool already has the name \"{}\"", self.name)
+    }
+}
+
+impl std::error::Error for DuplicateToolName {}
 
 /// The tools that a driver offers to the model.
 #[derive(Default)]
@@ -35,10 +54,19 @@ impl Toolset {
         }
     }
 
-    /// Offer `definition` to the model. A call of its name runs `tool`.
-    pub fn add(&mut self, definition: ai::ToolDefinition, tool: impl Tool + 'static) {
+    /// Offer `definition` to the model. A call with that name runs `tool`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DuplicateToolName`] if the toolset already holds a tool of that name. The toolset stays unchanged. One
+    /// name can select only one handler.
+    pub fn add(&mut self, definition: ai::ToolDefinition, tool: impl Tool + 'static) -> Result<(), DuplicateToolName> {
+        if self.definitions.iter().any(|held| held.name == definition.name) {
+            return Err(DuplicateToolName { name: definition.name });
+        }
         self.definitions.push(definition);
         self.handlers.push(Box::new(tool));
+        Ok(())
     }
 
     /// The definitions, in the order of [`Toolset::add`].
@@ -46,13 +74,13 @@ impl Toolset {
         &self.definitions
     }
 
-    /// Run `call`, and return its result.
-    pub(crate) async fn call(&self, call: &ToolCall) -> ToolResult {
+    /// Run `call`, and return its result. The tool sees `cancellation_token`.
+    pub(crate) async fn call(&self, call: &ToolCall, cancellation_token: &CancellationToken) -> ToolResult {
         let Some(index) = self.definitions.iter().position(|tool| tool.name == call.name) else {
             return ToolResult::error(&call.call_id, format!("Unknown tool: {}", call.name));
         };
 
-        match self.handlers[index].call(&call.arguments).await {
+        match self.handlers[index].call(&call.arguments, cancellation_token).await {
             Ok(content) => ToolResult::success(&call.call_id, content),
             Err(content) => ToolResult::error(&call.call_id, content),
         }

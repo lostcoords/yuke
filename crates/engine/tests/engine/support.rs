@@ -1,8 +1,9 @@
-//! A scripted transport and fixtures. Every exchange completes without a wait.
+//! A scripted transport and fixtures. Each exchange completes without a wait, except a stall that a test asks for.
 
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
@@ -13,7 +14,7 @@ use ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 use ai::{AnthropicWire, Encoder, Request, Target, Wire};
 use async_trait::async_trait;
 use bytes::Bytes;
-use engine::{Action, Inbox, Timer, Tool, TurnEvent};
+use engine::{Action, CancellationToken, Inbox, Timer, Tool};
 
 /// An Anthropic target at a test host, with no credential.
 pub(crate) fn target() -> Target {
@@ -42,13 +43,10 @@ pub(crate) fn sent_body(action: Action<'_>) -> String {
     String::from_utf8(encoded.http.body().flatten().copied().collect()).unwrap()
 }
 
-/// An observer that keeps nothing.
-pub(crate) fn ignore(_: &TurnEvent<'_>) {}
-
 /// The names of the calls that `action` asks to run.
 pub(crate) fn called_names(action: Action<'_>) -> Vec<String> {
     match action {
-        Action::CallTools(calls) => calls.iter().map(|call| call.name.clone()).collect(),
+        Action::CallTools(calls) => calls.into_iter().map(|call| call.name.clone()).collect(),
         other => panic!("expected tool calls, got {other:?}"),
     }
 }
@@ -147,7 +145,7 @@ impl Recorder {
 
 #[async_trait]
 impl Tool for Recorder {
-    async fn call(&self, arguments: &str) -> Result<String, String> {
+    async fn call(&self, arguments: &str, _: &CancellationToken) -> Result<String, String> {
         let mut calls = self.calls.lock().unwrap();
         calls.push(arguments.to_owned());
         Ok(format!("result {}", calls.len()))
@@ -157,12 +155,20 @@ impl Tool for Recorder {
 /// An inbox that hands out one scripted batch for each take, then nothing.
 #[derive(Debug, Default)]
 pub(crate) struct Batches {
-    pub(crate) batches: VecDeque<Vec<ai::Block>>,
+    batches: Mutex<VecDeque<Vec<ai::Block>>>,
+}
+
+impl Batches {
+    pub(crate) fn new(batches: impl IntoIterator<Item = Vec<ai::Block>>) -> Self {
+        Batches {
+            batches: Mutex::new(batches.into_iter().collect()),
+        }
+    }
 }
 
 impl Inbox for Batches {
-    fn take(&mut self) -> Vec<ai::Block> {
-        self.batches.pop_front().unwrap_or_default()
+    fn take(&self) -> Vec<ai::Block> {
+        self.batches.lock().unwrap().pop_front().unwrap_or_default()
     }
 }
 
@@ -197,16 +203,33 @@ impl Timer for Waits {
 /// Answer each open with the next scripted reply, and record each request body.
 #[derive(Debug, Default)]
 pub(crate) struct ScriptedTransport {
-    replies: Mutex<VecDeque<Bytes>>,
+    replies: Mutex<VecDeque<OneChunk>>,
     requests: Mutex<Vec<String>>,
 }
 
 impl ScriptedTransport {
     pub(crate) fn new(replies: impl IntoIterator<Item = String>) -> Self {
         ScriptedTransport {
-            replies: Mutex::new(replies.into_iter().map(Bytes::from).collect()),
+            replies: Mutex::new(
+                replies
+                    .into_iter()
+                    .map(|reply| OneChunk {
+                        chunk: Some(Bytes::from(reply)),
+                        stalls: false,
+                    })
+                    .collect(),
+            ),
             requests: Mutex::default(),
         }
+    }
+
+    /// Add a reply that sends `reply`, then waits forever. It acts as a stream that the provider holds open.
+    pub(crate) fn then_stall(self, reply: String) -> Self {
+        self.replies.lock().unwrap().push_back(OneChunk {
+            chunk: Some(Bytes::from(reply)),
+            stalls: true,
+        });
+        self
     }
 
     /// The request bodies, in send order.
@@ -229,25 +252,76 @@ impl Transport for ScriptedTransport {
             .unwrap()
             .pop_front()
             .expect("the script has no reply left");
-        let body: BoxBody = Box::pin(OneChunk(Some(reply)));
+        let body: BoxBody = Box::pin(reply);
         Box::pin(std::future::ready(Ok((Head::new(200), body))))
     }
 }
 
-/// A body of one chunk.
-struct OneChunk(Option<Bytes>);
+/// A body of one chunk. A body that stalls never ends after its chunk.
+#[derive(Debug)]
+struct OneChunk {
+    chunk: Option<Bytes>,
+    stalls: bool,
+}
 
 impl Body for OneChunk {
     fn poll_chunk(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Result<Bytes, Fault>>> {
-        Poll::Ready(self.0.take().map(Ok))
+        match self.chunk.take() {
+            Some(chunk) => Poll::Ready(Some(Ok(chunk))),
+            None if self.stalls => Poll::Pending,
+            None => Poll::Ready(None),
+        }
     }
 }
 
-/// Run a future that never waits, as every scripted exchange is.
-pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
-    let mut future = std::pin::pin!(future);
-    match future.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
-        Poll::Ready(output) => output,
-        Poll::Pending => panic!("a scripted exchange never waits"),
+/// A timer that cancels the turn when its wait starts. The wait never ends by itself.
+pub(crate) struct CancelOnSleep(pub(crate) CancellationToken);
+
+#[async_trait]
+impl Timer for CancelOnSleep {
+    async fn sleep(&self, _: Duration) {
+        self.0.cancel();
+        std::future::pending::<()>().await;
     }
+}
+
+/// Run a future to its end. It polls again only after a wake, and a future that waits with no wake fails the test.
+pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
+    let woken = Arc::new(Woken::default());
+    let waker = Waker::from(Arc::clone(&woken));
+    let mut context = Context::from_waker(&waker);
+    let mut future = std::pin::pin!(future);
+    loop {
+        if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
+            return output;
+        }
+        assert!(
+            woken.0.swap(false, Ordering::SeqCst),
+            "the future waits for something that no test ends"
+        );
+    }
+}
+
+/// A waker that records a wake.
+#[derive(Default)]
+struct Woken(AtomicBool);
+
+impl std::task::Wake for Woken {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Wait once, and wake at once, as a short wait for the operating system does.
+pub(crate) async fn yield_once() {
+    let mut yielded = false;
+    std::future::poll_fn(|context| {
+        if yielded {
+            return Poll::Ready(());
+        }
+        yielded = true;
+        context.waker().wake_by_ref();
+        Poll::Pending
+    })
+    .await;
 }

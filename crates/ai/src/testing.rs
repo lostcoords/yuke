@@ -61,7 +61,7 @@ pub(crate) fn frame(json: &str) -> String {
     format!("data: {json}\n\n")
 }
 
-/// One complete Anthropic text turn.
+/// One complete Anthropic text response.
 pub(crate) fn canned_reply() -> String {
     [
         r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,

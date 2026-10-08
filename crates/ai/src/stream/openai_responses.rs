@@ -13,7 +13,7 @@ use crate::wire::json::JsonWriter;
 use crate::wyhash::Wyhash;
 
 use super::Reduce;
-use super::turn::{BlockState, DecodeError, ToolField, Turn};
+use super::draft::{BlockState, DecodeError, Draft, ToolField};
 
 /// A delta of text, a refusal, reasoning, or tool arguments, read with no tree. Other events take the tree path. The
 /// typed read rejects a duplicate of a field that it reads, and ignores a duplicate of another field.
@@ -53,7 +53,7 @@ impl Output {
         self.blocks[slot(kind)]
     }
 
-    /// The block of this kind that the item owns. The turn checks that it is still open.
+    /// The block of this kind that the item owns. The draft checks that it is still open.
     fn require(&self, kind: BlockKind) -> Result<BlockId, DecodeError> {
         self.block(kind).ok_or(DecodeError::Protocol)
     }
@@ -90,7 +90,7 @@ fn slot(kind: BlockKind) -> usize {
 
 #[derive(Debug)]
 pub(crate) struct Reducer {
-    turn: Turn,
+    draft: Draft,
     /// The output items, in the order they first arrived. A repeated `output_index` replaces its item.
     outputs: Vec<Output>,
     /// The position in `outputs` of each `output_index`.
@@ -98,15 +98,15 @@ pub(crate) struct Reducer {
 }
 
 impl Reduce for Reducer {
-    fn new(turn: Turn) -> Self {
+    fn new(draft: Draft) -> Self {
         Reducer {
-            turn,
+            draft,
             outputs: Vec::new(),
             positions: HashMap::default(),
         }
     }
 
-    /// Parse one SSE `data` payload and append its neutral events to the turn. Return the provider failure that an
+    /// Parse one SSE `data` payload and append its neutral events to the draft. Return the provider failure that an
     /// error event names.
     fn decode(&mut self, data: &str) -> Result<Option<ProviderKind>, DecodeError> {
         // A derived struct also reads a JSON array by position, so only an object takes the typed path.
@@ -143,12 +143,12 @@ impl Reduce for Reducer {
         Ok(None)
     }
 
-    fn turn(&self) -> &Turn {
-        &self.turn
+    fn draft(&self) -> &Draft {
+        &self.draft
     }
 
-    fn turn_mut(&mut self) -> &mut Turn {
-        &mut self.turn
+    fn draft_mut(&mut self) -> &mut Draft {
+        &mut self.draft
     }
 }
 
@@ -159,7 +159,7 @@ impl Reducer {
         let item_type = item.require_str("type")?;
 
         // An ignored item opens no block, so the items need their own bound.
-        if self.outputs.len() >= self.turn.limits.max_blocks as usize {
+        if self.outputs.len() >= self.draft.limits.max_blocks as usize {
             return Err(DecodeError::TooLarge);
         }
         let fresh = Output {
@@ -205,7 +205,7 @@ impl Reducer {
             None if search => "",
             None => return Err(DecodeError::Protocol),
         };
-        let id = self.turn.start_tool(call_id, name)?;
+        let id = self.draft.start_tool(call_id, name)?;
         let output = &mut self.outputs[position];
         output.kind = ItemKind::Tool;
         output.blocks[slot(BlockKind::ToolCall)] = Some(id);
@@ -220,7 +220,7 @@ impl Reducer {
         if self.outputs[position].block(kind).is_some() {
             return Err(DecodeError::Protocol);
         }
-        let id = self.turn.start(kind)?;
+        let id = self.draft.start(kind)?;
         self.outputs[position].blocks[slot(kind)] = Some(id);
         Ok(())
     }
@@ -252,7 +252,7 @@ impl Reducer {
         delta: Result<&str, DecodeError>,
     ) -> Result<(), DecodeError> {
         let id = self.outputs[self.position(index)?].require(kind)?;
-        self.turn.delta(id, delta?)
+        self.draft.delta(id, delta?)
     }
 
     fn reasoning_delta(
@@ -268,25 +268,25 @@ impl Reducer {
         if let Some(index) = summary {
             let last = self.outputs[position].last_summary_index;
             if last.is_some_and(|last| last != index) {
-                self.turn.delta(id, "\n\n")?;
+                self.draft.delta(id, "\n\n")?;
             }
             if last != Some(index) {
-                self.turn.section(id)?;
+                self.draft.section(id)?;
             }
             self.outputs[position].last_summary_index = Some(index);
         }
-        self.turn.delta(id, delta)
+        self.draft.delta(id, delta)
     }
 
     fn arguments_delta(&mut self, index: usize, delta: Result<&str, DecodeError>) -> Result<(), DecodeError> {
         let id = self.outputs[self.position(index)?].require(BlockKind::ToolCall)?;
-        self.turn.tool_delta(id, delta?)
+        self.draft.tool_delta(id, delta?)
     }
 
     fn on_text_done(&mut self, root: &Value<'_>, kind: BlockKind) -> Result<(), DecodeError> {
         // An item with no block of this kind sent no delta of it, so the event closes nothing.
         match self.outputs[self.output_for(root)?].block(kind) {
-            Some(id) => self.turn.stop_if_open(id),
+            Some(id) => self.draft.stop_if_open(id),
             None => Ok(()),
         }
     }
@@ -297,14 +297,14 @@ impl Reducer {
             return Ok(());
         };
         match self.outputs[position].block(kind) {
-            Some(id) => self.turn.stop_if_open(id),
+            Some(id) => self.draft.stop_if_open(id),
             None => Ok(()),
         }
     }
 
     fn on_tool_arguments_done(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
         let id = self.outputs[self.output_for(root)?].require(BlockKind::ToolCall)?;
-        self.turn.final_args(id, root.require_str("arguments")?)
+        self.draft.final_args(id, root.require_str("arguments")?)
     }
 
     fn on_output_item_done(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
@@ -322,11 +322,11 @@ impl Reducer {
                 }
                 let id = self.reasoning_block(position)?;
                 if !encrypted.is_empty() {
-                    let block = self.turn.open(id)?;
+                    let block = self.draft.open(id)?;
                     block.replay = Some(ReplayKind::ResponsesEncrypted);
                     block.bytes.push_str(encrypted);
                 }
-                self.turn.stop_if_open(id)
+                self.draft.stop_if_open(id)
             }
             ItemKind::Tool => {
                 let id = output.require(BlockKind::ToolCall)?;
@@ -336,7 +336,7 @@ impl Reducer {
     }
 
     fn on_tool_done(&mut self, id: BlockId, item: &Value<'_>, item_type: &str) -> Result<(), DecodeError> {
-        let block = self.turn.open(id)?;
+        let block = self.draft.open(id)?;
         let search = block.name == SEARCH_TOOL_NAME && item_type == "tool_search_call";
         if !search && item_type != "function_call" {
             return Err(DecodeError::Protocol);
@@ -345,23 +345,23 @@ impl Reducer {
         if let Some(status) = item.get_str("status")
             && status != "completed"
         {
-            return self.turn.drop_block(id);
+            return self.draft.drop_block(id);
         }
         if search {
             self.read_search_call(id, item)?;
         } else if let Some(arguments) = item.optional_str("arguments")? {
-            self.turn.final_args(id, arguments)?;
+            self.draft.final_args(id, arguments)?;
         }
-        self.turn.stop(id)
+        self.draft.stop(id)
     }
 
     /// A client search call names its call id and its arguments only when it is done.
     /// The arguments arrive as one object, so the block writes its JSON text in place.
     fn read_search_call(&mut self, id: BlockId, item: &Value<'_>) -> Result<(), DecodeError> {
         // The done item repeats or first names the call id, and the call must have one by now.
-        self.turn
+        self.draft
             .identify(id, ToolField::CallId, item.get_str("call_id").unwrap_or_default())?;
-        if self.turn.open(id)?.call_id.is_empty() {
+        if self.draft.open(id)?.call_id.is_empty() {
             return Err(DecodeError::Protocol);
         }
         let object = item.get("arguments").ok_or(DecodeError::Protocol)?;
@@ -372,21 +372,21 @@ impl Reducer {
         JsonWriter::new(&mut text).value(object);
         // The text comes from parsed strings and ASCII syntax, so it is valid UTF-8.
         let text = String::from_utf8(text).map_err(|_| DecodeError::Protocol)?;
-        self.turn.final_args(id, &text)
+        self.draft.final_args(id, &text)
     }
 
     fn on_completed(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
         let response = root.get_object("response").ok_or(DecodeError::Protocol)?;
         self.read_usage(response);
         // This API reports `completed` even for a response that holds a function call.
-        // A refusal block turns either reason into `refusal` when the turn finishes.
+        // A refusal block turns either reason into `refusal` when the draft finishes.
         let reason = if self.has_tool_call() {
             FinishReason::ToolCalls
         } else {
             FinishReason::Stop
         };
-        self.turn.set_finish(reason, "completed");
-        self.turn.close_and_finish(true)
+        self.draft.set_finish(reason, "completed");
+        self.draft.close_and_finish(true)
     }
 
     fn on_incomplete(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
@@ -397,15 +397,15 @@ impl Reducer {
             Some(details) => details.optional_str("reason")?.unwrap_or("incomplete"),
             None => "incomplete",
         };
-        self.turn.set_finish(incomplete_reason(reason), reason);
-        self.turn.close_and_finish(true)
+        self.draft.set_finish(incomplete_reason(reason), reason);
+        self.draft.close_and_finish(true)
     }
 
     fn read_usage(&mut self, response: &Value<'_>) {
         let Some(usage) = response.get_object("usage") else {
             return;
         };
-        let total = &mut self.turn.usage;
+        let total = &mut self.draft.usage;
         total.input = usage.count("input_tokens");
         total.output = usage.count("output_tokens");
         if let Some(details) = usage.get_object("input_tokens_details") {
@@ -431,7 +431,7 @@ impl Reducer {
         if let Some(id) = self.outputs[position].block(BlockKind::Reasoning) {
             return Ok(id);
         }
-        let id = self.turn.start(BlockKind::Reasoning)?;
+        let id = self.draft.start(BlockKind::Reasoning)?;
         self.outputs[position].blocks[slot(BlockKind::Reasoning)] = Some(id);
         Ok(id)
     }
@@ -439,7 +439,7 @@ impl Reducer {
     /// True when this response finished a function call. It decides the stop reason at `completed`.
     fn has_tool_call(&self) -> bool {
         // A dropped or unfinished tool block reaches no consumer, so it must not decide the stop reason.
-        self.turn
+        self.draft
             .blocks
             .iter()
             .any(|block| block.kind == BlockKind::ToolCall && block.state == BlockState::Stopped)
@@ -477,7 +477,7 @@ mod tests {
     use crate::stream::testing::Harness;
 
     #[test]
-    fn text_turn() {
+    fn text_reply() {
         let mut h = Harness::<Reducer>::new();
         h.feed(&[
             r#"{"type":"response.created"}"#,
@@ -757,7 +757,7 @@ mod tests {
     }
 
     // Items are keyed by `output_index`, so an item added again replaces the first one. The block that the first item
-    // opened stays open until the turn closes it.
+    // opened stays open until the draft closes it.
     #[test]
     fn readded_item_replaces_first() {
         let mut h = Harness::<Reducer>::new();
@@ -886,7 +886,7 @@ mod tests {
             r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
         ])
         .unwrap();
-        // The turn reports the refusal, so a caller never reads it as a plain answer.
+        // The draft reports the refusal, so a caller never reads it as a plain answer.
         h.expect_trace(
             "start 0 refusal\n\
              refusal_delta 0 \"I cannot help\"\n\
