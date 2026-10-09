@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use yuke_ai::{Block, Target, ToolCall, ToolDefinition, ToolResult};
-use yuke_engine::{Bm25, Conversation, Driver, Hooks, ToolNameError, ToolSearch, Toolset, TurnEvent};
+use yuke_engine::{Bm25, Driver, Hooks, ToolNameError, ToolSearch, Toolset, TurnEvent};
 
 use crate::support::{NoWait, Recorder, ScriptedTransport, block_on, definition, target, text_reply, tool_reply};
 
@@ -28,10 +28,9 @@ fn declared_tools(body: &str) -> &str {
 
 /// Run one turn, and return the tool results of the history.
 fn results_in_history(driver: Driver<'_>) -> Vec<ToolResult> {
-    let mut conversation = Conversation::new();
-    block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run()).unwrap();
-    conversation
-        .history()
+    let mut history = Vec::new();
+    block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run()).unwrap();
+    history
         .iter()
         .filter_map(|block| match block {
             Block::ToolResult(result) => Some(result.clone()),
@@ -105,14 +104,14 @@ fn large(name: &str, bytes: usize) -> ToolDefinition {
 }
 
 #[test]
-fn a_bridge_search_shows_schemas_under_the_budget_and_names_past_it() {
+fn a_bridge_search_shows_the_schema_of_each_match_in_name_order() {
     let transport = ScriptedTransport::new([
         tool_reply(&[("c1", "tool_search", r#"{"query": "alpha"}"#)]),
         text_reply("done"),
     ]);
     let target = target();
     let mut toolset = Toolset::new();
-    // Each schema holds 7000 bytes, so two fit in 16 KiB and the third does not. Equal scores sort by name.
+    // Large schemas show in full. Equal scores sort by name.
     for name in ["alpha_two", "alpha_one", "alpha_three"] {
         toolset.add(large(name, 7000), Recorder::default()).unwrap();
     }
@@ -120,37 +119,12 @@ fn a_bridge_search_shows_schemas_under_the_budget_and_names_past_it() {
 
     let results = results_in_history(driver);
 
-    assert!(results[0].content.len() <= 16 * 1024, "{}", results[0].content.len());
     let sections: Vec<&str> = results[0].content.split("\n\n").collect();
     assert_eq!(sections.len(), 4, "{}", results[0].content);
-    assert!(sections[1].starts_with("## alpha_one\nAlpha tool.\nInput schema: {"));
-    assert!(sections[2].starts_with("## alpha_three\nAlpha tool.\nInput schema: {"));
-    assert_eq!(
-        sections[3],
-        "## alpha_two\nAlpha tool.\nThe input schema is not shown. Search for the exact name to see it."
-    );
-}
-
-#[test]
-fn a_bridge_search_result_never_passes_its_budget() {
-    let budget = 16 * 1024;
-    let header = "Found 1 tools. Call one with tool_call.";
-    let head = "## alpha_one\nAlpha tool.\nInput schema: ";
-    // The section with its schema fits the budget only when the separator after the header is not counted.
-    let filler = budget - header.len() - 1 - head.len() - large("alpha_one", 0).input_schema.len();
-    let transport = ScriptedTransport::new([
-        tool_reply(&[("c1", "tool_search", r#"{"query": "alpha"}"#)]),
-        text_reply("done"),
-    ]);
-    let target = target();
-    let mut toolset = Toolset::new();
-    toolset.add(large("alpha_one", filler), Recorder::default()).unwrap();
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
-
-    let results = results_in_history(driver);
-
-    assert!(results[0].content.len() <= budget, "{}", results[0].content.len());
-    assert!(results[0].content.ends_with("Search for the exact name to see it."));
+    for (section, name) in sections[1..].iter().zip(["alpha_one", "alpha_three", "alpha_two"]) {
+        let schema = large(name, 7000).input_schema;
+        assert_eq!(*section, format!("## {name}\nAlpha tool.\nInput schema: {schema}"));
+    }
 }
 
 /// Hooks that keep the name and the arguments of each call that `before_tool` sees.
@@ -191,11 +165,11 @@ fn tool_call_runs_a_deferred_tool_and_the_hooks_and_the_observer_see_the_real_ca
         .toolset(&toolset)
         .hooks(&hooks);
     let started = Mutex::new(Vec::new());
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
     block_on(
         driver
-            .turn(&mut conversation, vec![Block::user_text("go")])
+            .turn(&mut history, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
                 if let TurnEvent::ToolStarted(call) = event {
                     started.lock().unwrap().push(format!("{} {}", call.call_id, call.name));
@@ -214,7 +188,7 @@ fn tool_call_runs_a_deferred_tool_and_the_hooks_and_the_observer_see_the_real_ca
     );
     assert_eq!(*started.lock().unwrap(), ["c1 create_issue"]);
     // The history keeps the call that the model wrote, and the result answers it.
-    let history = conversation.history();
+    let history = history;
     assert!(matches!(&history[1], Block::ToolCall(call) if call.name == "tool_call"));
     assert_eq!(history[2], Block::ToolResult(ToolResult::success("c1", "result 1")));
 }

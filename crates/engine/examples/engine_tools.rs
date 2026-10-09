@@ -8,8 +8,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use yuke_ai::{Block, HttpOptions, HttpTransport};
 use yuke_engine::{
-    Concurrency, Conversation, Driver, Observer, Timer, Tool, ToolContent, ToolContext, Toolset, TurnEvent,
-    parse_arguments,
+    Concurrency, Driver, Observer, Timer, Tool, ToolContent, ToolContext, Toolset, TurnEvent, parse_arguments,
 };
 
 /// Return the text in uppercase. The tool parses its arguments into a struct first.
@@ -59,17 +58,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Uppercase,
     )?;
     let driver = Driver::new(&http, &target, &TokioTimer).toolset(&toolset);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
     let transcript = Transcript::default();
 
     let input = vec![Block::user_text(
         "Use the uppercase tool on 'Hello, Rust!' and report its result.",
     )];
-    driver
-        .turn(&mut conversation, input)
-        .observer(&transcript)
-        .run()
-        .await?;
+    driver.turn(&mut history, input).observer(&transcript).run().await?;
     let answer = transcript.answer.into_inner().unwrap_or_else(PoisonError::into_inner);
     println!("{answer} ({} tool runs)", transcript.tool_runs.into_inner());
     Ok(())

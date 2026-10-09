@@ -3,39 +3,34 @@
 
 use yuke_ai::{Block, FinishReason, Partial, Response, Role, ToolCall, ToolResult};
 
-/// The history of one conversation.
-#[derive(Debug, Default)]
-pub struct Conversation {
-    history: Vec<Block>,
+/// The decisions of one turn on the caller's history.
+#[derive(Debug)]
+pub(crate) struct Conversation<'h> {
+    history: &'h mut Vec<Block>,
 
-    /// The finish reason of the last answer, when that answer ends the turn without new input. It is `None` while
-    /// the turn continues.
+    /// The finish reason of the last answer, when that answer needs no other request. New input can still continue the
+    /// turn.
     turn_end: Option<FinishReason>,
 }
 
-/// The next thing the caller does for a turn.
+/// The next thing the driver does for a turn.
 #[derive(Debug)]
-#[must_use = "the turn continues only when the caller carries out the action"]
-pub enum Action<'a> {
-    /// Send a request of these blocks, then give the result to [`Conversation::model_finished`]. The blocks are the
-    /// whole history.
-    Send(&'a [Block]),
+#[must_use = "the turn continues only when the driver carries out the action"]
+pub(crate) enum Action<'a> {
+    /// Send a request of the whole history, then give the result to [`Conversation::model_finished`].
+    Send,
 
     /// Run these calls, then give the results to [`Conversation::tools_finished`] in call order.
     CallTools(ToolCalls<'a>),
 
-    /// A round ended, and its answer and tool results are in the history. Call [`Conversation::proceed`] or
-    /// [`Conversation::stop`]. The blocks are the whole history.
-    AfterRound(&'a [Block]),
-
-    /// The model ended the turn, and no new input waits. Call [`Conversation::continue_turn`] to send another request
-    /// in this turn. Call [`Conversation::stop`] to end the turn as [`Outcome::Completed`].
-    AfterTurn {
-        /// The whole history. It holds the last answer. It can also hold error results of calls that did not run.
+    /// A round ended, and its answer and tool results are in the history. Call [`Conversation::proceed`],
+    /// [`Conversation::continue_turn`], or [`Conversation::stop`].
+    AfterRound {
+        /// The whole history.
         history: &'a [Block],
 
-        /// The finish reason of the last answer.
-        finish_reason: FinishReason,
+        /// The finish reason of an answer that needs no other request. `None` when the round asks for another request.
+        finish_reason: Option<FinishReason>,
     },
 
     /// The turn ended. `Err` holds the failure of a request, and the history keeps the input and no answer.
@@ -44,7 +39,7 @@ pub enum Action<'a> {
 
 /// The tool calls of one answer. It borrows the blocks of the answer, so the calls are not copied.
 #[derive(Debug, Clone, Copy)]
-pub struct ToolCalls<'a> {
+pub(crate) struct ToolCalls<'a> {
     blocks: &'a [Block],
 }
 
@@ -61,7 +56,7 @@ impl<'a> IntoIterator for ToolCalls<'a> {
 
 /// The iterator over the calls of [`ToolCalls`], in answer order.
 #[derive(Debug, Clone)]
-pub struct ToolCallsIter<'a> {
+pub(crate) struct ToolCallsIter<'a> {
     blocks: std::slice::Iter<'a, Block>,
 }
 
@@ -98,32 +93,35 @@ pub enum Outcome {
     Cancelled,
 }
 
-impl Conversation {
-    /// An empty conversation.
-    pub fn new() -> Self {
-        Self::default()
+impl<'h> Conversation<'h> {
+    /// The decisions of one turn on `history`.
+    pub(crate) fn new(history: &'h mut Vec<Block>) -> Self {
+        Conversation {
+            history,
+            turn_end: None,
+        }
     }
 
     /// The blocks of the conversation, oldest first.
-    pub fn history(&self) -> &[Block] {
-        &self.history
+    pub(crate) fn history(&self) -> &[Block] {
+        self.history.as_slice()
     }
 
-    /// Replace the history, for example with a summary and the recent blocks. Call it between turns, or before the
-    /// request of [`Action::Send`]. The next request sends the new history.
-    pub fn replace_history(&mut self, history: Vec<Block>) {
-        self.history = history;
+    /// Replace the history, for example with a summary and the recent blocks. Call it before the request of
+    /// [`Action::Send`]. The next request sends the new history.
+    pub(crate) fn replace_history(&mut self, history: Vec<Block>) {
+        *self.history = history;
     }
 
     /// Start a turn with the blocks of `input`, such as a text and its attachments. Call it after the previous turn
     /// returned [`Action::Done`].
-    pub fn start(&mut self, input: Vec<Block>) -> Action<'_> {
+    pub(crate) fn start(&mut self, input: Vec<Block>) -> Action<'_> {
         self.history.extend(input);
-        Action::Send(&self.history)
+        Action::Send
     }
 
     /// Take the result of the request that [`Action::Send`] asked for.
-    pub fn model_finished(&mut self, result: Result<Response, yuke_ai::Error>) -> Action<'_> {
+    pub(crate) fn model_finished(&mut self, result: Result<Response, yuke_ai::Error>) -> Action<'_> {
         let completion = match result {
             Ok(response) => response.completion,
             Err(error) => return Action::Done(Err(error)),
@@ -134,7 +132,7 @@ impl Conversation {
         if completion.tool_calls().next().is_none() {
             self.history.extend(completion.into_blocks());
             self.turn_end = Some(finish_reason);
-            return Action::AfterRound(&self.history);
+            return self.after_round();
         }
 
         if matches!(finish_reason, FinishReason::ToolCalls | FinishReason::Stop) {
@@ -164,41 +162,35 @@ impl Conversation {
         if finish_reason != FinishReason::Length {
             self.turn_end = Some(finish_reason);
         }
-        Action::AfterRound(&self.history)
+        self.after_round()
     }
 
     /// Take the results of the calls that [`Action::CallTools`] asked for, in call order.
-    pub fn tools_finished(&mut self, results: Vec<ToolResult>) -> Action<'_> {
+    pub(crate) fn tools_finished(&mut self, results: Vec<ToolResult>) -> Action<'_> {
         self.history.extend(results.into_iter().map(Block::ToolResult));
-        Action::AfterRound(&self.history)
+        self.after_round()
     }
 
     /// Continue after [`Action::AfterRound`], and send `input` after the round. After an answer that needs no other
-    /// request, an empty `input` returns [`Action::AfterTurn`].
-    pub fn proceed(&mut self, input: Vec<Block>) -> Action<'_> {
-        // Input that arrived during the final answer continues the turn. Without input, the caller decides.
-        if let Some(finish_reason) = self.turn_end
-            && input.is_empty()
-        {
-            return Action::AfterTurn {
-                history: &self.history,
-                finish_reason,
-            };
+    /// request, an empty `input` ends the turn as [`Outcome::Completed`].
+    pub(crate) fn proceed(&mut self, input: Vec<Block>) -> Action<'_> {
+        // Input that arrived during the final answer continues the turn.
+        if self.turn_end.is_some() && input.is_empty() {
+            return self.stop();
         }
         self.continue_turn(input)
     }
 
-    /// Continue after [`Action::AfterTurn`]. The next [`Action::Send`] holds `input` after the answer, also when
-    /// `input` is empty.
-    pub fn continue_turn(&mut self, input: Vec<Block>) -> Action<'_> {
+    /// Send another request after [`Action::AfterRound`]. `input` joins the history before the request, also when it is
+    /// empty.
+    pub(crate) fn continue_turn(&mut self, input: Vec<Block>) -> Action<'_> {
         self.turn_end = None;
         self.history.extend(input);
-        Action::Send(&self.history)
+        Action::Send
     }
 
-    /// End the turn after [`Action::AfterRound`] or [`Action::AfterTurn`]. A round that ended the turn still ends it
-    /// as [`Outcome::Completed`].
-    pub fn stop(&mut self) -> Action<'_> {
+    /// End the turn after [`Action::AfterRound`]. A round that ended the turn still ends it as [`Outcome::Completed`].
+    pub(crate) fn stop(&mut self) -> Action<'_> {
         match self.turn_end.take() {
             Some(finish_reason) => Action::Done(Ok(Outcome::Completed { finish_reason })),
             None => Action::Done(Ok(Outcome::Stopped)),
@@ -207,7 +199,7 @@ impl Conversation {
 
     /// End the turn as [`Outcome::Cancelled`] after [`Action::Send`]. The `partial` output of the cancelled attempt
     /// joins the history, except its reasoning, which has no provider state. Each tool call in it gets an error result.
-    pub fn model_cancelled(&mut self, partial: Vec<Partial>) -> Action<'_> {
+    pub(crate) fn model_cancelled(&mut self, partial: Vec<Partial>) -> Action<'_> {
         self.history.extend(
             partial
                 .into_iter()
@@ -219,7 +211,7 @@ impl Conversation {
 
     /// End the turn as [`Outcome::Cancelled`] after [`Action::CallTools`]. Give the `results` of the first calls, in call
     /// order, for example of the calls that ran. Each later call gets an error result.
-    pub fn tools_cancelled(&mut self, results: Vec<ToolResult>) -> Action<'_> {
+    pub(crate) fn tools_cancelled(&mut self, results: Vec<ToolResult>) -> Action<'_> {
         let answer = self
             .history
             .iter()
@@ -239,10 +231,18 @@ impl Conversation {
         self.cancel()
     }
 
-    /// End the turn as [`Outcome::Cancelled`] after [`Action::AfterRound`] or [`Action::AfterTurn`].
-    pub fn cancel(&mut self) -> Action<'_> {
+    /// End the turn as [`Outcome::Cancelled`] after [`Action::AfterRound`].
+    pub(crate) fn cancel(&mut self) -> Action<'_> {
         self.turn_end = None;
         Action::Done(Ok(Outcome::Cancelled))
+    }
+
+    /// The question to the caller after a round.
+    fn after_round(&self) -> Action<'_> {
+        Action::AfterRound {
+            history: self.history.as_slice(),
+            finish_reason: self.turn_end,
+        }
     }
 }
 
@@ -260,3 +260,6 @@ pub(crate) fn not_executed(call: &ToolCall, reason: &str) -> ToolResult {
         format!("Tool call \"{}\" was not executed: {reason}", call.name),
     )
 }
+
+#[cfg(test)]
+mod tests;

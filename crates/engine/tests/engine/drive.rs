@@ -5,8 +5,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason, ToolCall, ToolResult};
 use yuke_engine::{
-    CancellationToken, Conversation, Driver, Hooks, Outcome, RoundDecision, Tool, ToolContent, ToolContext,
-    ToolDecision, ToolNameError, Toolset, TurnEvent,
+    CancellationToken, Driver, Hooks, Outcome, RoundDecision, Tool, ToolContent, ToolContext, ToolDecision,
+    ToolNameError, Toolset, TurnEvent,
 };
 
 use crate::support::{
@@ -19,10 +19,10 @@ fn driver_sends_the_history_and_keeps_each_answer() {
     let transport = ScriptedTransport::new([text_reply("first answer"), text_reply("second answer")]);
     let target = target();
     let driver = Driver::new(&transport, &target, &NoWait);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
-    let first = block_on(driver.turn(&mut conversation, vec![Block::user_text("one")]).run());
-    let second = block_on(driver.turn(&mut conversation, vec![Block::user_text("two")]).run());
+    let first = block_on(driver.turn(&mut history, vec![Block::user_text("one")]).run());
+    let second = block_on(driver.turn(&mut history, vec![Block::user_text("two")]).run());
 
     for outcome in [first, second] {
         assert!(matches!(
@@ -35,10 +35,7 @@ fn driver_sends_the_history_and_keeps_each_answer() {
     let requests = transport.requests();
     assert_eq!(requests.len(), 2);
     assert_in_order(&requests[1], &["one", "first answer", "two"]);
-    assert_eq!(
-        conversation.history().last(),
-        Some(&Block::assistant_text("second answer"))
-    );
+    assert_eq!(history.last(), Some(&Block::assistant_text("second answer")));
 }
 
 #[test]
@@ -52,9 +49,9 @@ fn driver_runs_each_call_in_order_and_sends_the_results() {
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), echo.clone()).unwrap();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
 
     assert!(matches!(
         outcome,
@@ -82,8 +79,8 @@ fn a_second_tool_of_a_taken_name_is_refused_and_the_first_tool_runs() {
 
     assert_eq!(refused, Err(ToolNameError::Duplicate("echo".to_owned())));
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
-    let mut conversation = Conversation::new();
-    block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run()).unwrap();
+    let mut history = Vec::new();
+    block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run()).unwrap();
     assert_eq!(first.calls(), ["{}"]);
     assert_eq!(second.calls(), Vec::<String>::new());
     assert_eq!(transport.requests()[0].matches(r#""name":"echo""#).count(), 1);
@@ -97,9 +94,9 @@ fn unknown_tool_returns_an_error_result_and_runs_nothing() {
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), echo.clone()).unwrap();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
 
     assert!(matches!(
         outcome,
@@ -130,9 +127,9 @@ fn tool_error_reaches_the_model_and_the_turn_continues() {
     let mut toolset = Toolset::new();
     toolset.add(definition("write"), Fails).unwrap();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
 
     assert!(matches!(
         outcome,
@@ -172,12 +169,12 @@ fn observer_receives_every_event_of_each_round_in_source_order() {
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
     let seen = Mutex::new(Vec::new());
 
     let outcome = block_on(
         driver
-            .turn(&mut conversation, vec![Block::user_text("go")])
+            .turn(&mut history, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
                 seen.lock().unwrap().push(label(event));
             })
@@ -217,12 +214,12 @@ fn failed_reply_delivers_its_events_then_fails_with_the_partial_output() {
     let transport = ScriptedTransport::new([failed_reply("cut")]);
     let target = target();
     let driver = Driver::new(&transport, &target, &NoWait);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
     let seen = Mutex::new(Vec::new());
 
     let outcome = block_on(
         driver
-            .turn(&mut conversation, vec![Block::user_text("go")])
+            .turn(&mut history, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
                 seen.lock().unwrap().push(label(event));
             })
@@ -234,7 +231,7 @@ fn failed_reply_delivers_its_events_then_fails_with_the_partial_output() {
         panic!("expected a failed attempt, got {outcome:?}");
     };
     assert_eq!(error.partial, [yuke_ai::Partial::Text("cut".to_owned())]);
-    assert_eq!(conversation.history(), [Block::user_text("go")]);
+    assert_eq!(history, [Block::user_text("go")]);
 }
 
 #[test]
@@ -243,13 +240,13 @@ fn retry_sends_the_same_request_bytes_and_the_observer_sees_the_wait() {
     let target = target();
     let waits = Waits::default();
     let driver = Driver::new(&transport, &target, &waits);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
     let retries = Mutex::new(Vec::new());
     let causes = Mutex::new(Vec::new());
 
     let outcome = block_on(
         driver
-            .turn(&mut conversation, vec![Block::user_text("go")])
+            .turn(&mut history, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
                 if let TurnEvent::RetryScheduled { after, error } = event {
                     retries.lock().unwrap().push(*after);
@@ -285,9 +282,9 @@ fn no_retry_after_output_reached_the_observer() {
     let target = target();
     let waits = Waits::default();
     let driver = Driver::new(&transport, &target, &waits);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
 
     assert!(outcome.is_err());
     assert_eq!(transport.requests().len(), 1);
@@ -300,9 +297,9 @@ fn request_stops_after_five_attempts() {
     let target = target();
     let waits = Waits::default();
     let driver = Driver::new(&transport, &target, &waits);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
 
     assert!(outcome.is_err());
     assert_eq!(transport.requests().len(), 5);
@@ -324,9 +321,9 @@ fn input_taken_between_rounds_follows_the_tool_results_and_a_retry_keeps_its_byt
     let driver = Driver::new(&transport, &target, &NoWait)
         .toolset(&toolset)
         .inbox(&inbox);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
 
     assert!(matches!(
         outcome,
@@ -356,9 +353,9 @@ fn input_during_the_final_answer_continues_the_turn_until_its_next_final_answer(
     let driver = Driver::new(&transport, &target, &NoWait)
         .toolset(&toolset)
         .inbox(&inbox);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
 
     assert!(matches!(
         outcome,
@@ -388,9 +385,9 @@ fn input_follows_the_error_results_of_a_cut_answer() {
     let driver = Driver::new(&transport, &target, &NoWait)
         .toolset(&toolset)
         .inbox(&inbox);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
 
     assert!(matches!(
         outcome,
@@ -439,9 +436,9 @@ fn blocked_call_runs_no_tool_and_its_reason_reaches_the_model() {
     let driver = Driver::new(&transport, &target, &NoWait)
         .toolset(&toolset)
         .hooks(&BlockWrite);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
 
     assert!(matches!(
         outcome,
@@ -473,7 +470,7 @@ impl RoundLimit {
 
 #[async_trait]
 impl Hooks for RoundLimit {
-    async fn after_round(&self, _: &[Block]) -> RoundDecision {
+    async fn after_round(&self, _: &[Block], _: Option<FinishReason>) -> RoundDecision {
         if self.rounds.fetch_add(1, Ordering::Relaxed) + 1 >= self.limit {
             RoundDecision::Stop
         } else {
@@ -494,14 +491,14 @@ fn stop_after_a_round_ends_the_turn_with_its_tool_results_and_leaves_the_input()
         .toolset(&toolset)
         .hooks(&hooks)
         .inbox(&inbox);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
 
     assert!(matches!(outcome, Ok(Outcome::Stopped)));
     assert_eq!(transport.requests().len(), 1);
     assert_eq!(
-        conversation.history().last(),
+        history.last(),
         Some(&Block::ToolResult(ToolResult::success("c1", "result 1")))
     );
     assert_eq!(*inbox.lock().unwrap(), [Block::user_text("steer")]);
@@ -514,9 +511,9 @@ fn round_limit_stops_a_turn_of_cut_answers() {
     let target = target();
     let hooks = RoundLimit::new(2);
     let driver = Driver::new(&transport, &target, &NoWait).hooks(&hooks);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
 
     assert!(matches!(outcome, Ok(Outcome::Stopped)));
     assert_eq!(transport.requests().len(), 2);
@@ -529,18 +526,18 @@ fn cancel_during_the_retry_wait_sends_no_other_attempt() {
     let cancellation_token = CancellationToken::new();
     let timer = CancelOnSleep(cancellation_token.clone());
     let driver = Driver::new(&transport, &target, &timer);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
     let outcome = block_on(
         driver
-            .turn(&mut conversation, vec![Block::user_text("go")])
+            .turn(&mut history, vec![Block::user_text("go")])
             .cancellation_token(cancellation_token)
             .run(),
     );
 
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
     assert_eq!(transport.requests().len(), 1);
-    assert_eq!(conversation.history(), [Block::user_text("go")]);
+    assert_eq!(history, [Block::user_text("go")]);
 }
 
 /// A tool that cancels the turn during its call, waits once as a process kill does, and returns its own result.
@@ -571,11 +568,11 @@ fn cancel_during_a_tool_keeps_its_own_result_and_runs_no_later_call() {
     let driver = Driver::new(&transport, &target, &NoWait)
         .toolset(&toolset)
         .inbox(&inbox);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
     let outcome = block_on(
         driver
-            .turn(&mut conversation, vec![Block::user_text("go")])
+            .turn(&mut history, vec![Block::user_text("go")])
             .cancellation_token(cancellation_token)
             .run(),
     );
@@ -584,7 +581,7 @@ fn cancel_during_a_tool_keeps_its_own_result_and_runs_no_later_call() {
     assert_eq!(echo.calls(), Vec::<String>::new());
     assert_eq!(transport.requests().len(), 1);
     assert_eq!(
-        conversation.history(),
+        history,
         [
             Block::user_text("go"),
             Block::ToolCall(ToolCall::new("c1", "build", "{}")),
@@ -611,13 +608,13 @@ fn cancel_during_the_stream_keeps_the_partial_text_and_delivers_every_event() {
     let transport = ScriptedTransport::new([]).then_stall(partial);
     let target = target();
     let driver = Driver::new(&transport, &target, &NoWait);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
     let cancellation_token = CancellationToken::new();
     let seen = Mutex::new(Vec::new());
 
     let outcome = block_on(
         driver
-            .turn(&mut conversation, vec![Block::user_text("go")])
+            .turn(&mut history, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
                 seen.lock().unwrap().push(label(event));
                 if matches!(event, TurnEvent::Model(yuke_ai::Event::TextDelta(_))) {
@@ -630,10 +627,7 @@ fn cancel_during_the_stream_keeps_the_partial_text_and_delivers_every_event() {
 
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
     assert_eq!(*seen.lock().unwrap(), ["start 0 Text", "text cut"]);
-    assert_eq!(
-        conversation.history(),
-        [Block::user_text("go"), Block::assistant_text("cut")]
-    );
+    assert_eq!(history, [Block::user_text("go"), Block::assistant_text("cut")]);
 }
 
 /// Hooks that cancel the turn after each round, then wait forever.
@@ -641,7 +635,7 @@ struct CancelAfterRound(CancellationToken);
 
 #[async_trait]
 impl Hooks for CancelAfterRound {
-    async fn after_round(&self, _: &[Block]) -> RoundDecision {
+    async fn after_round(&self, _: &[Block], _: Option<FinishReason>) -> RoundDecision {
         self.0.cancel();
         std::future::pending().await
     }
@@ -655,20 +649,17 @@ fn cancel_while_the_after_round_hook_waits_keeps_the_answer_and_the_input() {
     let hooks = CancelAfterRound(cancellation_token.clone());
     let inbox = Mutex::new(vec![Block::user_text("later")]);
     let driver = Driver::new(&transport, &target, &NoWait).hooks(&hooks).inbox(&inbox);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
     let outcome = block_on(
         driver
-            .turn(&mut conversation, vec![Block::user_text("go")])
+            .turn(&mut history, vec![Block::user_text("go")])
             .cancellation_token(cancellation_token)
             .run(),
     );
 
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
-    assert_eq!(
-        conversation.history(),
-        [Block::user_text("go"), Block::assistant_text("done")]
-    );
+    assert_eq!(history, [Block::user_text("go"), Block::assistant_text("done")]);
     assert_eq!(*inbox.lock().unwrap(), [Block::user_text("later")]);
 }
 
@@ -677,13 +668,13 @@ fn turn_with_a_cancelled_token_sends_no_request() {
     let transport = ScriptedTransport::new([text_reply("unused")]);
     let target = target();
     let driver = Driver::new(&transport, &target, &NoWait);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
     let cancellation_token = CancellationToken::new();
     cancellation_token.cancel();
 
     let outcome = block_on(
         driver
-            .turn(&mut conversation, vec![Block::user_text("go")])
+            .turn(&mut history, vec![Block::user_text("go")])
             .cancellation_token(cancellation_token)
             .run(),
     );

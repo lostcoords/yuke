@@ -13,8 +13,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use yuke_ai::route::{Credential, Route};
 use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
-use yuke_ai::{AnthropicWire, Encoder, Request, Target, Wire};
-use yuke_engine::{Action, CancellationToken, Inbox, Timer, Tool, ToolContent, ToolContext};
+use yuke_ai::{AnthropicWire, Target, Wire};
+use yuke_engine::{CancellationToken, Inbox, Timer, Tool, ToolContent, ToolContext};
 
 /// An Anthropic target at a test host, with no credential.
 pub(crate) fn target() -> Target {
@@ -30,25 +30,6 @@ pub(crate) fn target() -> Target {
             cache: false,
         }),
         tool_search: false,
-    }
-}
-
-/// The body that a request of the blocks of `action` encodes to for [`target`].
-pub(crate) fn sent_body(action: Action<'_>) -> String {
-    let blocks = match action {
-        Action::Send(blocks) => blocks,
-        other => panic!("expected a request, got {other:?}"),
-    };
-    let mut encoder = Encoder::new();
-    let encoded = encoder.encode(&target(), Request::new(blocks)).unwrap();
-    String::from_utf8(encoded.http.body().flatten().copied().collect()).unwrap()
-}
-
-/// The names of the calls that `action` asks to run.
-pub(crate) fn called_names(action: Action<'_>) -> Vec<String> {
-    match action {
-        Action::CallTools(calls) => calls.into_iter().map(|call| call.name.clone()).collect(),
-        other => panic!("expected tool calls, got {other:?}"),
     }
 }
 

@@ -4,18 +4,15 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use yuke_ai::{Blob, BlobStore, Block, Media, ToolCall, ToolResult};
-use yuke_engine::{
-    Conversation, Driver, Hooks, Tool, ToolContent, ToolContext, ToolDecision, Toolset, TurnEvent, parse_arguments,
-};
+use yuke_engine::{Driver, Hooks, Tool, ToolContent, ToolContext, ToolDecision, Toolset, TurnEvent, parse_arguments};
 
 use crate::support::{NoWait, Recorder, ScriptedTransport, block_on, definition, target, text_reply, tool_reply};
 
 /// Run one turn, and return the tool results of the history.
 fn results_in_history(driver: Driver<'_>) -> Vec<ToolResult> {
-    let mut conversation = Conversation::new();
-    block_on(driver.turn(&mut conversation, vec![Block::user_text("go")]).run()).unwrap();
-    conversation
-        .history()
+    let mut history = Vec::new();
+    block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run()).unwrap();
+    history
         .iter()
         .filter_map(|block| match block {
             Block::ToolResult(result) => Some(result.clone()),
@@ -142,7 +139,7 @@ fn tool_output_reaches_the_observer_between_the_start_and_the_end_of_its_call() 
 
     block_on(
         driver
-            .turn(&mut Conversation::new(), vec![Block::user_text("go")])
+            .turn(&mut Vec::new(), vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| match event {
                 TurnEvent::ToolStarted(call) => seen.lock().unwrap().push(format!("started {}", call.call_id)),
                 TurnEvent::ToolOutput { call_id, text } => {

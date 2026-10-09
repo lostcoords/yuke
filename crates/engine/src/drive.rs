@@ -18,7 +18,7 @@ use yuke_ai::{
 };
 
 use crate::conversation::{Action, CANCELLED_REASON, Conversation, Outcome, not_executed};
-use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundPlan, ToolDecision, TurnDecision};
+use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundPlan, ToolDecision};
 use crate::search::{self, Bm25, Declared, ToolSearch};
 use crate::tool::{Concurrency, TOOL_CALL_NAME, ToolContext, Toolset};
 
@@ -312,14 +312,14 @@ impl<'a> Driver<'a> {
         Driver { tool_search, ..self }
     }
 
-    /// The turn of `input` on `conversation`. [`Turn::run`] runs it.
-    pub fn turn<'t>(&self, conversation: &'t mut Conversation, input: Vec<Block>) -> Turn<'t>
+    /// The turn of `input` on `history`. [`Turn::run`] runs it and adds the blocks of the turn to `history`.
+    pub fn turn<'t>(&self, history: &'t mut Vec<Block>, input: Vec<Block>) -> Turn<'t>
     where
         'a: 't,
     {
         Turn {
             driver: *self,
-            conversation,
+            history,
             input,
             observer: None,
             cancellation_token: CancellationToken::new(),
@@ -330,7 +330,7 @@ impl<'a> Driver<'a> {
     /// send the round again when the plan names a target.
     async fn send_round(
         &self,
-        conversation: &mut Conversation,
+        conversation: &mut Conversation<'_>,
         encoder: &mut Encoder,
         declared: &Declared<'_>,
         observer: &dyn Observer,
@@ -448,7 +448,7 @@ impl<'a> Driver<'a> {
 #[must_use = "a turn does nothing until the caller runs it"]
 pub struct Turn<'a> {
     driver: Driver<'a>,
-    conversation: &'a mut Conversation,
+    history: &'a mut Vec<Block>,
     input: Vec<Block>,
     observer: Option<&'a dyn Observer>,
     cancellation_token: CancellationToken,
@@ -491,11 +491,12 @@ impl<'a> Turn<'a> {
     pub async fn run(self) -> Result<Outcome, yuke_ai::Error> {
         let Turn {
             driver,
-            conversation,
+            history,
             input,
             observer,
             cancellation_token,
         } = self;
+        let mut conversation = Conversation::new(history);
         let ignore = |_: &TurnEvent<'_>| {};
         let observer: &dyn Observer = match observer {
             Some(observer) => observer,
@@ -511,10 +512,16 @@ impl<'a> Turn<'a> {
         let mut action = conversation.start(input);
         loop {
             match action {
-                Action::Send(_) => {
+                Action::Send => {
                     let sent;
                     (sent, native) = driver
-                        .send_round(conversation, &mut encoder, &declared, observer, &cancellation_token)
+                        .send_round(
+                            &mut conversation,
+                            &mut encoder,
+                            &declared,
+                            observer,
+                            &cancellation_token,
+                        )
                         .await;
                     action = match sent {
                         Sent::Finished(result) => conversation.model_finished(result),
@@ -547,20 +554,17 @@ impl<'a> Turn<'a> {
                     };
                 }
 
-                Action::AfterRound(history) => {
-                    action = match race(driver.hooks.after_round(history), pin!(cancellation_token.cancelled())).await {
+                Action::AfterRound { history, finish_reason } => {
+                    let decided = driver.hooks.after_round(history, finish_reason);
+                    action = match race(decided, pin!(cancellation_token.cancelled())).await {
                         // The driver takes the input only when the turn goes on, so a stop or a cancel leaves it.
                         Raced::Done(RoundDecision::Proceed) => conversation.proceed(driver.inbox.take()),
+                        Raced::Done(RoundDecision::Continue(more)) => {
+                            // Input of the user comes first. The hook gets another call after the next round.
+                            let input = driver.inbox.take();
+                            conversation.continue_turn(if input.is_empty() { more } else { input })
+                        }
                         Raced::Done(RoundDecision::Stop) => conversation.stop(),
-                        Raced::Cancelled => conversation.cancel(),
-                    };
-                }
-
-                Action::AfterTurn { history, finish_reason } => {
-                    let decided = driver.hooks.after_turn(history, finish_reason);
-                    action = match race(decided, pin!(cancellation_token.cancelled())).await {
-                        Raced::Done(TurnDecision::Finish) => conversation.stop(),
-                        Raced::Done(TurnDecision::Continue(input)) => conversation.continue_turn(input),
                         Raced::Cancelled => conversation.cancel(),
                     };
                 }

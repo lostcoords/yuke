@@ -30,18 +30,11 @@ pub trait Hooks: Send + Sync {
     }
 
     /// Decide whether the turn continues. The driver asks after each answer, when the answer and its tool results are
-    /// in `history`. After an answer that needs no other request, `Proceed` continues when new input waits. When no
-    /// input waits, the driver asks [`Hooks::after_turn`].
-    async fn after_round(&self, _history: &[Block]) -> RoundDecision {
+    /// in `history`, and before it takes the input of the inbox. `finish_reason` is the reason of an answer that needs
+    /// no other request, and `None` after a round that asks for another request. The engine sets no limit on
+    /// `Continue`, so a caller bounds its own loop.
+    async fn after_round(&self, _history: &[Block], _finish_reason: Option<FinishReason>) -> RoundDecision {
         RoundDecision::Proceed
-    }
-
-    /// Decide whether the turn ends. The driver asks when the model ended the turn with `finish_reason`, after
-    /// [`Hooks::after_round`] and only when no new input waits. `history` holds the last answer. It can also hold error
-    /// results of calls that did not run. The driver does not read the inbox while this hook waits. The engine sets no
-    /// limit on `Continue`, so a caller bounds its own loop.
-    async fn after_turn(&self, _history: &[Block], _finish_reason: FinishReason) -> TurnDecision {
-        TurnDecision::Finish
     }
 }
 
@@ -68,23 +61,19 @@ pub enum ToolDecision {
 }
 
 /// The answer of [`Hooks::after_round`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RoundDecision {
-    /// Continue the turn.
-    Proceed,
-    /// End the turn. A turn that asked for another request ends as [`crate::Outcome::Stopped`]. After an answer
-    /// that needs no other request, the turn ends as [`crate::Outcome::Completed`].
-    Stop,
-}
-
-/// The answer of [`Hooks::after_turn`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TurnDecision {
-    /// End the turn as [`crate::Outcome::Completed`].
-    Finish,
-    /// Add this input to the history. Then send another request in the same turn. Some models reject a request that
-    /// ends with an answer, so give input after an answer.
+pub enum RoundDecision {
+    /// Send the next request with the input of the inbox. After an answer that needs no other request, an empty inbox
+    /// ends the turn as [`crate::Outcome::Completed`].
+    Proceed,
+    /// Send another request with this input. When the inbox holds input, the request sends only the inbox input, and
+    /// the driver asks again after the next round. Some models reject a request that ends with an answer, so give
+    /// input after an answer.
     Continue(Vec<Block>),
+    /// End the turn, and leave the input of the inbox for the next turn. A turn that asked for another request ends as
+    /// [`crate::Outcome::Stopped`]. After an answer that needs no other request, the turn ends as
+    /// [`crate::Outcome::Completed`].
+    Stop,
 }
 
 /// The hooks of a driver without hooks: each call runs, each round continues, and each turn ends when the model ends it.

@@ -181,9 +181,6 @@ fn singular(word: &str) -> String {
 const DEFAULT_LIMIT: usize = 5;
 const MAX_LIMIT: usize = 20;
 
-/// The size of a bridge search result after which a match shows no input schema.
-const SCHEMA_BUDGET: usize = 16 * 1024;
-
 /// The arguments of both search tools.
 const SEARCH_SCHEMA: &str = r#"{"type":"object","properties":{"query":{"type":"string","description":"Keywords that describe the tool."},"limit":{"type":"integer","minimum":1,"maximum":20,"description":"The most matches. The default is 5."}},"required":["query"],"additionalProperties":false}"#;
 
@@ -308,22 +305,15 @@ pub(crate) async fn search(ranker: &dyn ToolSearch, toolset: &Toolset, call: &To
         let loaded = found.into_iter().cloned().collect();
         return ToolResult::success(&call.call_id, text).with_loaded(loaded);
     }
-    let separator = "\n\n";
+    // The engine sets no size cap. A caller bounds a large result in `after_tool`, as for any tool.
     let mut sections = vec![format!("Found {} tools. Call one with tool_call.", found.len())];
-    let mut size = sections[0].len();
-    for tool in found {
-        let head = format!("## {}\n{}", tool.name, tool.description);
-        let with_schema = format!("{head}\nInput schema: {}", tool.input_schema);
-        // A schema that would exceed the budget stays out, so one large schema cannot crowd out the later matches.
-        let section = if size + separator.len() + with_schema.len() <= SCHEMA_BUDGET {
-            with_schema
-        } else {
-            format!("{head}\nThe input schema is not shown. Search for the exact name to see it.")
-        };
-        size += separator.len() + section.len();
-        sections.push(section);
-    }
-    ToolResult::success(&call.call_id, sections.join(separator))
+    sections.extend(found.into_iter().map(|tool| {
+        format!(
+            "## {}\n{}\nInput schema: {}",
+            tool.name, tool.description, tool.input_schema
+        )
+    }));
+    ToolResult::success(&call.call_id, sections.join("\n\n"))
 }
 
 /// The arguments of [`TOOL_CALL_NAME`]. The inner arguments keep their text, so the tool receives the bytes that the

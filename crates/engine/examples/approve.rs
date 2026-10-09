@@ -11,10 +11,10 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use yuke_ai::{Block, HttpOptions, HttpTransport, ToolCall};
+use yuke_ai::{Block, FinishReason, HttpOptions, HttpTransport, ToolCall};
 use yuke_engine::{
-    Conversation, Driver, Hooks, Observer, Outcome, RoundDecision, Timer, Tool, ToolContent, ToolContext, ToolDecision,
-    Toolset, TurnEvent,
+    Driver, Hooks, Observer, Outcome, RoundDecision, Timer, Tool, ToolContent, ToolContext, ToolDecision, Toolset,
+    TurnEvent,
 };
 
 /// The number of rounds before the hooks stop the turn.
@@ -54,7 +54,7 @@ impl Hooks for Approve {
         }
     }
 
-    async fn after_round(&self, _: &[Block]) -> RoundDecision {
+    async fn after_round(&self, _: &[Block], _: Option<FinishReason>) -> RoundDecision {
         if self.rounds.fetch_add(1, Ordering::Relaxed) + 1 >= ROUND_LIMIT {
             RoundDecision::Stop
         } else {
@@ -109,13 +109,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let hooks = Approve::default();
     let driver = Driver::new(&http, &target, &TokioTimer).toolset(&toolset).hooks(&hooks);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
     let observer = PrintText::default();
 
     let input = vec![Block::user_text(
         "Use the uppercase tool on 'Hello, Rust!' and report its result.",
     )];
-    let outcome = driver.turn(&mut conversation, input).observer(&observer).run().await?;
+    let outcome = driver.turn(&mut history, input).observer(&observer).run().await?;
 
     match outcome {
         Outcome::Completed { .. } => println!(),

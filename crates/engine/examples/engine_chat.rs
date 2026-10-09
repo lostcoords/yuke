@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use yuke_ai::{Block, HttpOptions, HttpTransport};
-use yuke_engine::{CancellationToken, Conversation, Driver, Observer, Outcome, Timer, TurnEvent};
+use yuke_engine::{CancellationToken, Driver, Observer, Outcome, Timer, TurnEvent};
 
 /// Print each piece of answer text when it arrives.
 struct PrintText;
@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let settings = yuke_ai::Settings::new().system(SYSTEM);
     let driver = Driver::new(&http, &target, &TokioTimer).settings(&settings);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
     let observer = PrintText;
 
     let mut cancelled = false;
@@ -80,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         input.push(Block::user_text(line?));
         let outcome = driver
-            .turn(&mut conversation, input)
+            .turn(&mut history, input)
             .observer(&observer)
             .cancellation_token(cancellation_token)
             .run()

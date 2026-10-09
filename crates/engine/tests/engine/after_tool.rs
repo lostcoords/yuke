@@ -4,8 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use async_trait::async_trait;
 use yuke_ai::{Block, ToolCall, ToolResult};
 use yuke_engine::{
-    CancellationToken, Conversation, Driver, Hooks, Outcome, Tool, ToolContent, ToolContext, ToolDecision, Toolset,
-    TurnEvent,
+    CancellationToken, Driver, Hooks, Outcome, Tool, ToolContent, ToolContext, ToolDecision, Toolset, TurnEvent,
 };
 
 use crate::support::{NoWait, ScriptedTransport, block_on, definition, target, text_reply, tool_reply};
@@ -21,11 +20,11 @@ impl Tool for Answers {
 }
 
 /// Run one turn in which the model calls `print` once. Return the tool result in the history.
-fn result_in_history(driver: Driver<'_>, conversation: &mut Conversation) -> ToolResult {
+fn result_in_history(driver: Driver<'_>, history: &mut Vec<Block>) -> ToolResult {
     let finished = Mutex::new(Vec::new());
     block_on(
         driver
-            .turn(conversation, vec![Block::user_text("go")])
+            .turn(history, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
                 if let TurnEvent::ToolFinished(result) = event {
                     finished.lock().unwrap().push((*result).clone());
@@ -34,8 +33,7 @@ fn result_in_history(driver: Driver<'_>, conversation: &mut Conversation) -> Too
             .run(),
     )
     .unwrap();
-    let result = conversation
-        .history()
+    let result = history
         .iter()
         .find_map(|block| match block {
             Block::ToolResult(result) => Some(result.clone()),
@@ -72,7 +70,7 @@ fn after_tool_replaces_a_result_and_the_replacement_keeps_its_call_id() {
         .toolset(&toolset)
         .hooks(&hooks);
 
-    let result = result_in_history(driver, &mut Conversation::new());
+    let result = result_in_history(driver, &mut Vec::new());
 
     assert_eq!(*hooks.seen.lock().unwrap(), ["printed"]);
     assert_eq!(result, ToolResult::error("c1", "replaced"));
@@ -107,7 +105,7 @@ fn after_tool_does_not_run_for_a_blocked_call() {
         .toolset(&toolset)
         .hooks(&hooks);
 
-    let result = result_in_history(driver, &mut Conversation::new());
+    let result = result_in_history(driver, &mut Vec::new());
 
     assert_eq!(result, ToolResult::error("c1", "The user blocked this call."));
     assert_eq!(hooks.after_tool_calls.load(Ordering::Relaxed), 0);
@@ -135,18 +133,18 @@ fn cancel_while_after_tool_waits_keeps_the_tool_result() {
     let driver = Driver::new(&transport, &target, &NoWait)
         .toolset(&toolset)
         .hooks(&hooks);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
     let outcome = block_on(
         driver
-            .turn(&mut conversation, vec![Block::user_text("go")])
+            .turn(&mut history, vec![Block::user_text("go")])
             .cancellation_token(cancellation_token)
             .run(),
     );
 
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
     assert_eq!(
-        conversation.history().last(),
+        history.last(),
         Some(&Block::ToolResult(ToolResult::success("c1", "printed")))
     );
 }

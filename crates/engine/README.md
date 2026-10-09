@@ -1,7 +1,7 @@
 # engine
 
-Conversation execution for the yuke coding agent. A `Conversation` decides each step without I/O. A `Driver` carries
-out the steps over a caller's `ai` transport.
+Conversation execution for the yuke coding agent. A `Driver` runs each turn on the caller's history. It sends requests
+over the caller's `ai` transport.
 
 ## Examples
 

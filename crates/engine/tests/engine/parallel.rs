@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use yuke_ai::{Block, ToolCall, ToolResult};
 use yuke_engine::{
-    CancellationToken, Concurrency, Conversation, Driver, Hooks, Outcome, Tool, ToolContent, ToolContext, ToolDecision,
-    Toolset, TurnEvent, parse_arguments,
+    CancellationToken, Concurrency, Driver, Hooks, Outcome, Tool, ToolContent, ToolContext, ToolDecision, Toolset,
+    TurnEvent, parse_arguments,
 };
 
 use crate::support::{
@@ -140,7 +140,7 @@ fn two_parallel_calls_run_together_and_each_output_names_its_call() {
 
     block_on(
         driver
-            .turn(&mut Conversation::new(), vec![Block::user_text("go")])
+            .turn(&mut Vec::new(), vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
                 if let TurnEvent::ToolOutput { call_id, text } = event {
                     outputs.lock().unwrap().push(format!("{call_id}: {text}"));
@@ -172,12 +172,7 @@ fn a_serial_call_waits_for_the_group_before_it_and_runs_alone() {
     let toolset = toolset(&log);
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
 
-    block_on(
-        driver
-            .turn(&mut Conversation::new(), vec![Block::user_text("go")])
-            .run(),
-    )
-    .unwrap();
+    block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
 
     assert_eq!(
         log.entries(),
@@ -207,11 +202,11 @@ fn results_go_back_in_call_order_when_the_finish_order_differs() {
     let toolset = toolset(&log);
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
     let finished = Mutex::new(Vec::new());
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
     block_on(
         driver
-            .turn(&mut conversation, vec![Block::user_text("go")])
+            .turn(&mut history, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
                 if let TurnEvent::ToolFinished(result) = event {
                     finished.lock().unwrap().push(result.call_id.clone());
@@ -224,7 +219,7 @@ fn results_go_back_in_call_order_when_the_finish_order_differs() {
     assert_eq!(*finished.lock().unwrap(), ["c2", "c1"]);
     assert_in_order(&transport.requests()[1], &["result c1", "result c2"]);
     assert_eq!(
-        results(conversation.history()),
+        results(&history),
         [
             ("c1".to_owned(), "result c1".to_owned()),
             ("c2".to_owned(), "result c2".to_owned())
@@ -249,12 +244,7 @@ fn every_before_tool_of_a_group_runs_before_any_call_of_the_group_starts() {
         .toolset(&toolset)
         .hooks(&hooks);
 
-    block_on(
-        driver
-            .turn(&mut Conversation::new(), vec![Block::user_text("go")])
-            .run(),
-    )
-    .unwrap();
+    block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
 
     assert_eq!(
         log.entries(),
@@ -281,11 +271,11 @@ fn cancel_during_a_group_keeps_the_results_of_the_running_calls_and_runs_no_late
     let toolset = toolset(&log);
     let cancellation_token = CancellationToken::new();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
     let outcome = block_on(
         driver
-            .turn(&mut conversation, vec![Block::user_text("go")])
+            .turn(&mut history, vec![Block::user_text("go")])
             .cancellation_token(cancellation_token)
             .run(),
     );
@@ -293,7 +283,7 @@ fn cancel_during_a_group_keeps_the_results_of_the_running_calls_and_runs_no_late
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
     assert!(!log.entries().contains(&"start c3".to_owned()), "{:?}", log.entries());
     assert_eq!(
-        results(conversation.history()),
+        results(&history),
         [
             ("c1".to_owned(), "stopped c1".to_owned()),
             ("c2".to_owned(), "stopped c2".to_owned()),
@@ -322,11 +312,11 @@ fn cancel_during_the_hooks_of_a_group_starts_no_call_of_the_group() {
     let driver = Driver::new(&transport, &target, &NoWait)
         .toolset(&toolset)
         .hooks(&hooks);
-    let mut conversation = Conversation::new();
+    let mut history = Vec::new();
 
     let outcome = block_on(
         driver
-            .turn(&mut conversation, vec![Block::user_text("go")])
+            .turn(&mut history, vec![Block::user_text("go")])
             .cancellation_token(cancellation_token)
             .run(),
     );
@@ -335,7 +325,7 @@ fn cancel_during_the_hooks_of_a_group_starts_no_call_of_the_group() {
     assert_eq!(log.entries(), ["before c1", "before c2"]);
     let cancelled = |name: &str| format!("Tool call \"{name}\" was not executed: the user cancelled the turn.");
     assert_eq!(
-        results(conversation.history()),
+        results(&history),
         [
             ("c1".to_owned(), cancelled("read")),
             ("c2".to_owned(), cancelled("read"))
