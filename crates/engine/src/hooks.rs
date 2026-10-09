@@ -15,13 +15,15 @@ pub trait Hooks: Send + Sync {
         RoundPlan::default()
     }
 
-    /// Decide whether `call` runs. The driver asks before each call.
+    /// Decide whether `call` runs. The driver asks before each call, in call order. In a parallel group, it asks for each
+    /// call of the group before any call starts.
     async fn before_tool(&self, _call: &ToolCall) -> ToolDecision {
         ToolDecision::Run
     }
 
-    /// Return a replacement for the `result` of `call`, or `None` to keep it. The driver asks after each call that
-    /// [`Hooks::before_tool`] lets run. A replacement keeps the call id. A cancel during this hook keeps the result.
+    /// Return a replacement for the `result` of `call`, or `None` to keep it. The driver asks after each call that ran
+    /// its tool, at once when the call returns. The calls of a parallel group can ask together.
+    /// A replacement keeps the call id. A cancel during this hook keeps the result.
     /// The engine sets no cap on a result, so a caller bounds a large result here.
     async fn after_tool(&self, _call: &ToolCall, _result: &ToolResult) -> Option<ToolResult> {
         None

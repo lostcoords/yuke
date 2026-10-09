@@ -8,7 +8,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use yuke_ai::{Block, HttpOptions, HttpTransport};
 use yuke_engine::{
-    Conversation, Driver, Observer, Timer, Tool, ToolContent, ToolContext, Toolset, TurnEvent, parse_arguments,
+    Concurrency, Conversation, Driver, Observer, Timer, Tool, ToolContent, ToolContext, Toolset, TurnEvent,
+    parse_arguments,
 };
 
 /// Return the text in uppercase. The tool parses its arguments into a struct first.
@@ -22,6 +23,11 @@ struct UppercaseArguments {
 
 #[async_trait]
 impl Tool for Uppercase {
+    // Each call only reads its arguments, so the calls of one answer can run together.
+    fn concurrency(&self) -> Concurrency {
+        Concurrency::Parallel
+    }
+
     async fn call(&self, arguments: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
         let arguments: UppercaseArguments = parse_arguments(arguments)?;
         Ok(arguments.text.to_uppercase().into())

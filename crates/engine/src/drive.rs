@@ -1,5 +1,6 @@
 //! The standard driver. It carries out each [`Action`] of a [`Conversation`] over a caller's transport.
 
+use std::borrow::Cow;
 use std::future::poll_fn;
 use std::pin::{Pin, pin};
 use std::sync::{Mutex, PoisonError};
@@ -7,6 +8,7 @@ use std::task::Poll;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures_util::future::join_all;
 use tokio_util::sync::CancellationToken;
 use yuke_ai::retry::{self, Attempt};
 use yuke_ai::transport::Transport;
@@ -18,7 +20,7 @@ use yuke_ai::{
 use crate::conversation::{Action, CANCELLED_REASON, Conversation, Outcome, not_executed};
 use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundPlan, ToolDecision, TurnDecision};
 use crate::search::{self, Bm25, Declared, ToolSearch};
-use crate::tool::{TOOL_CALL_NAME, ToolContext, Toolset};
+use crate::tool::{Concurrency, TOOL_CALL_NAME, ToolContext, Toolset};
 
 /// One fact of a turn, for an observer. It borrows turn data until the observer returns, so an observer copies the
 /// data that it keeps.
@@ -40,7 +42,7 @@ pub enum TurnEvent<'a> {
         text: &'a str,
     },
 
-    /// A call finished with this result.
+    /// A call finished with this result. The approved calls of one parallel group finish in any order.
     ToolFinished(&'a ToolResult),
 
     /// A round failed after its retries. The model events of the round came before it, and the history keeps none of
@@ -169,46 +171,123 @@ impl<'a> Driver<'a> {
         Driver { inbox, ..self }
     }
 
-    /// Run `call` when its arguments are valid JSON and the hooks let it run, and return its result.
-    async fn call_tool(
+    /// The call that `call` runs, and its result when it runs nothing. The model calls a deferred tool through the
+    /// bridge, but the hooks and the observer see the real call.
+    fn resolve<'c>(&self, call: &'c ToolCall) -> Resolved<'c> {
+        let call = if call.name == TOOL_CALL_NAME && self.toolset.deferred().next().is_some() {
+            match search::unwrap_call(self.toolset, call) {
+                Ok(real) => Cow::Owned(real),
+                Err(refused) => {
+                    return Resolved {
+                        call: Cow::Borrowed(call),
+                        result: Some(refused),
+                    };
+                }
+            }
+        } else {
+            Cow::Borrowed(call)
+        };
+        // The parse error goes to the model before a hook or the tool receives the call. The model can send it again.
+        let result = serde_json::from_str::<serde::de::IgnoredAny>(&call.arguments)
+            .err()
+            .map(|error| not_executed(&call, &format!("its arguments are not valid JSON: {error}.")));
+        Resolved { call, result }
+    }
+
+    /// Whether `call` runs the built-in search of the deferred tools.
+    fn is_search(&self, call: &ToolCall) -> bool {
+        call.name == SEARCH_TOOL_NAME && self.toolset.deferred().next().is_some()
+    }
+
+    /// The concurrency of a resolved call. A call that runs nothing, and the search that only reads the toolset, do
+    /// not wait for other calls.
+    fn concurrency(&self, resolved: &Resolved<'_>) -> Concurrency {
+        if resolved.result.is_some() || self.is_search(&resolved.call) {
+            Concurrency::Parallel
+        } else {
+            self.toolset.concurrency(&resolved.call.name)
+        }
+    }
+
+    /// Run the calls of one group, and return their results in call order. The driver asks [`Hooks::before_tool`] for
+    /// each call in call order first. Then the approved calls run together.
+    async fn call_group(
+        &self,
+        mut group: Vec<Resolved<'_>>,
+        native: bool,
+        observer: &dyn Observer,
+        cancellation_token: &CancellationToken,
+    ) -> Vec<ToolResult> {
+        // After this loop, a call without a result is a call that the hooks let run.
+        for Resolved { call, result } in &mut group {
+            observer.event(&TurnEvent::ToolStarted(call));
+            if result.is_none() {
+                *result = match race(self.hooks.before_tool(call), pin!(cancellation_token.cancelled())).await {
+                    Raced::Done(ToolDecision::Run) => None,
+                    Raced::Done(ToolDecision::Block(reason)) => Some(ToolResult::error(&call.call_id, reason)),
+                    Raced::Cancelled => Some(not_executed(call, CANCELLED_REASON)),
+                };
+            }
+            if let Some(result) = result {
+                observer.event(&TurnEvent::ToolFinished(result));
+            }
+        }
+
+        let calls = group.into_iter().map(|Resolved { call, result }| async move {
+            match result {
+                Some(result) => result,
+                None => self.run_call(&call, native, observer, cancellation_token).await,
+            }
+        });
+        join_all(calls).await
+    }
+
+    /// Run an approved `call`, then ask [`Hooks::after_tool`], and return its result. A cancel before the start runs
+    /// nothing.
+    async fn run_call(
         &self,
         call: &ToolCall,
         native: bool,
         observer: &dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> ToolResult {
-        // The parse error goes to the model before a hook or the tool receives the call. The model can send it again.
-        if let Err(error) = serde_json::from_str::<serde::de::IgnoredAny>(&call.arguments) {
-            return not_executed(call, &format!("its arguments are not valid JSON: {error}."));
-        }
-        match race(self.hooks.before_tool(call), pin!(cancellation_token.cancelled())).await {
-            Raced::Done(ToolDecision::Run) => {
-                let result = if call.name == SEARCH_TOOL_NAME && self.toolset.deferred().next().is_some() {
-                    let searched = search::search(self.tool_search, self.toolset, call, native);
-                    match race(searched, pin!(cancellation_token.cancelled())).await {
-                        Raced::Done(result) => result,
-                        Raced::Cancelled => not_executed(call, CANCELLED_REASON),
-                    }
-                } else {
-                    let context = ToolContext::new(call, cancellation_token, observer);
-                    self.toolset.call(call, &context).await
-                };
-                match race(
-                    self.hooks.after_tool(call, &result),
-                    pin!(cancellation_token.cancelled()),
-                )
-                .await
-                {
-                    // The result answers this call, so a replacement keeps its call id.
-                    Raced::Done(Some(replacement)) => ToolResult {
-                        call_id: result.call_id,
-                        ..replacement
-                    },
-                    Raced::Done(None) | Raced::Cancelled => result,
-                }
+        // A cancel during the hooks of the group comes before this call starts, so the call does not start.
+        let result = if cancellation_token.is_cancelled() {
+            not_executed(call, CANCELLED_REASON)
+        } else if self.is_search(call) {
+            let searched = search::search(self.tool_search, self.toolset, call, native);
+            match race(searched, pin!(cancellation_token.cancelled())).await {
+                Raced::Done(result) => self.after_tool(call, result, cancellation_token).await,
+                Raced::Cancelled => not_executed(call, CANCELLED_REASON),
             }
-            Raced::Done(ToolDecision::Block(reason)) => ToolResult::error(&call.call_id, reason),
-            Raced::Cancelled => not_executed(call, CANCELLED_REASON),
+        } else {
+            let context = ToolContext::new(call, cancellation_token, observer);
+            let result = self.toolset.call(call, &context).await;
+            self.after_tool(call, result, cancellation_token).await
+        };
+        observer.event(&TurnEvent::ToolFinished(&result));
+        result
+    }
+
+    /// Ask [`Hooks::after_tool`] for a replacement of `result`. A cancel keeps `result`.
+    async fn after_tool(
+        &self,
+        call: &ToolCall,
+        result: ToolResult,
+        cancellation_token: &CancellationToken,
+    ) -> ToolResult {
+        match race(
+            self.hooks.after_tool(call, &result),
+            pin!(cancellation_token.cancelled()),
+        )
+        .await
+        {
+            // The result answers this call, so a replacement keeps its call id.
+            Raced::Done(Some(replacement)) => ToolResult {
+                call_id: result.call_id,
+                ..replacement
+            },
+            Raced::Done(None) | Raced::Cancelled => result,
         }
     }
 
@@ -403,7 +482,7 @@ impl<'a> Turn<'a> {
     }
 
     /// Run the turn until it ends. A cancel interrupts each wait that the driver owns. A tool that runs gets the token,
-    /// and the driver waits for its return. A later tool call does not run.
+    /// and the driver waits for its return. A tool call that did not start does not run.
     ///
     /// # Errors
     ///
@@ -444,28 +523,21 @@ impl<'a> Turn<'a> {
                 }
 
                 Action::CallTools(calls) => {
+                    // A closure kept across an await makes the turn future lose `Send`, so the calls resolve first.
+                    let resolved: Vec<Resolved<'_>> = calls.into_iter().map(|call| driver.resolve(call)).collect();
+                    let mut resolved = resolved.into_iter().peekable();
                     let mut results = Vec::new();
-                    for call in calls {
-                        // The model calls a deferred tool through the bridge, but the hooks and the observer see the
-                        // real call.
-                        let bridged = (call.name == TOOL_CALL_NAME && driver.toolset.deferred().next().is_some())
-                            .then(|| search::unwrap_call(driver.toolset, call));
-                        let result = match bridged {
-                            Some(Err(refused)) => {
-                                observer.event(&TurnEvent::ToolStarted(call));
-                                refused
-                            }
-                            Some(Ok(real)) => {
-                                observer.event(&TurnEvent::ToolStarted(&real));
-                                driver.call_tool(&real, native, observer, &cancellation_token).await
-                            }
-                            None => {
-                                observer.event(&TurnEvent::ToolStarted(call));
-                                driver.call_tool(call, native, observer, &cancellation_token).await
-                            }
-                        };
-                        observer.event(&TurnEvent::ToolFinished(&result));
-                        results.push(result);
+                    // Consecutive parallel calls form one group. A serial call forms a group of its own.
+                    while let Some(first) = resolved.next() {
+                        let parallel = driver.concurrency(&first) == Concurrency::Parallel;
+                        let mut group = vec![first];
+                        while parallel
+                            && let Some(next) =
+                                resolved.next_if(|next| driver.concurrency(next) == Concurrency::Parallel)
+                        {
+                            group.push(next);
+                        }
+                        results.extend(driver.call_group(group, native, observer, &cancellation_token).await);
                     }
 
                     action = if cancellation_token.is_cancelled() {
@@ -497,6 +569,16 @@ impl<'a> Turn<'a> {
             }
         }
     }
+}
+
+/// A tool call after the bridge and the JSON check.
+struct Resolved<'c> {
+    /// The call that the hooks and the observer see.
+    call: Cow<'c, ToolCall>,
+
+    /// The result of a call that the bridge refuses or that has invalid JSON. After [`Hooks::before_tool`], also the
+    /// result of a call that the hooks block or that a cancel stops.
+    result: Option<ToolResult>,
 }
 
 /// How a request ended.

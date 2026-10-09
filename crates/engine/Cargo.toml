@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 async-trait = "0.1.92"
 fastrand = "2.5.0"
+futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
 serde = "1.0.229"
 serde_json = { version = "1.0.151", features = ["raw_value"] }
 tokio-util = "0.7.19"

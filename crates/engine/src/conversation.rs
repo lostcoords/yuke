@@ -21,7 +21,7 @@ pub enum Action<'a> {
     /// whole history.
     Send(&'a [Block]),
 
-    /// Run these calls in order, then give the results to [`Conversation::tools_finished`] in the same order.
+    /// Run these calls, then give the results to [`Conversation::tools_finished`] in call order.
     CallTools(ToolCalls<'a>),
 
     /// A round ended, and its answer and tool results are in the history. Call [`Conversation::proceed`] or
@@ -217,8 +217,8 @@ impl Conversation {
         self.tools_cancelled(Vec::new())
     }
 
-    /// End the turn as [`Outcome::Cancelled`] after [`Action::CallTools`]. Give the `results` of the tool calls that
-    /// ran, in call order. Each tool call that did not run gets an error result.
+    /// End the turn as [`Outcome::Cancelled`] after [`Action::CallTools`]. Give the `results` of the first calls, in call
+    /// order, for example of the calls that ran. Each later call gets an error result.
     pub fn tools_cancelled(&mut self, results: Vec<ToolResult>) -> Action<'_> {
         let answer = self
             .history

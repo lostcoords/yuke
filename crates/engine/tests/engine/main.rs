@@ -12,5 +12,6 @@ mod before_round;
 mod conversation;
 mod deferred;
 mod drive;
+mod parallel;
 mod support;
 mod tool_api;

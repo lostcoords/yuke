@@ -16,4 +16,4 @@ pub use drive::{Driver, Inbox, Observer, Timer, Turn, TurnEvent};
 pub use hooks::{Hooks, RoundDecision, RoundPlan, ToolDecision, TurnDecision};
 pub use search::{Bm25, ToolSearch};
 pub use tokio_util::sync::CancellationToken;
-pub use tool::{TOOL_CALL_NAME, Tool, ToolContent, ToolContext, ToolNameError, Toolset, parse_arguments};
+pub use tool::{Concurrency, TOOL_CALL_NAME, Tool, ToolContent, ToolContext, ToolNameError, Toolset, parse_arguments};

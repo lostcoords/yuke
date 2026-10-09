@@ -7,9 +7,26 @@ use yuke_ai::{Media, ToolCall, ToolResult};
 
 use crate::drive::{Observer, TurnEvent};
 
+/// How the calls of one tool run beside other calls of the same answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Concurrency {
+    /// The call runs alone. It starts after the calls before it end.
+    Serial,
+
+    /// The call runs together with the `Parallel` calls next to it. The calls share the task of the turn, so a call
+    /// that blocks the thread stops the others. Wait with async I/O, or move blocking work off the task.
+    Parallel,
+}
+
 /// A tool that the model can call.
 #[async_trait]
 pub trait Tool: Send + Sync {
+    /// How the calls of this tool run beside other calls. Declare `Parallel` only for a tool whose calls do not
+    /// depend on each other, for example a tool that only reads.
+    fn concurrency(&self) -> Concurrency {
+        Concurrency::Serial
+    }
+
     /// Run one call with its JSON `arguments`. The engine checks that the arguments are valid JSON first. `Err`
     /// reaches the model as an error result, and the turn continues.
     ///
@@ -189,6 +206,14 @@ impl Toolset {
     /// The definition of the tool `name`.
     pub(crate) fn definition(&self, name: &str) -> Option<&yuke_ai::ToolDefinition> {
         self.definitions.iter().find(|definition| definition.name == name)
+    }
+
+    /// The concurrency of the tool of `name`. A name without a tool runs nothing, so it does not wait for other calls.
+    pub(crate) fn concurrency(&self, name: &str) -> Concurrency {
+        match self.definitions.iter().position(|tool| tool.name == name) {
+            Some(index) => self.handlers[index].concurrency(),
+            None => Concurrency::Parallel,
+        }
     }
 
     /// Run `call`, and return its result. The tool sees `context`.
