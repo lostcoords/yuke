@@ -21,7 +21,7 @@ use yuke_engine::{CancellationToken, Conversation, Driver, Observer, Outcome, Ti
 struct PrintText;
 
 impl Observer for PrintText {
-    fn event(&mut self, event: &TurnEvent<'_>) {
+    fn event(&self, event: &TurnEvent<'_>) {
         if let TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) = event {
             print!("{}", delta.text);
             std::io::stdout().flush().expect("Couldn't flush");
@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let settings = yuke_ai::Settings::new().system(SYSTEM);
     let driver = Driver::new(&http, &target, &TokioTimer).settings(&settings);
     let mut conversation = Conversation::new();
-    let mut observer = PrintText;
+    let observer = PrintText;
 
     let mut cancelled = false;
 
@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         input.push(Block::user_text(line?));
         let outcome = driver
             .turn(&mut conversation, input)
-            .observer(&mut observer)
+            .observer(&observer)
             .cancellation_token(cancellation_token)
             .run()
             .await;

@@ -15,20 +15,20 @@ struct Answers(&'static str);
 
 #[async_trait]
 impl Tool for Answers {
-    async fn call(&self, _: &str, _: &mut ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
         Ok(self.0.into())
     }
 }
 
 /// Run one turn in which the model calls `print` once. Return the tool result in the history.
 fn result_in_history(driver: Driver<'_>, conversation: &mut Conversation) -> ToolResult {
-    let mut finished = Vec::new();
+    let finished = Mutex::new(Vec::new());
     block_on(
         driver
             .turn(conversation, vec![Block::user_text("go")])
-            .observer(&mut |event: &TurnEvent<'_>| {
+            .observer(&|event: &TurnEvent<'_>| {
                 if let TurnEvent::ToolFinished(result) = event {
-                    finished.push((*result).clone());
+                    finished.lock().unwrap().push((*result).clone());
                 }
             })
             .run(),
@@ -43,7 +43,7 @@ fn result_in_history(driver: Driver<'_>, conversation: &mut Conversation) -> Too
         })
         .unwrap();
     // The observer receives the result that the model receives.
-    assert_eq!(finished, std::slice::from_ref(&result));
+    assert_eq!(*finished.lock().unwrap(), std::slice::from_ref(&result));
     result
 }
 

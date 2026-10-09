@@ -146,7 +146,7 @@ impl Recorder {
 
 #[async_trait]
 impl Tool for Recorder {
-    async fn call(&self, arguments: &str, _: &mut ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(&self, arguments: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
         let mut calls = self.calls.lock().unwrap();
         calls.push(arguments.to_owned());
         Ok(format!("result {}", calls.len()).into())

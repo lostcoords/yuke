@@ -1,6 +1,6 @@
 use std::borrow::Cow;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use yuke_ai::{Blob, BlobStore, Block, Media, ToolCall, ToolResult};
@@ -79,7 +79,7 @@ struct EchoArguments {
 
 #[async_trait]
 impl Tool for Echo {
-    async fn call(&self, arguments: &str, _: &mut ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(&self, arguments: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
         let arguments: EchoArguments = parse_arguments(arguments)?;
         self.runs.fetch_add(1, Ordering::Relaxed);
         Ok(format!("echo {}", arguments.text).into())
@@ -124,7 +124,7 @@ struct Prints;
 
 #[async_trait]
 impl Tool for Prints {
-    async fn call(&self, _: &str, context: &mut ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(&self, _: &str, context: &ToolContext<'_>) -> Result<ToolContent, String> {
         context.output("line 1\n");
         context.output("line 2\n");
         Ok(format!("printed for {}", context.call_id()).into())
@@ -138,15 +138,17 @@ fn tool_output_reaches_the_observer_between_the_start_and_the_end_of_its_call() 
     let mut toolset = Toolset::new();
     toolset.add(definition("print"), Prints).unwrap();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
-    let mut seen = Vec::new();
+    let seen = Mutex::new(Vec::new());
 
     block_on(
         driver
             .turn(&mut Conversation::new(), vec![Block::user_text("go")])
-            .observer(&mut |event: &TurnEvent<'_>| match event {
-                TurnEvent::ToolStarted(call) => seen.push(format!("started {}", call.call_id)),
-                TurnEvent::ToolOutput { call_id, text } => seen.push(format!("output {call_id} {text}")),
-                TurnEvent::ToolFinished(result) => seen.push(format!("finished {}", result.content)),
+            .observer(&|event: &TurnEvent<'_>| match event {
+                TurnEvent::ToolStarted(call) => seen.lock().unwrap().push(format!("started {}", call.call_id)),
+                TurnEvent::ToolOutput { call_id, text } => {
+                    seen.lock().unwrap().push(format!("output {call_id} {text}"));
+                }
+                TurnEvent::ToolFinished(result) => seen.lock().unwrap().push(format!("finished {}", result.content)),
                 _ => {}
             })
             .run(),
@@ -154,7 +156,7 @@ fn tool_output_reaches_the_observer_between_the_start_and_the_end_of_its_call() 
     .unwrap();
 
     assert_eq!(
-        seen,
+        *seen.lock().unwrap(),
         [
             "started c1",
             "output c1 line 1\n",
@@ -189,7 +191,7 @@ struct ReadsImage;
 
 #[async_trait]
 impl Tool for ReadsImage {
-    async fn call(&self, _: &str, _: &mut ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
         Ok(ToolContent::from("a picture").with_media(vec![image()]))
     }
 }

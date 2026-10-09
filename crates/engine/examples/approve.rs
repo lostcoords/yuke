@@ -7,7 +7,7 @@
 )]
 
 use std::io::Write;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -25,7 +25,7 @@ struct Uppercase;
 
 #[async_trait]
 impl Tool for Uppercase {
-    async fn call(&self, arguments: &str, _: &mut ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(&self, arguments: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
         Ok(arguments.to_uppercase().into())
     }
 }
@@ -66,21 +66,18 @@ impl Hooks for Approve {
 /// Print the answer text when it arrives. End the open line before a call, so the approval prompt starts a line.
 #[derive(Default)]
 struct PrintText {
-    line_open: bool,
+    line_open: AtomicBool,
 }
 
 impl Observer for PrintText {
-    fn event(&mut self, event: &TurnEvent<'_>) {
+    fn event(&self, event: &TurnEvent<'_>) {
         match event {
             TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => {
                 print!("{}", delta.text);
                 std::io::stdout().flush().expect("Couldn't flush");
-                self.line_open = true;
+                self.line_open.store(true, Ordering::Relaxed);
             }
-            TurnEvent::ToolStarted(_) if self.line_open => {
-                println!();
-                self.line_open = false;
-            }
+            TurnEvent::ToolStarted(_) if self.line_open.swap(false, Ordering::Relaxed) => println!(),
             _ => {}
         }
     }
@@ -113,16 +110,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hooks = Approve::default();
     let driver = Driver::new(&http, &target, &TokioTimer).toolset(&toolset).hooks(&hooks);
     let mut conversation = Conversation::new();
-    let mut observer = PrintText::default();
+    let observer = PrintText::default();
 
     let input = vec![Block::user_text(
         "Use the uppercase tool on 'Hello, Rust!' and report its result.",
     )];
-    let outcome = driver
-        .turn(&mut conversation, input)
-        .observer(&mut observer)
-        .run()
-        .await?;
+    let outcome = driver.turn(&mut conversation, input).observer(&observer).run().await?;
 
     match outcome {
         Outcome::Completed { .. } => println!(),

@@ -15,7 +15,7 @@ pub trait Tool: Send + Sync {
     ///
     /// When the cancellation token of `context` is cancelled, stop the work. Return a result that describes the
     /// stopped work, for example the output so far and "Command aborted". The driver waits for the return.
-    async fn call(&self, arguments: &str, context: &mut ToolContext<'_>) -> Result<ToolContent, String>;
+    async fn call(&self, arguments: &str, context: &ToolContext<'_>) -> Result<ToolContent, String>;
 }
 
 /// Parse the JSON `arguments` of a call into `T`. A tool calls it first, and `?` returns the parse error to the
@@ -32,7 +32,7 @@ pub fn parse_arguments<T: DeserializeOwned>(arguments: &str) -> Result<T, String
 pub struct ToolContext<'a> {
     call: &'a ToolCall,
     cancellation_token: &'a CancellationToken,
-    observer: &'a mut dyn Observer,
+    observer: &'a dyn Observer,
 }
 
 impl std::fmt::Debug for ToolContext<'_> {
@@ -47,7 +47,7 @@ impl<'a> ToolContext<'a> {
     pub(crate) fn new(
         call: &'a ToolCall,
         cancellation_token: &'a CancellationToken,
-        observer: &'a mut dyn Observer,
+        observer: &'a dyn Observer,
     ) -> Self {
         ToolContext {
             call,
@@ -69,7 +69,7 @@ impl<'a> ToolContext<'a> {
     /// Show `text` as live output of the call, for example a line that a command prints. The observer receives it as
     /// [`TurnEvent::ToolOutput`] at once. The model does not receive it. Put the text for the model in the returned
     /// [`ToolContent`].
-    pub fn output(&mut self, text: &str) {
+    pub fn output(&self, text: &str) {
         self.observer.event(&TurnEvent::ToolOutput {
             call_id: &self.call.call_id,
             text,
@@ -192,7 +192,7 @@ impl Toolset {
     }
 
     /// Run `call`, and return its result. The tool sees `context`.
-    pub(crate) async fn call(&self, call: &ToolCall, context: &mut ToolContext<'_>) -> ToolResult {
+    pub(crate) async fn call(&self, call: &ToolCall, context: &ToolContext<'_>) -> ToolResult {
         let Some(index) = self.definitions.iter().position(|tool| tool.name == call.name) else {
             return ToolResult::error(&call.call_id, format!("Unknown tool: {}", call.name));
         };

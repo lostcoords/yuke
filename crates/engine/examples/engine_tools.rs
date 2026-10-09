@@ -1,6 +1,8 @@
 //! Give the model one tool. The observer prints each call and its result, and it keeps the answer text.
 #![expect(clippy::print_stdout, reason = "an example prints its answer")]
 
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -20,7 +22,7 @@ struct UppercaseArguments {
 
 #[async_trait]
 impl Tool for Uppercase {
-    async fn call(&self, arguments: &str, _: &mut ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(&self, arguments: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
         let arguments: UppercaseArguments = parse_arguments(arguments)?;
         Ok(arguments.text.to_uppercase().into())
     }
@@ -52,36 +54,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let driver = Driver::new(&http, &target, &TokioTimer).toolset(&toolset);
     let mut conversation = Conversation::new();
-    let mut transcript = Transcript::default();
+    let transcript = Transcript::default();
 
     let input = vec![Block::user_text(
         "Use the uppercase tool on 'Hello, Rust!' and report its result.",
     )];
     driver
         .turn(&mut conversation, input)
-        .observer(&mut transcript)
+        .observer(&transcript)
         .run()
         .await?;
-    println!("{} ({} tool runs)", transcript.answer, transcript.tool_runs);
+    let answer = transcript.answer.into_inner().unwrap_or_else(PoisonError::into_inner);
+    println!("{answer} ({} tool runs)", transcript.tool_runs.into_inner());
     Ok(())
 }
 
 /// Print each call and its result, and keep the answer text.
 #[derive(Default)]
 struct Transcript {
-    answer: String,
-    tool_runs: u32,
+    answer: Mutex<String>,
+    tool_runs: AtomicU32,
 }
 
 impl Observer for Transcript {
-    fn event(&mut self, event: &TurnEvent<'_>) {
+    fn event(&self, event: &TurnEvent<'_>) {
         match event {
             TurnEvent::ToolStarted(call) => println!("call {} {}", call.name, call.arguments),
             TurnEvent::ToolFinished(result) => {
                 println!("result {}", result.content);
-                self.tool_runs += 1;
+                self.tool_runs.fetch_add(1, Ordering::Relaxed);
             }
-            TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => self.answer.push_str(delta.text),
+            TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => {
+                self.answer
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push_str(delta.text);
+            }
             _ => {}
         }
     }

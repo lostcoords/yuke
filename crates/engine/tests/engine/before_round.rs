@@ -174,14 +174,16 @@ fn a_failed_round_runs_again_on_the_plan_target_in_the_same_turn() {
     });
     let driver = Driver::new(&transport, &target, &NoWait).hooks(&hooks);
     let mut conversation = Conversation::new();
-    let mut texts = Vec::new();
+    let texts = Mutex::new(Vec::new());
 
     let outcome = block_on(
         driver
             .turn(&mut conversation, vec![Block::user_text("go")])
-            .observer(&mut |event: &TurnEvent<'_>| match event {
-                TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => texts.push(delta.text.to_string()),
-                TurnEvent::RoundFailed(_) => texts.push("[failed]".to_owned()),
+            .observer(&|event: &TurnEvent<'_>| match event {
+                TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => {
+                    texts.lock().unwrap().push(delta.text.to_string());
+                }
+                TurnEvent::RoundFailed(_) => texts.lock().unwrap().push("[failed]".to_owned()),
                 _ => {}
             })
             .run(),
@@ -189,7 +191,7 @@ fn a_failed_round_runs_again_on_the_plan_target_in_the_same_turn() {
 
     assert!(matches!(outcome, Ok(Outcome::Completed { .. })), "{outcome:?}");
     // The observer can tell the text of the failed round from the text of the fallback.
-    assert_eq!(texts, ["cut", "[failed]", "done"]);
+    assert_eq!(*texts.lock().unwrap(), ["cut", "[failed]", "done"]);
     assert_eq!(hooks.failures.lock().unwrap().len(), 1);
     let requests = transport.requests();
     assert_eq!(requests.len(), 2);

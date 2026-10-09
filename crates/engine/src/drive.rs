@@ -57,16 +57,16 @@ pub enum TurnEvent<'a> {
     },
 }
 
-/// Receives the events of a turn. The driver calls it on the turn's task, so it copies or records the data that it
-/// needs, and it returns without a wait. A `Send` closure that takes a `&TurnEvent` is an observer.
-pub trait Observer: Send {
+/// Receives the events of a turn, one at a time, and returns without a wait. Two turns can share one observer, so an
+/// observer with state keeps that state behind a lock or an atomic.
+pub trait Observer: Send + Sync {
     /// Receive one event.
-    fn event(&mut self, event: &TurnEvent<'_>);
+    fn event(&self, event: &TurnEvent<'_>);
 }
 
 // A closure or a function is an observer, so a quick observer needs no struct.
-impl<F: FnMut(&TurnEvent<'_>) + Send> Observer for F {
-    fn event(&mut self, event: &TurnEvent<'_>) {
+impl<F: Fn(&TurnEvent<'_>) + Send + Sync> Observer for F {
+    fn event(&self, event: &TurnEvent<'_>) {
         self(event);
     }
 }
@@ -174,7 +174,7 @@ impl<'a> Driver<'a> {
         &self,
         call: &ToolCall,
         native: bool,
-        observer: &mut dyn Observer,
+        observer: &dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> ToolResult {
         // The parse error goes to the model before a hook or the tool receives the call. The model can send it again.
@@ -190,8 +190,8 @@ impl<'a> Driver<'a> {
                         Raced::Cancelled => not_executed(call, CANCELLED_REASON),
                     }
                 } else {
-                    let mut context = ToolContext::new(call, cancellation_token, observer);
-                    self.toolset.call(call, &mut context).await
+                    let context = ToolContext::new(call, cancellation_token, observer);
+                    self.toolset.call(call, &context).await
                 };
                 match race(
                     self.hooks.after_tool(call, &result),
@@ -254,7 +254,7 @@ impl<'a> Driver<'a> {
         conversation: &mut Conversation,
         encoder: &mut Encoder,
         declared: &Declared<'_>,
-        observer: &mut dyn Observer,
+        observer: &dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> (Sent, bool) {
         let mut failure: Option<yuke_ai::Error> = None;
@@ -305,7 +305,7 @@ impl<'a> Driver<'a> {
         blocks: &[Block],
         tools: &[ToolDefinition],
         plan: &RoundPlan,
-        observer: &mut dyn Observer,
+        observer: &dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> Sent {
         let target = plan.target.as_ref().unwrap_or(self.target);
@@ -371,7 +371,7 @@ pub struct Turn<'a> {
     driver: Driver<'a>,
     conversation: &'a mut Conversation,
     input: Vec<Block>,
-    observer: Option<&'a mut dyn Observer>,
+    observer: Option<&'a dyn Observer>,
     cancellation_token: CancellationToken,
 }
 
@@ -386,7 +386,7 @@ impl std::fmt::Debug for Turn<'_> {
 
 impl<'a> Turn<'a> {
     /// Give each event of the turn to `observer`. A turn without an observer drops its events.
-    pub fn observer(self, observer: &'a mut dyn Observer) -> Self {
+    pub fn observer(self, observer: &'a dyn Observer) -> Self {
         Turn {
             observer: Some(observer),
             ..self
@@ -417,10 +417,10 @@ impl<'a> Turn<'a> {
             observer,
             cancellation_token,
         } = self;
-        let mut ignore = |_: &TurnEvent<'_>| {};
-        let observer: &mut dyn Observer = match observer {
+        let ignore = |_: &TurnEvent<'_>| {};
+        let observer: &dyn Observer = match observer {
             Some(observer) => observer,
-            None => &mut ignore,
+            None => &ignore,
         };
         let declared = Declared::new(driver.toolset);
         // The calls of a round use the kind of search of the target of that round.

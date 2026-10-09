@@ -118,7 +118,7 @@ struct Fails;
 
 #[async_trait]
 impl Tool for Fails {
-    async fn call(&self, _: &str, _: &mut ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
         Err("disk full".to_owned())
     }
 }
@@ -173,13 +173,13 @@ fn observer_receives_every_event_of_each_round_in_source_order() {
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
     let mut conversation = Conversation::new();
-    let mut seen = Vec::new();
+    let seen = Mutex::new(Vec::new());
 
     let outcome = block_on(
         driver
             .turn(&mut conversation, vec![Block::user_text("go")])
-            .observer(&mut |event: &TurnEvent<'_>| {
-                seen.push(label(event));
+            .observer(&|event: &TurnEvent<'_>| {
+                seen.lock().unwrap().push(label(event));
             })
             .run(),
     );
@@ -191,7 +191,7 @@ fn observer_receives_every_event_of_each_round_in_source_order() {
         })
     ));
     assert_eq!(
-        seen,
+        *seen.lock().unwrap(),
         [
             "start 0 ToolCall",
             "arguments 0 {}",
@@ -218,18 +218,18 @@ fn failed_reply_delivers_its_events_then_fails_with_the_partial_output() {
     let target = target();
     let driver = Driver::new(&transport, &target, &NoWait);
     let mut conversation = Conversation::new();
-    let mut seen = Vec::new();
+    let seen = Mutex::new(Vec::new());
 
     let outcome = block_on(
         driver
             .turn(&mut conversation, vec![Block::user_text("go")])
-            .observer(&mut |event: &TurnEvent<'_>| {
-                seen.push(label(event));
+            .observer(&|event: &TurnEvent<'_>| {
+                seen.lock().unwrap().push(label(event));
             })
             .run(),
     );
 
-    assert_eq!(seen, ["start 0 Text", "text cut", "round failed"]);
+    assert_eq!(*seen.lock().unwrap(), ["start 0 Text", "text cut", "round failed"]);
     let Err(yuke_ai::Error::Attempt(error)) = outcome else {
         panic!("expected a failed attempt, got {outcome:?}");
     };
@@ -244,16 +244,16 @@ fn retry_sends_the_same_request_bytes_and_the_observer_sees_the_wait() {
     let waits = Waits::default();
     let driver = Driver::new(&transport, &target, &waits);
     let mut conversation = Conversation::new();
-    let mut retries = Vec::new();
-    let mut causes = Vec::new();
+    let retries = Mutex::new(Vec::new());
+    let causes = Mutex::new(Vec::new());
 
     let outcome = block_on(
         driver
             .turn(&mut conversation, vec![Block::user_text("go")])
-            .observer(&mut |event: &TurnEvent<'_>| {
+            .observer(&|event: &TurnEvent<'_>| {
                 if let TurnEvent::RetryScheduled { after, error } = event {
-                    retries.push(*after);
-                    causes.push(error.cause);
+                    retries.lock().unwrap().push(*after);
+                    causes.lock().unwrap().push(error.cause);
                 }
             })
             .run(),
@@ -268,8 +268,12 @@ fn retry_sends_the_same_request_bytes_and_the_observer_sees_the_wait() {
     let requests = transport.requests();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0], requests[1]);
+    let retries = retries.into_inner().unwrap();
     assert_eq!(waits.waits(), retries);
-    assert_eq!(causes, [yuke_ai::Failure::Provider(yuke_ai::ProviderKind::ServerError)]);
+    assert_eq!(
+        *causes.lock().unwrap(),
+        [yuke_ai::Failure::Provider(yuke_ai::ProviderKind::ServerError)]
+    );
     // The first backoff keeps 75% to 100% of 500 ms.
     assert_eq!(retries.len(), 1);
     assert!((Duration::from_millis(375)..=Duration::from_millis(500)).contains(&retries[0]));
@@ -544,7 +548,7 @@ struct CancelDuringCall(CancellationToken);
 
 #[async_trait]
 impl Tool for CancelDuringCall {
-    async fn call(&self, _: &str, context: &mut ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(&self, _: &str, context: &ToolContext<'_>) -> Result<ToolContent, String> {
         self.0.cancel();
         assert!(context.cancellation_token().is_cancelled());
         yield_once().await;
@@ -609,13 +613,13 @@ fn cancel_during_the_stream_keeps_the_partial_text_and_delivers_every_event() {
     let driver = Driver::new(&transport, &target, &NoWait);
     let mut conversation = Conversation::new();
     let cancellation_token = CancellationToken::new();
-    let mut seen = Vec::new();
+    let seen = Mutex::new(Vec::new());
 
     let outcome = block_on(
         driver
             .turn(&mut conversation, vec![Block::user_text("go")])
-            .observer(&mut |event: &TurnEvent<'_>| {
-                seen.push(label(event));
+            .observer(&|event: &TurnEvent<'_>| {
+                seen.lock().unwrap().push(label(event));
                 if matches!(event, TurnEvent::Model(yuke_ai::Event::TextDelta(_))) {
                     cancellation_token.cancel();
                 }
@@ -625,7 +629,7 @@ fn cancel_during_the_stream_keeps_the_partial_text_and_delivers_every_event() {
     );
 
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
-    assert_eq!(seen, ["start 0 Text", "text cut"]);
+    assert_eq!(*seen.lock().unwrap(), ["start 0 Text", "text cut"]);
     assert_eq!(
         conversation.history(),
         [Block::user_text("go"), Block::assistant_text("cut")]

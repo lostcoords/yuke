@@ -190,15 +190,15 @@ fn tool_call_runs_a_deferred_tool_and_the_hooks_and_the_observer_see_the_real_ca
     let driver = Driver::new(&transport, &target, &NoWait)
         .toolset(&toolset)
         .hooks(&hooks);
-    let mut started = Vec::new();
+    let started = Mutex::new(Vec::new());
     let mut conversation = Conversation::new();
 
     block_on(
         driver
             .turn(&mut conversation, vec![Block::user_text("go")])
-            .observer(&mut |event: &TurnEvent<'_>| {
+            .observer(&|event: &TurnEvent<'_>| {
                 if let TurnEvent::ToolStarted(call) = event {
-                    started.push(format!("{} {}", call.call_id, call.name));
+                    started.lock().unwrap().push(format!("{} {}", call.call_id, call.name));
                 }
             })
             .run(),
@@ -212,7 +212,7 @@ fn tool_call_runs_a_deferred_tool_and_the_hooks_and_the_observer_see_the_real_ca
         *hooks.calls.lock().unwrap(),
         [("create_issue".to_owned(), arguments.to_owned())]
     );
-    assert_eq!(started, ["c1 create_issue"]);
+    assert_eq!(*started.lock().unwrap(), ["c1 create_issue"]);
     // The history keeps the call that the model wrote, and the result answers it.
     let history = conversation.history();
     assert!(matches!(&history[1], Block::ToolCall(call) if call.name == "tool_call"));
