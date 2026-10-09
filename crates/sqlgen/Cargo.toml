@@ -1,0 +1,17 @@
+[package]
+name = "yuke-sqlgen"
+version = "0.0.1-dev"
+description = "Checks the SQLite queries of .sql files against the migrated schema, and writes typed Rust for yuke-sql."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+rusqlite = { version = "0.40.2", features = ["bundled", "column_metadata"] }
+
+[dev-dependencies]
+yuke-sql = { path = "../sql" }
+
+[lints]
+workspace = true

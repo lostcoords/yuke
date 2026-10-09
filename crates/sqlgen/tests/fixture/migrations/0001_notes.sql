@@ -1,0 +1,7 @@
+CREATE TABLE notes (
+    id INTEGER PRIMARY KEY NOT NULL,
+    author TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT,
+    stars INTEGER NOT NULL DEFAULT 0
+) STRICT;

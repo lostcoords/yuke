@@ -1112,6 +1112,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "yuke-sqlgen"
+version = "0.0.1-dev"
+dependencies = [
+ "rusqlite",
+ "yuke-sql",
+]
+
+[[package]]
 name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

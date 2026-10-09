@@ -10,10 +10,6 @@ Unleash you harness.
 git config core.hooksPath .githooks
 ```
 
-## Crates
-
-- ai: model calls
-
 ## License
 
 [MIT](LICENSE.md)
