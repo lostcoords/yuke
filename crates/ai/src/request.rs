@@ -4,6 +4,8 @@
 use std::borrow::Cow;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::encoder::EncodeError;
 use crate::route::{Credential, Route};
 
@@ -21,7 +23,8 @@ pub enum Protocol {
 
 /// The kind of provider state that a reasoning block must return verbatim. Each kind names the protocol that
 /// produced the state. Only the encoder of that protocol writes it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ReplayKind {
     /// The `signature` of an Anthropic thinking block. A compatible host may send an empty one.
@@ -35,7 +38,7 @@ pub enum ReplayKind {
 }
 
 /// The model and host that answered a request. Provider state returns only to the same model at the same host.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Origin {
     /// The upstream model ID.
     pub model: String,
@@ -87,7 +90,7 @@ impl From<OriginRef<'_>> for Origin {
 }
 
 /// Provider state, and the origin that may receive it again. The state must return to its provider verbatim.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ReasoningReplay {
     /// The model and host that produced the state.
     pub origin: Origin,
@@ -150,9 +153,10 @@ pub enum Modality {
 
 /// Bytes in the caller's store, named by the digest of their content. Equal digests name equal bytes. Thus a resumed
 /// history reads no blob that the encoder kept.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Blob {
-    /// The digest of the content, such as its SHA-256.
+    /// The digest of the content, such as its SHA-256. JSON holds it as 64 lowercase hex characters.
+    #[serde(with = "digest_hex")]
     pub digest: [u8; 32],
     /// The byte count of the content. [`BlobStore`] answers are checked against it.
     pub len: usize,
@@ -184,6 +188,43 @@ pub(crate) fn read_blob<'s>(store: Option<&'s dyn BlobStore>, blob: &Blob) -> Re
         .ok_or(EncodeError::UnresolvedBlob { digest })
 }
 
+/// Write a blob digest to JSON as 64 lowercase hex characters, the text that also names a stored file. Read either
+/// case.
+mod digest_hex {
+    use serde::de::{Error, Unexpected};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+
+    pub(super) fn serialize<S: Serializer>(digest: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error> {
+        let mut text = String::with_capacity(64);
+        for byte in digest {
+            text.push(char::from(DIGITS[usize::from(byte >> 4)]));
+            text.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+        }
+        serializer.serialize_str(&text)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 32], D::Error> {
+        let text = String::deserialize(deserializer)?;
+        let invalid = || D::Error::invalid_value(Unexpected::Str(&text), &"64 hex characters");
+        if text.len() != 64 {
+            return Err(invalid());
+        }
+        let digit = |byte: u8| match byte {
+            b'0'..=b'9' => Ok(byte - b'0'),
+            b'a'..=b'f' => Ok(byte - b'a' + 10),
+            b'A'..=b'F' => Ok(byte - b'A' + 10),
+            _ => Err(invalid()),
+        };
+        let mut digest = [0; 32];
+        for (byte, &[high, low]) in digest.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
+            *byte = digit(high)? << 4 | digit(low)?;
+        }
+        Ok(digest)
+    }
+}
+
 /// Which side of the conversation a block belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
@@ -205,7 +246,8 @@ impl Role {
 
 /// One block of the conversation. Its kind fixes its role ([`Block::role`]), so it holds only content of that role.
 /// The serializer groups the blocks into the messages of each protocol.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Block {
     /// User text.
     UserText(String),
@@ -266,7 +308,7 @@ impl From<ToolCall> for Block {
 }
 
 /// One attachment. Its media type selects the block each protocol writes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Media {
     /// The bytes in the caller's store. The encoder reads them through [`Request::blobs`] only when it writes the
     /// element.
@@ -274,6 +316,7 @@ pub struct Media {
     /// The IANA media type, such as `image/png` or `application/pdf`.
     pub mime: String,
     /// The name a provider requires beside file bytes. An image needs none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub filename: String,
 }
 
@@ -317,11 +360,12 @@ impl Media {
 
 /// Reasoning text, and the provider state that returns with it. A request carries the state only to the origin that
 /// produced it, in that protocol. Elsewhere the block drops, except where a dialect replays the text.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Reasoning {
     /// The reasoning text.
     pub text: String,
     /// `None` for text alone: a block that never finished, or one whose provider sent no state.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub replay: Option<ReasoningReplay>,
 }
 
@@ -337,7 +381,7 @@ impl Reasoning {
 }
 
 /// A tool call of the assistant.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ToolCall {
     /// The provider's call id.
     pub call_id: String,
@@ -389,7 +433,8 @@ impl From<ToolCallRef<'_>> for ToolCall {
 }
 
 /// The result of one tool call.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// Most results have no media and no loaded tools, so the JSON leaves out both empty lists.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ToolResult {
     /// The call this result answers.
     pub call_id: String,
@@ -401,10 +446,12 @@ pub struct ToolResult {
     pub is_error: bool,
 
     /// Attachments beside the text. Each protocol places them where its result shape allows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media: Vec<Media>,
 
     /// The deferred tools this result loads. Anthropic references each one by name. Responses answers its search
     /// with the declarations. A request that defers no tool writes only the text of the result.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub loaded: Vec<ToolDefinition>,
 }
 
@@ -446,7 +493,7 @@ impl ToolResult {
 pub const SEARCH_TOOL_NAME: &str = "tool_search";
 
 /// A tool definition for the provider.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ToolDefinition {
     /// The tool name.
     pub name: String,
@@ -492,7 +539,7 @@ impl ToolDefinition {
 
 /// Ask for a response that matches a JSON Schema. Anthropic, and OpenAI with a strict schema, enforce it while
 /// they sample.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OutputSchema {
     /// The schema name OpenAI requires. Anthropic takes no name.
     pub name: String,
@@ -514,7 +561,8 @@ impl OutputSchema {
 }
 
 /// A named reasoning effort from the closed portable set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[expect(missing_docs, reason = "each variant is the wire name of one effort")]
 pub enum Effort {
     Minimal,
@@ -604,7 +652,8 @@ pub enum ThinkingFormat {
 }
 
 /// Whether and how the model thinks before it answers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Thinking {
     /// Ask for no reasoning. Some hosts accept the field and reason again.
     Off,
@@ -616,7 +665,8 @@ pub enum Thinking {
 }
 
 /// Whether a thinking block returns its summary text. Anthropic bills the full thinking either way.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ThinkingDisplay {
     /// `summarized`.
     Summarized,
@@ -636,7 +686,7 @@ impl ThinkingDisplay {
 
 /// The reasoning one request asks for, as the caller chose it for the model. Each serializer writes the settings its
 /// protocol has.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct ReasoningSettings {
     /// Whether and how the model thinks. `None` leaves the endpoint default.
     pub thinking: Option<Thinking>,
@@ -725,7 +775,7 @@ pub struct Target {
 
 /// The settings of a request apart from its conversation, its tools, and its blobs. A caller can store one for each
 /// session, and [`Request::settings`] applies it. It names no model and holds no secret.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     /// The system prompt. An empty prompt writes none.
     pub system: String,
@@ -1037,7 +1087,8 @@ impl fmt::Debug for Request<'_> {
 }
 
 /// The tool controls every host understands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolChoice {
     /// The model decides.
     #[default]
@@ -1071,6 +1122,125 @@ mod tests {
         assert_same(read_blob(Some(&Store), &blob), Ok(Cow::Borrowed(&b"ab"[..])));
         // The store holds other content under this digest, so the request must not send it.
         assert_same(read_blob(Some(&Store), &Blob { len: 3, ..blob }), missing());
+    }
+
+    // The store keeps this JSON, so this test must catch a renamed field or variant.
+    #[test]
+    fn block_json_keeps_its_stored_shape() {
+        let digest = "00ff".repeat(16);
+        let blob = Blob {
+            digest: [0x00, 0xff].repeat(16).try_into().unwrap(),
+            len: 3,
+        };
+        let replay = ReasoningReplay {
+            origin: Origin {
+                model: "m".to_owned(),
+                base_url: "https://h/v1".to_owned(),
+            },
+            kind: ReplayKind::AnthropicSignature,
+            data: "sig".to_owned(),
+        };
+        let cases = [
+            (Block::user_text("hi"), r#"{"user_text":"hi"}"#.to_owned()),
+            (Block::assistant_text("ok"), r#"{"assistant_text":"ok"}"#.to_owned()),
+            (
+                Block::Media(Media::new(blob, "image/png")),
+                format!(r#"{{"media":{{"blob":{{"digest":"{digest}","len":3}},"mime":"image/png"}}}}"#),
+            ),
+            (
+                Block::Media(Media {
+                    filename: "a.pdf".to_owned(),
+                    ..Media::new(blob, "application/pdf")
+                }),
+                format!(
+                    r#"{{"media":{{"blob":{{"digest":"{digest}","len":3}},"mime":"application/pdf","filename":"a.pdf"}}}}"#
+                ),
+            ),
+            (
+                Block::Reasoning(Reasoning {
+                    text: "think".to_owned(),
+                    replay: None,
+                }),
+                r#"{"reasoning":{"text":"think"}}"#.to_owned(),
+            ),
+            (
+                Block::Reasoning(Reasoning {
+                    text: "think".to_owned(),
+                    replay: Some(replay),
+                }),
+                r#"{"reasoning":{"text":"think","replay":{"origin":{"model":"m","base_url":"https://h/v1"},"kind":"anthropic_signature","data":"sig"}}}"#.to_owned(),
+            ),
+            (
+                Block::ToolCall(ToolCall::new("c1", "read", r#"{"path":"a"}"#)),
+                r#"{"tool_call":{"call_id":"c1","name":"read","arguments":"{\"path\":\"a\"}"}}"#.to_owned(),
+            ),
+            (
+                Block::ToolResult(ToolResult::success("c1", "text")),
+                r#"{"tool_result":{"call_id":"c1","content":"text","is_error":false}}"#.to_owned(),
+            ),
+            (
+                Block::ToolResult(
+                    ToolResult::error("c1", "failed")
+                        .with_media(vec![Media::new(blob, "image/png")])
+                        .with_loaded(vec![ToolDefinition::new("grep", "Search.", "{}").deferred()]),
+                ),
+                format!(
+                    r#"{{"tool_result":{{"call_id":"c1","content":"failed","is_error":true,"media":[{{"blob":{{"digest":"{digest}","len":3}},"mime":"image/png"}}],"loaded":[{{"name":"grep","description":"Search.","input_schema":"{{}}","defer_loading":true,"strict":false}}]}}}}"#
+                ),
+            ),
+        ];
+        for (block, json) in cases {
+            assert_eq!(serde_json::to_string(&block).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Block>(&json).unwrap(), block);
+        }
+    }
+
+    #[test]
+    fn digest_json_needs_64_hex_characters() {
+        let parse = |digest: &str| serde_json::from_str::<Blob>(&format!(r#"{{"digest":"{digest}","len":1}}"#));
+        let mut expected = [0; 32];
+        expected[0] = 0xab;
+        expected[31] = 0x09;
+        let text = format!("ab{}09", "0".repeat(60));
+        assert_eq!(parse(&text).unwrap().digest, expected);
+        assert_eq!(parse(&text.to_uppercase()).unwrap().digest, expected);
+        assert!(parse(&text[..62]).is_err());
+        assert!(parse(&format!("{text}00")).is_err());
+        assert!(parse(&format!("zz{}", &text[2..])).is_err());
+        assert!(parse(&format!("{}zz", &text[..62])).is_err());
+    }
+
+    // The store keeps the settings of each session as this JSON.
+    #[test]
+    fn settings_json_keeps_its_stored_shape() {
+        let full = Settings::new()
+            .system("Be brief.")
+            .max_output_tokens(1000)
+            .thinking(Thinking::Adaptive(Some(ThinkingDisplay::Summarized)))
+            .effort(Effort::Xhigh)
+            .temperature(0.5)
+            .top_p(0.9)
+            .tool_choice(ToolChoice::None)
+            .session_id("s1")
+            .output_schema(OutputSchema::new(r#"{"type":"object"}"#));
+        let cases = [
+            (
+                full,
+                r#"{"system":"Be brief.","max_output_tokens":1000,"reasoning":{"thinking":{"adaptive":"summarized"},"effort":"xhigh"},"temperature":0.5,"top_p":0.9,"tool_choice":"none","session_id":"s1","output_schema":{"name":"response","schema":"{\"type\":\"object\"}","strict":true}}"#,
+            ),
+            (
+                Settings::new().thinking(Thinking::Budget(2048)),
+                r#"{"system":"","max_output_tokens":null,"reasoning":{"thinking":{"budget":2048},"effort":null},"temperature":null,"top_p":null,"tool_choice":"auto","session_id":"","output_schema":null}"#,
+            ),
+            (
+                Settings::new().thinking(Thinking::Off),
+                r#"{"system":"","max_output_tokens":null,"reasoning":{"thinking":"off","effort":null},"temperature":null,"top_p":null,"tool_choice":"auto","session_id":"","output_schema":null}"#,
+            ),
+        ];
+        for (settings, json) in cases {
+            assert_eq!(serde_json::to_string(&settings).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Settings>(json).unwrap(), settings);
+        }
     }
 
     #[test]
