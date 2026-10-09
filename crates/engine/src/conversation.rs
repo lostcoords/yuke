@@ -28,6 +28,16 @@ pub enum Action<'a> {
     /// [`Conversation::stop`]. The blocks are the whole history.
     AfterRound(&'a [Block]),
 
+    /// The model ended the turn, and no new input waits. Call [`Conversation::continue_turn`] to send another request
+    /// in this turn. Call [`Conversation::stop`] to end the turn as [`Outcome::Completed`].
+    AfterTurn {
+        /// The whole history. It holds the last answer. It can also hold error results of calls that did not run.
+        history: &'a [Block],
+
+        /// The finish reason of the last answer.
+        finish_reason: FinishReason,
+    },
+
     /// The turn ended. `Err` holds the failure of a request, and the history keeps the input and no answer.
     Done(Result<Outcome, yuke_ai::Error>),
 }
@@ -164,21 +174,30 @@ impl Conversation {
     }
 
     /// Continue after [`Action::AfterRound`], and send `input` after the round. After an answer that needs no other
-    /// request, the turn ends only when `input` is empty.
+    /// request, an empty `input` returns [`Action::AfterTurn`].
     pub fn proceed(&mut self, input: Vec<Block>) -> Action<'_> {
-        // Input that arrived during the final answer continues the turn, so the model answers it in this turn.
-        if let Some(finish_reason) = self.turn_end.take()
+        // Input that arrived during the final answer continues the turn. Without input, the caller decides.
+        if let Some(finish_reason) = self.turn_end
             && input.is_empty()
         {
-            return Action::Done(Ok(Outcome::Completed { finish_reason }));
+            return Action::AfterTurn {
+                history: &self.history,
+                finish_reason,
+            };
         }
+        self.continue_turn(input)
+    }
 
+    /// Continue after [`Action::AfterTurn`]. The next [`Action::Send`] holds `input` after the answer, also when
+    /// `input` is empty.
+    pub fn continue_turn(&mut self, input: Vec<Block>) -> Action<'_> {
+        self.turn_end = None;
         self.history.extend(input);
         Action::Send(&self.history)
     }
 
-    /// End the turn after [`Action::AfterRound`]. A round that ended the turn still ends it as
-    /// [`Outcome::Completed`].
+    /// End the turn after [`Action::AfterRound`] or [`Action::AfterTurn`]. A round that ended the turn still ends it
+    /// as [`Outcome::Completed`].
     pub fn stop(&mut self) -> Action<'_> {
         match self.turn_end.take() {
             Some(finish_reason) => Action::Done(Ok(Outcome::Completed { finish_reason })),
@@ -220,7 +239,7 @@ impl Conversation {
         self.cancel()
     }
 
-    /// End the turn as [`Outcome::Cancelled`] after [`Action::AfterRound`].
+    /// End the turn as [`Outcome::Cancelled`] after [`Action::AfterRound`] or [`Action::AfterTurn`].
     pub fn cancel(&mut self) -> Action<'_> {
         self.turn_end = None;
         Action::Done(Ok(Outcome::Cancelled))

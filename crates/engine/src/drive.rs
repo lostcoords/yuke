@@ -16,7 +16,7 @@ use yuke_ai::{
 };
 
 use crate::conversation::{Action, CANCELLED_REASON, Conversation, Outcome, not_executed};
-use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundPlan, ToolDecision};
+use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundPlan, ToolDecision, TurnDecision};
 use crate::search::{self, Bm25, Declared, ToolSearch};
 use crate::tool::{TOOL_CALL_NAME, ToolContext, Toolset};
 
@@ -135,7 +135,8 @@ impl std::fmt::Debug for Driver<'_> {
 
 impl<'a> Driver<'a> {
     /// A driver that sends to `target` through `transport`, and waits with `timer` before a retry. It offers no tools,
-    /// and it takes no input during a turn. Its hooks run each call and continue each turn.
+    /// and it takes no input during a turn. Its hooks run each call and continue each round. They end each turn when
+    /// the model ends it.
     pub fn new(transport: &'a dyn Transport, target: &'a Target, timer: &'a dyn Timer) -> Self {
         Driver {
             transport,
@@ -156,7 +157,7 @@ impl<'a> Driver<'a> {
         Driver { toolset, ..self }
     }
 
-    /// Ask `hooks` before each tool call and after each round.
+    /// Ask `hooks` for each decision of a turn, as [`Hooks`] lists them.
     #[must_use]
     pub fn hooks(self, hooks: &'a dyn Hooks) -> Self {
         Driver { hooks, ..self }
@@ -479,6 +480,15 @@ impl<'a> Turn<'a> {
                         // The driver takes the input only when the turn goes on, so a stop or a cancel leaves it.
                         Raced::Done(RoundDecision::Proceed) => conversation.proceed(driver.inbox.take()),
                         Raced::Done(RoundDecision::Stop) => conversation.stop(),
+                        Raced::Cancelled => conversation.cancel(),
+                    };
+                }
+
+                Action::AfterTurn { history, finish_reason } => {
+                    let decided = driver.hooks.after_turn(history, finish_reason);
+                    action = match race(decided, pin!(cancellation_token.cancelled())).await {
+                        Raced::Done(TurnDecision::Finish) => conversation.stop(),
+                        Raced::Done(TurnDecision::Continue(input)) => conversation.continue_turn(input),
                         Raced::Cancelled => conversation.cancel(),
                     };
                 }

@@ -23,7 +23,7 @@ fn second_turn_sends_the_first_turn_history() {
     let mut conversation = Conversation::new();
     let _ = conversation.start(vec![Block::user_text("one")]);
     let _ = conversation.model_finished(Ok(answer("first answer")));
-    let _ = conversation.proceed(Vec::new());
+    let _ = conversation.stop();
 
     let body = sent_body(conversation.start(vec![Block::user_text("two")]));
 
@@ -44,6 +44,18 @@ fn stop_after_the_final_answer_ends_the_turn_as_completed() {
             finish_reason: FinishReason::Stop
         }))
     ));
+}
+
+#[test]
+fn continue_turn_sends_another_request_without_input() {
+    let mut conversation = Conversation::new();
+    let _ = conversation.start(vec![Block::user_text("one")]);
+    let _ = conversation.model_finished(Ok(answer("done")));
+    assert!(matches!(conversation.proceed(Vec::new()), Action::AfterTurn { .. }));
+
+    let body = sent_body(conversation.continue_turn(Vec::new()));
+
+    assert_in_order(&body, &["one", "done"]);
 }
 
 #[test]
@@ -144,6 +156,13 @@ fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
 
     assert!(matches!(
         action,
+        Action::AfterTurn {
+            finish_reason: FinishReason::ContentFilter,
+            ..
+        }
+    ));
+    assert!(matches!(
+        conversation.stop(),
         Action::Done(Ok(Outcome::Completed {
             finish_reason: FinishReason::ContentFilter
         }))

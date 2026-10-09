@@ -2,7 +2,7 @@
 //! only watches.
 
 use async_trait::async_trait;
-use yuke_ai::{Block, Settings, Target, ToolCall, ToolResult};
+use yuke_ai::{Block, FinishReason, Settings, Target, ToolCall, ToolResult};
 
 /// The decisions of a caller at the boundaries of a turn. Each method has a default that changes nothing, so a
 /// caller implements only the hooks that it needs.
@@ -28,9 +28,18 @@ pub trait Hooks: Send + Sync {
     }
 
     /// Decide whether the turn continues. The driver asks after each answer, when the answer and its tool results are
-    /// in `history`. After an answer that needs no other request, `Proceed` continues only when new input waits.
+    /// in `history`. After an answer that needs no other request, `Proceed` continues when new input waits. When no
+    /// input waits, the driver asks [`Hooks::after_turn`].
     async fn after_round(&self, _history: &[Block]) -> RoundDecision {
         RoundDecision::Proceed
+    }
+
+    /// Decide whether the turn ends. The driver asks when the model ended the turn with `finish_reason`, after
+    /// [`Hooks::after_round`] and only when no new input waits. `history` holds the last answer. It can also hold error
+    /// results of calls that did not run. The driver does not read the inbox while this hook waits. The engine sets no
+    /// limit on `Continue`, so a caller bounds its own loop.
+    async fn after_turn(&self, _history: &[Block], _finish_reason: FinishReason) -> TurnDecision {
+        TurnDecision::Finish
     }
 }
 
@@ -66,7 +75,17 @@ pub enum RoundDecision {
     Stop,
 }
 
-/// The hooks of a driver without hooks: each call runs, and each turn continues.
+/// The answer of [`Hooks::after_turn`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TurnDecision {
+    /// End the turn as [`crate::Outcome::Completed`].
+    Finish,
+    /// Add this input to the history. Then send another request in the same turn. Some models reject a request that
+    /// ends with an answer, so give input after an answer.
+    Continue(Vec<Block>),
+}
+
+/// The hooks of a driver without hooks: each call runs, each round continues, and each turn ends when the model ends it.
 pub(crate) struct NoHooks;
 
 impl Hooks for NoHooks {}
