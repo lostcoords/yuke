@@ -188,7 +188,7 @@ CREATE TABLE session_instructions (
     UNIQUE (session_id, canonical_path)
 ) STRICT, WITHOUT ROWID;
 
--- The skill catalog snapshot. It holds no body. The model reads SKILL.md, and `/skill:name` reads the file at invocation.
+-- The skill catalog snapshot. It holds no body, because skill.load reads the file at invocation.
 CREATE TABLE session_skills (
     session_id BLOB NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 64),
