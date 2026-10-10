@@ -1,6 +1,7 @@
 //! The standard driver. It carries out each [`Action`] of a [`Conversation`] over a caller's transport.
 
 use std::borrow::Cow;
+use std::fmt;
 use std::future::poll_fn;
 use std::pin::{Pin, pin};
 use std::sync::{Mutex, PoisonError};
@@ -13,12 +14,12 @@ use tokio_util::sync::CancellationToken;
 use yuke_ai::retry::{self, Attempt};
 use yuke_ai::transport::Transport;
 use yuke_ai::{
-    AttemptError, BlobStore, Block, Encoder, Options, Partial, Reply, Request, Response, SEARCH_TOOL_NAME, Settings,
-    Target, ToolCall, ToolDefinition, ToolResult,
+    AttemptError, BlobStore, Block, Encoder, Options, Origin, OriginRef, Partial, Reply, Request, Response,
+    SEARCH_TOOL_NAME, Settings, Target, ToolCall, ToolResult,
 };
 
-use crate::conversation::{Action, CANCELLED_REASON, Conversation, Outcome, not_executed};
-use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundPlan, ToolDecision};
+use crate::conversation::{Action, CANCELLED_REASON, Commit, Conversation, Outcome, not_executed};
+use crate::hooks::{Hooks, NoHooks, RoundDecision, ToolDecision};
 use crate::search::{self, Bm25, Declared, ToolSearch};
 use crate::tool::{Concurrency, TOOL_CALL_NAME, ToolContext, Toolset};
 
@@ -96,6 +97,19 @@ impl Inbox for Mutex<Vec<Block>> {
     }
 }
 
+/// Saves the changes of a conversation. The driver awaits each commit before the turn goes on, and a cancel does not
+/// stop a commit. A caller that saves nothing sets no journal.
+#[async_trait]
+pub trait Journal: Send + Sync {
+    /// Save `commit`. The driver sends the commits of a conversation in order. The history that a turn starts with
+    /// counts as saved.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of the save. The turn then ends with [`TurnError::Commit`].
+    async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+}
+
 /// The inbox of a driver without an inbox. It never holds input.
 struct NoInput;
 
@@ -115,6 +129,7 @@ pub struct Driver<'a> {
     toolset: &'a Toolset,
     hooks: &'a dyn Hooks,
     inbox: &'a dyn Inbox,
+    journal: Option<&'a dyn Journal>,
     settings: &'a Settings,
     blob_store: Option<&'a dyn BlobStore>,
     tool_search: &'a dyn ToolSearch,
@@ -126,8 +141,8 @@ static NO_TOOLS: Toolset = Toolset::new();
 /// The settings of a driver without settings. Each value stays at its endpoint default.
 static NO_SETTINGS: Settings = Settings::new();
 
-impl std::fmt::Debug for Driver<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Driver<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Driver")
             .field("target", &self.target)
             .field("toolset", &self.toolset)
@@ -147,6 +162,7 @@ impl<'a> Driver<'a> {
             toolset: &NO_TOOLS,
             hooks: &NoHooks,
             inbox: &NoInput,
+            journal: None,
             settings: &NO_SETTINGS,
             blob_store: None,
             tool_search: &Bm25,
@@ -169,6 +185,23 @@ impl<'a> Driver<'a> {
     #[must_use]
     pub fn inbox(self, inbox: &'a dyn Inbox) -> Self {
         Driver { inbox, ..self }
+    }
+
+    /// Give each commit of a turn to `journal`, and await the result of each save.
+    #[must_use]
+    pub fn journal(self, journal: &'a dyn Journal) -> Self {
+        Driver {
+            journal: Some(journal),
+            ..self
+        }
+    }
+
+    /// Save `commit` in the journal. The save does not race the cancel. A failed save ends the turn.
+    async fn save(&self, commit: &Commit<'_>) -> Result<(), TurnError> {
+        match self.journal {
+            Some(journal) => journal.commit(commit).await.map_err(TurnError::Commit),
+            None => Ok(()),
+        }
     }
 
     /// The call that `call` runs, and its result when it runs nothing. The model calls a deferred tool through the
@@ -291,7 +324,7 @@ impl<'a> Driver<'a> {
         }
     }
 
-    /// Send each request with `settings`, unless a [`RoundPlan`] gives other settings for its round.
+    /// Send each request with `settings`, unless a [`RoundPlan`](crate::RoundPlan) gives other settings for its round.
     #[must_use]
     pub fn settings(self, settings: &'a Settings) -> Self {
         Driver { settings, ..self }
@@ -335,7 +368,7 @@ impl<'a> Driver<'a> {
         declared: &Declared<'_>,
         observer: &dyn Observer,
         cancellation_token: &CancellationToken,
-    ) -> (Sent, bool) {
+    ) -> Result<Round, TurnError> {
         let mut failure: Option<yuke_ai::Error> = None;
         loop {
             let Raced::Done(mut plan) = race(
@@ -344,24 +377,24 @@ impl<'a> Driver<'a> {
             )
             .await
             else {
-                return (Sent::Cancelled(Vec::new()), false);
+                return Ok(Round::new(Sent::Cancelled(Vec::new()), self.target));
             };
             if let Some(error) = failure
                 && plan.target.is_none()
             {
-                return (Sent::Finished(Err(error)), false);
+                return Ok(Round::new(Sent::Finished(Err(error)), self.target));
             }
-            if let Some(history) = plan.history.take() {
-                conversation.replace_history(history);
+            if let Some(replace) = plan.replace.take() {
+                self.save(&conversation.replace(replace)).await?;
             }
-            let native = plan.target.as_ref().unwrap_or(self.target).tool_search;
-            let tools = declared.tools(native);
+            let target = plan.target.as_ref().unwrap_or(self.target);
+            let settings = plan.settings.as_ref().unwrap_or(self.settings);
+            let tools = declared.tools(target.tool_search);
             match self
                 .send(
                     encoder,
-                    conversation.history(),
-                    tools,
-                    &plan,
+                    Request::new(conversation.history()).tools(tools).settings(settings),
+                    target,
                     observer,
                     cancellation_token,
                 )
@@ -371,25 +404,21 @@ impl<'a> Driver<'a> {
                     observer.event(&TurnEvent::RoundFailed(&error));
                     failure = Some(error);
                 }
-                sent => return (sent, native),
+                sent => return Ok(Round::new(sent, target)),
             }
         }
     }
 
-    /// Send one request of `blocks`, and give each event of the reply to `observer`. If [`retry::decide`] permits a
+    /// Send `request` to `target`, and give each event of the reply to `observer`. If [`retry::decide`] permits a
     /// retry, the driver waits with the caller's timer, then sends the same encoded bytes.
     async fn send(
         &self,
         encoder: &mut Encoder,
-        blocks: &[Block],
-        tools: &[ToolDefinition],
-        plan: &RoundPlan,
+        mut request: Request<'_>,
+        target: &Target,
         observer: &dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> Sent {
-        let target = plan.target.as_ref().unwrap_or(self.target);
-        let settings = plan.settings.as_ref().unwrap_or(self.settings);
-        let mut request = Request::new(blocks).tools(tools).settings(settings);
         if let Some(blob_store) = self.blob_store {
             request = request.blobs(blob_store);
         }
@@ -454,8 +483,8 @@ pub struct Turn<'a> {
     cancellation_token: CancellationToken,
 }
 
-impl std::fmt::Debug for Turn<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Turn<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Turn")
             .field("driver", &self.driver)
             .field("input", &self.input)
@@ -486,9 +515,9 @@ impl<'a> Turn<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an [`yuke_ai::Error`] when a request cannot be encoded, or when its last attempt fails. The history keeps the
-    /// input and no answer.
-    pub async fn run(self) -> Result<Outcome, yuke_ai::Error> {
+    /// Returns [`TurnError::Model`] when a request cannot be encoded, or when its last attempt fails. The history keeps
+    /// the blocks from before the failure. Returns [`TurnError::Commit`] when the journal fails to save a commit.
+    pub async fn run(self) -> Result<Outcome, TurnError> {
         let Turn {
             driver,
             history,
@@ -512,9 +541,11 @@ impl<'a> Turn<'a> {
         let mut action = conversation.start(input);
         loop {
             match action {
-                Action::Send => {
-                    let sent;
-                    (sent, native) = driver
+                Action::Send(commit) => {
+                    if let Some(commit) = commit {
+                        driver.save(&commit).await?;
+                    }
+                    let round = driver
                         .send_round(
                             &mut conversation,
                             &mut encoder,
@@ -522,14 +553,16 @@ impl<'a> Turn<'a> {
                             observer,
                             &cancellation_token,
                         )
-                        .await;
-                    action = match sent {
-                        Sent::Finished(result) => conversation.model_finished(result),
+                        .await?;
+                    native = round.native;
+                    action = match round.sent {
+                        Sent::Finished(result) => conversation.model_finished(result, round.origin),
                         Sent::Cancelled(partial) => conversation.model_cancelled(partial),
                     };
                 }
 
-                Action::CallTools(calls) => {
+                Action::CallTools(calls, commit) => {
+                    driver.save(&commit).await?;
                     // A closure kept across an await makes the turn future lose `Send`, so the calls resolve first.
                     let resolved: Vec<Resolved<'_>> = calls.into_iter().map(|call| driver.resolve(call)).collect();
                     let mut resolved = resolved.into_iter().peekable();
@@ -554,7 +587,12 @@ impl<'a> Turn<'a> {
                     };
                 }
 
-                Action::AfterRound { history, finish_reason } => {
+                Action::AfterRound {
+                    history,
+                    finish_reason,
+                    commit,
+                } => {
+                    driver.save(&commit).await?;
                     let decided = driver.hooks.after_round(history, finish_reason);
                     action = match race(decided, pin!(cancellation_token.cancelled())).await {
                         // The driver takes the input only when the turn goes on, so a stop or a cancel leaves it.
@@ -569,7 +607,10 @@ impl<'a> Turn<'a> {
                     };
                 }
 
-                Action::Done(result) => return result,
+                Action::Done { tail, result } => {
+                    driver.save(&Commit::end(tail, result.as_ref())).await?;
+                    return result.map_err(TurnError::Model);
+                }
             }
         }
     }
@@ -583,6 +624,56 @@ struct Resolved<'c> {
     /// The result of a call that the bridge refuses or that has invalid JSON. After [`Hooks::before_tool`], also the
     /// result of a call that the hooks block or that a cancel stops.
     result: Option<ToolResult>,
+}
+
+/// Why a turn failed.
+#[derive(Debug)]
+pub enum TurnError {
+    /// A request could not be encoded, or its last attempt failed. The history keeps the blocks from before the failure.
+    Model(yuke_ai::Error),
+
+    /// The journal did not confirm a commit. It can still have saved the commit. The history can hold blocks after the
+    /// last confirmed commit, so the caller loads the conversation again from its store.
+    Commit(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl fmt::Display for TurnError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Model(error) => fmt::Display::fmt(error, f),
+            // The text names no journal error, because `source` returns it.
+            Self::Commit(_) => f.write_str("the journal failed to save the turn"),
+        }
+    }
+}
+
+impl std::error::Error for TurnError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Model(error) => error.source(),
+            Self::Commit(error) => Some(error.as_ref()),
+        }
+    }
+}
+
+/// The request of one round, and its target.
+struct Round {
+    /// How the request ended.
+    sent: Sent,
+    /// Whether the target searches deferred tools natively.
+    native: bool,
+    /// The model and host of the target.
+    origin: Origin,
+}
+
+impl Round {
+    fn new(sent: Sent, target: &Target) -> Self {
+        Round {
+            sent,
+            native: target.tool_search,
+            origin: Origin::from(OriginRef::of(target)),
+        }
+    }
 }
 
 /// How a request ended.

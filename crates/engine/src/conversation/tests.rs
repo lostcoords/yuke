@@ -6,6 +6,14 @@ use yuke_ai::{
 
 use super::{Action, Conversation, Outcome};
 
+/// The origin of the test target.
+fn origin() -> yuke_ai::Origin {
+    yuke_ai::Origin {
+        model: "test-model".to_owned(),
+        base_url: "https://example.test/v1".to_owned(),
+    }
+}
+
 /// The body that a request of `history` encodes to for an Anthropic target.
 fn body(history: &[Block]) -> String {
     let target = Target {
@@ -36,7 +44,7 @@ fn assert_in_order(body: &str, texts: &[&str]) {
 /// The names of the calls that `action` asks to run.
 fn called_names(action: Action<'_>) -> Vec<String> {
     match action {
-        Action::CallTools(calls) => calls.into_iter().map(|call| call.name.clone()).collect(),
+        Action::CallTools(calls, _) => calls.into_iter().map(|call| call.name.clone()).collect(),
         other => panic!("expected tool calls, got {other:?}"),
     }
 }
@@ -80,13 +88,13 @@ fn second_turn_sends_the_first_turn_history() {
     let mut history = Vec::new();
     let mut conversation = Conversation::new(&mut history);
     let _ = conversation.start(vec![Block::user_text("one")]);
-    let _ = conversation.model_finished(Ok(answer("first answer")));
+    let _ = conversation.model_finished(Ok(answer("first answer")), origin());
     let _ = conversation.stop();
 
     let mut conversation = Conversation::new(&mut history);
     assert!(matches!(
         conversation.start(vec![Block::user_text("two")]),
-        Action::Send
+        Action::Send(_)
     ));
 
     assert_in_order(&body(&history), &["one", "first answer", "two"]);
@@ -98,7 +106,7 @@ fn a_final_answer_without_input_completes_the_turn() {
     let mut conversation = Conversation::new(&mut history);
     let _ = conversation.start(vec![Block::user_text("one")]);
     assert!(matches!(
-        conversation.model_finished(Ok(answer("done"))),
+        conversation.model_finished(Ok(answer("done")), origin()),
         Action::AfterRound {
             finish_reason: Some(FinishReason::Stop),
             ..
@@ -107,9 +115,12 @@ fn a_final_answer_without_input_completes_the_turn() {
 
     assert!(matches!(
         conversation.proceed(Vec::new()),
-        Action::Done(Ok(Outcome::Completed {
-            finish_reason: FinishReason::Stop
-        }))
+        Action::Done {
+            result: Ok(Outcome::Completed {
+                finish_reason: FinishReason::Stop
+            }),
+            ..
+        }
     ));
 }
 
@@ -118,9 +129,9 @@ fn continue_turn_sends_another_request_without_input() {
     let mut history = Vec::new();
     let mut conversation = Conversation::new(&mut history);
     let _ = conversation.start(vec![Block::user_text("one")]);
-    let _ = conversation.model_finished(Ok(answer("done")));
+    let _ = conversation.model_finished(Ok(answer("done")), origin());
 
-    assert!(matches!(conversation.continue_turn(Vec::new()), Action::Send));
+    assert!(matches!(conversation.continue_turn(Vec::new()), Action::Send(_)));
 
     assert_in_order(&body(&history), &["one", "done"]);
 }
@@ -136,9 +147,9 @@ fn failed_attempt_adds_no_assistant_block() {
         partial: vec![Partial::Text("cut".to_owned())],
     };
 
-    let action = conversation.model_finished(Err(failure.into()));
+    let action = conversation.model_finished(Err(failure.into()), origin());
 
-    assert!(matches!(action, Action::Done(Err(_))));
+    assert!(matches!(action, Action::Done { result: Err(_), .. }));
     assert_eq!(history, [Block::user_text("one")]);
 }
 
@@ -148,7 +159,7 @@ fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_ne
     let mut conversation = Conversation::new(&mut history);
     let _ = conversation.start(vec![Block::user_text("one")]);
 
-    let action = conversation.model_finished(Ok(tool_answer(FinishReason::ToolCalls)));
+    let action = conversation.model_finished(Ok(tool_answer(FinishReason::ToolCalls)), origin());
     assert_eq!(called_names(action), ["read", "write"]);
 
     let results = vec![
@@ -165,7 +176,7 @@ fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_ne
     ));
     assert!(matches!(
         conversation.proceed(vec![Block::user_text("also run the tests")]),
-        Action::Send
+        Action::Send(_)
     ));
     assert_in_order(
         &body(&history),
@@ -179,7 +190,7 @@ fn stop_finish_with_tool_calls_runs_them() {
     let mut conversation = Conversation::new(&mut history);
     let _ = conversation.start(vec![Block::user_text("one")]);
 
-    let action = conversation.model_finished(Ok(tool_answer(FinishReason::Stop)));
+    let action = conversation.model_finished(Ok(tool_answer(FinishReason::Stop)), origin());
 
     assert_eq!(called_names(action), ["read", "write"]);
 }
@@ -190,7 +201,7 @@ fn length_finish_runs_no_tool_and_asks_the_model_again() {
     let mut conversation = Conversation::new(&mut history);
     let _ = conversation.start(vec![Block::user_text("one")]);
 
-    let action = conversation.model_finished(Ok(tool_answer(FinishReason::Length)));
+    let action = conversation.model_finished(Ok(tool_answer(FinishReason::Length)), origin());
     assert!(matches!(
         action,
         Action::AfterRound {
@@ -198,7 +209,7 @@ fn length_finish_runs_no_tool_and_asks_the_model_again() {
             ..
         }
     ));
-    assert!(matches!(conversation.proceed(Vec::new()), Action::Send));
+    assert!(matches!(conversation.proceed(Vec::new()), Action::Send(_)));
 
     let body = body(&history);
     assert_in_order(&body, &["one", "c1", "c2"]);
@@ -216,13 +227,16 @@ fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
     let mut history = Vec::new();
     let mut conversation = Conversation::new(&mut history);
     let _ = conversation.start(vec![Block::user_text("one")]);
-    let _ = conversation.model_finished(Ok(tool_answer(FinishReason::ContentFilter)));
+    let _ = conversation.model_finished(Ok(tool_answer(FinishReason::ContentFilter)), origin());
 
     assert!(matches!(
         conversation.proceed(Vec::new()),
-        Action::Done(Ok(Outcome::Completed {
-            finish_reason: FinishReason::ContentFilter
-        }))
+        Action::Done {
+            result: Ok(Outcome::Completed {
+                finish_reason: FinishReason::ContentFilter
+            }),
+            ..
+        }
     ));
     let results: Vec<(&str, bool)> = history
         .iter()
@@ -258,7 +272,13 @@ fn cancelled_request_keeps_its_text_and_calls_but_not_its_reasoning() {
         Partial::ToolCall(ToolCall::new("c1", "read", "{}")),
     ]);
 
-    assert!(matches!(action, Action::Done(Ok(Outcome::Cancelled))));
+    assert!(matches!(
+        action,
+        Action::Done {
+            result: Ok(Outcome::Cancelled),
+            ..
+        }
+    ));
     assert_eq!(
         history,
         [

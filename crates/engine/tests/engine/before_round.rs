@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use yuke_ai::{Block, Settings, Target};
-use yuke_engine::{CancellationToken, Driver, Hooks, Outcome, RoundPlan, Toolset, TurnEvent};
+use yuke_engine::{CancellationToken, Driver, Hooks, Outcome, Replace, RoundPlan, Toolset, TurnEvent};
 
 use crate::support::{
     NoWait, Recorder, ScriptedTransport, block_on, definition, failed_reply, target, text_reply, tool_reply,
@@ -95,14 +95,17 @@ impl Hooks for SummarizeSecondRound {
             return RoundPlan::default();
         }
         RoundPlan {
-            history: Some(vec![Block::user_text("Summary of the work so far.")]),
+            replace: Some(Replace {
+                head: vec![Block::user_text("Summary of the work so far.")],
+                keep: 0,
+            }),
             ..RoundPlan::default()
         }
     }
 }
 
 #[test]
-fn a_plan_history_replaces_the_history_and_stays() {
+fn a_plan_replacement_replaces_the_history_and_stays() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
     let target = target();
     let mut toolset = Toolset::new();

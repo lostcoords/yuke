@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason, ToolCall, ToolResult};
 use yuke_engine::{
     CancellationToken, Driver, Hooks, Outcome, RoundDecision, Tool, ToolContent, ToolContext, ToolDecision,
-    ToolNameError, Toolset, TurnEvent,
+    ToolNameError, Toolset, TurnError, TurnEvent,
 };
 
 use crate::support::{
@@ -227,7 +227,7 @@ fn failed_reply_delivers_its_events_then_fails_with_the_partial_output() {
     );
 
     assert_eq!(*seen.lock().unwrap(), ["start 0 Text", "text cut", "round failed"]);
-    let Err(yuke_ai::Error::Attempt(error)) = outcome else {
+    let Err(TurnError::Model(yuke_ai::Error::Attempt(error))) = outcome else {
         panic!("expected a failed attempt, got {outcome:?}");
     };
     assert_eq!(error.partial, [yuke_ai::Partial::Text("cut".to_owned())]);

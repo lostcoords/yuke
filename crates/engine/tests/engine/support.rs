@@ -33,6 +33,11 @@ pub(crate) fn target() -> Target {
     }
 }
 
+/// The origin of [`target`].
+pub(crate) fn origin() -> yuke_ai::Origin {
+    yuke_ai::Origin::from(yuke_ai::OriginRef::of(&target()))
+}
+
 /// Assert that each of `texts` appears as a JSON string in `body`, in order.
 pub(crate) fn assert_in_order(body: &str, texts: &[&str]) {
     let positions: Vec<Option<usize>> = texts.iter().map(|text| body.find(&format!("\"{text}\""))).collect();

@@ -4,6 +4,7 @@
 mod after_round;
 mod after_tool;
 mod before_round;
+mod commit;
 mod deferred;
 mod drive;
 mod parallel;

@@ -4,6 +4,8 @@
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason, Settings, Target, ToolCall, ToolResult};
 
+use crate::conversation::Replace;
+
 /// The decisions of a caller at the boundaries of a turn. Each method has a default that changes nothing, so a
 /// caller implements only the hooks that it needs.
 #[async_trait]
@@ -38,13 +40,13 @@ pub trait Hooks: Send + Sync {
     }
 }
 
-/// The answer of [`Hooks::before_round`]. A `None` history keeps the history. A `None` target or settings keeps the
-/// driver's value.
+/// The answer of [`Hooks::before_round`]. A `None` replacement keeps the history. A `None` target or settings keeps
+/// the driver's value.
 #[derive(Debug, Clone, Default)]
 pub struct RoundPlan {
-    /// The new history of the conversation, for example a summary and the recent blocks. It replaces the history before
-    /// the request, and the replacement stays after the round.
-    pub history: Option<Vec<Block>>,
+    /// A new first part of the history and the number of old blocks that stay after it, for example a summary and the
+    /// recent blocks. It replaces the history before the request, and the replacement stays after the round.
+    pub replace: Option<Replace>,
     /// The model of this round. The next round uses the driver's target again.
     pub target: Option<Target>,
     /// The settings of this round. The next round uses the driver's settings again.
