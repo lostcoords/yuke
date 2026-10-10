@@ -1376,6 +1376,8 @@ export class Session {
      * Apply a streaming delta: rebuild only the streaming message `id`, or only its part `partId` when the digest names one.
      */
     active(id: number, partId?: number): void;
+    /** Rebuild the running tool header, because its elapsed time reads the wall clock instead of the stored part. */
+    refreshElapsed(): void;
     /**
      * Create the session with its first input, then open the new session. It returns false when a create is in flight or no workspace directory exists.
      * On a failure the composer takes the input back.

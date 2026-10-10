@@ -215,6 +215,14 @@ export class Session {
     root.invalidate();
   }
 
+  /** Rebuild the running tool header, because its elapsed time reads the wall clock instead of the stored part. */
+  refreshElapsed() {
+    const state = this.activity?.state;
+    if (!state || state.type !== "running_tool") return;
+    const views = this.views;
+    for (let i = 0; i < views.length; i++) /** @type {SessionPane} */ (views[i]).transcript.refreshRow(state.message_id, state.part_id);
+  }
+
   /**
    * Create the session with its first input, then open the new session. It returns false when a create is in flight or no workspace directory exists.
    * On a failure the composer takes the input back.

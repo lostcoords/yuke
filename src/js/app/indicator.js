@@ -2,6 +2,7 @@
 import { sessions } from "yuke:internal/session";
 import { client } from "yuke:internal/client";
 import { agentsLabel, elapsedLabel } from "yuke:internal/format";
+import { tickToolTime } from "yuke:internal/transcript-view";
 
 /** @import { Context } from "yuke:internal/ext" */
 /** @import { Session } from "yuke:internal/session" */
@@ -91,6 +92,9 @@ export const indicatorPlugin = {
         needsTick: () => (anyWorking() ? TICK : null),
         tick: () => {
           frame++;
+          tickToolTime();
+          // The same pulse that advances the spinner updates each running tool's elapsed time.
+          for (let i = 0; i < sessions.length; i++) /** @type {Session} */ (sessions[i]).refreshElapsed();
         },
       });
       ctx.effect(() => () => { starts.clear(); agentsSince = 0; childRuns = 0; });

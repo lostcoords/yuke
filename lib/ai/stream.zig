@@ -77,11 +77,11 @@ pub const Stream = struct {
         self.* = undefined;
     }
 
-    /// Answer the next event, or null after the terminal done at the end of the body. Event slices expire at the next call.
+    /// Answer the next event, or null after the terminal done without another body read. Event slices expire at the next call.
     pub fn next(self: *Stream) !?event.StreamEvent {
         std.debug.assert(self.index <= self.events.items.len);
         while (self.index == self.events.items.len) {
-            if (self.ended) return null;
+            if (self.ended or self.saw_done) return null;
             self.events.clearRetainingCapacity();
             self.index = 0;
             _ = self.scratch.reset(.retain_capacity);
@@ -249,4 +249,75 @@ test "stream keeps no bytes for a malformed event, which is no provider answer" 
     defer s.deinit();
     try testing.expectError(error.Protocol, collector.drain(&s));
     try testing.expectEqual(@as(?[]const u8, null), info.body);
+}
+
+test "a protocol terminal ends the stream without another transport read" {
+    const HeldBody = struct {
+        replay: ReplayReader,
+        late_reads: usize = 0,
+
+        const vtable: transport.ResponseBody.VTable = .{ .peek = peek, .toss = toss, .deinit = deinitNoop };
+
+        fn peek(ctx: *anyopaque) anyerror![]const u8 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (self.replay.offset == self.replay.bytes.len) {
+                self.late_reads += 1;
+                return transport.HttpError.IdleTimeout;
+            }
+            return self.replay.body().peek();
+        }
+
+        fn toss(ctx: *anyopaque, count: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.replay.body().toss(count);
+        }
+
+        fn deinitNoop(_: *anyopaque) void {}
+    };
+    const responses_tool = comptime sseFrame(
+        \\{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"edit"}}
+    ) ++ sseFrame(
+        \\{"type":"response.function_call_arguments.done","output_index":0,"arguments":"{}"}
+    ) ++ sseFrame(
+        \\{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","arguments":"{}"}}
+    ) ++ sseFrame(
+        \\{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":100,"output_tokens":5}}}
+    );
+    const chat_text = comptime sseFrame(
+        \\{"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":5}}
+    ) ++ sseFrame("[DONE]");
+    for ([_]struct { protocol: types.Protocol, bytes: []const u8, finish: types.FinishReason }{
+        .{ .protocol = .anthropic_messages, .bytes = canned_text_turn, .finish = .stop },
+        .{ .protocol = .openai_chat, .bytes = chat_text, .finish = .stop },
+        .{ .protocol = .openai_responses, .bytes = responses_tool, .finish = .tool_calls },
+    }) |case| {
+        errdefer std.debug.print("protocol: {s}\n", .{@tagName(case.protocol)});
+        // No EOF follows the terminal. A read past it models a held-open HTTP body.
+        var reader: HeldBody = .{ .replay = .{ .bytes = case.bytes, .chunk_size = 7 } };
+        const body: transport.ResponseBody = .{ .ctx = &reader, .vtable = &HeldBody.vtable };
+        var info: AttemptInfo = .{};
+        var s = Stream.init(testing.allocator, testing.allocator, body, &info, case.protocol);
+        defer s.deinit();
+        var collector: StreamCollector = .{ .gpa = testing.allocator };
+        defer collector.deinit();
+        try collector.drain(&s);
+        try testing.expectEqual(case.finish, collector.stop.?);
+        try testing.expectEqual(@as(u64, 5), collector.usage_output.?);
+        try testing.expectEqual(@as(usize, 0), reader.late_reads);
+        try testing.expect(try s.next() == null);
+        try testing.expectEqual(@as(usize, 0), reader.late_reads);
+
+        // A stopped tool item alone is not a completed response. Keep the read
+        // failure when the provider never sends its terminal frame.
+        const boundary = std.mem.lastIndexOf(u8, case.bytes[0 .. case.bytes.len - 2], "\n\ndata:").? + 2;
+        var incomplete: HeldBody = .{ .replay = .{ .bytes = case.bytes[0..boundary], .chunk_size = 7 } };
+        var incomplete_info: AttemptInfo = .{};
+        var truncated = Stream.init(testing.allocator, testing.allocator, .{ .ctx = &incomplete, .vtable = &HeldBody.vtable }, &incomplete_info, case.protocol);
+        defer truncated.deinit();
+        var partial: StreamCollector = .{ .gpa = testing.allocator };
+        defer partial.deinit();
+        try testing.expectError(transport.HttpError.IdleTimeout, partial.drain(&truncated));
+        try testing.expect(partial.stop == null);
+        try testing.expectEqual(@as(usize, 1), incomplete.late_reads);
+    }
 }

@@ -21,6 +21,14 @@ const PREVIEW_LINES = 10;
 // Every row starts one column in, so a block background frames its text.
 const PAD = 1;
 
+// The clock changes only with an explicit TUI pulse, so a cached render stays deterministic between pulses.
+let elapsedNow = Date.now();
+
+/** Advance the clock that running tool headings read. */
+export function tickToolTime() {
+  elapsedNow = Date.now();
+}
+
 /**
  * A path for a header: relative under the process directory, else complete.
  * @param {unknown} path @returns {string}
@@ -214,6 +222,13 @@ function addBody(rows, shown, body, from, source) {
   return source + "\n" + body;
 }
 
+// The elapsed time of a tool call. A running call uses the wall-clock stamp that the engine published.
+/** @param {ToolPart["state"]} state @returns {string} */
+function toolTime(state) {
+  const ms = state.type === "running" ? Math.max(0, elapsedNow - state.started_at_ms) : /** @type {{ duration_ms?: number }} */ (state).duration_ms;
+  return typeof ms === "number" ? " · " + (ms / 1000).toFixed(1) + "s" : "";
+}
+
 // The body of a tool block is the tail of a shell output, the whole diff of an edit, or the head of any other output. A folded read shows no body.
 // The source is the same folded and open, so a cursor and a selection keep their text across a fold.
 /** @param {ToolPart} part @param {number} width @param {boolean} expanded @param {TranscriptRow[]} rows @param {string} source @returns {string} */
@@ -257,8 +272,6 @@ function toolBody(part, width, expanded, rows, source) {
     const label = mediaLabel(blob, i + 1);
     source = addBody(rows, cap === 0 ? [] : wrapRows(label, width, "TxToolHint", PAD), label, 0, source);
   });
-  const ms = /** @type {{ duration_ms?: number }} */ (state).duration_ms;
-  if (name === "exec" && typeof ms === "number" && state.type !== "running") hint(rows, "Took " + (ms / 1000).toFixed(1) + "s");
   return source;
 }
 
@@ -294,7 +307,8 @@ export const defaultRender = {
       const ms = part.duration_ms;
       // A block can stop while it is still the last part of the draft, so its duration wins over `env.live`.
       const verb = ms == null && env.live ? "thinking" : "thought";
-      const time = ms != null ? " · " + (ms / 1000).toFixed(1) + "s" : "";
+      // Some providers report a synthetic zero duration. It says nothing useful, so leave it out.
+      const time = typeof ms === "number" && ms > 0 ? " · " + (ms / 1000).toFixed(1) + "s" : "";
       // The header reads like a tool heading: the verb, the title as its subject, then the time.
       /** @type {Segment[]} */
       const segments = [{ text: verb, group: "TxToolTitle" }];
@@ -315,15 +329,17 @@ export const defaultRender = {
     const title = head.verb;
     const input = head.input;
     const source = input ? title + " " + input : head.subject ? title + " " + head.subject : title;
+    const time = toolTime(part.state);
     /** @type {Segment[]} */
     const segments = [{ text: title, group: "TxToolTitle", src: 0, srcEnd: title.length }];
-    const shown = head.subject ? clip(head.subject, Math.max(1, width - term.measure(title) - 1)) : "";
+    const shown = head.subject ? clip(head.subject, Math.max(1, width - term.measure(title) - time.length - 1)) : "";
     const revealInput = env.expanded && input !== "" && (shown !== head.subject || input.indexOf("\n") >= 0);
     // The header clips here and not in the draw, so a frame allocates no cut string for a long command.
     if (head.subject) {
       if (revealInput) segments.push({ text: " " + shown, group: "TxToolArg" });
       else segments.push({ text: " " + shown, group: "TxToolArg", src: title.length, srcEnd: source.length });
     }
+    if (time) segments.push({ text: time, group: "TxToolHint" });
     /** @type {TranscriptRow[]} */
     const rows = [{ segments, indent: PAD, header: true, stop: true }];
     if (revealInput) {

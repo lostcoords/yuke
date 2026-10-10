@@ -14,8 +14,21 @@ staged=$bin_dir/.yuke.$$
 staged_lib=${lib_dir%/*}/.yuke.$$
 trap 'rm -rf "$tmp" "$staged" "$staged_lib"' EXIT
 
+# The build label identifies the source snapshot, including local edits, and the UTC build time.
+package_version=$(sed -n 's/^ *\.version = "\([^"]*\)".*/\1/p' "$repo_root/build.zig.zon")
+[ -n "$package_version" ] || { printf 'error cannot read the package version.\n' >&2; exit 1; }
+if [ -d "$repo_root/.jj" ]; then
+    revision=$(cd "$repo_root" && jj log -r @ --no-graph -T 'commit_id.short(12)')
+elif [ -d "$repo_root/.git" ] || [ -f "$repo_root/.git" ]; then
+    revision=$(cd "$repo_root" && git rev-parse --short=12 HEAD)
+    if [ -n "$(cd "$repo_root" && git status --porcelain)" ]; then revision=$revision.dirty; fi
+else
+    revision=source
+fi
+version_string=$package_version+$revision.b$(date -u +%Y%m%d%H%M%S)
+
 # A separate prefix leaves zig-out/ to the development build.
-(cd "$repo_root" && zig build -Doptimize=ReleaseFast --prefix "$tmp")
+(cd "$repo_root" && zig build -Doptimize=ReleaseFast "-Dversion-string=$version_string" --prefix "$tmp")
 
 # The lib directory goes first, so the new binary never starts without its files.
 # A rename cannot replace a non-empty directory. So the old directory moves aside first.

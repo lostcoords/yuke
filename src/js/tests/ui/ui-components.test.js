@@ -22,7 +22,7 @@ const key = (code, char) => ({ type: "key", code: code || "char", char: char || 
 
 const parts = {
   done: [{ type: "tool", id: 0, name: "read", arguments: '{"path":"a.zig"}', state: { type: "completed", output: "alpha\\nbeta", duration_ms: 12 } }],
-  run: [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"zig build test"}', state: { type: "running", started_at_ms: 1, output: "compiling" } }],
+  run: [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"zig build test"}', state: { type: "running", started_at_ms: Date.now() - 1500, output: "compiling" } }],
   err: [{ type: "tool", id: 1, name: "edit", arguments: '{"path":"b.zig"}', state: { type: "error", error: "no match", duration_ms: 3 } }],
   mix: [{ type: "text", id: 0, text: "**hi** there" }, { type: "tool", id: 1, name: "read", arguments: '{"path":"c.zig"}', state: { type: "completed", output: "ok", duration_ms: 1 } }],
   diff: [{ type: "tool", id: 0, name: "edit", arguments: '{"path":"d.zig"}', state: { type: "completed", output: "ok", duration_ms: 2, diff: [{ path: "d.zig", hunks: [{ old_start: 1, old_lines: 1, new_start: 1, new_lines: 1, lines: ["-old", "+new"] }] }] } }],
@@ -36,11 +36,11 @@ paint();
 
 // A folded read shows its header alone; a running command shows the tail of its output; an error shows its text.
 const done = t.rows(40, 0, 2);
-check("done-header", rowsHave(done, "read") && rowsHave(done, "a.zig") && !rowsHave(done, "alpha") && done[0].header === true);
+check("done-header", rowsHave(done, "read") && rowsHave(done, "a.zig") && rowsHave(done, "0.0s") && !rowsHave(done, "alpha") && done[0].header === true);
 const run = t.rows(40, t._globalRow({ id: "run", row: 0, col: 0 }), 4);
-check("run-preview", rowsHave(run, "$") && rowsHave(run, "zig build test") && rowsHave(run, "compiling") && run[0].bg === "TxToolPendingBg");
+check("run-preview", rowsHave(run, "$") && rowsHave(run, "zig build test") && rowsHave(run, "1.5s") && rowsHave(run, "compiling") && run[0].bg === "TxToolPendingBg");
 const err = t.rows(40, t._globalRow({ id: "err", row: 0, col: 0 }), 4);
-check("err-shows", rowsHave(err, "no match") && rowsGroup(err, "TxToolError") && err[0].bg === "TxToolErrorBg");
+check("err-shows", rowsHave(err, "no match") && rowsHave(err, "0.0s") && rowsGroup(err, "TxToolError") && err[0].bg === "TxToolErrorBg");
 
 // A click on any row of a block toggles it. A drag does not.
 t.onMouse(at(4, 0, "press"));
@@ -102,7 +102,7 @@ parts.long = [{ type: "tool", id: 0, name: "exec", arguments: '{"command":"seq"}
 const longT = new Transcript({ partsOf: (id) => parts[id] || [] });
 longT.setOutline([{ id: "long", type: "assistant" }], null);
 const folded = longT.rows(40, 0, longT.rowCount(40));
-check("exec-tail", rowsHave(folded, "earlier lines") && rowsHave(folded, "line75") && rowsHave(folded, "line79") && !rowsHave(folded, "line74") && rowsHave(folded, "Took 1.5s"));
+check("exec-tail", rowsHave(folded, "earlier lines") && rowsHave(folded, "line75") && rowsHave(folded, "line79") && !rowsHave(folded, "line74") && rowsHave(folded, "1.5s"));
 term.beginFrame(); longT.draw({ x: 0, y: 0, w: 40, h: 4 }); term.endFrame();
 longT.onMouse(at(4, 0, "press"));
 longT.onMouse(at(4, 0, "release"));
@@ -135,7 +135,7 @@ const owner = plugins.use({ name: "test-head", apply(ctx) {
 const over = new Transcript({ partsOf: (id) => parts[id] || [] });
 over.setOutline([{ id: "pres", type: "assistant" }], null);
 const overRows = over.rows(60, 0, 4);
-check("override-head", rowsHave(overRows, "custom") && rowsHave(overRows, "Took 0.0s") && over._sourceOf("pres") === "run custom\nok");
+check("override-head", rowsHave(overRows, "custom") && rowsHave(overRows, "0.0s") && over._sourceOf("pres") === "run custom\nok");
 check("cached-rows-change", rowsHave(pres.rows(60, 0, 4), "custom"));
 const faulty = plugins.use({ name: "test-faulty-head", apply(ctx) {
   ctx.inject(["chat"], (ctx) => { ctx.chat.render({ tools: { exec: () => { throw new Error("bad"); } }, sources: { engine_interruption: () => "second" } }); });

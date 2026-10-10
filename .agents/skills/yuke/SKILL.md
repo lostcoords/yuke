@@ -15,15 +15,31 @@ description: Customizes the yuke coding agent through its profile. Use when the 
 - An engine event (`run.started`, `run.done`, `message.*`, `tool.*`) passes the whole drain, not one fact. When `ev.type === "session"`, `ev.session` is the session id and `ev.facts` lists the facts.
 - TUI code goes in `ctx.inject(["tui"], (c) => …)`. That block does not run in `yuke -p` or `yuke --rpc`.
 - The transcript look is a stack of renderers (`c.chat.render`). A new look stacks on the default; a hook that answers `undefined` passes to the one below.
-- `providers.json` can hold API keys inline. Read and edit it as needed, but do not print a key. Keep the mode `0600`. `yuke check` validates it, `yuke login` shows the state of each provider, and `/reload-providers` applies an edit without a restart.
+- `providers.json` can hold API keys inline. Read and edit it as needed, but do not print a key. Keep the mode `0600`. Yuke rejects a symlink here, so do not manage this file through Stow. `yuke check` validates it, `yuke login` shows the state of each provider, and `/reload-providers` applies an edit without a restart.
 
 ## Workflow
 
 1. Find the API (below).
 2. Edit `index.js` in the profile (`$XDG_CONFIG_HOME/$YUKE_APPNAME`, default `~/.config/yuke`), or a file it imports. Leave `yuke.d.ts`, `yuke-modules.d.ts`, and `yuke.jsconfig.json` as they are: the installer owns them.
 3. When `tsc` exists: `tsc -p <profile>/jsconfig.json`.
-4. `yuke check`. Exit 1 means an error, and stderr names it. Fix it and run the check again.
-5. Tell the user to restart yuke.
+4. Run `yuke check`. Exit 1 means an error, and stderr names it. Fix it and run the check again.
+5. Run the profile's focused test when one exists in `<profile>/tests`.
+6. Verify an interactive TUI change in isolated tmux as described below.
+7. Tell the user to restart yuke.
+
+## Verify TUI behavior
+
+`yuke check` validates plugin startup but does not prove key routing, mode changes, screen output, or exit behavior. `yuke -p` and `yuke --rpc` do not provide the TUI capability. Use a detached tmux session for these changes.
+
+1. Create temporary `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, and `XDG_CACHE_HOME` directories.
+2. Write a minimal temporary `index.js` that loads only the plugin under test and its required capabilities. Import the real plugin file so the test runs the edited code.
+3. Start `yuke` in a uniquely named, detached tmux session. Do not attach to it. Use a fixed terminal size.
+4. Send real keys with `tmux send-keys`. Use `-l` for literal text.
+5. After each action, use `tmux capture-pane -p` and assert the composer text, status, dialog, or other visible state.
+6. For an exit action, assert that the Yuke process or tmux session ends.
+7. Save the labeled captures as a text artifact. Always kill the test session in cleanup.
+
+Prefer a reusable script in `<profile>/tests` over a one-time command. The script must use an isolated profile and session store. It must not attach to tmux, activate a desktop app, use system-wide input, or access the clipboard. For the main profile's Ctrl+C behavior, run `python3 ~/.config/yuke/tests/check-ctrl-c.py`.
 
 ## Find the API
 

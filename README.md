@@ -12,7 +12,9 @@ git config core.hooksPath .githooks
 mise run install
 ```
 
-`mise run install` builds an optimized Yuke, installs it at `~/.local/bin/yuke`, and refreshes the plugin types.
+`mise run install` builds an optimized Yuke, installs it at `~/.local/bin/yuke`, and refreshes the plugin types. The local build version includes the source revision and UTC build time, for example `0.0.1-dev+abcdef123456.b20261010104300`. In a jj checkout, the revision identifies the working-copy snapshot, including local edits. Run `yuke --version` to check the installed binary. The `initialize` RPC reports the version embedded in the running process, which does not change when you install another binary.
+
+`python3 tools/test-install.py` checks the build stamp and install paths in a temporary home without compiling.
 
 ## Commands
 

@@ -45,13 +45,14 @@ check("num-id-later-send", rowsHave(num.rows(40, 0, num.rowCount(40)), "num body
 // A hidden thought with a duration shows the duration on a row that does not fold. A hidden thought with no duration shows nothing.
 const blank = new Transcript({ partsOf: () => [
   { type: "reasoning", id: 0, text: "", title: "Hidden", duration_ms: 2000 },
-  { type: "reasoning", id: 1, text: "" },
-  { type: "text", id: 2, text: "answer" },
+  { type: "reasoning", id: 1, text: "", title: "Synthetic", duration_ms: 0 },
+  { type: "reasoning", id: 2, text: "" },
+  { type: "text", id: 3, text: "answer" },
 ] });
 blank.setOutline([{ id: "bl", type: "assistant" }], null);
 draw(blank, 40, 8);
 const blankRows = blank.rows(40, 0, 8);
-check("hidden-thought-row", textOf(blankRows[0]) === "thought Hidden · 2.0s" && !blankRows[0].header && blankRows.filter((r) => rowsHave([r], "thought")).length === 1 && rowsHave(blankRows, "answer"));
+check("hidden-thought-row", textOf(blankRows[0]) === "thought Hidden · 2.0s" && !blankRows[0].header && blankRows.filter((r) => rowsHave([r], "thought")).length === 2 && !rowsHave(blankRows, "0.0s") && rowsHave(blankRows, "answer"));
 // A long title clips to the row, and the time stays whole.
 const narrow = new Transcript({ partsOf: () => [{ type: "reasoning", id: 0, text: "x", title: "A very long title that cannot fit", duration_ms: 1500 }] });
 narrow.setOutline([{ id: "nw", type: "assistant" }], null);

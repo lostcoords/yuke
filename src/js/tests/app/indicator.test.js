@@ -108,6 +108,13 @@ check("phase", phaseLabel({ type: "retrying", run_id: 1, attempt: 2, max_attempt
 // The countdown rounds up, so a short wait never reads "in 0s" while the run still holds.
 check("phase-countdown-up", phaseLabel({ type: "retrying", run_id: 1, attempt: 2, max_attempts: 5, next_at_ms: 500, code: "rate_limited", message: "" }, 0) === "retry 2/5 in 1s · rate_limited");
 check("phase-waiting", phaseLabel({ type: "waiting", run_id: 1, started_at_ms: 0 }, 0) === "waiting for response" && phaseLabel({ type: "streaming", run_id: 1, started_at_ms: 0 }, 0) === "responding");
+// A clock pulse rebuilds the running tool row without rereading its part.
+const elapsedSession = new Session();
+let elapsedRefresh = "";
+elapsedSession.activity = tool;
+elapsedSession.views.push({ transcript: { refreshRow: (message, part) => { elapsedRefresh = message + ":" + part; } } });
+elapsedSession.refreshElapsed();
+check("tool-elapsed-refresh", elapsedRefresh === "1:1");
 check("bar", contextBar(0, 1000) === "[░░░░░░]" && contextBar(1, 1000) === "[░░░░░░]" && contextBar(500, 1000) === "[███░░░]" && contextBar(1000, 1000) === "[██████]" && contextBar(5, 0) === "[░░░░░░]");
 // With no session the reading describes the next chat: the default model's window and 0%.
 showSession(chat, new Session());
