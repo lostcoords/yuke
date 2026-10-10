@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::{File, OpenOptions, TryLockError};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -12,14 +12,15 @@ use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_sql::rusqlite::{self, Connection, TransactionBehavior};
 
 use crate::context::{self, Loaded};
+use crate::files;
 use crate::queries::{commits, pending_inputs, sessions};
 use crate::schema;
 
 /// A [`Store`] in one SQLite file. One connection runs every read and write in call order on its own thread.
 pub struct SqliteStore {
     connection: tokio_rusqlite::Connection,
-    /// The folder of the lock files.
-    locks: PathBuf,
+    /// The folder of the session folders.
+    sessions: PathBuf,
     owners: Owners,
 }
 
@@ -47,14 +48,14 @@ impl Drop for Owner {
 impl fmt::Debug for SqliteStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SqliteStore")
-            .field("locks", &self.locks)
+            .field("sessions", &self.sessions)
             .finish_non_exhaustive()
     }
 }
 
 impl SqliteStore {
-    /// Open the store in `folder`: the database `yuke.db` and the lock files in `locks/`. Create what is missing, and
-    /// run the migrations that the database lacks.
+    /// Open the store in `folder`. The store keeps the database `yuke.db` and a folder for each session in `sessions/`.
+    /// The open makes what is missing, runs the missing migrations, and removes the folders of deleted sessions.
     ///
     /// # Errors
     ///
@@ -62,8 +63,9 @@ impl SqliteStore {
     /// returns it when the schema version of the database is above the versions that this yuke knows.
     pub async fn open(folder: impl AsRef<Path>) -> Result<SqliteStore, StoreError> {
         let folder = folder.as_ref();
-        let locks = folder.join("locks");
-        std::fs::create_dir_all(&locks).map_err(failed)?;
+        let sessions = folder.join("sessions");
+        std::fs::create_dir_all(&sessions).map_err(failed)?;
+        files::sync_folder(folder).map_err(failed)?;
 
         let connection = tokio_rusqlite::Connection::open(folder.join("yuke.db"))
             .await
@@ -71,11 +73,14 @@ impl SqliteStore {
 
         let store = SqliteStore {
             connection,
-            locks,
+            sessions: sessions.clone(),
             owners: Owners::default(),
         };
         store
-            .call(|connection| schema::prepare(connection).map_err(StoreError::Failed))
+            .call(move |connection| {
+                schema::prepare(connection).map_err(StoreError::Failed)?;
+                files::sweep(connection, &sessions)
+            })
             .await?;
 
         Ok(store)
@@ -92,10 +97,9 @@ impl SqliteStore {
         })
     }
 
-    /// The lock file of session `id`.
-    fn lock_path(&self, id: SessionId) -> PathBuf {
-        self.locks
-            .join(format!("{:032x}.lock", u128::from_be_bytes(*id.as_bytes())))
+    /// The folder of session `id`.
+    fn folder(&self, id: SessionId) -> PathBuf {
+        files::session_folder(&self.sessions, id.as_bytes())
     }
 
     /// The lock file that a lease of this store holds for session `id`.
@@ -125,7 +129,8 @@ impl SqliteStore {
 impl Store for SqliteStore {
     async fn create_session(&self, settings: &SessionSettings) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
-        let lock_path = self.lock_path(id);
+        let folder = self.folder(id);
+        let sessions_folder = self.sessions.clone();
         let params = sessions::InsertSessionParams {
             id: *id.as_bytes(),
             settings: serde_json::to_string(settings).map_err(failed)?,
@@ -133,8 +138,12 @@ impl Store for SqliteStore {
 
         let file = self
             .call(move |connection| {
-                let file = take_lock(&lock_path)?;
+                // No other process knows the new id yet, so the row can come first. Then each folder that the sweep
+                // finds for a live session has its row.
                 sessions::insert_session(connection, &params).map_err(failed)?;
+                let file = files::take_lock(&folder)?;
+                // A crash must not lose the entry of the new folder, so the call syncs the folder that holds it.
+                files::sync_folder(&sessions_folder).map_err(failed)?;
                 Ok(file)
             })
             .await?;
@@ -179,17 +188,17 @@ impl Store for SqliteStore {
     }
 
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {
-        let lock_path = match access {
+        let folder = match access {
             Access::Read => None,
-            Access::Write => Some(self.lock_path(id)),
+            Access::Write => Some(self.folder(id)),
         };
         let session = *id.as_bytes();
 
         let (loaded, file) = self
             .call(move |connection| {
                 // The lock comes before the load, so no other writer commits between the lock and the load.
-                let file = match lock_path {
-                    Some(lock_path) => Some(lock_known_session(connection, session, &lock_path)?),
+                let file = match folder {
+                    Some(folder) => Some(lock_known_session(connection, session, &folder)?),
                     None => None,
                 };
 
@@ -248,6 +257,39 @@ impl Store for SqliteStore {
                 blocks: row.blocks.0,
             })
             .collect())
+    }
+
+    async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, StoreError> {
+        let session = *id.as_bytes();
+        let folder = self.folder(id);
+
+        // The write runs on the thread of the connection, and the calls behind it wait. Puts are rare, and this keeps
+        // the caller's task free of blocking work.
+        self.call(move |connection| {
+            ensure_session(connection, session)?;
+            files::write_blob(&folder, &bytes).map_err(failed)
+        })
+        .await
+    }
+
+    fn read_blob(&self, id: SessionId, digest: &yuke_ai::Digest) -> Result<Option<Vec<u8>>, StoreError> {
+        files::read_blob(&self.folder(id), digest)
+    }
+
+    async fn delete_session(&self, id: SessionId) -> Result<(), StoreError> {
+        let session = *id.as_bytes();
+        let folder = self.folder(id);
+
+        self.call(move |connection| {
+            let lock = lock_known_session(connection, session, &folder)?;
+            sessions::delete_session(connection, session).map_err(failed)?;
+
+            // Windows does not delete an open file, so the lock closes before the folder goes. When the removal
+            // fails, the rows are already gone, and the sweep of the next open removes the folder.
+            drop(lock);
+            files::remove_session_folder(&folder).map_err(failed)
+        })
+        .await
     }
 }
 
@@ -324,33 +366,21 @@ fn commit_params(id: SessionId, commit: &Commit<'_>) -> serde_json::Result<commi
     })
 }
 
-/// Take the lock of session `session` at `lock_path`. An unknown session gets [`StoreError::NotFound`] and no lock
-/// file.
-fn lock_known_session(connection: &Connection, session: [u8; 16], lock_path: &Path) -> Result<File, StoreError> {
+/// Take the lock of session `session` in `folder`. An unknown session gets [`StoreError::NotFound`] and no folder.
+fn lock_known_session(connection: &Connection, session: [u8; 16], folder: &Path) -> Result<File, StoreError> {
+    ensure_session(connection, session)?;
+
+    files::take_lock(folder)
+}
+
+/// `Ok` when the database has session `session`, and [`StoreError::NotFound`] otherwise.
+fn ensure_session(connection: &Connection, session: [u8; 16]) -> Result<(), StoreError> {
     let count = sessions::session_count(connection, session)
         .one()
         .map_err(failed)?
         .count;
-    ensure_found(count > 0)?;
 
-    take_lock(lock_path)
-}
-
-/// Open the lock file at `path`, and take its lock. Windows does not lock a file that is open only for append, so
-/// the file opens for writing.
-fn take_lock(path: &Path) -> Result<File, StoreError> {
-    let file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
-        .map_err(failed)?;
-
-    match file.try_lock() {
-        Ok(()) => Ok(file),
-        Err(TryLockError::WouldBlock) => Err(StoreError::Owned),
-        Err(TryLockError::Error(error)) => Err(failed(error)),
-    }
+    ensure_found(count > 0)
 }
 
 /// `Ok` when the session was found, and [`StoreError::NotFound`] otherwise.
@@ -362,6 +392,6 @@ fn ensure_found(session_found: bool) -> Result<(), StoreError> {
     }
 }
 
-fn failed(error: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> StoreError {
+pub(crate) fn failed(error: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> StoreError {
     StoreError::Failed(error.into())
 }

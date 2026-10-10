@@ -36,7 +36,8 @@ impl fmt::Debug for Session {
     }
 }
 
-/// The journal and the inbox of the turns of a session. It saves each commit in the store of the session.
+/// The journal, the inbox, and the blob store of the turns of a session. It saves each commit in the store of the
+/// session, and it reads the blobs of the session from the store.
 struct SessionJournal {
     store: Arc<dyn Store>,
     id: SessionId,
@@ -84,6 +85,15 @@ impl Journal for SessionJournal {
 impl Inbox for SessionJournal {
     fn take(&self) -> Vec<yuke_ai::Block> {
         self.take_waiting()
+    }
+}
+
+impl yuke_ai::BlobStore for SessionJournal {
+    fn read(
+        &self,
+        digest: &yuke_ai::Digest,
+    ) -> Result<Option<std::borrow::Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self.store.read_blob(self.id, digest)?.map(std::borrow::Cow::Owned))
     }
 }
 
@@ -163,8 +173,8 @@ impl Session {
         }
     }
 
-    /// The next turn with `driver`. The turn takes each pending input as its input, and the session is the journal
-    /// and the inbox of the driver.
+    /// The next turn with `driver`. The turn takes each pending input as its input. When the turn runs, the session
+    /// gives the driver its journal, its inbox, and its blob store.
     pub fn turn<'s>(&'s mut self, driver: Driver<'s>) -> SessionTurn<'s> {
         SessionTurn {
             session: self,
@@ -305,6 +315,7 @@ impl<'s> SessionTurn<'s> {
         let mut turn = driver
             .journal(journal)
             .inbox(journal)
+            .blobs(journal)
             .turn(&mut session.history, input)
             .cancellation_token(cancellation_token);
         if let Some(observer) = observer {

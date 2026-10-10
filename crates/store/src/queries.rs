@@ -312,4 +312,9 @@ pub(crate) mod sessions {
             &[(":id", &id)],
         )
     }
+
+    /// Delete the session. The cascade deletes its commits and its pending inputs.
+    pub(crate) fn delete_session(connection: &Connection, id: [u8; 16]) -> Result<usize> {
+        execute(connection, r"DELETE FROM sessions WHERE id = :id;", &[(":id", &id)])
+    }
 }

@@ -14,7 +14,7 @@ use support::{
     tool_reply,
 };
 use yuke_agent::{Access, MemoryStore, ModelReference, Session, SessionError, SessionSettings, Store, StoreError};
-use yuke_ai::{Block, ToolCall, ToolDefinition, ToolResult};
+use yuke_ai::{Block, Media, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::{Commit, Driver, Toolset};
 
 /// A commit in the middle of a turn.
@@ -122,6 +122,26 @@ async fn a_pending_input_waits_for_the_next_turn_after_an_open() {
     assert_eq!(before.context, []);
     assert_in_order(&transport.requests()[0], &["one"]);
     assert_eq!(store.pending(id).await.unwrap(), []);
+}
+
+#[tokio::test]
+async fn a_turn_sends_the_bytes_of_its_media_from_the_store() {
+    let store = Arc::new(MemoryStore::new());
+    let transport = ScriptedTransport::new([text_reply("seen")]);
+    let target = target();
+    let mut session = Session::create(store.clone(), settings()).await.unwrap();
+    let blob = store.put_blob(session.id(), b"image-bytes".to_vec()).await.unwrap();
+    let input = [Block::user_text("look"), Block::Media(Media::new(blob, "image/png"))];
+    session.input().send(&input).await.unwrap();
+
+    session
+        .turn(Driver::new(&transport, &target, &NoWait))
+        .run()
+        .await
+        .unwrap();
+
+    // The driver has no blob store of the caller, so the bytes come through the session.
+    assert_in_order(&transport.requests()[0], &["look", "aW1hZ2UtYnl0ZXM="]);
 }
 
 #[tokio::test]

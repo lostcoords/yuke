@@ -54,6 +54,40 @@ pub trait Store: Send + Sync {
     ///
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the load fails.
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError>;
+
+    /// Save `bytes` as a blob of session `id`, and return its [`blob_of`] reference. Only this session reads the blob.
+    /// The same bytes again give the same blob. Any caller can put a blob.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the save fails.
+    async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, StoreError>;
+
+    /// The bytes of the blob with `digest` in session `id`, or `None` when the session has no such blob. The read
+    /// blocks, because the request encoder reads blobs synchronously.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the read fails.
+    fn read_blob(&self, id: SessionId, digest: &yuke_ai::Digest) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Delete session `id` with its commits, inputs, and blobs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::NotFound`] for an unknown session, [`StoreError::Owned`] while a writer holds the
+    /// session, and [`StoreError::Failed`] when the delete fails.
+    async fn delete_session(&self, id: SessionId) -> Result<(), StoreError>;
+}
+
+/// The blob of `bytes`: their SHA-256 and their length. Each store finds a blob by this digest.
+pub fn blob_of(bytes: &[u8]) -> yuke_ai::Blob {
+    use sha2::Digest;
+
+    yuke_ai::Blob {
+        digest: sha2::Sha256::digest(bytes).into(),
+        len: bytes.len(),
+    }
 }
 
 /// The id of a session: a version 7 UUID, so a new id sorts after an old one.

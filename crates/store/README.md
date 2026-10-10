@@ -1,7 +1,7 @@
 # store
 
 A SQLite store for the sessions of [`yuke-agent`](../agent). `SqliteStore::open(folder)` opens `folder/yuke.db` and
-keeps the owner locks in `folder/locks/`.
+keeps a folder for each session in `folder/sessions/<id>/`, with the lock file and the blobs of the session.
 
 ## Database
 
@@ -14,8 +14,18 @@ keeps the owner locks in `folder/locks/`.
 
 ## Owner lock
 
-`open` with `Access::Write` locks `locks/<id>.lock`. A second writer, in this process or another one, gets
+`open` with `Access::Write` locks `sessions/<id>/lock`. A second writer, in this process or another one, gets
 `StoreError::Owned`. The lock stays held until the `Lease` drops and each write that the lease started has ended.
+
+## Blobs
+
+- `put_blob` writes the bytes to `sessions/<id>/<sha256>`. The file is durable before the call returns.
+- A second put of the same bytes replaces the file with equal content.
+- A blob belongs to one session. The same image in two sessions is two files.
+- `read_blob` reads the file synchronously, because the request encoder reads blobs synchronously.
+- `delete_session` deletes the rows. Then it removes the folder of the session.
+- `SqliteStore::open` removes each folder that has no session row and no held lock, for example after a crash during
+  a delete.
 
 ## Migrations and queries
 

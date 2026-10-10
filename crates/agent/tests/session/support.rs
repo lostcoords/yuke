@@ -223,4 +223,16 @@ impl Store for FailingStore {
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError> {
         self.store.pending(id).await
     }
+
+    async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, StoreError> {
+        self.store.put_blob(id, bytes).await
+    }
+
+    fn read_blob(&self, id: SessionId, digest: &yuke_ai::Digest) -> Result<Option<Vec<u8>>, StoreError> {
+        self.store.read_blob(id, digest)
+    }
+
+    async fn delete_session(&self, id: SessionId) -> Result<(), StoreError> {
+        self.store.delete_session(id).await
+    }
 }

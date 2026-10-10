@@ -1,8 +1,9 @@
 //! A SQLite [`Store`](yuke_agent::Store) for the sessions of `yuke-agent`. [`SqliteStore`] keeps all sessions in one
-//! database file and takes the owner lock of a session through a lock file. The queries come from `yuke-sqlgen`:
+//! database file. Each session has a folder with its lock file and its blobs. The queries come from `yuke-sqlgen`:
 //! run `cargo run -p yuke-sqlgen` after a change of `migrations/` or `queries/`.
 
 mod context;
+mod files;
 // Clippy accepts `use super::*` in a test build, so the expectation holds only outside tests.
 #[cfg_attr(
     not(test),

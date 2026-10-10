@@ -6,8 +6,12 @@ commit of the turn in a `Store` before the turn goes on.
 ## Store
 
 Each `Store` method is one atomic durable step: create a session, set its settings, accept an input, open it, save
-one commit of the engine, and load the pending inputs. One writer at a time owns a session. A second writer gets
-`StoreError::Owned` until the `Lease` of the first writer drops. `MemoryStore` keeps its sessions in memory.
+one commit of the engine, load the pending inputs, put and read a blob, and delete a session. One writer at a time
+owns a session. A second writer gets `StoreError::Owned` until the `Lease` of the first writer drops. `MemoryStore`
+keeps its sessions in memory.
+
+A blob belongs to one session, and `blob_of` gives its reference: the SHA-256 and the length of its bytes. A session
+turn reads the blobs of its media from the store, so the driver needs no blob store of the caller.
 
 ## Session
 

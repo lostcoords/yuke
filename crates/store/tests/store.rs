@@ -104,3 +104,54 @@ async fn a_queued_write_finishes_before_the_lock_releases() {
 
     assert_eq!(after.context, blocks);
 }
+
+#[tokio::test]
+async fn a_blob_survives_a_close_and_an_open_of_the_file() {
+    let folder = folder("a_blob_survives_a_close_and_an_open_of_the_file");
+    let first = SqliteStore::open(&folder).await.unwrap();
+    let id = first.create_session(&settings("one")).await.unwrap().id;
+    let blob = first.put_blob(id, b"image".to_vec()).await.unwrap();
+    drop(first);
+
+    let second = SqliteStore::open(&folder).await.unwrap();
+
+    assert_eq!(
+        second.read_blob(id, &blob.digest).unwrap().as_deref(),
+        Some(&b"image"[..])
+    );
+}
+
+#[tokio::test]
+async fn a_delete_removes_the_folder_of_the_session() {
+    let folder = folder("a_delete_removes_the_folder_of_the_session");
+    let store = SqliteStore::open(&folder).await.unwrap();
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    store.put_blob(id, b"image".to_vec()).await.unwrap();
+    let sessions = || std::fs::read_dir(folder.join("sessions")).unwrap().count();
+    let before = sessions();
+
+    store.delete_session(id).await.unwrap();
+
+    assert_eq!(before, 1);
+    assert_eq!(sessions(), 0);
+}
+
+#[tokio::test]
+async fn the_sweep_removes_a_folder_without_a_session_and_keeps_a_locked_one() {
+    let folder = folder("the_sweep_removes_a_folder_without_a_session_and_keeps_a_locked_one");
+    drop(SqliteStore::open(&folder).await.unwrap());
+    // This folder has no session row, as after a crash during a delete.
+    let left = folder.join("sessions").join("0123456789abcdef0123456789abcdef");
+    std::fs::create_dir_all(&left).unwrap();
+    std::fs::write(left.join("blob"), b"image").unwrap();
+    // This folder has no session row and a held lock, as during a delete in another process.
+    let deleting = folder.join("sessions").join("fedcba9876543210fedcba9876543210");
+    std::fs::create_dir_all(&deleting).unwrap();
+    let lock = std::fs::File::create(deleting.join("lock")).unwrap();
+    lock.try_lock().unwrap();
+
+    drop(SqliteStore::open(&folder).await.unwrap());
+
+    assert!(!left.exists());
+    assert!(deleting.exists());
+}

@@ -8,7 +8,7 @@
 
 use yuke_engine::{Commit, Outcome, Replaced, TurnEnd};
 
-use crate::store::{Access, ModelReference, SessionId, SessionSettings, Store, StoreError};
+use crate::store::{Access, ModelReference, SessionId, SessionSettings, Store, StoreError, blob_of};
 
 /// Write one `#[tokio::test]` for each behavior of this module. `$make_store` is an async function that takes the
 /// name of the test and returns a new store, such as an `Arc<impl Store>`. The calling crate needs `tokio` with the
@@ -32,6 +32,11 @@ macro_rules! store_tests {
             a_consumed_input_id_is_not_given_again,
             new_settings_replace_the_old_settings,
             an_unknown_session_is_not_found,
+            a_put_blob_reads_back,
+            the_same_bytes_give_the_same_blob,
+            a_blob_of_another_session_does_not_read,
+            a_deleted_session_is_not_found,
+            a_delete_of_a_held_session_gets_owned,
         );
     };
     (@behaviors $make_store:path; $($behavior:ident),* $(,)?) => {
@@ -330,10 +335,86 @@ pub async fn an_unknown_session_is_not_found(store: &dyn Store) {
     let input = store.accept_input(id, &[yuke_ai::Block::user_text("one")]).await;
     let commit = store.commit(id, &step(&[]), &[]).await;
     let pending = store.pending(id).await;
+    let put = store.put_blob(id, b"image".to_vec()).await;
+    let read = store.read_blob(id, &blob_of(b"image").digest);
+    let delete = store.delete_session(id).await;
 
     assert!(matches!(open, Err(StoreError::NotFound)), "{open:?}");
     assert!(matches!(settings, Err(StoreError::NotFound)), "{settings:?}");
     assert!(matches!(input, Err(StoreError::NotFound)), "{input:?}");
     assert!(matches!(commit, Err(StoreError::NotFound)), "{commit:?}");
     assert!(matches!(pending, Err(StoreError::NotFound)), "{pending:?}");
+    assert!(matches!(put, Err(StoreError::NotFound)), "{put:?}");
+    assert!(matches!(read, Err(StoreError::NotFound)), "{read:?}");
+    assert!(matches!(delete, Err(StoreError::NotFound)), "{delete:?}");
+}
+
+/// A put returns the digest and the length of the bytes, and the blob reads back.
+pub async fn a_put_blob_reads_back(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+
+    let blob = store.put_blob(id, b"image".to_vec()).await.unwrap();
+
+    assert_eq!(blob, blob_of(b"image"));
+    assert_eq!(
+        store.read_blob(id, &blob.digest).unwrap().as_deref(),
+        Some(&b"image"[..])
+    );
+}
+
+/// A second put of the same bytes gives the same blob, and the blob still reads back.
+pub async fn the_same_bytes_give_the_same_blob(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+
+    let first = store.put_blob(id, b"image".to_vec()).await.unwrap();
+    let second = store.put_blob(id, b"image".to_vec()).await.unwrap();
+
+    assert_eq!(first, second);
+    assert_eq!(
+        store.read_blob(id, &second.digest).unwrap().as_deref(),
+        Some(&b"image"[..])
+    );
+}
+
+/// A blob belongs to the session that put it. Another session has no blob with its digest.
+pub async fn a_blob_of_another_session_does_not_read(store: &dyn Store) {
+    let owner = store.create_session(&settings("one")).await.unwrap().id;
+    let other = store.create_session(&settings("two")).await.unwrap().id;
+
+    let blob = store.put_blob(owner, b"image".to_vec()).await.unwrap();
+
+    assert_eq!(store.read_blob(other, &blob.digest).unwrap(), None);
+}
+
+/// A deleted session is not found, and its pending inputs and its blobs are not found.
+pub async fn a_deleted_session_is_not_found(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    store
+        .commit(id, &end(&[yuke_ai::Block::user_text("one")]), &[])
+        .await
+        .unwrap();
+    store
+        .accept_input(id, &[yuke_ai::Block::user_text("two")])
+        .await
+        .unwrap();
+    let blob = store.put_blob(id, b"image".to_vec()).await.unwrap();
+
+    store.delete_session(id).await.unwrap();
+
+    let open = store.open(id, Access::Read).await;
+    let pending = store.pending(id).await;
+    let read = store.read_blob(id, &blob.digest);
+    assert!(matches!(open, Err(StoreError::NotFound)), "{open:?}");
+    assert!(matches!(pending, Err(StoreError::NotFound)), "{pending:?}");
+    assert!(matches!(read, Err(StoreError::NotFound)), "{read:?}");
+}
+
+/// A delete of a session that a writer holds gets [`StoreError::Owned`], and the session stays.
+pub async fn a_delete_of_a_held_session_gets_owned(store: &dyn Store) {
+    let opened = store.create_session(&settings("one")).await.unwrap();
+
+    let delete = store.delete_session(opened.id).await;
+
+    assert!(matches!(delete, Err(StoreError::Owned)), "{delete:?}");
+    assert!(store.open(opened.id, Access::Read).await.is_ok());
 }

@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use yuke_engine::Commit;
 
 use crate::lock;
-use crate::store::{Access, InputId, Lease, Opened, PendingInput, SessionId, SessionSettings, Store, StoreError};
+use crate::store::{
+    Access, InputId, Lease, Opened, PendingInput, SessionId, SessionSettings, Store, StoreError, blob_of,
+};
 
 /// A [`Store`] that keeps its sessions in memory, for tests and for a caller that saves nothing. It refuses a second
 /// writer of a session, as a store with a file lock does.
@@ -32,6 +34,8 @@ struct Saved {
     context: Vec<yuke_ai::Block>,
     pending: Vec<PendingInput>,
     turn_open: bool,
+    /// The blobs of the session, by digest.
+    blobs: HashMap<yuke_ai::Digest, Vec<u8>>,
 }
 
 /// The lock of one writer.
@@ -75,6 +79,7 @@ impl Store for MemoryStore {
                 context: Vec::new(),
                 pending: Vec::new(),
                 turn_open: false,
+                blobs: HashMap::new(),
             },
         );
         Ok(Opened {
@@ -139,6 +144,32 @@ impl Store for MemoryStore {
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError> {
         let state = lock(&self.state);
         Ok(state.sessions.get(&id).ok_or(StoreError::NotFound)?.pending.clone())
+    }
+
+    async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, StoreError> {
+        let blob = blob_of(&bytes);
+        let mut state = lock(&self.state);
+        let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
+        saved.blobs.insert(blob.digest, bytes);
+        Ok(blob)
+    }
+
+    fn read_blob(&self, id: SessionId, digest: &yuke_ai::Digest) -> Result<Option<Vec<u8>>, StoreError> {
+        let state = lock(&self.state);
+        let saved = state.sessions.get(&id).ok_or(StoreError::NotFound)?;
+        Ok(saved.blobs.get(digest).cloned())
+    }
+
+    async fn delete_session(&self, id: SessionId) -> Result<(), StoreError> {
+        let mut state = lock(&self.state);
+        if !state.sessions.contains_key(&id) {
+            return Err(StoreError::NotFound);
+        }
+        if lock(&self.writers).contains(&id) {
+            return Err(StoreError::Owned);
+        }
+        state.sessions.remove(&id);
+        Ok(())
     }
 }
 
