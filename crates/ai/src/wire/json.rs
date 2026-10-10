@@ -287,41 +287,40 @@ pub(crate) fn escape_into(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(&bytes[start..]);
 }
 
+/// The two base64 characters of each 12-bit value. Two lookups encode a group of 3 bytes.
+static BASE64_PAIRS: [[u8; 2]; 4096] = {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut pairs = [[0; 2]; 4096];
+    let mut index = 0;
+    while index < 4096 {
+        pairs[index] = [ALPHABET[index >> 6], ALPHABET[index & 63]];
+        index += 1;
+    }
+    pairs
+};
+
 /// Append the standard padded base64 of `data`.
 fn base64_into(out: &mut Vec<u8>, data: &[u8]) {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    out.reserve(data.len().div_ceil(3) * 4);
+    let start = out.len();
+    // The output grows once, so the loop writes each group of 4 characters in place.
+    out.resize(start + data.len().div_ceil(3) * 4, 0);
     let (groups, rest) = data.as_chunks::<3>();
-    for group in groups {
-        let n = u32::from(group[0]) << 16 | u32::from(group[1]) << 8 | u32::from(group[2]);
-        out.extend_from_slice(&[
-            ALPHABET[(n >> 18) as usize & 63],
-            ALPHABET[(n >> 12) as usize & 63],
-            ALPHABET[(n >> 6) as usize & 63],
-            ALPHABET[n as usize & 63],
-        ]);
+    let (cells, _) = out[start..].as_chunks_mut::<4>();
+    let (cells, last) = cells.split_at_mut(groups.len());
+    for (group, cell) in groups.iter().zip(cells) {
+        let n = usize::from(group[0]) << 16 | usize::from(group[1]) << 8 | usize::from(group[2]);
+        let [c0, c1] = BASE64_PAIRS[n >> 12];
+        let [c2, c3] = BASE64_PAIRS[n & 0xfff];
+        *cell = [c0, c1, c2, c3];
     }
-    match *rest {
-        [a] => {
-            let n = u32::from(a) << 16;
-            out.extend_from_slice(&[
-                ALPHABET[(n >> 18) as usize & 63],
-                ALPHABET[(n >> 12) as usize & 63],
-                b'=',
-                b'=',
-            ]);
-        }
-        [a, b] => {
-            let n = u32::from(a) << 16 | u32::from(b) << 8;
-            out.extend_from_slice(&[
-                ALPHABET[(n >> 18) as usize & 63],
-                ALPHABET[(n >> 12) as usize & 63],
-                ALPHABET[(n >> 6) as usize & 63],
-                b'=',
-            ]);
-        }
-        _ => {}
-    }
+    let n = match *rest {
+        [a] => usize::from(a) << 16,
+        [a, b] => usize::from(a) << 16 | usize::from(b) << 8,
+        _ => return,
+    };
+    let [c0, c1] = BASE64_PAIRS[n >> 12];
+    let [c2, _] = BASE64_PAIRS[n & 0xfff];
+    last[0] = [c0, c1, if rest.len() == 2 { c2 } else { b'=' }, b'='];
 }
 
 #[cfg(test)]
@@ -358,7 +357,16 @@ mod tests {
 
     #[test]
     fn base64_padding() {
-        for (data, want) in [(&b""[..], ""), (b"f", "Zg=="), (b"fo", "Zm8="), (b"foo", "Zm9v")] {
+        // RFC 4648 section 10 gives these vectors.
+        for (data, want) in [
+            (&b""[..], ""),
+            (b"f", "Zg=="),
+            (b"fo", "Zm8="),
+            (b"foo", "Zm9v"),
+            (b"foob", "Zm9vYg=="),
+            (b"fooba", "Zm9vYmE="),
+            (b"foobar", "Zm9vYmFy"),
+        ] {
             assert_eq!(written(|jw| jw.base64(None, data)), format!("\"{want}\""));
         }
     }
