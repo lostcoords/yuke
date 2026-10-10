@@ -1,0 +1,24 @@
+[package]
+name = "yuke-agent"
+version = "0.0.1-dev"
+description = "Durable sessions that run yuke-engine turns and save each commit in a store."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+# The shared behavior tests of a `Store`, for the crate of each store.
+testing = []
+
+[dependencies]
+async-trait = "0.1.92"
+uuid = { version = "1.28.0", features = ["v7"] }
+yuke-ai = { path = "../ai", default-features = false }
+yuke-engine = { path = "../engine" }
+
+[dev-dependencies]
+bytes = "1.12"
+tokio = { version = "1.53", features = ["macros", "rt"] }
+
+[lints]
+workspace = true
