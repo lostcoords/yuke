@@ -26,8 +26,8 @@ pub use failure::{Failure, ProviderKind, detail_text};
 pub use http::{HttpOptions, HttpTransport, InvalidUserAgent};
 pub use reply::Reply;
 pub use request::{
-    AnthropicWire, Blob, BlobStore, Block, ChatDialect, ChatWire, Effort, MaxTokensField, Media, Modality, Origin,
-    OriginRef, OutputSchema, Protocol, Reasoning, ReasoningReplay, ReasoningReplayMode, ReasoningReplayRef,
+    AnthropicWire, Blob, BlobStore, Block, ChatDialect, ChatWire, Digest, Effort, MaxTokensField, Media, Modality,
+    Origin, OriginRef, OutputSchema, Protocol, Reasoning, ReasoningReplay, ReasoningReplayMode, ReasoningReplayRef,
     ReasoningSettings, ReplayKind, Request, ResponsesDialect, ResponsesWire, Role, SEARCH_TOOL_NAME, Settings, Target,
     Thinking, ThinkingDisplay, ThinkingFormat, ToolCall, ToolCallRef, ToolChoice, ToolDefinition, ToolResult, Wire,
 };

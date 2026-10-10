@@ -151,13 +151,16 @@ pub enum Modality {
     Other,
 }
 
+/// The digest of the content of a blob, such as its SHA-256.
+pub type Digest = [u8; 32];
+
 /// Bytes in the caller's store, named by the digest of their content. Equal digests name equal bytes. Thus a resumed
 /// history reads no blob that the encoder kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Blob {
     /// The digest of the content, such as its SHA-256. JSON holds it as 64 lowercase hex characters.
     #[serde(with = "digest_hex")]
-    pub digest: [u8; 32],
+    pub digest: Digest,
     /// The byte count of the content. [`BlobStore`] answers are checked against it.
     pub len: usize,
 }
@@ -170,7 +173,7 @@ pub trait BlobStore: Sync {
     /// # Errors
     ///
     /// Returns the store error when the read fails. The encode then fails with [`EncodeError::BlobRead`].
-    fn read(&self, digest: &[u8; 32]) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>>;
+    fn read(&self, digest: &Digest) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// Answer the bytes of `blob` from `store`. Bytes of another length fail: the store holds other content.
@@ -194,9 +197,11 @@ mod digest_hex {
     use serde::de::{Error, Unexpected};
     use serde::{Deserialize, Deserializer, Serializer};
 
+    use super::Digest;
+
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
 
-    pub(super) fn serialize<S: Serializer>(digest: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error> {
+    pub(super) fn serialize<S: Serializer>(digest: &Digest, serializer: S) -> Result<S::Ok, S::Error> {
         let mut text = String::with_capacity(64);
         for byte in digest {
             text.push(char::from(DIGITS[usize::from(byte >> 4)]));
@@ -205,7 +210,7 @@ mod digest_hex {
         serializer.serialize_str(&text)
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 32], D::Error> {
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Digest, D::Error> {
         let text = String::deserialize(deserializer)?;
         let invalid = || D::Error::invalid_value(Unexpected::Str(&text), &"64 hex characters");
         if text.len() != 64 {
@@ -1106,7 +1111,7 @@ mod tests {
     struct Store;
 
     impl BlobStore for Store {
-        fn read(&self, _: &[u8; 32]) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
+        fn read(&self, _: &Digest) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
             Ok(Some(Cow::Borrowed(b"ab")))
         }
     }

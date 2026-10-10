@@ -167,7 +167,7 @@ fn tool_output_reaches_the_observer_between_the_start_and_the_end_of_its_call() 
 struct TwoBytes;
 
 impl BlobStore for TwoBytes {
-    fn read(&self, _: &[u8; 32]) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
+    fn read(&self, _: &yuke_ai::Digest) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
         Ok(Some(Cow::Borrowed(b"ab")))
     }
 }

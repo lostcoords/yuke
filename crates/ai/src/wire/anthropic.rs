@@ -572,7 +572,7 @@ mod tests {
         impl BlobStore for Latin1 {
             fn read(
                 &self,
-                _: &[u8; 32],
+                _: &crate::Digest,
             ) -> Result<Option<std::borrow::Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
                 Ok(Some(std::borrow::Cow::Borrowed(b"caf\xe9")))
             }

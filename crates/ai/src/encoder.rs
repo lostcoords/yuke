@@ -20,12 +20,12 @@ pub enum EncodeError {
     /// The blob store lacks a blob, or answers bytes of another length.
     UnresolvedBlob {
         /// The digest of the blob.
-        digest: [u8; 32],
+        digest: crate::Digest,
     },
     /// The blob store failed to read a blob. [`std::error::Error::source`] returns the store error.
     BlobRead {
         /// The digest of the blob.
-        digest: [u8; 32],
+        digest: crate::Digest,
         /// The store error.
         source: Arc<dyn std::error::Error + Send + Sync>,
     },
@@ -362,7 +362,10 @@ mod tests {
     }
 
     impl BlobStore for Counter {
-        fn read(&self, digest: &[u8; 32]) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
+        fn read(
+            &self,
+            digest: &crate::Digest,
+        ) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
             self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             TestBlobs.read(digest)
         }
@@ -613,7 +616,7 @@ mod tests {
         impl BlobStore for Copied {
             fn read(
                 &self,
-                digest: &[u8; 32],
+                digest: &crate::Digest,
             ) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
                 Ok(TestBlobs.read(digest)?.map(|bytes| Cow::Owned(bytes.into_owned())))
             }
@@ -659,7 +662,7 @@ mod tests {
         impl BlobStore for Flaky {
             fn read(
                 &self,
-                digest: &[u8; 32],
+                digest: &crate::Digest,
             ) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
                 if self.fail.swap(false, std::sync::atomic::Ordering::Relaxed) {
                     return Err(Box::new(Locked { code: 5 }));

@@ -78,7 +78,7 @@ pub(crate) fn result(call_id: &str, content: &str, is_error: bool) -> ToolResult
 pub(crate) struct TestBlobs;
 
 impl BlobStore for TestBlobs {
-    fn read(&self, digest: &[u8; 32]) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
+    fn read(&self, digest: &crate::Digest) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
         Ok(STORED
             .iter()
             .find(|data| digest_of(data.as_bytes()) == *digest)
@@ -86,7 +86,7 @@ impl BlobStore for TestBlobs {
     }
 }
 
-fn digest_of(data: &[u8]) -> [u8; 32] {
+fn digest_of(data: &[u8]) -> crate::Digest {
     assert!(data.len() <= 32);
     let mut digest = [0; 32];
     digest[..data.len()].copy_from_slice(data);
