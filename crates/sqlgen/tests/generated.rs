@@ -1,4 +1,5 @@
 //! The generated code of the fixture runs against the fixture schema, and the committed output is current.
+#![expect(clippy::unwrap_used, reason = "a test fails by panicking")]
 
 use std::path::{Path, PathBuf};
 
@@ -30,7 +31,7 @@ fn fixture() -> PathBuf {
 
 #[test]
 fn the_committed_fixture_output_is_current() {
-    let generated = yuke_sqlgen::generate(&fixture().join("migrations"), &fixture().join("queries")).unwrap();
+    let generated = yuke_sqlgen::generate(&fixture()).unwrap();
     let path = fixture().join("src/queries.rs");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(generated.code.as_str()) {
         // The test writes the new output, so a run after a change of the fixture updates the file.
@@ -42,13 +43,54 @@ fn the_committed_fixture_output_is_current() {
     }
 }
 
+/// An in-memory database with each migration of `MIGRATIONS`.
+fn migrated() -> Connection {
+    let connection = Connection::open_in_memory().unwrap();
+    for migration in queries::MIGRATIONS {
+        connection.execute_batch(migration).unwrap();
+    }
+    connection
+}
+
+#[test]
+fn migrations_hold_each_migration_file_in_number_order() {
+    let files: Vec<String> = ["0001_notes.sql", "0002_pins.sql"]
+        .iter()
+        .map(|name| std::fs::read_to_string(fixture().join("migrations").join(name)).unwrap())
+        .collect();
+
+    assert_eq!(queries::MIGRATIONS, files);
+}
+
+#[test]
+fn a_returning_query_returns_its_typed_row() {
+    let connection = migrated();
+    let params = queries::notes::AddNoteParams {
+        author: "ada",
+        title: "first",
+    };
+
+    let added = queries::notes::add_note(&connection, &params).one().unwrap();
+
+    assert_eq!(
+        added,
+        queries::notes::AddNote {
+            id: NoteId(1),
+            pinned: 0,
+        }
+    );
+    let title = queries::notes::note_by_id(&connection, NoteId(1))
+        .map(|note| note.title)
+        .one()
+        .unwrap();
+    assert_eq!(title, "first");
+}
+
 #[test]
 fn the_generated_queries_run_against_the_fixture_schema() {
     use queries::notes;
 
-    let connection = Connection::open_in_memory().unwrap();
-    let migration = std::fs::read_to_string(fixture().join("migrations/0001_notes.sql")).unwrap();
-    connection.execute_batch(&migration).unwrap();
+    let connection = migrated();
     let first = notes::InsertNoteParams {
         author: "ada",
         title: "first",

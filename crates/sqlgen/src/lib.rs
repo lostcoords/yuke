@@ -1,6 +1,7 @@
 //! Typed Rust for the SQLite queries of `.sql` files. [`generate`] runs the migrations into an in-memory database,
 //! checks each query against that schema, and writes one module of functions for each query file. The functions
-//! return the types of `yuke-sql`.
+//! return the types of `yuke-sql`. The output also holds `MIGRATIONS`, the SQL of each migration in number order, for
+//! the migration runner of the crate.
 //!
 //! A query file holds annotated queries:
 //!
@@ -31,8 +32,9 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// Run each migration of the `migrations` folder, in file name order, and return the formatted Rust for the query
-/// files of the `queries` folder. Each query file becomes a module that takes its name from the file.
+/// Run each migration of `crate_folder/migrations`, in file name order, and return the formatted Rust for the query
+/// files of `crate_folder/queries`. Each query file becomes a module that takes its name from the file. The code
+/// belongs in `crate_folder/src/queries.rs`, because its `MIGRATIONS` includes each migration by a path from there.
 ///
 /// The migrations are numbered `0001_name.sql`, `0002_name.sql`, and on, with no gap and no repeat. A database applies
 /// them in this order, so each database gets the same schema.
@@ -41,17 +43,20 @@ use std::process::{Command, Stdio};
 ///
 /// Returns [`Error`] when a file cannot be read, a migration fails, a query file does not fit the grammar, a query
 /// fails a check, or rustfmt fails.
-pub fn generate(migrations: &Path, queries: &Path) -> Result<Generated, Error> {
+pub fn generate(crate_folder: &Path) -> Result<Generated, Error> {
     let connection = rusqlite::Connection::open_in_memory().map_err(Error::Database)?;
-    for (place, file) in sql_files(migrations)?.into_iter().enumerate() {
-        check_number(&file, place + 1)?;
+    let mut migrations = Vec::new();
+    for (place, file) in sql_files(&crate_folder.join("migrations"))?.into_iter().enumerate() {
+        let name = migration_name(&file, place + 1)?;
         let sql = read(&file)?;
         connection
             .execute_batch(&sql)
             .map_err(|source| Error::Migration { file, source })?;
+        migrations.push(name);
     }
+    let queries = crate_folder.join("queries");
     let mut modules = Vec::new();
-    for file in sql_files(queries)? {
+    for file in sql_files(&queries)? {
         let source = read(&file)?;
         let parsed = parse::parse(&source).map_err(|message| Error::File {
             file: file.clone(),
@@ -59,9 +64,9 @@ pub fn generate(migrations: &Path, queries: &Path) -> Result<Generated, Error> {
         })?;
         modules.push(resolve::resolve(&connection, &file, &parsed)?);
     }
-    let code = emit::emit(&modules).map_err(|error| Error::Format(error.to_string()))?;
+    let code = emit::emit(&migrations, &modules).map_err(|error| Error::Format(error.to_string()))?;
     Ok(Generated {
-        code: format(&code, queries)?,
+        code: format(&code, crate_folder)?,
         files: modules.len(),
         queries: modules.iter().map(|module| module.queries.len()).sum(),
     })
@@ -133,22 +138,21 @@ impl fmt::Display for Error {
 // The message holds the cause, so `source` stays `None` and a reporter does not print the cause twice.
 impl std::error::Error for Error {}
 
-/// Check that `file` is migration number `place`. Two branches can add the same number with two file names, so git
-/// shows no conflict, and this check makes the second branch renumber its migration.
-fn check_number(file: &Path, place: usize) -> Result<(), Error> {
-    let number = file
-        .file_name()
-        .and_then(|name| name.to_str())
+/// The file name of `file` when it is migration number `place`. Two branches can add the same number with two file
+/// names, so git shows no conflict, and this check makes the second branch renumber its migration.
+fn migration_name(file: &Path, place: usize) -> Result<String, Error> {
+    let name = file.file_name().and_then(|name| name.to_str());
+    let number = name
         .and_then(|name| name.split_once('_'))
         .filter(|(digits, _)| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()))
         .and_then(|(digits, _)| digits.parse::<usize>().ok());
-    let message = match number {
-        Some(number) if number == place => return Ok(()),
-        Some(number) => format!(
+    let message = match (name, number) {
+        (Some(name), Some(number)) if number == place => return Ok(name.to_owned()),
+        (_, Some(number)) => format!(
             "the migration has number {number}, but it is migration {place} in file name order. Number the \
              migrations 1, 2, 3, and on, with no gap and no repeat."
         ),
-        None => "a migration name starts with its number and `_`, for example `0001_initial.sql`".to_owned(),
+        (_, None) => "a migration name starts with its number and `_`, for example `0001_initial.sql`".to_owned(),
     };
     Err(Error::File {
         file: file.to_owned(),
@@ -180,13 +184,13 @@ fn read(file: &Path) -> Result<String, Error> {
     })
 }
 
-/// Format `code` with rustfmt. rustfmt runs in the `queries` folder, so it finds the `rustfmt.toml` of the
-/// workspace, and the output passes `cargo fmt --check`.
-fn format(code: &str, queries: &Path) -> Result<String, Error> {
+/// Format `code` with rustfmt. rustfmt runs in `crate_folder`, so it finds the `rustfmt.toml` of the workspace. The
+/// output then passes `cargo fmt --check`.
+fn format(code: &str, crate_folder: &Path) -> Result<String, Error> {
     let rustfmt = std::env::var_os("RUSTFMT").unwrap_or_else(|| "rustfmt".into());
     let mut child = Command::new(rustfmt)
         .args(["--edition", "2024", "--emit", "stdout"])
-        .current_dir(queries)
+        .current_dir(crate_folder)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

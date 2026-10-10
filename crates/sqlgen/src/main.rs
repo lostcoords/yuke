@@ -88,8 +88,7 @@ fn run(arguments: &Arguments) -> Result<ExitCode, String> {
     };
     let output = crate_folder.join("src/queries.rs");
     let shown = shown(&output);
-    let generated = yuke_sqlgen::generate(&crate_folder.join("migrations"), &crate_folder.join("queries"))
-        .map_err(|error| error.to_string())?;
+    let generated = yuke_sqlgen::generate(&crate_folder).map_err(|error| error.to_string())?;
     let summary = format!("query files: {}\nqueries: {}", generated.files, generated.queries);
 
     let current = match std::fs::read_to_string(&output) {

@@ -45,7 +45,7 @@ fn generate_with_migrations(
         std::fs::write(folder.join("migrations").join(name), sql).unwrap();
     }
     std::fs::write(folder.join("queries/notes.sql"), queries).unwrap();
-    let result = yuke_sqlgen::generate(&folder.join("migrations"), &folder.join("queries"));
+    let result = yuke_sqlgen::generate(&folder);
     std::fs::remove_dir_all(&folder).unwrap();
     result
 }

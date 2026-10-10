@@ -2,6 +2,13 @@
 
 use super::*;
 
+/// The SQL of each migration in number order. The `user_version` of a database counts its applied migrations.
+/// A database at `user_version` `n` runs `MIGRATIONS[n..]`.
+pub(crate) const MIGRATIONS: &[&str] = &[
+    include_str!(r"../migrations/0001_notes.sql"),
+    include_str!(r"../migrations/0002_pins.sql"),
+];
+
 pub(crate) mod notes {
     use super::*;
     use yuke_sql::rusqlite::{Connection, Result, Row};
@@ -48,6 +55,21 @@ pub(crate) mod notes {
         fn from_row(row: &Row<'_>) -> Result<Self> {
             Ok(Self {
                 stars: row.get("stars")?,
+            })
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub(crate) struct AddNote {
+        pub(crate) id: NoteId,
+        pub(crate) pinned: i64,
+    }
+
+    impl FromRow for AddNote {
+        fn from_row(row: &Row<'_>) -> Result<Self> {
+            Ok(Self {
+                id: row.get("id")?,
+                pinned: row.get("pinned")?,
             })
         }
     }
@@ -118,5 +140,20 @@ pub(crate) mod notes {
 
     pub(crate) fn stars_of(connection: &Connection, id: NoteId) -> Query<'_, StarsOf> {
         Query::new(connection, r"SELECT stars FROM notes WHERE id = :id;", &[(":id", &id)])
+    }
+
+    #[derive(Debug)]
+    pub(crate) struct AddNoteParams<'a> {
+        pub(crate) author: &'a str,
+        pub(crate) title: &'a str,
+    }
+
+    /// Add a note, and return its id and its `pinned` value.
+    pub(crate) fn add_note<'a>(connection: &'a Connection, params: &AddNoteParams<'_>) -> Query<'a, AddNote> {
+        Query::new(
+            connection,
+            r"INSERT INTO notes(author, title) VALUES (:author, :title) RETURNING id, pinned;",
+            &[(":author", &params.author), (":title", &params.title)],
+        )
     }
 }

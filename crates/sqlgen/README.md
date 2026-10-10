@@ -49,6 +49,10 @@ A query with columns returns a `Query`: pick `one`, `opt`, or `all`, and `map` e
 columns runs at once and returns the number of changed rows. A query with more than one parameter takes a parameter
 struct. The fixture in [`tests/fixture`](tests/fixture) shows a full query file and its output.
 
+The generated file also holds `MIGRATIONS`, the SQL of each migration in number order. Each item is an `include_str!`
+of a file in `migrations`, so the binary holds the SQL. The `user_version` of a database counts its applied
+migrations, so a database at `user_version` `n` runs `MIGRATIONS[n..]`.
+
 ## Command
 
 The command writes `<dir>/src/queries.rs` from `<dir>/migrations` and `<dir>/queries`. The default `<dir>` is

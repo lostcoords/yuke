@@ -4,12 +4,22 @@ use std::fmt::{self, Write as _};
 
 use crate::resolve::{Module, Parameter, Query, RowType, pascal_case};
 
-/// The generated file for `modules`.
-pub(crate) fn emit(modules: &[Module]) -> Result<String, fmt::Error> {
+/// The generated file for `modules`. `migrations` holds the migration file names in number order.
+pub(crate) fn emit(migrations: &[String], modules: &[Module]) -> Result<String, fmt::Error> {
     let mut code = String::from("//! Generated from the query files by `yuke-sqlgen`. Do not edit.\n\n");
     if modules.iter().any(uses_parent) {
         code.push_str("use super::*;\n\n");
     }
+    // `include_str!` finds a path from the file that calls it. The generated file is `src/queries.rs` of the crate.
+    code.push_str(
+        "/// The SQL of each migration in number order. The `user_version` of a database counts its applied migrations.\n\
+         /// A database at `user_version` `n` runs `MIGRATIONS[n..]`.\n\
+         pub(crate) const MIGRATIONS: &[&str] = &[",
+    );
+    for name in migrations {
+        write!(code, "include_str!({}),", raw_string(&format!("../migrations/{name}")))?;
+    }
+    code.push_str("];\n\n");
     for module in modules {
         emit_module(&mut code, module)?;
     }
@@ -169,13 +179,13 @@ fn nullable(parameter: &Parameter, rust_type: &str) -> String {
     }
 }
 
-/// `sql` as a raw string literal with the fewest `#` that it needs, so the SQL keeps its lines and its quotes.
-fn raw_string(sql: &str) -> String {
+/// `text` as a raw string literal with the fewest `#` that it needs, so the text keeps its lines and its quotes.
+fn raw_string(text: &str) -> String {
     let mut hashes = String::new();
-    while sql.contains(&format!("\"{hashes}")) {
+    while text.contains(&format!("\"{hashes}")) {
         hashes.push('#');
     }
-    format!("r{hashes}\"{sql}\"{hashes}")
+    format!("r{hashes}\"{text}\"{hashes}")
 }
 
 /// Whether a type of `module` names something of the parent module, so the module needs `use super::*`.

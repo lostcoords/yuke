@@ -26,3 +26,7 @@ UPDATE notes SET stars = stars + 1 WHERE id = :id;
 
 --! stars_of (id: NoteId) : (stars)
 SELECT stars FROM notes WHERE id = :id;
+
+--! add_note (author: &str, title: &str) : (id: NoteId, pinned)
+--- Add a note, and return its id and its `pinned` value.
+INSERT INTO notes(author, title) VALUES (:author, :title) RETURNING id, pinned;

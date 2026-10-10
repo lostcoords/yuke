@@ -75,7 +75,7 @@ fn a_second_run_reports_the_file_up_to_date() {
     assert!(text(&first.stdout).starts_with("updated "), "{}", text(&first.stdout));
     assert!(second.status.success(), "{}", text(&second.stderr));
     let stdout = text(&second.stdout);
-    assert!(stdout.contains("is up to date\nquery files: 1\nqueries: 7"), "{stdout}");
+    assert!(stdout.contains("is up to date\nquery files: 1\nqueries: 8"), "{stdout}");
     assert_eq!(std::fs::read_to_string(folder.join("src/queries.rs")).unwrap(), written);
     std::fs::remove_dir_all(&folder).unwrap();
 }
