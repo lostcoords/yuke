@@ -3,11 +3,12 @@
 use std::fmt;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use yuke_engine::Commit;
 
 /// Saves and loads sessions. Each method is one atomic durable step. One writer at a time owns a session. A second
-/// [`Access::Write`] open gets [`StoreError::Owned`] until the [`Lease`] of the first writer drops. Only the holder of
-/// the lease calls [`Store::set_settings`] and [`Store::commit`]. Any caller can accept input.
+/// [`Access::Write`] open gets [`StoreError::Owned`] until the [`Lease`] of the first writer drops and its writes end.
+/// Only the holder of the lease calls [`Store::set_settings`] and [`Store::commit`]. Any caller can accept input.
 #[async_trait]
 pub trait Store: Send + Sync {
     /// Save a new session with `settings`, and open it for writing.
@@ -64,6 +65,11 @@ impl SessionId {
     pub fn generate() -> Self {
         SessionId(uuid::Uuid::now_v7())
     }
+
+    /// The 16 bytes of the id, in the order that sorts by time.
+    pub fn as_bytes(&self) -> &[u8; 16] {
+        self.0.as_bytes()
+    }
 }
 
 /// The id of a pending input. A store gives each input of a session a larger id than the inputs before it.
@@ -72,7 +78,7 @@ pub struct InputId(pub i64);
 
 /// The current choice of a session: the model and the request settings. It holds no credential and no route, so the
 /// agent makes the target from the model reference and its config.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionSettings {
     /// The model of the next turn.
     pub model: ModelReference,
@@ -81,12 +87,22 @@ pub struct SessionSettings {
 }
 
 /// A model of a provider, by the ids of the config.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelReference {
     /// The id of the provider.
     pub provider: String,
     /// The id of the model at the provider.
     pub model: String,
+}
+
+impl ModelReference {
+    /// The model `model` of the provider `provider`.
+    pub fn new(provider: impl Into<String>, model: impl Into<String>) -> Self {
+        ModelReference {
+            provider: provider.into(),
+            model: model.into(),
+        }
+    }
 }
 
 /// How [`Store::open`] opens a session.

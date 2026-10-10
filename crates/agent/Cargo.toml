@@ -12,6 +12,7 @@ testing = []
 
 [dependencies]
 async-trait = "0.1.92"
+serde = { version = "1.0.229", features = ["derive"] }
 uuid = { version = "1.28.0", features = ["v7"] }
 yuke-ai = { path = "../ai", default-features = false }
 yuke-engine = { path = "../engine" }

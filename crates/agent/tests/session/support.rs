@@ -38,10 +38,7 @@ pub(crate) fn target() -> Target {
 /// Session settings for [`target`].
 pub(crate) fn settings() -> SessionSettings {
     SessionSettings {
-        model: ModelReference {
-            provider: "test".to_owned(),
-            model: "test-model".to_owned(),
-        },
+        model: ModelReference::new("test", "test-model"),
         settings: yuke_ai::Settings::new(),
     }
 }

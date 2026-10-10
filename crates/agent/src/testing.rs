@@ -22,12 +22,14 @@ macro_rules! store_tests {
             a_commit_adds_its_blocks_to_the_context,
             a_replacement_keeps_its_head_and_the_last_blocks,
             a_replacement_that_keeps_nothing_leaves_its_head,
+            a_second_replacement_keeps_blocks_from_before_the_first,
             a_turn_is_open_until_its_end_commit,
             a_second_writer_gets_owned,
             a_dropped_lease_lets_a_new_writer_open,
             a_reader_opens_while_a_writer_holds_the_session,
             a_reader_holds_no_lock,
             a_pending_input_stays_until_a_commit_consumes_it,
+            a_consumed_input_id_is_not_given_again,
             new_settings_replace_the_old_settings,
             an_unknown_session_is_not_found,
         );
@@ -46,10 +48,7 @@ macro_rules! store_tests {
 /// Settings with the system prompt `system`.
 fn settings(system: &str) -> SessionSettings {
     SessionSettings {
-        model: ModelReference {
-            provider: "test".to_owned(),
-            model: "test-model".to_owned(),
-        },
+        model: ModelReference::new("test", "test-model"),
         settings: yuke_ai::Settings {
             system: system.to_owned(),
             ..yuke_ai::Settings::new()
@@ -163,6 +162,55 @@ pub async fn a_replacement_that_keeps_nothing_leaves_its_head(store: &dyn Store)
     assert_eq!(store.open(id, Access::Read).await.unwrap().context, head);
 }
 
+/// A second replacement can keep blocks that the first replacement kept and the end of the first head.
+pub async fn a_second_replacement_keeps_blocks_from_before_the_first(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    let first = [yuke_ai::Block::user_text("a"), yuke_ai::Block::assistant_text("b")];
+    store.commit(id, &step(&first), &[]).await.unwrap();
+    let first_head = [
+        yuke_ai::Block::user_text("summary one"),
+        yuke_ai::Block::assistant_text("noted"),
+    ];
+    let first_replacement = Commit {
+        replaced: Some(Replaced {
+            head: &first_head,
+            keep: 1,
+        }),
+        ..step(&[])
+    };
+    store.commit(id, &first_replacement, &[]).await.unwrap();
+    store
+        .commit(id, &step(&[yuke_ai::Block::user_text("c")]), &[])
+        .await
+        .unwrap();
+    let second_head = [yuke_ai::Block::user_text("summary two")];
+
+    let second_replacement = Commit {
+        replaced: Some(Replaced {
+            head: &second_head,
+            keep: 3,
+        }),
+        ..step(&[])
+    };
+    store.commit(id, &second_replacement, &[]).await.unwrap();
+    store
+        .commit(id, &end(&[yuke_ai::Block::assistant_text("d")]), &[])
+        .await
+        .unwrap();
+
+    let opened = store.open(id, Access::Read).await.unwrap();
+    assert_eq!(
+        opened.context,
+        [
+            yuke_ai::Block::user_text("summary two"),
+            yuke_ai::Block::assistant_text("noted"),
+            yuke_ai::Block::assistant_text("b"),
+            yuke_ai::Block::user_text("c"),
+            yuke_ai::Block::assistant_text("d")
+        ]
+    );
+}
+
 /// A turn is open after a commit without an end, and closed after a commit with an end.
 pub async fn a_turn_is_open_until_its_end_commit(store: &dyn Store) {
     let id = store.create_session(&settings("one")).await.unwrap().id;
@@ -242,6 +290,26 @@ pub async fn a_pending_input_stays_until_a_commit_consumes_it(store: &dyn Store)
     assert_eq!(before[1].blocks, [yuke_ai::Block::user_text("two")]);
     let ids: Vec<_> = after.iter().map(|input| input.id).collect();
     assert_eq!(ids, [first]);
+}
+
+/// The id of a consumed input does not go to a new input, also when the consumed input was the newest one.
+pub async fn a_consumed_input_id_is_not_given_again(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    let first = store
+        .accept_input(id, &[yuke_ai::Block::user_text("one")])
+        .await
+        .unwrap();
+    store
+        .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[first])
+        .await
+        .unwrap();
+
+    let second = store
+        .accept_input(id, &[yuke_ai::Block::user_text("two")])
+        .await
+        .unwrap();
+
+    assert!(second > first, "{second:?} after {first:?}");
 }
 
 /// New settings replace the settings that a session opens with.

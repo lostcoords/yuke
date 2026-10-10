@@ -7,7 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+# With `fallible_uint`, rusqlite binds and reads `u64` and `usize`. A value above `i64::MAX` fails.
+rusqlite = { version = "0.40.2", features = ["bundled", "fallible_uint"] }
 
 [lints]
 workspace = true

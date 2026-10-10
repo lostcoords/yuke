@@ -1,0 +1,25 @@
+[package]
+name = "yuke-store"
+version = "0.0.1-dev"
+description = "A SQLite store for the sessions of yuke-agent."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait = "0.1.92"
+serde = "1.0.229"
+serde_json = "1.0.151"
+tokio-rusqlite = "0.8.0"
+yuke-agent = { path = "../agent" }
+yuke-ai = { path = "../ai", default-features = false }
+yuke-engine = { path = "../engine" }
+yuke-sql = { path = "../sql" }
+
+[dev-dependencies]
+tokio = { version = "1.53", features = ["macros", "rt"] }
+yuke-agent = { path = "../agent", features = ["testing"] }
+yuke-sqlgen = { path = "../sqlgen" }
+
+[lints]
+workspace = true
