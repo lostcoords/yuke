@@ -12,7 +12,7 @@ mod hooks;
 mod search;
 mod tool;
 
-pub use conversation::{Answer, Commit, Outcome, Replace, Replaced};
+pub use conversation::{Answer, Commit, Outcome, Replace, Replaced, TurnEnd};
 pub use drive::{Driver, Inbox, Journal, Observer, Timer, Turn, TurnError, TurnEvent};
 pub use hooks::{Hooks, RoundDecision, RoundPlan, ToolDecision};
 pub use search::{Bm25, ToolSearch};

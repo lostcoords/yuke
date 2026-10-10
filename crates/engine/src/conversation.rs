@@ -66,7 +66,7 @@ pub struct Commit<'a> {
     pub answer: Option<Answer>,
 
     /// How the turn ended. A commit in the middle of a turn has `None`.
-    pub end: Option<Result<&'a Outcome, &'a yuke_ai::Error>>,
+    pub end: Option<TurnEnd>,
 }
 
 impl<'a> Commit<'a> {
@@ -81,12 +81,26 @@ impl<'a> Commit<'a> {
     }
 
     /// The commit that ends a turn with `result` after the `tail` blocks.
-    pub(crate) fn end(tail: &'a [Block], result: Result<&'a Outcome, &'a yuke_ai::Error>) -> Self {
+    pub(crate) fn end(tail: &'a [Block], result: Result<&Outcome, &yuke_ai::Error>) -> Self {
+        let end = match result {
+            Ok(outcome) => TurnEnd::Outcome(outcome.clone()),
+            Err(error) => TurnEnd::Failed(error.to_string()),
+        };
         Commit {
-            end: Some(result),
+            end: Some(end),
             ..Commit::blocks(tail)
         }
     }
+}
+
+/// How a turn ended, in a form that a journal can save. A failure keeps the text of its error, and
+/// [`crate::TurnError::Model`] gives the caller the error itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TurnEnd {
+    /// The turn ended without a failure.
+    Outcome(Outcome),
+    /// A request failed, or the turn stopped before it saved its end. The text tells why.
+    Failed(String),
 }
 
 /// A replacement in a [`Commit`]. The new history is `head`, then the last `keep` blocks of the saved history.
@@ -162,7 +176,7 @@ impl<'a> Iterator for ToolCallsIter<'a> {
 }
 
 /// How a turn ended without a failure.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     /// The turn ended with an answer of the model, and the answer joined the history. A filter or a refusal answer
     /// can hold calls that did not run.

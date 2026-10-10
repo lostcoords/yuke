@@ -8,7 +8,7 @@ use yuke_ai::transport::{BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 use yuke_ai::{Block, FinishReason, Target, ToolCall, ToolResult, Usage};
 use yuke_engine::{
     Answer, CancellationToken, Commit, Driver, Hooks, Journal, Outcome, Replace, Replaced, RoundDecision, RoundPlan,
-    Tool, ToolContent, ToolContext, Toolset, TurnError, TurnEvent,
+    Tool, ToolContent, ToolContext, Toolset, TurnEnd, TurnError, TurnEvent,
 };
 
 use crate::support::{
@@ -65,11 +65,11 @@ impl Journal for Replay {
             replaced: commit.replaced.map(|Replaced { head, keep }| (head.to_vec(), keep)),
             blocks: commit.blocks.to_vec(),
             answer: commit.answer.clone(),
-            end: commit.end.map(|end| match end {
-                Ok(Outcome::Completed { .. }) => "completed",
-                Ok(Outcome::Stopped) => "stopped",
-                Ok(Outcome::Cancelled) => "cancelled",
-                Err(_) => "failed",
+            end: commit.end.as_ref().map(|end| match end {
+                TurnEnd::Outcome(Outcome::Completed { .. }) => "completed",
+                TurnEnd::Outcome(Outcome::Stopped) => "stopped",
+                TurnEnd::Outcome(Outcome::Cancelled) => "cancelled",
+                TurnEnd::Failed(_) => "failed",
             }),
         });
         Ok(())
