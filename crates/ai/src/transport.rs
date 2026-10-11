@@ -161,7 +161,7 @@ impl Header {
 pub struct Outgoing<'a> {
     url: &'a str,
     headers: &'a [Header],
-    /// The body in parts, sent in order. A long history stays in one part across requests.
+    /// The body in parts, sent in order. A long context stays in one part across requests.
     body: [&'a [u8]; 3],
 }
 

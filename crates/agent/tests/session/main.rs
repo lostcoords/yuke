@@ -1,4 +1,4 @@
-//! A session over a memory store: it opens again with its history, ends an open turn, keeps pending inputs, takes
+//! A session over a memory store: it opens again with its context, ends an open turn, keeps pending inputs, takes
 //! input during a turn, and opens again after a failed commit.
 #![expect(clippy::unwrap_used, clippy::expect_used, reason = "a test fails by panicking")]
 
@@ -28,7 +28,7 @@ fn step(blocks: &[Block]) -> Commit<'_> {
 }
 
 #[tokio::test]
-async fn a_session_that_opens_again_has_the_same_history() {
+async fn a_session_that_opens_again_has_the_same_context() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("two")]);
     let target = target();
@@ -40,13 +40,13 @@ async fn a_session_that_opens_again_has_the_same_history() {
         .run()
         .await
         .unwrap();
-    let history = session.history().to_vec();
+    let context = session.context().to_vec();
     let id = session.id();
     drop(session);
     let again = Session::open(store, id).await.unwrap();
 
-    assert_eq!(history, [Block::user_text("one"), Block::assistant_text("two")]);
-    assert_eq!(again.history(), history);
+    assert_eq!(context, [Block::user_text("one"), Block::assistant_text("two")]);
+    assert_eq!(again.context(), context);
 }
 
 #[tokio::test]
@@ -86,7 +86,7 @@ async fn an_open_turn_ends_with_an_error_result_for_each_call_without_a_result()
 
     let session = Session::open(store.clone(), id).await.unwrap();
 
-    let results: Vec<(&str, bool)> = session.history()[answered.len() + open.len()..]
+    let results: Vec<(&str, bool)> = session.context()[answered.len() + open.len()..]
         .iter()
         .map(|block| match block {
             Block::ToolResult(result) => (result.call_id.as_str(), result.is_error),
@@ -96,7 +96,7 @@ async fn an_open_turn_ends_with_an_error_result_for_each_call_without_a_result()
     assert_eq!(results, [("c1", true), ("c2", true)]);
     let saved = store.open(id, Access::Read).await.unwrap();
     assert!(!saved.turn_open);
-    assert_eq!(saved.context, session.history());
+    assert_eq!(saved.context, session.context());
 }
 
 #[tokio::test]

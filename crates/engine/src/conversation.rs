@@ -3,12 +3,12 @@
 
 use yuke_ai::{Block, FinishReason, Origin, Partial, Response, Role, ToolCall, ToolResult, Usage};
 
-/// The decisions of one turn on the caller's history.
+/// The decisions of one turn on the caller's context.
 #[derive(Debug)]
 pub(crate) struct Conversation<'h> {
-    history: &'h mut Vec<Block>,
+    context: &'h mut Vec<Block>,
 
-    /// The number of history blocks that a commit holds already. The history that a turn starts with counts as saved.
+    /// The number of context blocks that a commit holds already. The context that a turn starts with counts as saved.
     saved: usize,
 
     /// The finish reason of the last answer, when that answer needs no other request. New input can still continue the
@@ -20,7 +20,7 @@ pub(crate) struct Conversation<'h> {
 #[derive(Debug)]
 #[must_use = "the turn continues only when the driver carries out the action"]
 pub(crate) enum Action<'a> {
-    /// Send a request of the whole history, then give the result to [`Conversation::model_finished`]. The commit holds
+    /// Send a request of the whole context, then give the result to [`Conversation::model_finished`]. The commit holds
     /// the new input, and it is `None` without new input.
     Send(Option<Commit<'a>>),
 
@@ -28,11 +28,11 @@ pub(crate) enum Action<'a> {
     /// answer.
     CallTools(ToolCalls<'a>, Commit<'a>),
 
-    /// A round ended, and its answer and tool results are in the history. Call [`Conversation::proceed`],
+    /// A round ended, and its answer and tool results are in the context. Call [`Conversation::proceed`],
     /// [`Conversation::continue_turn`], or [`Conversation::stop`].
     AfterRound {
-        /// The whole history.
-        history: &'a [Block],
+        /// The whole context.
+        context: &'a [Block],
 
         /// The finish reason of an answer that needs no other request. `None` when the round asks for another request.
         finish_reason: Option<FinishReason>,
@@ -41,7 +41,7 @@ pub(crate) enum Action<'a> {
         commit: Commit<'a>,
     },
 
-    /// The turn ended. `Err` holds the failure of a request, and the history keeps the blocks from before the failure.
+    /// The turn ended. `Err` holds the failure of a request, and the context keeps the blocks from before the failure.
     /// The end commit holds `tail` and `result`.
     Done {
         /// The blocks after the last commit, such as the partial output of a cancel.
@@ -52,14 +52,14 @@ pub(crate) enum Action<'a> {
     },
 }
 
-/// The change of the history since the last commit, and the facts of the turn. Replay each commit in order on a copy
-/// of the history: apply `replaced`, then append `blocks`. The copy then equals the history.
+/// The change of the context since the last commit, and the facts of the turn. Replay each commit in order on a copy
+/// of the context: apply `replaced`, then append `blocks`. The copy then equals the context.
 #[derive(Debug)]
 pub struct Commit<'a> {
-    /// The replacement of the history. A commit with a replacement holds no blocks.
+    /// The replacement of the context. A commit with a replacement holds no blocks.
     pub replaced: Option<Replaced<'a>>,
 
-    /// The blocks after the saved blocks, in history order.
+    /// The blocks after the saved blocks, in context order.
     pub blocks: &'a [Block],
 
     /// The facts of the answer in `blocks`. A commit without an answer has `None`.
@@ -103,7 +103,7 @@ pub enum TurnEnd {
     Failed(String),
 }
 
-/// A replacement in a [`Commit`]. The new history is `head`, then the last `keep` blocks of the saved history.
+/// A replacement in a [`Commit`]. The new context is `head`, then the last `keep` blocks of the saved context.
 #[derive(Debug, Clone, Copy)]
 pub struct Replaced<'a> {
     /// The new first blocks, such as a summary.
@@ -113,15 +113,15 @@ pub struct Replaced<'a> {
     pub keep: usize,
 }
 
-/// A new history: `head`, then the last `keep` blocks of the old history. A compaction gives a summary and the recent
-/// blocks. Another rewrite gives the whole new history as `head` and keeps nothing.
+/// A new context: `head`, then the last `keep` blocks of the old context. A compaction gives a summary and the recent
+/// blocks. Another rewrite gives the whole new context as `head` and keeps nothing.
 #[derive(Debug, Clone, Default)]
 pub struct Replace {
     /// The new first blocks.
     pub head: Vec<Block>,
 
-    /// The number of blocks at the end of the old history that stay after `head`. A number above the length keeps the
-    /// whole old history.
+    /// The number of blocks at the end of the old context that stay after `head`. A number above the length keeps the
+    /// whole old context.
     pub keep: usize,
 }
 
@@ -178,53 +178,53 @@ impl<'a> Iterator for ToolCallsIter<'a> {
 /// How a turn ended without a failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// The turn ended with an answer of the model, and the answer joined the history. A filter or a refusal answer
+    /// The turn ended with an answer of the model, and the answer joined the context. A filter or a refusal answer
     /// can hold calls that did not run.
     Completed {
         /// The reason in the closed set.
         finish_reason: FinishReason,
     },
 
-    /// The caller stopped the turn after a round that asked for another request. The history ends with the tool
+    /// The caller stopped the turn after a round that asked for another request. The context ends with the tool
     /// results of that round.
     Stopped,
 
-    /// The caller cancelled the turn. The history keeps the model output of the turn and a result for each tool call.
+    /// The caller cancelled the turn. The context keeps the model output of the turn and a result for each tool call.
     /// It has no note about the cancel, so the caller can put one in the input of the next turn.
     Cancelled,
 }
 
 impl<'h> Conversation<'h> {
-    /// The decisions of one turn on `history`. The history counts as saved.
-    pub(crate) fn new(history: &'h mut Vec<Block>) -> Self {
-        let saved = history.len();
+    /// The decisions of one turn on `context`. The context counts as saved.
+    pub(crate) fn new(context: &'h mut Vec<Block>) -> Self {
+        let saved = context.len();
         Conversation {
-            history,
+            context,
             saved,
             turn_end: None,
         }
     }
 
     /// The blocks of the conversation, oldest first.
-    pub(crate) fn history(&self) -> &[Block] {
-        self.history.as_slice()
+    pub(crate) fn context(&self) -> &[Block] {
+        self.context.as_slice()
     }
 
-    /// Replace the history with `replace.head` and the last `replace.keep` blocks, and return the commit of the
+    /// Replace the context with `replace.head` and the last `replace.keep` blocks, and return the commit of the
     /// replacement. Call it after the input commit of [`Action::Send`], so the replacement keeps only saved blocks. The
     /// driver saves the returned commit before the next request.
     pub(crate) fn replace(&mut self, replace: Replace) -> Commit<'_> {
         let Replace { head, keep } = replace;
-        let keep = keep.min(self.history.len());
+        let keep = keep.min(self.context.len());
         let head_len = head.len();
-        let kept = self.history.len() - keep;
-        let mut history = head;
-        history.extend(self.history.drain(kept..));
-        *self.history = history;
-        self.saved = self.history.len();
+        let kept = self.context.len() - keep;
+        let mut context = head;
+        context.extend(self.context.drain(kept..));
+        *self.context = context;
+        self.saved = self.context.len();
         Commit {
             replaced: Some(Replaced {
-                head: &self.history[..head_len],
+                head: &self.context[..head_len],
                 keep,
             }),
             ..Commit::blocks(&[])
@@ -233,7 +233,7 @@ impl<'h> Conversation<'h> {
 
     /// Start a turn with the blocks of `input`, such as a text and its attachments.
     pub(crate) fn start(&mut self, input: Vec<Block>) -> Action<'_> {
-        self.history.extend(input);
+        self.context.extend(input);
         Action::Send(self.commit())
     }
 
@@ -252,22 +252,22 @@ impl<'h> Conversation<'h> {
         };
 
         if completion.tool_calls().next().is_none() {
-            self.history.extend(completion.into_blocks());
+            self.context.extend(completion.into_blocks());
             self.turn_end = Some(finish_reason);
             return self.after_round(Some(answer));
         }
 
         if matches!(finish_reason, FinishReason::ToolCalls | FinishReason::Stop) {
-            let start = self.history.len();
-            self.history.extend(completion.into_blocks());
+            let start = self.context.len();
+            self.context.extend(completion.into_blocks());
             let saved = self.take_unsaved();
             return Action::CallTools(
                 ToolCalls {
-                    blocks: &self.history[start..],
+                    blocks: &self.context[start..],
                 },
                 Commit {
                     answer: Some(answer),
-                    ..Commit::blocks(&self.history[saved..])
+                    ..Commit::blocks(&self.context[saved..])
                 },
             );
         }
@@ -282,8 +282,8 @@ impl<'h> Conversation<'h> {
             .map(|call| Block::ToolResult(not_executed(call, &reason)))
             .collect();
 
-        self.history.extend(completion.into_blocks());
-        self.history.extend(results);
+        self.context.extend(completion.into_blocks());
+        self.context.extend(results);
 
         // The model can issue a cut call again with complete arguments. A filter or a refusal would likely repeat, so
         // only new input continues the turn.
@@ -295,7 +295,7 @@ impl<'h> Conversation<'h> {
 
     /// Take the results of the calls that [`Action::CallTools`] asked for, in call order.
     pub(crate) fn tools_finished(&mut self, results: Vec<ToolResult>) -> Action<'_> {
-        self.history.extend(results.into_iter().map(Block::ToolResult));
+        self.context.extend(results.into_iter().map(Block::ToolResult));
         self.after_round(None)
     }
 
@@ -309,11 +309,11 @@ impl<'h> Conversation<'h> {
         self.continue_turn(input)
     }
 
-    /// Send another request after [`Action::AfterRound`]. `input` joins the history before the request, also when it is
+    /// Send another request after [`Action::AfterRound`]. `input` joins the context before the request, also when it is
     /// empty.
     pub(crate) fn continue_turn(&mut self, input: Vec<Block>) -> Action<'_> {
         self.turn_end = None;
-        self.history.extend(input);
+        self.context.extend(input);
         Action::Send(self.commit())
     }
 
@@ -327,9 +327,9 @@ impl<'h> Conversation<'h> {
     }
 
     /// End the turn as [`Outcome::Cancelled`] after [`Action::Send`]. The `partial` output of the cancelled attempt
-    /// joins the history, except its reasoning, which has no provider state. Each tool call in it gets an error result.
+    /// joins the context, except its reasoning, which has no provider state. Each tool call in it gets an error result.
     pub(crate) fn model_cancelled(&mut self, partial: Vec<Partial>) -> Action<'_> {
-        self.history.extend(
+        self.context.extend(
             partial
                 .into_iter()
                 .filter(|part| !matches!(part, Partial::Reasoning(_)))
@@ -342,11 +342,11 @@ impl<'h> Conversation<'h> {
     /// order, for example of the calls that ran. Each later call gets an error result.
     pub(crate) fn tools_cancelled(&mut self, results: Vec<ToolResult>) -> Action<'_> {
         let answer = self
-            .history
+            .context
             .iter()
             .rposition(|block| block.role() != Role::Assistant)
             .map_or(0, |index| index + 1);
-        let not_run: Vec<Block> = self.history[answer..]
+        let not_run: Vec<Block> = self.context[answer..]
             .iter()
             .filter_map(|block| match block {
                 Block::ToolCall(call) => Some(Block::ToolResult(not_executed(call, CANCELLED_REASON))),
@@ -355,8 +355,8 @@ impl<'h> Conversation<'h> {
             .skip(results.len())
             .collect();
 
-        self.history.extend(results.into_iter().map(Block::ToolResult));
-        self.history.extend(not_run);
+        self.context.extend(results.into_iter().map(Block::ToolResult));
+        self.context.extend(not_run);
         self.cancel()
     }
 
@@ -370,11 +370,11 @@ impl<'h> Conversation<'h> {
     fn after_round(&mut self, answer: Option<Answer>) -> Action<'_> {
         let start = self.take_unsaved();
         Action::AfterRound {
-            history: self.history.as_slice(),
+            context: self.context.as_slice(),
             finish_reason: self.turn_end,
             commit: Commit {
                 answer,
-                ..Commit::blocks(&self.history[start..])
+                ..Commit::blocks(&self.context[start..])
             },
         }
     }
@@ -383,7 +383,7 @@ impl<'h> Conversation<'h> {
     fn done(&mut self, result: Result<Outcome, yuke_ai::Error>) -> Action<'_> {
         let start = self.take_unsaved();
         Action::Done {
-            tail: &self.history[start..],
+            tail: &self.context[start..],
             result,
         }
     }
@@ -391,13 +391,13 @@ impl<'h> Conversation<'h> {
     /// The commit of the blocks since the last commit, or `None` when no block came.
     fn commit(&mut self) -> Option<Commit<'_>> {
         let start = self.take_unsaved();
-        (start < self.history.len()).then(|| Commit::blocks(&self.history[start..]))
+        (start < self.context.len()).then(|| Commit::blocks(&self.context[start..]))
     }
 
-    /// Mark the whole history saved, because a commit of it follows. Return the index of the first block that the
+    /// Mark the whole context saved, because a commit of it follows. Return the index of the first block that the
     /// commit holds.
     fn take_unsaved(&mut self) -> usize {
-        std::mem::replace(&mut self.saved, self.history.len())
+        std::mem::replace(&mut self.saved, self.context.len())
     }
 }
 
@@ -405,8 +405,7 @@ impl<'h> Conversation<'h> {
 pub(crate) const CANCELLED_REASON: &str = "the user cancelled the turn.";
 
 /// The reason of a call that did not run, because the output limit can cut its arguments.
-const OUTPUT_LIMIT_REASON: &str = "the response hit the output token limit, so its arguments may be truncated. \
-                                   Re-issue the tool call with complete arguments.";
+const OUTPUT_LIMIT_REASON: &str = "the response hit the output token limit, so its arguments may be truncated.";
 
 /// The error result of `call` when it did not run. `reason` tells the model why.
 pub(crate) fn not_executed(call: &ToolCall, reason: &str) -> ToolResult {

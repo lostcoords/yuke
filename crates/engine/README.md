@@ -1,7 +1,11 @@
 # engine
 
-Conversation execution for the yuke coding agent. A `Driver` runs each turn on the caller's history. It sends requests
+Conversation execution for the yuke coding agent. A `Driver` runs each turn on the caller's context. It sends requests
 over the caller's `ai` transport.
+
+By default, a `Driver` uses `retry::Policy::default()` and `ResponseLimits::default()` of `yuke-ai`. The
+[`ai` README](../ai/README.md#defaults) gives their values. Set them with `Driver::retry_policy` and
+`Driver::response_limits`.
 
 ## Examples
 

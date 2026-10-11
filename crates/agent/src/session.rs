@@ -1,4 +1,4 @@
-//! A session that runs turns on its history and saves each commit of a turn in a store.
+//! A session that runs turns on its context and saves each commit of a turn in a store.
 
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -10,17 +10,16 @@ use crate::lock;
 use crate::store::{Access, InputId, Lease, Opened, PendingInput, SessionId, SessionSettings, Store, StoreError};
 
 /// The result of a call that was open when its turn stopped. The model reads it.
-const OUTCOME_UNKNOWN: &str = "The turn stopped before it saved the result of this call. The call can have run. Check \
-                               the workspace before you call the tool again.";
+const OUTCOME_UNKNOWN: &str = "The turn stopped before it saved the result of this call. The call can have run.";
 
 /// The failure of a turn that stopped before it saved its end.
 const TURN_STOPPED: &str = "the turn stopped before it saved its end";
 
-/// A session that one writer owns. Each turn runs on the history of the session. The session saves each commit of
+/// A session that one writer owns. Each turn runs on the context of the session. The session saves each commit of
 /// the turn in its store before the turn goes on.
 pub struct Session {
     settings: SessionSettings,
-    history: Vec<yuke_ai::Block>,
+    context: Vec<yuke_ai::Block>,
     journal: SessionJournal,
     /// `None` after a failed or dropped turn, until the next turn opens the session again.
     lease: Option<Lease>,
@@ -31,7 +30,7 @@ impl fmt::Debug for Session {
         f.debug_struct("Session")
             .field("id", &self.journal.id)
             .field("settings", &self.settings)
-            .field("history", &self.history)
+            .field("context", &self.context)
             .finish_non_exhaustive()
     }
 }
@@ -123,7 +122,7 @@ impl Session {
     fn from_opened(store: Arc<dyn Store>, opened: Opened) -> Session {
         Session {
             settings: opened.settings,
-            history: opened.context,
+            context: opened.context,
             journal: SessionJournal {
                 store,
                 id: opened.id,
@@ -143,10 +142,10 @@ impl Session {
         &self.settings
     }
 
-    /// The history. After a failed or dropped turn, it can hold blocks that the store lacks. The next turn then loads
-    /// the history from the store.
-    pub fn history(&self) -> &[yuke_ai::Block] {
-        &self.history
+    /// The context. After a failed or dropped turn, it can hold blocks that the store lacks. The next turn then loads
+    /// the context from the store.
+    pub fn context(&self) -> &[yuke_ai::Block] {
+        &self.context
     }
 
     /// Save `settings` as the current settings. After a failed or dropped turn, the session first opens again, so
@@ -184,12 +183,12 @@ impl Session {
         }
     }
 
-    /// Open the session again after a failed or dropped turn. The store holds the truth about the history and the
+    /// Open the session again after a failed or dropped turn. The store holds the truth about the context and the
     /// pending inputs.
     async fn reopen(&mut self) -> Result<(), StoreError> {
         let opened = open_for_writing(&*self.journal.store, self.journal.id).await?;
         self.settings = opened.settings;
-        self.history = opened.context;
+        self.context = opened.context;
         self.lease = opened.lease;
         Ok(())
     }
@@ -215,14 +214,14 @@ async fn open_for_writing(store: &dyn Store, id: SessionId) -> Result<Opened, St
     Ok(opened)
 }
 
-/// The ids of the calls in `history` without a result, in call order. One commit saves all results of an answer, so
-/// only an answer at the end of the history has calls without a result.
-fn open_calls(history: &[yuke_ai::Block]) -> impl Iterator<Item = &str> {
-    let answer = history
+/// The ids of the calls in `context` without a result, in call order. One commit saves all results of an answer, so
+/// only an answer at the end of the context has calls without a result.
+fn open_calls(context: &[yuke_ai::Block]) -> impl Iterator<Item = &str> {
+    let answer = context
         .iter()
         .rposition(|block| block.role() == yuke_ai::Role::User)
         .map_or(0, |last_user| last_user + 1);
-    history[answer..].iter().filter_map(|block| match block {
+    context[answer..].iter().filter_map(|block| match block {
         yuke_ai::Block::ToolCall(call) => Some(call.call_id.as_str()),
         _ => None,
     })
@@ -316,7 +315,7 @@ impl<'s> SessionTurn<'s> {
             .journal(journal)
             .inbox(journal)
             .blobs(journal)
-            .turn(&mut session.history, input)
+            .turn(&mut session.context, input)
             .cancellation_token(cancellation_token);
         if let Some(observer) = observer {
             turn = turn.observer(observer);

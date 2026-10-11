@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let settings = yuke_ai::Settings::new().system(SYSTEM);
     let driver = Driver::new(&http, &target, &TokioTimer).settings(&settings);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
     let observer = PrintText;
 
     let mut cancelled = false;
@@ -80,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         input.push(Block::user_text(line?));
         let outcome = driver
-            .turn(&mut history, input)
+            .turn(&mut context, input)
             .observer(&observer)
             .cancellation_token(cancellation_token)
             .run()

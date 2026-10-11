@@ -8,11 +8,11 @@ use yuke_engine::{Driver, Hooks, Tool, ToolContent, ToolContext, ToolDecision, T
 
 use crate::support::{NoWait, Recorder, ScriptedTransport, block_on, definition, target, text_reply, tool_reply};
 
-/// Run one turn, and return the tool results of the history.
-fn results_in_history(driver: Driver<'_>) -> Vec<ToolResult> {
-    let mut history = Vec::new();
-    block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run()).unwrap();
-    history
+/// Run one turn, and return the tool results of the context.
+fn results_in_context(driver: Driver<'_>) -> Vec<ToolResult> {
+    let mut context = Vec::new();
+    block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();
+    context
         .iter()
         .filter_map(|block| match block {
             Block::ToolResult(result) => Some(result.clone()),
@@ -47,7 +47,7 @@ fn arguments_that_are_not_valid_json_reach_no_hook_and_no_tool() {
         .toolset(&toolset)
         .hooks(&hooks);
 
-    let results = results_in_history(driver);
+    let results = results_in_context(driver);
 
     assert_eq!(results.len(), 1);
     assert!(results[0].is_error);
@@ -91,7 +91,7 @@ fn a_tool_receives_its_parsed_arguments() {
     toolset.add(definition("echo"), Echo::default()).unwrap();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
 
-    assert_eq!(results_in_history(driver), [ToolResult::success("c1", "echo hi")]);
+    assert_eq!(results_in_context(driver), [ToolResult::success("c1", "echo hi")]);
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn a_parse_error_reaches_the_model_and_the_tool_body_does_not_run() {
     toolset.add(definition("echo"), echo.clone()).unwrap();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
 
-    let results = results_in_history(driver);
+    let results = results_in_context(driver);
 
     assert!(results[0].is_error);
     assert!(
@@ -203,7 +203,7 @@ fn tool_media_reaches_the_result_and_the_next_request() {
         .toolset(&toolset)
         .blobs(&TwoBytes);
 
-    let results = results_in_history(driver);
+    let results = results_in_context(driver);
 
     assert_eq!(
         results,

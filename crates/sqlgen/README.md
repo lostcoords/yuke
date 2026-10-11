@@ -60,10 +60,10 @@ The command writes `<dir>/src/queries.rs` from `<dir>/migrations` and `<dir>/que
 
 | Command | Result |
 | --- | --- |
-| `cargo run -p yuke-sqlgen` | Writes the file, or reports that it is up to date. |
-| `cargo run -p yuke-sqlgen -- --check` | Writes nothing. Exits with status 1 when the file is out of date. |
-| `cargo run -p yuke-sqlgen -- --crate crates/sqlgen/tests/fixture` | Writes the output of the fixture. |
-| `cargo run -p yuke-sqlgen -- --help` | Shows the options and examples. |
+| `mise exec -- cargo run -p yuke-sqlgen` | Writes the file, or reports that it is up to date. |
+| `mise exec -- cargo run -p yuke-sqlgen -- --check` | Writes nothing. Exits with status 1 when the file is out of date. |
+| `mise exec -- cargo run -p yuke-sqlgen -- --crate crates/sqlgen/tests/fixture` | Writes the output of the fixture. |
+| `mise exec -- cargo run -p yuke-sqlgen -- --help` | Shows the options and examples. |
 
 On success, the command prints the file and its counts, for example `queries: 7`. An error names the file, the query,
 and the fix. A usage error exits with status 2.

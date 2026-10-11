@@ -124,9 +124,7 @@ pub(crate) fn event_kind(root: &Value<'_>) -> ProviderKind {
         .unwrap_or(ProviderKind::ProviderFailed)
 }
 
-const MAX_DETAIL_BYTES: usize = 512;
-
-/// Build a bounded, sanitized line from error answer bytes: `type: message (code)` when the JSON names them, else
+/// Build a sanitized line from error answer bytes: `type: message (code)` when the JSON names them, else
 /// the raw text. `None` when nothing printable remains.
 pub fn detail_text(bytes: &[u8]) -> Option<String> {
     let trimmed = trim(bytes);
@@ -303,25 +301,15 @@ fn describe(root: &Value<'_>) -> Option<String> {
     Some(out)
 }
 
-/// Copy at most `MAX_DETAIL_BYTES` of valid UTF-8: a C0, DEL, or C1 control becomes a space and an invalid byte
-/// becomes `?`.
+/// Copy the text as valid UTF-8: a C0, DEL, or C1 control becomes a space and an invalid byte becomes `?`.
 fn sanitize(text: &[u8]) -> String {
-    let mut out = String::with_capacity(text.len().min(MAX_DETAIL_BYTES));
-    let mut rest = text;
-    while !rest.is_empty() {
-        let (piece, used) = match rest.utf8_chunks().next() {
-            Some(chunk) if !chunk.valid().is_empty() => {
-                let c = chunk.valid().chars().next().unwrap_or_default();
-                let control = c < ' ' || c == '\u{7f}' || ('\u{80}'..'\u{a0}').contains(&c);
-                (if control { " " } else { &chunk.valid()[..c.len_utf8()] }, c.len_utf8())
-            }
-            _ => ("?", 1),
-        };
-        if out.len() + piece.len() > MAX_DETAIL_BYTES {
-            break;
+    let mut out = String::with_capacity(text.len());
+    for chunk in text.utf8_chunks() {
+        for c in chunk.valid().chars() {
+            let control = c < ' ' || c == '\u{7f}' || ('\u{80}'..'\u{a0}').contains(&c);
+            out.push(if control { ' ' } else { c });
         }
-        out.push_str(piece);
-        rest = &rest[used..];
+        out.extend(chunk.invalid().iter().map(|_| '?'));
     }
     out
 }
@@ -518,13 +506,9 @@ mod tests {
     }
 
     #[test]
-    fn detail_text_truncates_on_char_boundary() {
-        let long = "é".repeat(300);
-        let cut = detail_text(long.as_bytes()).unwrap();
-        assert_eq!(MAX_DETAIL_BYTES, cut.len());
-        let crossing = format!("a{}", "é".repeat(300));
-        let cut = detail_text(crossing.as_bytes()).unwrap();
-        assert_eq!(cut, format!("a{}", "é".repeat(255)));
+    fn detail_text_keeps_the_whole_body_and_replaces_unprintable_bytes() {
+        let long = format!("a{}", "é".repeat(3_000));
+        assert_eq!(detail_text(long.as_bytes()), Some(long));
         assert_eq!(detail_text(b"a\xffb").as_deref(), Some("a?b"));
         assert_eq!(detail_text(b"a\x1bb").as_deref(), Some("a b"));
         assert_eq!(detail_text(b"a\xc2\x85b").as_deref(), Some("a b"));

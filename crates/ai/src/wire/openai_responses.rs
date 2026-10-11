@@ -8,9 +8,6 @@ use crate::request::{
 
 use super::json::{Elements, JsonWriter, object_text};
 
-/// The instructions of a Codex request with no system prompt. The Codex backend refuses a request without them.
-const DEFAULT_INSTRUCTIONS: &str = "You are a helpful assistant.";
-
 /// Write the request up to the open `input` array, which holds no element yet.
 pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire, request: &Request<'_>) -> bool {
     // The Codex backend refuses the sampling limits an API key accepts.
@@ -19,7 +16,7 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire
     jw.begin_object();
     jw.field_str("model", &target.model);
     jw.field_bool("stream", true);
-    // The caller owns the input history, so the endpoint never keeps a copy.
+    // The caller owns the context, so the endpoint never keeps a copy.
     jw.field_bool("store", false);
     // A stable key sends every round of one session to the same cache node.
     if !request.session_id.is_empty() {
@@ -49,11 +46,8 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire
         jw.end_object();
     }
 
-    // Only the Codex backend refuses a request with no instructions, so the standard one omits it.
     if !request.system.is_empty() {
         jw.field_str("instructions", request.system);
-    } else if wire.dialect == ResponsesDialect::Codex {
-        jw.field_str("instructions", DEFAULT_INSTRUCTIONS);
     }
 
     // A deferred tool needs the native search tool, so a request that defers declares the search tool natively.
@@ -604,7 +598,7 @@ mod tests {
                 .session_id("0123456789abcdef"),
         );
         expect_json(
-            r#"{"model":"gpt-5.6","stream":true,"store":false,"prompt_cache_key":"0123456789abcdef","instructions":"You are a helpful assistant.","input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#,
+            r#"{"model":"gpt-5.6","stream":true,"store":false,"prompt_cache_key":"0123456789abcdef","input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#,
             "gpt-5.6",
             codex(),
             Request::new(&blocks)
@@ -649,10 +643,17 @@ mod tests {
         );
         // The ChatGPT backend refuses every sampling limit, exactly as it refuses the token ceiling.
         expect_json(
-            r#"{"model":"gpt-5","stream":true,"store":false,"instructions":"You are a helpful assistant.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}"#,
+            r#"{"model":"gpt-5","stream":true,"store":false,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}"#,
             "gpt-5",
             codex(),
             request,
+        );
+        // A system prompt goes out as the instructions, as it does for the OpenAI API.
+        expect_json(
+            r#"{"model":"gpt-5","stream":true,"store":false,"instructions":"be brief","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}"#,
+            "gpt-5",
+            codex(),
+            request.system("be brief"),
         );
     }
 

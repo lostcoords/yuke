@@ -58,13 +58,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Uppercase,
     )?;
     let driver = Driver::new(&http, &target, &TokioTimer).toolset(&toolset);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
     let transcript = Transcript::default();
 
     let input = vec![Block::user_text(
         "Use the uppercase tool on 'Hello, Rust!' and report its result.",
     )];
-    driver.turn(&mut history, input).observer(&transcript).run().await?;
+    driver.turn(&mut context, input).observer(&transcript).run().await?;
     let answer = transcript.answer.into_inner().unwrap_or_else(PoisonError::into_inner);
     println!("{answer} ({} tool runs)", transcript.tool_runs.into_inner());
     Ok(())

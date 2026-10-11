@@ -115,9 +115,9 @@ impl Hooks for LogHooks {
     }
 }
 
-/// The tool results in `history`, as call id and text.
-fn results(history: &[Block]) -> Vec<(String, String)> {
-    history
+/// The tool results in `context`, as call id and text.
+fn results(context: &[Block]) -> Vec<(String, String)> {
+    context
         .iter()
         .filter_map(|block| match block {
             Block::ToolResult(ToolResult { call_id, content, .. }) => Some((call_id.clone(), content.clone())),
@@ -202,11 +202,11 @@ fn results_go_back_in_call_order_when_the_finish_order_differs() {
     let toolset = toolset(&log);
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
     let finished = Mutex::new(Vec::new());
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
     block_on(
         driver
-            .turn(&mut history, vec![Block::user_text("go")])
+            .turn(&mut context, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
                 if let TurnEvent::ToolFinished(result) = event {
                     finished.lock().unwrap().push(result.call_id.clone());
@@ -219,7 +219,7 @@ fn results_go_back_in_call_order_when_the_finish_order_differs() {
     assert_eq!(*finished.lock().unwrap(), ["c2", "c1"]);
     assert_in_order(&transport.requests()[1], &["result c1", "result c2"]);
     assert_eq!(
-        results(&history),
+        results(&context),
         [
             ("c1".to_owned(), "result c1".to_owned()),
             ("c2".to_owned(), "result c2".to_owned())
@@ -271,11 +271,11 @@ fn cancel_during_a_group_keeps_the_results_of_the_running_calls_and_runs_no_late
     let toolset = toolset(&log);
     let cancellation_token = CancellationToken::new();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
     let outcome = block_on(
         driver
-            .turn(&mut history, vec![Block::user_text("go")])
+            .turn(&mut context, vec![Block::user_text("go")])
             .cancellation_token(cancellation_token)
             .run(),
     );
@@ -283,7 +283,7 @@ fn cancel_during_a_group_keeps_the_results_of_the_running_calls_and_runs_no_late
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
     assert!(!log.entries().contains(&"start c3".to_owned()), "{:?}", log.entries());
     assert_eq!(
-        results(&history),
+        results(&context),
         [
             ("c1".to_owned(), "stopped c1".to_owned()),
             ("c2".to_owned(), "stopped c2".to_owned()),
@@ -312,11 +312,11 @@ fn cancel_during_the_hooks_of_a_group_starts_no_call_of_the_group() {
     let driver = Driver::new(&transport, &target, &NoWait)
         .toolset(&toolset)
         .hooks(&hooks);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
     let outcome = block_on(
         driver
-            .turn(&mut history, vec![Block::user_text("go")])
+            .turn(&mut context, vec![Block::user_text("go")])
             .cancellation_token(cancellation_token)
             .run(),
     );
@@ -325,7 +325,7 @@ fn cancel_during_the_hooks_of_a_group_starts_no_call_of_the_group() {
     assert_eq!(log.entries(), ["before c1", "before c2"]);
     let cancelled = |name: &str| format!("Tool call \"{name}\" was not executed: the user cancelled the turn.");
     assert_eq!(
-        results(&history),
+        results(&context),
         [
             ("c1".to_owned(), cancelled("read")),
             ("c2".to_owned(), cancelled("read"))

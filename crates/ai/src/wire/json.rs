@@ -203,7 +203,7 @@ impl std::fmt::Write for ByteWriter<'_> {
     }
 }
 
-/// The elements of the history array. Each one after the first starts with a comma.
+/// The elements of the context array. Each one after the first starts with a comma.
 pub(crate) struct Elements<'b> {
     pub(crate) out: &'b mut Vec<u8>,
     /// An element comes before the next one.

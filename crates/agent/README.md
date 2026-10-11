@@ -1,6 +1,6 @@
 # agent
 
-Durable sessions for the yuke coding agent. A `Session` runs each turn of `yuke-engine` on its history, and saves each
+Durable sessions for the yuke coding agent. A `Session` runs each turn of `yuke-engine` on its context, and saves each
 commit of the turn in a `Store` before the turn goes on.
 
 ## Store

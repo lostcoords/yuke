@@ -18,7 +18,7 @@ macro_rules! store_tests {
     ($make_store:path) => {
         $crate::store_tests!(
             @behaviors $make_store;
-            a_new_session_opens_with_its_settings_and_no_history,
+            a_new_session_opens_with_its_settings_and_no_context,
             a_commit_adds_its_blocks_to_the_context,
             a_replacement_keeps_its_head_and_the_last_blocks,
             a_replacement_that_keeps_nothing_leaves_its_head,
@@ -82,7 +82,7 @@ fn end(blocks: &[yuke_ai::Block]) -> Commit<'_> {
 }
 
 /// A new session opens with its settings, an empty context, no pending input, and no open turn.
-pub async fn a_new_session_opens_with_its_settings_and_no_history(store: &dyn Store) {
+pub async fn a_new_session_opens_with_its_settings_and_no_context(store: &dyn Store) {
     let id = store.create_session(&settings("one")).await.unwrap().id;
 
     let opened = store.open(id, Access::Read).await.unwrap();

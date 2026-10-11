@@ -1,4 +1,4 @@
-//! Durable sessions over `yuke-engine`. A [`Session`] runs turns on its history, and saves each commit of a turn in a
+//! Durable sessions over `yuke-engine`. A [`Session`] runs turns on its context, and saves each commit of a turn in a
 //! [`Store`] before the turn goes on. [`MemoryStore`] keeps its sessions in memory. The `testing` feature gives the
 //! shared behavior tests of a store.
 

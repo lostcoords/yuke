@@ -1,6 +1,6 @@
 //! A SQLite [`Store`](yuke_agent::Store) for the sessions of `yuke-agent`. [`SqliteStore`] keeps all sessions in one
 //! database file. Each session has a folder with its lock file and its blobs. The queries come from `yuke-sqlgen`:
-//! run `cargo run -p yuke-sqlgen` after a change of `migrations/` or `queries/`.
+//! run `mise exec -- cargo run -p yuke-sqlgen` after a change of `migrations/` or `queries/`.
 
 mod context;
 mod files;

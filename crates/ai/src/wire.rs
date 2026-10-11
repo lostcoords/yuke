@@ -1,4 +1,4 @@
-//! The request serializers of the three protocols. Each writes the head of a request up to its open history array,
+//! The request serializers of the three protocols. Each writes the head of a request up to its open context array,
 //! and the groups of blocks that make the elements of that array.
 
 mod anthropic;
@@ -13,7 +13,7 @@ use crate::encoder::EncodeError;
 use crate::request::{Block, Request, Target, Wire};
 use json::Elements;
 
-/// Write the request up to its open history array. Return whether that array already holds an element, as the
+/// Write the request up to its open context array. Return whether that array already holds an element, as the
 /// Chat system message is one.
 pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, request: &Request<'_>) -> Result<bool, EncodeError> {
     match &target.wire {

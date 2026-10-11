@@ -109,13 +109,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let hooks = Approve::default();
     let driver = Driver::new(&http, &target, &TokioTimer).toolset(&toolset).hooks(&hooks);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
     let observer = PrintText::default();
 
     let input = vec![Block::user_text(
         "Use the uppercase tool on 'Hello, Rust!' and report its result.",
     )];
-    let outcome = driver.turn(&mut history, input).observer(&observer).run().await?;
+    let outcome = driver.turn(&mut context, input).observer(&observer).run().await?;
 
     match outcome {
         Outcome::Completed { .. } => println!(),

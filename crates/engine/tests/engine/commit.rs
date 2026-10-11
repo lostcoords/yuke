@@ -25,16 +25,16 @@ struct Saved {
     end: Option<&'static str>,
 }
 
-/// A journal that replays each commit into one history and keeps each commit.
+/// A journal that replays each commit into one context and keeps each commit.
 #[derive(Debug, Default)]
 struct Replay {
-    history: Mutex<Vec<Block>>,
+    context: Mutex<Vec<Block>>,
     saved: Mutex<Vec<Saved>>,
 }
 
 impl Replay {
-    fn history(&self) -> Vec<Block> {
-        self.history.lock().unwrap().clone()
+    fn context(&self) -> Vec<Block> {
+        self.context.lock().unwrap().clone()
     }
 
     fn saved(&self) -> Vec<Saved> {
@@ -53,14 +53,14 @@ impl Replay {
 #[async_trait]
 impl Journal for Replay {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let mut history = self.history.lock().unwrap();
+        let mut context = self.context.lock().unwrap();
         if let Some(Replaced { head, keep }) = commit.replaced {
-            let start = history.len() - keep;
-            let kept = history.split_off(start);
-            *history = head.to_vec();
-            history.extend(kept);
+            let start = context.len() - keep;
+            let kept = context.split_off(start);
+            *context = head.to_vec();
+            context.extend(kept);
         }
-        history.extend_from_slice(commit.blocks);
+        context.extend_from_slice(commit.blocks);
         self.saved.lock().unwrap().push(Saved {
             replaced: commit.replaced.map(|Replaced { head, keep }| (head.to_vec(), keep)),
             blocks: commit.blocks.to_vec(),
@@ -81,7 +81,7 @@ fn call(id: &str) -> Block {
 }
 
 #[test]
-fn the_commits_of_two_turns_replay_to_the_history_and_input_commits_before_its_request() {
+fn the_commits_of_two_turns_replay_to_the_context_and_input_commits_before_its_request() {
     let transport = ScriptedTransport::new([
         tool_reply(&[("c1", "echo", "{}")]),
         text_reply("done"),
@@ -96,12 +96,12 @@ fn the_commits_of_two_turns_replay_to_the_history_and_input_commits_before_its_r
         .toolset(&toolset)
         .inbox(&inbox)
         .journal(&journal);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
-    block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run()).unwrap();
-    block_on(driver.turn(&mut history, vec![Block::user_text("two")]).run()).unwrap();
+    block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();
+    block_on(driver.turn(&mut context, vec![Block::user_text("two")]).run()).unwrap();
 
-    assert_eq!(journal.history(), history);
+    assert_eq!(journal.context(), context);
     assert_eq!(
         journal.shapes(),
         [
@@ -139,12 +139,12 @@ fn a_stopped_turn_ends_with_a_stopped_commit() {
         .toolset(&toolset)
         .hooks(&StopAfterRound)
         .journal(&journal);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
 
     assert!(matches!(outcome, Ok(Outcome::Stopped)));
-    assert_eq!(journal.history(), history);
+    assert_eq!(journal.context(), context);
     assert_eq!(journal.shapes().last(), Some(&(vec![], Some("stopped"))));
 }
 
@@ -154,16 +154,16 @@ fn a_failed_request_commits_an_end_after_its_input() {
     let target = target();
     let journal = Replay::default();
     let driver = Driver::new(&transport, &target, &NoWait).journal(&journal);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
 
     assert!(matches!(outcome, Err(TurnError::Model(_))));
     assert_eq!(
         journal.shapes(),
         [(vec![Block::user_text("go")], None), (vec![], Some("failed"))]
     );
-    assert_eq!(journal.history(), history);
+    assert_eq!(journal.context(), context);
 }
 
 #[test]
@@ -178,16 +178,16 @@ fn inbox_input_before_a_failed_request_commits_before_the_request() {
         .toolset(&toolset)
         .inbox(&inbox)
         .journal(&journal);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
 
     assert!(matches!(outcome, Err(TurnError::Model(_))));
     assert_eq!(
         journal.shapes()[3..],
         [(vec![Block::user_text("steer")], None), (vec![], Some("failed"))]
     );
-    assert_eq!(journal.history(), history);
+    assert_eq!(journal.context(), context);
 }
 
 #[test]
@@ -203,12 +203,12 @@ fn a_cancel_during_the_stream_commits_the_partial_output_with_the_end() {
     let target = target();
     let journal = Replay::default();
     let driver = Driver::new(&transport, &target, &NoWait).journal(&journal);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
     let cancellation_token = CancellationToken::new();
 
     let outcome = block_on(
         driver
-            .turn(&mut history, vec![Block::user_text("go")])
+            .turn(&mut context, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
                 if matches!(event, TurnEvent::Model(yuke_ai::Event::TextDelta(_))) {
                     cancellation_token.cancel();
@@ -228,7 +228,7 @@ fn a_cancel_during_the_stream_commits_the_partial_output_with_the_end() {
             end: Some("cancelled"),
         }
     );
-    assert_eq!(journal.history(), history);
+    assert_eq!(journal.context(), context);
 }
 
 /// A tool that cancels the turn before it returns its result.
@@ -256,11 +256,11 @@ fn a_cancel_during_a_tool_commits_the_results_with_the_end() {
     let driver = Driver::new(&transport, &target, &NoWait)
         .toolset(&toolset)
         .journal(&journal);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
     let outcome = block_on(
         driver
-            .turn(&mut history, vec![Block::user_text("go")])
+            .turn(&mut context, vec![Block::user_text("go")])
             .cancellation_token(cancellation_token)
             .run(),
     );
@@ -270,7 +270,7 @@ fn a_cancel_during_a_tool_commits_the_results_with_the_end() {
     assert_eq!(shapes.len(), 3, "{shapes:?}");
     assert_eq!(shapes[2].0.len(), 2, "both calls get a result: {shapes:?}");
     assert_eq!(shapes[2].1, Some("cancelled"));
-    assert_eq!(journal.history(), history);
+    assert_eq!(journal.context(), context);
 }
 
 /// A tool that checks whether the journal saved its call before the tool ran.
@@ -282,7 +282,7 @@ struct SeesItsCall {
 #[async_trait]
 impl Tool for SeesItsCall {
     async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
-        let saved = self.journal.history().contains(&call("c1"));
+        let saved = self.journal.context().contains(&call("c1"));
         *self.saw.lock().unwrap() = Some(saved);
         Ok("ran".into())
     }
@@ -444,11 +444,11 @@ fn a_cancel_during_a_commit_lets_the_commit_finish() {
         replay: Replay::default(),
     };
     let driver = Driver::new(&transport, &target, &NoWait).journal(&journal);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
     let outcome = block_on(
         driver
-            .turn(&mut history, vec![Block::user_text("go")])
+            .turn(&mut context, vec![Block::user_text("go")])
             .cancellation_token(cancellation_token)
             .run(),
     );
@@ -459,10 +459,10 @@ fn a_cancel_during_a_commit_lets_the_commit_finish() {
         [(vec![Block::user_text("go")], None), (vec![], Some("cancelled"))]
     );
     assert_eq!(transport.requests().len(), 0);
-    assert_eq!(journal.replay.history(), history);
+    assert_eq!(journal.replay.context(), context);
 }
 
-/// Hooks that replace the history before the second round with `head` and the last `keep` blocks.
+/// Hooks that replace the context before the second round with `head` and the last `keep` blocks.
 struct Summarize {
     head: Vec<Block>,
     keep: usize,
@@ -496,8 +496,8 @@ impl Hooks for Summarize {
 }
 
 #[test]
-fn a_replacement_commits_before_its_request_and_replays_to_the_new_history() {
-    // The cases keep no block, the input, a saved answer and the input, and more blocks than the history holds. The
+fn a_replacement_commits_before_its_request_and_replays_to_the_new_context() {
+    // The cases keep no block, the input, a saved answer and the input, and more blocks than the context holds. The
     // last case has no head.
     for (head, keep, saved_keep, expected) in [
         (&["summary"][..], 0, 0, vec!["summary", "second"]),
@@ -513,12 +513,12 @@ fn a_replacement_commits_before_its_request_and_replays_to_the_new_history() {
         let driver = Driver::new(&transport, &target, &NoWait)
             .hooks(&hooks)
             .journal(&journal);
-        let mut history = Vec::new();
+        let mut context = Vec::new();
 
-        block_on(driver.turn(&mut history, vec![Block::user_text("one")]).run()).unwrap();
-        block_on(driver.turn(&mut history, vec![Block::user_text("two")]).run()).unwrap();
+        block_on(driver.turn(&mut context, vec![Block::user_text("one")]).run()).unwrap();
+        block_on(driver.turn(&mut context, vec![Block::user_text("two")]).run()).unwrap();
 
-        let texts: Vec<&str> = history
+        let texts: Vec<&str> = context
             .iter()
             .map(|block| match block {
                 Block::UserText(text) | Block::AssistantText(text) => text.as_str(),
@@ -526,7 +526,7 @@ fn a_replacement_commits_before_its_request_and_replays_to_the_new_history() {
             })
             .collect();
         assert_eq!(texts, expected, "keep {keep}");
-        assert_eq!(journal.history(), history, "keep {keep}");
+        assert_eq!(journal.context(), context, "keep {keep}");
         // The journal receives the replacement after the input of the turn and before its answer.
         let saved = journal.saved();
         assert_eq!(saved[3].blocks, [Block::user_text("two")], "keep {keep}");
@@ -535,7 +535,7 @@ fn a_replacement_commits_before_its_request_and_replays_to_the_new_history() {
     }
 }
 
-/// Hooks that replace the history before the first attempt of the second round and again after its failure.
+/// Hooks that replace the context before the first attempt of the second round and again after its failure.
 #[derive(Default)]
 struct SummarizeTwice {
     rounds: AtomicUsize,
@@ -564,7 +564,7 @@ impl Hooks for SummarizeTwice {
 }
 
 #[test]
-fn a_replacement_before_a_retried_round_replays_to_the_new_history() {
+fn a_replacement_before_a_retried_round_replays_to_the_new_context() {
     let transport = ScriptedTransport::new([text_reply("first"), failed_reply("cut"), text_reply("second")]);
     let target = target();
     let hooks = SummarizeTwice::default();
@@ -572,13 +572,13 @@ fn a_replacement_before_a_retried_round_replays_to_the_new_history() {
     let driver = Driver::new(&transport, &target, &NoWait)
         .hooks(&hooks)
         .journal(&journal);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
-    block_on(driver.turn(&mut history, vec![Block::user_text("one")]).run()).unwrap();
-    block_on(driver.turn(&mut history, vec![Block::user_text("two")]).run()).unwrap();
+    block_on(driver.turn(&mut context, vec![Block::user_text("one")]).run()).unwrap();
+    block_on(driver.turn(&mut context, vec![Block::user_text("two")]).run()).unwrap();
 
     assert_eq!(
-        history,
+        context,
         [
             Block::user_text("s2"),
             Block::user_text("s1"),
@@ -587,10 +587,10 @@ fn a_replacement_before_a_retried_round_replays_to_the_new_history() {
             Block::assistant_text("second"),
         ]
     );
-    assert_eq!(journal.history(), history);
+    assert_eq!(journal.context(), context);
 }
 
-/// A transport that records the history of the journal when each request opens.
+/// A transport that records the context of the journal when each request opens.
 struct Watching {
     transport: ScriptedTransport,
     journal: Arc<Replay>,
@@ -603,7 +603,7 @@ impl Transport for Watching {
         request: &'a Outgoing<'_>,
         deadline: Option<Instant>,
     ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
-        self.seen.lock().unwrap().push(self.journal.history());
+        self.seen.lock().unwrap().push(self.journal.context());
         self.transport.open(request, deadline)
     }
 }
@@ -621,10 +621,10 @@ fn each_request_opens_after_the_journal_saved_its_input_and_replacement() {
     let driver = Driver::new(&transport, &target, &NoWait)
         .hooks(&hooks)
         .journal(journal.as_ref());
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
-    block_on(driver.turn(&mut history, vec![Block::user_text("one")]).run()).unwrap();
-    block_on(driver.turn(&mut history, vec![Block::user_text("two")]).run()).unwrap();
+    block_on(driver.turn(&mut context, vec![Block::user_text("one")]).run()).unwrap();
+    block_on(driver.turn(&mut context, vec![Block::user_text("two")]).run()).unwrap();
 
     assert_eq!(
         *transport.seen.lock().unwrap(),
@@ -660,9 +660,9 @@ fn continue_input_commits_before_its_request() {
     let driver = Driver::new(&transport, &target, &NoWait)
         .hooks(&hooks)
         .journal(&journal);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
-    block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run()).unwrap();
+    block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();
 
     assert_eq!(
         journal.shapes(),
@@ -674,5 +674,5 @@ fn continue_input_commits_before_its_request() {
             (vec![], Some("completed")),
         ]
     );
-    assert_eq!(journal.history(), history);
+    assert_eq!(journal.context(), context);
 }

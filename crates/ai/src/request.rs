@@ -154,8 +154,8 @@ pub enum Modality {
 /// The digest of the content of a blob, such as its SHA-256.
 pub type Digest = [u8; 32];
 
-/// Bytes in the caller's store, named by the digest of their content. Equal digests name equal bytes. Thus a resumed
-/// history reads no blob that the encoder kept.
+/// Bytes in the caller's store, named by the digest of their content. Equal digests name equal bytes. Thus the request
+/// of a resumed context reads no blob that the encoder kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Blob {
     /// The digest of the content, such as its SHA-256. JSON holds it as 64 lowercase hex characters.
@@ -592,8 +592,7 @@ impl Effort {
     }
 }
 
-/// Select the Responses endpoint shape. The Codex backend refuses the sampling members and the output limit, and
-/// requires instructions.
+/// Select the Responses endpoint shape. The Codex backend refuses the sampling members and the output limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ResponsesDialect {
     /// The OpenAI API.

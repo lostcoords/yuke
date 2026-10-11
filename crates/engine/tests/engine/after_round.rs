@@ -30,8 +30,8 @@ impl Script {
 
 #[async_trait]
 impl Hooks for Script {
-    async fn after_round(&self, history: &[Block], finish_reason: Option<FinishReason>) -> RoundDecision {
-        let last = match history.last() {
+    async fn after_round(&self, context: &[Block], finish_reason: Option<FinishReason>) -> RoundDecision {
+        let last = match context.last() {
             Some(Block::AssistantText(text)) => text.as_str(),
             Some(Block::ToolResult(result)) => result.content.as_str(),
             _ => "",
@@ -79,9 +79,9 @@ fn continue_adds_its_input_and_a_tool_round_gives_no_finish_reason() {
     let driver = Driver::new(&transport, &target, &NoWait)
         .toolset(&toolset)
         .hooks(&hooks);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
 
     assert!(matches!(outcome, Ok(Outcome::Completed { .. })));
     assert_eq!(
@@ -92,7 +92,7 @@ fn continue_adds_its_input_and_a_tool_round_gives_no_finish_reason() {
     assert_eq!(requests.len(), 3);
     assert_in_order(&requests[1], &["go", "first answer", "the tests fail"]);
     assert_in_order(&requests[2], &["the tests fail", "c1", "result 1"]);
-    assert_eq!(history.last(), Some(&Block::assistant_text("second answer")));
+    assert_eq!(context.last(), Some(&Block::assistant_text("second answer")));
 }
 
 #[test]

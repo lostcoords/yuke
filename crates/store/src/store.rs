@@ -78,7 +78,7 @@ impl SqliteStore {
         };
         store
             .call(move |connection| {
-                schema::prepare(connection).map_err(StoreError::Failed)?;
+                schema::prepare(connection).map_err(failed)?;
                 files::sweep(connection, &sessions)
             })
             .await?;

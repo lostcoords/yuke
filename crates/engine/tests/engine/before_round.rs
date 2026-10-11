@@ -82,7 +82,7 @@ fn a_plan_target_and_settings_apply_to_their_round_only() {
     assert!(!requests[1].contains("First round."), "{}", requests[1]);
 }
 
-/// Hooks that replace the history with a summary before the second round.
+/// Hooks that replace the context with a summary before the second round.
 #[derive(Default)]
 struct SummarizeSecondRound {
     rounds: AtomicUsize,
@@ -105,7 +105,7 @@ impl Hooks for SummarizeSecondRound {
 }
 
 #[test]
-fn a_plan_replacement_replaces_the_history_and_stays() {
+fn a_plan_replacement_replaces_the_context_and_stays() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
     let target = target();
     let mut toolset = Toolset::new();
@@ -114,15 +114,15 @@ fn a_plan_replacement_replaces_the_history_and_stays() {
     let driver = Driver::new(&transport, &target, &NoWait)
         .toolset(&toolset)
         .hooks(&hooks);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
-    block_on(driver.turn(&mut history, vec![Block::user_text("go")]).run()).unwrap();
+    block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();
 
     let requests = transport.requests();
     assert!(requests[1].contains("Summary of the work so far."), "{}", requests[1]);
     assert!(!requests[1].contains(r#""go""#), "{}", requests[1]);
     assert_eq!(
-        history,
+        context,
         [
             Block::user_text("Summary of the work so far."),
             Block::assistant_text("done")
@@ -166,12 +166,12 @@ fn a_failed_round_runs_again_on_the_plan_target_in_the_same_turn() {
         ..RoundPlan::default()
     });
     let driver = Driver::new(&transport, &target, &NoWait).hooks(&hooks);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
     let texts = Mutex::new(Vec::new());
 
     let outcome = block_on(
         driver
-            .turn(&mut history, vec![Block::user_text("go")])
+            .turn(&mut context, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| match event {
                 TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => {
                     texts.lock().unwrap().push(delta.text.to_string());
@@ -189,7 +189,7 @@ fn a_failed_round_runs_again_on_the_plan_target_in_the_same_turn() {
     let requests = transport.requests();
     assert_eq!(requests.len(), 2);
     assert!(requests[1].contains(r#""model":"fallback-model""#), "{}", requests[1]);
-    assert_eq!(history, [Block::user_text("go"), Block::assistant_text("done")]);
+    assert_eq!(context, [Block::user_text("go"), Block::assistant_text("done")]);
 }
 
 #[test]
@@ -227,16 +227,16 @@ fn a_cancel_during_before_round_sends_no_request() {
     let cancellation_token = CancellationToken::new();
     let hooks = CancelBeforeRound(cancellation_token.clone());
     let driver = Driver::new(&transport, &target, &NoWait).hooks(&hooks);
-    let mut history = Vec::new();
+    let mut context = Vec::new();
 
     let outcome = block_on(
         driver
-            .turn(&mut history, vec![Block::user_text("go")])
+            .turn(&mut context, vec![Block::user_text("go")])
             .cancellation_token(cancellation_token)
             .run(),
     );
 
     assert!(matches!(outcome, Ok(Outcome::Cancelled)), "{outcome:?}");
     assert_eq!(transport.requests().len(), 0);
-    assert_eq!(history, [Block::user_text("go")]);
+    assert_eq!(context, [Block::user_text("go")]);
 }

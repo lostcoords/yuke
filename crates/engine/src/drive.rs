@@ -15,7 +15,7 @@ use yuke_ai::retry::{self, Attempt};
 use yuke_ai::transport::Transport;
 use yuke_ai::{
     AttemptError, BlobStore, Block, Encoder, Options, Origin, OriginRef, Partial, Reply, Request, Response,
-    SEARCH_TOOL_NAME, Settings, Target, ToolCall, ToolResult,
+    ResponseLimits, SEARCH_TOOL_NAME, Settings, Target, ToolCall, ToolResult,
 };
 
 use crate::conversation::{Action, CANCELLED_REASON, Commit, Conversation, Outcome, not_executed};
@@ -46,7 +46,7 @@ pub enum TurnEvent<'a> {
     /// A call finished with this result. The approved calls of one parallel group finish in any order.
     ToolFinished(&'a ToolResult),
 
-    /// A round failed after its retries. The model events of the round came before it, and the history keeps none of
+    /// A round failed after its retries. The model events of the round came before it, and the context keeps none of
     /// them. The driver then asks [`Hooks::before_round`] whether the round runs again.
     RoundFailed(&'a yuke_ai::Error),
 
@@ -101,7 +101,7 @@ impl Inbox for Mutex<Vec<Block>> {
 /// stop a commit. A caller that saves nothing sets no journal.
 #[async_trait]
 pub trait Journal: Send + Sync {
-    /// Save `commit`. The driver sends the commits of a conversation in order. The history that a turn starts with
+    /// Save `commit`. The driver sends the commits of a conversation in order. The context that a turn starts with
     /// counts as saved.
     ///
     /// # Errors
@@ -133,6 +133,8 @@ pub struct Driver<'a> {
     settings: &'a Settings,
     blob_store: Option<&'a dyn BlobStore>,
     tool_search: &'a dyn ToolSearch,
+    retry_policy: retry::Policy,
+    response_limits: ResponseLimits,
 }
 
 /// The toolset of a driver without tools.
@@ -166,6 +168,8 @@ impl<'a> Driver<'a> {
             settings: &NO_SETTINGS,
             blob_store: None,
             tool_search: &Bm25,
+            retry_policy: retry::Policy::default(),
+            response_limits: ResponseLimits::default(),
         }
     }
 
@@ -345,14 +349,30 @@ impl<'a> Driver<'a> {
         Driver { tool_search, ..self }
     }
 
-    /// The turn of `input` on `history`. [`Turn::run`] runs it and adds the blocks of the turn to `history`.
-    pub fn turn<'t>(&self, history: &'t mut Vec<Block>, input: Vec<Block>) -> Turn<'t>
+    /// Set the attempt and delay bounds of each request. The default is [`retry::Policy::default`].
+    #[must_use]
+    pub fn retry_policy(self, retry_policy: retry::Policy) -> Self {
+        Driver { retry_policy, ..self }
+    }
+
+    /// Set the size bounds of each response: body bytes, event bytes, tool arguments, blocks, and error body. The
+    /// default is [`ResponseLimits::default`].
+    #[must_use]
+    pub fn response_limits(self, response_limits: ResponseLimits) -> Self {
+        Driver {
+            response_limits,
+            ..self
+        }
+    }
+
+    /// The turn of `input` on `context`. [`Turn::run`] runs it and adds the blocks of the turn to `context`.
+    pub fn turn<'t>(&self, context: &'t mut Vec<Block>, input: Vec<Block>) -> Turn<'t>
     where
         'a: 't,
     {
         Turn {
             driver: *self,
-            history,
+            context,
             input,
             observer: None,
             cancellation_token: CancellationToken::new(),
@@ -372,7 +392,7 @@ impl<'a> Driver<'a> {
         let mut failure: Option<yuke_ai::Error> = None;
         loop {
             let Raced::Done(mut plan) = race(
-                self.hooks.before_round(conversation.history(), failure.as_ref()),
+                self.hooks.before_round(conversation.context(), failure.as_ref()),
                 pin!(cancellation_token.cancelled()),
             )
             .await
@@ -393,7 +413,7 @@ impl<'a> Driver<'a> {
             match self
                 .send(
                     encoder,
-                    Request::new(conversation.history()).tools(tools).settings(settings),
+                    Request::new(conversation.context()).tools(tools).settings(settings),
                     target,
                     observer,
                     cancellation_token,
@@ -431,7 +451,14 @@ impl<'a> Driver<'a> {
         let mut number = 1;
         loop {
             let opened = race(
-                Reply::open(self.transport, &encoded, Options::default()),
+                Reply::open(
+                    self.transport,
+                    &encoded,
+                    Options {
+                        limits: self.response_limits,
+                        deadline: None,
+                    },
+                ),
                 cancelled.as_mut(),
             );
             let Raced::Done(mut reply) = opened.await else {
@@ -459,7 +486,7 @@ impl<'a> Driver<'a> {
                 number,
             };
 
-            let Some(delay) = retry::decide(retry::Policy::default(), &attempt, fastrand::f64()) else {
+            let Some(delay) = retry::decide(self.retry_policy, &attempt, fastrand::f64()) else {
                 return Sent::Finished(Err(error.into()));
             };
 
@@ -477,7 +504,7 @@ impl<'a> Driver<'a> {
 #[must_use = "a turn does nothing until the caller runs it"]
 pub struct Turn<'a> {
     driver: Driver<'a>,
-    history: &'a mut Vec<Block>,
+    context: &'a mut Vec<Block>,
     input: Vec<Block>,
     observer: Option<&'a dyn Observer>,
     cancellation_token: CancellationToken,
@@ -515,17 +542,17 @@ impl<'a> Turn<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`TurnError::Model`] when a request cannot be encoded, or when its last attempt fails. The history keeps
+    /// Returns [`TurnError::Model`] when a request cannot be encoded, or when its last attempt fails. The context keeps
     /// the blocks from before the failure. Returns [`TurnError::Commit`] when the journal fails to save a commit.
     pub async fn run(self) -> Result<Outcome, TurnError> {
         let Turn {
             driver,
-            history,
+            context,
             input,
             observer,
             cancellation_token,
         } = self;
-        let mut conversation = Conversation::new(history);
+        let mut conversation = Conversation::new(context);
         let ignore = |_: &TurnEvent<'_>| {};
         let observer: &dyn Observer = match observer {
             Some(observer) => observer,
@@ -534,7 +561,7 @@ impl<'a> Turn<'a> {
         let declared = Declared::new(driver.toolset);
         // The calls of a round use the kind of search of the target of that round.
         let mut native = false;
-        // The encoder lives for one turn. Its first request encodes the whole history, and each later request of the
+        // The encoder lives for one turn. Its first request encodes the whole context, and each later request of the
         // turn encodes only the changed elements.
         let mut encoder = Encoder::new();
 
@@ -588,12 +615,12 @@ impl<'a> Turn<'a> {
                 }
 
                 Action::AfterRound {
-                    history,
+                    context,
                     finish_reason,
                     commit,
                 } => {
                     driver.save(&commit).await?;
-                    let decided = driver.hooks.after_round(history, finish_reason);
+                    let decided = driver.hooks.after_round(context, finish_reason);
                     action = match race(decided, pin!(cancellation_token.cancelled())).await {
                         // The driver takes the input only when the turn goes on, so a stop or a cancel leaves it.
                         Raced::Done(RoundDecision::Proceed) => conversation.proceed(driver.inbox.take()),
@@ -629,10 +656,10 @@ struct Resolved<'c> {
 /// Why a turn failed.
 #[derive(Debug)]
 pub enum TurnError {
-    /// A request could not be encoded, or its last attempt failed. The history keeps the blocks from before the failure.
+    /// A request could not be encoded, or its last attempt failed. The context keeps the blocks from before the failure.
     Model(yuke_ai::Error),
 
-    /// The journal did not confirm a commit. It can still have saved the commit. The history can hold blocks after the
+    /// The journal did not confirm a commit. It can still have saved the commit. The context can hold blocks after the
     /// last confirmed commit, so the caller loads the conversation again from its store.
     Commit(Box<dyn std::error::Error + Send + Sync>),
 }

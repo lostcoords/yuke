@@ -55,7 +55,7 @@ fn kept(
     mut count: usize,
 ) -> rusqlite::Result<Vec<yuke_ai::Block>> {
     // The walk goes back over the commits, so it collects the parts newest first. A loop, not a recursion, keeps the
-    // stack small when a replacement keeps a long history.
+    // stack small when a replacement keeps many blocks.
     let mut parts: Vec<Vec<yuke_ai::Block>> = Vec::new();
     let mut collected = 0;
     // For each replacement on the walk: its head, the number of blocks still missing, and `collected` at that point.

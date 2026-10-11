@@ -32,7 +32,7 @@ keeps a folder for each session in `folder/sessions/<id>/`, with the lock file a
 The migrations are in `migrations/`, and the queries are in `queries/`. After a change, write `src/queries.rs` again:
 
 ```sh
-cargo run -p yuke-sqlgen
+mise exec -- cargo run -p yuke-sqlgen
 ```
 
 A database at `user_version` `n` runs each migration after the first `n`. A database that a newer yuke migrated does

@@ -27,6 +27,16 @@ Catalog generation script:
 
 All protocols work without default features. Supply a custom [`Transport`](src/transport.rs).
 
+## Defaults
+
+The library uses these default values. The caller can change each field.
+
+| Setting | Default |
+| --- | --- |
+| `HttpOptions::idle_timeout` | 300 s |
+| `ResponseLimits` | 64 MiB response body, 4 MiB event, 1 MiB tool-call arguments, 1,024 blocks, 4 KiB error body |
+| `retry::Policy` | 5 attempts, 500 ms base delay, 8 s delay cap, 120 s cap on a server delay |
+
 ## Examples
 
 Set `OPENAI_API_KEY`. These examples send live requests. API charges can apply.

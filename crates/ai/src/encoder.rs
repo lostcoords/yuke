@@ -182,7 +182,7 @@ impl Encoder {
         0
     }
 
-    /// Write the body as the history elements, then the head. Return where the elements end. Only an element that
+    /// Write the body as the context elements, then the head. Return where the elements end. Only an element that
     /// this call encodes reads its blobs.
     fn serialize(&mut self, target: &Target, request: &Request<'_>) -> Result<usize, EncodeError> {
         let blocks = request.blocks;
@@ -377,8 +377,8 @@ mod tests {
         }
     }
 
-    // `encode_checked` compares each successful call with a fresh encoding, so it checks the history a failed call
-    // left. The blob fails in the middle of a write, so the history holds a partial element the next call must drop.
+    // `encode_checked` compares each successful call with a fresh encoding, so it checks the encoder state that a
+    // failed call left. The blob fails in the middle of a write, so the encoder holds a partial element to drop.
     #[test]
     fn missing_blob_fails_and_fixed_request_resumes() {
         let missing = image("zz");

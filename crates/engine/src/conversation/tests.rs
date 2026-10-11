@@ -14,8 +14,8 @@ fn origin() -> yuke_ai::Origin {
     }
 }
 
-/// The body that a request of `history` encodes to for an Anthropic target.
-fn body(history: &[Block]) -> String {
+/// The body that a request of `context` encodes to for an Anthropic target.
+fn body(context: &[Block]) -> String {
     let target = Target {
         model: "test-model".into(),
         route: Route {
@@ -30,7 +30,7 @@ fn body(history: &[Block]) -> String {
         tool_search: false,
     };
     let mut encoder = Encoder::new();
-    let encoded = encoder.encode(&target, Request::new(history)).unwrap();
+    let encoded = encoder.encode(&target, Request::new(context)).unwrap();
     String::from_utf8(encoded.http.body().flatten().copied().collect()).unwrap()
 }
 
@@ -84,26 +84,26 @@ fn tool_answer(finish_reason: FinishReason) -> Response {
 }
 
 #[test]
-fn second_turn_sends_the_first_turn_history() {
-    let mut history = Vec::new();
-    let mut conversation = Conversation::new(&mut history);
+fn second_turn_sends_the_first_turn_context() {
+    let mut context = Vec::new();
+    let mut conversation = Conversation::new(&mut context);
     let _ = conversation.start(vec![Block::user_text("one")]);
     let _ = conversation.model_finished(Ok(answer("first answer")), origin());
     let _ = conversation.stop();
 
-    let mut conversation = Conversation::new(&mut history);
+    let mut conversation = Conversation::new(&mut context);
     assert!(matches!(
         conversation.start(vec![Block::user_text("two")]),
         Action::Send(_)
     ));
 
-    assert_in_order(&body(&history), &["one", "first answer", "two"]);
+    assert_in_order(&body(&context), &["one", "first answer", "two"]);
 }
 
 #[test]
 fn a_final_answer_without_input_completes_the_turn() {
-    let mut history = Vec::new();
-    let mut conversation = Conversation::new(&mut history);
+    let mut context = Vec::new();
+    let mut conversation = Conversation::new(&mut context);
     let _ = conversation.start(vec![Block::user_text("one")]);
     assert!(matches!(
         conversation.model_finished(Ok(answer("done")), origin()),
@@ -126,20 +126,20 @@ fn a_final_answer_without_input_completes_the_turn() {
 
 #[test]
 fn continue_turn_sends_another_request_without_input() {
-    let mut history = Vec::new();
-    let mut conversation = Conversation::new(&mut history);
+    let mut context = Vec::new();
+    let mut conversation = Conversation::new(&mut context);
     let _ = conversation.start(vec![Block::user_text("one")]);
     let _ = conversation.model_finished(Ok(answer("done")), origin());
 
     assert!(matches!(conversation.continue_turn(Vec::new()), Action::Send(_)));
 
-    assert_in_order(&body(&history), &["one", "done"]);
+    assert_in_order(&body(&context), &["one", "done"]);
 }
 
 #[test]
 fn failed_attempt_adds_no_assistant_block() {
-    let mut history = Vec::new();
-    let mut conversation = Conversation::new(&mut history);
+    let mut context = Vec::new();
+    let mut conversation = Conversation::new(&mut context);
     let _ = conversation.start(vec![Block::user_text("one")]);
     let failure = AttemptError {
         cause: Failure::Provider(ProviderKind::ServerError),
@@ -150,13 +150,13 @@ fn failed_attempt_adds_no_assistant_block() {
     let action = conversation.model_finished(Err(failure.into()), origin());
 
     assert!(matches!(action, Action::Done { result: Err(_), .. }));
-    assert_eq!(history, [Block::user_text("one")]);
+    assert_eq!(context, [Block::user_text("one")]);
 }
 
 #[test]
 fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_next_request() {
-    let mut history = Vec::new();
-    let mut conversation = Conversation::new(&mut history);
+    let mut context = Vec::new();
+    let mut conversation = Conversation::new(&mut context);
     let _ = conversation.start(vec![Block::user_text("one")]);
 
     let action = conversation.model_finished(Ok(tool_answer(FinishReason::ToolCalls)), origin());
@@ -179,15 +179,15 @@ fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_ne
         Action::Send(_)
     ));
     assert_in_order(
-        &body(&history),
+        &body(&context),
         &["one", "c1", "c2", "file text", "written", "also run the tests"],
     );
 }
 
 #[test]
 fn stop_finish_with_tool_calls_runs_them() {
-    let mut history = Vec::new();
-    let mut conversation = Conversation::new(&mut history);
+    let mut context = Vec::new();
+    let mut conversation = Conversation::new(&mut context);
     let _ = conversation.start(vec![Block::user_text("one")]);
 
     let action = conversation.model_finished(Ok(tool_answer(FinishReason::Stop)), origin());
@@ -197,8 +197,8 @@ fn stop_finish_with_tool_calls_runs_them() {
 
 #[test]
 fn length_finish_runs_no_tool_and_asks_the_model_again() {
-    let mut history = Vec::new();
-    let mut conversation = Conversation::new(&mut history);
+    let mut context = Vec::new();
+    let mut conversation = Conversation::new(&mut context);
     let _ = conversation.start(vec![Block::user_text("one")]);
 
     let action = conversation.model_finished(Ok(tool_answer(FinishReason::Length)), origin());
@@ -211,7 +211,7 @@ fn length_finish_runs_no_tool_and_asks_the_model_again() {
     ));
     assert!(matches!(conversation.proceed(Vec::new()), Action::Send(_)));
 
-    let body = body(&history);
+    let body = body(&context);
     assert_in_order(&body, &["one", "c1", "c2"]);
     assert_eq!(
         body.matches("was not executed: the response hit the output token limit")
@@ -224,8 +224,8 @@ fn length_finish_runs_no_tool_and_asks_the_model_again() {
 
 #[test]
 fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
-    let mut history = Vec::new();
-    let mut conversation = Conversation::new(&mut history);
+    let mut context = Vec::new();
+    let mut conversation = Conversation::new(&mut context);
     let _ = conversation.start(vec![Block::user_text("one")]);
     let _ = conversation.model_finished(Ok(tool_answer(FinishReason::ContentFilter)), origin());
 
@@ -238,7 +238,7 @@ fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
             ..
         }
     ));
-    let results: Vec<(&str, bool)> = history
+    let results: Vec<(&str, bool)> = context
         .iter()
         .filter_map(|block| match block {
             Block::ToolResult(result) if result.content.ends_with("finish reason content_filter.") => {
@@ -252,18 +252,18 @@ fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
 
 #[test]
 fn start_sends_every_block_of_the_input() {
-    let mut history = Vec::new();
-    let mut conversation = Conversation::new(&mut history);
+    let mut context = Vec::new();
+    let mut conversation = Conversation::new(&mut context);
 
     let _ = conversation.start(vec![Block::user_text("look at this"), Block::user_text("and this")]);
 
-    assert_in_order(&body(&history), &["look at this", "and this"]);
+    assert_in_order(&body(&context), &["look at this", "and this"]);
 }
 
 #[test]
 fn cancelled_request_keeps_its_text_and_calls_but_not_its_reasoning() {
-    let mut history = Vec::new();
-    let mut conversation = Conversation::new(&mut history);
+    let mut context = Vec::new();
+    let mut conversation = Conversation::new(&mut context);
     let _ = conversation.start(vec![Block::user_text("one")]);
 
     let action = conversation.model_cancelled(vec![
@@ -280,7 +280,7 @@ fn cancelled_request_keeps_its_text_and_calls_but_not_its_reasoning() {
         }
     ));
     assert_eq!(
-        history,
+        context,
         [
             Block::user_text("one"),
             Block::assistant_text("Let me check."),
