@@ -13,5 +13,11 @@ uuid = { version = "1.28.0", features = ["serde", "v7"] }
 yuke-ai = { path = "../ai", default-features = false }
 yuke-engine = { path = "../engine" }
 
+[dev-dependencies]
+# ts-rs ignores `serde(transparent)` and writes a newtype as its inner type. The feature stops its warning.
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
+yuke-ai = { path = "../ai", default-features = false, features = ["ts"] }
+yuke-engine = { path = "../engine", features = ["ts"] }
+
 [lints]
 workspace = true

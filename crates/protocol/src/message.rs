@@ -1,5 +1,8 @@
 //! The JSON-RPC 2.0 messages: the requests and notifications of a client, the notifications of a server, and the
 //! responses. Each type holds one message, a JSON object with `"jsonrpc": "2.0"`. The protocol has no batches.
+//!
+//! An `Option` field that JSON can omit has `serde(default)` beside `skip_serializing_if`: serde needs only the second,
+//! and ts-rs marks the field optional only with both.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -33,6 +36,7 @@ impl<'de> Deserialize<'de> for JsonRpc {
 
 /// The id of a request: a number or a text, as the client chose it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(untagged)]
 pub enum RequestId {
     /// A number.
@@ -43,8 +47,10 @@ pub enum RequestId {
 
 /// A request of a client. The server answers it with one [`Response`] of the same id.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Request {
     /// The version, `"2.0"`.
+    #[cfg_attr(test, ts(type = "\"2.0\""))]
     pub jsonrpc: JsonRpc,
     /// The id that the response repeats.
     pub id: RequestId,
@@ -55,6 +61,7 @@ pub struct Request {
 
 /// The method and the params of a client request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "method", content = "params")]
 pub enum ClientRequest {
     /// Agree on the protocol version. The first request of a connection.
@@ -80,8 +87,10 @@ pub enum ClientRequest {
 
 /// A notification: a message that a server or a client sends with no id. It gets no response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Notification<Message> {
     /// The version, `"2.0"`.
+    #[cfg_attr(test, ts(type = "\"2.0\""))]
     pub jsonrpc: JsonRpc,
     /// The method and its params.
     #[serde(flatten)]
@@ -90,6 +99,7 @@ pub struct Notification<Message> {
 
 /// The method and the params of a client notification.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "method", content = "params")]
 pub enum ClientNotification {
     /// Ask the server to stop the running turn of a session. The end of the turn arrives as a saved commit.
@@ -99,6 +109,7 @@ pub enum ClientNotification {
 
 /// The method and the params of a server notification.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "method", content = "params")]
 pub enum ServerNotification {
     /// A saved event or a live update of a session.
@@ -108,8 +119,10 @@ pub enum ServerNotification {
 
 /// The answer to a request: its result or its error.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Response {
     /// The version, `"2.0"`.
+    #[cfg_attr(test, ts(type = "\"2.0\""))]
     pub jsonrpc: JsonRpc,
     /// The id of the request. It is null when the server cannot read the id, as after a parse error.
     pub id: Option<RequestId>,
@@ -120,23 +133,26 @@ pub struct Response {
 
 /// The `result` or the `error` member of a response. A result is the JSON of the result type of its method.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ResponseOutcome {
     /// The request succeeded.
-    Result(serde_json::Value),
+    Result(#[cfg_attr(test, ts(type = "unknown"))] serde_json::Value),
     /// The request failed.
     Error(ResponseError),
 }
 
 /// The error of a failed request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct ResponseError {
     /// The kind of the error: one of the constants of this type.
     pub code: i32,
     /// A short text for a person.
     pub message: String,
     /// More facts about the error, when the server has them.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(type = "unknown"))]
     pub data: Option<serde_json::Value>,
 }
 
@@ -161,12 +177,13 @@ impl ResponseError {
 
 /// The name, an optional title, and the version of a client or a server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Implementation {
     /// The name for a program.
     pub name: String,
     /// The name for a person.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// The version.
     pub version: String,
@@ -174,6 +191,7 @@ pub struct Implementation {
 
 /// The params of `initialize`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeParams {
     /// The newest protocol version of the client.
@@ -184,6 +202,7 @@ pub struct InitializeParams {
 
 /// The result of `initialize`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeResult {
     /// The protocol version that the server selects: the version of the client when the server speaks it, or else
@@ -196,6 +215,7 @@ pub struct InitializeResult {
 /// The params of `session/new`: the settings of the new session. Each field is required, and a null value keeps the
 /// endpoint default.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct NewSessionParams {
     /// The model, the request settings, and the working folder.
@@ -205,6 +225,7 @@ pub struct NewSessionParams {
 
 /// The result of `session/new`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct NewSessionResult {
     /// The id of the new session.
@@ -213,18 +234,20 @@ pub struct NewSessionResult {
 
 /// The params of `session/fork`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ForkSessionParams {
     /// The source session.
     pub session_id: SessionId,
     /// The event number of the end of a completed turn. None takes the newest completed turn, or the settings before
     /// the first commit when no turn completed.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<EventNumber>,
 }
 
 /// The result of `session/fork`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ForkSessionResult {
     /// The id of the new session.
@@ -233,17 +256,19 @@ pub struct ForkSessionResult {
 
 /// The params of `session/load`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct LoadSessionParams {
     /// The session.
     pub session_id: SessionId,
     /// The last event that the client has. None sends every event.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<EventNumber>,
 }
 
 /// The result of `session/load`. The saved events arrive before it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct LoadSessionResult {
     /// The inputs that no commit consumed, in id order.
@@ -252,6 +277,7 @@ pub struct LoadSessionResult {
 
 /// The params of `session/input`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InputParams {
     /// The session.
@@ -262,6 +288,7 @@ pub struct InputParams {
 
 /// The result of `session/input`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InputResult {
     /// The id of the pending input.
@@ -270,6 +297,7 @@ pub struct InputResult {
 
 /// The params of `session/set_settings`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SetSettingsParams {
     /// The session.
@@ -281,6 +309,7 @@ pub struct SetSettingsParams {
 
 /// The result of `session/set_settings`: an empty object.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[expect(
     clippy::empty_structs_with_brackets,
     reason = "serde writes a struct with braces as `{}`, and a unit struct as `null`"
@@ -289,6 +318,7 @@ pub struct SetSettingsResult {}
 
 /// The params of `session/cancel`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CancelParams {
     /// The session.

@@ -24,6 +24,7 @@ pub enum Protocol {
 /// The kind of provider state that a reasoning block must return verbatim. Each kind names the protocol that
 /// produced the state. Only the encoder of that protocol writes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ReplayKind {
@@ -39,6 +40,7 @@ pub enum ReplayKind {
 
 /// The model and host that answered a request. Provider state returns only to the same model at the same host.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Origin {
     /// The upstream model ID.
@@ -92,6 +94,7 @@ impl From<OriginRef<'_>> for Origin {
 
 /// Provider state, and the origin that may receive it again. The state must return to its provider verbatim.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ReasoningReplay {
     /// The model and host that produced the state.
@@ -148,10 +151,12 @@ pub type Digest = [u8; 32];
 /// Bytes in the caller's store, named by the digest of their content. Equal digests name equal bytes. Thus the request
 /// of a resumed context reads no blob that the encoder kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Blob {
     /// The digest of the content, such as its SHA-256. JSON holds it as 64 lowercase hex characters.
     #[serde(with = "digest_hex")]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub digest: Digest,
     /// The byte count of the content. [`BlobStore`] answers are checked against it.
     pub len: usize,
@@ -244,6 +249,7 @@ impl Role {
 /// One block of the conversation. Its kind fixes its role ([`Block::role`]), so it holds only content of that role.
 /// The serializer groups the blocks into the messages of each protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum Block {
     /// User text.
@@ -306,6 +312,7 @@ impl From<ToolCall> for Block {
 
 /// One attachment. Its media type selects the block each protocol writes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Media {
     /// The bytes in the caller's store. The encoder reads them through [`Request::blobs`] only when it writes the
@@ -350,12 +357,14 @@ impl Media {
 /// Reasoning text, and the provider state that returns with it. A request carries the state only to the origin that
 /// produced it, in that protocol. Elsewhere the block drops, except where a dialect replays the text.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Reasoning {
     /// The reasoning text.
     pub text: String,
     /// `None` for text alone: a block that never finished, or one whose provider sent no state.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // ts-rs marks the field optional only with `default` beside `skip_serializing_if`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay: Option<ReasoningReplay>,
 }
 
@@ -372,6 +381,7 @@ impl Reasoning {
 
 /// A tool call of the assistant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCall {
     /// The provider's call id.
@@ -417,6 +427,7 @@ impl From<ToolCallRef<'_>> for ToolCall {
 /// The result of one tool call.
 // Most results have no media and no loaded tools, so the JSON leaves out both empty lists.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolResult {
     /// The call this result answers.
@@ -477,6 +488,7 @@ pub const SEARCH_TOOL_NAME: &str = "tool_search";
 
 /// A tool definition for the provider.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolDefinition {
     /// The tool name.
@@ -518,6 +530,7 @@ impl ToolDefinition {
 /// Ask for a response that matches a JSON Schema. Anthropic, and OpenAI with a strict schema, enforce it while
 /// they sample.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct OutputSchema {
     /// The schema name OpenAI requires. Anthropic takes no name.
@@ -541,6 +554,7 @@ impl OutputSchema {
 
 /// A named reasoning effort from the closed portable set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 #[expect(missing_docs, reason = "each variant is the wire name of one effort")]
 pub enum Effort {
@@ -631,6 +645,7 @@ pub enum ThinkingFormat {
 
 /// Whether and how the model thinks before it answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum Thinking {
     /// Ask for no reasoning. Some hosts accept the field and reason again.
@@ -644,6 +659,7 @@ pub enum Thinking {
 
 /// Whether a thinking block returns its summary text. Anthropic bills the full thinking either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingDisplay {
     /// `summarized`.
@@ -665,6 +681,7 @@ impl ThinkingDisplay {
 /// The reasoning one request asks for, as the caller chose it for the model. Each serializer writes the settings its
 /// protocol has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ReasoningSettings {
     /// Whether and how the model thinks. `None` leaves the endpoint default.
@@ -755,6 +772,7 @@ pub struct Target {
 /// The settings of a request apart from its conversation, its tools, and its blobs. A caller can store one for each
 /// session, and [`Request::settings`] applies it. It names no model and holds no secret.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     /// The system prompt. An empty prompt writes none.
@@ -953,6 +971,7 @@ impl fmt::Debug for Request<'_> {
 
 /// The tool controls every host understands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ToolChoice {
     /// The model decides.

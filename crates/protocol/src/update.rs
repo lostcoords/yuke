@@ -7,6 +7,7 @@ use crate::{SessionId, StoredEvent};
 
 /// The params of `session/update`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionUpdateParams {
     /// The session of the update.
@@ -17,6 +18,7 @@ pub struct SessionUpdateParams {
 
 /// A saved event with its event number, or a live update with none. The `sessionUpdate` field of each names its kind.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(untagged)]
 pub enum SessionUpdate {
     /// A change that the store saved.
@@ -28,6 +30,7 @@ pub enum SessionUpdate {
 /// A part of a running turn that a client shows as it happens. It is for display only: a text chunk names no block,
 /// and the next saved commit holds the whole answer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "sessionUpdate", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum LiveUpdate {
     /// New text of the answer.

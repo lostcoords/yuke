@@ -1,6 +1,8 @@
 //! The yuke protocol: JSON-RPC 2.0 messages between a yuke server and its clients, in the conventions of the Agent
 //! Client Protocol. The session types of the messages are the types that `yuke-agent` and its stores save.
 
+#[cfg(test)]
+mod bindings;
 mod event;
 mod id;
 mod message;

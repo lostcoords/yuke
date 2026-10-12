@@ -12,6 +12,7 @@ use crate::request::{Block, Reasoning, ReasoningReplayRef, ToolCall, ToolCallRef
 /// Why a response ended. At `Length` a tool call can hold cut-off arguments, so do not run such a call.
 /// `Pause` marks an Anthropic server-tool loop at its iteration cap. The same content resumes the loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum FinishReason {
@@ -62,6 +63,7 @@ impl FinishReason {
 
 /// Token counts of one attempt, in the convention of OpenAI: a total includes the parts named after it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Usage {
     /// Every prompt token, `cache_read` and `cache_write` among them.

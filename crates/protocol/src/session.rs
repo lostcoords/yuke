@@ -9,6 +9,7 @@ use crate::InputId;
 /// The current choice of a session: the model, the request settings, and the working folder. It holds no credential
 /// and no route.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSettings {
     /// The model of the next turn.
@@ -21,6 +22,7 @@ pub struct SessionSettings {
 
 /// A model of a provider, by the ids of the config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ModelReference {
     /// The id of the provider.
@@ -41,6 +43,7 @@ impl ModelReference {
 
 /// An input that no commit consumed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PendingInput {
     /// The id that `Store::accept_input` of `yuke-agent` gave.

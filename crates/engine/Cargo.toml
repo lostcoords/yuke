@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+# Derive the TypeScript declarations of the serde types through ts-rs. The binding test of yuke-protocol turns it on.
+ts = ["dep:ts-rs", "yuke-ai/ts"]
+
 [dependencies]
 async-trait = "0.1.92"
 fastrand = "2.5.0"
@@ -13,6 +17,7 @@ futures-util = { version = "0.3.34", default-features = false, features = ["allo
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["raw_value"] }
 tokio-util = "0.7.19"
+ts-rs = { version = "12.0.1", optional = true }
 yuke-ai = { path = "../ai", default-features = false }
 
 [dev-dependencies]
