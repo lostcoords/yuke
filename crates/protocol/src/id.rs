@@ -3,7 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 /// The id of a session: a version 7 UUID, so the ids sort by the millisecond of their creation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct SessionId(uuid::Uuid);
 
 impl SessionId {
@@ -19,7 +20,8 @@ impl SessionId {
 }
 
 /// The number of an event in its session. The events of a session have the numbers 1, 2, 3, and so on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct EventNumber(pub u64);
 
 /// The id of a pending input. A store gives each input of a session a larger id than the inputs before it.

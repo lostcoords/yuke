@@ -40,7 +40,8 @@ impl ModelReference {
 }
 
 /// An input that no commit consumed.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PendingInput {
     /// The id that `Store::accept_input` of `yuke-agent` gave.
     pub id: InputId,
