@@ -1,5 +1,5 @@
 //! Model calls over Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses. [`generate`] returns one owned
-//! [`Response`]. [`Encoder`], [`Reply`], and [`Stream`] split the same call into steps that lend until the next call.
+//! [`Response`]. [`Encoder`] and [`Reply`] split the same call into steps that lend until the next call.
 
 pub mod catalog;
 mod encoder;
@@ -35,7 +35,7 @@ pub use response::{
     AttemptError, AttemptInfo, BlockId, BlockKind, BlockResult, BlockStarted, BlockStopped, Completion, Content,
     Delivery, Delta, Done, Error, Event, FinishReason, Partial, Response, ResponseLimits, Usage,
 };
-pub use stream::{Options, Stream};
+pub use stream::Options;
 use transport::Transport;
 
 /// Encode one request, open it with `options`, and read the reply to its end. No automatic retries and no tool
@@ -129,11 +129,6 @@ mod tests {
         let mut encoder = Encoder::new();
         send(&encoder);
         let encoded = encoder.encode(&target, request).unwrap();
-        let open = Stream::open(&canned, &encoded, Options::default());
-        send(&open);
-        let mut stream: Stream = block_on(open);
-        send(&stream);
-        send(&stream.next());
         let open = Reply::open(&canned, &encoded, Options::default());
         send(&open);
         let mut reply = block_on(open);

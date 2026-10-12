@@ -679,8 +679,9 @@ mod tests {
 
     #[test]
     fn non_string_reasoning_delta_fails_without_output() {
+        use crate::stream::Stream;
         use crate::testing::{CannedTransport, block_on, frame, target};
-        use crate::{Block, Encoder, Failure, Options, Protocol, Request, Stream};
+        use crate::{Block, Encoder, Failure, Options, Protocol, Request};
         for (delta, valid) in [("5", false), (r#""x""#, true)] {
             let events = [
                 r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}"#.to_owned(),

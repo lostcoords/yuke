@@ -83,7 +83,7 @@ enum State {
 }
 
 /// Every event of one attempt, with no retained output. See the module documentation.
-pub struct Stream {
+pub(crate) struct Stream {
     info: AttemptInfo,
     /// The response body, or `None` when the transport opened none. The stream owns the body until the stream drops,
     /// and the drop closes the connection.
@@ -113,7 +113,7 @@ impl std::fmt::Debug for Stream {
 impl Stream {
     /// Open one attempt. Borrow `request` only until this returns. An opening fault, and an answer other than 200,
     /// become the first event.
-    pub async fn open(transport: &dyn Transport, request: &Encoded<'_>, options: Options) -> Stream {
+    pub(crate) async fn open(transport: &dyn Transport, request: &Encoded<'_>, options: Options) -> Stream {
         let limits = options.limits;
         // The stream keeps no request bytes, so the reasoning origin is its own copy.
         let draft = Draft::new(Origin::from(request.origin), limits);
@@ -156,13 +156,14 @@ impl Stream {
     }
 
     /// The attempt facts, on success and failure.
-    pub fn info(&self) -> &AttemptInfo {
+    #[cfg(test)]
+    pub(crate) fn info(&self) -> &AttemptInfo {
         &self.info
     }
 
     /// Return the next event, the one failure that ends a failed attempt, or `None` after the end. The event borrows
     /// the stream until the next call. A drop of the returned future loses no event, so `select!` can race it.
-    pub async fn next(&mut self) -> Option<Result<Event<'_>, Failure>> {
+    pub(crate) async fn next(&mut self) -> Option<Result<Event<'_>, Failure>> {
         match self.state {
             State::Ended => None,
             State::Failed(failure) => Some(Err(self.fail(failure))),

@@ -34,7 +34,8 @@ enum End {
 }
 
 impl Reply {
-    /// Open one attempt, as [`Stream::open`] does: borrow `request` only until this returns.
+    /// Open one attempt. Borrow `request` only until this returns. An opening fault, and an answer other than 200,
+    /// become the first event.
     pub async fn open(transport: &dyn Transport, request: &Encoded<'_>, options: Options) -> Reply {
         Reply {
             stream: Stream::open(transport, request, options).await,
@@ -43,8 +44,9 @@ impl Reply {
         }
     }
 
-    /// Return the next event, as [`Stream::next`] does, after the reply keeps what it says. The event borrows the
-    /// reply until the next call. A drop of the returned future loses no event.
+    /// Return the next event, the one failure that ends a failed attempt, or `None` after the end. The reply keeps what
+    /// the event says. The event borrows the reply until the next call. A drop of the returned future loses no event,
+    /// so `select!` can race it.
     pub async fn next(&mut self) -> Option<Result<Event<'_>, Failure>> {
         let item = self.stream.next().await?;
         match &item {
