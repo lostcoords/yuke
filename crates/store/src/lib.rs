@@ -3,6 +3,7 @@
 //! run `mise exec -- cargo run -p yuke-sqlgen` after a change of `migrations/` or `queries/`.
 
 mod context;
+mod event;
 mod files;
 // Clippy accepts `use super::*` in a test build, so the expectation holds only outside tests.
 #[cfg_attr(

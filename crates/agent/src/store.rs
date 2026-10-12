@@ -1,6 +1,7 @@
 //! The durable steps of a session, and the types that a store saves and loads.
 
 use std::fmt;
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -9,23 +10,30 @@ use yuke_engine::Commit;
 /// Saves and loads sessions. Each method is one atomic durable step. One writer at a time owns a session. A second
 /// [`Access::Write`] open gets [`StoreError::Owned`] until the [`Lease`] of the first writer drops and its writes end.
 /// Only the holder of the lease calls [`Store::set_settings`] and [`Store::commit`]. Any caller can accept input.
+///
+/// Each commit and each settings change also save one [`SessionEvent`] with the next event number of the session. A
+/// reader of [`Store::events`] sees each of them once and in order. An accepted input is no event: it enters the events
+/// with the commit that consumes it.
 #[async_trait]
 pub trait Store: Send + Sync {
-    /// Save a new session with `settings`, and open it for writing.
+    /// Save a new session with `settings`, and open it for writing. Its first event holds the settings.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError::Failed`] when the save fails.
     async fn create_session(&self, settings: &SessionSettings) -> Result<Opened, StoreError>;
 
-    /// Save a new session with a copy of the settings, the commits, and the blobs of session `source`, and open it for
-    /// writing. The copy has no pending input. A writer of `source` can keep its lease during the fork.
+    /// Save a new session with the events of session `source` up to the end of a completed turn, and open it for
+    /// writing. `through` is the event number of that end. `None` takes the newest completed turn, and a source with no
+    /// completed turn gives the settings before its first commit. The copy has the settings at that point, every blob of
+    /// the source, no pending input, and no open turn. A writer of `source` can keep its lease during the fork.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError::NotFound`] for an unknown source, and [`StoreError::Failed`] when the save fails. After a
-    /// failed save, the store deletes the new session, and an error of that delete returns in its place.
-    async fn fork_session(&self, source: SessionId) -> Result<Opened, StoreError>;
+    /// Returns [`StoreError::NotFound`] for an unknown source, [`StoreError::NotACompletedTurn`] when event `through`
+    /// does not end a completed turn, and [`StoreError::Failed`] when the save fails. A failed save leaves no new
+    /// session. When the delete of a partial copy fails, the error of that delete returns in place of the first one.
+    async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError>;
 
     /// Replace the settings of session `id` with `settings`.
     ///
@@ -64,6 +72,13 @@ pub trait Store: Send + Sync {
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the load fails.
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError>;
 
+    /// The events of session `id` after event `after`, in event-number order. `None` gives every event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the load fails.
+    async fn events(&self, id: SessionId, after: Option<EventNumber>) -> Result<Vec<StoredEvent>, StoreError>;
+
     /// Save `bytes` as a blob of session `id`, and return its [`blob_of`] reference. Only this session reads the blob.
     /// The same bytes again give the same blob. Any caller can put a blob.
     ///
@@ -80,7 +95,7 @@ pub trait Store: Send + Sync {
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the read fails.
     fn read_blob(&self, id: SessionId, digest: &yuke_ai::Digest) -> Result<Option<Vec<u8>>, StoreError>;
 
-    /// Delete session `id` with its commits, inputs, and blobs.
+    /// Delete session `id` with its events, pending inputs, and blobs.
     ///
     /// # Errors
     ///
@@ -115,9 +130,14 @@ impl SessionId {
     }
 }
 
-/// The id of a pending input. A store gives each input of a session a larger id than the inputs before it.
+/// The number of an event in its session. The events of a session have the numbers 1, 2, 3, and so on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct InputId(pub i64);
+pub struct EventNumber(pub u64);
+
+/// The id of a pending input. A store gives each input of a session a larger id than the inputs before it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct InputId(pub u64);
 
 /// The current choice of a session: the model and the request settings. It holds no credential and no route, so the
 /// agent makes the target from the model reference and its config.
@@ -127,6 +147,8 @@ pub struct SessionSettings {
     pub model: ModelReference,
     /// The request settings of the next turn.
     pub settings: yuke_ai::Settings,
+    /// The folder that the tools of the session work in.
+    pub cwd: PathBuf,
 }
 
 /// A model of a provider, by the ids of the config.
@@ -181,6 +203,29 @@ pub struct PendingInput {
     pub blocks: Vec<yuke_ai::Block>,
 }
 
+/// One saved event of a session, with its event number.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredEvent {
+    /// The number of the event in its session.
+    pub event_number: EventNumber,
+    /// What the event saved.
+    pub event: SessionEvent,
+}
+
+/// A change of a session that the store saves.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionEvent {
+    /// A commit of a turn, and the inputs that it consumed. The blocks of the commit hold the blocks of those inputs.
+    Commit {
+        /// The commit, with its own blocks.
+        commit: Commit<'static>,
+        /// The inputs that the commit consumed.
+        consumed: Vec<InputId>,
+    },
+    /// The settings of the session from this event on.
+    Settings(SessionSettings),
+}
+
 /// Holds the owner lock of a session. The drop releases the lock.
 pub struct Lease {
     #[expect(dead_code, reason = "only the drop of the guard matters: it releases the lock")]
@@ -207,6 +252,8 @@ pub enum StoreError {
     Owned,
     /// The store has no session with this id.
     NotFound,
+    /// The event that a fork names does not end a completed turn.
+    NotACompletedTurn,
     /// The store failed to save or load.
     Failed(Box<dyn std::error::Error + Send + Sync>),
 }
@@ -216,6 +263,7 @@ impl fmt::Display for StoreError {
         match self {
             Self::Owned => f.write_str("another writer holds the session"),
             Self::NotFound => f.write_str("the store has no such session"),
+            Self::NotACompletedTurn => f.write_str("the event does not end a completed turn"),
             // The text names no cause, because `source` returns it.
             Self::Failed(_) => f.write_str("the store failed"),
         }
@@ -226,7 +274,7 @@ impl std::error::Error for StoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Failed(error) => Some(error.as_ref()),
-            Self::Owned | Self::NotFound => None,
+            Self::Owned | Self::NotFound | Self::NotACompletedTurn => None,
         }
     }
 }

@@ -7,10 +7,14 @@ keeps a folder for each session in `folder/sessions/<id>/`, with the lock file a
 
 - One file holds all sessions. The connection uses WAL, and a commit is durable when it returns.
 - One connection runs each read and write in call order on its own thread.
-- The `sessions` table holds one row for each session. The `commits` table holds one row for each engine commit. The
-  `pending_inputs` table holds the inputs that no commit consumed.
+- The `sessions` table holds one row for each session. The `events` table holds the engine commits and the settings of
+  each session, numbered 1, 2, 3, and so on. The first event of a session holds its settings, and the newest settings
+  event holds the current settings. The `pending_inputs`
+  table holds the inputs that no commit consumed.
+- Each commit and each settings change take the next event number in the same transaction, so the numbers have no gap.
 - Blocks and settings are JSON. The answer facts and the turn end are columns.
 - `open` loads the context from the newest replacement: its head, the blocks that it keeps, and the commits after it.
+- `events(id, after)` reads the events after event number `after`, or every event for `None`.
 
 ## Owner lock
 
@@ -29,8 +33,10 @@ keeps a folder for each session in `folder/sessions/<id>/`, with the lock file a
 
 ## Fork
 
-- `fork_session` copies the session row and each commit row in one transaction. A copied commit keeps its token usage
-  and its creation time. The new session row gets the time of the fork. The pending inputs stay with the source.
+- `fork_session` copies the session up to the end of a completed turn: the event that the fork names, or the newest
+  completed turn. One transaction finds that end and copies the events up to it. A copied event keeps its number, its
+  token usage, and its creation time. The new session row gets the time of the fork, and the newest copied settings event gives its settings. The
+  pending inputs stay with the source.
 - Then it locks the new folder and copies each blob file through a temporary file. On a file system with reflinks, such as
   btrfs or APFS, the copy can share the blocks of the source file.
 - The fork takes no lock on the source, so a writer of the source can keep its lease during the fork.

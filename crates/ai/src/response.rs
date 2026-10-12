@@ -41,6 +41,20 @@ impl FinishReason {
             Self::Unknown => "unknown",
         }
     }
+
+    /// The reason that [`FinishReason::as_str`] names, or `None` for another name.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "stop" => Self::Stop,
+            "length" => Self::Length,
+            "content_filter" => Self::ContentFilter,
+            "refusal" => Self::Refusal,
+            "tool_calls" => Self::ToolCalls,
+            "pause" => Self::Pause,
+            "unknown" => Self::Unknown,
+            _ => return None,
+        })
+    }
 }
 
 /// Token counts of one attempt, in the convention of OpenAI: a total includes the parts named after it.
@@ -401,6 +415,24 @@ impl From<AttemptError> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A store saves a reason by its name and reads it back by that name.
+    #[test]
+    fn each_finish_reason_reads_back_from_its_name() {
+        let reasons = [
+            FinishReason::Stop,
+            FinishReason::Length,
+            FinishReason::ContentFilter,
+            FinishReason::Refusal,
+            FinishReason::ToolCalls,
+            FinishReason::Pause,
+            FinishReason::Unknown,
+        ];
+        for reason in reasons {
+            assert_eq!(FinishReason::from_name(reason.as_str()), Some(reason));
+        }
+        assert_eq!(FinishReason::from_name("end_turn"), None);
+    }
 
     // A retry is safe only before output reached the caller, so an empty event must not close that window.
     #[test]

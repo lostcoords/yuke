@@ -2,7 +2,7 @@
 
 use yuke_sql::rusqlite::{self, Connection};
 
-use crate::queries::{commits, sessions};
+use crate::queries::events;
 
 /// A session as the database holds it.
 pub(crate) struct Loaded {
@@ -27,22 +27,23 @@ impl Loaded {
 /// Load session `session`, or `None` when the database has no such session. Run it in a transaction, so each query
 /// reads the same state.
 pub(crate) fn load(connection: &Connection, session: [u8; 16]) -> rusqlite::Result<Option<Loaded>> {
-    let Some(settings) = sessions::session_settings(connection, session).opt()? else {
+    // Each session has a settings event, so no row means no session.
+    let Some(settings) = events::newest_settings(connection, session).opt()? else {
         return Ok(None);
     };
     // The context starts at the newest replacement: its head, then the blocks that it keeps.
     let mut context = Vec::new();
     let mut first = 0;
-    if let Some(replacement) = commits::newest_replacement(connection, session).opt()? {
+    if let Some(replacement) = events::newest_replacement(connection, session).opt()? {
         if let (Some(head), Some(keep)) = (replacement.head, replacement.keep) {
             context = head.0;
-            context.append(&mut kept(connection, session, replacement.id, keep)?);
+            context.append(&mut kept(connection, session, replacement.seq, keep)?);
         }
-        first = replacement.id;
+        first = replacement.seq;
     }
-    let rows = commits::commits_from(
+    let rows = events::commits_from(
         connection,
-        &commits::CommitsFromParams {
+        &events::CommitsFromParams {
             session_id: session,
             first,
         },
@@ -50,21 +51,21 @@ pub(crate) fn load(connection: &Connection, session: [u8; 16]) -> rusqlite::Resu
     .all()?;
     let turn_open = rows.last().is_some_and(|row| row.end_kind.is_none());
     for row in rows {
-        context.extend(row.blocks.0);
+        context.extend(required(row.blocks, "blocks")?.0);
     }
     Ok(Some(Loaded {
-        settings: settings.settings.0,
+        settings: required(settings.settings, "settings")?.0,
         context,
         turn_open,
     }))
 }
 
-/// The last `count` blocks of the context before commit `before`, oldest first. A context shorter than `count` gives
+/// The last `count` blocks of the context before event `before`, oldest first. A context shorter than `count` gives
 /// all its blocks.
 fn kept(
     connection: &Connection,
     session: [u8; 16],
-    mut before: i64,
+    mut before: u64,
     mut count: usize,
 ) -> rusqlite::Result<Vec<yuke_ai::Block>> {
     // The walk goes back over the commits, so it collects the parts newest first. A loop, not a recursion, keeps the
@@ -74,14 +75,14 @@ fn kept(
     // For each replacement on the walk: its head, the number of blocks still missing, and `collected` at that point.
     let mut heads = Vec::new();
     while count > 0 {
-        let params = commits::PreviousCommitParams {
+        let params = events::PreviousCommitParams {
             session_id: session,
             before,
         };
-        let Some(row) = commits::previous_commit(connection, &params).opt()? else {
+        let Some(row) = events::previous_commit(connection, &params).opt()? else {
             break;
         };
-        let mut blocks = row.blocks.0;
+        let mut blocks = required(row.blocks, "blocks")?.0;
         let part = blocks.split_off(blocks.len().saturating_sub(count));
         count -= part.len();
         collected += part.len();
@@ -93,7 +94,7 @@ fn kept(
             heads.push((head.0, count, collected));
             count = count.min(keep);
         }
-        before = row.id;
+        before = row.seq;
     }
     // Take the replacements in reverse walk order. In the context, the head of an older replacement comes after the
     // head of a newer one.
@@ -104,4 +105,9 @@ fn kept(
         parts.push(part);
     }
     Ok(parts.into_iter().rev().flatten().collect())
+}
+
+/// The value of a column that the kind of its row always sets. A missing value means a damaged row.
+pub(crate) fn required<T>(value: Option<T>, column: &str) -> rusqlite::Result<T> {
+    value.ok_or_else(|| rusqlite::Error::InvalidColumnType(0, column.to_owned(), rusqlite::types::Type::Null))
 }

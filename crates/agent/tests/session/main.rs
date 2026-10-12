@@ -1,4 +1,4 @@
-//! A session over a memory store: it opens again with its context, ends an open turn, forks, keeps pending inputs,
+//! A session over a memory store: it opens again with its context, ends an open turn, keeps pending inputs,
 //! takes input during a turn, and opens again after a failed commit.
 #![expect(clippy::unwrap_used, clippy::expect_used, reason = "a test fails by panicking")]
 
@@ -13,7 +13,10 @@ use support::{
     FailingStore, NoWait, ScriptedTransport, SendsInput, Stalled, assert_in_order, failed_reply, settings, target,
     text_reply, tool_reply,
 };
-use yuke_agent::{Access, MemoryStore, ModelReference, Session, SessionError, SessionSettings, Store, StoreError};
+use yuke_agent::{
+    Access, InputId, MemoryStore, ModelReference, Session, SessionError, SessionEvent, SessionSettings, Store,
+    StoreError,
+};
 use yuke_ai::{Block, Media, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::{Commit, Driver, Toolset};
 
@@ -21,7 +24,7 @@ use yuke_engine::{Commit, Driver, Toolset};
 fn step(blocks: &[Block]) -> Commit<'_> {
     Commit {
         replaced: None,
-        blocks,
+        blocks: std::borrow::Cow::Borrowed(blocks),
         answer: None,
         end: None,
     }
@@ -112,54 +115,6 @@ async fn an_open_turn_ends_with_an_error_result_for_each_call_without_a_result()
     let saved = store.open(id, Access::Read).await.unwrap();
     assert!(!saved.turn_open);
     assert_eq!(saved.context, session.context());
-}
-
-#[tokio::test]
-async fn a_fork_of_an_open_turn_ends_the_turn_in_the_fork_and_leaves_the_source_open() {
-    let store = Arc::new(MemoryStore::new());
-    let source = store.create_session(&settings()).await.unwrap().id;
-    let open = [
-        Block::user_text("one"),
-        Block::ToolCall(ToolCall::new("c1", "read", "{}")),
-    ];
-    store.commit(source, &step(&open), &[]).await.unwrap();
-
-    let fork = Session::fork(store.clone(), source).await.unwrap();
-
-    assert_ne!(fork.id(), source);
-    let Some(Block::ToolResult(result)) = fork.context().get(open.len()) else {
-        panic!("a result was expected after the call, not {:?}", fork.context());
-    };
-    assert_eq!((result.call_id.as_str(), result.is_error), ("c1", true));
-    let saved_fork = store.open(fork.id(), Access::Read).await.unwrap();
-    assert!(!saved_fork.turn_open);
-    assert_eq!(saved_fork.context, fork.context());
-    let saved_source = store.open(source, Access::Read).await.unwrap();
-    assert!(saved_source.turn_open);
-    assert_eq!(saved_source.context, open);
-}
-
-#[tokio::test]
-async fn a_fork_whose_repair_fails_deletes_the_copy() {
-    // The first commit opens a turn in the source, and the second one, the repair of the fork, fails.
-    let store = FailingStore::new(2);
-    let source = store.create_session(&settings()).await.unwrap().id;
-    let open = [Block::ToolCall(ToolCall::new("c1", "read", "{}"))];
-    store.commit(source, &step(&open), &[]).await.unwrap();
-
-    let fork = Session::fork(store.clone(), source).await;
-
-    assert!(
-        matches!(fork, Err(StoreError::Failed(_))),
-        "{:?}",
-        fork.map(|session| session.id())
-    );
-    let [copy] = store.forks()[..] else {
-        panic!("one fork was expected, not {:?}", store.forks());
-    };
-    let reopened = store.open(copy, Access::Read).await;
-    assert!(matches!(reopened, Err(StoreError::NotFound)), "{reopened:?}");
-    assert!(store.open(source, Access::Read).await.unwrap().turn_open);
 }
 
 #[tokio::test]
@@ -293,6 +248,36 @@ async fn the_input_of_a_failed_commit_joins_the_next_turn() {
     let saved = store.open(session.id(), Access::Read).await.unwrap();
     assert_eq!(saved.context, [Block::user_text("one"), Block::assistant_text("two")]);
     assert_eq!(store.pending(session.id()).await.unwrap(), []);
+}
+
+#[tokio::test]
+async fn after_a_failed_commit_the_next_turn_consumes_each_input_once() {
+    // The first commit of a turn saves its input, before any request.
+    let store = FailingStore::new(1);
+    let transport = ScriptedTransport::new([text_reply("two")]);
+    let target = target();
+    let mut session = Session::create(store.clone(), settings()).await.unwrap();
+    let input = session.input().send(&[Block::user_text("one")]).await.unwrap();
+
+    let failed = session.turn(Driver::new(&transport, &target, &NoWait)).run().await;
+    session
+        .turn(Driver::new(&transport, &target, &NoWait))
+        .run()
+        .await
+        .unwrap();
+
+    assert!(failed.is_err(), "{failed:?}");
+    let consumed: Vec<InputId> = store
+        .events(session.id(), None)
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|stored| match stored.event {
+            SessionEvent::Commit { consumed, .. } => consumed,
+            SessionEvent::Settings(_) => Vec::new(),
+        })
+        .collect();
+    assert_eq!(consumed, [input]);
 }
 
 #[tokio::test]

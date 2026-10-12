@@ -4,11 +4,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use yuke_engine::Commit;
+use yuke_engine::{Commit, Outcome, TurnEnd};
 
 use crate::lock;
 use crate::store::{
-    Access, InputId, Lease, Opened, PendingInput, SessionId, SessionSettings, Store, StoreError, blob_of,
+    Access, EventNumber, InputId, Lease, Opened, PendingInput, SessionEvent, SessionId, SessionSettings, Store,
+    StoreError, StoredEvent, blob_of,
 };
 
 /// A [`Store`] that keeps its sessions in memory, for tests and for a caller that saves nothing. It refuses a second
@@ -24,18 +25,81 @@ pub struct MemoryStore {
 struct State {
     sessions: HashMap<SessionId, Saved>,
     /// The id of the newest input of all sessions.
-    newest_input: i64,
+    newest_input: u64,
 }
 
-/// One session as a store load gives it.
+/// One session. Its settings, its context, and whether a turn is open follow from its events.
 #[derive(Debug)]
 struct Saved {
-    settings: SessionSettings,
-    context: Vec<yuke_ai::Block>,
+    /// The events of the session. The event at index `i` has the number `i + 1`.
+    events: Vec<StoredEvent>,
     pending: Vec<PendingInput>,
-    turn_open: bool,
     /// The blobs of the session, by digest.
     blobs: HashMap<yuke_ai::Digest, Vec<u8>>,
+}
+
+impl Saved {
+    /// Save `event` with the next number of the session.
+    fn push_event(&mut self, event: SessionEvent) {
+        let event_number = EventNumber(self.events.len() as u64 + 1);
+        self.events.push(StoredEvent { event_number, event });
+    }
+
+    /// The session `id` as a load gives it, with `lease`. A replay of the events gives the settings and the context.
+    fn opened(&self, id: SessionId, lease: Option<Lease>) -> Result<Opened, StoreError> {
+        let mut settings = None;
+        let mut context = Vec::new();
+        let mut turn_open = false;
+        for stored in &self.events {
+            match &stored.event {
+                SessionEvent::Settings(event_settings) => settings = Some(event_settings),
+                SessionEvent::Commit { commit, .. } => {
+                    commit.apply(&mut context);
+                    turn_open = commit.end.is_none();
+                }
+            }
+        }
+        Ok(Opened {
+            id,
+            settings: settings
+                .ok_or_else(|| StoreError::Failed("the session has no settings event".into()))?
+                .clone(),
+            context,
+            turn_open,
+            lease,
+        })
+    }
+}
+
+/// The number of events that a fork of `events` copies. `through` names the end of a completed turn. `None` takes the
+/// newest one, or the events before the first commit when no turn completed.
+fn fork_cut(events: &[StoredEvent], through: Option<EventNumber>) -> Result<usize, StoreError> {
+    let completed = |stored: &StoredEvent| {
+        matches!(
+            &stored.event,
+            SessionEvent::Commit { commit, .. }
+                if matches!(commit.end, Some(TurnEnd::Outcome(Outcome::Completed { .. })))
+        )
+    };
+    match through {
+        Some(through) => {
+            let cut = usize::try_from(through.0).map_err(|_| StoreError::NotACompletedTurn)?;
+            match cut.checked_sub(1).and_then(|index| events.get(index)) {
+                Some(stored) if completed(stored) => Ok(cut),
+                _ => Err(StoreError::NotACompletedTurn),
+            }
+        }
+        None => Ok(events
+            .iter()
+            .rposition(completed)
+            .map(|index| index + 1)
+            .or_else(|| {
+                events
+                    .iter()
+                    .position(|stored| matches!(stored.event, SessionEvent::Commit { .. }))
+            })
+            .unwrap_or(events.len())),
+    }
 }
 
 /// The lock of one writer.
@@ -72,43 +136,27 @@ impl MemoryStore {
 impl Store for MemoryStore {
     async fn create_session(&self, settings: &SessionSettings) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
-        lock(&self.state).sessions.insert(
-            id,
-            Saved {
-                settings: settings.clone(),
-                context: Vec::new(),
-                pending: Vec::new(),
-                turn_open: false,
-                blobs: HashMap::new(),
-            },
-        );
-        Ok(Opened {
-            id,
-            settings: settings.clone(),
-            context: Vec::new(),
-            turn_open: false,
-            lease: Some(self.take_writer(id)?),
-        })
+        let mut saved = Saved {
+            events: Vec::new(),
+            pending: Vec::new(),
+            blobs: HashMap::new(),
+        };
+        saved.push_event(SessionEvent::Settings(settings.clone()));
+        let opened = saved.opened(id, Some(self.take_writer(id)?))?;
+        lock(&self.state).sessions.insert(id, saved);
+        Ok(opened)
     }
 
-    async fn fork_session(&self, source: SessionId) -> Result<Opened, StoreError> {
+    async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
         let mut state = lock(&self.state);
         let saved = state.sessions.get(&source).ok_or(StoreError::NotFound)?;
         let fork = Saved {
-            settings: saved.settings.clone(),
-            context: saved.context.clone(),
+            events: saved.events[..fork_cut(&saved.events, through)?].to_vec(),
             pending: Vec::new(),
-            turn_open: saved.turn_open,
             blobs: saved.blobs.clone(),
         };
-        let opened = Opened {
-            id,
-            settings: fork.settings.clone(),
-            context: fork.context.clone(),
-            turn_open: fork.turn_open,
-            lease: Some(self.take_writer(id)?),
-        };
+        let opened = fork.opened(id, Some(self.take_writer(id)?))?;
         state.sessions.insert(id, fork);
         Ok(opened)
     }
@@ -116,7 +164,7 @@ impl Store for MemoryStore {
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {
         let mut state = lock(&self.state);
         let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
-        saved.settings = settings.clone();
+        saved.push_event(SessionEvent::Settings(settings.clone()));
         Ok(())
     }
 
@@ -139,33 +187,32 @@ impl Store for MemoryStore {
             Access::Read => None,
             Access::Write => Some(self.take_writer(id)?),
         };
-        Ok(Opened {
-            id,
-            settings: saved.settings.clone(),
-            context: saved.context.clone(),
-            turn_open: saved.turn_open,
-            lease,
-        })
+        saved.opened(id, lease)
     }
 
     async fn commit(&self, id: SessionId, commit: &Commit<'_>, consumed: &[InputId]) -> Result<(), StoreError> {
         let mut state = lock(&self.state);
         let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
-        if let Some(replaced) = commit.replaced {
-            let kept = saved
-                .context
-                .split_off(saved.context.len().saturating_sub(replaced.keep));
-            saved.context = [replaced.head, &kept].concat();
-        }
-        saved.context.extend_from_slice(commit.blocks);
         saved.pending.retain(|input| !consumed.contains(&input.id));
-        saved.turn_open = commit.end.is_none();
+        saved.push_event(SessionEvent::Commit {
+            commit: commit.clone().into_owned(),
+            consumed: consumed.to_vec(),
+        });
         Ok(())
     }
 
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError> {
         let state = lock(&self.state);
         Ok(state.sessions.get(&id).ok_or(StoreError::NotFound)?.pending.clone())
+    }
+
+    async fn events(&self, id: SessionId, after: Option<EventNumber>) -> Result<Vec<StoredEvent>, StoreError> {
+        let state = lock(&self.state);
+        let saved = state.sessions.get(&id).ok_or(StoreError::NotFound)?;
+        // Event number `n` sits at index `n - 1`, so the events after it start at index `n`.
+        let after = after.map_or(0, |after| usize::try_from(after.0).unwrap_or(usize::MAX));
+        let after = after.min(saved.events.len());
+        Ok(saved.events[after..].to_vec())
     }
 
     async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, StoreError> {

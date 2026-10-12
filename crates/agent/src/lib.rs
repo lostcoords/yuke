@@ -13,8 +13,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 pub use memory::MemoryStore;
 pub use session::{InputSender, Session, SessionError, SessionTurn};
 pub use store::{
-    Access, InputId, Lease, ModelReference, Opened, PendingInput, SessionId, SessionSettings, Store, StoreError,
-    blob_of,
+    Access, EventNumber, InputId, Lease, ModelReference, Opened, PendingInput, SessionEvent, SessionId,
+    SessionSettings, Store, StoreError, StoredEvent, blob_of,
 };
 
 // Each change of a guarded value is complete before the next statement, so a panic of another holder leaves a valid

@@ -1,6 +1,8 @@
 //! The decisions of one conversation. A [`Conversation`] does no I/O, reads no clock, and never awaits. Each call
 //! that feeds it a fact returns the next [`Action`], with the [`Commit`] that the caller saves before it acts.
 
+use std::borrow::Cow;
+
 use yuke_ai::{Block, FinishReason, Origin, Partial, Response, Role, ToolCall, ToolResult, Usage};
 
 /// The decisions of one turn on the caller's context.
@@ -53,14 +55,15 @@ pub(crate) enum Action<'a> {
 }
 
 /// The change of the context since the last commit, and the facts of the turn. Replay each commit in order on a copy
-/// of the context: apply `replaced`, then append `blocks`. The copy then equals the context.
-#[derive(Debug)]
+/// of the context: apply `replaced`, then append `blocks`. The copy then equals the context. The driver lends its
+/// blocks, and a store that reads a commit back owns them.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Commit<'a> {
     /// The replacement of the context. A commit with a replacement holds no blocks.
     pub replaced: Option<Replaced<'a>>,
 
     /// The blocks after the saved blocks, in context order.
-    pub blocks: &'a [Block],
+    pub blocks: Cow<'a, [Block]>,
 
     /// The facts of the answer in `blocks`. A commit without an answer has `None`.
     pub answer: Option<Answer>,
@@ -74,9 +77,33 @@ impl<'a> Commit<'a> {
     fn blocks(blocks: &'a [Block]) -> Self {
         Commit {
             replaced: None,
-            blocks,
+            blocks: Cow::Borrowed(blocks),
             answer: None,
             end: None,
+        }
+    }
+
+    /// Replay this commit on `context`, a copy of the context: apply `replaced`, then append `blocks`.
+    pub fn apply(&self, context: &mut Vec<Block>) {
+        if let Some(replaced) = &self.replaced {
+            let kept = context.split_off(context.len().saturating_sub(replaced.keep));
+            context.clear();
+            context.extend_from_slice(&replaced.head);
+            context.extend(kept);
+        }
+        context.extend_from_slice(&self.blocks);
+    }
+
+    /// The same commit with its own copy of each block.
+    pub fn into_owned(self) -> Commit<'static> {
+        Commit {
+            replaced: self.replaced.map(|Replaced { head, keep }| Replaced {
+                head: Cow::Owned(head.into_owned()),
+                keep,
+            }),
+            blocks: Cow::Owned(self.blocks.into_owned()),
+            answer: self.answer,
+            end: self.end,
         }
     }
 
@@ -95,7 +122,7 @@ impl<'a> Commit<'a> {
 
 /// How a turn ended, in a form that a journal can save. A failure keeps the text of its error, and
 /// [`crate::TurnError::Model`] gives the caller the error itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TurnEnd {
     /// The turn ended without a failure.
     Outcome(Outcome),
@@ -104,10 +131,10 @@ pub enum TurnEnd {
 }
 
 /// A replacement in a [`Commit`]. The new context is `head`, then the last `keep` blocks of the saved context.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Replaced<'a> {
     /// The new first blocks, such as a summary.
-    pub head: &'a [Block],
+    pub head: Cow<'a, [Block]>,
 
     /// The number of saved blocks that stay after `head`.
     pub keep: usize,
@@ -126,7 +153,7 @@ pub struct Replace {
 }
 
 /// The facts of one answer of the model.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Answer {
     /// The model and host of the target that answered.
     pub origin: Origin,
@@ -176,7 +203,7 @@ impl<'a> Iterator for ToolCallsIter<'a> {
 }
 
 /// How a turn ended without a failure.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Outcome {
     /// The turn ended with an answer of the model, and the answer joined the context. A filter or a refusal answer
     /// can hold calls that did not run.
@@ -224,7 +251,7 @@ impl<'h> Conversation<'h> {
         self.saved = self.context.len();
         Commit {
             replaced: Some(Replaced {
-                head: &self.context[..head_len],
+                head: Cow::Borrowed(&self.context[..head_len]),
                 keep,
             }),
             ..Commit::blocks(&[])

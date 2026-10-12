@@ -7,13 +7,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
-use yuke_agent::{Access, InputId, Lease, Opened, PendingInput, SessionId, SessionSettings, Store, StoreError};
+use yuke_agent::{
+    Access, EventNumber, InputId, Lease, Opened, PendingInput, SessionId, SessionSettings, Store, StoreError,
+    StoredEvent,
+};
 use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_sql::rusqlite::{self, Connection, TransactionBehavior};
 
 use crate::context;
+use crate::event;
 use crate::files;
-use crate::queries::{commits, pending_inputs, sessions};
+use crate::queries::{events, pending_inputs, sessions};
 use crate::schema;
 
 /// A [`Store`] in one SQLite file. One connection runs every read and write in call order on its own thread.
@@ -131,20 +135,24 @@ impl Store for SqliteStore {
         let id = SessionId::generate();
         let folder = self.folder(id);
         let sessions_folder = self.sessions.clone();
-        let params = sessions::InsertSessionParams {
-            id: *id.as_bytes(),
-            settings: serde_json::to_string(settings).map_err(failed)?,
-        };
+        let session = *id.as_bytes();
+        let settings_json = serde_json::to_string(settings).map_err(failed)?;
 
         let file = self
             .call(move |connection| {
-                // No other process knows the new id yet, so the row can come first. Then each folder that the sweep
+                // No other process knows the new id yet, so the rows can come first. Then each folder that the sweep
                 // finds for a live session has its row.
-                sessions::insert_session(connection, &params).map_err(failed)?;
-                let file = files::take_lock(&folder)?;
-                // A crash must not lose the entry of the new folder, so the call syncs the folder that holds it.
-                files::sync_folder(&sessions_folder).map_err(failed)?;
-                Ok(file)
+                insert_session(connection, session, settings_json).map_err(failed)?;
+                let locked = files::take_lock(&folder).and_then(|file| {
+                    // A crash must not lose the entry of the new folder, so the call syncs the folder that holds it.
+                    files::sync_folder(&sessions_folder).map_err(failed)?;
+                    Ok(file)
+                });
+                // The caller never learns the id of a failed creation, so nothing else can open or delete it.
+                locked.or_else(|error| {
+                    delete_new_session(connection, session, &folder)?;
+                    Err(error)
+                })
             })
             .await?;
 
@@ -157,12 +165,10 @@ impl Store for SqliteStore {
         })
     }
 
-    async fn fork_session(&self, source: SessionId) -> Result<Opened, StoreError> {
+    async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
-        let params = sessions::CopySessionParams {
-            source: *source.as_bytes(),
-            id: *id.as_bytes(),
-        };
+        let fork = *id.as_bytes();
+        let source_bytes = *source.as_bytes();
         let source_folder = self.folder(source);
         let folder = self.folder(id);
         let sessions_folder = self.sessions.clone();
@@ -172,14 +178,14 @@ impl Store for SqliteStore {
             .call(move |connection| {
                 // The rows come before the folder, as in `create_session`, so the sweep finds no live folder without
                 // its row.
-                ensure_found(copy_rows(connection, &params).map_err(failed)?)?;
+                copy_rows(connection, source_bytes, fork, through)?;
                 let forked = copy_folder(&source_folder, &folder, &sessions_folder).and_then(|file| {
-                    let loaded = read(connection, |connection| context::load(connection, params.id))?;
+                    let loaded = read(connection, |connection| context::load(connection, fork))?;
                     Ok((loaded.ok_or(StoreError::NotFound)?, file))
                 });
                 // The caller never learns the id of a failed fork, so nothing else can open or delete it.
                 forked.or_else(|error| {
-                    delete_fork(connection, params.id, &folder)?;
+                    delete_new_session(connection, fork, &folder)?;
                     Err(error)
                 })
             })
@@ -190,15 +196,13 @@ impl Store for SqliteStore {
 
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {
         let owner = self.owner(id);
-        let params = sessions::UpdateSettingsParams {
-            id: *id.as_bytes(),
-            settings: serde_json::to_string(settings).map_err(failed)?,
-        };
+        let session = *id.as_bytes();
+        let settings_json = serde_json::to_string(settings).map_err(failed)?;
 
         self.call(move |connection| {
-            let changed = sessions::update_settings(connection, &params).map_err(failed)?;
+            let saved = save_settings(connection, session, settings_json).map_err(failed)?;
             drop(owner);
-            ensure_found(changed > 0)
+            ensure_found(saved)
         })
         .await
     }
@@ -243,8 +247,8 @@ impl Store for SqliteStore {
 
     async fn commit(&self, id: SessionId, commit: &Commit<'_>, consumed: &[InputId]) -> Result<(), StoreError> {
         let owner = self.owner(id);
-        let params = commit_params(id, commit).map_err(failed)?;
-        let consumed: Vec<i64> = consumed.iter().map(|input| input.0).collect();
+        let params = commit_params(id, commit, consumed).map_err(failed)?;
+        let consumed: Vec<u64> = consumed.iter().map(|input| input.0).collect();
 
         self.call(move |connection| {
             let saved = save_commit(connection, &params, &consumed).map_err(failed)?;
@@ -277,6 +281,28 @@ impl Store for SqliteStore {
                 blocks: row.blocks.0,
             })
             .collect())
+    }
+
+    async fn events(&self, id: SessionId, after: Option<EventNumber>) -> Result<Vec<StoredEvent>, StoreError> {
+        let params = events::EventsAfterParams {
+            session_id: *id.as_bytes(),
+            after: after.map_or(0, |after| after.0.min(LARGEST_SEQ)),
+        };
+
+        let rows = self
+            .call(move |connection| {
+                read(connection, |connection| {
+                    if sessions::session_count(connection, params.session_id).one()?.count == 0 {
+                        return Ok(None);
+                    }
+
+                    events::events_after(connection, &params).all().map(Some)
+                })?
+                .ok_or(StoreError::NotFound)
+            })
+            .await?;
+
+        rows.into_iter().map(event::stored_event).collect()
     }
 
     async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, StoreError> {
@@ -313,6 +339,9 @@ impl Store for SqliteStore {
     }
 }
 
+/// The largest event number that SQLite can hold. A larger number names no event.
+const LARGEST_SEQ: u64 = i64::MAX.unsigned_abs();
+
 /// Run `function` in a read transaction, so each of its queries reads the same state.
 fn read<T>(
     connection: &mut Connection,
@@ -324,16 +353,51 @@ fn read<T>(
     Ok(value)
 }
 
-/// Save the commit row and remove the consumed inputs in one transaction. Returns `false` for an unknown session.
-fn save_commit(
-    connection: &mut Connection,
-    params: &commits::InsertCommitParams,
-    consumed: &[i64],
-) -> rusqlite::Result<bool> {
+/// Take the next event number of session `session`, and return `false` for an unknown session. The insert of the event
+/// reads the number from the session row. Call it in the write transaction of that insert, so a failed save leaves no gap.
+fn take_seq(connection: &Connection, session: [u8; 16]) -> rusqlite::Result<bool> {
+    Ok(sessions::take_seq(connection, session)? > 0)
+}
+
+/// Save a new session row and its first event, which holds its settings, in one transaction.
+fn insert_session(connection: &mut Connection, session: [u8; 16], settings: String) -> rusqlite::Result<()> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if commits::insert_commit(&transaction, params)? == 0 {
+    sessions::insert_session(&transaction, session)?;
+    take_seq(&transaction, session)?;
+    let params = events::InsertSettingsParams {
+        session_id: session,
+        settings,
+    };
+    events::insert_settings(&transaction, &params)?;
+    transaction.commit()
+}
+
+/// Save a settings event in one transaction. Returns `false` for an unknown session.
+fn save_settings(connection: &mut Connection, session: [u8; 16], settings: String) -> rusqlite::Result<bool> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if !take_seq(&transaction, session)? {
         return Ok(false);
     }
+    let params = events::InsertSettingsParams {
+        session_id: session,
+        settings,
+    };
+    events::insert_settings(&transaction, &params)?;
+    transaction.commit()?;
+    Ok(true)
+}
+
+/// Save the commit event and remove the consumed inputs in one transaction. Returns `false` for an unknown session.
+fn save_commit(
+    connection: &mut Connection,
+    params: &events::InsertCommitParams,
+    consumed: &[u64],
+) -> rusqlite::Result<bool> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if !take_seq(&transaction, params.session_id)? {
+        return Ok(false);
+    }
+    events::insert_commit(&transaction, params)?;
 
     for &input in consumed {
         let params = pending_inputs::DeletePendingInputParams {
@@ -347,21 +411,53 @@ fn save_commit(
     Ok(true)
 }
 
-/// Copy the session row and the commit rows of `params.source` to `params.id` in one transaction. Returns `false` for
-/// an unknown source.
-fn copy_rows(connection: &mut Connection, params: &sessions::CopySessionParams) -> rusqlite::Result<bool> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if sessions::copy_session(&transaction, params)? == 0 {
-        return Ok(false);
-    }
-
-    let copy_commits_params = commits::CopyCommitsParams {
-        source: params.source,
-        session_id: params.id,
+/// Copy the session row and the events of session `source` up to the cut to session `fork` in one transaction. The cut
+/// is event `through`, which must end a completed turn, or the cut that `fork_cut` gives.
+fn copy_rows(
+    connection: &mut Connection,
+    source: [u8; 16],
+    fork: [u8; 16],
+    through: Option<EventNumber>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(failed)?;
+    let cut = match through {
+        Some(EventNumber(through)) => {
+            ensure_session(&transaction, source)?;
+            if through > LARGEST_SEQ {
+                return Err(StoreError::NotACompletedTurn);
+            }
+            let params = events::CompletedTurnCountParams {
+                session_id: source,
+                seq: through,
+            };
+            if events::completed_turn_count(&transaction, &params)
+                .one()
+                .map_err(failed)?
+                .count
+                == 0
+            {
+                return Err(StoreError::NotACompletedTurn);
+            }
+            through
+        }
+        None => events::fork_cut(&transaction, source)
+            .map(|row| row.cut)
+            .opt()
+            .map_err(failed)?
+            .ok_or(StoreError::NotFound)?,
     };
-    commits::copy_commits(&transaction, &copy_commits_params)?;
-    transaction.commit()?;
-    Ok(true)
+
+    let params = sessions::InsertForkParams { id: fork, cut };
+    sessions::insert_fork(&transaction, &params).map_err(failed)?;
+    let params = events::CopyEventsParams {
+        source,
+        session_id: fork,
+        cut,
+    };
+    events::copy_events(&transaction, &params).map_err(failed)?;
+    transaction.commit().map_err(failed)
 }
 
 /// Take the lock of the new session folder `folder`, and copy the blobs of the session folder `source` into it.
@@ -373,17 +469,21 @@ fn copy_folder(source: &Path, folder: &Path, sessions_folder: &Path) -> Result<F
     Ok(file)
 }
 
-/// Delete the rows and the folder of a failed fork. The lock of the fork is already free. An error here returns in
-/// place of the error of the fork, because the fork then stays.
-fn delete_fork(connection: &Connection, session: [u8; 16], folder: &Path) -> Result<(), StoreError> {
+/// Delete the rows and the folder of a new session whose creation or fork failed. Its lock is already free. An error
+/// here returns in place of the first error, because the session then stays.
+fn delete_new_session(connection: &Connection, session: [u8; 16], folder: &Path) -> Result<(), StoreError> {
     sessions::delete_session(connection, session).map_err(failed)?;
     files::remove_session_folder(folder).map_err(failed)
 }
 
-/// The row of `commit`, with its blocks as JSON text.
-fn commit_params(id: SessionId, commit: &Commit<'_>) -> serde_json::Result<commits::InsertCommitParams> {
-    let (head, keep) = match commit.replaced {
-        Some(replaced) => (Some(serde_json::to_string(replaced.head)?), Some(replaced.keep)),
+/// The row of `commit` and its `consumed` inputs, with its blocks as JSON text.
+fn commit_params(
+    id: SessionId,
+    commit: &Commit<'_>,
+    consumed: &[InputId],
+) -> serde_json::Result<events::InsertCommitParams> {
+    let (head, keep) = match &commit.replaced {
+        Some(replaced) => (Some(serde_json::to_string(&replaced.head)?), Some(replaced.keep)),
         None => (None, None),
     };
 
@@ -400,11 +500,12 @@ fn commit_params(id: SessionId, commit: &Commit<'_>) -> serde_json::Result<commi
         Some(TurnEnd::Failed(message)) => (Some("failed"), None, Some(message.clone())),
     };
 
-    Ok(commits::InsertCommitParams {
+    Ok(events::InsertCommitParams {
         session_id: *id.as_bytes(),
+        blocks: serde_json::to_string(&commit.blocks)?,
+        consumed: serde_json::to_string(consumed)?,
         head,
         keep,
-        blocks: serde_json::to_string(commit.blocks)?,
         model: answer.map(|answer| answer.origin.model.clone()),
         base_url: answer.map(|answer| answer.origin.base_url.clone()),
         input_tokens: usage.map(|usage| usage.input),

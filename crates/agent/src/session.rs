@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use yuke_engine::{CancellationToken, Commit, Driver, Inbox, Journal, Observer, Outcome, TurnEnd, TurnError};
 
 use crate::lock;
-use crate::store::{Access, InputId, Lease, Opened, PendingInput, SessionId, SessionSettings, Store, StoreError};
+use crate::store::{
+    Access, EventNumber, InputId, Lease, Opened, PendingInput, SessionId, SessionSettings, Store, StoreError,
+};
 
 /// The result of a call that was open when its turn stopped. The model reads it.
 const OUTCOME_UNKNOWN: &str = "The turn stopped before it saved the result of this call. The call can have run.";
@@ -71,10 +73,10 @@ impl SessionJournal {
 #[async_trait]
 impl Journal for SessionJournal {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // The first commit after a take holds the blocks of the taken inputs, so it consumes their ids.
-        let consumed = lock(&self.inputs).taken.clone();
+        // The first commit after a take holds the blocks of the taken inputs, so it consumes their ids. The ids leave
+        // `taken` before the save: after a failed save, the next turn takes the inputs that are still pending again.
+        let consumed = std::mem::take(&mut lock(&self.inputs).taken);
         self.store.commit(self.id, commit, &consumed).await?;
-        lock(&self.inputs).taken.clear();
         // The inbox then gives the input that arrived during the round.
         self.load_pending().await?;
         Ok(())
@@ -119,25 +121,20 @@ impl Session {
         Ok(Session::from_opened(store, opened))
     }
 
-    /// Copy session `source` of `store` into a new session, and own the copy. The copy has the settings, the context,
-    /// and the blobs of the source, and no pending input. A turn that is open in the source ends in the copy as in
-    /// [`Session::open`], and the source does not change.
+    /// Copy session `source` of `store` up to the end of a completed turn into a new session, and own the copy.
+    /// `through` is the event number of that end, and `None` takes the newest one, as in [`Store::fork_session`]. The
+    /// source does not change.
     ///
     /// # Errors
     ///
-    /// Returns the error of [`Store::fork_session`], or of the commit that ends an open turn. After a failed commit,
-    /// the fork deletes the copy, and an error of that delete returns in its place.
-    pub async fn fork(store: Arc<dyn Store>, source: SessionId) -> Result<Session, StoreError> {
-        let opened = store.fork_session(source).await?;
-        let id = opened.id;
-        match end_open_turn(&*store, opened).await {
-            Ok(opened) => Ok(Session::from_opened(store, opened)),
-            // The caller never learns the id of a failed fork, so nothing else can open or delete the copy.
-            Err(error) => {
-                store.delete_session(id).await?;
-                Err(error)
-            }
-        }
+    /// Returns the error of [`Store::fork_session`].
+    pub async fn fork(
+        store: Arc<dyn Store>,
+        source: SessionId,
+        through: Option<EventNumber>,
+    ) -> Result<Session, StoreError> {
+        let opened = store.fork_session(source, through).await?;
+        Ok(Session::from_opened(store, opened))
     }
 
     fn from_opened(store: Arc<dyn Store>, opened: Opened) -> Session {
@@ -229,7 +226,7 @@ async fn end_open_turn(store: &dyn Store, mut opened: Opened) -> Result<Opened, 
             .collect::<Vec<_>>();
         let repair = Commit {
             replaced: None,
-            blocks: &results,
+            blocks: std::borrow::Cow::Borrowed(&results),
             answer: None,
             end: Some(TurnEnd::Failed(TURN_STOPPED.to_owned())),
         };

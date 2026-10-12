@@ -6,9 +6,15 @@
     reason = "a behavior test fails by panicking"
 )]
 
-use yuke_engine::{Commit, Outcome, Replaced, TurnEnd};
+use std::borrow::Cow;
+use std::path::PathBuf;
 
-use crate::store::{Access, ModelReference, SessionId, SessionSettings, Store, StoreError, blob_of};
+use yuke_engine::{Answer, Commit, Outcome, Replaced, TurnEnd};
+
+use crate::store::{
+    Access, EventNumber, ModelReference, SessionEvent, SessionId, SessionSettings, Store, StoreError, StoredEvent,
+    blob_of,
+};
 
 /// Write one `#[tokio::test]` for each behavior of this module. `$make_store` is an async function that takes the
 /// name of the test and returns a new store, such as an `Arc<impl Store>`. The calling crate needs `tokio` with the
@@ -41,7 +47,16 @@ macro_rules! store_tests {
             a_source_forks_while_its_writer_keeps_its_lease_and_the_fork_has_its_own_lease,
             a_commit_to_a_fork_or_its_source_does_not_change_the_other,
             a_fork_keeps_the_blobs_of_its_source_after_the_delete_of_the_source,
-            a_fork_of_a_source_with_an_open_turn_has_an_open_turn,
+            a_fork_of_a_source_in_a_running_turn_ends_at_its_newest_completed_turn,
+            a_fork_at_an_earlier_completed_turn_has_the_context_and_the_settings_of_that_point,
+            a_fork_point_that_does_not_end_a_completed_turn_gets_not_a_completed_turn,
+            a_source_without_a_completed_turn_forks_to_its_settings_and_an_empty_context,
+            a_new_session_has_its_settings_as_its_first_event,
+            each_commit_and_each_new_settings_is_the_next_event_and_an_input_is_no_event,
+            a_saved_commit_reads_back_equal,
+            events_after_a_number_are_the_newer_events,
+            a_fork_has_the_events_of_its_source_and_numbers_on_from_them,
+            the_context_holds_only_commit_blocks_across_pending_inputs_and_settings_events,
         );
     };
     (@behaviors $make_store:path; $($behavior:ident),* $(,)?) => {
@@ -56,28 +71,29 @@ macro_rules! store_tests {
 }
 
 /// Settings with the system prompt `system`.
-fn settings(system: &str) -> SessionSettings {
+pub fn settings(system: &str) -> SessionSettings {
     SessionSettings {
         model: ModelReference::new("test", "test-model"),
         settings: yuke_ai::Settings {
             system: system.to_owned(),
             ..yuke_ai::Settings::new()
         },
+        cwd: PathBuf::from("/work"),
     }
 }
 
 /// A commit in the middle of a turn.
-fn step(blocks: &[yuke_ai::Block]) -> Commit<'_> {
+pub fn step(blocks: &[yuke_ai::Block]) -> Commit<'_> {
     Commit {
         replaced: None,
-        blocks,
+        blocks: Cow::Borrowed(blocks),
         answer: None,
         end: None,
     }
 }
 
-/// A commit that ends a turn.
-fn end(blocks: &[yuke_ai::Block]) -> Commit<'_> {
+/// A commit that ends a turn as completed.
+pub fn end(blocks: &[yuke_ai::Block]) -> Commit<'_> {
     Commit {
         end: Some(TurnEnd::Outcome(Outcome::Completed {
             finish_reason: yuke_ai::FinishReason::Stop,
@@ -130,7 +146,10 @@ pub async fn a_replacement_keeps_its_head_and_the_last_blocks(store: &dyn Store)
     let head = [yuke_ai::Block::user_text("summary")];
 
     let replacement = Commit {
-        replaced: Some(Replaced { head: &head, keep: 1 }),
+        replaced: Some(Replaced {
+            head: Cow::Borrowed(&head),
+            keep: 1,
+        }),
         ..step(&[])
     };
     store.commit(id, &replacement, &[]).await.unwrap();
@@ -164,7 +183,10 @@ pub async fn a_replacement_that_keeps_nothing_leaves_its_head(store: &dyn Store)
     let head = [yuke_ai::Block::user_text("new")];
 
     let replacement = Commit {
-        replaced: Some(Replaced { head: &head, keep: 0 }),
+        replaced: Some(Replaced {
+            head: Cow::Borrowed(&head),
+            keep: 0,
+        }),
         ..step(&[])
     };
     store.commit(id, &replacement, &[]).await.unwrap();
@@ -183,7 +205,7 @@ pub async fn a_second_replacement_keeps_blocks_from_before_the_first(store: &dyn
     ];
     let first_replacement = Commit {
         replaced: Some(Replaced {
-            head: &first_head,
+            head: Cow::Borrowed(&first_head),
             keep: 1,
         }),
         ..step(&[])
@@ -197,7 +219,7 @@ pub async fn a_second_replacement_keeps_blocks_from_before_the_first(store: &dyn
 
     let second_replacement = Commit {
         replaced: Some(Replaced {
-            head: &second_head,
+            head: Cow::Borrowed(&second_head),
             keep: 3,
         }),
         ..step(&[])
@@ -343,7 +365,9 @@ pub async fn an_unknown_session_is_not_found(store: &dyn Store) {
     let put = store.put_blob(id, b"image".to_vec()).await;
     let read = store.read_blob(id, &blob_of(b"image").digest);
     let delete = store.delete_session(id).await;
-    let fork = store.fork_session(id).await;
+    let fork = store.fork_session(id, None).await;
+    let fork_at = store.fork_session(id, Some(EventNumber(2))).await;
+    let events = store.events(id, None).await;
 
     assert!(matches!(open, Err(StoreError::NotFound)), "{open:?}");
     assert!(matches!(settings, Err(StoreError::NotFound)), "{settings:?}");
@@ -354,6 +378,8 @@ pub async fn an_unknown_session_is_not_found(store: &dyn Store) {
     assert!(matches!(read, Err(StoreError::NotFound)), "{read:?}");
     assert!(matches!(delete, Err(StoreError::NotFound)), "{delete:?}");
     assert!(matches!(fork, Err(StoreError::NotFound)), "{fork:?}");
+    assert!(matches!(fork_at, Err(StoreError::NotFound)), "{fork_at:?}");
+    assert!(matches!(events, Err(StoreError::NotFound)), "{events:?}");
 }
 
 /// A put returns the digest and the length of the bytes, and the blob reads back.
@@ -440,7 +466,10 @@ pub async fn a_fork_has_the_settings_and_the_context_of_its_source_and_no_pendin
     // A replacement makes the context depend on the order and the columns of the copied commits.
     let head = [yuke_ai::Block::user_text("summary")];
     let replacement = Commit {
-        replaced: Some(Replaced { head: &head, keep: 1 }),
+        replaced: Some(Replaced {
+            head: Cow::Borrowed(&head),
+            keep: 1,
+        }),
         ..step(&[])
     };
     store.commit(source, &replacement, &[]).await.unwrap();
@@ -458,7 +487,7 @@ pub async fn a_fork_has_the_settings_and_the_context_of_its_source_and_no_pendin
         yuke_ai::Block::assistant_text("c"),
     ];
 
-    let fork = store.fork_session(source).await.unwrap();
+    let fork = store.fork_session(source, None).await.unwrap();
 
     assert_ne!(fork.id, source);
     assert_eq!(fork.settings, settings("one"));
@@ -475,7 +504,7 @@ pub async fn a_fork_has_the_settings_and_the_context_of_its_source_and_no_pendin
 pub async fn a_source_forks_while_its_writer_keeps_its_lease_and_the_fork_has_its_own_lease(store: &dyn Store) {
     let source = store.create_session(&settings("one")).await.unwrap();
 
-    let fork = store.fork_session(source.id).await.unwrap();
+    let fork = store.fork_session(source.id, None).await.unwrap();
 
     assert!(fork.lease.is_some());
     let fork_writer = store.open(fork.id, Access::Write).await;
@@ -491,7 +520,7 @@ pub async fn a_commit_to_a_fork_or_its_source_does_not_change_the_other(store: &
         .commit(source, &end(&[yuke_ai::Block::user_text("a")]), &[])
         .await
         .unwrap();
-    let fork = store.fork_session(source).await.unwrap().id;
+    let fork = store.fork_session(source, None).await.unwrap().id;
 
     store
         .commit(fork, &end(&[yuke_ai::Block::user_text("fork")]), &[])
@@ -519,7 +548,7 @@ pub async fn a_fork_keeps_the_blobs_of_its_source_after_the_delete_of_the_source
     let source = store.create_session(&settings("one")).await.unwrap();
     let first = store.put_blob(source.id, b"image".to_vec()).await.unwrap();
     let second = store.put_blob(source.id, b"audio".to_vec()).await.unwrap();
-    let fork = store.fork_session(source.id).await.unwrap().id;
+    let fork = store.fork_session(source.id, None).await.unwrap().id;
     let source_id = source.id;
 
     drop(source);
@@ -535,16 +564,309 @@ pub async fn a_fork_keeps_the_blobs_of_its_source_after_the_delete_of_the_source
     );
 }
 
-/// A fork of a source with an open turn has the open turn too.
-pub async fn a_fork_of_a_source_with_an_open_turn_has_an_open_turn(store: &dyn Store) {
+/// A fork of a source in a running turn ends at the newest completed turn: it has neither the running turn nor the
+/// settings after the completed turn, and it has no open turn.
+pub async fn a_fork_of_a_source_in_a_running_turn_ends_at_its_newest_completed_turn(store: &dyn Store) {
     let source = store.create_session(&settings("one")).await.unwrap().id;
+    store
+        .commit(source, &end(&[yuke_ai::Block::assistant_text("a")]), &[])
+        .await
+        .unwrap();
+    store.set_settings(source, &settings("two")).await.unwrap();
+    store
+        .commit(source, &step(&[yuke_ai::Block::user_text("running")]), &[])
+        .await
+        .unwrap();
+
+    let fork = store.fork_session(source, None).await.unwrap();
+
+    assert_eq!(fork.context, [yuke_ai::Block::assistant_text("a")]);
+    assert_eq!(fork.settings, settings("one"));
+    assert!(!fork.turn_open);
+    assert_eq!(
+        kinds(&store.events(fork.id, None).await.unwrap()),
+        [(1, "settings"), (2, "commit")]
+    );
+}
+
+/// A fork through an earlier completed turn has the context and the settings of that point.
+pub async fn a_fork_at_an_earlier_completed_turn_has_the_context_and_the_settings_of_that_point(store: &dyn Store) {
+    let source = store.create_session(&settings("one")).await.unwrap().id;
+    store
+        .commit(source, &end(&[yuke_ai::Block::assistant_text("a")]), &[])
+        .await
+        .unwrap();
+    store.set_settings(source, &settings("two")).await.unwrap();
+    store
+        .commit(source, &end(&[yuke_ai::Block::assistant_text("b")]), &[])
+        .await
+        .unwrap();
+
+    let first = store.fork_session(source, Some(EventNumber(2))).await.unwrap();
+    let second = store.fork_session(source, Some(EventNumber(4))).await.unwrap();
+
+    assert_eq!(first.context, [yuke_ai::Block::assistant_text("a")]);
+    assert_eq!(first.settings, settings("one"));
+    assert_eq!(
+        second.context,
+        [yuke_ai::Block::assistant_text("a"), yuke_ai::Block::assistant_text("b")]
+    );
+    assert_eq!(second.settings, settings("two"));
+}
+
+/// A fork point that is no end of a completed turn gets [`StoreError::NotACompletedTurn`]: 0, a settings event, a
+/// commit in the middle of a turn, a turn that stopped, was cancelled, or failed, and a number after the newest event, also
+/// the largest number.
+pub async fn a_fork_point_that_does_not_end_a_completed_turn_gets_not_a_completed_turn(store: &dyn Store) {
+    let source = store.create_session(&settings("one")).await.unwrap().id;
+    let ends = [
+        Some(TurnEnd::Outcome(Outcome::Stopped)),
+        Some(TurnEnd::Outcome(Outcome::Cancelled)),
+        Some(TurnEnd::Failed("the request failed".to_owned())),
+    ];
     store
         .commit(source, &step(&[yuke_ai::Block::user_text("a")]), &[])
         .await
         .unwrap();
+    for end in ends {
+        store.commit(source, &Commit { end, ..step(&[]) }, &[]).await.unwrap();
+    }
 
-    let fork = store.fork_session(source).await.unwrap();
+    for through in [0, 1, 2, 3, 4, 5, 6, u64::MAX] {
+        let fork = store.fork_session(source, Some(EventNumber(through))).await;
 
-    assert!(fork.turn_open);
-    assert_eq!(fork.context, [yuke_ai::Block::user_text("a")]);
+        assert!(
+            matches!(fork, Err(StoreError::NotACompletedTurn)),
+            "{through}: {fork:?}"
+        );
+    }
+}
+
+/// A source with no completed turn forks to the settings before its first commit and an empty context.
+pub async fn a_source_without_a_completed_turn_forks_to_its_settings_and_an_empty_context(store: &dyn Store) {
+    let source = store.create_session(&settings("one")).await.unwrap().id;
+    store.set_settings(source, &settings("two")).await.unwrap();
+    store
+        .commit(source, &step(&[yuke_ai::Block::user_text("running")]), &[])
+        .await
+        .unwrap();
+    store.set_settings(source, &settings("three")).await.unwrap();
+
+    let fork = store.fork_session(source, None).await.unwrap();
+
+    assert_eq!(fork.context, []);
+    assert_eq!(fork.settings, settings("two"));
+    assert!(!fork.turn_open);
+}
+
+/// The kind of each event, for a short comparison.
+fn kinds(events: &[StoredEvent]) -> Vec<(u64, &'static str)> {
+    events
+        .iter()
+        .map(|stored| {
+            let kind = match stored.event {
+                SessionEvent::Commit { .. } => "commit",
+                SessionEvent::Settings(_) => "settings",
+            };
+            (stored.event_number.0, kind)
+        })
+        .collect()
+}
+
+/// A new session has one event: its settings, with the number 1.
+pub async fn a_new_session_has_its_settings_as_its_first_event(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+
+    let events = store.events(id, None).await.unwrap();
+
+    assert_eq!(
+        events,
+        [StoredEvent {
+            event_number: EventNumber(1),
+            event: SessionEvent::Settings(settings("one")),
+        }]
+    );
+}
+
+/// A commit and new settings each save the next event. An accepted input saves no event, and the commit that
+/// consumes it names its id.
+pub async fn each_commit_and_each_new_settings_is_the_next_event_and_an_input_is_no_event(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    let blocks = [yuke_ai::Block::user_text("one")];
+
+    let input = store.accept_input(id, &blocks).await.unwrap();
+    let after_input = store.events(id, None).await.unwrap();
+    store.commit(id, &step(&blocks), &[input]).await.unwrap();
+    store.set_settings(id, &settings("two")).await.unwrap();
+
+    let events = store.events(id, None).await.unwrap();
+    assert_eq!(kinds(&after_input), [(1, "settings")]);
+    assert_eq!(kinds(&events), [(1, "settings"), (2, "commit"), (3, "settings")]);
+    assert_eq!(
+        events[1].event,
+        SessionEvent::Commit {
+            commit: step(&blocks).into_owned(),
+            consumed: vec![input],
+        }
+    );
+    assert_eq!(events[2].event, SessionEvent::Settings(settings("two")));
+}
+
+/// A commit reads back equal to the saved one: its replacement, its blocks, its answer, and each kind of end.
+pub async fn a_saved_commit_reads_back_equal(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    let head = [yuke_ai::Block::user_text("summary")];
+    let blocks = [yuke_ai::Block::assistant_text("answer")];
+    let answer = Answer {
+        origin: yuke_ai::Origin {
+            model: "test-model".to_owned(),
+            base_url: "https://example.test".to_owned(),
+        },
+        usage: yuke_ai::Usage {
+            input: 10,
+            output: 20,
+            reasoning: 3,
+            cache_read: 4,
+            cache_write: 5,
+        },
+        finish_reason: yuke_ai::FinishReason::Length,
+    };
+    let commits = [
+        Commit {
+            replaced: Some(Replaced {
+                head: Cow::Borrowed(&head),
+                keep: 2,
+            }),
+            ..step(&[])
+        },
+        Commit {
+            answer: Some(answer),
+            ..step(&blocks)
+        },
+        Commit {
+            end: Some(TurnEnd::Outcome(Outcome::Completed {
+                finish_reason: yuke_ai::FinishReason::ToolCalls,
+            })),
+            ..step(&[])
+        },
+        Commit {
+            end: Some(TurnEnd::Outcome(Outcome::Stopped)),
+            ..step(&[])
+        },
+        Commit {
+            end: Some(TurnEnd::Outcome(Outcome::Cancelled)),
+            ..step(&[])
+        },
+        Commit {
+            end: Some(TurnEnd::Failed("the request failed".to_owned())),
+            ..step(&[])
+        },
+    ];
+    for commit in &commits {
+        store.commit(id, commit, &[]).await.unwrap();
+    }
+
+    let events = store.events(id, Some(EventNumber(1))).await.unwrap();
+
+    let read: Vec<&SessionEvent> = events.iter().map(|stored| &stored.event).collect();
+    let saved: Vec<SessionEvent> = commits
+        .iter()
+        .map(|commit| SessionEvent::Commit {
+            commit: commit.clone().into_owned(),
+            consumed: Vec::new(),
+        })
+        .collect();
+    assert_eq!(read, saved.iter().collect::<Vec<_>>());
+}
+
+/// The events after a number are the events with a larger number, in order. After the newest number, also after the
+/// largest number, there are none.
+pub async fn events_after_a_number_are_the_newer_events(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    store
+        .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[])
+        .await
+        .unwrap();
+    store.set_settings(id, &settings("two")).await.unwrap();
+
+    let after_one = store.events(id, Some(EventNumber(1))).await.unwrap();
+    let after_last = store.events(id, Some(EventNumber(3))).await.unwrap();
+    let after_largest = store.events(id, Some(EventNumber(u64::MAX))).await.unwrap();
+
+    assert_eq!(kinds(&after_one), [(2, "commit"), (3, "settings")]);
+    assert_eq!(after_last, []);
+    assert_eq!(after_largest, []);
+}
+
+/// A fork has the events of its source with their numbers. The next event of the fork takes the next number, and the
+/// source does not change.
+pub async fn a_fork_has_the_events_of_its_source_and_numbers_on_from_them(store: &dyn Store) {
+    let source = store.create_session(&settings("one")).await.unwrap().id;
+    store
+        .commit(source, &end(&[yuke_ai::Block::user_text("one")]), &[])
+        .await
+        .unwrap();
+    let source_events = store.events(source, None).await.unwrap();
+
+    let fork = store.fork_session(source, None).await.unwrap().id;
+    store.set_settings(fork, &settings("two")).await.unwrap();
+
+    let fork_events = store.events(fork, None).await.unwrap();
+    assert_eq!(fork_events[..2], source_events[..]);
+    assert_eq!(
+        fork_events[2],
+        StoredEvent {
+            event_number: EventNumber(3),
+            event: SessionEvent::Settings(settings("two")),
+        }
+    );
+    assert_eq!(store.events(source, None).await.unwrap(), source_events);
+}
+
+/// The context holds the blocks of the commits only. Pending inputs and settings events before and after a replacement
+/// add no block.
+pub async fn the_context_holds_only_commit_blocks_across_pending_inputs_and_settings_events(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    store
+        .commit(id, &step(&[yuke_ai::Block::user_text("a")]), &[])
+        .await
+        .unwrap();
+    store
+        .accept_input(id, &[yuke_ai::Block::user_text("queued")])
+        .await
+        .unwrap();
+    store
+        .commit(id, &step(&[yuke_ai::Block::assistant_text("b")]), &[])
+        .await
+        .unwrap();
+    store.set_settings(id, &settings("two")).await.unwrap();
+    let head = [yuke_ai::Block::user_text("summary")];
+    let replacement = Commit {
+        replaced: Some(Replaced {
+            head: Cow::Borrowed(&head),
+            keep: 2,
+        }),
+        ..step(&[])
+    };
+    store.commit(id, &replacement, &[]).await.unwrap();
+    store
+        .accept_input(id, &[yuke_ai::Block::user_text("queued later")])
+        .await
+        .unwrap();
+    store
+        .commit(id, &step(&[yuke_ai::Block::user_text("c")]), &[])
+        .await
+        .unwrap();
+
+    let opened = store.open(id, Access::Read).await.unwrap();
+
+    assert_eq!(
+        opened.context,
+        [
+            yuke_ai::Block::user_text("summary"),
+            yuke_ai::Block::user_text("a"),
+            yuke_ai::Block::assistant_text("b"),
+            yuke_ai::Block::user_text("c"),
+        ]
+    );
 }

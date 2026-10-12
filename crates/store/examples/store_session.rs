@@ -17,6 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let settings = SessionSettings {
         model: ModelReference::new("minimax", "MiniMax-M3"),
         settings: yuke_ai::Settings::new(),
+        cwd: std::env::current_dir()?,
     };
     let opened = store.create_session(&settings).await?;
     let id = opened.id;
@@ -29,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The owner saves each commit of a turn. This commit takes the input and ends the turn.
     let commit = Commit {
         replaced: None,
-        blocks: &hello,
+        blocks: std::borrow::Cow::Borrowed(&hello),
         answer: None,
         end: Some(TurnEnd::Outcome(Outcome::Stopped)),
     };

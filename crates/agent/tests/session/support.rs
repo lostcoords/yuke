@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use bytes::Bytes;
 use yuke_agent::{
-    Access, InputId, InputSender, MemoryStore, ModelReference, Opened, PendingInput, SessionId, SessionSettings, Store,
-    StoreError,
+    Access, EventNumber, InputId, InputSender, MemoryStore, ModelReference, Opened, PendingInput, SessionId,
+    SessionSettings, Store, StoreError, StoredEvent,
 };
 use yuke_ai::route::{Credential, Route};
 use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
@@ -40,6 +40,7 @@ pub(crate) fn settings() -> SessionSettings {
     SessionSettings {
         model: ModelReference::new("test", "test-model"),
         settings: yuke_ai::Settings::new(),
+        cwd: std::path::PathBuf::from("/work"),
     }
 }
 
@@ -194,7 +195,6 @@ pub(crate) struct FailingStore {
     store: MemoryStore,
     fail_at: usize,
     commits: AtomicUsize,
-    forks: Mutex<Vec<SessionId>>,
 }
 
 impl FailingStore {
@@ -203,13 +203,7 @@ impl FailingStore {
             store: MemoryStore::new(),
             fail_at,
             commits: AtomicUsize::new(0),
-            forks: Mutex::default(),
         })
-    }
-
-    /// The id of each session that a fork made.
-    pub(crate) fn forks(&self) -> Vec<SessionId> {
-        self.forks.lock().unwrap().clone()
     }
 }
 
@@ -219,10 +213,8 @@ impl Store for FailingStore {
         self.store.create_session(settings).await
     }
 
-    async fn fork_session(&self, source: SessionId) -> Result<Opened, StoreError> {
-        let opened = self.store.fork_session(source).await?;
-        self.forks.lock().unwrap().push(opened.id);
-        Ok(opened)
+    async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError> {
+        self.store.fork_session(source, through).await
     }
 
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {
@@ -246,6 +238,10 @@ impl Store for FailingStore {
 
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError> {
         self.store.pending(id).await
+    }
+
+    async fn events(&self, id: SessionId, after: Option<EventNumber>) -> Result<Vec<StoredEvent>, StoreError> {
+        self.store.events(id, after).await
     }
 
     async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, StoreError> {

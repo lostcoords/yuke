@@ -54,15 +54,12 @@ impl Replay {
 impl Journal for Replay {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut context = self.context.lock().unwrap();
-        if let Some(Replaced { head, keep }) = commit.replaced {
-            let start = context.len() - keep;
-            let kept = context.split_off(start);
-            *context = head.to_vec();
-            context.extend(kept);
-        }
-        context.extend_from_slice(commit.blocks);
+        commit.apply(&mut context);
         self.saved.lock().unwrap().push(Saved {
-            replaced: commit.replaced.map(|Replaced { head, keep }| (head.to_vec(), keep)),
+            replaced: commit
+                .replaced
+                .as_ref()
+                .map(|Replaced { head, keep }| (head.to_vec(), *keep)),
             blocks: commit.blocks.to_vec(),
             answer: commit.answer.clone(),
             end: commit.end.as_ref().map(|end| match end {
