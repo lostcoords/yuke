@@ -15,6 +15,9 @@ use crate::store::failed;
 /// The name of the lock file in a session folder. No blob has this name, because a blob name has 64 characters.
 const LOCK: &str = "lock";
 
+/// The start of the name of each temporary file. No blob name starts with a dot.
+const TEMPORARY_PREFIX: &str = ".tmp-";
+
 /// The counter of the temporary files of this process. The process id and the counter make the name of each file.
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
@@ -46,8 +49,7 @@ pub(crate) fn take_lock(folder: &Path) -> Result<File, StoreError> {
 pub(crate) fn write_blob(folder: &Path, bytes: &[u8]) -> io::Result<yuke_ai::Blob> {
     let blob = yuke_agent::blob_of(bytes);
     std::fs::create_dir_all(folder)?;
-    let number = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
-    let temporary = folder.join(format!(".tmp-{}-{number}", std::process::id()));
+    let temporary = temporary_file(folder);
 
     // An error before the rename leaves the temporary file, and the delete of the session removes it. A file of a
     // stopped process with the same id gets new content.
@@ -58,6 +60,32 @@ pub(crate) fn write_blob(folder: &Path, bytes: &[u8]) -> io::Result<yuke_ai::Blo
 
     sync_folder(folder)?;
     Ok(blob)
+}
+
+/// Copy each blob file of the session folder `source` into the session folder `folder`, and make the copies durable.
+/// Each copy goes through a temporary file, because a read does not check the digest of a blob.
+pub(crate) fn copy_blobs(source: &Path, folder: &Path) -> io::Result<()> {
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == LOCK || name.to_string_lossy().starts_with(TEMPORARY_PREFIX) {
+            continue;
+        }
+
+        let temporary = temporary_file(folder);
+        // On a file system with reflinks, such as btrfs or APFS, the copy can share the blocks of the source file.
+        std::fs::copy(entry.path(), &temporary)?;
+        // Windows syncs only a file that is open for writing.
+        OpenOptions::new().write(true).open(&temporary)?.sync_all()?;
+        std::fs::rename(&temporary, folder.join(name))?;
+    }
+    sync_folder(folder)
+}
+
+/// A new temporary file name in `folder`.
+fn temporary_file(folder: &Path) -> PathBuf {
+    let number = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
+    folder.join(format!("{TEMPORARY_PREFIX}{}-{number}", std::process::id()))
 }
 
 /// Make the entries of `folder` durable, such as a renamed file or a new folder. Windows does not open a folder as a

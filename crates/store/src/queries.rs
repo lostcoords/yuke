@@ -113,6 +113,29 @@ FROM sessions WHERE id = :session_id;",
         )
     }
 
+    #[derive(Debug)]
+    pub(crate) struct CopyCommitsParams {
+        pub(crate) source: [u8; 16],
+        pub(crate) session_id: [u8; 16],
+    }
+
+    /// Copy each commit of session `source` to session `session_id` in id order, with its token usage and its creation time.
+    pub(crate) fn copy_commits(connection: &Connection, params: &CopyCommitsParams) -> Result<usize> {
+        execute(
+            connection,
+            r"INSERT INTO commits(
+    session_id, head, keep, blocks, model, base_url, input_tokens, output_tokens, reasoning_tokens,
+    cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message, created_at
+)
+SELECT
+    :session_id, head, keep, blocks, model, base_url, input_tokens, output_tokens, reasoning_tokens,
+    cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message, created_at
+FROM commits WHERE session_id = :source
+ORDER BY id;",
+            &[(":source", &params.source), (":session_id", &params.session_id)],
+        )
+    }
+
     /// The newest commit of the session with a replacement.
     pub(crate) fn newest_replacement(connection: &Connection, session_id: [u8; 16]) -> Query<'_, NewestReplacement> {
         Query::new(
@@ -278,6 +301,21 @@ pub(crate) mod sessions {
             connection,
             r"INSERT INTO sessions(id, settings) VALUES (:id, :settings);",
             &[(":id", &params.id), (":settings", &params.settings)],
+        )
+    }
+
+    #[derive(Debug)]
+    pub(crate) struct CopySessionParams {
+        pub(crate) source: [u8; 16],
+        pub(crate) id: [u8; 16],
+    }
+
+    /// Add session `id` with the settings of session `source`. It adds no row for an unknown source.
+    pub(crate) fn copy_session(connection: &Connection, params: &CopySessionParams) -> Result<usize> {
+        execute(
+            connection,
+            r"INSERT INTO sessions(id, settings) SELECT :id, settings FROM sessions WHERE id = :source;",
+            &[(":source", &params.source), (":id", &params.id)],
         )
     }
 

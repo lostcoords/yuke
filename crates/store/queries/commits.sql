@@ -11,6 +11,18 @@ SELECT
     :cache_read_tokens, :cache_write_tokens, :finish_reason, :end_kind, :end_finish_reason, :end_message
 FROM sessions WHERE id = :session_id;
 
+--! copy_commits (source: [u8; 16], session_id: [u8; 16])
+--- Copy each commit of session `source` to session `session_id` in id order, with its token usage and its creation time.
+INSERT INTO commits(
+    session_id, head, keep, blocks, model, base_url, input_tokens, output_tokens, reasoning_tokens,
+    cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message, created_at
+)
+SELECT
+    :session_id, head, keep, blocks, model, base_url, input_tokens, output_tokens, reasoning_tokens,
+    cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message, created_at
+FROM commits WHERE session_id = :source
+ORDER BY id;
+
 --! newest_replacement (session_id: [u8; 16]) : (id, head?: Json<Vec<yuke_ai::Block>>, keep?: usize)
 --- The newest commit of the session with a replacement.
 SELECT id, head, keep FROM commits

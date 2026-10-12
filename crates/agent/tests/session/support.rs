@@ -183,6 +183,7 @@ pub(crate) struct FailingStore {
     store: MemoryStore,
     fail_at: usize,
     commits: AtomicUsize,
+    forks: Mutex<Vec<SessionId>>,
 }
 
 impl FailingStore {
@@ -191,7 +192,13 @@ impl FailingStore {
             store: MemoryStore::new(),
             fail_at,
             commits: AtomicUsize::new(0),
+            forks: Mutex::default(),
         })
+    }
+
+    /// The id of each session that a fork made.
+    pub(crate) fn forks(&self) -> Vec<SessionId> {
+        self.forks.lock().unwrap().clone()
     }
 }
 
@@ -199,6 +206,12 @@ impl FailingStore {
 impl Store for FailingStore {
     async fn create_session(&self, settings: &SessionSettings) -> Result<Opened, StoreError> {
         self.store.create_session(settings).await
+    }
+
+    async fn fork_session(&self, source: SessionId) -> Result<Opened, StoreError> {
+        let opened = self.store.fork_session(source).await?;
+        self.forks.lock().unwrap().push(opened.id);
+        Ok(opened)
     }
 
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {

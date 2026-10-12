@@ -91,6 +91,28 @@ impl Store for MemoryStore {
         })
     }
 
+    async fn fork_session(&self, source: SessionId) -> Result<Opened, StoreError> {
+        let id = SessionId::generate();
+        let mut state = lock(&self.state);
+        let saved = state.sessions.get(&source).ok_or(StoreError::NotFound)?;
+        let fork = Saved {
+            settings: saved.settings.clone(),
+            context: saved.context.clone(),
+            pending: Vec::new(),
+            turn_open: saved.turn_open,
+            blobs: saved.blobs.clone(),
+        };
+        let opened = Opened {
+            id,
+            settings: fork.settings.clone(),
+            context: fork.context.clone(),
+            turn_open: fork.turn_open,
+            lease: Some(self.take_writer(id)?),
+        };
+        state.sessions.insert(id, fork);
+        Ok(opened)
+    }
+
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {
         let mut state = lock(&self.state);
         let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;

@@ -5,8 +5,8 @@ commit of the turn in a `Store` before the turn goes on.
 
 ## Store
 
-Each `Store` method is one atomic durable step: create a session, set its settings, accept an input, open it, save
-one commit of the engine, load the pending inputs, put and read a blob, and delete a session. One writer at a time
+Each `Store` method is one atomic durable step: create a session, fork it, set its settings, accept an input, open it,
+save one commit of the engine, load the pending inputs, put and read a blob, and delete a session. One writer at a time
 owns a session. A second writer gets `StoreError::Owned` until the `Lease` of the first writer drops. `MemoryStore`
 keeps its sessions in memory.
 
@@ -17,6 +17,9 @@ turn reads the blobs of its media from the store, so the driver needs no blob st
 
 - `Session::open` ends a turn that was open when its process stopped. Each call without a result gets an error result,
   and the turn ends as failed. The session sends no request again.
+- `Session::fork` copies a session into a new session, and the returned `Session` owns the new session. The copy
+  has the settings, the context, and the blobs of the source, and no pending input. A turn that is open in the source
+  ends in the copy as in `Session::open`.
 - An input from `Session::input` is pending in the store until a commit consumes it. An open starts no turn.
 - After a failed commit, or when the caller drops a turn, the next turn opens the session again from the store.
 

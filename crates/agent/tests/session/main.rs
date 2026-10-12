@@ -1,5 +1,5 @@
-//! A session over a memory store: it opens again with its context, ends an open turn, keeps pending inputs, takes
-//! input during a turn, and opens again after a failed commit.
+//! A session over a memory store: it opens again with its context, ends an open turn, forks, keeps pending inputs,
+//! takes input during a turn, and opens again after a failed commit.
 #![expect(clippy::unwrap_used, clippy::expect_used, reason = "a test fails by panicking")]
 
 mod support;
@@ -97,6 +97,54 @@ async fn an_open_turn_ends_with_an_error_result_for_each_call_without_a_result()
     let saved = store.open(id, Access::Read).await.unwrap();
     assert!(!saved.turn_open);
     assert_eq!(saved.context, session.context());
+}
+
+#[tokio::test]
+async fn a_fork_of_an_open_turn_ends_the_turn_in_the_fork_and_leaves_the_source_open() {
+    let store = Arc::new(MemoryStore::new());
+    let source = store.create_session(&settings()).await.unwrap().id;
+    let open = [
+        Block::user_text("one"),
+        Block::ToolCall(ToolCall::new("c1", "read", "{}")),
+    ];
+    store.commit(source, &step(&open), &[]).await.unwrap();
+
+    let fork = Session::fork(store.clone(), source).await.unwrap();
+
+    assert_ne!(fork.id(), source);
+    let Some(Block::ToolResult(result)) = fork.context().get(open.len()) else {
+        panic!("a result was expected after the call, not {:?}", fork.context());
+    };
+    assert_eq!((result.call_id.as_str(), result.is_error), ("c1", true));
+    let saved_fork = store.open(fork.id(), Access::Read).await.unwrap();
+    assert!(!saved_fork.turn_open);
+    assert_eq!(saved_fork.context, fork.context());
+    let saved_source = store.open(source, Access::Read).await.unwrap();
+    assert!(saved_source.turn_open);
+    assert_eq!(saved_source.context, open);
+}
+
+#[tokio::test]
+async fn a_fork_whose_repair_fails_deletes_the_copy() {
+    // The first commit opens a turn in the source, and the second one, the repair of the fork, fails.
+    let store = FailingStore::new(2);
+    let source = store.create_session(&settings()).await.unwrap().id;
+    let open = [Block::ToolCall(ToolCall::new("c1", "read", "{}"))];
+    store.commit(source, &step(&open), &[]).await.unwrap();
+
+    let fork = Session::fork(store.clone(), source).await;
+
+    assert!(
+        matches!(fork, Err(StoreError::Failed(_))),
+        "{:?}",
+        fork.map(|session| session.id())
+    );
+    let [copy] = store.forks()[..] else {
+        panic!("one fork was expected, not {:?}", store.forks());
+    };
+    let reopened = store.open(copy, Access::Read).await;
+    assert!(matches!(reopened, Err(StoreError::NotFound)), "{reopened:?}");
+    assert!(store.open(source, Access::Read).await.unwrap().turn_open);
 }
 
 #[tokio::test]

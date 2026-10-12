@@ -3,6 +3,10 @@
 --! insert_session (id: [u8; 16], settings: String)
 INSERT INTO sessions(id, settings) VALUES (:id, :settings);
 
+--! copy_session (source: [u8; 16], id: [u8; 16])
+--- Add session `id` with the settings of session `source`. It adds no row for an unknown source.
+INSERT INTO sessions(id, settings) SELECT :id, settings FROM sessions WHERE id = :source;
+
 --! update_settings (id: [u8; 16], settings: String)
 --- Replace the settings of the session. It changes no row for an unknown session.
 UPDATE sessions SET settings = :settings WHERE id = :id;

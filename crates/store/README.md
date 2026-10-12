@@ -27,6 +27,16 @@ keeps a folder for each session in `folder/sessions/<id>/`, with the lock file a
 - `SqliteStore::open` removes each folder that has no session row and no held lock, for example after a crash during
   a delete.
 
+## Fork
+
+- `fork_session` copies the session row and each commit row in one transaction. A copied commit keeps its token usage
+  and its creation time. The new session row gets the time of the fork. The pending inputs stay with the source.
+- Then it locks the new folder and copies each blob file through a temporary file. On a file system with reflinks, such as
+  btrfs or APFS, the copy can share the blocks of the source file.
+- The fork takes no lock on the source, so a writer of the source can keep its lease during the fork.
+- When the copy fails, the store deletes the rows and the folder of the fork. An error of that delete returns in
+  place of the error of the copy.
+
 ## Migrations and queries
 
 The migrations are in `migrations/`, and the queries are in `queries/`. After a change, write `src/queries.rs` again:

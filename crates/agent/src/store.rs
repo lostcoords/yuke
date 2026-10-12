@@ -18,6 +18,15 @@ pub trait Store: Send + Sync {
     /// Returns [`StoreError::Failed`] when the save fails.
     async fn create_session(&self, settings: &SessionSettings) -> Result<Opened, StoreError>;
 
+    /// Save a new session with a copy of the settings, the commits, and the blobs of session `source`, and open it for
+    /// writing. The copy has no pending input. A writer of `source` can keep its lease during the fork.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::NotFound`] for an unknown source, and [`StoreError::Failed`] when the save fails. After a
+    /// failed save, the store deletes the new session, and an error of that delete returns in its place.
+    async fn fork_session(&self, source: SessionId) -> Result<Opened, StoreError>;
+
     /// Replace the settings of session `id` with `settings`.
     ///
     /// # Errors

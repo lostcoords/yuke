@@ -8,7 +8,7 @@ use std::task::{Context, Poll, Waker};
 
 use tokio_rusqlite::rusqlite;
 use yuke_agent::{Access, ModelReference, SessionSettings, Store, StoreError};
-use yuke_engine::Commit;
+use yuke_engine::{Answer, Commit};
 use yuke_store::SqliteStore;
 
 /// A new empty folder for the test `name`.
@@ -154,4 +154,86 @@ async fn the_sweep_removes_a_folder_without_a_session_and_keeps_a_locked_one() {
 
     assert!(!left.exists());
     assert!(deleting.exists());
+}
+
+/// The model, the token usage, and the creation time of each commit row of session `id` in the database of `folder`, in id order, as
+/// JSON arrays.
+fn commit_rows(folder: &std::path::Path, id: yuke_agent::SessionId) -> Vec<String> {
+    let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
+    let mut statement = connection
+        .prepare(
+            "SELECT json_array(model, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, \
+             cache_write_tokens, created_at) FROM commits WHERE session_id = ? ORDER BY id",
+        )
+        .unwrap();
+    statement
+        .query_map([id.as_bytes()], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_fork_keeps_the_token_usage_and_the_creation_time_of_each_copied_commit() {
+    let folder = folder("a_fork_keeps_the_token_usage_and_the_creation_time_of_each_copied_commit");
+    let store = SqliteStore::open(&folder).await.unwrap();
+    let source = store.create_session(&settings("one")).await.unwrap().id;
+    let blocks = [yuke_ai::Block::assistant_text("a")];
+    let answer = Commit {
+        answer: Some(Answer {
+            origin: yuke_ai::Origin {
+                model: "test-model".to_owned(),
+                base_url: "https://example.test".to_owned(),
+            },
+            usage: yuke_ai::Usage {
+                input: 10,
+                output: 20,
+                reasoning: 3,
+                cache_read: 4,
+                cache_write: 5,
+            },
+            finish_reason: yuke_ai::FinishReason::Stop,
+        }),
+        ..step(&blocks)
+    };
+    store.commit(source, &answer, &[]).await.unwrap();
+    store
+        .commit(source, &step(&[yuke_ai::Block::user_text("b")]), &[])
+        .await
+        .unwrap();
+    // An old time tells a copied time apart from the time of the fork.
+    let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
+    connection.execute("UPDATE commits SET created_at = 1000", []).unwrap();
+
+    let fork = store.fork_session(source).await.unwrap().id;
+
+    assert_eq!(
+        commit_rows(&folder, fork),
+        [
+            r#"["test-model",10,20,3,4,5,1000]"#,
+            "[null,null,null,null,null,null,1000]",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_failed_copy_of_the_blobs_leaves_no_fork() {
+    let folder = folder("a_failed_copy_of_the_blobs_leaves_no_fork");
+    let store = SqliteStore::open(&folder).await.unwrap();
+    let source = store.create_session(&settings("one")).await.unwrap().id;
+    store.put_blob(source, b"image".to_vec()).await.unwrap();
+    let sessions = folder.join("sessions");
+    let source_folder = std::fs::read_dir(&sessions).unwrap().next().unwrap().unwrap().path();
+    // A folder in place of a blob file makes the copy fail.
+    std::fs::create_dir(source_folder.join("f".repeat(64))).unwrap();
+
+    let fork = store.fork_session(source).await;
+
+    assert!(matches!(fork, Err(StoreError::Failed(_))), "{fork:?}");
+    assert_eq!(std::fs::read_dir(&sessions).unwrap().count(), 1);
+    let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
+    let rows: i64 = connection
+        .query_row("SELECT count(*) FROM sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 1);
 }

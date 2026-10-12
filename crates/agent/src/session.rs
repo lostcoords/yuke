@@ -119,6 +119,27 @@ impl Session {
         Ok(Session::from_opened(store, opened))
     }
 
+    /// Copy session `source` of `store` into a new session, and own the copy. The copy has the settings, the context,
+    /// and the blobs of the source, and no pending input. A turn that is open in the source ends in the copy as in
+    /// [`Session::open`], and the source does not change.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of [`Store::fork_session`], or of the commit that ends an open turn. After a failed commit,
+    /// the fork deletes the copy, and an error of that delete returns in its place.
+    pub async fn fork(store: Arc<dyn Store>, source: SessionId) -> Result<Session, StoreError> {
+        let opened = store.fork_session(source).await?;
+        let id = opened.id;
+        match end_open_turn(&*store, opened).await {
+            Ok(opened) => Ok(Session::from_opened(store, opened)),
+            // The caller never learns the id of a failed fork, so nothing else can open or delete the copy.
+            Err(error) => {
+                store.delete_session(id).await?;
+                Err(error)
+            }
+        }
+    }
+
     fn from_opened(store: Arc<dyn Store>, opened: Opened) -> Session {
         Session {
             settings: opened.settings,
@@ -196,7 +217,12 @@ impl Session {
 
 /// Open session `id` for writing, and end a turn that was open when its process stopped.
 async fn open_for_writing(store: &dyn Store, id: SessionId) -> Result<Opened, StoreError> {
-    let mut opened = store.open(id, Access::Write).await?;
+    let opened = store.open(id, Access::Write).await?;
+    end_open_turn(store, opened).await
+}
+
+/// End the open turn of `opened`: each call without a result gets an error result, and the turn ends as failed.
+async fn end_open_turn(store: &dyn Store, mut opened: Opened) -> Result<Opened, StoreError> {
     if opened.turn_open {
         let results = open_calls(&opened.context)
             .map(|call_id| yuke_ai::Block::ToolResult(yuke_ai::ToolResult::error(call_id, OUTCOME_UNKNOWN)))
@@ -207,7 +233,7 @@ async fn open_for_writing(store: &dyn Store, id: SessionId) -> Result<Opened, St
             answer: None,
             end: Some(TurnEnd::Failed(TURN_STOPPED.to_owned())),
         };
-        store.commit(id, &repair, &[]).await?;
+        store.commit(opened.id, &repair, &[]).await?;
         opened.context.extend(results);
         opened.turn_open = false;
     }

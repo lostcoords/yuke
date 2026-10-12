@@ -157,6 +157,48 @@ impl Store for SqliteStore {
         })
     }
 
+    async fn fork_session(&self, source: SessionId) -> Result<Opened, StoreError> {
+        let id = SessionId::generate();
+        let params = sessions::CopySessionParams {
+            source: *source.as_bytes(),
+            id: *id.as_bytes(),
+        };
+        let source_folder = self.folder(source);
+        let folder = self.folder(id);
+        let sessions_folder = self.sessions.clone();
+
+        // The copy of the blobs runs on the thread of the connection, as a put does. Forks are rare.
+        let (loaded, file) = self
+            .call(move |connection| {
+                // The rows come before the folder, as in `create_session`, so the sweep finds no live folder without
+                // its row.
+                ensure_found(copy_rows(connection, &params).map_err(failed)?)?;
+                let forked = copy_folder(&source_folder, &folder, &sessions_folder).and_then(|file| {
+                    let loaded = read(connection, |connection| context::load(connection, params.id))?;
+                    Ok((loaded.ok_or(StoreError::NotFound)?, file))
+                });
+                // The caller never learns the id of a failed fork, so nothing else can open or delete it.
+                forked.or_else(|error| {
+                    delete_fork(connection, params.id, &folder)?;
+                    Err(error)
+                })
+            })
+            .await?;
+
+        let Loaded {
+            settings,
+            context,
+            turn_open,
+        } = loaded;
+        Ok(Opened {
+            id,
+            settings,
+            context,
+            turn_open,
+            lease: Some(self.lease(id, file)),
+        })
+    }
+
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {
         let owner = self.owner(id);
         let params = sessions::UpdateSettingsParams {
@@ -325,6 +367,39 @@ fn save_commit(
 
     transaction.commit()?;
     Ok(true)
+}
+
+/// Copy the session row and the commit rows of `params.source` to `params.id` in one transaction. Returns `false` for
+/// an unknown source.
+fn copy_rows(connection: &mut Connection, params: &sessions::CopySessionParams) -> rusqlite::Result<bool> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if sessions::copy_session(&transaction, params)? == 0 {
+        return Ok(false);
+    }
+
+    let copy_commits_params = commits::CopyCommitsParams {
+        source: params.source,
+        session_id: params.id,
+    };
+    commits::copy_commits(&transaction, &copy_commits_params)?;
+    transaction.commit()?;
+    Ok(true)
+}
+
+/// Take the lock of the new session folder `folder`, and copy the blobs of the session folder `source` into it.
+fn copy_folder(source: &Path, folder: &Path, sessions_folder: &Path) -> Result<File, StoreError> {
+    let file = files::take_lock(folder)?;
+    // A crash must not lose the entry of the new folder, so the call syncs the folder that holds it.
+    files::sync_folder(sessions_folder).map_err(failed)?;
+    files::copy_blobs(source, folder).map_err(failed)?;
+    Ok(file)
+}
+
+/// Delete the rows and the folder of a failed fork. The lock of the fork is already free. An error here returns in
+/// place of the error of the fork, because the fork then stays.
+fn delete_fork(connection: &Connection, session: [u8; 16], folder: &Path) -> Result<(), StoreError> {
+    sessions::delete_session(connection, session).map_err(failed)?;
+    files::remove_session_folder(folder).map_err(failed)
 }
 
 /// The row of `commit`, with its blocks as JSON text.

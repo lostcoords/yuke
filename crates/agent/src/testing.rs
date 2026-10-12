@@ -37,6 +37,11 @@ macro_rules! store_tests {
             a_blob_of_another_session_does_not_read,
             a_deleted_session_is_not_found,
             a_delete_of_a_held_session_gets_owned,
+            a_fork_has_the_settings_and_the_context_of_its_source_and_no_pending_input,
+            a_source_forks_while_its_writer_keeps_its_lease_and_the_fork_has_its_own_lease,
+            a_commit_to_a_fork_or_its_source_does_not_change_the_other,
+            a_fork_keeps_the_blobs_of_its_source_after_the_delete_of_the_source,
+            a_fork_of_a_source_with_an_open_turn_has_an_open_turn,
         );
     };
     (@behaviors $make_store:path; $($behavior:ident),* $(,)?) => {
@@ -338,6 +343,7 @@ pub async fn an_unknown_session_is_not_found(store: &dyn Store) {
     let put = store.put_blob(id, b"image".to_vec()).await;
     let read = store.read_blob(id, &blob_of(b"image").digest);
     let delete = store.delete_session(id).await;
+    let fork = store.fork_session(id).await;
 
     assert!(matches!(open, Err(StoreError::NotFound)), "{open:?}");
     assert!(matches!(settings, Err(StoreError::NotFound)), "{settings:?}");
@@ -347,6 +353,7 @@ pub async fn an_unknown_session_is_not_found(store: &dyn Store) {
     assert!(matches!(put, Err(StoreError::NotFound)), "{put:?}");
     assert!(matches!(read, Err(StoreError::NotFound)), "{read:?}");
     assert!(matches!(delete, Err(StoreError::NotFound)), "{delete:?}");
+    assert!(matches!(fork, Err(StoreError::NotFound)), "{fork:?}");
 }
 
 /// A put returns the digest and the length of the bytes, and the blob reads back.
@@ -417,4 +424,127 @@ pub async fn a_delete_of_a_held_session_gets_owned(store: &dyn Store) {
 
     assert!(matches!(delete, Err(StoreError::Owned)), "{delete:?}");
     assert!(store.open(opened.id, Access::Read).await.is_ok());
+}
+
+/// A fork has a new id, and the settings and the context of its source. It has a closed turn and no pending input.
+pub async fn a_fork_has_the_settings_and_the_context_of_its_source_and_no_pending_input(store: &dyn Store) {
+    let source = store.create_session(&settings("one")).await.unwrap().id;
+    store
+        .commit(
+            source,
+            &step(&[yuke_ai::Block::user_text("a"), yuke_ai::Block::assistant_text("b")]),
+            &[],
+        )
+        .await
+        .unwrap();
+    // A replacement makes the context depend on the order and the columns of the copied commits.
+    let head = [yuke_ai::Block::user_text("summary")];
+    let replacement = Commit {
+        replaced: Some(Replaced { head: &head, keep: 1 }),
+        ..step(&[])
+    };
+    store.commit(source, &replacement, &[]).await.unwrap();
+    store
+        .commit(source, &end(&[yuke_ai::Block::assistant_text("c")]), &[])
+        .await
+        .unwrap();
+    store
+        .accept_input(source, &[yuke_ai::Block::user_text("d")])
+        .await
+        .unwrap();
+    let blocks = [
+        yuke_ai::Block::user_text("summary"),
+        yuke_ai::Block::assistant_text("b"),
+        yuke_ai::Block::assistant_text("c"),
+    ];
+
+    let fork = store.fork_session(source).await.unwrap();
+
+    assert_ne!(fork.id, source);
+    assert_eq!(fork.settings, settings("one"));
+    assert_eq!(fork.context, blocks);
+    assert!(!fork.turn_open);
+    assert_eq!(store.pending(fork.id).await.unwrap(), []);
+    assert_eq!(store.pending(source).await.unwrap().len(), 1);
+    let saved = store.open(fork.id, Access::Read).await.unwrap();
+    assert_eq!(saved.settings, settings("one"));
+    assert_eq!(saved.context, blocks);
+}
+
+/// A source forks while its writer keeps its lease. The fork has its own lease, and the source keeps its lease.
+pub async fn a_source_forks_while_its_writer_keeps_its_lease_and_the_fork_has_its_own_lease(store: &dyn Store) {
+    let source = store.create_session(&settings("one")).await.unwrap();
+
+    let fork = store.fork_session(source.id).await.unwrap();
+
+    assert!(fork.lease.is_some());
+    let fork_writer = store.open(fork.id, Access::Write).await;
+    let source_writer = store.open(source.id, Access::Write).await;
+    assert!(matches!(fork_writer, Err(StoreError::Owned)), "{fork_writer:?}");
+    assert!(matches!(source_writer, Err(StoreError::Owned)), "{source_writer:?}");
+}
+
+/// A commit to a fork does not change its source, and a commit to the source does not change the fork.
+pub async fn a_commit_to_a_fork_or_its_source_does_not_change_the_other(store: &dyn Store) {
+    let source = store.create_session(&settings("one")).await.unwrap().id;
+    store
+        .commit(source, &end(&[yuke_ai::Block::user_text("a")]), &[])
+        .await
+        .unwrap();
+    let fork = store.fork_session(source).await.unwrap().id;
+
+    store
+        .commit(fork, &end(&[yuke_ai::Block::user_text("fork")]), &[])
+        .await
+        .unwrap();
+    store
+        .commit(source, &end(&[yuke_ai::Block::user_text("source")]), &[])
+        .await
+        .unwrap();
+
+    let fork = store.open(fork, Access::Read).await.unwrap().context;
+    let source = store.open(source, Access::Read).await.unwrap().context;
+    assert_eq!(
+        fork,
+        [yuke_ai::Block::user_text("a"), yuke_ai::Block::user_text("fork")]
+    );
+    assert_eq!(
+        source,
+        [yuke_ai::Block::user_text("a"), yuke_ai::Block::user_text("source")]
+    );
+}
+
+/// A fork reads each blob of its source, also after the delete of the source.
+pub async fn a_fork_keeps_the_blobs_of_its_source_after_the_delete_of_the_source(store: &dyn Store) {
+    let source = store.create_session(&settings("one")).await.unwrap();
+    let first = store.put_blob(source.id, b"image".to_vec()).await.unwrap();
+    let second = store.put_blob(source.id, b"audio".to_vec()).await.unwrap();
+    let fork = store.fork_session(source.id).await.unwrap().id;
+    let source_id = source.id;
+
+    drop(source);
+    store.delete_session(source_id).await.unwrap();
+
+    assert_eq!(
+        store.read_blob(fork, &first.digest).unwrap().as_deref(),
+        Some(&b"image"[..])
+    );
+    assert_eq!(
+        store.read_blob(fork, &second.digest).unwrap().as_deref(),
+        Some(&b"audio"[..])
+    );
+}
+
+/// A fork of a source with an open turn has the open turn too.
+pub async fn a_fork_of_a_source_with_an_open_turn_has_an_open_turn(store: &dyn Store) {
+    let source = store.create_session(&settings("one")).await.unwrap().id;
+    store
+        .commit(source, &step(&[yuke_ai::Block::user_text("a")]), &[])
+        .await
+        .unwrap();
+
+    let fork = store.fork_session(source).await.unwrap();
+
+    assert!(fork.turn_open);
+    assert_eq!(fork.context, [yuke_ai::Block::user_text("a")]);
 }
