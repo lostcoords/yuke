@@ -2,8 +2,9 @@
 //! A program usually gives the store to a `yuke_agent::Session`, which runs the turns and saves each commit.
 #![expect(clippy::print_stdout, reason = "an example prints what the store saved")]
 
-use yuke_agent::{Access, ModelReference, SessionSettings, Store};
+use yuke_agent::{Access, Store};
 use yuke_engine::{Commit, Outcome, TurnEnd};
+use yuke_protocol::{ModelReference, SessionSettings};
 use yuke_store::SqliteStore;
 
 #[tokio::main(flavor = "current_thread")]

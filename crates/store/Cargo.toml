@@ -12,6 +12,7 @@ serde = "1.0.229"
 serde_json = "1.0.151"
 tokio-rusqlite = "0.8.0"
 yuke-agent = { path = "../agent" }
+yuke-protocol = { path = "../protocol" }
 yuke-ai = { path = "../ai", default-features = false }
 yuke-engine = { path = "../engine" }
 yuke-sql = { path = "../sql" }

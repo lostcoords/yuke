@@ -13,12 +13,10 @@ use support::{
     FailingStore, NoWait, ScriptedTransport, SendsInput, Stalled, assert_in_order, failed_reply, settings, target,
     text_reply, tool_reply,
 };
-use yuke_agent::{
-    Access, InputId, MemoryStore, ModelReference, Session, SessionError, SessionEvent, SessionSettings, Store,
-    StoreError,
-};
+use yuke_agent::{Access, MemoryStore, Session, SessionError, Store, StoreError};
 use yuke_ai::{Block, Media, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::{Commit, Driver, Toolset};
+use yuke_protocol::{InputId, ModelReference, SessionEvent, SessionSettings};
 
 /// A commit in the middle of a turn.
 fn step(blocks: &[Block]) -> Commit<'_> {

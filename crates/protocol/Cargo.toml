@@ -1,0 +1,16 @@
+[package]
+name = "yuke-protocol"
+version = "0.0.1-dev"
+description = "The types that a yuke server and its clients speak."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+uuid = { version = "1.28.0", features = ["v7"] }
+yuke-ai = { path = "../ai", default-features = false }
+yuke-engine = { path = "../engine" }
+
+[lints]
+workspace = true

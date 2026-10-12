@@ -6,14 +6,14 @@ use crate::queries::events;
 
 /// A session as the database holds it.
 pub(crate) struct Loaded {
-    pub(crate) settings: yuke_agent::SessionSettings,
+    pub(crate) settings: yuke_protocol::SessionSettings,
     pub(crate) context: Vec<yuke_ai::Block>,
     pub(crate) turn_open: bool,
 }
 
 impl Loaded {
     /// The session `id` with this state and `lease`.
-    pub(crate) fn opened(self, id: yuke_agent::SessionId, lease: Option<yuke_agent::Lease>) -> yuke_agent::Opened {
+    pub(crate) fn opened(self, id: yuke_protocol::SessionId, lease: Option<yuke_agent::Lease>) -> yuke_agent::Opened {
         yuke_agent::Opened {
             id,
             settings: self.settings,

@@ -7,10 +7,9 @@ use async_trait::async_trait;
 use yuke_engine::{Commit, Outcome, TurnEnd};
 
 use crate::lock;
-use crate::store::{
-    Access, EventNumber, InputId, Lease, Opened, PendingInput, SessionEvent, SessionId, SessionSettings, Store,
-    StoreError, StoredEvent, blob_of,
-};
+use yuke_protocol::{EventNumber, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, StoredEvent};
+
+use crate::store::{Access, Lease, Opened, Store, StoreError, blob_of};
 
 /// A [`Store`] that keeps its sessions in memory, for tests and for a caller that saves nothing. It refuses a second
 /// writer of a session, as a store with a file lock does.

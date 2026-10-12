@@ -8,8 +8,9 @@ use std::task::{Context, Poll, Waker};
 
 use tokio_rusqlite::rusqlite;
 use yuke_agent::testing::{end, settings, step};
-use yuke_agent::{Access, EventNumber, Store, StoreError};
+use yuke_agent::{Access, Store, StoreError};
 use yuke_engine::{Answer, Commit};
+use yuke_protocol::EventNumber;
 use yuke_store::SqliteStore;
 
 /// A new empty folder for the test `name`.
@@ -140,7 +141,7 @@ async fn the_sweep_removes_a_folder_without_a_session_and_keeps_a_locked_one() {
 
 /// The model, the token usage, and the creation time of each commit event of session `id` in the database of `folder`,
 /// in event-number order, as JSON arrays.
-fn commit_rows(folder: &std::path::Path, id: yuke_agent::SessionId) -> Vec<String> {
+fn commit_rows(folder: &std::path::Path, id: yuke_protocol::SessionId) -> Vec<String> {
     let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
     let mut statement = connection
         .prepare(

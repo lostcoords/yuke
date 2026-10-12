@@ -2,8 +2,9 @@
 
 use std::borrow::Cow;
 
-use yuke_agent::{EventNumber, SessionEvent, StoreError, StoredEvent};
+use yuke_agent::StoreError;
 use yuke_engine::{Answer, Commit, Outcome, Replaced, TurnEnd};
+use yuke_protocol::{EventNumber, SessionEvent, StoredEvent};
 use yuke_sql::rusqlite;
 
 use crate::context::required;

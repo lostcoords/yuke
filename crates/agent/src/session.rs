@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use yuke_engine::{CancellationToken, Commit, Driver, Inbox, Journal, Observer, Outcome, TurnEnd, TurnError};
 
 use crate::lock;
-use crate::store::{
-    Access, EventNumber, InputId, Lease, Opened, PendingInput, SessionId, SessionSettings, Store, StoreError,
-};
+use yuke_protocol::{EventNumber, InputId, PendingInput, SessionId, SessionSettings};
+
+use crate::store::{Access, Lease, Opened, Store, StoreError};
 
 /// The result of a call that was open when its turn stopped. The model reads it.
 const OUTCOME_UNKNOWN: &str = "The turn stopped before it saved the result of this call. The call can have run.";

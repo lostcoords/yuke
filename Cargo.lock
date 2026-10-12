@@ -1178,12 +1178,11 @@ version = "0.0.1-dev"
 dependencies = [
  "async-trait",
  "bytes",
- "serde",
  "sha2",
  "tokio",
- "uuid",
  "yuke-ai",
  "yuke-engine",
+ "yuke-protocol",
 ]
 
 [[package]]
@@ -1220,6 +1219,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "yuke-protocol"
+version = "0.0.1-dev"
+dependencies = [
+ "serde",
+ "uuid",
+ "yuke-ai",
+ "yuke-engine",
+]
+
+[[package]]
 name = "yuke-sql"
 version = "0.0.1-dev"
 dependencies = [
@@ -1246,6 +1255,7 @@ dependencies = [
  "yuke-agent",
  "yuke-ai",
  "yuke-engine",
+ "yuke-protocol",
  "yuke-sql",
  "yuke-sqlgen",
 ]

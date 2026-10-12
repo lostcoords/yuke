@@ -1,6 +1,6 @@
 -- The queries of the events table: the numbered commits and settings of each session.
 
---: Event(seq: u64, kind, blocks?: Json<Vec<yuke_ai::Block>>, settings?: Json<yuke_agent::SessionSettings>, consumed?: Json<Vec<yuke_agent::InputId>>, head?: Json<Vec<yuke_ai::Block>>, keep?: usize, model?, base_url?, input_tokens?: u64, output_tokens?: u64, reasoning_tokens?: u64, cache_read_tokens?: u64, cache_write_tokens?: u64, finish_reason?, end_kind?, end_finish_reason?, end_message?)
+--: Event(seq: u64, kind, blocks?: Json<Vec<yuke_ai::Block>>, settings?: Json<yuke_protocol::SessionSettings>, consumed?: Json<Vec<yuke_protocol::InputId>>, head?: Json<Vec<yuke_ai::Block>>, keep?: usize, model?, base_url?, input_tokens?: u64, output_tokens?: u64, reasoning_tokens?: u64, cache_read_tokens?: u64, cache_write_tokens?: u64, finish_reason?, end_kind?, end_finish_reason?, end_message?)
 
 --! insert_settings (session_id: [u8; 16], settings: String)
 --- Add a settings event with the number that `take_seq` took.
@@ -58,7 +58,7 @@ SELECT
 FROM events WHERE session_id = :session_id AND seq > :after
 ORDER BY seq;
 
---! newest_settings (session_id: [u8; 16]) : (settings?: Json<yuke_agent::SessionSettings>)
+--! newest_settings (session_id: [u8; 16]) : (settings?: Json<yuke_protocol::SessionSettings>)
 --- The settings of the newest settings event of the session. It returns no row for an unknown session.
 SELECT settings FROM events
 WHERE session_id = :session_id AND kind = 'settings'

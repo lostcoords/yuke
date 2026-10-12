@@ -16,8 +16,8 @@ pub(crate) mod events {
         pub(crate) seq: u64,
         pub(crate) kind: String,
         pub(crate) blocks: Option<Json<Vec<yuke_ai::Block>>>,
-        pub(crate) settings: Option<Json<yuke_agent::SessionSettings>>,
-        pub(crate) consumed: Option<Json<Vec<yuke_agent::InputId>>>,
+        pub(crate) settings: Option<Json<yuke_protocol::SessionSettings>>,
+        pub(crate) consumed: Option<Json<Vec<yuke_protocol::InputId>>>,
         pub(crate) head: Option<Json<Vec<yuke_ai::Block>>>,
         pub(crate) keep: Option<usize>,
         pub(crate) model: Option<String>,
@@ -84,7 +84,7 @@ pub(crate) mod events {
 
     #[derive(Debug, Clone, PartialEq)]
     pub(crate) struct NewestSettings {
-        pub(crate) settings: Option<Json<yuke_agent::SessionSettings>>,
+        pub(crate) settings: Option<Json<yuke_protocol::SessionSettings>>,
     }
 
     impl FromRow for NewestSettings {

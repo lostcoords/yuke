@@ -9,14 +9,12 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use yuke_agent::{
-    Access, EventNumber, InputId, InputSender, MemoryStore, ModelReference, Opened, PendingInput, SessionId,
-    SessionSettings, Store, StoreError, StoredEvent,
-};
+use yuke_agent::{Access, InputSender, MemoryStore, Opened, Store, StoreError};
 use yuke_ai::route::{Credential, Route};
 use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 use yuke_ai::{AnthropicWire, Block, Target, Wire};
 use yuke_engine::{Commit, Timer, Tool, ToolContent, ToolContext};
+use yuke_protocol::{EventNumber, InputId, ModelReference, PendingInput, SessionId, SessionSettings, StoredEvent};
 
 /// An Anthropic target at a test host, with no credential.
 pub(crate) fn target() -> Target {

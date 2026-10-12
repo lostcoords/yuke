@@ -7,11 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
-use yuke_agent::{
-    Access, EventNumber, InputId, Lease, Opened, PendingInput, SessionId, SessionSettings, Store, StoreError,
-    StoredEvent,
-};
+use yuke_agent::{Access, Lease, Opened, Store, StoreError};
 use yuke_engine::{Commit, Outcome, TurnEnd};
+use yuke_protocol::{EventNumber, InputId, PendingInput, SessionId, SessionSettings, StoredEvent};
 use yuke_sql::rusqlite::{self, Connection, TransactionBehavior};
 
 use crate::context;

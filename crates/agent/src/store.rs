@@ -1,17 +1,16 @@
 //! The durable steps of a session, and the types that a store saves and loads.
 
 use std::fmt;
-use std::path::PathBuf;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use yuke_engine::Commit;
+use yuke_protocol::{EventNumber, InputId, PendingInput, SessionId, SessionSettings, StoredEvent};
 
 /// Saves and loads sessions. Each method is one atomic durable step. One writer at a time owns a session. A second
 /// [`Access::Write`] open gets [`StoreError::Owned`] until the [`Lease`] of the first writer drops and its writes end.
 /// Only the holder of the lease calls [`Store::set_settings`] and [`Store::commit`]. Any caller can accept input.
 ///
-/// Each commit and each settings change also save one [`SessionEvent`] with the next event number of the session. A
+/// Each commit and each settings change also save one [`SessionEvent`](yuke_protocol::SessionEvent) with the next event number of the session. A
 /// reader of [`Store::events`] sees each of them once and in order. An accepted input is no event: it enters the events
 /// with the commit that consumes it.
 #[async_trait]
@@ -114,64 +113,6 @@ pub fn blob_of(bytes: &[u8]) -> yuke_ai::Blob {
     }
 }
 
-/// The id of a session: a version 7 UUID, so a new id sorts after an old one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SessionId(uuid::Uuid);
-
-impl SessionId {
-    /// A new id from the current time and random bits.
-    pub fn generate() -> Self {
-        SessionId(uuid::Uuid::now_v7())
-    }
-
-    /// The 16 bytes of the id, in the order that sorts by time.
-    pub fn as_bytes(&self) -> &[u8; 16] {
-        self.0.as_bytes()
-    }
-}
-
-/// The number of an event in its session. The events of a session have the numbers 1, 2, 3, and so on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct EventNumber(pub u64);
-
-/// The id of a pending input. A store gives each input of a session a larger id than the inputs before it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct InputId(pub u64);
-
-/// The current choice of a session: the model and the request settings. It holds no credential and no route, so the
-/// agent makes the target from the model reference and its config.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionSettings {
-    /// The model of the next turn.
-    pub model: ModelReference,
-    /// The request settings of the next turn.
-    pub settings: yuke_ai::Settings,
-    /// The folder that the tools of the session work in.
-    pub cwd: PathBuf,
-}
-
-/// A model of a provider, by the ids of the config.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelReference {
-    /// The id of the provider.
-    pub provider: String,
-    /// The id of the model at the provider.
-    pub model: String,
-}
-
-impl ModelReference {
-    /// The model `model` of the provider `provider`.
-    pub fn new(provider: impl Into<String>, model: impl Into<String>) -> Self {
-        ModelReference {
-            provider: provider.into(),
-            model: model.into(),
-        }
-    }
-}
-
 /// How [`Store::open`] opens a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
@@ -194,38 +135,6 @@ pub struct Opened {
     pub turn_open: bool,
     /// The owner lock of an [`Access::Write`] open. A read holds no lock.
     pub lease: Option<Lease>,
-}
-
-/// An input that no commit consumed.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PendingInput {
-    /// The id that [`Store::accept_input`] gave.
-    pub id: InputId,
-    /// The blocks of the input.
-    pub blocks: Vec<yuke_ai::Block>,
-}
-
-/// One saved event of a session, with its event number.
-#[derive(Debug, Clone, PartialEq)]
-pub struct StoredEvent {
-    /// The number of the event in its session.
-    pub event_number: EventNumber,
-    /// What the event saved.
-    pub event: SessionEvent,
-}
-
-/// A change of a session that the store saves.
-#[derive(Debug, Clone, PartialEq)]
-pub enum SessionEvent {
-    /// A commit of a turn, and the inputs that it consumed. The blocks of the commit hold the blocks of those inputs.
-    Commit {
-        /// The commit, with its own blocks.
-        commit: Commit<'static>,
-        /// The inputs that the commit consumed.
-        consumed: Vec<InputId>,
-    },
-    /// The settings of the session from this event on.
-    Settings(SessionSettings),
 }
 
 /// Holds the owner lock of a session. The drop releases the lock.

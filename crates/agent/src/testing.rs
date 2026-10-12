@@ -11,10 +11,9 @@ use std::path::PathBuf;
 
 use yuke_engine::{Answer, Commit, Outcome, Replaced, TurnEnd};
 
-use crate::store::{
-    Access, EventNumber, ModelReference, SessionEvent, SessionId, SessionSettings, Store, StoreError, StoredEvent,
-    blob_of,
-};
+use yuke_protocol::{EventNumber, ModelReference, SessionEvent, SessionId, SessionSettings, StoredEvent};
+
+use crate::store::{Access, Store, StoreError, blob_of};
 
 /// Write one `#[tokio::test]` for each behavior of this module. `$make_store` is an async function that takes the
 /// name of the test and returns a new store, such as an `Arc<impl Store>`. The calling crate needs `tokio` with the
