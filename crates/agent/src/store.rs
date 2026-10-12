@@ -142,6 +142,7 @@ pub struct InputId(pub u64);
 /// The current choice of a session: the model and the request settings. It holds no credential and no route, so the
 /// agent makes the target from the model reference and its config.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionSettings {
     /// The model of the next turn.
     pub model: ModelReference,
@@ -153,6 +154,7 @@ pub struct SessionSettings {
 
 /// A model of a provider, by the ids of the config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelReference {
     /// The id of the provider.
     pub provider: String,

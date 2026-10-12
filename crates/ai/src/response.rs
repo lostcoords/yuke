@@ -3,13 +3,16 @@
 use std::borrow::Cow;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::encoder::EncodeError;
 use crate::failure::Failure;
 use crate::request::{Block, Reasoning, ReasoningReplayRef, ToolCall, ToolCallRef};
 
 /// Why a response ended. At `Length` a tool call can hold cut-off arguments, so do not run such a call.
 /// `Pause` marks an Anthropic server-tool loop at its iteration cap. The same content resumes the loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum FinishReason {
     /// The model finished its answer.
@@ -58,7 +61,8 @@ impl FinishReason {
 }
 
 /// Token counts of one attempt, in the convention of OpenAI: a total includes the parts named after it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Usage {
     /// Every prompt token, `cache_read` and `cache_write` among them.
     pub input: u64,

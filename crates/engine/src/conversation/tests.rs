@@ -1,10 +1,12 @@
+use std::borrow::Cow;
+
 use yuke_ai::route::{Credential, Route};
 use yuke_ai::{
     AnthropicWire, AttemptError, AttemptInfo, Block, Completion, Content, Encoder, Failure, FinishReason, Partial,
     ProviderKind, Reasoning, Request, Response, Target, ToolCall, ToolResult, Usage, Wire,
 };
 
-use super::{Action, Conversation, Outcome};
+use super::{Action, Answer, Commit, Conversation, Outcome, Replaced, TurnEnd};
 
 /// The origin of the test target.
 fn origin() -> yuke_ai::Origin {
@@ -291,4 +293,62 @@ fn cancelled_request_keeps_its_text_and_calls_but_not_its_reasoning() {
             )),
         ]
     );
+}
+
+// The protocol sends a commit as this JSON. The SQLite store saves the parts of a commit in columns instead.
+#[test]
+fn a_commit_reads_back_from_its_json() {
+    let head = [Block::user_text("summary")];
+    let blocks = [Block::assistant_text("a")];
+    let cases = [
+        (
+            Commit {
+                replaced: Some(Replaced {
+                    head: Cow::Borrowed(&head),
+                    keep: 2,
+                }),
+                blocks: Cow::Borrowed(&blocks),
+                answer: Some(Answer {
+                    origin: yuke_ai::Origin {
+                        model: "m".to_owned(),
+                        base_url: "https://h".to_owned(),
+                    },
+                    usage: Usage {
+                        input: 1,
+                        output: 2,
+                        reasoning: 3,
+                        cache_read: 4,
+                        cache_write: 5,
+                    },
+                    finish_reason: FinishReason::Stop,
+                }),
+                end: Some(TurnEnd::Outcome(Outcome::Completed {
+                    finish_reason: FinishReason::ToolCalls,
+                })),
+            },
+            r#"{"replaced":{"head":[{"user_text":"summary"}],"keep":2},"blocks":[{"assistant_text":"a"}],"answer":{"origin":{"model":"m","baseUrl":"https://h"},"usage":{"input":1,"output":2,"reasoning":3,"cacheRead":4,"cacheWrite":5},"finishReason":"stop"},"end":{"outcome":{"completed":{"finishReason":"tool_calls"}}}}"#,
+        ),
+        (
+            Commit {
+                replaced: None,
+                blocks: Cow::Borrowed(&[]),
+                answer: None,
+                end: Some(TurnEnd::Failed("the request failed".to_owned())),
+            },
+            r#"{"replaced":null,"blocks":[],"answer":null,"end":{"failed":"the request failed"}}"#,
+        ),
+        (
+            Commit {
+                replaced: None,
+                blocks: Cow::Borrowed(&[]),
+                answer: None,
+                end: Some(TurnEnd::Outcome(Outcome::Cancelled)),
+            },
+            r#"{"replaced":null,"blocks":[],"answer":null,"end":{"outcome":"cancelled"}}"#,
+        ),
+    ];
+    for (commit, json) in cases {
+        assert_eq!(serde_json::to_string(&commit).unwrap(), json);
+        assert_eq!(serde_json::from_str::<Commit<'static>>(json).unwrap(), commit);
+    }
 }

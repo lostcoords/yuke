@@ -39,6 +39,7 @@ pub enum ReplayKind {
 
 /// The model and host that answered a request. Provider state returns only to the same model at the same host.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Origin {
     /// The upstream model ID.
     pub model: String,
@@ -91,6 +92,7 @@ impl From<OriginRef<'_>> for Origin {
 
 /// Provider state, and the origin that may receive it again. The state must return to its provider verbatim.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReasoningReplay {
     /// The model and host that produced the state.
     pub origin: Origin,
@@ -146,6 +148,7 @@ pub type Digest = [u8; 32];
 /// Bytes in the caller's store, named by the digest of their content. Equal digests name equal bytes. Thus the request
 /// of a resumed context reads no blob that the encoder kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Blob {
     /// The digest of the content, such as its SHA-256. JSON holds it as 64 lowercase hex characters.
     #[serde(with = "digest_hex")]
@@ -303,6 +306,7 @@ impl From<ToolCall> for Block {
 
 /// One attachment. Its media type selects the block each protocol writes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Media {
     /// The bytes in the caller's store. The encoder reads them through [`Request::blobs`] only when it writes the
     /// element.
@@ -346,6 +350,7 @@ impl Media {
 /// Reasoning text, and the provider state that returns with it. A request carries the state only to the origin that
 /// produced it, in that protocol. Elsewhere the block drops, except where a dialect replays the text.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Reasoning {
     /// The reasoning text.
     pub text: String,
@@ -367,6 +372,7 @@ impl Reasoning {
 
 /// A tool call of the assistant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolCall {
     /// The provider's call id.
     pub call_id: String,
@@ -411,6 +417,7 @@ impl From<ToolCallRef<'_>> for ToolCall {
 /// The result of one tool call.
 // Most results have no media and no loaded tools, so the JSON leaves out both empty lists.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolResult {
     /// The call this result answers.
     pub call_id: String,
@@ -470,6 +477,7 @@ pub const SEARCH_TOOL_NAME: &str = "tool_search";
 
 /// A tool definition for the provider.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolDefinition {
     /// The tool name.
     pub name: String,
@@ -510,6 +518,7 @@ impl ToolDefinition {
 /// Ask for a response that matches a JSON Schema. Anthropic, and OpenAI with a strict schema, enforce it while
 /// they sample.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OutputSchema {
     /// The schema name OpenAI requires. Anthropic takes no name.
     pub name: String,
@@ -656,6 +665,7 @@ impl ThinkingDisplay {
 /// The reasoning one request asks for, as the caller chose it for the model. Each serializer writes the settings its
 /// protocol has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReasoningSettings {
     /// Whether and how the model thinks. `None` leaves the endpoint default.
     pub thinking: Option<Thinking>,
@@ -745,6 +755,7 @@ pub struct Target {
 /// The settings of a request apart from its conversation, its tools, and its blobs. A caller can store one for each
 /// session, and [`Request::settings`] applies it. It names no model and holds no secret.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Settings {
     /// The system prompt. An empty prompt writes none.
     pub system: String,
@@ -1022,15 +1033,15 @@ mod tests {
                     text: "think".to_owned(),
                     replay: Some(replay),
                 }),
-                r#"{"reasoning":{"text":"think","replay":{"origin":{"model":"m","base_url":"https://h/v1"},"kind":"anthropic_signature","data":"sig"}}}"#.to_owned(),
+                r#"{"reasoning":{"text":"think","replay":{"origin":{"model":"m","baseUrl":"https://h/v1"},"kind":"anthropic_signature","data":"sig"}}}"#.to_owned(),
             ),
             (
                 Block::ToolCall(ToolCall::new("c1", "read", r#"{"path":"a"}"#)),
-                r#"{"tool_call":{"call_id":"c1","name":"read","arguments":"{\"path\":\"a\"}"}}"#.to_owned(),
+                r#"{"tool_call":{"callId":"c1","name":"read","arguments":"{\"path\":\"a\"}"}}"#.to_owned(),
             ),
             (
                 Block::ToolResult(ToolResult::success("c1", "text")),
-                r#"{"tool_result":{"call_id":"c1","content":"text","is_error":false}}"#.to_owned(),
+                r#"{"tool_result":{"callId":"c1","content":"text","isError":false}}"#.to_owned(),
             ),
             (
                 Block::ToolResult(
@@ -1039,7 +1050,7 @@ mod tests {
                         .with_loaded(vec![ToolDefinition::new("grep", "Search.", "{}").deferred()]),
                 ),
                 format!(
-                    r#"{{"tool_result":{{"call_id":"c1","content":"failed","is_error":true,"media":[{{"blob":{{"digest":"{digest}","len":3}},"mime":"image/png"}}],"loaded":[{{"name":"grep","description":"Search.","input_schema":"{{}}","defer_loading":true,"strict":false}}]}}}}"#
+                    r#"{{"tool_result":{{"callId":"c1","content":"failed","isError":true,"media":[{{"blob":{{"digest":"{digest}","len":3}},"mime":"image/png"}}],"loaded":[{{"name":"grep","description":"Search.","inputSchema":"{{}}","deferLoading":true,"strict":false}}]}}}}"#
                 ),
             ),
         ];
@@ -1080,15 +1091,15 @@ mod tests {
         let cases = [
             (
                 full,
-                r#"{"system":"Be brief.","max_output_tokens":1000,"reasoning":{"thinking":{"adaptive":"summarized"},"effort":"xhigh"},"temperature":0.5,"top_p":0.9,"tool_choice":"none","session_id":"s1","output_schema":{"name":"response","schema":"{\"type\":\"object\"}","strict":true}}"#,
+                r#"{"system":"Be brief.","maxOutputTokens":1000,"reasoning":{"thinking":{"adaptive":"summarized"},"effort":"xhigh"},"temperature":0.5,"topP":0.9,"toolChoice":"none","sessionId":"s1","outputSchema":{"name":"response","schema":"{\"type\":\"object\"}","strict":true}}"#,
             ),
             (
                 Settings::new().thinking(Thinking::Budget(2048)),
-                r#"{"system":"","max_output_tokens":null,"reasoning":{"thinking":{"budget":2048},"effort":null},"temperature":null,"top_p":null,"tool_choice":"auto","session_id":"","output_schema":null}"#,
+                r#"{"system":"","maxOutputTokens":null,"reasoning":{"thinking":{"budget":2048},"effort":null},"temperature":null,"topP":null,"toolChoice":"auto","sessionId":"","outputSchema":null}"#,
             ),
             (
                 Settings::new().thinking(Thinking::Off),
-                r#"{"system":"","max_output_tokens":null,"reasoning":{"thinking":"off","effort":null},"temperature":null,"top_p":null,"tool_choice":"auto","session_id":"","output_schema":null}"#,
+                r#"{"system":"","maxOutputTokens":null,"reasoning":{"thinking":"off","effort":null},"temperature":null,"topP":null,"toolChoice":"auto","sessionId":"","outputSchema":null}"#,
             ),
         ];
         for (settings, json) in cases {

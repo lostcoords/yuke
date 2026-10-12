@@ -3,6 +3,7 @@
 
 use std::borrow::Cow;
 
+use serde::{Deserialize, Serialize};
 use yuke_ai::{Block, FinishReason, Origin, Partial, Response, Role, ToolCall, ToolResult, Usage};
 
 /// The decisions of one turn on the caller's context.
@@ -57,7 +58,8 @@ pub(crate) enum Action<'a> {
 /// The change of the context since the last commit, and the facts of the turn. Replay each commit in order on a copy
 /// of the context: apply `replaced`, then append `blocks`. The copy then equals the context. The driver lends its
 /// blocks, and a store that reads a commit back owns them.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Commit<'a> {
     /// The replacement of the context. A commit with a replacement holds no blocks.
     pub replaced: Option<Replaced<'a>>,
@@ -122,7 +124,8 @@ impl<'a> Commit<'a> {
 
 /// How a turn ended, in a form that a journal can save. A failure keeps the text of its error, and
 /// [`crate::TurnError::Model`] gives the caller the error itself.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TurnEnd {
     /// The turn ended without a failure.
     Outcome(Outcome),
@@ -131,7 +134,8 @@ pub enum TurnEnd {
 }
 
 /// A replacement in a [`Commit`]. The new context is `head`, then the last `keep` blocks of the saved context.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Replaced<'a> {
     /// The new first blocks, such as a summary.
     pub head: Cow<'a, [Block]>,
@@ -153,7 +157,8 @@ pub struct Replace {
 }
 
 /// The facts of one answer of the model.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Answer {
     /// The model and host of the target that answered.
     pub origin: Origin,
@@ -203,7 +208,8 @@ impl<'a> Iterator for ToolCallsIter<'a> {
 }
 
 /// How a turn ended without a failure.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum Outcome {
     /// The turn ended with an answer of the model, and the answer joined the context. A filter or a refusal answer
     /// can hold calls that did not run.
