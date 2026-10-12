@@ -1,1 +1,4 @@
 crates/ai/src/catalog/generated.rs linguist-generated=true
+crates/protocol/bindings/*.ts linguist-generated=true
+crates/sqlgen/tests/fixture/src/queries.rs linguist-generated=true
+crates/store/src/queries.rs linguist-generated=true
