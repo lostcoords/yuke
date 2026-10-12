@@ -6,7 +6,7 @@ use crate::request::{
     SEARCH_TOOL_NAME, Target, ToolChoice, ToolDefinition, ToolResult, read_blob,
 };
 
-use super::json::{Elements, JsonWriter, object_text};
+use super::json::{JsonWriter, object_text};
 
 /// Write the request up to the open `input` array, which holds no element yet.
 pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire, request: &Request<'_>) -> bool {
@@ -19,21 +19,21 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire
     // The caller owns the context, so the endpoint never keeps a copy.
     jw.field_bool("store", false);
     // A stable key sends every round of one session to the same cache node.
-    if !request.session_id.is_empty() {
-        jw.field_str("prompt_cache_key", request.session_id);
+    if !request.settings.session_id.is_empty() {
+        jw.field_str("prompt_cache_key", &request.settings.session_id);
     }
     if standard {
-        if let Some(limit) = request.max_output_tokens {
+        if let Some(limit) = request.settings.max_output_tokens {
             jw.field_uint("max_output_tokens", u64::from(limit));
         }
-        jw.field_float_opt("temperature", request.temperature);
-        jw.field_float_opt("top_p", request.top_p);
+        jw.field_float_opt("temperature", request.settings.temperature);
+        jw.field_float_opt("top_p", request.settings.top_p);
     }
 
     // Responses reasons by default, so only a named effort is worth a control.
-    write_reasoning(&mut jw, request.reasoning);
+    write_reasoning(&mut jw, request.settings.reasoning);
     // Responses names the format under `text`, not `response_format`.
-    if let Some(output) = request.output_schema {
+    if let Some(output) = &request.settings.output_schema {
         jw.key("text");
         jw.begin_object();
         jw.key("format");
@@ -46,12 +46,12 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire
         jw.end_object();
     }
 
-    if !request.system.is_empty() {
-        jw.field_str("instructions", request.system);
+    if !request.settings.system.is_empty() {
+        jw.field_str("instructions", &request.settings.system);
     }
 
     // A deferred tool needs the native search tool, so a request that defers declares the search tool natively.
-    let native = defers_tools(request.tools);
+    let native = super::defers_tools(request.tools);
     if !request.tools.is_empty() {
         jw.key("tools");
         jw.begin_array();
@@ -70,7 +70,7 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire
         jw.end_array();
         jw.field_str(
             "tool_choice",
-            match request.tool_choice {
+            match request.settings.tool_choice {
                 ToolChoice::Auto => "auto",
                 ToolChoice::None => "none",
             },
@@ -126,31 +126,18 @@ fn replayed<'a>(target: &Target, reasoning: &'a Reasoning) -> Option<&'a str> {
 /// Write the item of the group from `start`, and return its end. `marker` is the block that carries the explicit
 /// cache breakpoint.
 pub(crate) fn write_group(
-    elements: &mut Elements<'_>,
+    jw: &mut JsonWriter<'_>,
     target: &Target,
     request: &Request<'_>,
     start: usize,
     marker: Option<usize>,
 ) -> Result<usize, EncodeError> {
     let end = group_end(target, request.blocks, start);
-    write_item(elements, target, request, start, end, marker)?;
-    Ok(end)
-}
-
-fn write_item(
-    elements: &mut Elements<'_>,
-    target: &Target,
-    request: &Request<'_>,
-    start: usize,
-    end: usize,
-    marker: Option<usize>,
-) -> Result<(), EncodeError> {
     let blocks = request.blocks;
     let first = &blocks[start];
     if !writes(target, first) {
-        return Ok(());
+        return Ok(end);
     }
-    let mut jw = elements.next();
     match first {
         Block::UserText(_) | Block::AssistantText(_) | Block::Media(_) => {
             jw.begin_object();
@@ -178,7 +165,7 @@ fn write_item(
                         jw.field_str("text", text);
                         jw.end_object();
                     }
-                    Block::Media(media) => write_media(&mut jw, request, media)?,
+                    Block::Media(media) => write_media(jw, request, media)?,
                     // `group_end` admits only empty reasoning beside the message content.
                     _ => debug_assert!(!writes(target, block)),
                 }
@@ -188,12 +175,12 @@ fn write_item(
         }
         Block::Reasoning(reasoning) => {
             if let Some(encrypted) = replayed(target, reasoning) {
-                write_reasoning_item(&mut jw, &reasoning.text, encrypted);
+                write_reasoning_item(jw, &reasoning.text, encrypted);
             }
         }
         Block::ToolCall(call) => {
             jw.begin_object();
-            if call.name == SEARCH_TOOL_NAME && defers_tools(request.tools) {
+            if call.name == SEARCH_TOOL_NAME && super::defers_tools(request.tools) {
                 jw.field_str("type", "tool_search_call");
                 jw.field_str("execution", "client");
                 jw.field_str("call_id", &call.call_id);
@@ -209,9 +196,9 @@ fn write_item(
             jw.end_object();
         }
         Block::ToolResult(result) => {
-            if answers_search(&blocks[..start], &result.call_id) && defers_tools(request.tools) {
-                write_search_output(&mut jw, result);
-                return Ok(());
+            if answers_search(&blocks[..start], &result.call_id) && super::defers_tools(request.tools) {
+                write_search_output(jw, result);
+                return Ok(end);
             }
             jw.begin_object();
             jw.field_str("type", "function_call_output");
@@ -229,24 +216,19 @@ fn write_item(
                     jw.end_object();
                 }
                 for media in &result.media {
-                    write_media(&mut jw, request, media)?;
+                    write_media(jw, request, media)?;
                 }
                 jw.end_array();
             }
             jw.end_object();
         }
     }
-    Ok(())
+    Ok(end)
 }
 
 /// The last user text carries the explicit cache breakpoint. A breakpoint on a tool result never writes a cache.
 pub(crate) fn cacheable(block: &Block) -> bool {
     matches!(block, Block::UserText(_))
-}
-
-/// True when a request defers a tool, so it declares the search tool natively.
-pub(crate) fn defers_tools(tools: &[ToolDefinition]) -> bool {
-    tools.iter().any(|tool| tool.defer_loading)
 }
 
 /// Write the effort. Responses has no thinking shape of its own, so only `off` and the effort reach the wire.
@@ -365,7 +347,7 @@ fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media) ->
 mod tests {
     use super::*;
     use crate::Wire;
-    use crate::request::{Effort, OutputSchema, Thinking};
+    use crate::request::{Effort, OutputSchema, Settings, Thinking};
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay, result};
 
     fn responses() -> Wire {
@@ -387,7 +369,10 @@ mod tests {
     }
 
     fn media(data: &'static str, mime: &'static str, filename: &'static str) -> Media {
-        Media::new(blob(data), mime).with_filename(filename)
+        Media {
+            filename: filename.to_owned(),
+            ..Media::new(blob(data), mime)
+        }
     }
 
     fn reasoning<'a>(text: &'a str, kind: ReplayKind, data: &'a str) -> Block {
@@ -404,7 +389,7 @@ mod tests {
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":1024,"instructions":"be brief","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}"#,
             "gpt-5",
             responses(),
-            Request::new(&blocks).system("be brief").max_output_tokens(1024),
+            Request::new(&blocks).settings(&Settings::new().system("be brief").max_output_tokens(1024)),
         );
     }
 
@@ -415,7 +400,7 @@ mod tests {
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"high","summary":"auto"},"include":["reasoning.encrypted_content"],"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}"#,
             "gpt-5",
             responses(),
-            Request::new(&blocks).max_output_tokens(8).effort(Effort::High),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).effort(Effort::High)),
         );
     }
 
@@ -427,7 +412,7 @@ mod tests {
             r#"{"model":"gpt-5.2","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"none"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}"#,
             "gpt-5.2",
             responses(),
-            Request::new(&blocks).max_output_tokens(8).thinking(Thinking::Off),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).thinking(Thinking::Off)),
         );
     }
 
@@ -443,7 +428,7 @@ mod tests {
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"check"}],"encrypted_content":"sig_1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_1","name":"run","arguments":"{\"c\":1}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}"#,
             "gpt-5",
             responses(),
-            Request::new(&blocks).max_output_tokens(64),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
         );
     }
 
@@ -457,7 +442,7 @@ mod tests {
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"function_call","call_id":"call_1","name":"run","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"Error: no \"x\""}]}"#,
             "gpt-5",
             responses(),
-            Request::new(&blocks).max_output_tokens(64),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
         );
     }
 
@@ -475,7 +460,7 @@ mod tests {
                 &expected,
                 "gpt-5",
                 responses(),
-                Request::new(&blocks).max_output_tokens(8),
+                Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
             );
         }
     }
@@ -495,14 +480,18 @@ mod tests {
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"tool_search","execution":"client","description":"Find.","parameters":{"type":"object"}},{"type":"function","name":"mcp_read","description":"Read.","defer_loading":true,"parameters":{},"strict":false}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]},{"type":"tool_search_call","execution":"client","call_id":"call_1","status":"completed","arguments":{"query":"read"}},{"type":"tool_search_output","execution":"client","call_id":"call_1","status":"completed","tools":[{"type":"function","name":"mcp_read","description":"Read.","defer_loading":true,"parameters":{},"strict":false}]}]}"#,
             "gpt-5",
             responses(),
-            Request::new(&blocks).tools(&tools).max_output_tokens(8),
+            Request::new(&blocks)
+                .tools(&tools)
+                .settings(&Settings::new().max_output_tokens(8)),
         );
         // Without a deferred tool, as on a bridge target, the search is an ordinary call and its result keeps its text.
         expect_json(
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"function","name":"tool_search","description":"Find.","parameters":{"type":"object"},"strict":false}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]},{"type":"function_call","call_id":"call_1","name":"tool_search","arguments":"{\"query\":\"read\"}"},{"type":"function_call_output","call_id":"call_1","output":"found"}]}"#,
             "gpt-5",
             responses(),
-            Request::new(&blocks).tools(&tools[..1]).max_output_tokens(8),
+            Request::new(&blocks)
+                .tools(&tools[..1])
+                .settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
@@ -510,21 +499,25 @@ mod tests {
     fn tool_schema_and_strict_mode() {
         let tools = [
             ToolDefinition::new("run", "run a command", r#"{"type":"object"}"#),
-            ToolDefinition::new("strict_run", "run strictly", r#"{"type":"object"}"#).strict(),
+            ToolDefinition {
+                strict: true,
+                ..ToolDefinition::new("strict_run", "run strictly", r#"{"type":"object"}"#)
+            },
         ];
         let blocks = [Block::user_text("go")];
         expect_json(
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"function","name":"run","description":"run a command","parameters":{"type":"object"},"strict":false},{"type":"function","name":"strict_run","description":"run strictly","parameters":{"type":"object"},"strict":true}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}"#,
             "gpt-5",
             responses(),
-            Request::new(&blocks).tools(&tools).max_output_tokens(8),
+            Request::new(&blocks)
+                .tools(&tools)
+                .settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
     #[test]
     fn schema_uses_text_format() {
         let blocks = [Block::user_text("go")];
-        let request = Request::new(&blocks).max_output_tokens(8);
         let mut schema = OutputSchema {
             name: "person".to_owned(),
             ..OutputSchema::new(r#"{"type":"object"}"#)
@@ -540,7 +533,13 @@ mod tests {
             ),
         ] {
             schema.strict = strict;
-            expect_json(expected, "gpt-5", responses(), request.output_schema(&schema));
+            let settings = Settings::new().max_output_tokens(8).output_schema(schema.clone());
+            expect_json(
+                expected,
+                "gpt-5",
+                responses(),
+                Request::new(&blocks).settings(&settings),
+            );
         }
     }
 
@@ -552,7 +551,7 @@ mod tests {
             EncodeError::Unsupported,
             "gpt-5",
             responses(),
-            Request::new(&blocks).max_output_tokens(8),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
@@ -566,7 +565,7 @@ mod tests {
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,YWI=","detail":"auto"},{"type":"input_file","filename":"a.pdf","file_data":"data:application/pdf;base64,YWI="}]}]}"#,
             "gpt-5",
             responses(),
-            Request::new(&blocks).max_output_tokens(8),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
@@ -581,7 +580,7 @@ mod tests {
             r#"{"model":"gpt-5.6","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"one"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}"#,
             "gpt-5.6",
             cached(),
-            Request::new(&blocks).max_output_tokens(8),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
@@ -593,17 +592,13 @@ mod tests {
             r#"{"model":"gpt-5.6","stream":true,"store":false,"prompt_cache_key":"0123456789abcdef","max_output_tokens":8,"input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#,
             "gpt-5.6",
             responses(),
-            Request::new(&blocks)
-                .max_output_tokens(8)
-                .session_id("0123456789abcdef"),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).session_id("0123456789abcdef")),
         );
         expect_json(
             r#"{"model":"gpt-5.6","stream":true,"store":false,"prompt_cache_key":"0123456789abcdef","input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#,
             "gpt-5.6",
             codex(),
-            Request::new(&blocks)
-                .max_output_tokens(8)
-                .session_id("0123456789abcdef"),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).session_id("0123456789abcdef")),
         );
     }
 
@@ -615,7 +610,7 @@ mod tests {
             r#"{"model":"gpt-5.6","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#,
             "gpt-5.6",
             cached(),
-            Request::new(&only_result).max_output_tokens(8),
+            Request::new(&only_result).settings(&Settings::new().max_output_tokens(8)),
         );
         // A tool call and its result after the user text leave the marker on that text.
         let after = [
@@ -627,14 +622,15 @@ mod tests {
             r#"{"model":"gpt-5.6","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"q","prompt_cache_breakpoint":{"mode":"explicit"}}]},{"type":"function_call","call_id":"c1","name":"ls","arguments":"{}"},{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#,
             "gpt-5.6",
             cached(),
-            Request::new(&after).max_output_tokens(8),
+            Request::new(&after).settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
     #[test]
     fn codex_dialect() {
         let blocks = [Block::user_text("hello")];
-        let request = Request::new(&blocks).max_output_tokens(8).temperature(0.7).top_p(0.9);
+        let settings = Settings::new().max_output_tokens(8).temperature(0.7).top_p(0.9);
+        let request = Request::new(&blocks).settings(&settings);
         expect_json(
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"temperature":0.7,"top_p":0.9,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}"#,
             "gpt-5",
@@ -653,7 +649,7 @@ mod tests {
             r#"{"model":"gpt-5","stream":true,"store":false,"instructions":"be brief","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}"#,
             "gpt-5",
             codex(),
-            request.system("be brief"),
+            Request::new(&blocks).settings(&settings.clone().system("be brief")),
         );
     }
 
@@ -664,7 +660,7 @@ mod tests {
             r#"{"model":"m","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"function_call","call_id":"c","name":"ls","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}]}"#,
             "m",
             responses(),
-            Request::new(&blocks).max_output_tokens(8),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
         );
     }
 

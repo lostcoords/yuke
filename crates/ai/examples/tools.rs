@@ -2,7 +2,8 @@
 #![expect(clippy::print_stdout, reason = "an example prints its answer")]
 
 use yuke_ai::{
-    Block, Effort, FinishReason, HttpOptions, HttpTransport, Request, ToolCall, ToolChoice, ToolDefinition, ToolResult,
+    Block, Effort, FinishReason, HttpOptions, HttpTransport, Options, Request, Settings, ToolCall, ToolChoice,
+    ToolDefinition, ToolResult,
 };
 
 const SCHEMA: &str = r#"{
@@ -28,11 +29,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut conversation = vec![Block::user_text(
         "Use uppercase_ascii on 'Hello, Rust!' and report its result.",
     )];
-    let request = Request::new(&conversation)
-        .tools(&tools)
-        .max_output_tokens(4096)
-        .effort(Effort::Low);
-    let first = yuke_ai::generate(&http, &target, request).await?.completion;
+    let settings = Settings::new().max_output_tokens(4096).effort(Effort::Low);
+    let request = Request::new(&conversation).tools(&tools).settings(&settings);
+    let first = yuke_ai::generate(&http, &target, request, Options::default())
+        .await?
+        .completion;
 
     // Only a `ToolCalls` finish proves complete calls. After a `Length` finish, a call can hold cut-off arguments.
     if first.finish_reason != FinishReason::ToolCalls {
@@ -46,12 +47,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     conversation.extend(results.into_iter().map(Block::from));
 
     // Send the tool results back, but don't allow another round of tool calls.
-    let request = Request::new(&conversation)
-        .tools(&tools)
-        .tool_choice(ToolChoice::None)
-        .max_output_tokens(4096)
-        .effort(Effort::Low);
-    let last = yuke_ai::generate(&http, &target, request).await?.completion;
+    let settings = settings.tool_choice(ToolChoice::None);
+    let request = Request::new(&conversation).tools(&tools).settings(&settings);
+    let last = yuke_ai::generate(&http, &target, request, Options::default())
+        .await?
+        .completion;
     println!("{}", last.text());
     Ok(())
 }

@@ -6,7 +6,7 @@ use crate::request::{
     ReplayKind, Request, Target, ThinkingFormat, ToolChoice, ToolResult, read_blob,
 };
 
-use super::json::{Elements, JsonWriter, object_text};
+use super::json::{JsonWriter, object_text};
 
 /// Write the request up to the open `messages` array. Return whether it wrote the system message into it.
 pub(crate) fn write_head(
@@ -15,7 +15,7 @@ pub(crate) fn write_head(
     wire: ChatWire,
     request: &Request<'_>,
 ) -> Result<bool, EncodeError> {
-    if request.tools.iter().any(|tool| tool.defer_loading) {
+    if super::defers_tools(request.tools) {
         return Err(EncodeError::Unsupported);
     }
     let mut jw = JsonWriter::new(out);
@@ -30,19 +30,19 @@ pub(crate) fn write_head(
         jw.end_object();
     }
     // The field enum names the member.
-    if let Some(limit) = request.max_output_tokens {
+    if let Some(limit) = request.settings.max_output_tokens {
         let member = match wire.max_tokens_field {
             MaxTokensField::MaxTokens => "max_tokens",
             MaxTokensField::MaxCompletionTokens => "max_completion_tokens",
         };
         jw.field_uint(member, u64::from(limit));
     }
-    jw.field_float_opt("temperature", request.temperature);
-    jw.field_float_opt("top_p", request.top_p);
+    jw.field_float_opt("temperature", request.settings.temperature);
+    jw.field_float_opt("top_p", request.settings.top_p);
     // This endpoint writes no cache marker: OpenAI documents explicit breakpoints for Responses alone.
-    write_reasoning(&mut jw, wire.thinking_format, request.reasoning);
+    write_reasoning(&mut jw, wire.thinking_format, request.settings.reasoning);
     // The endpoint nests the schema one level deeper than Responses.
-    if let Some(output) = request.output_schema {
+    if let Some(output) = &request.settings.output_schema {
         jw.key("response_format");
         jw.begin_object();
         jw.field_str("type", "json_schema");
@@ -75,79 +75,21 @@ pub(crate) fn write_head(
         }
         jw.end_array();
         // This host reads no member as the automatic control, so only a refusal writes one.
-        if request.tool_choice == ToolChoice::None {
+        if request.settings.tool_choice == ToolChoice::None {
             jw.field_str("tool_choice", "none");
         }
     }
 
     jw.key("messages");
     jw.begin_array();
-    if request.system.is_empty() {
+    if request.settings.system.is_empty() {
         return Ok(false);
     }
     jw.begin_object();
     jw.field_str("role", "system");
-    jw.field_str("content", request.system);
+    jw.field_str("content", &request.settings.system);
     jw.end_object();
     Ok(true)
-}
-
-/// The kind of one group of blocks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GroupKind {
-    Results,
-    User,
-    Assistant,
-}
-
-/// One group of blocks, which writes one or more messages.
-#[derive(Debug, Clone, Copy)]
-struct Group {
-    kind: GroupKind,
-    /// The end of the tool results of a `Results` group. User blocks after it join the group.
-    results_end: usize,
-    end: usize,
-    /// A tool result holds an image. A tool message holds text only, so its images move into a user message.
-    images: bool,
-}
-
-fn group(blocks: &[Block], start: usize) -> Group {
-    match blocks[start] {
-        Block::ToolResult(_) => {
-            let mut end = start;
-            let mut images = false;
-            while let Some(Block::ToolResult(result)) = blocks.get(end) {
-                images = images || !result.media.is_empty();
-                end += 1;
-            }
-            // A strict host refuses two user messages in a row, so the images join the user blocks that follow.
-            let group_end = if images { user_end(blocks, end) } else { end };
-            Group {
-                kind: GroupKind::Results,
-                results_end: end,
-                end: group_end,
-                images,
-            }
-        }
-        Block::UserText(_) | Block::Media(_) => Group {
-            kind: GroupKind::User,
-            results_end: start,
-            end: user_end(blocks, start),
-            images: false,
-        },
-        Block::AssistantText(_) | Block::Reasoning(_) | Block::ToolCall(_) => {
-            let end = blocks[start..]
-                .iter()
-                .position(|block| block.role() != crate::Role::Assistant)
-                .map_or(blocks.len(), |len| start + len);
-            Group {
-                kind: GroupKind::Assistant,
-                results_end: start,
-                end,
-                images: false,
-            }
-        }
-    }
 }
 
 /// The end of the run of user text and media from `start`.
@@ -161,40 +103,52 @@ fn user_end(blocks: &[Block], start: usize) -> usize {
 /// Write the messages of the group from `start`, and return its end. A group is a user run, an assistant run, or tool
 /// results with the user blocks that take their attachments.
 pub(crate) fn write_group(
-    elements: &mut Elements<'_>,
+    jw: &mut JsonWriter<'_>,
     target: &Target,
     wire: ChatWire,
     request: &Request<'_>,
     start: usize,
 ) -> Result<usize, EncodeError> {
     let blocks = request.blocks;
-    let g = group(blocks, start);
-    match g.kind {
-        GroupKind::Results => {
-            let results = &blocks[start..g.results_end];
-            for result in results {
-                if let Block::ToolResult(result) = result {
-                    write_tool_result(&mut elements.next(), result);
-                }
+    match blocks[start] {
+        Block::ToolResult(_) => {
+            let mut results_end = start;
+            let mut images = false;
+            while let Some(Block::ToolResult(result)) = blocks.get(results_end) {
+                write_tool_result(jw, result);
+                images = images || !result.media.is_empty();
+                results_end += 1;
             }
-            if g.images {
-                write_user_message(&mut elements.next(), request, results, &blocks[g.results_end..g.end])?;
+            if !images {
+                return Ok(results_end);
             }
+            // A tool message holds text only, so its images move into a user message. A strict host refuses two user
+            // messages in a row, so the images join the user blocks that follow.
+            let end = user_end(blocks, results_end);
+            write_user_message(jw, request, &blocks[start..results_end], &blocks[results_end..end])?;
+            Ok(end)
         }
-        GroupKind::User => write_user_message(&mut elements.next(), request, &[], &blocks[start..g.end])?,
-        GroupKind::Assistant => {
+        Block::UserText(_) | Block::Media(_) => {
+            let end = user_end(blocks, start);
+            write_user_message(jw, request, &[], &blocks[start..end])?;
+            Ok(end)
+        }
+        Block::AssistantText(_) | Block::Reasoning(_) | Block::ToolCall(_) => {
+            let end = blocks[start..]
+                .iter()
+                .position(|block| block.role() != crate::Role::Assistant)
+                .map_or(blocks.len(), |len| start + len);
+            let run = &blocks[start..end];
             // A message needs content or tool calls, so a run of reasoning alone writes none, as pi skips it.
-            let run = &blocks[start..g.end];
-            if !run
+            if run
                 .iter()
                 .any(|block| matches!(block, Block::AssistantText(_) | Block::ToolCall(_)))
             {
-                return Ok(g.end);
+                write_assistant_message(jw, target, wire.reasoning_replay, run);
             }
-            write_assistant_message(&mut elements.next(), target, wire.reasoning_replay, run);
+            Ok(end)
         }
     }
-    Ok(g.end)
 }
 
 /// Write one user message. The images of `results` lead it, each under a label that names its call.
@@ -494,7 +448,7 @@ fn write_effort_object(jw: &mut JsonWriter<'_>, level: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::request::{Effort, OutputSchema, Thinking, ToolDefinition, Wire};
+    use crate::request::{Effort, OutputSchema, Settings, Thinking, ToolDefinition, Wire};
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay, result};
 
     fn chat() -> Wire {
@@ -513,7 +467,10 @@ mod tests {
     }
 
     fn media(data: &'static str, mime: &'static str, filename: &'static str) -> Media {
-        Media::new(blob(data), mime).with_filename(filename)
+        Media {
+            filename: filename.to_owned(),
+            ..Media::new(blob(data), mime)
+        }
     }
 
     fn reasoning(text: &str) -> Block {
@@ -523,8 +480,11 @@ mod tests {
         })
     }
 
+    /// The settings of most tests: a small output limit.
+    static SETTINGS: std::sync::LazyLock<Settings> = std::sync::LazyLock::new(|| Settings::new().max_output_tokens(8));
+
     fn request(blocks: &[Block]) -> Request<'_> {
-        Request::new(blocks).max_output_tokens(8)
+        Request::new(blocks).settings(&SETTINGS)
     }
 
     // DeepSeek answers "invalid type: sequence, expected a string" for an assistant message whose content is an
@@ -617,7 +577,7 @@ mod tests {
                 &expected,
                 "m",
                 replaying(ReasoningReplayMode::ReasoningContent),
-                request(blocks).system(system),
+                Request::new(blocks).settings(&Settings::new().max_output_tokens(8).system(system)),
             );
         }
     }
@@ -716,7 +676,7 @@ mod tests {
                         thinking_format: format,
                         ..ChatWire::default()
                     }),
-                    request(&blocks).reasoning(reasoning),
+                    Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).reasoning(reasoning)),
                 );
             }
         }
@@ -729,7 +689,7 @@ mod tests {
             r#"{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_tokens":1024,"messages":[{"role":"system","content":"be brief"},{"role":"user","content":[{"type":"text","text":"hello"}]}]}"#,
             "gpt",
             chat(),
-            request(&blocks).system("be brief").max_output_tokens(1024),
+            Request::new(&blocks).settings(&Settings::new().system("be brief").max_output_tokens(1024)),
         );
     }
 
@@ -744,7 +704,7 @@ mod tests {
             r#"{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_tokens":64,"messages":[{"role":"assistant","content":"checking","tool_calls":[{"id":"call_1","type":"function","function":{"name":"run","arguments":"{\"c\":1}"}}]},{"role":"tool","tool_call_id":"call_1","content":"ok"}]}"#,
             "gpt",
             chat(),
-            request(&blocks).max_output_tokens(64),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
         );
     }
 
@@ -758,7 +718,7 @@ mod tests {
             r#"{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_tokens":64,"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"run","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"Error: no \"x\""}]}"#,
             "gpt",
             chat(),
-            request(&blocks).max_output_tokens(64),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
         );
     }
 
@@ -800,7 +760,10 @@ mod tests {
     fn tool_schema_and_strict_mode() {
         let tools = [
             ToolDefinition::new("run", "run a command", r#"{"type":"object"}"#),
-            ToolDefinition::new("read", "read a file", "{}").strict(),
+            ToolDefinition {
+                strict: true,
+                ..ToolDefinition::new("read", "read a file", "{}")
+            },
         ];
         let blocks = [Block::user_text("go")];
         expect_json(
@@ -829,7 +792,12 @@ mod tests {
             ),
         ] {
             schema.strict = strict;
-            expect_json(expected, "m", chat(), request(&blocks).output_schema(&schema));
+            expect_json(
+                expected,
+                "m",
+                chat(),
+                Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).output_schema(schema.clone())),
+            );
         }
     }
 
@@ -868,7 +836,7 @@ mod tests {
             r#"{"model":"m","stream":true,"stream_options":{"include_usage":true},"max_tokens":8,"temperature":1.5,"top_p":0.1,"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}"#,
             "m",
             chat(),
-            request(&blocks).temperature(1.5).top_p(0.1),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).temperature(1.5).top_p(0.1)),
         );
     }
 
@@ -880,7 +848,9 @@ mod tests {
             EncodeError::Unsupported,
             "chat",
             chat(),
-            request(&blocks).tools(&tools).max_output_tokens(100),
+            Request::new(&blocks)
+                .tools(&tools)
+                .settings(&Settings::new().max_output_tokens(100)),
         );
     }
 

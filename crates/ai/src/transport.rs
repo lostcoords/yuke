@@ -10,8 +10,6 @@ use std::time::Instant;
 
 use bytes::Bytes;
 
-use crate::route;
-
 /// A future that a [`Transport`] returns.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -58,8 +56,7 @@ pub(crate) async fn next_chunk(body: &mut BoxBody) -> Option<Result<Bytes, Fault
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Fault {
-    /// The request holds an invalid header, a header that the transport writes itself, or too many headers. The
-    /// request never left.
+    /// The request holds an invalid header or too many headers. The request never left.
     InvalidRequest,
     /// The URL is invalid.
     BadUrl,
@@ -167,7 +164,8 @@ pub struct Outgoing<'a> {
 
 impl<'a> Outgoing<'a> {
     /// A request of `url`, `headers`, and one `body`.
-    pub fn new(url: &'a str, headers: &'a [Header], body: &'a [u8]) -> Self {
+    #[cfg(test)]
+    pub(crate) fn new(url: &'a str, headers: &'a [Header], body: &'a [u8]) -> Self {
         Outgoing {
             url,
             headers,
@@ -198,11 +196,6 @@ impl<'a> Outgoing<'a> {
     /// The byte count of the whole body.
     pub fn body_len(&self) -> usize {
         self.body.iter().map(|part| part.len()).sum()
-    }
-
-    /// Report whether every header is a valid HTTP field that the transport does not write itself.
-    pub fn valid_headers(&self) -> bool {
-        route::valid_headers(self.headers)
     }
 }
 

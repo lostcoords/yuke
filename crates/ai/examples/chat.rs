@@ -7,7 +7,7 @@
 
 use std::io::{BufRead, Write};
 
-use yuke_ai::{Block, Effort, Encoder, Event, HttpOptions, HttpTransport, Options, Reply, Request};
+use yuke_ai::{Block, Effort, Encoder, Event, HttpOptions, HttpTransport, Options, Reply, Request, Settings};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,6 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The encoder keeps the encoding of each request, so the next turn writes only what changed.
     let mut encoder = Encoder::new();
     let mut conversation: Vec<Block> = Vec::new();
+    let settings = Settings::new().max_output_tokens(4096).effort(Effort::Low);
 
     println!("Type /quit to exit.");
     let mut lines = std::io::stdin().lock().lines();
@@ -33,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         conversation.push(Block::user_text(prompt));
 
-        let request = Request::new(&conversation).max_output_tokens(4096).effort(Effort::Low);
+        let request = Request::new(&conversation).settings(&settings);
         let mut reply = Reply::open(&http, &encoder.encode(&target, request)?, Options::default()).await;
         print!("AI> ");
         while let Some(Ok(event)) = reply.next().await {

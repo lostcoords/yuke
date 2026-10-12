@@ -44,24 +44,13 @@ pub struct Endpoint {
     pub protocol: Protocol,
     /// The header that carries the credential on this path. `None` means that the path takes no credential.
     pub credential_header: Option<CredentialHeader>,
-    /// How the host caches a repeated prefix on this path.
-    pub cache: Cache,
+    /// The host caches a repeated prefix at an explicit breakpoint in the protocol's own shape on this path. When it
+    /// is false, a request marks nothing. Chat Completions has no breakpoint.
+    pub cache_breakpoint: bool,
     /// The Responses flavor the host speaks. Only a Responses endpoint reads it.
     pub responses_dialect: ResponsesDialect,
     /// The Chat Completions flavor the host speaks. Only a Chat endpoint reads it.
     pub chat_dialect: ChatDialect,
-}
-
-/// How an endpoint caches a repeated prefix.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum Cache {
-    /// Nobody verified a cache control for the host, so a request marks nothing.
-    #[default]
-    None,
-    /// The host caches on its own, so a request marks nothing.
-    Automatic,
-    /// The host caches at an explicit breakpoint in the protocol's own shape. Chat Completions has none.
-    Breakpoint,
 }
 
 /// The authentication scheme of a provider. The source owns the referenced bytes.
@@ -311,7 +300,7 @@ impl Entry<'_> {
     pub fn wire(&self) -> Result<Wire, Error> {
         let served = self.endpoint()?;
         // MiniMax M3 caches but refuses a marker, so only a model that states it takes one gets one.
-        let cache = served.cache == Cache::Breakpoint && self.model.caps.cache_breakpoint == Some(true);
+        let cache = served.cache_breakpoint && self.model.caps.cache_breakpoint == Some(true);
         Ok(match served.protocol {
             Protocol::AnthropicMessages => {
                 // This API has no default output limit, so the model must name one.
@@ -411,11 +400,11 @@ mod tests {
         }
     }
 
-    fn endpoint(protocol: Protocol, credential_header: CredentialHeader, cache: Cache) -> Endpoint {
+    fn endpoint(protocol: Protocol, credential_header: CredentialHeader, cache_breakpoint: bool) -> Endpoint {
         Endpoint {
             protocol,
             credential_header: Some(credential_header),
-            cache,
+            cache_breakpoint,
             responses_dialect: ResponsesDialect::Standard,
             chat_dialect: ChatDialect::Standard,
         }
@@ -466,16 +455,8 @@ mod tests {
     #[test]
     fn bind_marks_native_tool_search_only_for_a_capable_model_off_chat_completions() {
         let endpoints = [
-            endpoint(
-                Protocol::AnthropicMessages,
-                CredentialHeader::XApiKey,
-                Cache::Breakpoint,
-            ),
-            endpoint(
-                Protocol::OpenaiChat,
-                CredentialHeader::AuthorizationBearer,
-                Cache::Automatic,
-            ),
+            endpoint(Protocol::AnthropicMessages, CredentialHeader::XApiKey, true),
+            endpoint(Protocol::OpenaiChat, CredentialHeader::AuthorizationBearer, false),
         ];
         let searching = Caps {
             tool_search: Some(true),
@@ -519,16 +500,8 @@ mod tests {
     fn bind_takes_host_fields_and_endpoint_settings() {
         let headers = [Header::from_static("x-pinned", "1")];
         let mut endpoints = [
-            endpoint(
-                Protocol::AnthropicMessages,
-                CredentialHeader::XApiKey,
-                Cache::Breakpoint,
-            ),
-            endpoint(
-                Protocol::OpenaiChat,
-                CredentialHeader::AuthorizationBearer,
-                Cache::Automatic,
-            ),
+            endpoint(Protocol::AnthropicMessages, CredentialHeader::XApiKey, true),
+            endpoint(Protocol::OpenaiChat, CredentialHeader::AuthorizationBearer, false),
         ];
         let flags = ChatFlags {
             thinking_format: ThinkingFormat::Deepseek,
@@ -613,7 +586,7 @@ mod tests {
             let endpoints = [endpoint(
                 Protocol::OpenaiChat,
                 CredentialHeader::AuthorizationBearer,
-                Cache::None,
+                false,
             )];
             let models = [model("m", Protocol::OpenaiChat)];
             let provider = Provider {
@@ -632,11 +605,7 @@ mod tests {
 
     #[test]
     fn binding_checks_endpoint_and_anthropic_output_limit() {
-        let endpoints = [endpoint(
-            Protocol::AnthropicMessages,
-            CredentialHeader::XApiKey,
-            Cache::None,
-        )];
+        let endpoints = [endpoint(Protocol::AnthropicMessages, CredentialHeader::XApiKey, false)];
         let models = [
             model("chat", Protocol::OpenaiChat),
             model("bare", Protocol::AnthropicMessages),

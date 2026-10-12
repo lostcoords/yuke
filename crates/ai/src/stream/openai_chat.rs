@@ -12,8 +12,7 @@ use crate::request::ReplayKind;
 use crate::response::{BlockId, BlockKind, FinishReason};
 use crate::wire::json::JsonWriter;
 
-use super::Reduce;
-use super::draft::{DecodeError, Draft, ToolField};
+use super::draft::{DecodeError, Draft};
 
 /// The kind of one OpenRouter `reasoning_details` entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,7 +180,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for One<T> {
 /// This dialect sends no block-stop event, so every block stays open until `[DONE]`.
 #[derive(Debug)]
 pub(crate) struct Reducer {
-    draft: Draft,
+    pub(super) draft: Draft,
     /// The one block of each text channel: `content`, `refusal`, and reasoning. Their deltas interleave in no fixed
     /// order. The wire message has one string per channel, so a block never splits.
     channels: [Option<BlockId>; 3],
@@ -193,8 +192,8 @@ pub(crate) struct Reducer {
     details_seen: bool,
 }
 
-impl Reduce for Reducer {
-    fn new(draft: Draft) -> Self {
+impl Reducer {
+    pub(super) fn new(draft: Draft) -> Self {
         Reducer {
             draft,
             channels: [None; 3],
@@ -206,7 +205,7 @@ impl Reduce for Reducer {
 
     /// Parse one SSE `data` payload and append its neutral events to the draft. Return the provider failure that an
     /// error event names.
-    fn decode(&mut self, data: &str) -> Result<Option<ProviderKind>, DecodeError> {
+    pub(super) fn decode(&mut self, data: &str) -> Result<Option<ProviderKind>, DecodeError> {
         if data == "[DONE]" {
             self.on_done()?;
             return Ok(None);
@@ -238,16 +237,6 @@ impl Reduce for Reducer {
         Ok(None)
     }
 
-    fn draft(&self) -> &Draft {
-        &self.draft
-    }
-
-    fn draft_mut(&mut self) -> &mut Draft {
-        &mut self.draft
-    }
-}
-
-impl Reducer {
     /// Read one choice. Return the failure a finish reason names when the server cut the generation short.
     fn on_choice(&mut self, choice: &Value<'_>) -> Result<Option<ProviderKind>, DecodeError> {
         if let Some(delta @ Value::Object(_)) = choice.get("delta") {
@@ -425,8 +414,8 @@ impl Reducer {
         arguments: Option<&str>,
     ) -> Result<(), DecodeError> {
         let block = self.tool_block(index)?;
-        self.draft.identify(block, ToolField::CallId, id.unwrap_or_default())?;
-        self.draft.identify(block, ToolField::Name, name.unwrap_or_default())?;
+        self.draft
+            .identify(block, id.unwrap_or_default(), name.unwrap_or_default())?;
         match arguments {
             Some(fragment) => self.draft.tool_delta(block, fragment),
             None => Ok(()),
@@ -538,12 +527,15 @@ fn is_interrupted(raw: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::request::Protocol;
     use crate::response::ResponseLimits;
     use crate::stream::testing::Harness;
 
+    const PROTOCOL: Protocol = Protocol::OpenaiChat;
+
     #[test]
     fn text_reply() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#,
             r#"{"choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}"#,
@@ -566,13 +558,13 @@ mod tests {
     #[test]
     fn interrupted_finish_fails_and_model_length_is_length() {
         for reason in ["insufficient_system_resource", "aborted", "error"] {
-            let mut h = Harness::<Reducer>::new();
+            let mut h = Harness::new(PROTOCOL);
             let chunk =
                 format!(r#"{{"choices":[{{"index":0,"delta":{{"content":"cut"}},"finish_reason":"{reason}"}}]}}"#);
             h.feed(&[&chunk]).unwrap();
             h.expect_trace("start 0 text\ntext_delta 0 \"cut\"\nfailed server_error");
         }
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"choices":[{"index":0,"delta":{"content":"long"},"finish_reason":"model_length"}]}"#,
             "[DONE]",
@@ -584,7 +576,7 @@ mod tests {
     // pi skips a chunk without `choices` (openai-completions.ts), and a usage-only chunk is one.
     #[test]
     fn chunk_without_choices_carries_usage() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}"#,
             r#"{"usage":{"prompt_tokens":3,"completion_tokens":1}}"#,
@@ -609,7 +601,7 @@ mod tests {
             ),
             (r#""cached_tokens":40"#, "done stop \"stop\" input=100 cache_read=40"),
         ] {
-            let mut h = Harness::<Reducer>::new();
+            let mut h = Harness::new(PROTOCOL);
             let chunk = format!(
                 r#"{{"choices":[{{"index":0,"delta":{{}},"finish_reason":"stop"}}],"usage":{{"prompt_tokens":100,{usage}}}}}"#
             );
@@ -620,7 +612,7 @@ mod tests {
 
     #[test]
     fn unknown_finish_reason_keeps_raw_value() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":"pause_turn"}]}"#,
             "[DONE]",
@@ -631,7 +623,7 @@ mod tests {
 
     #[test]
     fn parallel_tool_calls_keep_their_blocks() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"one","arguments":"{\"a\":"}}]},"finish_reason":null}]}"#,
             r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"two","arguments":"{\"b\":"}}]},"finish_reason":null}]}"#,
@@ -657,7 +649,7 @@ mod tests {
     // Grok streams reasoning after content starts, and a chunk can carry both fields.
     #[test]
     fn interleaved_channels_keep_one_block_each() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"choices":[{"index":0,"delta":{"reasoning_content":"how it","role":"assistant"}}]}"#,
             r#"{"choices":[{"index":0,"delta":{"content":"The"}}]}"#,
@@ -688,7 +680,7 @@ mod tests {
     // Mistral repeats the id of a call as the string "null" in its later chunks (zed-industries/zed#54058).
     #[test]
     fn first_call_id_and_name_win() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"real_id","function":{"name":"read"}}]}}]}"#,
             r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"null","function":{"name":"other"}}]},"finish_reason":"tool_calls"}]}"#,
@@ -705,7 +697,7 @@ mod tests {
     // This dialect reports `stop` for a refusal, so only the refusal field marks the draft.
     #[test]
     fn refusal_streams_in_own_block() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"choices":[{"index":0,"delta":{"refusal":"I cannot help"},"finish_reason":"stop"}]}"#,
             "[DONE]",
@@ -727,7 +719,7 @@ mod tests {
                 "start 0 refusal\nrefusal_delta 0 \"I cannot\"\nstop 0 refusal\ndone content_filter \"content_filter\"",
             ),
         ] {
-            let mut h = Harness::<Reducer>::new();
+            let mut h = Harness::new(PROTOCOL);
             let finish = format!(r#"{{"choices":[{{"index":0,"delta":{{}},"finish_reason":"{reason}"}}]}}"#);
             h.feed(&[
                 r#"{"choices":[{"index":0,"delta":{"refusal":"I cannot"},"finish_reason":null}]}"#,
@@ -741,7 +733,7 @@ mod tests {
 
     #[test]
     fn gateway_error_chunk_fails_stream() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}"#,
             r#"{"error":{"code":502,"message":"upstream failed"},"choices":[{"delta":{"content":"must not appear"},"finish_reason":"stop"}]}"#,
@@ -749,7 +741,7 @@ mod tests {
         .unwrap();
         h.expect_trace("start 0 text\ntext_delta 0 \"Hel\"\nfailed server_error");
         // A null `error` is no error.
-        let mut ok = Harness::<Reducer>::new();
+        let mut ok = Harness::new(PROTOCOL);
         ok.feed(&[r#"{"error":null,"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}"#])
             .unwrap();
         ok.expect_trace("start 0 text\ntext_delta 0 \"hi\"");
@@ -758,7 +750,7 @@ mod tests {
     // The typed read covers the common chunk. These chunks need the tree, and must read as the tree reads them.
     #[test]
     fn error_chunk_names_its_kind_without_finish_reason() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[r#"{"error":{"code":"rate_limit_exceeded","message":"slow down"},"choices":[]}"#])
             .unwrap();
         h.expect_trace("failed rate_limited");
@@ -767,20 +759,20 @@ mod tests {
     #[test]
     fn duplicate_field_the_decoder_reads_fails() {
         let twice = r#"{"choices":[{"index":0,"delta":{"content":"a","content":"b"}}]}"#;
-        assert_eq!(Harness::<Reducer>::new().feed(&[twice]), Err(DecodeError::Protocol));
+        assert_eq!(Harness::new(PROTOCOL).feed(&[twice]), Err(DecodeError::Protocol));
     }
 
     #[test]
     fn tool_index_past_i64_fails() {
         let big = r#"{"choices":[{"delta":{"tool_calls":[{"index":9223372036854775808,"function":{"name":"run"}}]}}]}"#;
-        assert_eq!(Harness::<Reducer>::new().feed(&[big]), Err(DecodeError::Protocol));
+        assert_eq!(Harness::new(PROTOCOL).feed(&[big]), Err(DecodeError::Protocol));
         let negative = r#"{"choices":[{"delta":{"tool_calls":[{"index":-1,"function":{"name":"run"}}]}}]}"#;
-        assert_eq!(Harness::<Reducer>::new().feed(&[negative]), Err(DecodeError::Protocol));
+        assert_eq!(Harness::new(PROTOCOL).feed(&[negative]), Err(DecodeError::Protocol));
     }
 
     #[test]
     fn array_payload_reads_as_nothing() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[r#"[null,null,[{"delta":{"content":"hi"}}]]"#]).unwrap();
         h.expect_trace("");
     }
@@ -788,8 +780,8 @@ mod tests {
     #[test]
     fn null_function_fails_and_missing_function_adds_nothing() {
         let null = r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","function":null}]}}]}"#;
-        assert_eq!(Harness::<Reducer>::new().feed(&[null]), Err(DecodeError::Protocol));
-        let mut h = Harness::<Reducer>::new();
+        assert_eq!(Harness::new(PROTOCOL).feed(&[null]), Err(DecodeError::Protocol));
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a"}]}}]}"#])
             .unwrap();
         h.expect_trace("");
@@ -797,7 +789,7 @@ mod tests {
 
     #[test]
     fn calls_in_one_chunk_all_count() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"one","arguments":"{}"}},{"index":1,"id":"b","function":{"name":"two","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}"#,
             "[DONE]",
@@ -816,7 +808,7 @@ mod tests {
 
     #[test]
     fn tool_index_past_block_limit_fails() {
-        let mut h = Harness::<Reducer>::with_limits(ResponseLimits {
+        let mut h = Harness::new(PROTOCOL).limits(ResponseLimits {
             max_blocks: 1,
             ..ResponseLimits::default()
         });
@@ -829,7 +821,7 @@ mod tests {
 
     #[test]
     fn openrouter_reasoning_field_reads_as_reasoning() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             // OpenRouter names the field `reasoning`. DeepSeek names it `reasoning_content`.
             r#"{"choices":[{"index":0,"delta":{"reasoning":"why"}}]}"#,
@@ -840,7 +832,7 @@ mod tests {
 
     #[test]
     fn reasoning_details_merge_like_openrouter_sdk() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
         r#"{"choices":[{"index":0,"delta":{"reasoning":"Think","reasoning_details":[{"type":"reasoning.text","text":"Think","format":"anthropic-claude-v1","index":0}]},"finish_reason":null}]}"#,
         r#"{"choices":[{"index":0,"delta":{"reasoning":"ing","reasoning_details":[{"type":"reasoning.text","text":"ing","index":0}]},"finish_reason":null}]}"#,
@@ -862,7 +854,7 @@ mod tests {
 
     #[test]
     fn encrypted_details_open_reasoning_block() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"choices":[{"index":0,"delta":{"content":"Hi","reasoning_details":[{"type":"reasoning.encrypted","data":"enc"}]},"finish_reason":"stop"}]}"#,
             "[DONE]",
@@ -880,7 +872,7 @@ mod tests {
 
     #[test]
     fn empty_and_signature_only_details() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"choices":[{"index":0,"delta":{"reasoning_details":[]},"finish_reason":"stop"}]}"#,
             "[DONE]",
@@ -892,7 +884,7 @@ mod tests {
              done stop \"stop\"",
         );
 
-        let mut signed = Harness::<Reducer>::new();
+        let mut signed = Harness::new(PROTOCOL);
         signed
             .feed(&[
                 r#"{"choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.text","signature":"","index":0},{"type":"reasoning.text","signature":"s"}]},"finish_reason":"stop"}]}"#,
@@ -922,7 +914,7 @@ mod tests {
         let expected = format!("[{entry},{entry}]");
         assert_eq!(expected.len(), 203);
         for bound in [200, 203] {
-            let mut h = Harness::<Reducer>::with_limits(ResponseLimits {
+            let mut h = Harness::new(PROTOCOL).limits(ResponseLimits {
                 max_event_bytes: bound,
                 ..ResponseLimits::default()
             });

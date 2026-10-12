@@ -48,7 +48,7 @@ bash "$scripts/generate-catalog.sh" "$tmp/input.json" "$tmp/crates/ai/src/catalo
 cat > "$tmp/crates/ai/src/catalog/fixture_test.rs" <<'RUST'
 //! Regression check for the catalog translator.
 use super::fixture::PROVIDERS;
-use super::{AnthropicThinking, Cache};
+use super::AnthropicThinking;
 use crate::request::{ChatDialect, Effort, MaxTokensField, Modality, ReasoningReplayMode, ThinkingFormat};
 use crate::route::CredentialHeader;
 
@@ -83,7 +83,8 @@ fn catalog_translation_preserves_strings_nulls_false_and_zero() {
     assert_eq!(model.dialect.chat.max_tokens_field, MaxTokensField::MaxCompletionTokens);
     // A null level means no effort, and a name outside the request efforts stays out.
     assert_eq!(model.reasoning_levels, &[None, Some(Effort::High)]);
-    assert_eq!(provider.endpoints[0].cache, Cache::Breakpoint);
+    assert!(provider.endpoints[0].cache_breakpoint);
+    assert!(!provider.endpoints[1].cache_breakpoint);
     assert_eq!(model.modalities.input, &[Modality::Text, Modality::Image]);
 }
 RUST

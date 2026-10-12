@@ -1,7 +1,7 @@
 //! Decide whether a failed provider attempt may repeat. The decision is pure: no I/O and no state.
 
 use crate::failure::{Failure, ProviderKind};
-use crate::response::{AttemptInfo, Delivery};
+use crate::response::{AttemptError, Delivery};
 use crate::transport::Fault;
 
 /// How a failure behaves for a repeat.
@@ -77,35 +77,23 @@ impl Default for Policy {
     }
 }
 
-/// One failed attempt. The caller collects these facts. This module only decides.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Attempt<'a> {
-    /// Why the attempt failed.
-    pub failure: Failure,
-    /// What the attempt learned: the retry headers and the delivery state.
-    pub info: &'a AttemptInfo,
-    /// The caller showed an event of the attempt, so a repeat would show it again. When each event reaches a user,
-    /// pass `info.output_seen`. When the caller shows nothing before the end, as `generate` does, pass false.
-    pub output_shown: bool,
-    /// The 1-based number of the attempt that just failed.
-    pub number: u32,
-}
-
-/// Return the delay in milliseconds before the next attempt, or `None` when the request must stop. `jitter` is a draw
-/// in `[0, 1)`.
+/// Return the delay in milliseconds before the next attempt, or `None` when the request must stop. `number` is the
+/// 1-based number of the attempt that failed with `attempt_error`. `jitter` is a draw in `[0, 1)`.
 ///
 /// # Panics
 ///
-/// In a debug build, `decide` panics on input that breaks a precondition: `jitter` outside `[0, 1)`, an
-/// `attempt.number` of 0, a `policy.max_attempts` of 0, or a `policy.base_ms` above `policy.cap_ms`.
-pub fn decide(policy: Policy, attempt: &Attempt<'_>, jitter: f64) -> Option<u64> {
+/// In a debug build, `decide` panics on input that breaks a precondition: `jitter` outside `[0, 1)`, a `number` of 0,
+/// a `policy.max_attempts` of 0, or a `policy.base_ms` above `policy.cap_ms`.
+pub fn decide(policy: Policy, attempt_error: &AttemptError, number: u32, jitter: f64) -> Option<u64> {
     debug_assert!(policy.max_attempts >= 1);
     debug_assert!(policy.base_ms <= policy.cap_ms);
-    debug_assert!(attempt.number >= 1);
+    debug_assert!(number >= 1);
     debug_assert!((0.0..1.0).contains(&jitter));
 
-    let info = attempt.info;
-    if attempt.output_shown {
+    let info = &attempt_error.info;
+    let failure = attempt_error.cause;
+    // The caller got an event of the attempt, so a repeat would show it again.
+    if info.output_seen {
         return None;
     }
     // The provider's own `x-should-retry` decides first, as both SDKs obey it.
@@ -113,25 +101,25 @@ pub fn decide(policy: Policy, attempt: &Attempt<'_>, jitter: f64) -> Option<u64>
         return None;
     }
     if info.should_retry != Some(true) {
-        match classify(attempt.failure) {
+        match classify(failure) {
             Class::NonRetryable => return None,
             Class::AnsweredUnknown if info.retry_after_ms.is_none() => return None,
             // A transport fault after the first body write leaves delivery uncertain.
             Class::Transport if info.delivery == Delivery::PossiblySent => return None,
             // A provider answered, so it holds the request. Only an explicit HTTP 408 says it did not process it.
             Class::AnsweredTransient
-                if attempt.failure == Failure::Provider(ProviderKind::Timeout) && info.status != Some(408) =>
+                if failure == Failure::Provider(ProviderKind::Timeout) && info.status != Some(408) =>
             {
                 return None;
             }
             _ => {}
         }
     }
-    if attempt.number >= policy.max_attempts {
+    if number >= policy.max_attempts {
         return None;
     }
 
-    let computed = backoff(policy, attempt.number, jitter);
+    let computed = backoff(policy, number, jitter);
     let Some(asked) = info.retry_after_ms else {
         return Some(computed);
     };
@@ -159,22 +147,22 @@ fn backoff(policy: Policy, number: u32, jitter: f64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::response::AttemptInfo;
 
-    fn decide_with(info: &AttemptInfo, failure: Failure, number: u32, output_shown: bool) -> Option<u64> {
-        decide(
-            Policy::default(),
-            &Attempt {
-                failure,
-                info,
-                output_shown,
-                number,
-            },
-            0.0,
-        )
+    fn attempt_error(cause: Failure, info: AttemptInfo) -> AttemptError {
+        AttemptError {
+            cause,
+            info,
+            partial: Vec::new(),
+        }
+    }
+
+    fn decide_with(info: &AttemptInfo, failure: Failure, number: u32) -> Option<u64> {
+        decide(Policy::default(), &attempt_error(failure, info.clone()), number, 0.0)
     }
 
     fn failed(failure: Failure, number: u32) -> Option<u64> {
-        decide_with(&AttemptInfo::default(), failure, number, false)
+        decide_with(&AttemptInfo::default(), failure, number)
     }
 
     // A connection fault or a cut stream repeats. A request that the transport refused to send, or could not secure,
@@ -204,14 +192,8 @@ mod tests {
         assert_eq!(Some(1000), failed(Failure::Provider(ProviderKind::ServerError), 2));
         assert_eq!(Some(500), failed(Failure::Provider(ProviderKind::Conflict), 1));
         // The jitter removes at most a quarter, so a full draw leaves 750 of 1000.
-        let info = AttemptInfo::default();
-        let attempt = Attempt {
-            failure: Failure::Provider(ProviderKind::ServerError),
-            info: &info,
-            output_shown: false,
-            number: 2,
-        };
-        assert_eq!(Some(750), decide(Policy::default(), &attempt, 0.999));
+        let server = attempt_error(Failure::Provider(ProviderKind::ServerError), AttemptInfo::default());
+        assert_eq!(Some(750), decide(Policy::default(), &server, 2, 0.999));
 
         // The attempt limit permits both calls, so only the computed delay cap bounds them.
         let policy = Policy {
@@ -219,11 +201,7 @@ mod tests {
             ..Policy::default()
         };
         for number in [8, 40] {
-            let attempt = Attempt {
-                number,
-                ..attempt.clone()
-            };
-            assert_eq!(Some(8000), decide(policy, &attempt, 0.0));
+            assert_eq!(Some(8000), decide(policy, &server, number, 0.0));
         }
     }
 
@@ -231,11 +209,12 @@ mod tests {
     fn shown_output_blocks_retry() {
         let info = AttemptInfo {
             retry_after_ms: Some(10),
+            output_seen: true,
             ..AttemptInfo::default()
         };
         assert_eq!(
             None,
-            decide_with(&info, Failure::Provider(ProviderKind::RateLimited), 1, true)
+            decide_with(&info, Failure::Provider(ProviderKind::RateLimited), 1)
         );
     }
 
@@ -248,7 +227,7 @@ mod tests {
         };
         assert_eq!(
             None,
-            decide_with(&vetoed, Failure::Provider(ProviderKind::ServerError), 1, false)
+            decide_with(&vetoed, Failure::Provider(ProviderKind::ServerError), 1)
         );
         let asked = AttemptInfo {
             should_retry: Some(true),
@@ -256,7 +235,7 @@ mod tests {
         };
         assert_eq!(
             Some(500),
-            decide_with(&asked, Failure::Provider(ProviderKind::AuthFailed), 1, false)
+            decide_with(&asked, Failure::Provider(ProviderKind::AuthFailed), 1)
         );
     }
 
@@ -270,12 +249,12 @@ mod tests {
             retry_after_ms: Some(2_000),
             ..AttemptInfo::default()
         };
-        assert_eq!(Some(2_000), decide_with(&delayed, unknown, 1, false));
+        assert_eq!(Some(2_000), decide_with(&delayed, unknown, 1));
         let asked = AttemptInfo {
             should_retry: Some(true),
             ..AttemptInfo::default()
         };
-        assert_eq!(Some(500), decide_with(&asked, unknown, 1, false));
+        assert_eq!(Some(500), decide_with(&asked, unknown, 1));
     }
 
     #[test]
@@ -286,11 +265,11 @@ mod tests {
             ..AttemptInfo::default()
         };
         // No idempotency key exists for either provider, so a repeat could bill the same work twice.
-        assert_eq!(None, decide_with(&sent, cut, 1, false));
+        assert_eq!(None, decide_with(&sent, cut, 1));
         // A proven rate limit permits a repeat even after request delivery.
         assert_eq!(
             Some(500),
-            decide_with(&sent, Failure::Provider(ProviderKind::RateLimited), 1, false)
+            decide_with(&sent, Failure::Provider(ProviderKind::RateLimited), 1)
         );
     }
 
@@ -306,7 +285,7 @@ mod tests {
             let expected = (status == 408).then_some(500);
             assert_eq!(
                 expected,
-                decide_with(&info, Failure::Provider(ProviderKind::Timeout), 1, false)
+                decide_with(&info, Failure::Provider(ProviderKind::Timeout), 1)
             );
         }
     }
@@ -322,7 +301,6 @@ mod tests {
                 },
                 limited,
                 1,
-                false,
             )
         };
         assert_eq!(Some(2_500), at(2_500));

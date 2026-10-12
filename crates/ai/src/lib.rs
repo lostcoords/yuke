@@ -38,22 +38,13 @@ pub use response::{
 pub use stream::{Options, Stream};
 use transport::Transport;
 
-/// Encode one request, open it, and read the reply to its end, with the default [`Options`]. No automatic retries
-/// and no tool execution.
+/// Encode one request, open it with `options`, and read the reply to its end. No automatic retries and no tool
+/// execution.
 ///
 /// # Errors
 ///
 /// Returns [`Error::Encode`] if the request cannot be encoded, and [`Error::Attempt`] if the attempt failed.
-pub async fn generate(transport: &dyn Transport, target: &Target, request: Request<'_>) -> Result<Response, Error> {
-    generate_with_options(transport, target, request, Options::default()).await
-}
-
-/// Encode one request, open it with `options`, and read the reply to its end.
-///
-/// # Errors
-///
-/// Returns [`Error::Encode`] if the request cannot be encoded, and [`Error::Attempt`] if the attempt failed.
-pub async fn generate_with_options(
+pub async fn generate(
     transport: &dyn Transport,
     target: &Target,
     request: Request<'_>,
@@ -150,6 +141,6 @@ mod tests {
         let finish = reply.finish();
         send(&finish);
         send(&block_on(finish));
-        send(&generate(&canned, &target, request));
+        send(&generate(&canned, &target, request, Options::default()));
     }
 }

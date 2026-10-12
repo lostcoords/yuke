@@ -3,38 +3,40 @@
 use std::fmt::Write as _;
 
 use crate::failure::{Failure, ProviderKind};
-use crate::request::{Origin, ReplayKind};
+use crate::request::{Origin, Protocol, ReplayKind};
 use crate::response::{BlockKind, BlockResult, Event, ResponseLimits};
 use crate::testing::block_on;
 use crate::wire::json::escape_into;
 
 use super::draft::{DecodeError, Draft};
-use super::{Reduce, Stream};
+use super::{Reducer, Stream};
 
 /// A test harness. It holds a reducer, the trace of its events, and the first provider failure of any payload.
-pub(crate) struct Harness<R: Reduce> {
-    pub(crate) reducer: R,
-    pub(crate) failed: Option<ProviderKind>,
+pub(crate) struct Harness {
+    reducer: Reducer,
+    failed: Option<ProviderKind>,
     /// The trace line of every event so far. A delta borrows its payload, so the harness renders the delta before the
     /// next payload.
     lines: Vec<String>,
 }
 
-impl<R: Reduce> Harness<R> {
-    pub(crate) fn new() -> Self {
-        Self::with_limits(ResponseLimits::default())
-    }
-
-    pub(crate) fn with_limits(limits: ResponseLimits) -> Self {
+impl Harness {
+    pub(crate) fn new(protocol: Protocol) -> Self {
         let origin = Origin {
             model: "m".into(),
             base_url: "https://example.test/v1".into(),
         };
         Harness {
-            reducer: R::new(Draft::new(origin, limits)),
+            reducer: Reducer::new(protocol, Draft::new(origin, ResponseLimits::default())),
             failed: None,
             lines: Vec::new(),
         }
+    }
+
+    /// Bound the draft by `limits` in place of the defaults.
+    pub(crate) fn limits(mut self, limits: ResponseLimits) -> Self {
+        self.reducer.draft_mut().limits = limits;
+        self
     }
 
     /// Decode each payload, and record its events as trace lines before the draft clears them. The first failure
@@ -43,7 +45,6 @@ impl<R: Reduce> Harness<R> {
         for payload in payloads {
             // A stream reads nothing after the end of an answer.
             assert!(!self.reducer.draft().done, "a payload after the end of the answer");
-            self.reducer.draft_mut().begin_payload(payload);
             let decoded = self.reducer.decode(payload);
             let draft = self.reducer.draft();
             self.lines

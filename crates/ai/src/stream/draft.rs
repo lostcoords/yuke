@@ -66,13 +66,6 @@ enum Pending {
     Done,
 }
 
-/// Which field of a tool block [`Draft::identify`] sets.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ToolField {
-    CallId,
-    Name,
-}
-
 /// The blocks and the end of one response, while the response streams.
 #[derive(Debug)]
 pub(crate) struct Draft {
@@ -203,21 +196,19 @@ impl Draft {
     /// Add a tool block that owns copies of its call id and name, and announce it.
     pub(crate) fn start_tool(&mut self, call_id: &str, name: &str) -> Result<BlockId, DecodeError> {
         let id = self.start(BlockKind::ToolCall)?;
-        self.identify(id, ToolField::CallId, call_id)?;
-        self.identify(id, ToolField::Name, name)?;
+        self.identify(id, call_id, name)?;
         Ok(id)
     }
 
-    /// Set a tool's call id or name from the first value that names it. A later value changes nothing: Mistral
+    /// Set a tool's call id and name from the first value that names each. A later value changes nothing: Mistral
     /// repeats the id as the string `null` in later chunks.
-    pub(crate) fn identify(&mut self, id: BlockId, field: ToolField, value: &str) -> Result<(), DecodeError> {
+    pub(crate) fn identify(&mut self, id: BlockId, call_id: &str, name: &str) -> Result<(), DecodeError> {
         let block = self.open(id)?;
-        let slot = match field {
-            ToolField::CallId => &mut block.call_id,
-            ToolField::Name => &mut block.name,
-        };
-        if slot.is_empty() {
-            value.clone_into(slot);
+        if block.call_id.is_empty() {
+            call_id.clone_into(&mut block.call_id);
+        }
+        if block.name.is_empty() {
+            name.clone_into(&mut block.name);
         }
         Ok(())
     }

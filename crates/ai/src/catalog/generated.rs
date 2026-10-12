@@ -1,7 +1,7 @@
 //! Generated from the Yuke catalog. Do not edit. Run scripts/generate-catalog.sh.
 
 use crate::catalog::{
-    AnthropicThinking, Auth, Cache, Caps, ChatFlags, Dialect, Endpoint, Limits, Modalities, Model, PriceBand, Provider,
+    AnthropicThinking, Auth, Caps, ChatFlags, Dialect, Endpoint, Limits, Modalities, Model, PriceBand, Provider,
 };
 use crate::request::{
     ChatDialect, Effort, MaxTokensField, Modality, Protocol, ReasoningReplayMode, ResponsesDialect, ThinkingFormat,
@@ -24,7 +24,7 @@ pub static PROVIDERS: &[Provider<'static>] = &[
         endpoints: &[Endpoint {
             protocol: Protocol::AnthropicMessages,
             credential_header: Some(CredentialHeader::XApiKey),
-            cache: Cache::Breakpoint,
+            cache_breakpoint: true,
             responses_dialect: ResponsesDialect::Standard,
             chat_dialect: ChatDialect::Standard,
         }],
@@ -703,7 +703,7 @@ pub static PROVIDERS: &[Provider<'static>] = &[
         endpoints: &[Endpoint {
             protocol: Protocol::OpenaiResponses,
             credential_header: Some(CredentialHeader::AuthorizationBearer),
-            cache: Cache::Breakpoint,
+            cache_breakpoint: true,
             responses_dialect: ResponsesDialect::Standard,
             chat_dialect: ChatDialect::Standard,
         }],
@@ -2446,7 +2446,7 @@ pub static PROVIDERS: &[Provider<'static>] = &[
         endpoints: &[Endpoint {
             protocol: Protocol::OpenaiResponses,
             credential_header: Some(CredentialHeader::AuthorizationBearer),
-            cache: Cache::None,
+            cache_breakpoint: false,
             responses_dialect: ResponsesDialect::Codex,
             chat_dialect: ChatDialect::Standard,
         }],
@@ -2886,7 +2886,7 @@ pub static PROVIDERS: &[Provider<'static>] = &[
         endpoints: &[Endpoint {
             protocol: Protocol::OpenaiChat,
             credential_header: Some(CredentialHeader::AuthorizationBearer),
-            cache: Cache::None,
+            cache_breakpoint: false,
             responses_dialect: ResponsesDialect::Standard,
             chat_dialect: ChatDialect::Standard,
         }],
@@ -18481,7 +18481,7 @@ pub static PROVIDERS: &[Provider<'static>] = &[
         endpoints: &[Endpoint {
             protocol: Protocol::OpenaiChat,
             credential_header: Some(CredentialHeader::AuthorizationBearer),
-            cache: Cache::Automatic,
+            cache_breakpoint: false,
             responses_dialect: ResponsesDialect::Standard,
             chat_dialect: ChatDialect::Standard,
         }],
@@ -18572,7 +18572,7 @@ pub static PROVIDERS: &[Provider<'static>] = &[
         endpoints: &[Endpoint {
             protocol: Protocol::OpenaiChat,
             credential_header: Some(CredentialHeader::AuthorizationBearer),
-            cache: Cache::None,
+            cache_breakpoint: false,
             responses_dialect: ResponsesDialect::Standard,
             chat_dialect: ChatDialect::Standard,
         }],
@@ -19107,7 +19107,7 @@ pub static PROVIDERS: &[Provider<'static>] = &[
         endpoints: &[Endpoint {
             protocol: Protocol::OpenaiResponses,
             credential_header: Some(CredentialHeader::AuthorizationBearer),
-            cache: Cache::None,
+            cache_breakpoint: false,
             responses_dialect: ResponsesDialect::Standard,
             chat_dialect: ChatDialect::Standard,
         }],
@@ -19515,7 +19515,7 @@ pub static PROVIDERS: &[Provider<'static>] = &[
         endpoints: &[Endpoint {
             protocol: Protocol::OpenaiResponses,
             credential_header: Some(CredentialHeader::AuthorizationBearer),
-            cache: Cache::None,
+            cache_breakpoint: false,
             responses_dialect: ResponsesDialect::Standard,
             chat_dialect: ChatDialect::Standard,
         }],
@@ -19923,7 +19923,7 @@ pub static PROVIDERS: &[Provider<'static>] = &[
         endpoints: &[Endpoint {
             protocol: Protocol::OpenaiChat,
             credential_header: Some(CredentialHeader::AuthorizationBearer),
-            cache: Cache::None,
+            cache_breakpoint: false,
             responses_dialect: ResponsesDialect::Standard,
             chat_dialect: ChatDialect::Mistral,
         }],
@@ -20865,7 +20865,7 @@ pub static PROVIDERS: &[Provider<'static>] = &[
         endpoints: &[Endpoint {
             protocol: Protocol::OpenaiChat,
             credential_header: Some(CredentialHeader::AuthorizationBearer),
-            cache: Cache::None,
+            cache_breakpoint: false,
             responses_dialect: ResponsesDialect::Standard,
             chat_dialect: ChatDialect::Standard,
         }],
@@ -21554,7 +21554,7 @@ pub static PROVIDERS: &[Provider<'static>] = &[
         endpoints: &[Endpoint {
             protocol: Protocol::OpenaiChat,
             credential_header: Some(CredentialHeader::AuthorizationBearer),
-            cache: Cache::None,
+            cache_breakpoint: false,
             responses_dialect: ResponsesDialect::Standard,
             chat_dialect: ChatDialect::Standard,
         }],
@@ -21645,7 +21645,7 @@ pub static PROVIDERS: &[Provider<'static>] = &[
         endpoints: &[Endpoint {
             protocol: Protocol::OpenaiChat,
             credential_header: Some(CredentialHeader::AuthorizationBearer),
-            cache: Cache::None,
+            cache_breakpoint: false,
             responses_dialect: ResponsesDialect::Standard,
             chat_dialect: ChatDialect::Standard,
         }],
@@ -22501,7 +22501,7 @@ pub static PROVIDERS: &[Provider<'static>] = &[
         endpoints: &[Endpoint {
             protocol: Protocol::AnthropicMessages,
             credential_header: Some(CredentialHeader::AuthorizationBearer),
-            cache: Cache::Breakpoint,
+            cache_breakpoint: true,
             responses_dialect: ResponsesDialect::Standard,
             chat_dialect: ChatDialect::Standard,
         }],
@@ -22788,21 +22788,21 @@ pub static PROVIDERS: &[Provider<'static>] = &[
             Endpoint {
                 protocol: Protocol::AnthropicMessages,
                 credential_header: Some(CredentialHeader::XApiKey),
-                cache: Cache::Breakpoint,
+                cache_breakpoint: true,
                 responses_dialect: ResponsesDialect::Standard,
                 chat_dialect: ChatDialect::Standard,
             },
             Endpoint {
                 protocol: Protocol::OpenaiChat,
                 credential_header: Some(CredentialHeader::AuthorizationBearer),
-                cache: Cache::Automatic,
+                cache_breakpoint: false,
                 responses_dialect: ResponsesDialect::Standard,
                 chat_dialect: ChatDialect::Standard,
             },
             Endpoint {
                 protocol: Protocol::OpenaiResponses,
                 credential_header: Some(CredentialHeader::AuthorizationBearer),
-                cache: Cache::None,
+                cache_breakpoint: false,
                 responses_dialect: ResponsesDialect::Standard,
                 chat_dialect: ChatDialect::Standard,
             },
@@ -25915,21 +25915,21 @@ pub static PROVIDERS: &[Provider<'static>] = &[
             Endpoint {
                 protocol: Protocol::AnthropicMessages,
                 credential_header: Some(CredentialHeader::XApiKey),
-                cache: Cache::Breakpoint,
+                cache_breakpoint: true,
                 responses_dialect: ResponsesDialect::Standard,
                 chat_dialect: ChatDialect::Standard,
             },
             Endpoint {
                 protocol: Protocol::OpenaiChat,
                 credential_header: Some(CredentialHeader::AuthorizationBearer),
-                cache: Cache::None,
+                cache_breakpoint: false,
                 responses_dialect: ResponsesDialect::Standard,
                 chat_dialect: ChatDialect::Standard,
             },
             Endpoint {
                 protocol: Protocol::OpenaiResponses,
                 credential_header: Some(CredentialHeader::AuthorizationBearer),
-                cache: Cache::None,
+                cache_breakpoint: false,
                 responses_dialect: ResponsesDialect::Standard,
                 chat_dialect: ChatDialect::Standard,
             },

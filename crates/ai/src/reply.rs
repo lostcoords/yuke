@@ -3,11 +3,8 @@
 
 use crate::encoder::Encoded;
 use crate::failure::Failure;
-use crate::request::{Reasoning, ReasoningReplay, ToolCall};
-use crate::response::{
-    AttemptError, AttemptInfo, BlockKind, BlockResult, Completion, Content, Event, FinishReason, Partial, Response,
-    Usage,
-};
+use crate::request::{Reasoning, ReasoningReplay};
+use crate::response::{AttemptError, BlockKind, BlockResult, Completion, Content, Event, Partial, Response};
 use crate::stream::{Options, Stream};
 use crate::transport::Transport;
 
@@ -22,35 +19,17 @@ pub struct Reply {
 }
 
 #[derive(Debug)]
-struct Part {
-    text: String,
-    /// A block cut off by the end of the attempt never stops.
-    state: PartState,
-}
-
-#[derive(Debug)]
-enum PartState {
-    Started(BlockKind),
-    Stopped(StoppedResult),
-}
-
-/// A [`BlockResult`] that owns its bytes.
-#[derive(Debug)]
-enum StoppedResult {
-    Text,
-    Refusal,
-    Reasoning(Option<ReasoningReplay>),
-    ToolCall(ToolCall),
+enum Part {
+    /// A block and the text it joined so far. A block cut off by the end of the attempt never stops.
+    Open(BlockKind, String),
+    Stopped(Content),
 }
 
 #[derive(Debug)]
 enum End {
     Open,
-    Done {
-        finish_reason: FinishReason,
-        raw_finish_reason: String,
-        usage: Usage,
-    },
+    /// The end of the answer, with no content yet.
+    Done(Completion),
     Failed(Failure),
 }
 
@@ -62,11 +41,6 @@ impl Reply {
             parts: Vec::new(),
             end: End::Open,
         }
-    }
-
-    /// The attempt facts, on success and failure.
-    pub fn info(&self) -> &AttemptInfo {
-        self.stream.info()
     }
 
     /// Return the next event, as [`Stream::next`] does, after the reply keeps what it says. The event borrows the
@@ -89,17 +63,11 @@ impl Reply {
         while self.next().await.is_some() {}
         let info = self.stream.take_info();
         match self.end {
-            End::Done {
-                finish_reason,
-                raw_finish_reason,
-                usage,
-            } => Ok(Response {
+            End::Done(completion) => Ok(Response {
                 info,
                 completion: Completion {
                     content: complete(self.parts),
-                    finish_reason,
-                    raw_finish_reason,
-                    usage,
+                    ..completion
                 },
             }),
             End::Failed(cause) => Err(AttemptError {
@@ -121,48 +89,47 @@ impl Reply {
 /// Keep what one event says.
 fn keep(parts: &mut Vec<Part>, end: &mut End, event: &Event<'_>) {
     match event {
-        Event::BlockStarted(started) => parts.push(Part {
-            text: String::new(),
-            state: PartState::Started(started.kind),
-        }),
+        Event::BlockStarted(started) => parts.push(Part::Open(started.kind, String::new())),
         Event::TextDelta(delta) | Event::RefusalDelta(delta) | Event::ReasoningDelta(delta) => {
-            parts[delta.block as usize].text.push_str(delta.text);
+            if let Part::Open(_, text) = &mut parts[delta.block as usize] {
+                text.push_str(delta.text);
+            }
         }
         // The text already joins its sections. A stopped tool carries authoritative arguments.
         Event::ReasoningSectionStarted(_) | Event::ToolInputDelta(_) => {}
         Event::BlockStopped(stopped) => {
-            parts[stopped.block as usize].state = PartState::Stopped(match stopped.result {
-                BlockResult::Text => StoppedResult::Text,
-                BlockResult::Refusal => StoppedResult::Refusal,
-                BlockResult::Reasoning(replay) => StoppedResult::Reasoning(replay.map(ReasoningReplay::from)),
-                BlockResult::ToolCall(call) => StoppedResult::ToolCall(call.into()),
-            });
+            let part = &mut parts[stopped.block as usize];
+            if let Part::Open(_, text) = part {
+                let text = std::mem::take(text);
+                *part = Part::Stopped(match stopped.result {
+                    BlockResult::Text => Content::Text(text),
+                    BlockResult::Refusal => Content::Refusal(text),
+                    BlockResult::Reasoning(replay) => Content::Reasoning(Reasoning {
+                        text,
+                        replay: replay.map(ReasoningReplay::from),
+                    }),
+                    BlockResult::ToolCall(call) => Content::ToolCall(call.into()),
+                });
+            }
         }
         Event::Done(done) => {
-            *end = End::Done {
+            *end = End::Done(Completion {
+                content: Vec::new(),
                 finish_reason: done.finish_reason,
                 raw_finish_reason: done.raw_finish_reason.to_owned(),
                 usage: done.usage,
-            };
+            });
         }
     }
 }
 
-/// Pack the stopped blocks in start order. Each part moves its text, so the response costs no second copy.
+/// Pack the stopped blocks in start order. Each stopped part owns its content, so the response costs no second copy.
 fn complete(parts: Vec<Part>) -> Vec<Content> {
     parts
         .into_iter()
-        .filter_map(|part| match part.state {
-            PartState::Started(_) => None,
-            PartState::Stopped(result) => Some(match result {
-                StoppedResult::Text => Content::Text(part.text),
-                StoppedResult::Refusal => Content::Refusal(part.text),
-                StoppedResult::Reasoning(replay) => Content::Reasoning(Reasoning {
-                    text: part.text,
-                    replay,
-                }),
-                StoppedResult::ToolCall(call) => Content::ToolCall(call),
-            }),
+        .filter_map(|part| match part {
+            Part::Open(..) => None,
+            Part::Stopped(content) => Some(content),
         })
         .collect()
 }
@@ -173,17 +140,19 @@ fn partial(parts: Vec<Part>) -> Vec<Partial> {
     parts
         .into_iter()
         .filter_map(|part| {
-            let text_part: fn(String) -> Partial = match part.state {
-                PartState::Stopped(StoppedResult::ToolCall(call)) => return Some(Partial::ToolCall(call)),
+            let (text_part, text): (fn(String) -> Partial, String) = match part {
+                Part::Stopped(Content::ToolCall(call)) => return Some(Partial::ToolCall(call)),
                 // A call cut off in its arguments does not exist.
-                PartState::Started(BlockKind::ToolCall) => return None,
-                PartState::Started(BlockKind::Text) | PartState::Stopped(StoppedResult::Text) => Partial::Text,
-                PartState::Started(BlockKind::Refusal) | PartState::Stopped(StoppedResult::Refusal) => Partial::Refusal,
-                PartState::Started(BlockKind::Reasoning) | PartState::Stopped(StoppedResult::Reasoning(_)) => {
-                    Partial::Reasoning
+                Part::Open(BlockKind::ToolCall, _) => return None,
+                Part::Open(BlockKind::Text, text) | Part::Stopped(Content::Text(text)) => (Partial::Text, text),
+                Part::Open(BlockKind::Refusal, text) | Part::Stopped(Content::Refusal(text)) => {
+                    (Partial::Refusal, text)
+                }
+                Part::Open(BlockKind::Reasoning, text) | Part::Stopped(Content::Reasoning(Reasoning { text, .. })) => {
+                    (Partial::Reasoning, text)
                 }
             };
-            (!part.text.is_empty()).then(|| text_part(part.text))
+            (!text.is_empty()).then(|| text_part(text))
         })
         .collect()
 }
@@ -193,8 +162,8 @@ mod tests {
     use super::*;
     use crate::encoder::Encoder;
     use crate::failure::ProviderKind;
-    use crate::request::{Block, Protocol, Request, Role};
-    use crate::response::{Delivery, ResponseLimits};
+    use crate::request::{Block, Protocol, Request, Role, ToolCall};
+    use crate::response::{AttemptInfo, Delivery, FinishReason, ResponseLimits, Usage};
     use crate::testing::{
         CannedTransport, OVERLOAD_EVENT, block_on, canned_reply, completion, frame, generate_text, generate_with,
         target,

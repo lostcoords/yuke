@@ -1,15 +1,15 @@
 //! JSON writers for the request serializers. Only control bytes, `"`, and `\` are escaped, so other text stays as
 //! UTF-8. A float prints in its shortest decimal form.
 
-use std::fmt::Write as _;
+use std::io::Write as _;
 
 use crate::json::Value;
 
 /// A writer of one JSON value tree into a byte buffer. It places the commas between members and elements.
 pub(crate) struct JsonWriter<'b> {
-    out: &'b mut Vec<u8>,
+    pub(crate) out: &'b mut Vec<u8>,
     /// A value came before at this level, so the next one needs a comma.
-    comma: bool,
+    pub(crate) comma: bool,
 }
 
 impl<'b> JsonWriter<'b> {
@@ -67,18 +67,11 @@ impl<'b> JsonWriter<'b> {
     }
 
     pub(crate) fn uint(&mut self, value: u64) {
-        self.value_start();
-        push_digits(self.out, value);
-        self.value_done();
+        self.number(value);
     }
 
     pub(crate) fn int(&mut self, value: i64) {
-        self.value_start();
-        if value < 0 {
-            self.out.push(b'-');
-        }
-        push_digits(self.out, value.unsigned_abs());
-        self.value_done();
+        self.number(value);
     }
 
     pub(crate) fn null(&mut self) {
@@ -89,8 +82,13 @@ impl<'b> JsonWriter<'b> {
 
     /// Write a finite float in its shortest decimal form. The encoder rejects a NaN or an infinity first.
     pub(crate) fn float(&mut self, value: f64) {
+        self.number(value);
+    }
+
+    /// Write the decimal text of a number.
+    fn number(&mut self, value: impl std::fmt::Display) {
         self.value_start();
-        _ = write!(ByteWriter(self.out), "{value}"); // A byte buffer never fails a write.
+        _ = write!(self.out, "{value}"); // A byte buffer never fails a write.
         self.value_done();
     }
 
@@ -191,50 +189,6 @@ impl<'b> JsonWriter<'b> {
             self.float(value);
         }
     }
-}
-
-/// A byte buffer that takes formatted text with no temporary string.
-pub(crate) struct ByteWriter<'b>(pub(crate) &'b mut Vec<u8>);
-
-impl std::fmt::Write for ByteWriter<'_> {
-    fn write_str(&mut self, text: &str) -> std::fmt::Result {
-        self.0.extend_from_slice(text.as_bytes());
-        Ok(())
-    }
-}
-
-/// The elements of the context array. Each one after the first starts with a comma.
-pub(crate) struct Elements<'b> {
-    pub(crate) out: &'b mut Vec<u8>,
-    /// An element comes before the next one.
-    pub(crate) comma: bool,
-}
-
-impl Elements<'_> {
-    /// Begin the next element, and return a writer for it.
-    pub(crate) fn next(&mut self) -> JsonWriter<'_> {
-        if self.comma {
-            self.out.push(b',');
-        }
-        self.comma = true;
-        JsonWriter::new(self.out)
-    }
-}
-
-/// Append the decimal digits of `value`.
-fn push_digits(out: &mut Vec<u8>, value: u64) {
-    let mut digits = [0u8; 20];
-    let mut at = digits.len();
-    let mut rest = value;
-    loop {
-        at -= 1;
-        digits[at] = b'0' + u8::try_from(rest % 10).unwrap_or_default();
-        rest /= 10;
-        if rest == 0 {
-            break;
-        }
-    }
-    out.extend_from_slice(&digits[at..]);
 }
 
 /// A caller JSON object text, which the caller may leave empty for `{}`.

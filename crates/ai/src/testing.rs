@@ -3,7 +3,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
@@ -13,8 +13,8 @@ use crate::request::{AnthropicWire, ChatWire, Protocol, ResponsesWire, Target, W
 use crate::response::{AttemptError, Completion, Error, Response};
 use crate::route::{Credential, Route};
 use crate::stream::Options;
-use crate::transport::{Body, BoxBody, BoxFuture, Fault, Head, Header, Outgoing, Transport};
-use crate::{Block, Request, generate_with_options};
+use crate::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
+use crate::{Block, Request, generate};
 
 /// Assert that two values print the same `Debug` text. An error with a boxed source has no `PartialEq`. Use it only
 /// for a value whose `Debug` is derived and holds no boxed source, so the text shows every field.
@@ -92,7 +92,7 @@ pub(crate) fn generate_with(
     options: Options,
 ) -> Result<Response, AttemptError> {
     let blocks = [Block::user_text(prompt)];
-    match block_on(generate_with_options(transport, target, Request::new(&blocks), options)) {
+    match block_on(generate(transport, target, Request::new(&blocks), options)) {
         Ok(response) => Ok(response),
         Err(Error::Attempt(error)) => Err(error),
         Err(error) => panic!("the request does not encode: {error}"),
@@ -103,15 +103,6 @@ pub(crate) fn generate_with(
 struct Counters {
     opens: AtomicUsize,
     closes: AtomicUsize,
-}
-
-/// The request a canned transport expects, which it compares with each open.
-#[derive(Debug)]
-struct Expected {
-    url: String,
-    headers: Vec<Header>,
-    body: Vec<u8>,
-    matched: AtomicBool,
 }
 
 /// Replay one fixed reply for every open, and count opens and closes.
@@ -129,7 +120,6 @@ pub(crate) struct CannedTransport {
     /// The first poll for each chunk waits, so a test can cancel a read at every await.
     wait_first: bool,
     counters: Arc<Counters>,
-    expected: Option<Expected>,
 }
 
 impl CannedTransport {
@@ -143,7 +133,6 @@ impl CannedTransport {
             read_error: None,
             wait_first: false,
             counters: Arc::default(),
-            expected: None,
         }
     }
 
@@ -183,20 +172,6 @@ impl CannedTransport {
         }
     }
 
-    /// Compare every opened request with `request`.
-    pub(crate) fn expect_request(self, request: &Outgoing<'_>) -> Self {
-        let expected = Expected {
-            url: request.url().to_owned(),
-            headers: request.headers().to_vec(),
-            body: request.body().flatten().copied().collect::<Vec<u8>>(),
-            matched: AtomicBool::new(true),
-        };
-        CannedTransport {
-            expected: Some(expected),
-            ..self
-        }
-    }
-
     pub(crate) fn opens(&self) -> usize {
         self.counters.opens.load(Ordering::Relaxed)
     }
@@ -204,29 +179,11 @@ impl CannedTransport {
     pub(crate) fn closes(&self) -> usize {
         self.counters.closes.load(Ordering::Relaxed)
     }
-
-    pub(crate) fn requests_matched(&self) -> bool {
-        self.expected
-            .as_ref()
-            .is_some_and(|expected| expected.matched.load(Ordering::Relaxed))
-    }
 }
 
 impl Transport for CannedTransport {
-    fn open<'a>(
-        &'a self,
-        request: &'a Outgoing<'_>,
-        _: Option<Instant>,
-    ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
+    fn open<'a>(&'a self, _: &'a Outgoing<'_>, _: Option<Instant>) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
         self.counters.opens.fetch_add(1, Ordering::Relaxed);
-        if let Some(expected) = &self.expected {
-            let same = expected.url == request.url()
-                && expected.headers == request.headers()
-                && expected.body == request.body().flatten().copied().collect::<Vec<u8>>();
-            if !same {
-                expected.matched.store(false, Ordering::Relaxed);
-            }
-        }
         let result = if let Some(fault) = self.open_error {
             Err(fault)
         } else {

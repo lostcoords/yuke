@@ -20,18 +20,6 @@ use draft::{DecodeError, Draft};
 use sse::{Sse, Step};
 
 /// The rules of one protocol. A reducer decodes one SSE payload into the events of its draft.
-pub(crate) trait Reduce {
-    fn new(draft: Draft) -> Self;
-
-    /// Decode one payload into the draft events, or return the provider failure it names.
-    fn decode(&mut self, data: &str) -> Result<Option<ProviderKind>, DecodeError>;
-
-    fn draft(&self) -> &Draft;
-
-    fn draft_mut(&mut self) -> &mut Draft;
-}
-
-/// One reducer per closed protocol.
 #[derive(Debug)]
 enum Reducer {
     Anthropic(anthropic::Reducer),
@@ -42,12 +30,13 @@ enum Reducer {
 impl Reducer {
     fn new(protocol: Protocol, draft: Draft) -> Self {
         match protocol {
-            Protocol::AnthropicMessages => Reducer::Anthropic(Reduce::new(draft)),
-            Protocol::OpenaiChat => Reducer::Chat(Reduce::new(draft)),
-            Protocol::OpenaiResponses => Reducer::Responses(Reduce::new(draft)),
+            Protocol::AnthropicMessages => Reducer::Anthropic(anthropic::Reducer::new(draft)),
+            Protocol::OpenaiChat => Reducer::Chat(openai_chat::Reducer::new(draft)),
+            Protocol::OpenaiResponses => Reducer::Responses(openai_responses::Reducer::new(draft)),
         }
     }
 
+    /// Decode one payload into the draft events, or return the provider failure it names.
     fn decode(&mut self, data: &str) -> Result<Option<ProviderKind>, DecodeError> {
         self.draft_mut().begin_payload(data);
         match self {
@@ -59,17 +48,17 @@ impl Reducer {
 
     fn draft(&self) -> &Draft {
         match self {
-            Reducer::Anthropic(reducer) => reducer.draft(),
-            Reducer::Chat(reducer) => reducer.draft(),
-            Reducer::Responses(reducer) => reducer.draft(),
+            Reducer::Anthropic(reducer) => &reducer.draft,
+            Reducer::Chat(reducer) => &reducer.draft,
+            Reducer::Responses(reducer) => &reducer.draft,
         }
     }
 
     fn draft_mut(&mut self) -> &mut Draft {
         match self {
-            Reducer::Anthropic(reducer) => reducer.draft_mut(),
-            Reducer::Chat(reducer) => reducer.draft_mut(),
-            Reducer::Responses(reducer) => reducer.draft_mut(),
+            Reducer::Anthropic(reducer) => &mut reducer.draft,
+            Reducer::Chat(reducer) => &mut reducer.draft,
+            Reducer::Responses(reducer) => &mut reducer.draft,
         }
     }
 }
@@ -302,7 +291,6 @@ mod tests {
     use crate::request::OriginRef;
     use crate::request::{Block, Origin, Request};
     use crate::testing::{CannedTransport, OVERLOAD_EVENT, block_on, canned_reply, frame, target};
-    use crate::transport::Header;
     use crate::transport::{Fault, Outgoing};
     use testing::read_trace;
 
@@ -514,29 +502,6 @@ mod tests {
         assert_eq!(origin.model, "test-model");
         assert_eq!(origin.base_url, "https://example.test/v1");
         assert_eq!(canned.opens(), 2);
-    }
-
-    #[test]
-    fn caller_can_replace_request_bytes() {
-        let mut encoder = Encoder::new();
-        let blocks = [Block::user_text("before the hook")];
-        let mut encoded = encoder
-            .encode(&target(Protocol::AnthropicMessages), Request::new(&blocks))
-            .unwrap();
-        // The replacement borrows the caller's storage, which outlives every opening below.
-        let headers = [Header {
-            name: "x-hook".into(),
-            value: "accepted".into(),
-        }];
-        encoded.http = Outgoing::new("https://hook.test/messages", &headers, b"{\"hook\":true}");
-        let canned = CannedTransport::new(canned_reply()).expect_request(&encoded.http);
-        for _ in 0..2 {
-            let mut stream = block_on(Stream::open(&canned, &encoded, Options::default()));
-            while block_on(stream.next()).is_some() {}
-        }
-        assert!(canned.requests_matched());
-        assert_eq!(canned.opens(), 2);
-        assert_eq!(canned.closes(), 2);
     }
 
     // `select!` drops the future of the branch that lost, so a dropped `next` must lose no event.

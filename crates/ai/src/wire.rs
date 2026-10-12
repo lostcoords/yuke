@@ -10,8 +10,8 @@ pub(crate) mod outgoing;
 pub(crate) mod testing;
 
 use crate::encoder::EncodeError;
-use crate::request::{Block, Request, Target, Wire};
-use json::Elements;
+use crate::request::{Block, Request, Target, ToolDefinition, Wire};
+use json::JsonWriter;
 
 /// Write the request up to its open context array. Return whether that array already holds an element, as the
 /// Chat system message is one.
@@ -26,16 +26,16 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, request: &Request<'
 /// Write the element of the group of blocks that starts at `start`, and return the end of the group. Write
 /// nothing when the protocol drops the group. `marker` is the block that carries the cache marker.
 pub(crate) fn write_group(
-    elements: &mut Elements<'_>,
+    jw: &mut JsonWriter<'_>,
     target: &Target,
     request: &Request<'_>,
     start: usize,
     marker: Option<usize>,
 ) -> Result<usize, EncodeError> {
     match &target.wire {
-        Wire::AnthropicMessages(_) => anthropic::write_group(elements, target, request, start, marker),
-        Wire::OpenaiChat(wire) => openai_chat::write_group(elements, target, *wire, request, start),
-        Wire::OpenaiResponses(_) => openai_responses::write_group(elements, target, request, start, marker),
+        Wire::AnthropicMessages(_) => anthropic::write_group(jw, target, request, start, marker),
+        Wire::OpenaiChat(wire) => openai_chat::write_group(jw, target, *wire, request, start),
+        Wire::OpenaiResponses(_) => openai_responses::write_group(jw, target, request, start, marker),
     }
 }
 
@@ -49,8 +49,7 @@ pub(crate) fn cache_index(wire: Wire, blocks: &[Block]) -> Option<usize> {
     blocks.iter().rposition(cacheable)
 }
 
-/// Report whether a Responses request declares a deferred tool. The elements read it, so a change encodes them
-/// again.
-pub(crate) fn defers_tools(request: &Request<'_>) -> bool {
-    openai_responses::defers_tools(request.tools)
+/// Report whether a request declares a deferred tool. The elements read it, so a change encodes them again.
+pub(crate) fn defers_tools(tools: &[ToolDefinition]) -> bool {
+    tools.iter().any(|tool| tool.defer_loading)
 }

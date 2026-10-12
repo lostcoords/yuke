@@ -5,14 +5,11 @@ use crate::request::{OriginRef, Protocol, Target};
 use crate::route::{self, Credential, CredentialHeader};
 use crate::transport::Header;
 
-/// The URL, the headers, and the origin of one request. Each request reuses the allocations of the last one when
-/// their capacity is enough.
+/// The URL, the headers, and the origin of one request.
 #[derive(Debug, Default)]
 pub(crate) struct HeadText {
     pub(crate) url: String,
     pub(crate) headers: Vec<Header>,
-    /// The headers in use. Entries past it keep their capacity for the next request.
-    used: usize,
     pub(crate) model: String,
     pub(crate) base_url: String,
 }
@@ -47,42 +44,26 @@ impl HeadText {
 
         // A final slash on the base gives one separator, not two.
         let base_url = route.base_url.trim_end_matches('/');
-        set(&mut self.url, &[base_url, protocol_path(target.wire.protocol())]);
+        self.url = format!("{base_url}{}", protocol_path(target.wire.protocol()));
         let origin = OriginRef::of(target);
-        set(&mut self.model, &[origin.model]);
-        set(&mut self.base_url, &[origin.base_url]);
+        origin.model.clone_into(&mut self.model);
+        origin.base_url.clone_into(&mut self.base_url);
 
-        self.used = 0;
+        self.headers.clear();
         if let Some(header) = route.credential_header {
             let prefix = match header {
                 CredentialHeader::XApiKey | CredentialHeader::ApiKey => "",
                 CredentialHeader::AuthorizationBearer => "Bearer ",
             };
-            self.push(header.name(), &[prefix, secret]);
+            self.headers
+                .push(Header::new(header.name(), format!("{prefix}{secret}")));
         }
-        for header in identity.iter().chain(route.headers.iter()) {
-            self.push(&header.name, &[&header.value]);
-        }
+        self.headers
+            .extend(identity.iter().chain(route.headers.iter()).cloned());
         if let Some(name) = session_header {
-            self.push(name, &[session_id]);
+            self.headers.push(Header::new(name, session_id.to_owned()));
         }
         Ok(())
-    }
-
-    /// Add one header. Reuse the allocations of an earlier header when the list holds one.
-    fn push(&mut self, name: &str, value: &[&str]) {
-        if let Some(header) = self.headers.get_mut(self.used) {
-            set(header.name.to_mut(), &[name]);
-            set(header.value.to_mut(), value);
-        } else {
-            self.headers.push(Header::new(name.to_owned(), value.concat()));
-        }
-        self.used += 1;
-    }
-
-    /// The headers of the last request.
-    pub(crate) fn headers(&self) -> &[Header] {
-        &self.headers[..self.used]
     }
 
     pub(crate) fn origin(&self) -> OriginRef<'_> {
@@ -90,14 +71,6 @@ impl HeadText {
             model: &self.model,
             base_url: &self.base_url,
         }
-    }
-}
-
-/// Replace the text of `string` with `parts`, and keep its capacity.
-fn set(string: &mut String, parts: &[&str]) {
-    string.clear();
-    for part in parts {
-        string.push_str(part);
     }
 }
 
@@ -250,7 +223,7 @@ mod tests {
                 &case.credential,
                 case.session_id,
             );
-            assert_eq!(head.headers(), case.want.as_slice(), "case: {}", case.name);
+            assert_eq!(head.headers, case.want.as_slice(), "case: {}", case.name);
         }
     }
 
@@ -262,7 +235,7 @@ mod tests {
             ..Route::default()
         };
         let carried = built(&codex, Protocol::OpenaiResponses, &Credential::None, "0123456789abcdef");
-        assert_eq!(carried.headers(), [header("session-id", "0123456789abcdef")].as_slice());
+        assert_eq!(carried.headers, [header("session-id", "0123456789abcdef")].as_slice());
 
         // The header follows the host, not the protocol: OpenCode reads it on every path it serves.
         for protocol in [
@@ -277,7 +250,7 @@ mod tests {
             };
             let sent = built(&opencode, protocol, &Credential::None, "0123456789abcdef");
             assert_eq!(
-                sent.headers(),
+                sent.headers,
                 [header("x-opencode-session", "0123456789abcdef")].as_slice()
             );
         }
@@ -293,11 +266,11 @@ mod tests {
             &Credential::None,
             "0123456789abcdef",
         );
-        assert_eq!(plain.headers(), []);
+        assert_eq!(plain.headers, []);
 
         // A caller that names no session leaves the header off rather than sending an empty one.
         let absent = built(&codex, Protocol::OpenaiResponses, &Credential::None, "");
-        assert_eq!(absent.headers(), []);
+        assert_eq!(absent.headers, []);
     }
 
     #[test]
@@ -440,7 +413,7 @@ mod tests {
         assert!(try_build(&open, Protocol::OpenaiChat, &Credential::None, "").is_ok());
     }
 
-    // The encoder keeps one head and reuses its strings, so the second request must show only its own headers.
+    // The encoder keeps one head, so the second request must show only its own headers.
     #[test]
     fn reused_head_writes_only_current_headers() {
         let first = [header("x-a", "1"), header("x-b", "2"), header("x-c", "3")];
@@ -460,7 +433,7 @@ mod tests {
                 tool_search: false,
             };
             head.build(&target, "").unwrap();
-            assert_eq!(head.headers(), want);
+            assert_eq!(head.headers, want);
         }
     }
 }

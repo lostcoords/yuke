@@ -12,8 +12,7 @@ use crate::response::{BlockId, BlockKind, FinishReason};
 use crate::wire::json::JsonWriter;
 use crate::wyhash::Wyhash;
 
-use super::Reduce;
-use super::draft::{BlockState, DecodeError, Draft, ToolField};
+use super::draft::{BlockState, DecodeError, Draft};
 
 /// A delta of text, a refusal, reasoning, or tool arguments, read with no tree. Other events take the tree path. The
 /// typed read rejects a duplicate of a field that it reads, and ignores a duplicate of another field.
@@ -90,15 +89,15 @@ fn slot(kind: BlockKind) -> usize {
 
 #[derive(Debug)]
 pub(crate) struct Reducer {
-    draft: Draft,
+    pub(super) draft: Draft,
     /// The output items, in the order they first arrived. A repeated `output_index` replaces its item.
     outputs: Vec<Output>,
     /// The position in `outputs` of each `output_index`.
     positions: HashMap<usize, usize, BuildHasherDefault<Wyhash>>,
 }
 
-impl Reduce for Reducer {
-    fn new(draft: Draft) -> Self {
+impl Reducer {
+    pub(super) fn new(draft: Draft) -> Self {
         Reducer {
             draft,
             outputs: Vec::new(),
@@ -108,7 +107,7 @@ impl Reduce for Reducer {
 
     /// Parse one SSE `data` payload and append its neutral events to the draft. Return the provider failure that an
     /// error event names.
-    fn decode(&mut self, data: &str) -> Result<Option<ProviderKind>, DecodeError> {
+    pub(super) fn decode(&mut self, data: &str) -> Result<Option<ProviderKind>, DecodeError> {
         // A derived struct also reads a JSON array by position, so only an object takes the typed path.
         if data.trim_start().starts_with('{')
             && let Ok(event) = serde_json::from_str::<DeltaEvent<'_>>(data)
@@ -143,16 +142,6 @@ impl Reduce for Reducer {
         Ok(None)
     }
 
-    fn draft(&self) -> &Draft {
-        &self.draft
-    }
-
-    fn draft_mut(&mut self) -> &mut Draft {
-        &mut self.draft
-    }
-}
-
-impl Reducer {
     fn on_output_item_added(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
         let index = root.get_index("output_index")?;
         let item = root.get("item").ok_or(DecodeError::Protocol)?;
@@ -360,7 +349,7 @@ impl Reducer {
     fn read_search_call(&mut self, id: BlockId, item: &Value<'_>) -> Result<(), DecodeError> {
         // The done item repeats or first names the call id, and the call must have one by now.
         self.draft
-            .identify(id, ToolField::CallId, item.get_str("call_id").unwrap_or_default())?;
+            .identify(id, item.get_str("call_id").unwrap_or_default(), "")?;
         if self.draft.open(id)?.call_id.is_empty() {
             return Err(DecodeError::Protocol);
         }
@@ -473,12 +462,15 @@ fn incomplete_reason(reason: &str) -> FinishReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::request::Protocol;
     use crate::response::ResponseLimits;
     use crate::stream::testing::Harness;
 
+    const PROTOCOL: Protocol = Protocol::OpenaiResponses;
+
     #[test]
     fn text_reply() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.created"}"#,
             r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
@@ -512,7 +504,7 @@ mod tests {
             (with_id, other_id, true),
             (without_id, added_only, false),
         ] {
-            let mut h = Harness::<Reducer>::new();
+            let mut h = Harness::new(PROTOCOL);
             let fed = h.feed(&[added, done]);
             if !ok {
                 assert_eq!(fed, Err(DecodeError::Protocol));
@@ -528,7 +520,7 @@ mod tests {
     fn search_call_past_argument_bound_fails() {
         let arguments = r#"{"query":"read","limit":2}"#;
         for (max, fits) in [(arguments.len(), true), (arguments.len() - 1, false)] {
-            let mut h = Harness::<Reducer>::with_limits(ResponseLimits {
+            let mut h = Harness::new(PROTOCOL).limits(ResponseLimits {
                 max_tool_arg_bytes: max,
                 ..ResponseLimits::default()
             });
@@ -554,7 +546,7 @@ mod tests {
     // Nothing orders the item completions, so a later item may close first.
     #[test]
     fn interleaved_tool_items_keep_their_calls() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_a","name":"read"}}"#,
             r#"{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\":\""}"#,
@@ -590,7 +582,7 @@ mod tests {
                 r#"{"a":3}"#,
             ),
         ] {
-            let mut h = Harness::<Reducer>::new();
+            let mut h = Harness::new(PROTOCOL);
             h.feed(&[
                 r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"run"}}"#,
                 r#"{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"a\":1}"}"#,
@@ -603,7 +595,7 @@ mod tests {
 
     #[test]
     fn reasoning_item_captures_encrypted_content() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}"#,
             r#"{"type":"response.reasoning_summary_text.delta","output_index":0,"delta":"pondering"}"#,
@@ -621,7 +613,7 @@ mod tests {
 
     #[test]
     fn summary_section_starts_paragraph() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}"#,
             r#"{"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":0,"delta":"**One**"}"#,
@@ -644,7 +636,7 @@ mod tests {
     // The typed path reads the five delta events. For each one, it must match the tree path.
     #[test]
     fn delta_shaped_unknown_event_does_nothing() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
             r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
@@ -657,7 +649,7 @@ mod tests {
     #[test]
     fn output_index_outside_i64_fails() {
         for index in ["9223372036854775808", "-1", "0"] {
-            let mut h = Harness::<Reducer>::new();
+            let mut h = Harness::new(PROTOCOL);
             h.feed(&[
                 r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
                 r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
@@ -676,7 +668,7 @@ mod tests {
 
     #[test]
     fn summary_index_that_is_not_an_integer_reads_as_absent() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}"#,
             r#"{"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":"a","delta":"x"}"#,
@@ -716,7 +708,7 @@ mod tests {
 
     #[test]
     fn encrypted_reasoning_without_summary_emits_block() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}"#,
             r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","encrypted_content":"gAAAAsig"}}"#,
@@ -732,7 +724,7 @@ mod tests {
 
     #[test]
     fn empty_reasoning_item_emits_no_block() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}"#,
             r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}"#,
@@ -746,7 +738,7 @@ mod tests {
     // delta closes nothing.
     #[test]
     fn text_done_without_text_block_is_ignored() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
             r#"{"type":"response.output_text.done","output_index":0,"text":""}"#,
@@ -760,7 +752,7 @@ mod tests {
     // opened stays open until the draft closes it.
     #[test]
     fn readded_item_replaces_first() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
             r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
@@ -785,7 +777,7 @@ mod tests {
     // The replaced item names no text block, so a text delta for it rejects the frame.
     #[test]
     fn replaced_item_forgets_its_blocks() {
-        let result = Harness::<Reducer>::new().feed(&[
+        let result = Harness::new(PROTOCOL).feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
             r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
             r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
@@ -796,7 +788,7 @@ mod tests {
 
     #[test]
     fn ignored_item_counts_toward_limit() {
-        let mut h = Harness::<Reducer>::with_limits(ResponseLimits {
+        let mut h = Harness::new(PROTOCOL).limits(ResponseLimits {
             max_blocks: 1,
             ..ResponseLimits::default()
         });
@@ -810,7 +802,7 @@ mod tests {
     // The provider marks a call it never finished, so the call must not reach the consumer.
     #[test]
     fn unfinished_tool_item_is_dropped() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"run"}}"#,
             r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"incomplete","arguments":"{}"}}"#,
@@ -839,7 +831,7 @@ mod tests {
             ),
         ];
         for (events, expected) in cases {
-            let mut h = Harness::<Reducer>::new();
+            let mut h = Harness::new(PROTOCOL);
             h.feed(events).unwrap();
             h.expect_trace(expected);
         }
@@ -868,7 +860,7 @@ mod tests {
             ),
         ];
         for (events, expected) in cases {
-            let mut h = Harness::<Reducer>::new();
+            let mut h = Harness::new(PROTOCOL);
             h.feed(events).unwrap();
             h.expect_trace(expected);
         }
@@ -877,7 +869,7 @@ mod tests {
     // A refusal arrives in its own content part, so it would otherwise commit an empty message.
     #[test]
     fn refusal_streams_in_own_block() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message"}}"#,
             r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"item_id":"msg_1","part":{"type":"refusal"}}"#,
@@ -898,7 +890,7 @@ mod tests {
     // The caller acts on a cut-off answer, so a token limit outranks the refusal, as in the OpenAI SDK.
     #[test]
     fn incomplete_outranks_refusal() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message"}}"#,
             r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"item_id":"msg_1","part":{"type":"refusal"}}"#,
@@ -915,7 +907,7 @@ mod tests {
     // A refusal outranks a call, because the model declined the request it was given.
     #[test]
     fn refusal_outranks_tool_call() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"run"}}"#,
             r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","arguments":"{}"}}"#,
@@ -935,17 +927,17 @@ mod tests {
 
     #[test]
     fn failed_response_and_error_event_classify_by_code() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"response.failed","response":{"status":"failed","error":{"code":"rate_limit_exceeded","message":"try again"}}}"#,
         ])
         .unwrap();
         h.expect_trace("failed rate_limited");
-        let mut flat = Harness::<Reducer>::new();
+        let mut flat = Harness::new(PROTOCOL);
         flat.feed(&[r#"{"type":"error","code":"context_length_exceeded","message":"too long","param":null,"sequence_number":1}"#])
             .unwrap();
         flat.expect_trace("failed context_overflow");
-        let mut bare = Harness::<Reducer>::new();
+        let mut bare = Harness::new(PROTOCOL);
         bare.feed(&[r#"{"type":"response.failed"}"#]).unwrap();
         bare.expect_trace("failed provider_failed");
     }

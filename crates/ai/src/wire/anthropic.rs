@@ -4,7 +4,7 @@ use crate::encoder::EncodeError;
 use crate::request::read_blob;
 use crate::request::{AnthropicWire, Block, Media, Modality, Reasoning, ReplayKind, Request, Target, Thinking};
 
-use super::json::{Elements, JsonWriter};
+use super::json::JsonWriter;
 
 /// Write the request up to the open `messages` array, which holds no element yet.
 pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: AnthropicWire, request: &Request<'_>) -> bool {
@@ -13,21 +13,21 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: AnthropicWire
     jw.field_str("model", &target.model);
     jw.field_uint(
         "max_tokens",
-        u64::from(request.max_output_tokens.unwrap_or(wire.max_tokens)),
+        u64::from(request.settings.max_output_tokens.unwrap_or(wire.max_tokens)),
     );
     jw.field_bool("stream", true);
-    jw.field_float_opt("temperature", request.temperature);
-    jw.field_float_opt("top_p", request.top_p);
-    write_thinking(&mut jw, request.reasoning.thinking);
+    jw.field_float_opt("temperature", request.settings.temperature);
+    jw.field_float_opt("top_p", request.settings.top_p);
+    write_thinking(&mut jw, request.settings.reasoning.thinking);
     // The effort and the response format share the one object.
-    if request.reasoning.effort.is_some() || request.output_schema.is_some() {
+    if request.settings.reasoning.effort.is_some() || request.settings.output_schema.is_some() {
         jw.key("output_config");
         jw.begin_object();
-        if let Some(effort) = request.reasoning.effort {
+        if let Some(effort) = request.settings.reasoning.effort {
             jw.field_str("effort", effort.as_str());
         }
         // Anthropic constrains the response from the schema alone, with no name and no strict flag.
-        if let Some(output) = request.output_schema {
+        if let Some(output) = &request.settings.output_schema {
             jw.key("format");
             jw.begin_object();
             jw.field_str("type", "json_schema");
@@ -36,12 +36,12 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: AnthropicWire
         }
         jw.end_object();
     }
-    if !request.system.is_empty() {
+    if !request.settings.system.is_empty() {
         jw.key("system");
         jw.begin_array();
         jw.begin_object();
         jw.field_str("type", "text");
-        jw.field_str("text", request.system);
+        jw.field_str("text", &request.settings.system);
         write_cache_control(&mut jw, wire.cache);
         jw.end_object();
         jw.end_array();
@@ -65,7 +65,7 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: AnthropicWire
         }
         jw.end_array();
         // This host spells the control as an object, so only a refusal writes the member.
-        if request.tool_choice == crate::ToolChoice::None {
+        if request.settings.tool_choice == crate::ToolChoice::None {
             jw.key("tool_choice");
             jw.begin_object();
             jw.field_str("type", "none");
@@ -81,7 +81,7 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: AnthropicWire
 /// Write the message of the run of blocks with one role from `start`, and return the end of the run.
 /// `marker` is the block that carries the cache marker.
 pub(crate) fn write_group(
-    elements: &mut Elements<'_>,
+    jw: &mut JsonWriter<'_>,
     target: &Target,
     request: &Request<'_>,
     start: usize,
@@ -97,13 +97,12 @@ pub(crate) fn write_group(
     if !blocks[start..end].iter().any(|block| writes(target, block)) {
         return Ok(end);
     }
-    let mut jw = elements.next();
     jw.begin_object();
     jw.field_str("role", role.as_str());
     jw.key("content");
     jw.begin_array();
     for (i, block) in blocks.iter().enumerate().take(end).skip(start) {
-        write_block(&mut jw, target, request, block, marker == Some(i))?;
+        write_block(jw, target, request, block, marker == Some(i))?;
     }
     jw.end_array();
     jw.end_object();
@@ -187,7 +186,7 @@ fn write_block(
             jw.field_str("tool_use_id", &result.call_id);
             jw.key("content");
             // A reference needs the deferred tools of a native target. A request without them keeps the result text.
-            let loaded = if super::defers_tools(request) {
+            let loaded = if super::defers_tools(request.tools) {
                 result.loaded.as_slice()
             } else {
                 &[]
@@ -284,7 +283,7 @@ pub(crate) fn cacheable(block: &Block) -> bool {
 mod tests {
     use super::*;
     use crate::request::{
-        Blob, BlobStore, Effort, Origin, OutputSchema, ReasoningReplay, ThinkingDisplay, ToolDefinition,
+        Blob, BlobStore, Effort, Origin, OutputSchema, ReasoningReplay, Settings, ThinkingDisplay, ToolDefinition,
     };
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay, result};
 
@@ -319,7 +318,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":9,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             "claude",
             anthropic(64),
-            Request::new(&blocks).max_output_tokens(9),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(9)),
         );
     }
 
@@ -330,7 +329,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":1024,"stream":true,"system":[{"type":"text","text":"be brief"}],"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).system("be brief").max_output_tokens(1024),
+            Request::new(&blocks).settings(&Settings::new().system("be brief").max_output_tokens(1024)),
         );
     }
 
@@ -345,7 +344,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"read"}]},{"role":"assistant","content":[{"type":"text","text":"searching"},{"type":"text","text":"done"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).max_output_tokens(8),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
@@ -356,9 +355,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":8192,"stream":true,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks)
-                .max_output_tokens(8192)
-                .thinking(Thinking::Budget(4096)),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8192).thinking(Thinking::Budget(4096))),
         );
     }
 
@@ -369,29 +366,29 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"thinking":{"type":"disabled"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).max_output_tokens(8).thinking(Thinking::Off),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).thinking(Thinking::Off)),
         );
     }
 
     #[test]
     fn adaptive_thinking_display_and_effort() {
         let blocks = [Block::user_text("hi")];
-        let request = Request::new(&blocks).max_output_tokens(8);
-        for (model, request, expected) in [
+        for (model, settings, expected) in [
             (
                 "MiniMax-M3",
-                request.thinking(Thinking::Adaptive(None)),
+                Settings::new().max_output_tokens(8).thinking(Thinking::Adaptive(None)),
                 r#"{"model":"MiniMax-M3","max_tokens":8,"stream":true,"thinking":{"type":"adaptive"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             ),
             (
                 "claude",
-                request
+                Settings::new()
+                    .max_output_tokens(8)
                     .thinking(Thinking::Adaptive(Some(ThinkingDisplay::Summarized)))
                     .effort(Effort::Low),
                 r#"{"model":"claude","max_tokens":8,"stream":true,"thinking":{"type":"adaptive","display":"summarized"},"output_config":{"effort":"low"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             ),
         ] {
-            expect_json(expected, model, anthropic(8), request);
+            expect_json(expected, model, anthropic(8), Request::new(&blocks).settings(&settings));
         }
     }
 
@@ -406,7 +403,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":64,"stream":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"checking"},{"type":"tool_use","id":"toolu_1","name":"run","input":{"c":1}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok","is_error":false}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).max_output_tokens(64),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
         );
     }
 
@@ -420,7 +417,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":64,"stream":true,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"run","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"no","is_error":true}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).max_output_tokens(64),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
         );
     }
 
@@ -436,7 +433,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"read","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"PNG image"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}}],"is_error":false},{"type":"tool_result","tool_use_id":"toolu_2","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}}],"is_error":false,"cache_control":{"type":"ephemeral"}}]}]}"#,
             "claude",
             cached(8),
-            Request::new(&blocks).max_output_tokens(8),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
@@ -455,14 +452,18 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"tool_search","description":"Find.","input_schema":{}},{"name":"mcp_read","description":"Read.","defer_loading":true,"input_schema":{}},{"name":"mcp_write","description":"Write.","defer_loading":true,"input_schema":{}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"tool_search","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"found"},{"type":"tool_reference","tool_name":"mcp_read"},{"type":"tool_reference","tool_name":"mcp_write"}],"is_error":false}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).tools(&tools).max_output_tokens(8),
+            Request::new(&blocks)
+                .tools(&tools)
+                .settings(&Settings::new().max_output_tokens(8)),
         );
         // Without a deferred tool, as on a bridge target, a reference would name an undeclared tool, so none is written.
         expect_json(
             r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"tool_search","description":"Find.","input_schema":{}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"tool_search","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"found","is_error":false}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).tools(&tools[..1]).max_output_tokens(8),
+            Request::new(&blocks)
+                .tools(&tools[..1])
+                .settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
@@ -471,14 +472,19 @@ mod tests {
     fn tool_schema_and_strict_mode() {
         let tools = [
             ToolDefinition::new("run", "run a command", r#"{"type":"object"}"#),
-            ToolDefinition::new("read", "read a file", "{}").strict(),
+            ToolDefinition {
+                strict: true,
+                ..ToolDefinition::new("read", "read a file", "{}")
+            },
         ];
         let blocks = [Block::user_text("go")];
         expect_json(
             r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"run","description":"run a command","input_schema":{"type":"object"}},{"name":"read","description":"read a file","input_schema":{},"strict":true}],"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).tools(&tools).max_output_tokens(8),
+            Request::new(&blocks)
+                .tools(&tools)
+                .settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
@@ -489,7 +495,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"system":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"one"},{"type":"text","text":"two","cache_control":{"type":"ephemeral"}}]}]}"#,
             "claude",
             cached(8),
-            Request::new(&blocks).system("sys").max_output_tokens(8),
+            Request::new(&blocks).settings(&Settings::new().system("sys").max_output_tokens(8)),
         );
     }
 
@@ -506,7 +512,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer","cache_control":{"type":"ephemeral"}},{"type":"thinking","thinking":"ponder","signature":"sig"}]}]}"#,
             "claude",
             cached(8),
-            Request::new(&blocks).max_output_tokens(8),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
@@ -520,7 +526,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}},{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"YWI="}}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).max_output_tokens(8),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
@@ -532,7 +538,7 @@ mod tests {
                 EncodeError::Unsupported,
                 "claude",
                 anthropic(8),
-                Request::new(&blocks).max_output_tokens(8),
+                Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
             );
         }
     }
@@ -544,9 +550,11 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"output_config":{"format":{"type":"json_schema","schema":{"type":"object"}}},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks)
-                .max_output_tokens(8)
-                .output_schema(&OutputSchema::new(r#"{"type":"object"}"#)),
+            Request::new(&blocks).settings(
+                &Settings::new()
+                    .max_output_tokens(8)
+                    .output_schema(OutputSchema::new(r#"{"type":"object"}"#).clone()),
+            ),
         );
     }
 
@@ -557,10 +565,12 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"output_config":{"effort":"high","format":{"type":"json_schema","schema":{"type":"object"}}},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks)
-                .max_output_tokens(8)
-                .effort(Effort::High)
-                .output_schema(&OutputSchema::new(r#"{"type":"object"}"#)),
+            Request::new(&blocks).settings(
+                &Settings::new()
+                    .max_output_tokens(8)
+                    .effort(Effort::High)
+                    .output_schema(OutputSchema::new(r#"{"type":"object"}"#).clone()),
+            ),
         );
     }
 
@@ -587,7 +597,9 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"document","source":{"type":"text","media_type":"text/plain","data":"caf�"}}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).max_output_tokens(8).blobs(&Latin1),
+            Request::new(&blocks)
+                .blobs(&Latin1)
+                .settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
@@ -599,7 +611,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"document","source":{"type":"text","media_type":"text/plain","data":"note"}}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&text_doc).max_output_tokens(8),
+            Request::new(&text_doc).settings(&Settings::new().max_output_tokens(8)),
         );
         // A document is a PDF or plain text. Anything else has no source shape and must not be mislabelled.
         let spreadsheet = [Block::Media(image("ab", "application/zip"))];
@@ -607,7 +619,7 @@ mod tests {
             EncodeError::Unsupported,
             "claude",
             anthropic(8),
-            Request::new(&spreadsheet).max_output_tokens(8),
+            Request::new(&spreadsheet).settings(&Settings::new().max_output_tokens(8)),
         );
     }
 
@@ -618,14 +630,14 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"temperature":0.7,"top_p":0.9,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).max_output_tokens(8).temperature(0.7).top_p(0.9),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).temperature(0.7).top_p(0.9)),
         );
         // A missing value leaves the endpoint default, so the member never reaches the wire.
         expect_json(
             r#"{"model":"claude","max_tokens":8,"stream":true,"temperature":0,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).max_output_tokens(8).temperature(0.0),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).temperature(0.0)),
         );
     }
 

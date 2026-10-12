@@ -7,7 +7,6 @@ use crate::json::{self, Text, Value};
 use crate::request::ReplayKind;
 use crate::response::{BlockId, BlockKind, FinishReason};
 
-use super::Reduce;
 use super::draft::{DecodeError, Draft};
 
 /// A delta of one block, read with no tree. Other events take the tree path. The typed read rejects a duplicate of a
@@ -48,7 +47,7 @@ struct DeltaView<'v> {
 
 #[derive(Debug)]
 pub(crate) struct Reducer {
-    draft: Draft,
+    pub(super) draft: Draft,
     /// The neutral block of each provider block index, or `None` for a block the reducer ignores, whose events it
     /// drops.
     slots: Vec<Option<BlockId>>,
@@ -56,8 +55,8 @@ pub(crate) struct Reducer {
     uncached_input: u64,
 }
 
-impl Reduce for Reducer {
-    fn new(draft: Draft) -> Self {
+impl Reducer {
+    pub(super) fn new(draft: Draft) -> Self {
         Reducer {
             draft,
             slots: Vec::new(),
@@ -67,7 +66,7 @@ impl Reduce for Reducer {
 
     /// Parse one SSE `data` payload and append its neutral events to the draft. Return the provider failure that an
     /// error event names.
-    fn decode(&mut self, data: &str) -> Result<Option<ProviderKind>, DecodeError> {
+    pub(super) fn decode(&mut self, data: &str) -> Result<Option<ProviderKind>, DecodeError> {
         // A derived struct also reads a JSON array by position, so only an object takes the typed path.
         if data.trim_start().starts_with('{')
             && let Ok(event) = serde_json::from_str::<BlockDelta<'_>>(data)
@@ -100,16 +99,6 @@ impl Reduce for Reducer {
         Ok(None)
     }
 
-    fn draft(&self) -> &Draft {
-        &self.draft
-    }
-
-    fn draft_mut(&mut self) -> &mut Draft {
-        &mut self.draft
-    }
-}
-
-impl Reducer {
     fn on_message_start(&mut self, root: &Value<'_>) {
         if let Some(usage) = root
             .get_object("message")
@@ -307,12 +296,15 @@ fn finish_reason(raw: &str) -> FinishReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::request::Protocol;
     use crate::response::ResponseLimits;
     use crate::stream::testing::Harness;
 
+    const PROTOCOL: Protocol = Protocol::AnthropicMessages;
+
     #[test]
     fn pause_turn_keeps_raw_reason() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"message_delta","delta":{"stop_reason":"pause_turn"}}"#,
             r#"{"type":"message_stop"}"#,
@@ -352,7 +344,7 @@ mod tests {
             ),
         ];
         for (events, trace) in cases {
-            let mut h = Harness::<Reducer>::new();
+            let mut h = Harness::new(PROTOCOL);
             h.feed(events).unwrap();
             h.expect_trace(trace);
         }
@@ -381,7 +373,7 @@ mod tests {
             ),
         ];
         for (events, trace) in cases {
-            let mut h = Harness::<Reducer>::new();
+            let mut h = Harness::new(PROTOCOL);
             h.feed(events).unwrap();
             h.expect_trace(trace);
         }
@@ -389,7 +381,7 @@ mod tests {
 
     #[test]
     fn tool_reply() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"run"}}"#,
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":\"cargo "}}"#,
@@ -410,7 +402,7 @@ mod tests {
 
     #[test]
     fn complete_thinking_on_start_emits_delta() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"plan the poem","signature":"sig"}}"#,
             r#"{"type":"content_block_stop","index":0}"#,
@@ -425,7 +417,7 @@ mod tests {
 
     #[test]
     fn thinking_collects_signature() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"pondering"}}"#,
@@ -442,7 +434,7 @@ mod tests {
 
     #[test]
     fn redacted_thinking_keeps_data() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"opaque"}}"#,
             r#"{"type":"content_block_stop","index":0}"#,
@@ -453,7 +445,7 @@ mod tests {
 
     #[test]
     fn thinking_tokens_count_as_reasoning_usage() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":40,"output_tokens_details":{"thinking_tokens":25}}}"#,
             r#"{"type":"message_stop"}"#,
@@ -465,7 +457,7 @@ mod tests {
     // Claude 4 returns this when a safety classifier stops the response. It is not a content filter.
     #[test]
     fn refusal_stop_reason() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"message_delta","delta":{"stop_reason":"refusal"}}"#,
             r#"{"type":"message_stop"}"#,
@@ -486,7 +478,7 @@ mod tests {
                 r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}"#,
             ),
         ] {
-            let result = Harness::<Reducer>::new().feed(&[start, delta]);
+            let result = Harness::new(PROTOCOL).feed(&[start, delta]);
             assert_eq!(result, Err(DecodeError::Protocol));
         }
     }
@@ -497,7 +489,7 @@ mod tests {
             r#"{"type":"message_start"}"#,
             r#"{"type":"message_start","message":null}"#,
         ] {
-            let mut h = Harness::<Reducer>::new();
+            let mut h = Harness::new(PROTOCOL);
             h.feed(&[
                 payload,
                 r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
@@ -510,7 +502,7 @@ mod tests {
 
     #[test]
     fn ignored_block_keeps_ids_dense() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv_1","name":"web"}}"#,
             r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
@@ -525,7 +517,7 @@ mod tests {
 
     #[test]
     fn message_stop_with_open_block_fails() {
-        let result = Harness::<Reducer>::new().feed(&[
+        let result = Harness::new(PROTOCOL).feed(&[
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
             r#"{"type":"message_stop"}"#,
         ]);
@@ -535,7 +527,7 @@ mod tests {
     // An ignored block reaches no consumer, so no event of it can break the answer.
     #[test]
     fn ignored_block_events_are_dropped() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"web_search_tool_result"}}"#,
             r#"{"type":"content_block_stop","index":0}"#,
@@ -551,7 +543,7 @@ mod tests {
     // The typed path reads only `content_block_delta`. For that event, it must match the tree path.
     #[test]
     fn delta_shaped_unknown_event_does_nothing() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         let unknown = [r#"{"type":"some_future_event","data":{}}"#, r#"{"type":"ping"}"#];
         h.feed(&unknown).unwrap();
         h.feed(&[r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#])
@@ -565,7 +557,7 @@ mod tests {
     #[test]
     fn delta_index_outside_i64_fails() {
         for index in ["9223372036854775808", "-1", "0"] {
-            let mut h = Harness::<Reducer>::new();
+            let mut h = Harness::new(PROTOCOL);
             h.feed(&[r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#])
                 .unwrap();
             let delta = format!(
@@ -585,7 +577,7 @@ mod tests {
     // The block lookup comes first, so a delta of an ignored block does nothing, even a malformed one.
     #[test]
     fn malformed_delta_of_ignored_block_does_nothing() {
-        let mut h = Harness::<Reducer>::new();
+        let mut h = Harness::new(PROTOCOL);
         h.feed(&[
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"web_search_tool_result"}}"#,
             r#"{"type":"content_block_delta","index":0}"#,
@@ -598,7 +590,7 @@ mod tests {
 
     #[test]
     fn ignored_block_counts_toward_limit() {
-        let mut h = Harness::<Reducer>::with_limits(ResponseLimits {
+        let mut h = Harness::new(PROTOCOL).limits(ResponseLimits {
             max_blocks: 1,
             ..ResponseLimits::default()
         });
@@ -612,7 +604,7 @@ mod tests {
 
     #[test]
     fn redacted_thinking_rejects_deltas() {
-        let result = Harness::<Reducer>::new().feed(&[
+        let result = Harness::new(PROTOCOL).feed(&[
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"opaque"}}"#,
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"leak"}}"#,
         ]);

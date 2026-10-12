@@ -36,12 +36,12 @@ fn is_tchar(c: u8) -> bool {
 }
 
 /// Return true when a header name is one RFC 9110 token.
-pub fn valid_header_name(name: &str) -> bool {
+fn valid_header_name(name: &str) -> bool {
     !name.is_empty() && name.bytes().all(is_tchar)
 }
 
 /// Return true when a header value holds no control byte except a tab. This rejects CR and LF.
-pub fn valid_header_value(value: &str) -> bool {
+pub(crate) fn valid_header_value(value: &str) -> bool {
     value.bytes().all(|c| c == b'\t' || !c.is_ascii_control())
 }
 
@@ -59,14 +59,9 @@ const TRANSPORT_HEADERS: [&str; 10] = [
     "user-agent",
 ];
 
-/// Check the field syntax, and reject a header that the transport writes itself. The check allocates nothing.
-/// The caller owns the meaning of a duplicate field.
-pub fn valid_headers(headers: &[Header]) -> bool {
-    invalid_header(headers, &[]).is_none()
-}
-
-/// Return the name of the first header that [`valid_headers`] rejects or that repeats a name in `written`. An empty
-/// name in `written` rejects nothing.
+/// Return the name of the first header with invalid field syntax, that the transport writes itself, or that repeats a
+/// name in `written`. An empty name in `written` rejects nothing. The check allocates nothing. The caller owns the
+/// meaning of a duplicate field.
 pub(crate) fn invalid_header<'h>(headers: &'h [Header], written: &[&str]) -> Option<&'h str> {
     let valid = |header: &Header| {
         valid_header_name(&header.name)
@@ -162,13 +157,14 @@ mod tests {
 
     #[test]
     fn validates_header_names_and_values() {
-        assert!(valid_headers(&[Header::from_static("anthropic-version", "2023-06-01")]));
-        assert!(!valid_headers(&[Header::from_static("", "x")])); // An empty name aborts the client.
-        assert!(!valid_headers(&[Header::from_static("bad:name", "x")]));
-        assert!(!valid_headers(&[Header::from_static("bad name", "x")]));
-        assert!(!valid_headers(&[Header::from_static("x-note", "a\r\nb")]));
-        assert!(valid_headers(&[Header::from_static("x-note", "a\tb")])); // A tab is legal.
-        assert!(!valid_headers(&[Header::from_static("User-Agent", "other")])); // The transport owns it.
+        let valid = |header| invalid_header(&[header], &[]).is_none();
+        assert!(valid(Header::from_static("anthropic-version", "2023-06-01")));
+        assert!(!valid(Header::from_static("", "x"))); // An empty name aborts the client.
+        assert!(!valid(Header::from_static("bad:name", "x")));
+        assert!(!valid(Header::from_static("bad name", "x")));
+        assert!(!valid(Header::from_static("x-note", "a\r\nb")));
+        assert!(valid(Header::from_static("x-note", "a\tb"))); // A tab is legal.
+        assert!(!valid(Header::from_static("User-Agent", "other"))); // The transport owns it.
     }
 
     #[test]

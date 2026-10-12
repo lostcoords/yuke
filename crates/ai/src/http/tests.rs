@@ -824,28 +824,18 @@ async fn compressed_response_is_malformed() {
     }
 }
 
-// A caller that replaces the encoded request can pass any header, so the transport checks it and sends nothing.
+// A `HeaderMap` panics above its size limit, so the transport counts the headers and sends nothing.
 #[tokio::test]
-async fn invalid_request_fails_before_send() {
-    let cases = [
-        vec![Header::from_static("x-many", "1"); MAX_HEADERS + 1],
-        vec![Header::from_static("bad name", "x")],
-        vec![Header::from_static("x-note", "a\r\nb")],
-        vec![Header::from_static("x-note", "a\0b")],
-        vec![Header::from_static("User-Agent", "other")],
-    ];
+async fn too_many_headers_fail_before_send() {
+    let many = vec![Header::from_static("x-many", "1"); MAX_HEADERS + 1];
     let valid = [Header::from_static("x-note", "valid")];
-    let (outcomes, (fault, bytes)) = tokio::join!(
-        futures_join(cases.iter().map(|headers| observe_http_bytes(headers))),
-        observe_http_bytes(&valid),
-    );
-    for (fault, bytes) in outcomes {
-        assert_eq!(fault, Some(Fault::InvalidRequest));
-        assert!(fault.is_some_and(Fault::sent_nothing));
-        assert_eq!(bytes, 0, "the rejected request sent HTTP bytes");
-    }
-    assert_eq!(fault, None);
-    assert!(bytes != 0, "the observer missed a valid request");
+    let ((fault, bytes), (valid_fault, valid_bytes)) =
+        tokio::join!(observe_http_bytes(&many), observe_http_bytes(&valid));
+    assert_eq!(fault, Some(Fault::InvalidRequest));
+    assert!(fault.is_some_and(Fault::sent_nothing));
+    assert_eq!(bytes, 0, "the rejected request sent HTTP bytes");
+    assert_eq!(valid_fault, None);
+    assert!(valid_bytes != 0, "the observer missed a valid request");
 }
 
 /// Observe every connection during the window, including connections after an empty one.

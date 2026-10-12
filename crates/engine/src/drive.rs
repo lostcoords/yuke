@@ -11,7 +11,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures_util::future::join_all;
 use tokio_util::sync::CancellationToken;
-use yuke_ai::retry::{self, Attempt};
+use yuke_ai::retry;
 use yuke_ai::transport::Transport;
 use yuke_ai::{
     AttemptError, BlobStore, Block, Encoder, Options, Origin, OriginRef, Partial, Reply, Request, Response,
@@ -479,14 +479,7 @@ impl<'a> Driver<'a> {
                 Err(error) => error,
             };
             // The reply sets `output_seen` when it yields a showable event, and the observer gets that event at once.
-            let attempt = Attempt {
-                failure: error.cause,
-                info: &error.info,
-                output_shown: error.info.output_seen,
-                number,
-            };
-
-            let Some(delay) = retry::decide(self.retry_policy, &attempt, fastrand::f64()) else {
+            let Some(delay) = retry::decide(self.retry_policy, &error, number, fastrand::f64()) else {
                 return Sent::Finished(Err(error.into()));
             };
 

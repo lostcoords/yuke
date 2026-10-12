@@ -38,17 +38,15 @@ def modalities:
   map(select(. == "text" or . == "image" or . == "audio" or . == "video" or . == "pdf") | "Modality::" + variant) | list;
 
 # A breakpoint policy names the shape of one protocol, so it marks only that protocol's endpoint.
-def cache:
-  if (.cache == "anthropic_breakpoint" and .protocol == "anthropic_messages")
-    or (.cache == "openai_breakpoint" and .protocol == "openai_responses") then "Cache::Breakpoint"
-  elif .cache == "automatic" then "Cache::Automatic"
-  else "Cache::None" end;
+def cache_breakpoint:
+  (.cache == "anthropic_breakpoint" and .protocol == "anthropic_messages")
+  or (.cache == "openai_breakpoint" and .protocol == "openai_responses");
 
 def endpoint($auth):
   "Endpoint { protocol: Protocol::" + (.protocol | variant)
   + ", credential_header: " + (if $auth.kind == "oauth" then "Some(CredentialHeader::AuthorizationBearer)"
       elif .key_header == null then "None" else "Some(CredentialHeader::" + (.key_header | variant) + ")" end)
-  + ", cache: " + cache
+  + ", cache_breakpoint: " + (cache_breakpoint | bool)
   + ", responses_dialect: ResponsesDialect::"
       + (if .protocol == "openai_responses" then .responses_dialect | variant else "Standard" end)
   + ", chat_dialect: ChatDialect::" + (if .protocol == "openai_chat" then .chat_dialect | variant else "Standard" end)
@@ -111,7 +109,7 @@ def provider:
   + "}";
 
 "//! Generated from the Yuke catalog. Do not edit. Run scripts/generate-catalog.sh.\n\n"
-+ "use crate::catalog::{AnthropicThinking, Auth, Cache, Caps, ChatFlags, Dialect, Endpoint, Limits, Modalities, Model, PriceBand, Provider};\n"
++ "use crate::catalog::{AnthropicThinking, Auth, Caps, ChatFlags, Dialect, Endpoint, Limits, Modalities, Model, PriceBand, Provider};\n"
 + "use crate::request::{ChatDialect, Effort, MaxTokensField, Modality, Protocol, ReasoningReplayMode, ResponsesDialect, ThinkingFormat};\n"
 + "use crate::route::{CredentialHeader, SessionHeader};\nuse crate::transport::Header;\n\n"
 + "/// The catalog revision these static rows come from.\n"

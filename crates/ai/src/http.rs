@@ -19,7 +19,7 @@ use hyper::client::conn::http1;
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::ServerName;
 use rustls_platform_verifier::BuilderVerifierExt;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::time::{Instant, Sleep};
 
@@ -100,8 +100,8 @@ impl HttpTransport {
     }
 
     async fn exchange(&self, request: &Outgoing<'_>, deadline: Option<Instant>) -> Result<(Head, BoxBody), Fault> {
-        // A header that hyper cannot write fails the request before it leaves.
-        if request.headers().len() > MAX_HEADERS || !request.valid_headers() {
+        // `HeaderMap::with_capacity` panics above its size limit, so too many headers fail the request before it leaves.
+        if request.headers().len() > MAX_HEADERS {
             return Err(Fault::InvalidRequest);
         }
         let target = Target::parse(request.url())?;
@@ -196,18 +196,18 @@ impl HttpTransport {
         let tcp = tcp.ok_or(Fault::ConnectFailed)?;
         // The request goes out in one write, so no small segment waits for an acknowledgment.
         tcp.set_nodelay(true).map_err(|_| Fault::ConnectFailed)?;
-        if let Some(tls) = tls {
+        let socket: Box<dyn Socket> = if let Some(tls) = tls {
             let name = ServerName::try_from(target.host.clone()).map_err(|_| Fault::BadUrl)?;
             let stream = tokio_rustls::TlsConnector::from(tls)
                 .connect(name, tcp)
                 .await
                 .map_err(|_| Fault::ConnectFailed)?;
-            *sent = true;
-            send(Socket::Tls(Box::new(stream)), request).await
+            Box::new(stream)
         } else {
-            *sent = true;
-            send(Socket::Tcp(tcp), request).await
-        }
+            Box::new(tcp)
+        };
+        *sent = true;
+        send(socket, request).await
     }
 }
 
@@ -223,66 +223,20 @@ impl Transport for HttpTransport {
 }
 
 /// The byte stream of one connection: plain TCP, or TLS over TCP.
-enum Socket {
-    Tcp(TcpStream),
-    Tls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
-}
+trait Socket: AsyncRead + AsyncWrite + Send + Unpin {}
 
-impl AsyncRead for Socket {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
-        match self.get_mut() {
-            Socket::Tcp(stream) => Pin::new(stream).poll_read(cx, buf),
-            Socket::Tls(stream) => Pin::new(stream.as_mut()).poll_read(cx, buf),
-        }
-    }
-}
+impl<T: AsyncRead + AsyncWrite + Send + Unpin> Socket for T {}
 
-impl AsyncWrite for Socket {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
-        match self.get_mut() {
-            Socket::Tcp(stream) => Pin::new(stream).poll_write(cx, buf),
-            Socket::Tls(stream) => Pin::new(stream.as_mut()).poll_write(cx, buf),
-        }
-    }
-
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[io::IoSlice<'_>],
-    ) -> Poll<io::Result<usize>> {
-        match self.get_mut() {
-            Socket::Tcp(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
-            Socket::Tls(stream) => Pin::new(stream.as_mut()).poll_write_vectored(cx, bufs),
-        }
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        match self {
-            Socket::Tcp(stream) => stream.is_write_vectored(),
-            Socket::Tls(stream) => stream.is_write_vectored(),
-        }
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match self.get_mut() {
-            Socket::Tcp(stream) => Pin::new(stream).poll_flush(cx),
-            Socket::Tls(stream) => Pin::new(stream.as_mut()).poll_flush(cx),
-        }
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match self.get_mut() {
-            Socket::Tcp(stream) => Pin::new(stream).poll_shutdown(cx),
-            Socket::Tls(stream) => Pin::new(stream.as_mut()).poll_shutdown(cx),
-        }
-    }
-}
-
-type Connection = http1::Connection<TokioIo<Socket>, Full<Bytes>>;
+type Connection = http1::Connection<TokioIo<Box<dyn Socket>>, Full<Bytes>>;
 
 /// Send the request on a fresh connection, and drive the connection until the head arrives.
-async fn send(io: Socket, request: Request<Full<Bytes>>) -> Result<(http::Response<Incoming>, Connection), Fault> {
-    let (mut sender, mut connection) = http1::handshake(TokioIo::new(io)).await.map_err(|err| fault_of(&err))?;
+async fn send(
+    socket: Box<dyn Socket>,
+    request: Request<Full<Bytes>>,
+) -> Result<(http::Response<Incoming>, Connection), Fault> {
+    let (mut sender, mut connection) = http1::handshake(TokioIo::new(socket))
+        .await
+        .map_err(|err| fault_of(&err))?;
     let mut response = pin!(sender.send_request(request));
     let response = std::future::poll_fn(|cx| {
         if let Poll::Ready(result) = response.as_mut().poll(cx) {
@@ -319,7 +273,7 @@ fn check_content_encoding(headers: &HeaderMap) -> Result<(), Fault> {
     }
 }
 
-/// The most caller headers one request takes. hyper holds at most 32768 fields, and the transport writes seven.
+/// The most caller headers one request takes. A `HeaderMap` holds at most 32768 fields, and the transport writes seven.
 const MAX_HEADERS: usize = 32_000;
 
 /// Name one hyper failure. A truncated message is a lost connection, and a parse failure a malformed response.
@@ -495,7 +449,7 @@ fn wall_clock_seconds() -> i64 {
 fn read_head(headers: &HeaderMap, status: u16, now: i64) -> Head {
     let mut head = Head::new(status);
     for (name, value) in headers {
-        let value = trim_spaces(value.as_bytes());
+        let value = value.as_bytes();
         let text = std::str::from_utf8(value).ok();
         match name.as_str() {
             "request-id" | "x-request-id" => {
@@ -526,13 +480,6 @@ fn read_head(headers: &HeaderMap, status: u16, now: i64) -> Head {
         }
     }
     head
-}
-
-/// Trim the spaces at both ends, and no other whitespace.
-fn trim_spaces(bytes: &[u8]) -> &[u8] {
-    let start = bytes.iter().position(|&b| b != b' ').unwrap_or(bytes.len());
-    let end = bytes.iter().rposition(|&b| b != b' ').map_or(start, |i| i + 1);
-    &bytes[start..end]
 }
 
 fn retry_after_ms(value: &str, now: i64) -> Option<u64> {

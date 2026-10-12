@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::request::{Block, OriginRef, Protocol, Request, Target, Wire};
 use crate::transport::Outgoing;
-use crate::wire::{self, json::Elements, outgoing::HeadText};
+use crate::wire::{self, json::JsonWriter, outgoing::HeadText};
 use crate::wyhash::Wyhash;
 
 /// A request that cannot be encoded. The encoder sends nothing then.
@@ -74,7 +74,7 @@ impl std::error::Error for EncodeError {
 /// One encoded request. Its bytes borrow the encoder until the next `encode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Encoded<'a> {
-    /// The URL, headers, and body parts to send. A caller may replace them with its own bytes.
+    /// The URL, headers, and body parts to send.
     pub http: Outgoing<'a>,
     /// Selects the response decoder.
     pub protocol: Protocol,
@@ -128,7 +128,7 @@ impl Encoder {
     /// Returns [`EncodeError`] if the protocol cannot carry the content, a blob does not resolve, the route is invalid,
     /// or a sampling value is not finite.
     pub fn encode(&mut self, target: &Target, request: Request<'_>) -> Result<Encoded<'_>, EncodeError> {
-        if ![request.temperature, request.top_p]
+        if ![request.settings.temperature, request.settings.top_p]
             .into_iter()
             .flatten()
             .all(f64::is_finite)
@@ -136,13 +136,13 @@ impl Encoder {
             return Err(EncodeError::InvalidSampling);
         }
 
-        self.head.build(target, request.session_id)?;
+        self.head.build(target, &request.settings.session_id)?;
         let elements_end = self.serialize(target, &request)?;
         let items = &self.items;
         let body = [&items[elements_end..], &items[..elements_end], b"]}".as_slice()];
 
         Ok(Encoded {
-            http: Outgoing::from_parts(&self.head.url, self.head.headers(), body),
+            http: Outgoing::from_parts(&self.head.url, &self.head.headers, body),
             protocol: target.wire.protocol(),
             origin: self.head.origin(),
         })
@@ -200,7 +200,7 @@ impl Encoder {
 
         // A failed write leaves a partial last element, and the next request drops the last element first.
         // The buffer holds only kept elements here, so any byte means an element comes first.
-        let mut elements = Elements {
+        let mut jw = JsonWriter {
             comma: !self.items.is_empty(),
             out: &mut self.items,
         };
@@ -208,12 +208,12 @@ impl Encoder {
         self.elements.reserve(blocks.len().saturating_sub(from));
         let mut start = from;
         while start < blocks.len() {
-            let offset = elements.out.len();
+            let offset = jw.out.len();
             // A failed write keeps its start, so the next request drops the partial element.
             self.elements.push(Element { block: start, offset });
-            let end = wire::write_group(&mut elements, target, request, start, marker)?;
+            let end = wire::write_group(&mut jw, target, request, start, marker)?;
             // A group of blocks the protocol drops writes no element, so it records none.
-            if elements.out.len() == offset {
+            if jw.out.len() == offset {
                 self.elements.pop();
             }
             start = end;
@@ -236,7 +236,7 @@ fn element_key(target: &Target, request: &Request<'_>) -> u64 {
     let mut hasher = Wyhash::default();
     target.wire.protocol().hash(&mut hasher);
     OriginRef::of(target).hash(&mut hasher);
-    wire::defers_tools(request).hash(&mut hasher);
+    wire::defers_tools(request.tools).hash(&mut hasher);
     if let Wire::OpenaiChat(chat) = &target.wire {
         chat.reasoning_replay.hash(&mut hasher);
     }
@@ -254,6 +254,7 @@ mod tests {
     use std::borrow::Cow;
 
     use super::*;
+    use crate::Settings;
     use crate::request::OriginRef;
     use crate::request::{
         AnthropicWire, BlobStore, ChatWire, MaxTokensField, Media, Reasoning, ReasoningReplayMode, ReplayKind,
@@ -280,34 +281,6 @@ mod tests {
             cache: true,
         }),
     ];
-
-    #[test]
-    fn settings_write_the_body_of_their_setters() {
-        let blocks = [Block::user_text("hi")];
-        let settings = crate::Settings::new()
-            .system("be brief")
-            .max_output_tokens(100)
-            .effort(crate::Effort::High)
-            .temperature(0.5)
-            .tool_choice(crate::ToolChoice::None)
-            .session_id("s1")
-            .output_schema(crate::OutputSchema::new(r#"{"type":"object"}"#));
-        let schema = crate::OutputSchema::new(r#"{"type":"object"}"#);
-        for wire in ALL_WIRES {
-            let by_setters = Request::new(&blocks)
-                .system("be brief")
-                .max_output_tokens(100)
-                .effort(crate::Effort::High)
-                .temperature(0.5)
-                .tool_choice(crate::ToolChoice::None)
-                .session_id("s1")
-                .output_schema(&schema);
-            let by_settings = Request::new(&blocks).settings(&settings);
-            let encode = |request| body(&Encoder::new().encode(&target_of("m", wire), request).unwrap());
-            assert_eq!(encode(by_settings), encode(by_setters), "{wire:?}");
-            assert_ne!(encode(by_settings), encode(Request::new(&blocks)), "{wire:?}");
-        }
-    }
 
     fn plain_wires() -> [Wire; 3] {
         [
@@ -448,14 +421,20 @@ mod tests {
                 &mut encoder,
                 "m",
                 first,
-                Request::new(&blocks).tools(&before).system("s").blobs(&counter),
+                Request::new(&blocks)
+                    .tools(&before)
+                    .blobs(&counter)
+                    .settings(&Settings::new().system("s")),
             )
             .unwrap();
             encode_checked(
                 &mut encoder,
                 "m",
                 second,
-                Request::new(&blocks).tools(&after).system("t").blobs(&counter),
+                Request::new(&blocks)
+                    .tools(&after)
+                    .blobs(&counter)
+                    .settings(&Settings::new().system("t")),
             )
             .unwrap();
             // `encode_checked` reads the image once more for its fresh encoding of each request.
@@ -524,7 +503,8 @@ mod tests {
         for wire in ALL_WIRES {
             let mut encoder = Encoder::new();
             for blocks in rounds {
-                let request = Request::new(blocks).system("s").blobs(&TestBlobs).max_output_tokens(8);
+                let settings = Settings::new().system("s").max_output_tokens(8);
+                let request = Request::new(blocks).blobs(&TestBlobs).settings(&settings);
                 encode_checked(&mut encoder, "m", wire, request).unwrap();
             }
         }
@@ -697,15 +677,20 @@ mod tests {
                 let target = target_of("m", wire);
                 let mut encoder = Encoder::new();
                 for request in [
-                    Request::new(&blocks).temperature(value),
-                    Request::new(&blocks).top_p(value),
+                    Request::new(&blocks).settings(&Settings::new().temperature(value)),
+                    Request::new(&blocks).settings(&Settings::new().top_p(value)),
                 ] {
                     assert!(matches!(
                         encoder.encode(&target, request),
                         Err(EncodeError::InvalidSampling)
                     ));
                 }
-                encoder.encode(&target, Request::new(&blocks).temperature(0.5)).unwrap();
+                encoder
+                    .encode(
+                        &target,
+                        Request::new(&blocks).settings(&Settings::new().temperature(0.5)),
+                    )
+                    .unwrap();
             }
         }
     }
@@ -755,7 +740,12 @@ mod tests {
                 wire: Wire::OpenaiChat(ChatWire::default()),
                 tool_search: false,
             };
-            encoder.encode(&target, Request::new(&blocks).system(&system)).unwrap()
+            encoder
+                .encode(
+                    &target,
+                    Request::new(&blocks).settings(&Settings::new().system(&system)),
+                )
+                .unwrap()
         };
         assert_eq!(encoded.http.url(), "https://a.test/v1/chat/completions");
         assert_eq!(encoded.http.headers()[0].value, "Bearer secret");
@@ -777,7 +767,10 @@ mod tests {
         for wire in ALL_WIRES {
             let mut encoder = Encoder::new();
             let encoded = encoder
-                .encode(&target_of("m", wire), Request::new(&[]).system("be brief"))
+                .encode(
+                    &target_of("m", wire),
+                    Request::new(&[]).settings(&Settings::new().system("be brief")),
+                )
                 .unwrap();
             assert!(serde_json::from_slice::<serde_json::Value>(&body(&encoded)).is_ok());
         }

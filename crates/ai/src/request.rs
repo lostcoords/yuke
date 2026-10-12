@@ -100,17 +100,6 @@ pub struct ReasoningReplay {
     pub data: String,
 }
 
-impl ReasoningReplay {
-    /// The same replay, borrowed.
-    pub fn as_borrowed(&self) -> ReasoningReplayRef<'_> {
-        ReasoningReplayRef {
-            origin: self.origin.as_borrowed(),
-            kind: self.kind,
-            data: &self.data,
-        }
-    }
-}
-
 /// A borrowed [`ReasoningReplay`] that a stream event returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReasoningReplayRef<'a> {
@@ -335,15 +324,6 @@ impl Media {
         }
     }
 
-    /// The same attachment with the file name a provider requires beside file bytes.
-    #[must_use]
-    pub fn with_filename(self, filename: impl Into<String>) -> Self {
-        Media {
-            filename: filename.into(),
-            ..self
-        }
-    }
-
     /// The kind its media type names. A protocol writes a different part for each kind.
     pub fn kind(&self) -> Modality {
         let mime = self.mime.as_str();
@@ -403,15 +383,6 @@ impl ToolCall {
             call_id: call_id.into(),
             name: name.into(),
             arguments: arguments.into(),
-        }
-    }
-
-    /// The same call, borrowed.
-    pub fn as_borrowed(&self) -> ToolCallRef<'_> {
-        ToolCallRef {
-            call_id: &self.call_id,
-            name: &self.name,
-            arguments: &self.arguments,
         }
     }
 }
@@ -533,12 +504,6 @@ impl ToolDefinition {
             defer_loading: true,
             ..self
         }
-    }
-
-    /// The same tool, with its arguments constrained to its schema.
-    #[must_use]
-    pub fn strict(self) -> Self {
-        ToolDefinition { strict: true, ..self }
     }
 }
 
@@ -826,7 +791,8 @@ impl Settings {
         }
     }
 
-    /// The output limit.
+    /// The output limit. Without one, the endpoint default applies. For Anthropic, that is
+    /// [`AnthropicWire::max_tokens`].
     #[must_use]
     pub fn max_output_tokens(self, tokens: u32) -> Self {
         Settings {
@@ -916,22 +882,18 @@ impl Default for Settings {
     }
 }
 
-/// One request: the conversation, its generation settings, and its call settings. [`crate::Encoder::encode`] borrows
-/// it only until it returns. [`Request::new`] takes the conversation, and each setter changes one setting.
+/// One request: the conversation, its tools, its blob store, and its settings. [`crate::Encoder::encode`] borrows it
+/// only until it returns. [`Request::new`] takes the conversation, and each setter changes one part.
 #[derive(Clone, Copy)]
 pub struct Request<'a> {
     pub(crate) blocks: &'a [Block],
-    pub(crate) system: &'a str,
     pub(crate) tools: &'a [ToolDefinition],
     pub(crate) blobs: Option<&'a dyn BlobStore>,
-    pub(crate) max_output_tokens: Option<u32>,
-    pub(crate) reasoning: ReasoningSettings,
-    pub(crate) output_schema: Option<&'a OutputSchema>,
-    pub(crate) temperature: Option<f64>,
-    pub(crate) top_p: Option<f64>,
-    pub(crate) tool_choice: ToolChoice,
-    pub(crate) session_id: &'a str,
+    pub(crate) settings: &'a Settings,
 }
+
+/// The settings of a request without [`Request::settings`]: each value at its endpoint default.
+static DEFAULT_SETTINGS: Settings = Settings::new();
 
 impl<'a> Request<'a> {
     /// A request of the whole conversation `blocks`, with every setting at its endpoint default. The provider
@@ -939,40 +901,16 @@ impl<'a> Request<'a> {
     pub fn new(blocks: &'a [Block]) -> Self {
         Request {
             blocks,
-            system: "",
             tools: &[],
             blobs: None,
-            max_output_tokens: None,
-            reasoning: ReasoningSettings::default(),
-            output_schema: None,
-            temperature: None,
-            top_p: None,
-            tool_choice: ToolChoice::Auto,
-            session_id: "",
+            settings: &DEFAULT_SETTINGS,
         }
     }
 
-    /// Replace each setting that [`Settings`] holds with its value in `settings`. A `None` value clears the setting.
-    /// The request borrows its strings from `settings`.
+    /// The settings of the request.
     #[must_use]
     pub fn settings(self, settings: &'a Settings) -> Self {
-        Request {
-            system: &settings.system,
-            max_output_tokens: settings.max_output_tokens,
-            reasoning: settings.reasoning,
-            temperature: settings.temperature,
-            top_p: settings.top_p,
-            tool_choice: settings.tool_choice,
-            session_id: &settings.session_id,
-            output_schema: settings.output_schema.as_ref(),
-            ..self
-        }
-    }
-
-    /// The system prompt. An empty prompt writes none.
-    #[must_use]
-    pub fn system(self, system: &'a str) -> Self {
-        Request { system, ..self }
+        Request { settings, ..self }
     }
 
     /// The tool declarations.
@@ -989,103 +927,15 @@ impl<'a> Request<'a> {
             ..self
         }
     }
-
-    /// The output limit. Without one, the endpoint default applies. For Anthropic, that is
-    /// [`AnthropicWire::max_tokens`].
-    #[must_use]
-    pub fn max_output_tokens(self, tokens: u32) -> Self {
-        Request {
-            max_output_tokens: Some(tokens),
-            ..self
-        }
-    }
-
-    /// The reasoning settings, both at once.
-    #[must_use]
-    pub fn reasoning(self, reasoning: ReasoningSettings) -> Self {
-        Request { reasoning, ..self }
-    }
-
-    /// Whether and how the model thinks. Without it, the endpoint default applies.
-    #[must_use]
-    pub fn thinking(self, thinking: Thinking) -> Self {
-        Request {
-            reasoning: ReasoningSettings {
-                thinking: Some(thinking),
-                ..self.reasoning
-            },
-            ..self
-        }
-    }
-
-    /// How hard the model thinks. Without it, the endpoint default applies.
-    #[must_use]
-    pub fn effort(self, effort: Effort) -> Self {
-        Request {
-            reasoning: ReasoningSettings {
-                effort: Some(effort),
-                ..self.reasoning
-            },
-            ..self
-        }
-    }
-
-    /// Constrain the response to a schema. Without one, the response is free.
-    #[must_use]
-    pub fn output_schema(self, schema: &'a OutputSchema) -> Self {
-        Request {
-            output_schema: Some(schema),
-            ..self
-        }
-    }
-
-    /// The sampling temperature. Without it, the endpoint default applies. A NaN or an infinity fails the encode.
-    #[must_use]
-    pub fn temperature(self, temperature: f64) -> Self {
-        Request {
-            temperature: Some(temperature),
-            ..self
-        }
-    }
-
-    /// The nucleus sampling mass. Anthropic asks that a request set this or the temperature, not both. A NaN or an
-    /// infinity fails the encode.
-    #[must_use]
-    pub fn top_p(self, top_p: f64) -> Self {
-        Request {
-            top_p: Some(top_p),
-            ..self
-        }
-    }
-
-    /// The tool control.
-    #[must_use]
-    pub fn tool_choice(self, tool_choice: ToolChoice) -> Self {
-        Request { tool_choice, ..self }
-    }
-
-    /// A stable session ID for routing and the Responses cache key. A route can send it as a header, so it must be a
-    /// valid header value. The ChatGPT host refuses a key longer than 64 bytes.
-    #[must_use]
-    pub fn session_id(self, session_id: &'a str) -> Self {
-        Request { session_id, ..self }
-    }
 }
 
 impl fmt::Debug for Request<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Request")
             .field("blocks", &self.blocks)
-            .field("system", &self.system)
             .field("tools", &self.tools)
             .field("blobs", &self.blobs.map(|_| "BlobStore"))
-            .field("max_output_tokens", &self.max_output_tokens)
-            .field("reasoning", &self.reasoning)
-            .field("output_schema", &self.output_schema)
-            .field("temperature", &self.temperature)
-            .field("top_p", &self.top_p)
-            .field("tool_choice", &self.tool_choice)
-            .field("session_id", &self.session_id)
+            .field("settings", &self.settings)
             .finish()
     }
 }
