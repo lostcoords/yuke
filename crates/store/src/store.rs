@@ -11,7 +11,7 @@ use yuke_agent::{Access, InputId, Lease, Opened, PendingInput, SessionId, Sessio
 use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_sql::rusqlite::{self, Connection, TransactionBehavior};
 
-use crate::context::{self, Loaded};
+use crate::context;
 use crate::files;
 use crate::queries::{commits, pending_inputs, sessions};
 use crate::schema;
@@ -185,18 +185,7 @@ impl Store for SqliteStore {
             })
             .await?;
 
-        let Loaded {
-            settings,
-            context,
-            turn_open,
-        } = loaded;
-        Ok(Opened {
-            id,
-            settings,
-            context,
-            turn_open,
-            lease: Some(self.lease(id, file)),
-        })
+        Ok(loaded.opened(id, Some(self.lease(id, file))))
     }
 
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {
@@ -249,18 +238,7 @@ impl Store for SqliteStore {
             })
             .await?;
 
-        let Loaded {
-            settings,
-            context,
-            turn_open,
-        } = loaded;
-        Ok(Opened {
-            id,
-            settings,
-            context,
-            turn_open,
-            lease: file.map(|file| self.lease(id, file)),
-        })
+        Ok(loaded.opened(id, file.map(|file| self.lease(id, file))))
     }
 
     async fn commit(&self, id: SessionId, commit: &Commit<'_>, consumed: &[InputId]) -> Result<(), StoreError> {

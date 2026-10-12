@@ -10,8 +10,8 @@ use std::pin::pin;
 use std::task::{Context, Waker};
 
 use support::{
-    FailingStore, NoWait, ScriptedTransport, SendsInput, Stalled, assert_in_order, settings, target, text_reply,
-    tool_reply,
+    FailingStore, NoWait, ScriptedTransport, SendsInput, Stalled, assert_in_order, failed_reply, settings, target,
+    text_reply, tool_reply,
 };
 use yuke_agent::{Access, MemoryStore, ModelReference, Session, SessionError, SessionSettings, Store, StoreError};
 use yuke_ai::{Block, Media, ToolCall, ToolDefinition, ToolResult};
@@ -64,6 +64,21 @@ async fn a_session_keeps_its_lease_after_a_turn() {
         .unwrap();
     let other_writer = store.open(session.id(), Access::Write).await;
 
+    assert!(matches!(other_writer, Err(StoreError::Owned)), "{other_writer:?}");
+}
+
+#[tokio::test]
+async fn a_session_keeps_its_lease_after_a_failed_request() {
+    let store = Arc::new(MemoryStore::new());
+    let transport = ScriptedTransport::new([failed_reply("cut")]);
+    let target = target();
+    let mut session = Session::create(store.clone(), settings()).await.unwrap();
+    session.input().send(&[Block::user_text("one")]).await.unwrap();
+
+    let failed = session.turn(Driver::new(&transport, &target, &NoWait)).run().await;
+    let other_writer = store.open(session.id(), Access::Write).await;
+
+    assert!(matches!(failed, Err(SessionError::Model(_))), "{failed:?}");
     assert!(matches!(other_writer, Err(StoreError::Owned)), "{other_writer:?}");
 }
 

@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use yuke_ai::{Block, Target, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::{Bm25, Driver, Hooks, ToolNameError, ToolSearch, Toolset, TurnEvent};
 
-use crate::support::{NoWait, Recorder, ScriptedTransport, block_on, definition, target, text_reply, tool_reply};
+use crate::support::{
+    NoWait, Recorder, ScriptedTransport, block_on, definition, results_in_context, target, text_reply, tool_reply,
+};
 
 /// A deferred tool of `name` with `description` and any object as arguments.
 fn deferred(name: &str, description: &str) -> ToolDefinition {
@@ -24,19 +26,6 @@ fn declared_tools(body: &str) -> &str {
     let start = body.find(r#""tools":"#).expect("a request with tools");
     let end = body.find(r#","messages""#).expect("a request with messages");
     &body[start..end]
-}
-
-/// Run one turn, and return the tool results of the context.
-fn results_in_context(driver: Driver<'_>) -> Vec<ToolResult> {
-    let mut context = Vec::new();
-    block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();
-    context
-        .iter()
-        .filter_map(|block| match block {
-            Block::ToolResult(result) => Some(result.clone()),
-            _ => None,
-        })
-        .collect()
 }
 
 #[test]

@@ -14,7 +14,7 @@ use bytes::Bytes;
 use yuke_ai::route::{Credential, Route};
 use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 use yuke_ai::{AnthropicWire, Target, Wire};
-use yuke_engine::{CancellationToken, Inbox, Timer, Tool, ToolContent, ToolContext};
+use yuke_engine::{CancellationToken, Driver, Inbox, Timer, Tool, ToolContent, ToolContext};
 
 /// An Anthropic target at a test host, with no credential.
 pub(crate) fn target() -> Target {
@@ -287,6 +287,19 @@ pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
             "the future waits for something that no test ends"
         );
     }
+}
+
+/// Run one turn, and return the tool results of the context.
+pub(crate) fn results_in_context(driver: Driver<'_>) -> Vec<yuke_ai::ToolResult> {
+    let mut context = Vec::new();
+    block_on(driver.turn(&mut context, vec![yuke_ai::Block::user_text("go")]).run()).unwrap();
+    context
+        .iter()
+        .filter_map(|block| match block {
+            yuke_ai::Block::ToolResult(result) => Some(result.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// A waker that records a wake.

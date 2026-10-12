@@ -62,6 +62,17 @@ pub(crate) fn text_reply(text: &str) -> String {
     ])
 }
 
+/// An Anthropic answer that streams `text`, then fails with an overload error, as SSE. The output before the error
+/// stops a retry, so the request fails at once.
+pub(crate) fn failed_reply(text: &str) -> String {
+    sse(&[
+        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#.to_owned(),
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#.to_owned(),
+        format!(r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{text}"}}}}"#),
+        r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#.to_owned(),
+    ])
+}
+
 /// One complete Anthropic answer that asks for one call of `name` with the id `id` and no arguments, as SSE.
 pub(crate) fn tool_reply(id: &str, name: &str) -> String {
     sse(&[

@@ -11,6 +11,19 @@ pub(crate) struct Loaded {
     pub(crate) turn_open: bool,
 }
 
+impl Loaded {
+    /// The session `id` with this state and `lease`.
+    pub(crate) fn opened(self, id: yuke_agent::SessionId, lease: Option<yuke_agent::Lease>) -> yuke_agent::Opened {
+        yuke_agent::Opened {
+            id,
+            settings: self.settings,
+            context: self.context,
+            turn_open: self.turn_open,
+            lease,
+        }
+    }
+}
+
 /// Load session `session`, or `None` when the database has no such session. Run it in a transaction, so each query
 /// reads the same state.
 pub(crate) fn load(connection: &Connection, session: [u8; 16]) -> rusqlite::Result<Option<Loaded>> {

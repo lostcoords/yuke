@@ -6,20 +6,9 @@ use async_trait::async_trait;
 use yuke_ai::{Blob, BlobStore, Block, Media, ToolCall, ToolResult};
 use yuke_engine::{Driver, Hooks, Tool, ToolContent, ToolContext, ToolDecision, Toolset, TurnEvent, parse_arguments};
 
-use crate::support::{NoWait, Recorder, ScriptedTransport, block_on, definition, target, text_reply, tool_reply};
-
-/// Run one turn, and return the tool results of the context.
-fn results_in_context(driver: Driver<'_>) -> Vec<ToolResult> {
-    let mut context = Vec::new();
-    block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();
-    context
-        .iter()
-        .filter_map(|block| match block {
-            Block::ToolResult(result) => Some(result.clone()),
-            _ => None,
-        })
-        .collect()
-}
+use crate::support::{
+    NoWait, Recorder, ScriptedTransport, block_on, definition, results_in_context, target, text_reply, tool_reply,
+};
 
 /// Hooks that count the calls of `before_tool`.
 #[derive(Default)]
