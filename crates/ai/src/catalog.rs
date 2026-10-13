@@ -9,7 +9,7 @@ use std::fmt;
 
 use crate::request::{
     AnthropicWire, ChatDialect, ChatWire, Effort, MaxTokensField, Modality, Protocol, ReasoningReplayMode,
-    ResponsesDialect, ResponsesWire, Target, ThinkingFormat, Wire,
+    ReasoningSettings, ResponsesDialect, ResponsesWire, Target, Thinking, ThinkingDisplay, ThinkingFormat, Wire,
 };
 use crate::route::{Credential, CredentialHeader, Route, SessionHeader};
 use crate::transport::Header;
@@ -223,8 +223,82 @@ pub struct Model<'a> {
     pub modalities: Modalities<'a>,
 }
 
-/// A selector that names nothing, or an entry that cannot bind. Every baked entry binds, so only an entry built from
-/// caller configuration can fail to bind.
+/// A reasoning level that a user picks for a model: no reasoning, or an effort.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReasoningLevel {
+    /// No reasoning.
+    Off,
+    /// The effort of the model.
+    Effort(Effort),
+}
+
+/// The smallest thinking budget that an Anthropic-shaped endpoint takes.
+const SMALLEST_THINKING_BUDGET: u64 = 1024;
+
+/// The thinking budget of a level. Anthropic starts a complex task at this budget. A larger budget needs batch
+/// processing.
+const THINKING_BUDGET: u64 = 16_000;
+
+impl Model<'_> {
+    /// The reasoning settings that ask this model for `level`. A thinking budget stays below the output limit of the
+    /// model, and a budget that does not fit falls back to the effort.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UnsupportedReasoning`] for [`ReasoningLevel::Off`] on a model that states it cannot stop
+    /// reasoning, and for an effort that the levels of the model do not list.
+    pub fn reasoning(&self, level: ReasoningLevel) -> Result<ReasoningSettings, Error> {
+        let effort = match level {
+            // A model that states it cannot stop would refuse the control, so the refusal comes before a request.
+            ReasoningLevel::Off if self.caps.disable_reasoning == Some(false) => {
+                return Err(Error::UnsupportedReasoning);
+            }
+            ReasoningLevel::Off => {
+                return Ok(ReasoningSettings {
+                    thinking: Some(Thinking::Off),
+                    effort: None,
+                });
+            }
+            ReasoningLevel::Effort(effort) => effort,
+        };
+        if !self.reasoning_levels.is_empty() && !self.reasoning_levels.contains(&Some(effort)) {
+            return Err(Error::UnsupportedReasoning);
+        }
+        let effort_only = ReasoningSettings {
+            thinking: None,
+            effort: Some(effort),
+        };
+        Ok(match self.dialect.anthropic_thinking {
+            AnthropicThinking::None => effort_only,
+            AnthropicThinking::Toggle => ReasoningSettings {
+                thinking: Some(Thinking::Adaptive(None)),
+                effort: None,
+            },
+            AnthropicThinking::Adaptive => ReasoningSettings {
+                thinking: Some(Thinking::Adaptive(Some(ThinkingDisplay::Summarized))),
+                effort: Some(effort),
+            },
+            AnthropicThinking::Budget { min, max } => {
+                let smallest = min.and_then(|min| u64::try_from(min).ok()).unwrap_or(0);
+                let budget = THINKING_BUDGET
+                    .min(max.unwrap_or(u64::MAX))
+                    .max(smallest)
+                    .max(SMALLEST_THINKING_BUDGET);
+                if self.limits.max_output_tokens.is_some_and(|limit| budget < limit) {
+                    ReasoningSettings {
+                        thinking: Some(Thinking::Budget(budget)),
+                        effort: None,
+                    }
+                } else {
+                    effort_only
+                }
+            }
+        })
+    }
+}
+
+/// A selector that names nothing, an entry that cannot bind, or a reasoning level that a model does not support.
+/// Every baked entry binds, so only an entry built from caller configuration can fail to bind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Error {
@@ -238,6 +312,8 @@ pub enum Error {
     MissingEndpoint,
     /// The model names no output limit, which its protocol requires.
     MissingOutputLimit,
+    /// The model does not support the reasoning level.
+    UnsupportedReasoning,
 }
 
 impl fmt::Display for Error {
@@ -248,6 +324,7 @@ impl fmt::Display for Error {
             Self::UnknownModel => "the catalog holds no model with that name",
             Self::MissingEndpoint => "the catalog provider declares no endpoint for the model protocol",
             Self::MissingOutputLimit => "the catalog model names no output limit, which its protocol requires",
+            Self::UnsupportedReasoning => "the model does not support that reasoning level",
         })
     }
 }
@@ -704,5 +781,126 @@ mod tests {
                 assert!(valid_cost(model.cost), "{}/{}", provider.id, model.id);
             }
         }
+    }
+
+    /// An Anthropic model with the thinking shape `anthropic_thinking`, the effort `high`, and an output limit of
+    /// 32,000 tokens.
+    fn thinking_model(anthropic_thinking: AnthropicThinking) -> Model<'static> {
+        Model {
+            limits: Limits {
+                context_window: None,
+                max_output_tokens: Some(32_000),
+            },
+            reasoning_levels: &[Some(Effort::High)],
+            dialect: Dialect {
+                anthropic_thinking,
+                ..Dialect::default()
+            },
+            ..model("m", Protocol::AnthropicMessages)
+        }
+    }
+
+    const HIGH: ReasoningLevel = ReasoningLevel::Effort(Effort::High);
+
+    fn budget(min: Option<i64>, max: Option<u64>) -> AnthropicThinking {
+        AnthropicThinking::Budget { min, max }
+    }
+
+    #[test]
+    fn a_level_takes_the_thinking_shape_of_the_model() {
+        let effort = ReasoningSettings {
+            thinking: None,
+            effort: Some(Effort::High),
+        };
+        let cases = [
+            (AnthropicThinking::None, effort),
+            (
+                AnthropicThinking::Toggle,
+                ReasoningSettings {
+                    thinking: Some(Thinking::Adaptive(None)),
+                    effort: None,
+                },
+            ),
+            (
+                AnthropicThinking::Adaptive,
+                ReasoningSettings {
+                    thinking: Some(Thinking::Adaptive(Some(ThinkingDisplay::Summarized))),
+                    effort: Some(Effort::High),
+                },
+            ),
+            (
+                budget(Some(1024), Some(32_000)),
+                ReasoningSettings {
+                    thinking: Some(Thinking::Budget(16_000)),
+                    effort: None,
+                },
+            ),
+        ];
+        for (anthropic_thinking, settings) in cases {
+            assert_eq!(
+                thinking_model(anthropic_thinking).reasoning(HIGH),
+                Ok(settings),
+                "{anthropic_thinking:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_thinking_budget_stays_within_the_bounds_of_the_model() {
+        let budget_of = |anthropic_thinking| thinking_model(anthropic_thinking).reasoning(HIGH).unwrap().thinking;
+
+        assert_eq!(budget_of(budget(None, Some(2000))), Some(Thinking::Budget(2000)));
+        assert_eq!(budget_of(budget(Some(20_000), None)), Some(Thinking::Budget(20_000)));
+        assert_eq!(budget_of(budget(None, Some(10))), Some(Thinking::Budget(1024)));
+        assert_eq!(budget_of(budget(Some(-5), None)), Some(Thinking::Budget(16_000)));
+    }
+
+    #[test]
+    fn a_thinking_budget_that_does_not_fit_the_output_falls_back_to_the_effort() {
+        let small_output = Model {
+            limits: Limits {
+                context_window: None,
+                max_output_tokens: Some(16_000),
+            },
+            ..thinking_model(budget(None, None))
+        };
+
+        assert_eq!(
+            small_output.reasoning(HIGH),
+            Ok(ReasoningSettings {
+                thinking: None,
+                effort: Some(Effort::High),
+            })
+        );
+    }
+
+    #[test]
+    fn off_asks_for_no_thinking_unless_the_model_cannot_stop() {
+        let mut model = thinking_model(AnthropicThinking::Adaptive);
+        assert_eq!(
+            model.reasoning(ReasoningLevel::Off),
+            Ok(ReasoningSettings {
+                thinking: Some(Thinking::Off),
+                effort: None,
+            })
+        );
+
+        model.caps.disable_reasoning = Some(false);
+        assert_eq!(model.reasoning(ReasoningLevel::Off), Err(Error::UnsupportedReasoning));
+    }
+
+    #[test]
+    fn an_effort_that_the_model_does_not_list_is_unsupported() {
+        let model = thinking_model(AnthropicThinking::None);
+        assert_eq!(
+            model.reasoning(ReasoningLevel::Effort(Effort::Low)),
+            Err(Error::UnsupportedReasoning)
+        );
+
+        let unlisted = Model {
+            reasoning_levels: &[],
+            ..model
+        };
+        assert!(unlisted.reasoning(ReasoningLevel::Effort(Effort::Low)).is_ok());
     }
 }

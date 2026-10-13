@@ -25,6 +25,6 @@ mod tools;
 mod typescript;
 
 pub use error::{Error, Fault, ScriptError};
-pub use processes::{JobEnded, Processes};
+pub use processes::{JobEnded, Processes, shell};
 pub use runtime::{Limits, Options, Runtime};
 pub use tools::{ScriptTool, SessionHost};

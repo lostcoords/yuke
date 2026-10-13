@@ -146,6 +146,17 @@ pub(crate) mod events {
         }
     }
 
+    #[derive(Debug, Clone, PartialEq)]
+    pub(crate) struct NewestSessionIn {
+        pub(crate) id: [u8; 16],
+    }
+
+    impl FromRow for NewestSessionIn {
+        fn from_row(row: &Row<'_>) -> Result<Self> {
+            Ok(Self { id: row.get("id")? })
+        }
+    }
+
     #[derive(Debug)]
     pub(crate) struct InsertSettingsParams {
         pub(crate) session_id: [u8; 16],
@@ -357,6 +368,23 @@ ORDER BY seq DESC LIMIT 1;",
 WHERE session_id = :session_id AND kind = 'commit' AND seq >= :first
 ORDER BY seq;",
             &[(":session_id", &params.session_id), (":first", &params.first)],
+        )
+    }
+
+    /// The session whose newest settings event names the folder `cwd` and that has the newest event of those sessions. A
+    /// new event row gets a rowid above each rowid in the table, so a larger rowid is a newer event.
+    pub(crate) fn newest_session_in<'a>(connection: &'a Connection, cwd: &str) -> Query<'a, NewestSessionIn> {
+        Query::new(
+            connection,
+            r"SELECT settings_event.session_id AS id FROM events AS settings_event
+WHERE settings_event.kind = 'settings'
+    AND settings_event.seq = (
+        SELECT max(seq) FROM events WHERE session_id = settings_event.session_id AND kind = 'settings'
+    )
+    AND json_extract(settings_event.settings, '$.cwd') = :cwd
+ORDER BY (SELECT max(rowid) FROM events WHERE session_id = settings_event.session_id) DESC
+LIMIT 1;",
+            &[(":cwd", &cwd)],
         )
     }
 }

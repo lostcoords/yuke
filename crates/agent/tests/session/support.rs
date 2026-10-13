@@ -1,6 +1,7 @@
 //! A scripted transport, reply fixtures, and a store that fails a chosen commit.
 
 use std::collections::VecDeque;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -221,6 +222,10 @@ impl Store for FailingStore {
 
     async fn accept_input(&self, id: SessionId, blocks: &[Block]) -> Result<InputId, StoreError> {
         self.store.accept_input(id, blocks).await
+    }
+
+    async fn newest_session(&self, cwd: &Path) -> Result<Option<SessionId>, StoreError> {
+        self.store.newest_session(cwd).await
     }
 
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {

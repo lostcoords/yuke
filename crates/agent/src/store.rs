@@ -1,6 +1,7 @@
 //! The durable steps of a session, and the types that a store saves and loads.
 
 use std::fmt;
+use std::path::Path;
 
 use async_trait::async_trait;
 use yuke_engine::Commit;
@@ -47,6 +48,14 @@ pub trait Store: Send + Sync {
     ///
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the save fails.
     async fn accept_input(&self, id: SessionId, blocks: &[yuke_ai::Block]) -> Result<InputId, StoreError>;
+
+    /// The session that works in the folder `cwd` and has the newest event of those sessions. The newest settings of a
+    /// session name its folder. `None` when no session works in `cwd`. A fork counts as a new event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Failed`] when the load fails.
+    async fn newest_session(&self, cwd: &Path) -> Result<Option<SessionId>, StoreError>;
 
     /// Load session `id`. [`Access::Write`] also takes the owner lock.
     ///

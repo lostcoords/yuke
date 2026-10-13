@@ -47,6 +47,15 @@ impl SessionHost for TestHost {
 /// A runtime with the tools of `modules` (module names), for a session in `folder`.
 pub(super) async fn tools_of(folder: &Path, modules: &[&str]) -> (Runtime, Arc<TestHost>, HashMap<String, ScriptTool>) {
     let (runtime, _faults) = start(folder).await;
+    tools_in(runtime, folder, modules).await
+}
+
+/// The tools of `modules` (module names) in `runtime`, for a session in `folder`.
+pub(super) async fn tools_in(
+    runtime: Runtime,
+    folder: &Path,
+    modules: &[&str],
+) -> (Runtime, Arc<TestHost>, HashMap<String, ScriptTool>) {
     for name in modules {
         tokio::time::timeout(Duration::from_secs(5), runtime.import(name))
             .await

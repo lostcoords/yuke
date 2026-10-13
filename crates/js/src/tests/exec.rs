@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use yuke_engine::CancellationToken;
 
-use super::tools::{TestHost, call, call_with, error_of, text_of, tools_of};
+use super::tools::{TestHost, call, call_with, error_of, text_of, tools_in, tools_of};
 use super::{LIMITS, folder};
 use crate::native;
 use crate::processes::recovered_home;
@@ -270,6 +270,30 @@ async fn a_background_job_starts_and_its_end_reaches_the_session() {
         error_of(&tools["stop"], &format!(r#"{{"id": "{id}"}}"#)).await,
         format!("The id {id} does not exist. Nothing runs.")
     );
+}
+
+#[tokio::test]
+async fn a_background_start_fails_when_the_processes_start_no_jobs() {
+    let folder = folder("a_background_start_fails_when_the_processes_start_no_jobs");
+    let (runtime, _faults) = Runtime::start(Options {
+        limits: LIMITS,
+        cache: folder.join("cache"),
+        processes: Arc::new(Processes::without_jobs(folder.join("processes"))),
+    })
+    .await
+    .unwrap();
+    let (_runtime, host, tools) = tools_in(runtime, &folder, &["yuke:builtins"]).await;
+
+    let error = error_of(&tools["exec"], r#"{"command": "touch started", "background": true}"#).await;
+
+    assert_eq!(
+        error,
+        "This run ends with its turn, so it cannot start a background job. Run the command without background."
+    );
+    assert!(!folder.join("started").exists());
+    assert!(host.ended.lock().unwrap().is_empty());
+    // A command in the foreground still runs.
+    assert_eq!(run(&tools, "echo ran").await, "ran\n[exit code: 0]");
 }
 
 #[tokio::test]

@@ -1,6 +1,7 @@
 //! A store that keeps its sessions in memory.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -25,6 +26,16 @@ struct State {
     sessions: HashMap<SessionId, Saved>,
     /// The id of the newest input of all sessions.
     newest_input: u64,
+    /// The number of event writes of all sessions. It orders the sessions by their newest event.
+    writes: u64,
+}
+
+impl State {
+    /// The order number of a new event write.
+    fn next_write(&mut self) -> u64 {
+        self.writes += 1;
+        self.writes
+    }
 }
 
 /// One session. Its settings, its context, and whether a turn is open follow from its events.
@@ -35,13 +46,24 @@ struct Saved {
     pending: Vec<PendingInput>,
     /// The blobs of the session, by digest.
     blobs: HashMap<yuke_ai::Digest, Vec<u8>>,
+    /// The order number of the newest event write of the session.
+    newest_write: u64,
 }
 
 impl Saved {
-    /// Save `event` with the next number of the session.
-    fn push_event(&mut self, event: SessionEvent) {
+    /// Save `event` with the next number of the session. `write` is the order number of the write.
+    fn push_event(&mut self, event: SessionEvent, write: u64) {
         let event_number = EventNumber(self.events.len() as u64 + 1);
         self.events.push(StoredEvent { event_number, event });
+        self.newest_write = write;
+    }
+
+    /// The settings of the newest settings event.
+    fn settings(&self) -> Option<&SessionSettings> {
+        self.events.iter().rev().find_map(|stored| match &stored.event {
+            SessionEvent::Settings(settings) => Some(settings),
+            SessionEvent::Commit { .. } => None,
+        })
     }
 
     /// The session `id` as a load gives it, with `lease`. A replay of the events gives the settings and the context.
@@ -134,25 +156,29 @@ impl MemoryStore {
 impl Store for MemoryStore {
     async fn create_session(&self, settings: &SessionSettings) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
+        let mut state = lock(&self.state);
         let mut saved = Saved {
             events: Vec::new(),
             pending: Vec::new(),
             blobs: HashMap::new(),
+            newest_write: 0,
         };
-        saved.push_event(SessionEvent::Settings(settings.clone()));
+        saved.push_event(SessionEvent::Settings(settings.clone()), state.next_write());
         let opened = saved.opened(id, Some(self.take_writer(id)?));
-        lock(&self.state).sessions.insert(id, saved);
+        state.sessions.insert(id, saved);
         Ok(opened)
     }
 
     async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
         let mut state = lock(&self.state);
+        let write = state.next_write();
         let saved = state.sessions.get(&source).ok_or(StoreError::NotFound)?;
         let fork = Saved {
             events: saved.events[..fork_cut(&saved.events, through)?].to_vec(),
             pending: Vec::new(),
             blobs: saved.blobs.clone(),
+            newest_write: write,
         };
         let opened = fork.opened(id, Some(self.take_writer(id)?));
         state.sessions.insert(id, fork);
@@ -161,8 +187,9 @@ impl Store for MemoryStore {
 
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {
         let mut state = lock(&self.state);
+        let write = state.next_write();
         let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
-        saved.push_event(SessionEvent::Settings(settings.clone()));
+        saved.push_event(SessionEvent::Settings(settings.clone()), write);
         Ok(())
     }
 
@@ -178,6 +205,16 @@ impl Store for MemoryStore {
         Ok(input)
     }
 
+    async fn newest_session(&self, cwd: &Path) -> Result<Option<SessionId>, StoreError> {
+        let state = lock(&self.state);
+        Ok(state
+            .sessions
+            .iter()
+            .filter(|(_, saved)| saved.settings().is_some_and(|settings| settings.cwd == cwd))
+            .max_by_key(|(_, saved)| saved.newest_write)
+            .map(|(id, _)| *id))
+    }
+
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {
         let state = lock(&self.state);
         let saved = state.sessions.get(&id).ok_or(StoreError::NotFound)?;
@@ -190,12 +227,16 @@ impl Store for MemoryStore {
 
     async fn commit(&self, id: SessionId, commit: &Commit<'_>, consumed: &[InputId]) -> Result<(), StoreError> {
         let mut state = lock(&self.state);
+        let write = state.next_write();
         let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
         saved.pending.retain(|input| !consumed.contains(&input.id));
-        saved.push_event(SessionEvent::Commit {
-            commit: commit.clone().into_owned(),
-            consumed: consumed.to_vec(),
-        });
+        saved.push_event(
+            SessionEvent::Commit {
+                commit: commit.clone().into_owned(),
+                consumed: consumed.to_vec(),
+            },
+            write,
+        );
         Ok(())
     }
 

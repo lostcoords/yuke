@@ -46,6 +46,8 @@ pub struct Processes {
     last_job: AtomicU32,
     /// The running jobs. The task of a job removes it at its end.
     jobs: Arc<Mutex<Vec<Job>>>,
+    /// Whether a job can start. A process that ends with its turn has no one to receive the end of a job.
+    starts_jobs: bool,
 }
 
 impl fmt::Debug for Processes {
@@ -118,6 +120,20 @@ impl Processes {
     ///
     /// Panics when the caller runs outside a tokio runtime.
     pub fn new(folder: PathBuf) -> Self {
+        Self::with_jobs(folder, true)
+    }
+
+    /// The processes of this tokio runtime, for a process that ends with its turn: a job start fails. The full outputs
+    /// go to `folder`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the caller runs outside a tokio runtime.
+    pub fn without_jobs(folder: PathBuf) -> Self {
+        Self::with_jobs(folder, false)
+    }
+
+    fn with_jobs(folder: PathBuf, starts_jobs: bool) -> Self {
         Self {
             folder,
             handle: Handle::current(),
@@ -127,6 +143,7 @@ impl Processes {
                 u32::try_from(RandomState::new().hash_one(0_u8) % u64::from(JOB_NUMBERS)).unwrap_or(0),
             ),
             jobs: Arc::new(Mutex::new(Vec::new())),
+            starts_jobs,
         }
     }
 
@@ -186,12 +203,18 @@ impl Processes {
     }
 
     /// Start `command` in the folder of `owner` as a job, and answer its id and log file. A job that ends by itself
-    /// reports to `owner`.
+    /// reports to `owner`. Without jobs, the start fails with a text for the model.
     pub(crate) async fn start_job(
         &self,
         command: String,
         owner: Arc<dyn SessionHost>,
     ) -> Result<(String, PathBuf), String> {
+        if !self.starts_jobs {
+            return Err(
+                "This run ends with its turn, so it cannot start a background job. Run the command without background."
+                    .to_owned(),
+            );
+        }
         let id = self.job_id();
         let log = self.folder.join(format!("{id}.log"));
         let folder = owner.folder().to_owned();
@@ -307,20 +330,21 @@ pub(crate) fn recovered_home(inherited: Option<&OsStr>) -> Option<PathBuf> {
     }
 }
 
-/// The shell command for `command` in `folder`: bash when it exists, else sh. The child leads a new session with no
+/// The shell that runs each command: bash when it exists, else sh.
+pub fn shell() -> &'static Path {
+    let bash = Path::new("/bin/bash");
+    if bash.exists() { bash } else { Path::new("/bin/sh") }
+}
+
+/// The shell command for `command` in `folder`: the [`shell`]. The child leads a new session with no
 /// controlling terminal, so a prompt such as the password of `ssh` fails at once instead of a read of the terminal of
 /// yuke. The new session is a new process group too. The child reads no input.
 #[expect(
     unsafe_code,
     reason = "the hook runs between fork and exec, where only async-signal-safe calls are sound"
 )]
-fn shell(command: &str, folder: &Path) -> Command {
-    let shell = if Path::new("/bin/bash").exists() {
-        "/bin/bash"
-    } else {
-        "/bin/sh"
-    };
-    let mut shell_command = Command::new(shell);
+fn shell_command(command: &str, folder: &Path) -> Command {
+    let mut shell_command = Command::new(shell());
     shell_command
         .arg("-c")
         .arg(command)
@@ -378,7 +402,7 @@ async fn run(
     stop: CancellationToken,
 ) -> Result<CommandEnd, String> {
     let (reader, writer) = io::pipe().map_err(|error| format!("the command did not start: {error}"))?;
-    let mut shell_command = shell(command, folder);
+    let mut shell_command = shell_command(command, folder);
     let error_writer = writer
         .try_clone()
         .map_err(|error| format!("the command did not start: {error}"))?;
@@ -578,7 +602,7 @@ fn spawn_logged(command: &str, folder: &Path, log: &Path) -> io::Result<(Child, 
         std::fs::create_dir_all(parent)?;
     }
     let output = File::create(log)?;
-    let mut shell_command = shell(command, folder);
+    let mut shell_command = shell_command(command, folder);
     shell_command
         .stdout(Stdio::from(output.try_clone()?))
         .stderr(Stdio::from(output));

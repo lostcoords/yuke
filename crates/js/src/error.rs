@@ -35,6 +35,15 @@ pub enum Fault {
     Interrupted,
 }
 
+impl fmt::Display for Fault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Script(error) => error.fmt(f),
+            Self::Interrupted => f.write_str("the script ran past the slice limit"),
+        }
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

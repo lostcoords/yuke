@@ -220,6 +220,17 @@ impl Store for SqliteStore {
         .await
     }
 
+    async fn newest_session(&self, cwd: &Path) -> Result<Option<SessionId>, StoreError> {
+        // The settings save `cwd` as JSON text, which holds only UTF-8, so no session works in another folder.
+        let Some(cwd) = cwd.to_str().map(str::to_owned) else {
+            return Ok(None);
+        };
+        let row = self
+            .call(move |connection| events::newest_session_in(connection, &cwd).opt().map_err(failed))
+            .await?;
+        Ok(row.map(|row| SessionId::from_bytes(row.id)))
+    }
+
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {
         let folder = match access {
             Access::Read => None,

@@ -7,7 +7,7 @@
 )]
 
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use yuke_engine::{Answer, Commit, Outcome, Replaced, TurnEnd};
 
@@ -56,6 +56,9 @@ macro_rules! store_tests {
             events_after_a_number_are_the_newer_events,
             a_fork_has_the_events_of_its_source_and_numbers_on_from_them,
             the_context_holds_only_commit_blocks_across_pending_inputs_and_settings_events,
+            the_newest_session_of_a_folder_has_the_newest_event,
+            a_session_works_in_the_folder_of_its_newest_settings,
+            a_fork_is_the_newest_session_of_its_folder,
         );
     };
     (@behaviors $make_store:path; $($behavior:ident),* $(,)?) => {
@@ -869,4 +872,47 @@ pub async fn the_context_holds_only_commit_blocks_across_pending_inputs_and_sett
             yuke_ai::Block::user_text("c"),
         ]
     );
+}
+
+/// Settings that work in the folder `cwd`.
+fn settings_in(cwd: &str) -> SessionSettings {
+    SessionSettings {
+        cwd: PathBuf::from(cwd),
+        ..settings("")
+    }
+}
+
+/// The newest session of a folder is the session of that folder with the newest event. A session of another folder
+/// does not count.
+pub async fn the_newest_session_of_a_folder_has_the_newest_event(store: &dyn Store) {
+    let first = store.create_session(&settings_in("/work")).await.unwrap().id;
+    let second = store.create_session(&settings_in("/work")).await.unwrap().id;
+    let other = store.create_session(&settings_in("/other")).await.unwrap().id;
+
+    assert_eq!(store.newest_session(Path::new("/work")).await.unwrap(), Some(second));
+    store.commit(first, &step(&[]), &[]).await.unwrap();
+    assert_eq!(store.newest_session(Path::new("/work")).await.unwrap(), Some(first));
+    assert_eq!(store.newest_session(Path::new("/other")).await.unwrap(), Some(other));
+    assert_eq!(store.newest_session(Path::new("/none")).await.unwrap(), None);
+}
+
+/// A session works in the folder of its newest settings, not in the folder of earlier settings.
+pub async fn a_session_works_in_the_folder_of_its_newest_settings(store: &dyn Store) {
+    let id = store.create_session(&settings_in("/work")).await.unwrap().id;
+    store.create_session(&settings_in("/other")).await.unwrap();
+
+    store.set_settings(id, &settings_in("/other")).await.unwrap();
+
+    assert_eq!(store.newest_session(Path::new("/work")).await.unwrap(), None);
+    assert_eq!(store.newest_session(Path::new("/other")).await.unwrap(), Some(id));
+}
+
+/// A fork is newer than its source and than the other sessions of its folder.
+pub async fn a_fork_is_the_newest_session_of_its_folder(store: &dyn Store) {
+    let source = store.create_session(&settings_in("/work")).await.unwrap().id;
+    store.create_session(&settings_in("/work")).await.unwrap();
+
+    let fork = store.fork_session(source, None).await.unwrap().id;
+
+    assert_eq!(store.newest_session(Path::new("/work")).await.unwrap(), Some(fork));
 }
