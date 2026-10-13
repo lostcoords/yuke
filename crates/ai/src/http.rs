@@ -18,7 +18,6 @@ use hyper::body::{Body as _, Incoming};
 use hyper::client::conn::http1;
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::ServerName;
-use rustls_platform_verifier::BuilderVerifierExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::time::{Instant, Sleep};
@@ -58,8 +57,10 @@ impl std::fmt::Display for InvalidUserAgent {
 
 impl std::error::Error for InvalidUserAgent {}
 
-/// The built-in transport. It uses HTTP/1.1 over tokio, and rustls with the aws-lc-rs provider. The platform verifier
-/// checks certificates. The key exchange offers the hybrid post-quantum group `X25519MLKEM768` first.
+/// The built-in transport. It uses HTTP/1.1 over tokio, and rustls with the aws-lc-rs provider. On Unix outside Apple and
+/// Android, the `webpki` verifier checks certificates against the system roots: the paths in `SSL_CERT_FILE` or
+/// `SSL_CERT_DIR`, else the system bundle file. Elsewhere the platform verifier checks them. The key exchange offers the
+/// hybrid post-quantum group `X25519MLKEM768` first.
 #[derive(Debug)]
 pub struct HttpTransport {
     idle_timeout: Option<Duration>,
@@ -88,12 +89,10 @@ impl HttpTransport {
         self.tls
             .get_or_init(|| {
                 let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-                let config = rustls::ClientConfig::builder_with_provider(provider)
+                let builder = rustls::ClientConfig::builder_with_provider(provider)
                     .with_safe_default_protocol_versions()
-                    .and_then(BuilderVerifierExt::with_platform_verifier)
-                    .ok()?
-                    .with_no_client_auth();
-                Some(Arc::new(config))
+                    .ok()?;
+                Some(Arc::new(with_verifier(builder)?.with_no_client_auth()))
             })
             .clone()
             .ok_or(Fault::TlsSetupFailed)
@@ -220,6 +219,34 @@ impl Transport for HttpTransport {
         // The request deadline counts from here, before any preparation.
         Box::pin(self.exchange(request, deadline.map(Instant::from_std)))
     }
+}
+
+/// Give `builder` the `webpki` verifier with the system roots. Return `None` when no root loads.
+///
+/// `SSL_CERT_FILE` or `SSL_CERT_DIR` names the exact roots. Otherwise the roots come from the system bundle file, and
+/// from the certificate folders only when no bundle file exists. A root only in a folder then needs `SSL_CERT_DIR`.
+#[cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))]
+fn with_verifier(
+    builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier>,
+) -> Option<rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>> {
+    // The probe drops a named path that does not exist, so a named path goes to the loader that keeps it.
+    let named = std::env::var_os("SSL_CERT_FILE").is_some() || std::env::var_os("SSL_CERT_DIR").is_some();
+    let loaded = match openssl_probe::probe().cert_file {
+        // The system tools write each root to the bundle, so one file read replaces hundreds.
+        Some(bundle) if !named => rustls_native_certs::load_certs_from_paths(Some(&bundle), None),
+        _ => rustls_native_certs::load_native_certs(),
+    };
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add_parsable_certificates(loaded.certs);
+    (!roots.is_empty()).then(|| builder.with_root_certificates(roots))
+}
+
+/// Give `builder` the platform verifier. Return `None` when the verifier cannot start.
+#[cfg(not(all(unix, not(target_vendor = "apple"), not(target_os = "android"))))]
+fn with_verifier(
+    builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier>,
+) -> Option<rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>> {
+    rustls_platform_verifier::BuilderVerifierExt::with_platform_verifier(builder).ok()
 }
 
 /// The byte stream of one connection: plain TCP, or TLS over TCP.

@@ -707,15 +707,18 @@ async fn missing_root_certificates_fail_only_https() {
     const NO_ROOTS_CHILD: &str = "AI_TEST_NO_ROOTS_CHILD";
 
     if std::env::var_os(NO_ROOTS_CHILD).is_none() {
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "http::tests::missing_root_certificates_fail_only_https"])
-            .env(NO_ROOTS_CHILD, "1")
-            .env("SSL_CERT_FILE", "/dev/null")
-            .env_remove("SSL_CERT_DIR")
-            .stdout(std::process::Stdio::null())
-            .status()
-            .unwrap();
-        assert!(status.success());
+        // A named file with no root and a named file that does not exist both leave no root, never the system roots.
+        for file in ["/dev/null", "/nonexistent/yuke-test-roots.pem"] {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "http::tests::missing_root_certificates_fail_only_https"])
+                .env(NO_ROOTS_CHILD, "1")
+                .env("SSL_CERT_FILE", file)
+                .env_remove("SSL_CERT_DIR")
+                .stdout(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "{file}");
+        }
         return;
     }
     let transport = transport(None);
@@ -732,6 +735,37 @@ async fn missing_root_certificates_fail_only_https() {
     };
     let (_, out) = exchange(server, &transport, None).await;
     assert_eq!(out.err, None);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn ssl_cert_dir_names_the_exact_roots() {
+    // A child process isolates the root-store settings from the other tests. Its variable holds the expected result.
+    const FOLDER_CHILD: &str = "AI_TEST_FOLDER_CHILD";
+
+    if let Ok(expected) = std::env::var(FOLDER_CHILD) {
+        assert_eq!(transport(None).tls().is_ok(), expected == "roots");
+        return;
+    }
+    let base = std::env::temp_dir().join(format!("yuke-ai-roots-{}", std::process::id()));
+    let (filled, empty) = (base.join("filled"), base.join("empty"));
+    std::fs::create_dir_all(&filled).unwrap();
+    std::fs::create_dir_all(&empty).unwrap();
+    let bundle = openssl_probe::probe().cert_file.unwrap();
+    std::fs::copy(bundle, filled.join("roots.pem")).unwrap();
+    // A folder with roots supplies them. An empty folder leaves no root, never the system roots.
+    for (folder, expected) in [(&filled, "roots"), (&empty, "none")] {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "http::tests::ssl_cert_dir_names_the_exact_roots"])
+            .env(FOLDER_CHILD, expected)
+            .env("SSL_CERT_DIR", folder)
+            .env_remove("SSL_CERT_FILE")
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "{expected}");
+    }
+    std::fs::remove_dir_all(&base).unwrap();
 }
 
 #[test]

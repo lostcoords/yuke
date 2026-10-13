@@ -10,13 +10,16 @@ license.workspace = true
 default = ["http-tokio"]
 # Derive the TypeScript declarations of the serde types through ts-rs. The binding test of yuke-protocol turns it on.
 ts = ["dep:ts-rs"]
-# The built-in transport uses HTTP/1.1 over tokio. It uses rustls with the aws-lc-rs provider and the platform verifier.
+# The built-in transport uses HTTP/1.1 over tokio, and rustls with the aws-lc-rs provider. On Unix outside Apple and
+# Android, the roots come from the system certificate paths. Elsewhere the platform verifier checks certificates.
 http-tokio = [
     "dep:http",
     "dep:http-body-util",
     "dep:hyper",
     "dep:hyper-util",
+    "dep:openssl-probe",
     "dep:rustls",
+    "dep:rustls-native-certs",
     "dep:rustls-platform-verifier",
     "dep:tokio",
     "dep:tokio-rustls",
@@ -34,9 +37,15 @@ http-body-util = { version = "0.1.5", optional = true }
 hyper = { version = "1.11", features = ["client", "http1"], optional = true }
 hyper-util = { version = "0.1.21", features = ["tokio"], optional = true }
 rustls = { version = "0.23.45", default-features = false, features = ["aws-lc-rs", "prefer-post-quantum", "std", "tls12"], optional = true }
-rustls-platform-verifier = { version = "0.7.1", optional = true }
 tokio = { version = "1.53", features = ["net", "time"], optional = true }
 tokio-rustls = { version = "0.26.6", default-features = false, optional = true }
+
+[target.'cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))'.dependencies]
+openssl-probe = { version = "0.2.1", optional = true }
+rustls-native-certs = { version = "0.8.4", optional = true }
+
+[target.'cfg(not(all(unix, not(target_vendor = "apple"), not(target_os = "android"))))'.dependencies]
+rustls-platform-verifier = { version = "0.7.1", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.53", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
