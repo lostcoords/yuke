@@ -60,7 +60,7 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            // The text of the script error is the text of this error, so the cause is the cause of the script error.
+            // The text is the text of the inner error, so the source is the source of the inner error.
             Self::Script(error) => error.source(),
             Self::Thread(error) => Some(error),
             Self::Interrupted | Self::Stopped | Self::Panicked(_) => None,

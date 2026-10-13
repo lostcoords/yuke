@@ -373,8 +373,9 @@ impl fmt::Display for AttemptError {
 }
 
 impl std::error::Error for AttemptError {
+    // The text is the text of the inner error, so the source is the source of the inner error.
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.cause)
+        self.cause.source()
     }
 }
 
@@ -398,10 +399,11 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {
+    // The text is the text of the inner error, so the source is the source of the inner error.
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Error::Encode(error) => Some(error),
-            Error::Attempt(error) => Some(error),
+            Error::Encode(error) => error.source(),
+            Error::Attempt(error) => error.source(),
         }
     }
 }

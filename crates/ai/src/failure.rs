@@ -87,7 +87,8 @@ impl fmt::Display for Failure {
 impl std::error::Error for Failure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Transport(fault) => Some(fault),
+            // The text is the text of the inner error, so the source is the source of the inner error.
+            Self::Transport(fault) => fault.source(),
             _ => None,
         }
     }

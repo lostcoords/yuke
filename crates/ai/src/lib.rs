@@ -105,18 +105,45 @@ mod tests {
         );
     }
 
-    // A caller walks `source` to the store error, through the encode error.
+    /// The text of `error` and of each of its sources, in order.
+    fn chain(error: &dyn std::error::Error) -> Vec<String> {
+        std::iter::successors(Some(error), |error| error.source())
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    // An error that shows the text of the error it wraps returns the source of that error, so a printer of the chain
+    // shows each text once. A caller reaches the store error of a failed blob read with one `source` call.
     #[test]
-    fn blob_read_error_chains_to_the_store_error() {
+    fn each_text_of_an_error_chain_appears_once() {
+        let attempt = |cause| {
+            Error::Attempt(AttemptError {
+                cause,
+                info: AttemptInfo::default(),
+                partial: Vec::new(),
+            })
+        };
         let store_error: Box<dyn std::error::Error + Send + Sync> = "the store is locked".into();
-        let error = Error::from(EncodeError::BlobRead {
+        let blob_read = Error::from(EncodeError::BlobRead {
             digest: [0; 32],
             source: store_error.into(),
         });
-        let store = std::error::Error::source(&error)
-            .and_then(std::error::Error::source)
-            .map(ToString::to_string);
-        assert_eq!(store.as_deref(), Some("the store is locked"));
+
+        assert_eq!(
+            chain(&attempt(Failure::Provider(ProviderKind::AuthFailed))),
+            ["the provider rejected the credential"]
+        );
+        assert_eq!(
+            chain(&attempt(Failure::Transport(transport::Fault::TlsSetupFailed))),
+            ["the client could not build its TLS configuration"]
+        );
+        assert_eq!(
+            chain(&blob_read),
+            [
+                format!("the blob store failed to read the attachment blob {}", "00".repeat(32)),
+                "the store is locked".to_owned(),
+            ]
+        );
     }
 
     #[test]

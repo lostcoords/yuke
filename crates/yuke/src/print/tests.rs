@@ -393,6 +393,25 @@ async fn a_cancelled_run_ends_its_turn_as_cancelled() {
     assert_eq!(finished.unwrap().end, TurnEnd::Outcome(Outcome::Cancelled));
 }
 
+#[tokio::test]
+async fn a_rejected_credential_ends_the_turn_with_its_text_once() {
+    let place = Place::new("rejected");
+    let machine = Machine {
+        paths: place.paths.clone(),
+        cwd: place.cwd.clone(),
+        home: Some(place.home.clone()),
+        variable: &with_key,
+        transport: &Rejecting,
+    };
+
+    let finished = run(&task("Hi.", SessionChoice::New), &machine, CancellationToken::new()).await;
+
+    assert_eq!(
+        finished.unwrap().end,
+        TurnEnd::Failed("the provider rejected the credential".to_owned())
+    );
+}
+
 #[test]
 fn the_answer_text_is_the_text_after_the_last_block_of_the_user() {
     let context = [
@@ -475,6 +494,16 @@ impl Transport for ScriptedTransport {
             .expect("the script has no reply left");
         let body: BoxBody = Box::pin(OneChunk(Some(Bytes::from(reply))));
         Box::pin(std::future::ready(Ok((Head::new(200), body))))
+    }
+}
+
+/// Answers each request with a 401: the provider rejects the credential.
+struct Rejecting;
+
+impl Transport for Rejecting {
+    fn open<'a>(&'a self, _: &'a Outgoing<'_>, _: Option<Instant>) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
+        let body: BoxBody = Box::pin(OneChunk(Some(Bytes::from_static(b"{}"))));
+        Box::pin(std::future::ready(Ok((Head::new(401), body))))
     }
 }
 

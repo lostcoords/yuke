@@ -655,7 +655,7 @@ impl fmt::Display for TurnError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Model(error) => fmt::Display::fmt(error, f),
-            // The text names no journal error, because `source` returns it.
+            // The text names no cause, because `source` returns it.
             Self::Commit(_) => f.write_str("the journal failed to save the turn"),
         }
     }
@@ -664,6 +664,7 @@ impl fmt::Display for TurnError {
 impl std::error::Error for TurnError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            // The text is the text of the inner error, so the source is the source of the inner error.
             Self::Model(error) => error.source(),
             Self::Commit(error) => Some(error.as_ref()),
         }

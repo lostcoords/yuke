@@ -386,6 +386,7 @@ impl fmt::Display for SessionError {
 }
 
 impl std::error::Error for SessionError {
+    // The text is the text of the inner error, so the source is the source of the inner error.
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Model(error) => error.source(),

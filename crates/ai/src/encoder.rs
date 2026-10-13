@@ -49,7 +49,7 @@ impl fmt::Display for EncodeError {
                 f.write_str("the caller could not resolve the attachment blob ")?;
                 digest.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
             }
-            // The text names no store error, because `source` returns it.
+            // The text names no cause, because `source` returns it.
             Self::BlobRead { digest, .. } => {
                 f.write_str("the blob store failed to read the attachment blob ")?;
                 digest.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
