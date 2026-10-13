@@ -450,7 +450,7 @@ fn part_kind(part_type: &str) -> Option<BlockKind> {
 }
 
 /// The SDK names `max_output_tokens`, `max_messages`, `content_filter`, and `steered`, which only a WebSocket sends.
-/// `max_messages` caps the conversation, not the output, so it stays `Unknown` with its raw value.
+/// `max_messages` caps the context, not the output, so it stays `Unknown` with its raw value.
 fn incomplete_reason(reason: &str) -> FinishReason {
     match reason {
         "max_output_tokens" => FinishReason::Length,

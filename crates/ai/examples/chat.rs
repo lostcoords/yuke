@@ -1,9 +1,5 @@
-//! Stream chat replies while they arrive, and keep each finished one in the conversation.
-#![expect(
-    clippy::print_stdout,
-    clippy::print_stderr,
-    reason = "an example prints the conversation"
-)]
+//! Stream chat replies while they arrive, and keep each finished one in the context.
+#![expect(clippy::print_stdout, clippy::print_stderr, reason = "an example prints the chat")]
 
 use std::io::{BufRead, Write};
 
@@ -16,7 +12,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http = HttpTransport::new(HttpOptions::new("ai-example"))?;
     // The encoder keeps the encoding of each request, so the next turn writes only what changed.
     let mut encoder = Encoder::new();
-    let mut conversation: Vec<Block> = Vec::new();
+    let mut context: Vec<Block> = Vec::new();
     let settings = Settings::new().max_output_tokens(4096).effort(Effort::Low);
 
     println!("Type /quit to exit.");
@@ -32,9 +28,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if prompt.is_empty() {
             continue;
         }
-        conversation.push(Block::user_text(prompt));
+        context.push(Block::user_text(prompt));
 
-        let request = Request::new(&conversation).settings(&settings);
+        let request = Request::new(&context).settings(&settings);
         let mut reply = Reply::open(&http, &encoder.encode(&target, request)?, Options::default()).await;
         print!("AI> ");
         while let Some(Ok(event)) = reply.next().await {
@@ -46,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
 
         match reply.finish().await {
-            Ok(response) => conversation.extend(response.completion.into_blocks()),
+            Ok(response) => context.extend(response.completion.into_blocks()),
             // This chat drops a failed reply. Another application could keep `error.partial` as text.
             Err(error) => eprintln!("{error}"),
         }

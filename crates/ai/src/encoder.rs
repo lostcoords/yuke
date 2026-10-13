@@ -82,7 +82,7 @@ pub struct Encoded<'a> {
     pub origin: OriginRef<'a>,
 }
 
-/// The encoder of one conversation. See the module documentation. `Debug` writes no request bytes.
+/// The encoder of one context. See the module documentation. `Debug` writes no request bytes.
 #[derive(Default)]
 pub struct Encoder {
     /// The encoded elements, joined by commas, then the head of the last request. One buffer holds both.
@@ -763,7 +763,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_conversation_writes_valid_body() {
+    fn empty_context_writes_valid_body() {
         for wire in ALL_WIRES {
             let mut encoder = Encoder::new();
             let encoded = encoder

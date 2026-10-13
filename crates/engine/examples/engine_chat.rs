@@ -1,10 +1,6 @@
 //! Chat through the engine. The answer text prints while it streams. Press Ctrl-C to cancel an answer. Press Ctrl-D
 //! to exit.
-#![expect(
-    clippy::print_stdout,
-    clippy::print_stderr,
-    reason = "an example prints the conversation"
-)]
+#![expect(clippy::print_stdout, clippy::print_stderr, reason = "an example prints the chat")]
 #![expect(
     clippy::expect_used,
     reason = "an example stops when it cannot write to the terminal"

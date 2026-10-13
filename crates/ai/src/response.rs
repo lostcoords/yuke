@@ -362,7 +362,7 @@ pub struct AttemptError {
     pub cause: Failure,
     /// The attempt facts, which the retry decision reads.
     pub info: AttemptInfo,
-    /// What the attempt produced before it failed. The caller decides whether the conversation keeps it.
+    /// What the attempt produced before it failed. The caller decides whether the context keeps it.
     pub partial: Vec<Partial>,
 }
 

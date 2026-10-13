@@ -103,3 +103,17 @@ fn check_writes_nothing_and_fails_when_the_file_is_out_of_date() {
     assert!(current.status.success(), "{}", text(&current.stderr));
     std::fs::remove_dir_all(&folder).unwrap();
 }
+
+#[test]
+fn a_failed_migration_reports_its_file_and_the_sqlite_reason() {
+    let folder = crate_folder("failed_migration");
+    std::fs::write(folder.join("migrations/0003_broken.sql"), "CREATE TABLE;").unwrap();
+
+    let output = run(&["--crate", folder.to_str().unwrap()]);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = text(&output.stderr);
+    assert!(stderr.contains("0003_broken.sql: the migration failed: "), "{stderr}");
+    assert!(stderr.contains("syntax error"), "{stderr}");
+    std::fs::remove_dir_all(&folder).unwrap();
+}

@@ -290,7 +290,8 @@ pub async fn a_reader_opens_while_a_writer_holds_the_session(store: &dyn Store) 
 /// A read open holds no lock, so a writer opens while the reader holds its open session.
 pub async fn a_reader_holds_no_lock(store: &dyn Store) {
     let id = store.create_session(&settings("one")).await.unwrap().id;
-    let _read = store.open(id, Access::Read).await.unwrap();
+    #[expect(unused_variables, reason = "the read session stays open while the writer opens")]
+    let read = store.open(id, Access::Read).await.unwrap();
 
     let write = store.open(id, Access::Write).await;
 

@@ -5,7 +5,7 @@ import type { ToolCall } from "./ToolCall";
 import type { ToolResult } from "./ToolResult";
 
 /**
- * One block of the conversation. Its kind fixes its role ([`Block::role`]), so it holds only content of that role.
+ * One block of the context. Its kind fixes its role ([`Block::role`]), so it holds only content of that role.
  * The serializer groups the blocks into the messages of each protocol.
  */
 export type Block = { "user_text": string } | { "media": Media } | { "tool_result": ToolResult } | { "assistant_text": string } | { "reasoning": Reasoning } | { "tool_call": ToolCall };

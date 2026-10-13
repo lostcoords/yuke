@@ -316,7 +316,11 @@ async fn new_settings_after_a_dropped_turn_get_owned_while_another_writer_holds_
         let mut run = pin!(session.turn(Driver::new(&Stalled, &target, &NoWait)).run());
         assert!(run.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
     }
-    let _other_writer = store.open(session.id(), Access::Write).await.unwrap();
+    #[expect(
+        unused_variables,
+        reason = "the other writer holds the lock while the session changes its settings"
+    )]
+    let other_writer = store.open(session.id(), Access::Write).await.unwrap();
     let other_model = SessionSettings {
         model: ModelReference::new("test", "other-model"),
         ..settings()

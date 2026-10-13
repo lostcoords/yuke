@@ -1,4 +1,4 @@
-//! The standard driver. It carries out each [`Action`] of a [`Conversation`] over a caller's transport.
+//! The standard driver. It carries out each [`Action`] of a [`TurnState`] over a caller's transport.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -18,10 +18,10 @@ use yuke_ai::{
     ResponseLimits, SEARCH_TOOL_NAME, Settings, Target, ToolCall, ToolResult,
 };
 
-use crate::conversation::{Action, CANCELLED_REASON, Commit, Conversation, Outcome, not_executed};
 use crate::hooks::{Hooks, NoHooks, RoundDecision, ToolDecision};
 use crate::search::{self, Bm25, Declared, ToolSearch};
 use crate::tool::{Concurrency, TOOL_CALL_NAME, ToolContext, Toolset};
+use crate::turn_state::{Action, CANCELLED_REASON, Commit, Outcome, TurnState, not_executed};
 
 /// One fact of a turn, for an observer. It borrows turn data until the observer returns, so an observer copies the
 /// data that it keeps.
@@ -97,11 +97,11 @@ impl Inbox for Mutex<Vec<Block>> {
     }
 }
 
-/// Saves the changes of a conversation. The driver awaits each commit before the turn goes on, and a cancel does not
+/// Saves the commits of each turn. The driver awaits each commit before the turn goes on, and a cancel does not
 /// stop a commit. A caller that saves nothing sets no journal.
 #[async_trait]
 pub trait Journal: Send + Sync {
-    /// Save `commit`. The driver sends the commits of a conversation in order. The context that a turn starts with
+    /// Save `commit`. The driver sends the commits of a turn in order. The context that a turn starts with
     /// counts as saved.
     ///
     /// # Errors
@@ -383,7 +383,7 @@ impl<'a> Driver<'a> {
     /// send the round again when the plan names a target.
     async fn send_round(
         &self,
-        conversation: &mut Conversation<'_>,
+        turn_state: &mut TurnState<'_>,
         encoder: &mut Encoder,
         declared: &Declared<'_>,
         observer: &dyn Observer,
@@ -392,7 +392,7 @@ impl<'a> Driver<'a> {
         let mut failure: Option<yuke_ai::Error> = None;
         loop {
             let Raced::Done(mut plan) = race(
-                self.hooks.before_round(conversation.context(), failure.as_ref()),
+                self.hooks.before_round(turn_state.context(), failure.as_ref()),
                 pin!(cancellation_token.cancelled()),
             )
             .await
@@ -405,7 +405,7 @@ impl<'a> Driver<'a> {
                 return Ok(Round::new(Sent::Finished(Err(error)), self.target));
             }
             if let Some(replace) = plan.replace.take() {
-                self.save(&conversation.replace(replace)).await?;
+                self.save(&turn_state.replace(replace)).await?;
             }
             let target = plan.target.as_ref().unwrap_or(self.target);
             let settings = plan.settings.as_ref().unwrap_or(self.settings);
@@ -413,7 +413,7 @@ impl<'a> Driver<'a> {
             match self
                 .send(
                     encoder,
-                    Request::new(conversation.context()).tools(tools).settings(settings),
+                    Request::new(turn_state.context()).tools(tools).settings(settings),
                     target,
                     observer,
                     cancellation_token,
@@ -545,7 +545,7 @@ impl<'a> Turn<'a> {
             observer,
             cancellation_token,
         } = self;
-        let mut conversation = Conversation::new(context);
+        let mut turn_state = TurnState::new(context);
         let ignore = |_: &TurnEvent<'_>| {};
         let observer: &dyn Observer = match observer {
             Some(observer) => observer,
@@ -558,7 +558,7 @@ impl<'a> Turn<'a> {
         // turn encodes only the changed elements.
         let mut encoder = Encoder::new();
 
-        let mut action = conversation.start(input);
+        let mut action = turn_state.start(input);
         loop {
             match action {
                 Action::Send(commit) => {
@@ -566,18 +566,12 @@ impl<'a> Turn<'a> {
                         driver.save(&commit).await?;
                     }
                     let round = driver
-                        .send_round(
-                            &mut conversation,
-                            &mut encoder,
-                            &declared,
-                            observer,
-                            &cancellation_token,
-                        )
+                        .send_round(&mut turn_state, &mut encoder, &declared, observer, &cancellation_token)
                         .await?;
                     native = round.native;
                     action = match round.sent {
-                        Sent::Finished(result) => conversation.model_finished(result, round.origin),
-                        Sent::Cancelled(partial) => conversation.model_cancelled(partial),
+                        Sent::Finished(result) => turn_state.model_finished(result, round.origin),
+                        Sent::Cancelled(partial) => turn_state.model_cancelled(partial),
                     };
                 }
 
@@ -601,9 +595,9 @@ impl<'a> Turn<'a> {
                     }
 
                     action = if cancellation_token.is_cancelled() {
-                        conversation.tools_cancelled(results)
+                        turn_state.tools_cancelled(results)
                     } else {
-                        conversation.tools_finished(results)
+                        turn_state.tools_finished(results)
                     };
                 }
 
@@ -616,14 +610,14 @@ impl<'a> Turn<'a> {
                     let decided = driver.hooks.after_round(context, finish_reason);
                     action = match race(decided, pin!(cancellation_token.cancelled())).await {
                         // The driver takes the input only when the turn goes on, so a stop or a cancel leaves it.
-                        Raced::Done(RoundDecision::Proceed) => conversation.proceed(driver.inbox.take()),
+                        Raced::Done(RoundDecision::Proceed) => turn_state.proceed(driver.inbox.take()),
                         Raced::Done(RoundDecision::Continue(more)) => {
                             // Input of the user comes first. The hook gets another call after the next round.
                             let input = driver.inbox.take();
-                            conversation.continue_turn(if input.is_empty() { more } else { input })
+                            turn_state.continue_turn(if input.is_empty() { more } else { input })
                         }
-                        Raced::Done(RoundDecision::Stop) => conversation.stop(),
-                        Raced::Cancelled => conversation.cancel(),
+                        Raced::Done(RoundDecision::Stop) => turn_state.stop(),
+                        Raced::Cancelled => turn_state.cancel(),
                     };
                 }
 
@@ -653,7 +647,7 @@ pub enum TurnError {
     Model(yuke_ai::Error),
 
     /// The journal did not confirm a commit. It can still have saved the commit. The context can hold blocks after the
-    /// last confirmed commit, so the caller loads the conversation again from its store.
+    /// last confirmed commit, so the caller loads the context again from its store.
     Commit(Box<dyn std::error::Error + Send + Sync>),
 }
 

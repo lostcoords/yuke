@@ -38,10 +38,11 @@ pub struct Options {
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     /// The most bytes that the JavaScript heap holds. An allocation past it throws a catchable `InternalError`.
+    /// Zero means no limit.
     pub memory: usize,
 
-    /// The most bytes of stack that the JavaScript uses. A deeper call throws a catchable `RangeError`. A value above
-    /// 16 MiB means no limit, and a deep recursion then overflows the thread and aborts the process.
+    /// The most bytes of stack that the JavaScript uses. A deeper call throws a catchable `RangeError`. Zero or a value
+    /// above 16 MiB means no limit, and a deep recursion then overflows the thread and aborts the process.
     pub stack: usize,
 
     /// The longest time of one slice: an uninterrupted stretch of JavaScript. A slice past it stops with

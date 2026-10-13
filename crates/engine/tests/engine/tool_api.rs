@@ -178,7 +178,10 @@ struct ReadsImage;
 #[async_trait]
 impl Tool for ReadsImage {
     async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
-        Ok(ToolContent::from("a picture").with_media(vec![image()]))
+        Ok(ToolContent {
+            text: "a picture".to_owned(),
+            media: vec![image()],
+        })
     }
 }
 

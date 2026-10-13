@@ -125,9 +125,9 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Io { path, source } => write!(f, "{}: {source}", path.display()),
-            Error::Database(source) => write!(f, "the in-memory database does not open: {source}"),
-            Error::Migration { file, source } => write!(f, "{}: {source}", file.display()),
+            Error::Io { path, .. } => write!(f, "{} cannot be read", path.display()),
+            Error::Database(_) => f.write_str("the in-memory database does not open"),
+            Error::Migration { file, .. } => write!(f, "{}: the migration failed", file.display()),
             Error::File { file, message } => write!(f, "{}: {message}", file.display()),
             Error::Query { file, query, message } => write!(f, "{}: query `{query}`: {message}", file.display()),
             Error::Format(message) => write!(f, "rustfmt failed: {message}"),
@@ -135,8 +135,15 @@ impl fmt::Display for Error {
     }
 }
 
-// The message holds the cause, so `source` stays `None` and a reporter does not print the cause twice.
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Io { source, .. } => Some(source),
+            Error::Database(source) | Error::Migration { source, .. } => Some(source),
+            Error::File { .. } | Error::Query { .. } | Error::Format(_) => None,
+        }
+    }
+}
 
 /// The file name of `file` when it is migration number `place`. Two branches can add the same number with two file
 /// names, so git shows no conflict, and this check makes the second branch renumber its migration.
@@ -196,20 +203,18 @@ fn format(code: &str, crate_folder: &Path) -> Result<String, Error> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| Error::Format(error.to_string()))?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| Error::Format("rustfmt has no input".to_owned()))?;
-    stdin
-        .write_all(code.as_bytes())
-        .map_err(|error| Error::Format(error.to_string()))?;
-    // rustfmt reads until the end of its input, so the input closes before the wait.
-    drop(stdin);
+    // rustfmt reads until the end of its input, so the input closes before the wait. The wait comes before any error
+    // return, so no child outlives the call.
+    let written = match child.stdin.take() {
+        Some(mut stdin) => stdin.write_all(code.as_bytes()),
+        None => Err(std::io::Error::other("rustfmt has no input")),
+    };
     let output = child
         .wait_with_output()
         .map_err(|error| Error::Format(error.to_string()))?;
     if !output.status.success() {
         return Err(Error::Format(String::from_utf8_lossy(&output.stderr).into_owned()));
     }
+    written.map_err(|error| Error::Format(error.to_string()))?;
     String::from_utf8(output.stdout).map_err(|error| Error::Format(error.to_string()))
 }

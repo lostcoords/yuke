@@ -88,7 +88,7 @@ fn run(arguments: &Arguments) -> Result<ExitCode, String> {
     };
     let output = crate_folder.join("src/queries.rs");
     let shown = shown(&output);
-    let generated = yuke_sqlgen::generate(&crate_folder).map_err(|error| error.to_string())?;
+    let generated = yuke_sqlgen::generate(&crate_folder).map_err(|error| causes(&error))?;
     let summary = format!("query files: {}\nqueries: {}", generated.files, generated.queries);
 
     let current = match std::fs::read_to_string(&output) {
@@ -121,4 +121,12 @@ fn shown(path: &Path) -> String {
         .unwrap_or_else(|| path.to_path_buf())
         .display()
         .to_string()
+}
+
+/// The text of `error` and of each of its sources, joined by colons.
+fn causes(error: &dyn std::error::Error) -> String {
+    std::iter::successors(Some(error), |error| error.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
 }

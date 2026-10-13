@@ -1,5 +1,5 @@
 //! What a call says: the target, the request, its blocks and tools, and the wire facts of each protocol.
-//! A block owns its bytes, so a conversation is a `Vec<Block>`. A request borrows its parts only for one encode.
+//! A block owns its bytes, so a context is a `Vec<Block>`. A request borrows its parts only for one encode.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -227,7 +227,7 @@ mod digest_hex {
     }
 }
 
-/// Which side of the conversation a block belongs to.
+/// Which side a block belongs to: the user or the assistant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
     /// The user's side.
@@ -246,7 +246,7 @@ impl Role {
     }
 }
 
-/// One block of the conversation. Its kind fixes its role ([`Block::role`]), so it holds only content of that role.
+/// One block of the context. Its kind fixes its role ([`Block::role`]), so it holds only content of that role.
 /// The serializer groups the blocks into the messages of each protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -769,7 +769,7 @@ pub struct Target {
     pub tool_search: bool,
 }
 
-/// The settings of a request apart from its conversation, its tools, and its blobs. A caller can store one for each
+/// The settings of a request apart from its context, its tools, and its blobs. A caller can store one for each
 /// session, and [`Request::settings`] applies it. It names no model and holds no secret.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -911,8 +911,8 @@ impl Default for Settings {
     }
 }
 
-/// One request: the conversation, its tools, its blob store, and its settings. [`crate::Encoder::encode`] borrows it
-/// only until it returns. [`Request::new`] takes the conversation, and each setter changes one part.
+/// One request: the context, its tools, its blob store, and its settings. [`crate::Encoder::encode`] borrows it
+/// only until it returns. [`Request::new`] takes the context, and each setter changes one part.
 #[derive(Clone, Copy)]
 pub struct Request<'a> {
     pub(crate) blocks: &'a [Block],
@@ -925,8 +925,8 @@ pub struct Request<'a> {
 static DEFAULT_SETTINGS: Settings = Settings::new();
 
 impl<'a> Request<'a> {
-    /// A request of the whole conversation `blocks`, with every setting at its endpoint default. The provider
-    /// judges an explicitly empty conversation.
+    /// A request of the whole context `blocks`, with every setting at its endpoint default. The provider
+    /// judges an explicitly empty context.
     pub fn new(blocks: &'a [Block]) -> Self {
         Request {
             blocks,

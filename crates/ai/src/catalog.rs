@@ -223,11 +223,6 @@ pub struct Model<'a> {
     pub modalities: Modalities<'a>,
 }
 
-/// The baked provider with this ID, or `None` when no row matches.
-pub fn find(id: &str) -> Option<&'static Provider<'static>> {
-    PROVIDERS.iter().find(|row| row.id == id)
-}
-
 /// A selector that names nothing, or an entry that cannot bind. Every baked entry binds, so only an entry built from
 /// caller configuration can fail to bind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -363,7 +358,10 @@ impl Entry<'_> {
 /// no catalog model.
 pub fn lookup(selector: &str) -> Result<Entry<'static>, Error> {
     let (provider_id, model_id) = split(selector)?;
-    let provider = find(provider_id).ok_or(Error::UnknownProvider)?;
+    let provider = PROVIDERS
+        .iter()
+        .find(|provider| provider.id == provider_id)
+        .ok_or(Error::UnknownProvider)?;
     let model = provider
         .models
         .iter()

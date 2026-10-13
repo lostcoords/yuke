@@ -103,14 +103,6 @@ pub struct ToolContent {
     pub media: Vec<Media>,
 }
 
-impl ToolContent {
-    /// The same answer with attachments beside its text.
-    #[must_use]
-    pub fn with_media(self, media: Vec<Media>) -> Self {
-        ToolContent { media, ..self }
-    }
-}
-
 impl From<String> for ToolContent {
     fn from(text: String) -> Self {
         ToolContent {

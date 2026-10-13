@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason, Settings, Target, ToolCall, ToolResult};
 
-use crate::conversation::Replace;
+use crate::turn_state::Replace;
 
 /// The decisions of a caller at the boundaries of a turn. Each method has a default that changes nothing, so a
 /// caller implements only the hooks that it needs.

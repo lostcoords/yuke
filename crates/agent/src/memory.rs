@@ -45,7 +45,8 @@ impl Saved {
     }
 
     /// The session `id` as a load gives it, with `lease`. A replay of the events gives the settings and the context.
-    fn opened(&self, id: SessionId, lease: Option<Lease>) -> Result<Opened, StoreError> {
+    #[expect(clippy::expect_used, reason = "a create and a fork each save a settings event first")]
+    fn opened(&self, id: SessionId, lease: Option<Lease>) -> Opened {
         let mut settings = None;
         let mut context = Vec::new();
         let mut turn_open = false;
@@ -58,15 +59,13 @@ impl Saved {
                 }
             }
         }
-        Ok(Opened {
+        Opened {
             id,
-            settings: settings
-                .ok_or_else(|| StoreError::Failed("the session has no settings event".into()))?
-                .clone(),
+            settings: settings.expect("the session has a settings event").clone(),
             context,
             turn_open,
             lease,
-        })
+        }
     }
 }
 
@@ -141,7 +140,7 @@ impl Store for MemoryStore {
             blobs: HashMap::new(),
         };
         saved.push_event(SessionEvent::Settings(settings.clone()));
-        let opened = saved.opened(id, Some(self.take_writer(id)?))?;
+        let opened = saved.opened(id, Some(self.take_writer(id)?));
         lock(&self.state).sessions.insert(id, saved);
         Ok(opened)
     }
@@ -155,7 +154,7 @@ impl Store for MemoryStore {
             pending: Vec::new(),
             blobs: saved.blobs.clone(),
         };
-        let opened = fork.opened(id, Some(self.take_writer(id)?))?;
+        let opened = fork.opened(id, Some(self.take_writer(id)?));
         state.sessions.insert(id, fork);
         Ok(opened)
     }
@@ -186,7 +185,7 @@ impl Store for MemoryStore {
             Access::Read => None,
             Access::Write => Some(self.take_writer(id)?),
         };
-        saved.opened(id, lease)
+        Ok(saved.opened(id, lease))
     }
 
     async fn commit(&self, id: SessionId, commit: &Commit<'_>, consumed: &[InputId]) -> Result<(), StoreError> {

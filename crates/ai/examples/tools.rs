@@ -26,11 +26,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         SCHEMA,
     )];
 
-    let mut conversation = vec![Block::user_text(
+    let mut context = vec![Block::user_text(
         "Use uppercase_ascii on 'Hello, Rust!' and report its result.",
     )];
     let settings = Settings::new().max_output_tokens(4096).effort(Effort::Low);
-    let request = Request::new(&conversation).tools(&tools).settings(&settings);
+    let request = Request::new(&context).tools(&tools).settings(&settings);
     let first = yuke_ai::generate(&http, &target, request, Options::default())
         .await?
         .completion;
@@ -43,12 +43,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let results: Vec<ToolResult> = first.tool_calls().map(execute).collect();
 
     // Replay the whole assistant turn, then answer each call.
-    conversation.extend(first.into_blocks());
-    conversation.extend(results.into_iter().map(Block::from));
+    context.extend(first.into_blocks());
+    context.extend(results.into_iter().map(Block::from));
 
     // Send the tool results back, but don't allow another round of tool calls.
     let settings = settings.tool_choice(ToolChoice::None);
-    let request = Request::new(&conversation).tools(&tools).settings(&settings);
+    let request = Request::new(&context).tools(&tools).settings(&settings);
     let last = yuke_ai::generate(&http, &target, request, Options::default())
         .await?
         .completion;

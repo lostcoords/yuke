@@ -1,4 +1,4 @@
-//! The decisions of one conversation. A [`Conversation`] does no I/O, reads no clock, and never awaits. Each call
+//! The decisions of one turn. A [`TurnState`] does no I/O, reads no clock, and never awaits. Each call
 //! that feeds it a fact returns the next [`Action`], with the [`Commit`] that the caller saves before it acts.
 
 use std::borrow::Cow;
@@ -8,8 +8,8 @@ use yuke_ai::{Block, FinishReason, Origin, Partial, Response, Role, ToolCall, To
 
 /// The decisions of one turn on the caller's context.
 #[derive(Debug)]
-pub(crate) struct Conversation<'h> {
-    context: &'h mut Vec<Block>,
+pub(crate) struct TurnState<'c> {
+    context: &'c mut Vec<Block>,
 
     /// The number of context blocks that a commit holds already. The context that a turn starts with counts as saved.
     saved: usize,
@@ -23,16 +23,16 @@ pub(crate) struct Conversation<'h> {
 #[derive(Debug)]
 #[must_use = "the turn continues only when the driver carries out the action"]
 pub(crate) enum Action<'a> {
-    /// Send a request of the whole context, then give the result to [`Conversation::model_finished`]. The commit holds
+    /// Send a request of the whole context, then give the result to [`TurnState::model_finished`]. The commit holds
     /// the new input, and it is `None` without new input.
     Send(Option<Commit<'a>>),
 
-    /// Run these calls, then give the results to [`Conversation::tools_finished`] in call order. The commit holds the
+    /// Run these calls, then give the results to [`TurnState::tools_finished`] in call order. The commit holds the
     /// answer.
     CallTools(ToolCalls<'a>, Commit<'a>),
 
-    /// A round ended, and its answer and tool results are in the context. Call [`Conversation::proceed`],
-    /// [`Conversation::continue_turn`], or [`Conversation::stop`].
+    /// A round ended, and its answer and tool results are in the context. Call [`TurnState::proceed`],
+    /// [`TurnState::continue_turn`], or [`TurnState::stop`].
     AfterRound {
         /// The whole context.
         context: &'a [Block],
@@ -232,18 +232,18 @@ pub enum Outcome {
     Cancelled,
 }
 
-impl<'h> Conversation<'h> {
+impl<'c> TurnState<'c> {
     /// The decisions of one turn on `context`. The context counts as saved.
-    pub(crate) fn new(context: &'h mut Vec<Block>) -> Self {
+    pub(crate) fn new(context: &'c mut Vec<Block>) -> Self {
         let saved = context.len();
-        Conversation {
+        TurnState {
             context,
             saved,
             turn_end: None,
         }
     }
 
-    /// The blocks of the conversation, oldest first.
+    /// The context, oldest first.
     pub(crate) fn context(&self) -> &[Block] {
         self.context.as_slice()
     }
@@ -377,7 +377,7 @@ impl<'h> Conversation<'h> {
     }
 
     /// End the turn as [`Outcome::Cancelled`] after [`Action::CallTools`]. Give the `results` of the first calls, in call
-    /// order, for example of the calls that ran. Each later call gets an error result.
+    /// order, such as the results of the calls that ran. Each later call gets an error result.
     pub(crate) fn tools_cancelled(&mut self, results: Vec<ToolResult>) -> Action<'_> {
         let answer = self
             .context
