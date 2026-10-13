@@ -3,7 +3,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -16,9 +16,11 @@ use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Module, Persistent, Value};
 use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::error::{Error, Fault, ScriptError, caught};
-use crate::loader::{FileLoader, PathResolver};
+use crate::loader::{ModuleLoader, NameResolver};
+use crate::native;
 use crate::strip::Cache;
 use crate::timers::{self, Timers};
+use crate::tools::{self, Registry, ScriptTool, SessionHost};
 
 /// The stack of the JavaScript thread above [`Limits::stack`]. The engine checks only its own frames, so the thread
 /// needs room for the Rust frames too.
@@ -50,15 +52,24 @@ pub struct Limits {
     pub slice: Duration,
 }
 
-/// A call for the JavaScript thread. It receives the notice of interrupts.
-type Call = Box<dyn for<'js> FnOnce(Ctx<'js>, &Arc<Notify>) + Send>;
+/// A call for the JavaScript thread. It receives the tool registry and the notice of interrupts.
+type Call = Box<dyn for<'js> FnOnce(Ctx<'js>, &Rc<Registry>, &Arc<Notify>) + Send>;
 
 /// A QuickJS runtime on its own thread. Share it through an `Arc`. A drop asks the thread to end and does not wait;
 /// [`Runtime::shutdown`] waits.
 #[derive(Debug)]
 pub struct Runtime {
-    calls: mpsc::UnboundedSender<Call>,
+    caller: Caller,
+    /// The drop of this sender ends the thread. A tool keeps a clone of the caller, so the call channel can outlive the
+    /// runtime.
+    stop: oneshot::Sender<()>,
     thread: JoinHandle<()>,
+}
+
+/// The sender of calls to the JavaScript thread. A tool keeps a clone, so its calls reach the thread.
+#[derive(Debug, Clone)]
+pub(crate) struct Caller {
+    calls: mpsc::UnboundedSender<Call>,
 }
 
 impl Runtime {
@@ -72,35 +83,34 @@ impl Runtime {
         let (calls, call_receiver) = mpsc::unbounded_channel();
         let (faults, fault_receiver) = mpsc::unbounded_channel();
         let (ready, started) = oneshot::channel();
+        let (stop, stopped) = oneshot::channel();
 
         let thread = std::thread::Builder::new()
             .name("yuke-js".into())
             .stack_size(options.limits.stack.saturating_add(THREAD_HEADROOM))
-            .spawn(move || serve(options, call_receiver, faults, ready))
+            .spawn(move || serve(options, call_receiver, stopped, faults, ready))
             .map_err(Error::Thread)?;
 
-        let runtime = Self { calls, thread };
+        let runtime = Self {
+            caller: Caller { calls },
+            stop,
+            thread,
+        };
         started.await.map_err(|_| Error::Stopped)??;
         Ok((runtime, fault_receiver))
     }
 
-    /// Import the module at the absolute `path`, and wait for its evaluation, top-level `await` included.
+    /// Import the module `name`: a built-in module such as `yuke:builtins`, or the absolute path of a file. Wait for its
+    /// evaluation, top-level `await` included.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Script`] when a module of the import graph fails to resolve, to load, or to evaluate.
     /// Returns [`Error::Interrupted`] when the slice limit stops the JavaScript, and [`Error::Stopped`] when the
     /// thread has ended.
-    pub async fn import(&self, path: impl AsRef<Path>) -> Result<(), Error> {
-        let path = path.as_ref();
-        let Some(name) = path.to_str().map(str::to_owned) else {
-            return Err(Error::Script(ScriptError {
-                name: Some("TypeError".into()),
-                message: format!("the module path {} is not UTF-8", path.display()),
-                stack: None,
-            }));
-        };
-        self.run(async move |ctx: Ctx<'_>| {
+    pub async fn import(&self, name: &str) -> Result<(), Error> {
+        let name = name.to_owned();
+        self.run(async move |ctx: Ctx<'_>, _registry: Rc<Registry>| {
             let promise = caught(&ctx, Module::import(&ctx, name))?;
             caught(&ctx, promise.into_future::<Value<'_>>().await)?;
             Ok(())
@@ -108,22 +118,68 @@ impl Runtime {
         .await
     }
 
+    /// The tools that the JavaScript has defined so far, each with its definition, for the session of `host`. The
+    /// consumer adds each pair to the toolset of that session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Stopped`] when the thread has ended.
+    pub async fn tools(&self, host: Arc<dyn SessionHost>) -> Result<Vec<(yuke_ai::ToolDefinition, ScriptTool)>, Error> {
+        tools::tools(&self.caller, host).await
+    }
+
+    /// Run `f` on the JavaScript thread, and return its answer.
+    pub(crate) async fn run<F, R>(&self, f: F) -> Result<R, Error>
+    where
+        F: for<'js> AsyncFnOnce(Ctx<'js>, Rc<Registry>) -> Result<R, Error> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.caller.run(f).await
+    }
+
+    /// Stop the JavaScript and wait for the end of the thread. The thread ends after its current slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Panicked`] when the thread panicked, and [`Error::Stopped`] when the tokio runtime of the caller
+    /// ends during the wait.
+    pub async fn shutdown(self) -> Result<(), Error> {
+        let Self { caller, stop, thread } = self;
+        drop(caller);
+        drop(stop);
+        let joined = tokio::task::spawn_blocking(move || thread.join())
+            .await
+            .map_err(|_| Error::Stopped)?;
+        joined.map_err(|panic| {
+            let message = match panic.downcast::<String>() {
+                Ok(text) => *text,
+                Err(panic) => panic
+                    .downcast_ref::<&str>()
+                    .map_or_else(String::new, |text| (*text).to_owned()),
+            };
+            Error::Panicked(message)
+        })
+    }
+}
+
+impl Caller {
     /// Run `f` on the JavaScript thread, and return its answer. A drop of the returned future drops the future of `f` at
     /// its next await. The slice limit stops a loop without an await.
     pub(crate) async fn run<F, R>(&self, f: F) -> Result<R, Error>
     where
-        F: for<'js> AsyncFnOnce(Ctx<'js>) -> Result<R, Error> + Send + 'static,
+        F: for<'js> AsyncFnOnce(Ctx<'js>, Rc<Registry>) -> Result<R, Error> + Send + 'static,
         R: Send + 'static,
     {
         let (reply, answer) = oneshot::channel();
-        let call: Call = Box::new(move |ctx: Ctx<'_>, interrupts: &Arc<Notify>| {
+        let call: Call = Box::new(move |ctx: Ctx<'_>, registry: &Rc<Registry>, interrupts: &Arc<Notify>| {
             // The notice counts the interrupts from its creation, so an interrupt before the first poll still ends the
             // call.
             let interrupted = Arc::clone(interrupts).notified_owned();
+            let registry = Rc::clone(registry);
             ctx.clone().spawn(async move {
                 let mut reply = reply;
                 tokio::select! {
-                    result = f(ctx) => {
+                    result = f(ctx, registry) => {
                         if reply.send(result).is_err() {
                             // The caller has left.
                         }
@@ -141,36 +197,13 @@ impl Runtime {
         self.calls.send(call).map_err(|_| Error::Stopped)?;
         answer.await.map_err(|_| Error::Stopped)?
     }
-
-    /// Stop the JavaScript and wait for the end of the thread. The thread ends after its current slice.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Panicked`] when the thread panicked, and [`Error::Stopped`] when the tokio runtime of the caller
-    /// ends during the wait.
-    pub async fn shutdown(self) -> Result<(), Error> {
-        let Self { calls, thread } = self;
-        // The closed channel ends the loop of the thread.
-        drop(calls);
-        let joined = tokio::task::spawn_blocking(move || thread.join())
-            .await
-            .map_err(|_| Error::Stopped)?;
-        joined.map_err(|panic| {
-            let message = match panic.downcast::<String>() {
-                Ok(text) => *text,
-                Err(panic) => panic
-                    .downcast_ref::<&str>()
-                    .map_or_else(String::new, |text| (*text).to_owned()),
-            };
-            Error::Panicked(message)
-        })
-    }
 }
 
 /// The body of the JavaScript thread.
 fn serve(
     options: Options,
     calls: mpsc::UnboundedReceiver<Call>,
+    stopped: oneshot::Receiver<()>,
     faults: mpsc::UnboundedSender<Fault>,
     ready: oneshot::Sender<Result<(), Error>>,
 ) {
@@ -183,12 +216,13 @@ fn serve(
             return;
         }
     };
-    tokio::task::LocalSet::new().block_on(&tokio_runtime, serve_calls(options, calls, faults, ready));
+    tokio::task::LocalSet::new().block_on(&tokio_runtime, serve_calls(options, calls, stopped, faults, ready));
 }
 
 async fn serve_calls(
     options: Options,
     mut calls: mpsc::UnboundedReceiver<Call>,
+    mut stopped: oneshot::Receiver<()>,
     faults: mpsc::UnboundedSender<Fault>,
     ready: oneshot::Sender<Result<(), Error>>,
 ) {
@@ -203,7 +237,6 @@ async fn serve_calls(
     };
     if ready.send(Ok(())).is_err() {
         // The caller of `start` has left.
-        engine.close();
         return;
     }
 
@@ -216,8 +249,9 @@ async fn serve_calls(
     };
     loop {
         tokio::select! {
+            _ = &mut stopped => break,
             call = calls.recv() => match call {
-                Some(call) => engine.context.with(|ctx| call(ctx, &interrupts)).await,
+                Some(call) => engine.context.with(|ctx| call(ctx, &engine.registry, &interrupts)).await,
                 None => break,
             },
             () = std::future::poll_fn(|context| driver.poll_interrupt(context)) => {
@@ -232,17 +266,18 @@ async fn serve_calls(
         }
     }
 
+    // The drive holds the runtime, so it goes before the engine.
     drop(driver);
-    engine.close();
 }
 
 /// The engine of the thread, and the state that its callbacks share.
 struct Engine {
-    runtime: AsyncRuntime,
     context: AsyncContext,
+    runtime: AsyncRuntime,
     slice: Rc<Slice>,
     rejections: Rc<Rejections>,
     timers: Rc<Timers>,
+    registry: Rc<Registry>,
 }
 
 impl Engine {
@@ -252,7 +287,7 @@ impl Engine {
         runtime.set_memory_limit(options.limits.memory).await;
         runtime.set_max_stack_size(options.limits.stack).await;
         runtime
-            .set_loader(PathResolver, FileLoader::new(Cache::new(options.cache)))
+            .set_loader(NameResolver, ModuleLoader::new(Cache::new(options.cache)))
             .await;
 
         let slice = Rc::new(Slice {
@@ -275,27 +310,34 @@ impl Engine {
 
         let context = AsyncContext::full(&runtime).await.map_err(engine_error)?;
         let timers = Rc::new(Timers::default());
+        let registry = Rc::new(Registry::default());
         context
-            .with(|ctx| timers::install(&ctx, &timers, faults))
+            .with(|ctx| {
+                timers::install(&ctx, &timers, faults.clone())?;
+                crate::error::install_report_error(&ctx, faults)?;
+                native::install(&ctx, &registry)
+            })
             .await
             .map_err(engine_error)?;
 
         Ok(Self {
-            runtime,
             context,
+            runtime,
             slice,
             rejections,
             timers,
+            registry,
         })
     }
+}
 
-    /// Drop the engine. Each saved value goes first, because a saved value that outlives the runtime aborts the
-    /// process.
-    fn close(self) {
+impl Drop for Engine {
+    /// Drop each saved value before the fields drop the context and the runtime: a saved value that outlives the
+    /// runtime aborts the process. A panic of the thread drops the engine this way too.
+    fn drop(&mut self) {
         self.timers.clear();
+        self.registry.clear();
         self.rejections.pending.borrow_mut().clear();
-        drop(self.context);
-        drop(self.runtime);
     }
 }
 

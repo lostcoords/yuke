@@ -1,12 +1,13 @@
 [package]
 name = "yuke-js"
 version = "0.0.1-dev"
-description = "The JavaScript runtime of yuke: QuickJS on its own thread, with TypeScript modules."
+description = "The JavaScript runtime of yuke: QuickJS on its own thread, with TypeScript modules and tools."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait = "0.1.92"
 # oxc makes a breaking release each week, so each crate pins one exact version. The cache key holds it too.
 oxc_allocator = "=0.153.0"
 oxc_codegen = { version = "=0.153.0", default-features = false }
@@ -17,6 +18,18 @@ oxc_transformer = "=0.153.0"
 rquickjs = { version = "0.14.0", default-features = false, features = ["std", "futures", "loader"] }
 sha2 = { version = "0.11.0", default-features = false }
 tokio = { version = "1.53", features = ["macros", "rt", "sync", "time"] }
+yuke-ai = { path = "../ai", default-features = false }
+yuke-engine = { path = "../engine" }
+
+[build-dependencies]
+# build.rs strips and compiles the built-in modules with the same versions as the runtime.
+oxc_allocator = "=0.153.0"
+oxc_codegen = { version = "=0.153.0", default-features = false }
+oxc_parser = "=0.153.0"
+oxc_semantic = "=0.153.0"
+oxc_span = "=0.153.0"
+oxc_transformer = "=0.153.0"
+rquickjs = { version = "0.14.0", default-features = false, features = ["std", "loader"] }
 
 [dev-dependencies]
 # A test calls the runtime from the worker threads of a multi-thread tokio runtime.

@@ -1,4 +1,6 @@
 [tools]
 rust = { version = "1.99.0", components = "clippy,rustfmt,rust-docs,rust-analyzer,rust-src" }
+# The release holds a static tsc binary, so the check needs no Node.
+"github:microsoft/TypeScript" = { version = "7.0.2", bin_path = "lib", strip_components = 1 }
 # Biome checks the format and the lint rules of the TypeScript. It is one static binary.
 biome = "2.5.15"

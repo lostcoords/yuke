@@ -1,5 +1,5 @@
-//! The removal of TypeScript types, and the cache of its output. The cache holds JavaScript, not bytecode, so no
-//! file on disk reaches the bytecode reader of the engine.
+//! The cache of stripped TypeScript. The cache holds JavaScript, not bytecode, so no file on disk reaches the bytecode
+//! reader of the engine.
 
 use std::fmt;
 use std::fs::File;
@@ -7,13 +7,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use oxc_allocator::Allocator;
-use oxc_codegen::Codegen;
-use oxc_parser::Parser;
-use oxc_semantic::SemanticBuilder;
-use oxc_span::{LabeledSpan, SourceType};
-use oxc_transformer::{TransformOptions, Transformer};
 use sha2::{Digest, Sha256};
+
+use crate::typescript::strip;
 
 /// The oxc version of `Cargo.toml`. Another version can print other JavaScript, so the cache key holds it.
 pub(crate) const OXC_VERSION: &str = "0.153.0";
@@ -100,72 +96,4 @@ fn key(source: &str) -> String {
         text.push(char::from(DIGITS[usize::from(byte & 15)]));
     }
     text
-}
-
-/// Remove the types of the TypeScript module `source`, and return the JavaScript. The output keeps modern syntax. The
-/// code generator writes new code, so a line of the output can differ from the line of the source.
-pub(crate) fn strip(path: &Path, source: &str) -> Result<String, String> {
-    let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source, SourceType::ts().with_module(true)).parse();
-    if parsed.diagnostics.has_errors() {
-        return Err(describe(
-            path,
-            source,
-            parsed
-                .diagnostics
-                .errors()
-                .map(|error| (error.labels.first().map(LabeledSpan::offset), &*error.message)),
-        ));
-    }
-
-    let mut program = parsed.program;
-    let built = SemanticBuilder::new_compiler().build(&program);
-    if built.diagnostics.has_errors() {
-        return Err(describe(
-            path,
-            source,
-            built
-                .diagnostics
-                .errors()
-                .map(|error| (error.labels.first().map(LabeledSpan::offset), &*error.message)),
-        ));
-    }
-    let scoping = built.semantic.into_scoping();
-
-    let transformed =
-        Transformer::new(&allocator, path, &TransformOptions::default()).build_with_scoping(scoping, &mut program);
-    if transformed.diagnostics.has_errors() {
-        return Err(describe(
-            path,
-            source,
-            transformed
-                .diagnostics
-                .errors()
-                .map(|error| (error.labels.first().map(LabeledSpan::offset), &*error.message)),
-        ));
-    }
-
-    Ok(Codegen::new().build(&program).code)
-}
-
-/// One line for each error: the path, the line and column of the error's offset, and its message.
-fn describe<'a>(path: &Path, source: &str, errors: impl Iterator<Item = (Option<u32>, &'a str)>) -> String {
-    let lines: Vec<String> = errors
-        .map(|(offset, message)| match offset {
-            Some(offset) => {
-                let (line, column) = place(source, offset);
-                format!("{}:{line}:{column}: {message}", path.display())
-            }
-            None => format!("{}: {message}", path.display()),
-        })
-        .collect();
-    lines.join("\n")
-}
-
-/// The line and column, both from 1, of the byte `offset` in `source`. The column counts characters.
-fn place(source: &str, offset: u32) -> (usize, usize) {
-    let before = source.get(..offset as usize).unwrap_or(source);
-    let line = before.matches('\n').count() + 1;
-    let column = before.rsplit('\n').next().map_or(0, |text| text.chars().count()) + 1;
-    (line, column)
 }

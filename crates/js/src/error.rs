@@ -2,7 +2,8 @@
 
 use std::fmt;
 
-use rquickjs::{CatchResultExt, CaughtError, Coerced, Ctx, Exception, FromJs, Value};
+use rquickjs::{CatchResultExt, CaughtError, Coerced, Constructor, Ctx, Exception, FromJs, Function, Value};
+use tokio::sync::mpsc;
 
 /// The failure of a call into the runtime.
 #[derive(Debug)]
@@ -143,4 +144,30 @@ pub(crate) fn caught<T>(ctx: &Ctx<'_>, result: rquickjs::Result<T>) -> Result<T,
         CaughtError::Value(value) => Error::Script(ScriptError::from_value(ctx, &value)),
         CaughtError::Error(error) => Error::Script(ScriptError::from_engine(&error)),
     })
+}
+
+/// Add the global `reportError(error)` of the web: it reports `error` as a fault without a throw.
+pub(crate) fn install_report_error<'js>(ctx: &Ctx<'js>, faults: mpsc::UnboundedSender<Fault>) -> rquickjs::Result<()> {
+    let report = Function::new(ctx.clone(), move |ctx: Ctx<'js>, error: Value<'js>| {
+        if faults
+            .send(Fault::Script(ScriptError::from_value(&ctx, &error)))
+            .is_err()
+        {
+            // The owner dropped the receiver, so it ignores faults.
+        }
+    })?;
+    ctx.globals().set("reportError", report)
+}
+
+/// Throw a new error of the global class `class`, for example `TypeError`, with `message`. The typed throws of the
+/// engine cut a message at 255 bytes. A constructed error keeps all of it.
+pub(crate) fn throw(ctx: &Ctx<'_>, class: &str, message: &str) -> rquickjs::Error {
+    let built = ctx
+        .globals()
+        .get::<_, Constructor<'_>>(class)
+        .and_then(|constructor| constructor.construct::<_, Value<'_>>((message,)));
+    match built {
+        Ok(error) => ctx.throw(error),
+        Err(error) => error,
+    }
 }

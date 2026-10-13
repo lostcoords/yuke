@@ -2135,6 +2135,7 @@ dependencies = [
 name = "yuke-js"
 version = "0.0.1-dev"
 dependencies = [
+ "async-trait",
  "oxc_allocator",
  "oxc_codegen",
  "oxc_parser",
@@ -2144,6 +2145,8 @@ dependencies = [
  "rquickjs",
  "sha2",
  "tokio",
+ "yuke-ai",
+ "yuke-engine",
 ]
 
 [[package]]

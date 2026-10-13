@@ -1,3 +1,5 @@
+mod tools;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -25,6 +27,11 @@ fn folder(name: &str) -> PathBuf {
     }
     std::fs::create_dir_all(&folder).unwrap();
     folder
+}
+
+/// The module name of the file `file` below `folder`: its absolute path.
+fn module(folder: &Path, file: &str) -> String {
+    folder.join(file).to_str().unwrap().to_owned()
 }
 
 /// Write `files`, each a path below `folder` and its text.
@@ -63,7 +70,7 @@ where
 {
     let source = format!("(async () => {{ {body} }})()");
     runtime
-        .run(async move |ctx: Ctx<'_>| {
+        .run(async move |ctx: Ctx<'_>, _registry| {
             let promise: Promise<'_> = caught(&ctx, ctx.eval(source))?;
             caught(&ctx, promise.into_future::<T>().await)
         })
@@ -114,7 +121,7 @@ async fn a_dropped_call_stops_its_future_on_the_javascript_thread() {
     let folder = folder("a_dropped_call_stops_its_future_on_the_javascript_thread");
     let (runtime, _faults) = start(&folder).await;
 
-    let call = runtime.run(async |ctx: Ctx<'_>| {
+    let call = runtime.run(async |ctx: Ctx<'_>, _registry| {
         let promise: Promise<'_> = caught(&ctx, ctx.eval("new Promise(resolve => setTimeout(resolve, 100))"))?;
         caught(&ctx, promise.into_future::<()>().await)?;
         caught(&ctx, ctx.globals().set("finished", true))
@@ -162,7 +169,7 @@ async fn an_import_after_an_interrupted_promise_job_loads_its_module() {
     let result = tokio::time::timeout(Duration::from_secs(5), evaluate::<()>(&runtime, "for (;;) await null;")).await;
     assert!(matches!(result, Ok(Err(Error::Interrupted))), "{result:?}");
 
-    runtime.import(&folder.join("main.js")).await.unwrap();
+    runtime.import(&module(&folder, "main.js")).await.unwrap();
 
     assert!(evaluate::<bool>(&runtime, "return globalThis.loaded;").await.unwrap());
 }
@@ -455,7 +462,7 @@ async fn a_typescript_module_imports_typescript_modules_by_relative_paths() {
     );
     let (runtime, _faults) = start(&folder).await;
 
-    runtime.import(&folder.join("plugin/main.ts")).await.unwrap();
+    runtime.import(&module(&folder, "plugin/main.ts")).await.unwrap();
 
     assert_eq!(evaluate::<i32>(&runtime, "return globalThis.count;").await.unwrap(), 42);
 }
@@ -476,7 +483,7 @@ async fn two_names_of_one_file_give_one_module() {
     );
     let (runtime, _faults) = start(&folder).await;
 
-    runtime.import(&folder.join("main.js")).await.unwrap();
+    runtime.import(&module(&folder, "main.js")).await.unwrap();
 
     assert_eq!(evaluate::<i32>(&runtime, "return globalThis.loads;").await.unwrap(), 1);
 }
@@ -493,7 +500,7 @@ async fn a_throw_in_a_typescript_module_names_the_file_in_its_stack() {
     );
     let (runtime, _faults) = start(&folder).await;
 
-    let error = script_error(runtime.import(&folder.join("broken.ts")).await);
+    let error = script_error(runtime.import(&module(&folder, "broken.ts")).await);
 
     assert_eq!(error.message, "broken");
     let stack = error.stack.unwrap();
@@ -506,7 +513,7 @@ async fn a_typescript_syntax_error_names_its_line_and_column() {
     write(&folder, &[("broken.ts", "const fine = 1;\nconst broken: = 2;\n")]);
     let (runtime, _faults) = start(&folder).await;
 
-    let error = script_error(runtime.import(&folder.join("broken.ts")).await);
+    let error = script_error(runtime.import(&module(&folder, "broken.ts")).await);
 
     assert_eq!(error.name.as_deref(), Some("SyntaxError"));
     let place = format!("{}:2:", folder.join("broken.ts").display());
@@ -519,7 +526,7 @@ async fn a_bare_module_name_does_not_resolve() {
     write(&folder, &[("main.js", "import 'lodash';\n")]);
     let (runtime, _faults) = start(&folder).await;
 
-    let error = script_error(runtime.import(&folder.join("main.js")).await);
+    let error = script_error(runtime.import(&module(&folder, "main.js")).await);
 
     assert_eq!(error.name.as_deref(), Some("TypeError"));
     assert!(error.message.contains("cannot resolve 'lodash'"), "{}", error.message);
@@ -531,7 +538,7 @@ async fn a_typescript_file_loads_from_its_cache_file() {
     write(&folder, &[("main.ts", "globalThis.origin = 'source' as string;\n")]);
     {
         let (runtime, _faults) = start(&folder).await;
-        runtime.import(&folder.join("main.ts")).await.unwrap();
+        runtime.import(&module(&folder, "main.ts")).await.unwrap();
     }
 
     // A changed cache file proves that the second runtime reads it and does not strip the source again.
@@ -543,7 +550,7 @@ async fn a_typescript_file_loads_from_its_cache_file() {
     std::fs::write(&files[0], "globalThis.origin = 'cache';\n").unwrap();
 
     let (runtime, _faults) = start(&folder).await;
-    runtime.import(&folder.join("main.ts")).await.unwrap();
+    runtime.import(&module(&folder, "main.ts")).await.unwrap();
     assert_eq!(
         evaluate::<String>(&runtime, "return globalThis.origin;").await.unwrap(),
         "cache"
@@ -562,8 +569,8 @@ async fn a_changed_typescript_file_gets_a_new_cache_file() {
     );
     let (runtime, _faults) = start(&folder).await;
 
-    runtime.import(&folder.join("first.ts")).await.unwrap();
-    runtime.import(&folder.join("second.ts")).await.unwrap();
+    runtime.import(&module(&folder, "first.ts")).await.unwrap();
+    runtime.import(&module(&folder, "second.ts")).await.unwrap();
 
     assert_eq!(std::fs::read_dir(folder.join("cache")).unwrap().count(), 2);
     assert_eq!(evaluate::<i32>(&runtime, "return globalThis.value;").await.unwrap(), 2);

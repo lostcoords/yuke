@@ -20,6 +20,7 @@ mise exec -- cargo fmt --all -- --check
 mise exec -- cargo clippy --all-targets --all-features -- -D warnings
 mise exec -- cargo test --all-features
 mise exec -- env RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --all-features
+mise exec -- tsc -p crates/js/tsconfig.json
 mise exec -- biome ci --error-on-warnings
 ```
 

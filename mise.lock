@@ -49,6 +49,46 @@ url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.5
 url_api = "https://api.github.com/repos/biomejs/biome/releases/assets/601227624"
 provenance = "github-attestations"
 
+[[tools."github:microsoft/TypeScript"]]
+version = "7.0.2"
+backend = "github:microsoft/TypeScript"
+specifiers = ["7.0.2"]
+
+[tools."github:microsoft/TypeScript"."platforms.linux-arm64"]
+checksum = "sha256:c83d931ac9dd7549cde6e71246aa9d6a9812843023df3e277fe3b5dcf41dd0ea"
+url = "https://github.com/microsoft/TypeScript/releases/download/v7.0.2/typescript-linux-arm64.tgz"
+url_api = "https://api.github.com/repos/microsoft/TypeScript/releases/assets/522603171"
+
+[tools."github:microsoft/TypeScript"."platforms.linux-arm64-musl"]
+checksum = "sha256:c83d931ac9dd7549cde6e71246aa9d6a9812843023df3e277fe3b5dcf41dd0ea"
+url = "https://github.com/microsoft/TypeScript/releases/download/v7.0.2/typescript-linux-arm64.tgz"
+url_api = "https://api.github.com/repos/microsoft/TypeScript/releases/assets/522603171"
+
+[tools."github:microsoft/TypeScript"."platforms.linux-x64"]
+checksum = "sha256:7ecad6f67377e831856367ab062ef394f21506a611405bf8ac0ff039348637d3"
+url = "https://github.com/microsoft/TypeScript/releases/download/v7.0.2/typescript-linux-x64.tgz"
+url_api = "https://api.github.com/repos/microsoft/TypeScript/releases/assets/522603344"
+
+[tools."github:microsoft/TypeScript"."platforms.linux-x64-musl"]
+checksum = "sha256:7ecad6f67377e831856367ab062ef394f21506a611405bf8ac0ff039348637d3"
+url = "https://github.com/microsoft/TypeScript/releases/download/v7.0.2/typescript-linux-x64.tgz"
+url_api = "https://api.github.com/repos/microsoft/TypeScript/releases/assets/522603344"
+
+[tools."github:microsoft/TypeScript"."platforms.macos-arm64"]
+checksum = "sha256:902e2fe1cf0799198ef902c6b8c310a450fef629a6baba41d45641ef75c04ebd"
+url = "https://github.com/microsoft/TypeScript/releases/download/v7.0.2/typescript-darwin-arm64.tgz"
+url_api = "https://api.github.com/repos/microsoft/TypeScript/releases/assets/522602966"
+
+[tools."github:microsoft/TypeScript"."platforms.macos-x64"]
+checksum = "sha256:eba158cb54050f723d5ff781438f33de5640054440bb4f2bd170cfe9bc2eb551"
+url = "https://github.com/microsoft/TypeScript/releases/download/v7.0.2/typescript-darwin-x64.tgz"
+url_api = "https://api.github.com/repos/microsoft/TypeScript/releases/assets/522603002"
+
+[tools."github:microsoft/TypeScript"."platforms.windows-x64"]
+checksum = "sha256:61fc4e141d2bc687db580e71bbfa63b9c209f0310645d82ca1b457eb3a24fd19"
+url = "https://github.com/microsoft/TypeScript/releases/download/v7.0.2/typescript-win32-x64.tgz"
+url_api = "https://api.github.com/repos/microsoft/TypeScript/releases/assets/522603566"
+
 [[tools.rust]]
 version = "1.99.0"
 backend = "core:rust"
