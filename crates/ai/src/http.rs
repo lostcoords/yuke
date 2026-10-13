@@ -118,7 +118,7 @@ impl HttpTransport {
                 }
                 let outcome =
                     tokio::time::timeout_at(at, self.connect_and_send(&target, http_request, &mut sent)).await;
-                // A deadline that passed before the request left names the connect, so a repeat is known to be safe.
+                // A deadline that passed before the request left gives `ConnectTimeout`.
                 outcome.unwrap_or(Err(if sent { timed_out } else { Fault::ConnectTimeout }))
             }
         };

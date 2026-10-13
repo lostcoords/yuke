@@ -32,8 +32,8 @@ pub use request::{
     Thinking, ThinkingDisplay, ThinkingFormat, ToolCall, ToolCallRef, ToolChoice, ToolDefinition, ToolResult, Wire,
 };
 pub use response::{
-    AttemptError, AttemptInfo, BlockId, BlockKind, BlockResult, BlockStarted, BlockStopped, Completion, Content,
-    Delivery, Delta, Done, Error, Event, FinishReason, Partial, Response, ResponseLimits, Usage,
+    AttemptError, AttemptInfo, BlockId, BlockKind, BlockResult, BlockStarted, BlockStopped, Completion, Content, Delta,
+    Done, Error, Event, FinishReason, Partial, Response, ResponseLimits, Usage,
 };
 pub use stream::Options;
 use transport::Transport;

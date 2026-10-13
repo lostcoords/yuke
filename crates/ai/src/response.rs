@@ -108,25 +108,13 @@ impl Default for ResponseLimits {
     }
 }
 
-/// Whether the provider may hold the request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum Delivery {
-    /// The request never left, so a repeat cannot duplicate it.
-    #[default]
-    DefinitelyUnsent,
-    /// A response or a fault after the request left says the provider may hold it.
-    PossiblySent,
-}
-
-/// The facts of one attempt: the response head, the delivery state, and the failure bytes.
+/// The facts of one attempt: the response head, the failure bytes, and whether the caller saw output.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct AttemptInfo {
     /// A parsed `retry-after-ms`, or `retry-after` converted to milliseconds.
     pub retry_after_ms: Option<u64>,
     /// The provider's `x-should-retry`: false vetoes a repeat, and true asks for one, as both SDKs obey it.
     pub should_retry: Option<bool>,
-    /// Whether the provider may hold the request.
-    pub delivery: Delivery,
     /// The HTTP status, 200 included. `None` when the transport opened no body.
     pub status: Option<u16>,
     /// The provider request id from `request-id` or `x-request-id`, when the answer names one.

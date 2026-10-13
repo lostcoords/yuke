@@ -165,7 +165,7 @@ mod tests {
     use crate::encoder::Encoder;
     use crate::failure::ProviderKind;
     use crate::request::{Block, Protocol, Request, Role, ToolCall};
-    use crate::response::{AttemptInfo, Delivery, FinishReason, ResponseLimits, Usage};
+    use crate::response::{AttemptInfo, FinishReason, ResponseLimits, Usage};
     use crate::testing::{
         CannedTransport, OVERLOAD_EVENT, block_on, canned_reply, completion, frame, generate_text, generate_with,
         target,
@@ -380,7 +380,6 @@ mod tests {
             // An open that failed read no head. A read that failed keeps the head it read.
             let request_id = if during_open { None } else { Some("req-exchange") };
             assert_eq!(info(&response).request_id.as_deref(), request_id);
-            assert_eq!(info(&response).delivery, Delivery::PossiblySent);
             assert_eq!(canned.closes(), usize::from(!during_open));
         }
     }

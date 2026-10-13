@@ -462,7 +462,7 @@ async fn request_deadline_wins_over_longer_idle_timeout() {
     }
 }
 
-// No leg starts once the deadline passed, so the request never leaves and a repeat is known to be safe.
+// No leg starts once the deadline passed, so the request never leaves and the fault is `ConnectTimeout`.
 #[tokio::test]
 async fn expired_deadline_fails_before_send() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -658,19 +658,17 @@ async fn open_fault(url: &str) -> Option<Fault> {
     transport.open(&request, None).await.err()
 }
 
-// Each fault here happens before the request left, so the stream records it as definitely unsent.
+// Each case fails before the request leaves, and the fault names the step that failed.
 #[tokio::test]
-async fn connect_failures_send_nothing() {
+async fn a_failed_open_names_the_dns_or_the_connect() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
     let fault = open_fault(&format!("http://127.0.0.1:{port}/messages")).await;
     assert_eq!(fault, Some(Fault::ConnectFailed));
-    assert!(fault.is_some_and(Fault::sent_nothing));
     // The `.invalid` top-level name never resolves (RFC 2606).
     let fault = open_fault("http://host.invalid/messages").await;
     assert_eq!(fault, Some(Fault::DnsFailed));
-    assert!(fault.is_some_and(Fault::sent_nothing));
 
     // A plain HTTP peer answers the TLS hello with bytes that are no handshake.
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -681,7 +679,6 @@ async fn connect_failures_send_nothing() {
     });
     let fault = open_fault(&format!("https://127.0.0.1:{port}/messages")).await;
     assert_eq!(fault, Some(Fault::ConnectFailed));
-    assert!(fault.is_some_and(Fault::sent_nothing));
     peer.await.unwrap();
 }
 
@@ -726,7 +723,6 @@ async fn missing_root_certificates_fail_only_https() {
         let request = Outgoing::new("https://127.0.0.1:9/messages", &[], b"{}");
         let fault = transport.open(&request, None).await.err();
         assert_eq!(fault, Some(Fault::TlsSetupFailed));
-        assert!(fault.is_some_and(Fault::sent_nothing));
     }
     let server = Server {
         status: 200,
@@ -866,7 +862,6 @@ async fn too_many_headers_fail_before_send() {
     let ((fault, bytes), (valid_fault, valid_bytes)) =
         tokio::join!(observe_http_bytes(&many), observe_http_bytes(&valid));
     assert_eq!(fault, Some(Fault::InvalidRequest));
-    assert!(fault.is_some_and(Fault::sent_nothing));
     assert_eq!(bytes, 0, "the rejected request sent HTTP bytes");
     assert_eq!(valid_fault, None);
     assert!(valid_bytes != 0, "the observer missed a valid request");

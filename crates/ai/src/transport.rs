@@ -18,10 +18,9 @@ pub type BoxBody = Pin<Box<dyn Body>>;
 
 /// Send one request and return its head and body.
 ///
-/// The retry policy trusts the faults. Return a fault that [`Fault::sent_nothing`] names only when the transport wrote
-/// no request byte. Track the write yourself, because no hyper or reqwest error kind proves it. After the write starts,
-/// return [`Fault::ConnectionLost`] for a broken connection. Put a connection back in a pool only after its body ended
-/// with no fault.
+/// Return [`Fault::ConnectFailed`] or [`Fault::ConnectTimeout`] only before the request leaves. Return
+/// [`Fault::ConnectionLost`] when the connection breaks after the request starts. Put a connection back in a pool only
+/// after its body ended with no fault.
 pub trait Transport: Send + Sync {
     /// Send `request`, and read the response head. `deadline` bounds the exchange up to the end of the body.
     /// The request borrows only until the returned future ends.
@@ -51,8 +50,7 @@ pub(crate) async fn next_chunk(body: &mut BoxBody) -> Option<Result<Bytes, Fault
     std::future::poll_fn(|cx| body.as_mut().poll_chunk(cx)).await
 }
 
-/// The faults of an exchange. An HTTP status is response data, not a fault. A fault that [`Fault::sent_nothing`]
-/// names happened before the send, so a repeat cannot duplicate the request.
+/// The faults of an exchange. An HTTP status is response data, not a fault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Fault {
@@ -78,21 +76,6 @@ pub enum Fault {
     ConnectionLost,
     /// The peer sent a head, a chunk, or an encoding the client refuses.
     MalformedResponse,
-}
-
-impl Fault {
-    /// True when the fault happened before the request left, so the provider holds nothing of it.
-    pub fn sent_nothing(self) -> bool {
-        matches!(
-            self,
-            Self::InvalidRequest
-                | Self::BadUrl
-                | Self::DnsFailed
-                | Self::ConnectFailed
-                | Self::ConnectTimeout
-                | Self::TlsSetupFailed
-        )
-    }
 }
 
 /// One sentence for the caller. It names no internal error and no credential.

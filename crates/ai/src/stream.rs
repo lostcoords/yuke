@@ -14,7 +14,7 @@ use std::time::Instant;
 use crate::encoder::Encoded;
 use crate::failure::{self, Failure, ProviderKind};
 use crate::request::{Origin, Protocol};
-use crate::response::{AttemptInfo, Delivery, Event, ResponseLimits};
+use crate::response::{AttemptInfo, Event, ResponseLimits};
 use crate::transport::{self, BoxBody, Transport};
 use draft::{DecodeError, Draft};
 use sse::{Sse, Step};
@@ -131,17 +131,10 @@ impl Stream {
         let (head, mut body) = match transport.open(&request.http, options.deadline).await {
             Ok(opened) => opened,
             Err(fault) => {
-                stream.info.delivery = if fault.sent_nothing() {
-                    Delivery::DefinitelyUnsent
-                } else {
-                    Delivery::PossiblySent
-                };
                 stream.state = State::Failed(Failure::Transport(fault));
                 return stream;
             }
         };
-        // The transport read the head, so the provider received the request.
-        stream.info.delivery = Delivery::PossiblySent;
         stream.info.status = Some(head.status);
         stream.info.request_id = head.request_id;
         stream.info.retry_after_ms = head.retry_after_ms;
@@ -442,21 +435,19 @@ mod tests {
         }
     }
 
-    // A retry may repeat only a request the provider never received, so the fault decides the delivery.
     #[test]
-    fn open_fault_is_terminal_and_records_delivery() {
-        for (cause, delivery) in [
-            (Fault::ConnectFailed, Delivery::DefinitelyUnsent),
-            (Fault::ConnectTimeout, Delivery::DefinitelyUnsent),
-            (Fault::ConnectionLost, Delivery::PossiblySent),
-            (Fault::IdleTimeout, Delivery::PossiblySent),
+    fn an_open_fault_ends_the_stream_with_no_head_facts() {
+        for cause in [
+            Fault::ConnectFailed,
+            Fault::ConnectTimeout,
+            Fault::ConnectionLost,
+            Fault::IdleTimeout,
         ] {
             let canned = CannedTransport::new(String::new())
                 .open_error(cause)
                 .request_id("never-read");
             let mut stream = open_canned(&canned);
             assert_eq!(block_on(stream.next()), Some(Err(Failure::Transport(cause))));
-            assert_eq!(stream.info().delivery, delivery);
             assert_eq!(block_on(stream.next()), None);
             // No head was read, so nothing of one is known.
             assert_eq!(stream.info().request_id, None);

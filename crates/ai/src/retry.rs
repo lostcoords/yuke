@@ -1,19 +1,18 @@
 //! Decide whether a failed provider attempt may repeat. The decision is pure: no I/O and no state.
 
 use crate::failure::{Failure, ProviderKind};
-use crate::response::{AttemptError, Delivery};
+use crate::response::AttemptError;
 use crate::transport::Fault;
 
 /// How a failure behaves for a repeat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Class {
-    /// The provider answered and named a temporary condition. The request certainly arrived.
-    AnsweredTransient,
+    /// A failure that can pass: the provider named a temporary condition, or the transport or the stream failed. A
+    /// repeat can duplicate a request that reached the provider, because neither provider takes an idempotency key.
+    Transient,
     /// A 429 that names no known cause, as a rate limit and a spent quota both send. Only a retry delay or
     /// `x-should-retry: true` lets it repeat, as Codex does.
     AnsweredUnknown,
-    /// The connection failed. The delivery gate decides whether a repeat is safe.
-    Transport,
     /// The retry policy does not repeat this failure.
     NonRetryable,
 }
@@ -23,7 +22,7 @@ fn classify(cause: Failure) -> Class {
     match cause {
         Failure::Provider(kind) => match kind {
             ProviderKind::RateLimited | ProviderKind::ServerError | ProviderKind::Timeout | ProviderKind::Conflict => {
-                Class::AnsweredTransient
+                Class::Transient
             }
             ProviderKind::RateLimitUnknown => Class::AnsweredUnknown,
             ProviderKind::AuthFailed
@@ -39,7 +38,7 @@ fn classify(cause: Failure) -> Class {
             | Fault::ConnectTimeout
             | Fault::ConnectFailed
             | Fault::ConnectionLost
-            | Fault::DnsFailed => Class::Transport,
+            | Fault::DnsFailed => Class::Transient,
             Fault::InvalidRequest
             | Fault::RedirectRefused
             | Fault::BadUrl
@@ -47,7 +46,7 @@ fn classify(cause: Failure) -> Class {
             | Fault::TlsSetupFailed => Class::NonRetryable,
         },
         // A stream without its terminal event is a truncation, not a malformed stream.
-        Failure::IncompleteStream => Class::Transport,
+        Failure::IncompleteStream => Class::Transient,
         // A parse error never repeats.
         Failure::Protocol | Failure::ResponseTooLarge => Class::NonRetryable,
     }
@@ -104,12 +103,8 @@ pub fn decide(policy: Policy, attempt_error: &AttemptError, number: u32, jitter:
         match classify(failure) {
             Class::NonRetryable => return None,
             Class::AnsweredUnknown if info.retry_after_ms.is_none() => return None,
-            // A transport fault after the first body write leaves delivery uncertain.
-            Class::Transport if info.delivery == Delivery::PossiblySent => return None,
             // A provider answered, so it holds the request. Only an explicit HTTP 408 says it did not process it.
-            Class::AnsweredTransient
-                if failure == Failure::Provider(ProviderKind::Timeout) && info.status != Some(408) =>
-            {
+            Class::Transient if failure == Failure::Provider(ProviderKind::Timeout) && info.status != Some(408) => {
                 return None;
             }
             _ => {}
@@ -165,10 +160,10 @@ mod tests {
         decide_with(&AttemptInfo::default(), failure, number)
     }
 
-    // A connection fault or a cut stream repeats. A request that the transport refused to send, or could not secure,
-    // fails the same way each time.
+    // A connection fault or a cut stream can pass, so it repeats. A request that the transport refused to send, or
+    // could not secure, fails the same way each time, so it does not repeat.
     #[test]
-    fn transport_failures_repeat_unless_the_request_cannot_leave() {
+    fn transport_failures_repeat_unless_they_fail_the_same_way_each_time() {
         let repeats = [
             Fault::ConnectFailed,
             Fault::ConnectTimeout,
@@ -257,20 +252,19 @@ mod tests {
         assert_eq!(Some(500), decide_with(&asked, unknown, 1));
     }
 
+    // The policy repeats a request that may have reached the provider. Output that the caller saw stops the repeat.
     #[test]
-    fn possible_delivery_blocks_transport_retry() {
+    fn a_cut_connection_or_stream_repeats_until_the_caller_saw_output() {
         let cut = Failure::Transport(Fault::ConnectionLost);
-        let sent = AttemptInfo {
-            delivery: Delivery::PossiblySent,
+        let unseen = AttemptInfo::default();
+        let shown = AttemptInfo {
+            output_seen: true,
             ..AttemptInfo::default()
         };
-        // No idempotency key exists for either provider, so a repeat could bill the same work twice.
-        assert_eq!(None, decide_with(&sent, cut, 1));
-        // A proven rate limit permits a repeat even after request delivery.
-        assert_eq!(
-            Some(500),
-            decide_with(&sent, Failure::Provider(ProviderKind::RateLimited), 1)
-        );
+
+        assert_eq!(Some(500), decide_with(&unseen, cut, 1));
+        assert_eq!(Some(500), decide_with(&unseen, Failure::IncompleteStream, 1));
+        assert_eq!(None, decide_with(&shown, cut, 1));
     }
 
     #[test]
@@ -279,7 +273,6 @@ mod tests {
             // An answer means the provider received the request.
             let info = AttemptInfo {
                 status: Some(status),
-                delivery: Delivery::PossiblySent,
                 ..AttemptInfo::default()
             };
             let expected = (status == 408).then_some(500);
