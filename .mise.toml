@@ -1,2 +1,4 @@
 [tools]
 rust = { version = "1.99.0", components = "clippy,rustfmt,rust-docs,rust-analyzer,rust-src" }
+# Biome checks the format and the lint rules of the TypeScript. It is one static binary.
+biome = "2.5.15"
