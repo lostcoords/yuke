@@ -1,8 +1,13 @@
 import { readLines, readText, writeText } from "yuke:internal/native/fs";
+import { sessionOf } from "yuke:internal/session";
 import { define, OUTPUT_BYTES } from "yuke:tools";
 
 /** The largest line number. */
 const LAST_LINE = 4_294_967_295;
+
+/** The default and the longest deadline of a command, in milliseconds. */
+const DEFAULT_TIMEOUT = 120_000;
+const LONGEST_TIMEOUT = 600_000;
 
 /** The description of the `path` argument of each tool. */
 const PATH = "A relative path resolves against the workspace root.";
@@ -90,3 +95,84 @@ define({
     return `The tool replaced ${count} match(es).`;
   },
 });
+
+define({
+  name: "exec",
+  description:
+    "Run a shell command in the working directory. Return stdout and stderr in write order, and the exit status. " +
+    "Each call starts a fresh shell and ends every process it starts. For a server or watcher, set background to " +
+    "true. Do not use &, nohup, or setsid.",
+  parameters: {
+    type: "object",
+    properties: {
+      command: { type: "string" },
+      timeout_ms: { type: "integer", minimum: 1, maximum: LONGEST_TIMEOUT, description: "The default is 120000." },
+      background: { type: "boolean", description: "Run a server or watcher as a job and return at once." },
+    },
+    required: ["command"],
+  },
+  concurrency: "serial",
+  async execute(args, context) {
+    const command = args.command as string;
+    if (command.trim().length === 0) throw new Error("Set command to a nonempty string.");
+    if (args.background === true) {
+      if (args.timeout_ms !== undefined) throw new Error("Remove timeout_ms, or set background to false.");
+      const job = await sessionOf(context).startJob(command);
+      return (
+        `[${job.id} started: ${shortCommand(command)}. Log: ${job.log}. Its end arrives as a message, so never ` +
+        `sleep or poll. Use stop with ${job.id} to end it.]`
+      );
+    }
+
+    const timeout = (args.timeout_ms as number | undefined) ?? DEFAULT_TIMEOUT;
+    const end = await sessionOf(context).exec(command, timeout, OUTPUT_BYTES, context.signal, context.output);
+    let text = end.output.length === 0 ? "[no output]\n" : endLine(end.output);
+    if (end.stopped) text += "[stopped: the tool call was cancelled.]";
+    else if (end.timedOut) {
+      text +=
+        `[timeout: ${timeout} ms. yuke stopped the process group. Run a smaller command. Raise timeout_ms up to ` +
+        `${LONGEST_TIMEOUT}. Set background to true for a server or watcher.]`;
+    } else if (end.signal !== undefined) text += `[signal: ${end.signal}]`;
+    else text += `[exit code: ${end.code}]`;
+    return text;
+  },
+});
+
+define({
+  name: "stop",
+  description:
+    "Stop background work by the id that its start result names. A job ends in the result, and no end message follows.",
+  parameters: {
+    type: "object",
+    properties: {
+      id: { type: "string" },
+    },
+    required: ["id"],
+  },
+  concurrency: "serial",
+  async execute(args, context) {
+    const id = args.id as string;
+    const session = sessionOf(context);
+    const stopped = await session.stopJob(id);
+    if (stopped === undefined) {
+      const ids = session.runningJobs();
+      throw new Error(
+        `The id ${id} does not exist. ${ids.length === 0 ? "Nothing runs." : `The ids are: ${ids.join(", ")}.`}`,
+      );
+    }
+    return `[${id} ${stopped.label}.] Log: ${stopped.log}`;
+  },
+});
+
+/** `text` with a final line feed. */
+function endLine(text: string): string {
+  return text.length === 0 || text.endsWith("\n") ? text : `${text}\n`;
+}
+
+/** The first line of `command`, at most 60 characters, for a job start. */
+function shortCommand(command: string): string {
+  const text = command.trim();
+  const end = text.indexOf("\n");
+  const line = end < 0 ? text : text.slice(0, end);
+  return line.length > 60 || end >= 0 ? `${line.slice(0, 57)}...` : line;
+}

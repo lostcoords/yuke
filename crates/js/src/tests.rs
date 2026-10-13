@@ -1,3 +1,4 @@
+mod exec;
 mod tools;
 
 use std::path::{Path, PathBuf};
@@ -9,7 +10,7 @@ use tokio::sync::mpsc;
 
 use crate::error::caught;
 use crate::strip::OXC_VERSION;
-use crate::{Error, Fault, Limits, Options, Runtime, ScriptError};
+use crate::{Error, Fault, Limits, Options, Processes, Runtime, ScriptError};
 
 /// The slice limit of the tests that end a loop.
 const SLICE: Duration = Duration::from_millis(200);
@@ -58,6 +59,7 @@ async fn start_with(folder: &Path, limits: Limits) -> (Runtime, mpsc::UnboundedR
     Runtime::start(Options {
         limits,
         cache: folder.join("cache"),
+        processes: Arc::new(Processes::new(folder.join("processes"))),
     })
     .await
     .unwrap()

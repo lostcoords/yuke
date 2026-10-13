@@ -1,7 +1,9 @@
 //! The native modules: Rust functions under `yuke:internal/native/` for the built-in modules. The engine builds the
 //! export object of each module at its start, so a function can hold Rust state.
 
+mod exec;
 mod fs;
+pub(crate) mod session;
 mod tools;
 
 use std::collections::HashMap;
@@ -44,6 +46,15 @@ impl<N: Native> ModuleDef for Definition<N> {
         }
         Ok(())
     }
+}
+
+/// The name and the exports of each native module.
+#[cfg(test)]
+pub(crate) fn modules() -> [(&'static str, &'static [&'static str]); 2] {
+    [
+        (fs::Fs::NAME, fs::Fs::EXPORTS),
+        (tools::Tools::NAME, tools::Tools::EXPORTS),
+    ]
 }
 
 /// Whether `name` names a native module.

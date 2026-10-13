@@ -18,6 +18,7 @@ use tokio::sync::{Notify, mpsc, oneshot};
 use crate::error::{Error, Fault, ScriptError, caught};
 use crate::loader::{ModuleLoader, NameResolver};
 use crate::native;
+use crate::processes::Processes;
 use crate::strip::Cache;
 use crate::timers::{self, Timers};
 use crate::tools::{self, Registry, ScriptTool, SessionHost};
@@ -34,6 +35,10 @@ pub struct Options {
 
     /// The folder that keeps the JavaScript of each TypeScript file. The runtime makes it when it is missing.
     pub cache: PathBuf,
+
+    /// The child processes of the tools. Give every JavaScript runtime of the process the same value, so a job
+    /// outlives a reload.
+    pub processes: Arc<Processes>,
 }
 
 /// The limits of the JavaScript of one runtime.
@@ -60,6 +65,7 @@ type Call = Box<dyn for<'js> FnOnce(Ctx<'js>, &Rc<Registry>, &Arc<Notify>) + Sen
 #[derive(Debug)]
 pub struct Runtime {
     caller: Caller,
+    processes: Arc<Processes>,
     /// The drop of this sender ends the thread. A tool keeps a clone of the caller, so the call channel can outlive the
     /// runtime.
     stop: oneshot::Sender<()>,
@@ -84,6 +90,7 @@ impl Runtime {
         let (faults, fault_receiver) = mpsc::unbounded_channel();
         let (ready, started) = oneshot::channel();
         let (stop, stopped) = oneshot::channel();
+        let processes = Arc::clone(&options.processes);
 
         let thread = std::thread::Builder::new()
             .name("yuke-js".into())
@@ -93,6 +100,7 @@ impl Runtime {
 
         let runtime = Self {
             caller: Caller { calls },
+            processes,
             stop,
             thread,
         };
@@ -125,7 +133,7 @@ impl Runtime {
     ///
     /// Returns [`Error::Stopped`] when the thread has ended.
     pub async fn tools(&self, host: Arc<dyn SessionHost>) -> Result<Vec<(yuke_ai::ToolDefinition, ScriptTool)>, Error> {
-        tools::tools(&self.caller, host).await
+        tools::tools(&self.caller, &self.processes, host).await
     }
 
     /// Run `f` on the JavaScript thread, and return its answer.
@@ -144,7 +152,13 @@ impl Runtime {
     /// Returns [`Error::Panicked`] when the thread panicked, and [`Error::Stopped`] when the tokio runtime of the caller
     /// ends during the wait.
     pub async fn shutdown(self) -> Result<(), Error> {
-        let Self { caller, stop, thread } = self;
+        let Self {
+            caller,
+            processes,
+            stop,
+            thread,
+        } = self;
+        drop(processes);
         drop(caller);
         drop(stop);
         let joined = tokio::task::spawn_blocking(move || thread.join())

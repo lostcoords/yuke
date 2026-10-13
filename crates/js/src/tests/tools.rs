@@ -14,13 +14,14 @@ use yuke_engine::{CancellationToken, Concurrency, Tool, ToolContent};
 
 use super::{evaluate, folder, module, next_fault, script_error, start, write};
 use crate::tools::forward;
-use crate::{Fault, Runtime, ScriptTool, SessionHost, baked};
+use crate::{Fault, JobEnded, Runtime, ScriptTool, SessionHost, baked};
 
-/// A session host that keeps the bytes of each stored attachment.
-#[derive(Debug)]
-struct TestHost {
-    folder: PathBuf,
-    media: Mutex<Vec<Vec<u8>>>,
+/// A session host that keeps the bytes of each stored attachment and each job end.
+#[derive(Debug, Default)]
+pub(super) struct TestHost {
+    pub(super) folder: PathBuf,
+    pub(super) media: Mutex<Vec<Vec<u8>>>,
+    pub(super) ended: Mutex<Vec<JobEnded>>,
 }
 
 #[async_trait]
@@ -37,10 +38,14 @@ impl SessionHost for TestHost {
         self.media.lock().unwrap().push(bytes);
         Ok(blob)
     }
+
+    fn job_ended(&self, ended: JobEnded) {
+        self.ended.lock().unwrap().push(ended);
+    }
 }
 
 /// A runtime with the tools of `modules` (module names), for a session in `folder`.
-async fn tools_of(folder: &Path, modules: &[&str]) -> (Runtime, Arc<TestHost>, HashMap<String, ScriptTool>) {
+pub(super) async fn tools_of(folder: &Path, modules: &[&str]) -> (Runtime, Arc<TestHost>, HashMap<String, ScriptTool>) {
     let (runtime, _faults) = start(folder).await;
     for name in modules {
         tokio::time::timeout(Duration::from_secs(5), runtime.import(name))
@@ -50,7 +55,7 @@ async fn tools_of(folder: &Path, modules: &[&str]) -> (Runtime, Arc<TestHost>, H
     }
     let host = Arc::new(TestHost {
         folder: folder.to_owned(),
-        media: Mutex::new(Vec::new()),
+        ..TestHost::default()
     });
     let tools = runtime
         .tools(Arc::clone(&host) as Arc<dyn SessionHost>)
@@ -64,11 +69,11 @@ async fn tools_of(folder: &Path, modules: &[&str]) -> (Runtime, Arc<TestHost>, H
 
 /// Call `tool` with `arguments`, and return its answer and its live texts. A call that does not answer fails the test
 /// after five seconds.
-async fn call(tool: &ScriptTool, arguments: &str) -> (Result<ToolContent, String>, Vec<String>) {
+pub(super) async fn call(tool: &ScriptTool, arguments: &str) -> (Result<ToolContent, String>, Vec<String>) {
     call_with(tool, arguments, CancellationToken::new()).await
 }
 
-async fn call_with(
+pub(super) async fn call_with(
     tool: &ScriptTool,
     arguments: &str,
     token: CancellationToken,
@@ -82,12 +87,12 @@ async fn call_with(
 }
 
 /// The text of a call that succeeds.
-async fn text_of(tool: &ScriptTool, arguments: &str) -> String {
+pub(super) async fn text_of(tool: &ScriptTool, arguments: &str) -> String {
     call(tool, arguments).await.0.unwrap().text
 }
 
 /// The error of a call that fails.
-async fn error_of(tool: &ScriptTool, arguments: &str) -> String {
+pub(super) async fn error_of(tool: &ScriptTool, arguments: &str) -> String {
     call(tool, arguments).await.0.unwrap_err()
 }
 
@@ -198,13 +203,13 @@ async fn the_built_in_tools_come_with_their_definitions() {
     runtime.import("yuke:builtins").await.unwrap();
     let host: Arc<dyn SessionHost> = Arc::new(TestHost {
         folder: folder.clone(),
-        media: Mutex::new(Vec::new()),
+        ..TestHost::default()
     });
 
     let tools = runtime.tools(host).await.unwrap();
 
     let names: Vec<&str> = tools.iter().map(|(definition, _)| definition.name.as_str()).collect();
-    assert_eq!(names, ["read", "write", "edit"]);
+    assert_eq!(names, ["read", "write", "edit", "exec", "stop"]);
     let (read, read_tool) = &tools[0];
     assert!(read.input_schema.contains("\"offset\""), "{}", read.input_schema);
     assert_eq!(read_tool.concurrency(), Concurrency::Parallel);
@@ -461,7 +466,7 @@ async fn a_throw_of_an_abort_listener_is_a_fault_and_the_next_listener_runs() {
     runtime.import(&module(&folder, "tools.ts")).await.unwrap();
     let host: Arc<dyn SessionHost> = Arc::new(TestHost {
         folder: folder.clone(),
-        media: Mutex::new(Vec::new()),
+        ..TestHost::default()
     });
     let tools = runtime.tools(host).await.unwrap();
 
@@ -496,7 +501,7 @@ async fn a_throw_of_a_listener_added_after_the_abort_is_a_fault() {
     runtime.import(&module(&folder, "tools.ts")).await.unwrap();
     let host: Arc<dyn SessionHost> = Arc::new(TestHost {
         folder: folder.clone(),
-        media: Mutex::new(Vec::new()),
+        ..TestHost::default()
     });
     let tools = runtime.tools(host).await.unwrap();
 

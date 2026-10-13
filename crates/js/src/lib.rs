@@ -7,12 +7,15 @@
 //! each uninterrupted stretch of JavaScript.
 //!
 //! A tool that the JavaScript defines with `yuke:tools` is an engine tool: [`Runtime::tools`] gives each one as a
-//! [`ScriptTool`] for the session of a [`SessionHost`]. `yuke:builtins` defines the tools `read`, `write`, and `edit`.
+//! [`ScriptTool`] for the session of a [`SessionHost`]. `yuke:builtins` defines the tools `read`, `write`, `edit`,
+//! `exec`, and `stop`. [`Processes`] runs the commands and the background jobs on the tokio runtime of the consumer,
+//! so a job outlives a reload of the JavaScript.
 
 mod baked;
 mod error;
 mod loader;
 mod native;
+mod processes;
 mod runtime;
 mod strip;
 #[cfg(test)]
@@ -22,5 +25,6 @@ mod tools;
 mod typescript;
 
 pub use error::{Error, Fault, ScriptError};
+pub use processes::{JobEnded, Processes};
 pub use runtime::{Limits, Options, Runtime};
 pub use tools::{ScriptTool, SessionHost};

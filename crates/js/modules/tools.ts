@@ -1,5 +1,6 @@
 import { checkArguments, checkSchema, type ObjectSchema } from "yuke:internal/arguments";
 import { register } from "yuke:internal/native/tools";
+import { bindSession } from "yuke:internal/session";
 import { CallSignal } from "yuke:internal/signal";
 
 export type { ArraySchema, ObjectSchema, ScalarSchema, Schema } from "yuke:internal/arguments";
@@ -50,9 +51,11 @@ export function define(tool: Tool): void {
     tool.description,
     JSON.stringify(tool.parameters),
     tool.concurrency,
-    (text, callId, folder, output) => {
+    (text, callId, folder, output, session) => {
       const signal = new CallSignal();
-      const answer = run(tool, text, { callId, folder, signal, output });
+      const context: ToolContext = { callId, folder, signal, output };
+      bindSession(context, session);
+      const answer = run(tool, text, context);
       return { answer, abort: (reason: unknown) => signal.abort(reason) };
     },
   );

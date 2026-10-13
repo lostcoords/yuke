@@ -13,10 +13,13 @@ use tokio::sync::mpsc;
 use yuke_engine::{CancellationToken, Concurrency, Tool, ToolContent, ToolContext};
 
 use crate::error::{Error, caught};
+use crate::native::session;
+use crate::processes::{JobEnded, Processes, StopOnDrop};
 use crate::runtime::Caller;
 
 /// What the tools of one session need from the consumer. One process can serve sessions of several workspaces at
-/// once, so each session gives its own host.
+/// once, so each session gives its own host. Give the same host to every [`Runtime::tools`](crate::Runtime::tools)
+/// call of a session, also after a reload: the jobs of a session belong to its host.
 #[async_trait]
 pub trait SessionHost: Send + Sync {
     /// The workspace folder of the session. Relative paths and commands of the tools start here.
@@ -28,6 +31,10 @@ pub trait SessionHost: Send + Sync {
     ///
     /// Returns the text of the failure. The model receives it as the error of the tool call.
     async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String>;
+
+    /// A background job of the session ended by itself. Give [`JobEnded::text`] to the session as an input that is not
+    /// from the user.
+    fn job_ended(&self, ended: JobEnded);
 }
 
 /// The tools that the JavaScript defined, on the JavaScript thread.
@@ -101,6 +108,7 @@ impl Registry {
 /// The definitions of the tools, each with its engine tool for the session of `host`.
 pub(crate) async fn tools(
     caller: &Caller,
+    processes: &Arc<Processes>,
     host: Arc<dyn SessionHost>,
 ) -> Result<Vec<(yuke_ai::ToolDefinition, ScriptTool)>, Error> {
     let entries = caller
@@ -113,6 +121,7 @@ pub(crate) async fn tools(
                 caller: caller.clone(),
                 id,
                 concurrency,
+                processes: Arc::clone(processes),
                 host: Arc::clone(&host),
             };
             (definition, tool)
@@ -126,6 +135,7 @@ pub struct ScriptTool {
     caller: Caller,
     id: u64,
     concurrency: Concurrency,
+    processes: Arc<Processes>,
     host: Arc<dyn SessionHost>,
 }
 
@@ -197,6 +207,8 @@ impl ScriptTool {
             ));
         };
         let id = self.id;
+        let processes = Arc::clone(&self.processes);
+        let host = Arc::clone(&self.host);
         let arguments = arguments.to_owned();
         let call_id = call_id.to_owned();
         let answer = self
@@ -218,7 +230,15 @@ impl ScriptTool {
                         }
                     }),
                 )?;
-                let started: Object<'_> = caught(&ctx, start.call((arguments, call_id, folder, output)))?;
+                // The guard stops the commands of the call when the call ends, and also when the call drops.
+                let stop = CancellationToken::new();
+                #[expect(
+                    unused_variables,
+                    reason = "only the drop of the guard matters: it stops the commands"
+                )]
+                let guard = StopOnDrop(stop.clone());
+                let session = caught(&ctx, session::object(&ctx, &processes, &host, &stop))?;
+                let started: Object<'_> = caught(&ctx, start.call((arguments, call_id, folder, output, session)))?;
                 let promise: Promise<'_> = caught(&ctx, started.get("answer"))?;
                 let abort: Function<'_> = caught(&ctx, started.get("abort"))?;
 
