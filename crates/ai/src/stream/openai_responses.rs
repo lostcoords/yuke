@@ -147,10 +147,6 @@ impl Reducer {
         let item = root.get("item").ok_or(DecodeError::Protocol)?;
         let item_type = item.require_str("type")?;
 
-        // An ignored item opens no block, so the items need their own bound.
-        if self.outputs.len() >= self.draft.limits.max_blocks as usize {
-            return Err(DecodeError::TooLarge);
-        }
         let fresh = Output {
             kind: ItemKind::Ignored,
             blocks: [None; 4],
@@ -160,6 +156,10 @@ impl Reducer {
             self.outputs[position] = fresh;
             position
         } else {
+            // An ignored item opens no block, so the items need their own bound.
+            if self.outputs.len() >= self.draft.limits.max_blocks as usize {
+                return Err(DecodeError::TooLarge);
+            }
             self.outputs.push(fresh);
             self.positions.insert(index, self.outputs.len() - 1);
             self.outputs.len() - 1
@@ -798,6 +798,25 @@ mod tests {
             r#"{"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message"}}"#,
         ]);
         assert_eq!(fed, Err(DecodeError::TooLarge));
+    }
+
+    // A replacement reuses the slot of the earlier item, so the item limit allows it.
+    #[test]
+    fn replacement_at_item_limit_succeeds() {
+        let mut h = Harness::new(PROTOCOL).limits(ResponseLimits {
+            max_blocks: 1,
+            ..ResponseLimits::default()
+        });
+        h.feed(&[
+            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"web_search_call"}}"#,
+            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
+            r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
+            r#"{"type":"response.output_text.delta","output_index":0,"delta":"a"}"#,
+            r#"{"type":"response.output_text.done","output_index":0}"#,
+            r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
+        ])
+        .unwrap();
+        h.expect_trace("start 0 text\ntext_delta 0 \"a\"\nstop 0 text\ndone stop \"completed\"");
     }
 
     // The provider marks a call it never finished, so the call must not reach the consumer.
