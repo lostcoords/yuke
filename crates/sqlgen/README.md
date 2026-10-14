@@ -34,6 +34,14 @@ INSERT INTO notes(author, title, body) VALUES (:author, :title, :body);
   `Vec<u8>`. A computed column needs a type annotation. A domain type needs a type override.
 - A table column without `NOT NULL` needs `?`. Write `NOT NULL` on key columns, for example
   `id INTEGER PRIMARY KEY NOT NULL`.
+- SQLite reports the table column of a result, not whether the result can be `NULL`. So the generator rejects only a
+  nullable table column without `?`. Some queries return `NULL` from a `NOT NULL` column. Mark their columns with `?`:
+  - an outer join (`LEFT`, `RIGHT`, `FULL`), also inside a view, a CTE, or a subquery
+  - a scalar subquery without a row
+  - a bare column of an aggregate over no rows
+  - a compound select with a later arm that returns `NULL`, for example `UNION ALL SELECT NULL`
+
+  A read of a `NULL` into a field that is not an `Option` fails.
 - Migrations are numbered `0001_name.sql`, `0002_name.sql`, and on, with no gap and no repeat.
 
 ## Generated code
@@ -71,8 +79,7 @@ and the fix. A usage error exits with status 2.
 ## Drift
 
 The generated file is committed. A test compares it with a new `generate` run, so `cargo test` fails when a query file
-or a migration changes without a new output. The fixture test writes the new output, then fails, so a second run
-passes.
+or a migration changes without a new output. The test writes nothing. The commands above write the new output.
 
 ## Dependencies
 

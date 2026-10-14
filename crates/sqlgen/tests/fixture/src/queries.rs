@@ -7,6 +7,7 @@ use super::*;
 pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!(r"../migrations/0001_notes.sql"),
     include_str!(r"../migrations/0002_pins.sql"),
+    include_str!(r"../migrations/0003_tags.sql"),
 ];
 
 pub(crate) mod notes {
@@ -70,6 +71,21 @@ pub(crate) mod notes {
             Ok(Self {
                 id: row.get("id")?,
                 pinned: row.get("pinned")?,
+            })
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub(crate) struct TaggedTitles {
+        pub(crate) title: String,
+        pub(crate) tag: Option<String>,
+    }
+
+    impl FromRow for TaggedTitles {
+        fn from_row(row: &Row<'_>) -> Result<Self> {
+            Ok(Self {
+                title: row.get("title")?,
+                tag: row.get("tag")?,
             })
         }
     }
@@ -154,6 +170,16 @@ pub(crate) mod notes {
             connection,
             r"INSERT INTO notes(author, title) VALUES (:author, :title) RETURNING id, pinned;",
             &[(":author", &params.author), (":title", &params.title)],
+        )
+    }
+
+    /// Each note has one row for each tag. A note without a tag has one row with a `NULL` tag. The schema column
+    /// `tags.name` is `NOT NULL`.
+    pub(crate) fn tagged_titles(connection: &Connection) -> Query<'_, TaggedTitles> {
+        Query::new(
+            connection,
+            r"SELECT notes.title, tags.name AS tag FROM notes LEFT JOIN tags ON tags.note = notes.id ORDER BY notes.id;",
+            &[],
         )
     }
 }

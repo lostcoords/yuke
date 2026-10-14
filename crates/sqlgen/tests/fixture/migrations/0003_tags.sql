@@ -1,0 +1,4 @@
+CREATE TABLE tags (
+    note INTEGER NOT NULL REFERENCES notes(id),
+    name TEXT NOT NULL
+) STRICT;

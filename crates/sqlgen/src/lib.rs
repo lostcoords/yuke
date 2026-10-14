@@ -19,6 +19,12 @@
 //! shared row type. The `---` lines before the SQL of a query are its doc comment. A field is not null, and `?` makes
 //! it an `Option`. Only a `NOT NULL` constraint lets a table column go without `?`.
 //!
+//! SQLite reports the table column of a result, not whether the result can be `NULL`. So the generator rejects only a
+//! nullable table column without `?`. Some queries return `NULL` from a `NOT NULL` column. These queries are an outer
+//! join (also inside a view, a CTE, or a subquery), a scalar subquery without a row, a bare column of an aggregate over
+//! no rows, and a compound select with a later arm that returns `NULL`. Mark their columns with `?`. A read of a
+//! `NULL` into a field that is not an `Option` fails.
+//!
 //! A parameter annotation is the type of the function argument, for example `&str` or `NoteId`, because SQLite
 //! reports no parameter type. A column takes its type from its schema declaration, `INTEGER` as `i64`, `REAL` as `f64`,
 //! `TEXT` as `String`, and `BLOB` as `Vec<u8>`, unless an annotation names another type.

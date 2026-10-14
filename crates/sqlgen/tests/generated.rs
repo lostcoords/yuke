@@ -32,15 +32,13 @@ fn fixture() -> PathBuf {
 #[test]
 fn the_committed_fixture_output_is_current() {
     let generated = yuke_sqlgen::generate(&fixture()).unwrap();
-    let path = fixture().join("src/queries.rs");
-    if std::fs::read_to_string(&path).ok().as_deref() != Some(generated.code.as_str()) {
-        // The test writes the new output, so a run after a change of the fixture updates the file.
-        std::fs::write(&path, generated.code).unwrap();
-        panic!(
-            "{} was out of date; it is now updated, so check the change and run the tests again",
-            path.display()
-        );
-    }
+    let committed = std::fs::read_to_string(fixture().join("src/queries.rs")).unwrap();
+
+    assert!(
+        committed == generated.code,
+        "tests/fixture/src/queries.rs is out of date. Run `cargo run -p yuke-sqlgen -- --crate \
+         crates/sqlgen/tests/fixture` to update it."
+    );
 }
 
 /// An in-memory database with each migration of `MIGRATIONS`.
@@ -54,7 +52,7 @@ fn migrated() -> Connection {
 
 #[test]
 fn migrations_hold_each_migration_file_in_number_order() {
-    let files: Vec<String> = ["0001_notes.sql", "0002_pins.sql"]
+    let files: Vec<String> = ["0001_notes.sql", "0002_pins.sql", "0003_tags.sql"]
         .iter()
         .map(|name| std::fs::read_to_string(fixture().join("migrations").join(name)).unwrap())
         .collect();
@@ -84,6 +82,35 @@ fn a_returning_query_returns_its_typed_row() {
         .one()
         .unwrap();
     assert_eq!(title, "first");
+}
+
+// The schema column `tags.name` is `NOT NULL`, but the join gives `NULL` for a note without a tag.
+#[test]
+fn an_optional_outer_join_field_reads_an_unmatched_row_as_none() {
+    let connection = migrated();
+    for title in ["tagged", "untagged"] {
+        let params = queries::notes::AddNoteParams { author: "ada", title };
+        queries::notes::add_note(&connection, &params).one().unwrap();
+    }
+    connection
+        .execute("INSERT INTO tags(note, name) VALUES (1, 'red')", [])
+        .unwrap();
+
+    let rows = queries::notes::tagged_titles(&connection).all().unwrap();
+
+    assert_eq!(
+        rows,
+        [
+            queries::notes::TaggedTitles {
+                title: "tagged".to_owned(),
+                tag: Some("red".to_owned()),
+            },
+            queries::notes::TaggedTitles {
+                title: "untagged".to_owned(),
+                tag: None,
+            },
+        ]
+    );
 }
 
 #[test]

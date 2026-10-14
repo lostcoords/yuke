@@ -30,3 +30,8 @@ SELECT stars FROM notes WHERE id = :id;
 --! add_note (author: &str, title: &str) : (id: NoteId, pinned)
 --- Add a note, and return its id and its `pinned` value.
 INSERT INTO notes(author, title) VALUES (:author, :title) RETURNING id, pinned;
+
+--! tagged_titles : (title, tag?)
+--- Each note has one row for each tag. A note without a tag has one row with a `NULL` tag. The schema column
+--- `tags.name` is `NOT NULL`.
+SELECT notes.title, tags.name AS tag FROM notes LEFT JOIN tags ON tags.note = notes.id ORDER BY notes.id;
