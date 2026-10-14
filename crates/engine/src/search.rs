@@ -55,23 +55,30 @@ impl ToolSearch for Bm25 {
             })
             .collect();
 
+        // The whole catalog sets the rarity of a term, so the search computes each rarity once.
+        let rarities: Vec<f64> = terms
+            .iter()
+            .map(|term| {
+                #[expect(clippy::cast_precision_loss, reason = "a catalog holds far fewer than 2^52 tools")]
+                let containing = frequencies
+                    .iter()
+                    .filter(|frequency| frequency.contains_key(term.as_str()))
+                    .count() as f64;
+                (1.0 + (count - containing + 0.5) / (containing + 0.5)).ln()
+            })
+            .collect();
+
         let mut scored: Vec<(usize, f64)> = Vec::new();
         for (index, frequency) in frequencies.iter().enumerate() {
+            #[expect(clippy::cast_precision_loss, reason = "a tool has far fewer than 2^52 words")]
+            let length = documents[index].len() as f64;
             let mut score = 0.0;
-            for term in &terms {
+            for (term, rarity) in terms.iter().zip(&rarities) {
                 let Some(&occurrences) = frequency.get(term.as_str()) else {
                     continue;
                 };
                 #[expect(clippy::cast_precision_loss, reason = "the counts are small")]
-                let (containing, occurrences, length) = (
-                    frequencies
-                        .iter()
-                        .filter(|other| other.contains_key(term.as_str()))
-                        .count() as f64,
-                    occurrences as f64,
-                    documents[index].len() as f64,
-                );
-                let rarity = (1.0 + (count - containing + 0.5) / (containing + 0.5)).ln();
+                let occurrences = occurrences as f64;
                 score += rarity * occurrences * (K1 + 1.0) / (occurrences + K1 * (1.0 - B + B * length / average));
             }
             if score > 0.0 {
