@@ -3,12 +3,11 @@
 #![expect(clippy::unwrap_used, reason = "a test fails by panicking")]
 
 use std::borrow::Cow;
-use std::time::Duration;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use yuke_engine::{Commit, Outcome, TurnEnd, TurnEvent};
+use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_protocol::{
     ClientNotification, ClientRequest, EventNumber, InputId, LiveUpdate, ModelReference, Notification, Request,
     Response, ServerNotification, SessionEvent, SessionId, SessionSettings, SessionUpdate, SessionUpdateParams,
@@ -242,126 +241,61 @@ fn cancel_and_update_notifications_read_and_write_their_json() {
 }
 
 #[test]
-fn each_live_update_reads_and_writes_its_json() {
+fn live_updates_preserve_draft_and_execution_identity_in_json() {
+    let draft = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9e";
+    let draft_id = serde_json::from_value(json!(draft)).unwrap();
     let cases = [
         (
-            json!({ "sessionUpdate": "agent_message_chunk", "text": "Hel" }),
-            LiveUpdate::AgentMessageChunk { text: "Hel".to_owned() },
+            json!({ "sessionUpdate": "turn_unconfirmed" }),
+            LiveUpdate::TurnUnconfirmed,
         ),
         (
-            json!({ "sessionUpdate": "agent_thought_chunk", "text": "Hmm" }),
-            LiveUpdate::AgentThoughtChunk { text: "Hmm".to_owned() },
+            json!({ "sessionUpdate": "draft_started", "draftId": draft }),
+            LiveUpdate::DraftStarted { draft_id },
         ),
         (
-            json!({ "sessionUpdate": "tool_call", "callId": "c1", "name": "read", "arguments": "{}" }),
-            LiveUpdate::ToolCall(yuke_ai::ToolCall {
-                call_id: "c1".to_owned(),
-                name: "read".to_owned(),
-                arguments: "{}".to_owned(),
-            }),
+            json!({ "sessionUpdate": "model", "draftId": draft,
+                "event": { "kind": "text_delta", "block": 2, "text": "Hello" } }),
+            LiveUpdate::Model {
+                draft_id,
+                event: yuke_protocol::ModelUpdate::TextDelta {
+                    block: 2,
+                    text: "Hello".to_owned(),
+                },
+            },
         ),
         (
-            json!({ "sessionUpdate": "tool_call_output", "callId": "c1", "text": "line" }),
-            LiveUpdate::ToolCallOutput {
-                call_id: "c1".to_owned(),
+            json!({ "sessionUpdate": "model", "draftId": draft,
+                "event": { "kind": "block_started", "block": 2, "blockKind": "tool_call" } }),
+            LiveUpdate::Model {
+                draft_id,
+                event: yuke_protocol::ModelUpdate::BlockStarted {
+                    block: 2,
+                    block_kind: yuke_ai::BlockKind::ToolCall,
+                },
+            },
+        ),
+        (
+            json!({ "sessionUpdate": "draft_committed", "draftId": draft,
+                "eventNumber": 7, "blocks": [2, 5] }),
+            LiveUpdate::DraftCommitted {
+                draft_id,
+                event_number: EventNumber(7),
+                blocks: vec![2, 5],
+            },
+        ),
+        (
+            json!({ "sessionUpdate": "tool_output", "execution": { "eventNumber": 7, "blockIndex": 0 }, "text": "line" }),
+            LiveUpdate::ToolOutput {
+                execution: yuke_protocol::BlockPosition {
+                    event_number: EventNumber(7),
+                    block_index: 0,
+                },
                 text: "line".to_owned(),
-            },
-        ),
-        (
-            json!({ "sessionUpdate": "tool_call_result", "callId": "c1", "content": "text", "isError": false }),
-            LiveUpdate::ToolCallResult(yuke_ai::ToolResult::success("c1", "text")),
-        ),
-        (
-            json!({ "sessionUpdate": "retry_scheduled", "afterMs": 1500, "error": "the stream ended early" }),
-            LiveUpdate::RetryScheduled {
-                after_ms: 1500,
-                error: "the stream ended early".to_owned(),
-            },
-        ),
-        (
-            json!({ "sessionUpdate": "round_failed", "error": "the provider is busy" }),
-            LiveUpdate::RoundFailed {
-                error: "the provider is busy".to_owned(),
             },
         ),
     ];
     for (json, update) in cases {
-        let mut params = json!({ "sessionId": SESSION });
-        params["update"] = json;
-        assert_json(
-            &params,
-            &SessionUpdateParams {
-                session_id: session(),
-                update: SessionUpdate::Live(update),
-            },
-        );
-    }
-}
-
-#[test]
-fn each_turn_event_that_a_client_shows_becomes_a_live_update() {
-    let call = yuke_ai::ToolCall {
-        call_id: "c1".to_owned(),
-        name: "read".to_owned(),
-        arguments: "{}".to_owned(),
-    };
-    let result = yuke_ai::ToolResult::success("c1", "text");
-    let text = yuke_ai::Delta { block: 0, text: "Hel" };
-    let reasoning = yuke_ai::Delta { block: 1, text: "Hmm" };
-    let attempt_error = yuke_ai::AttemptError {
-        cause: yuke_ai::Failure::IncompleteStream,
-        info: yuke_ai::AttemptInfo::default(),
-        partial: Vec::new(),
-    };
-    let round_error = yuke_ai::Error::Attempt(attempt_error.clone());
-    let cases = [
-        (
-            TurnEvent::Model(yuke_ai::Event::TextDelta(text)),
-            Some(LiveUpdate::AgentMessageChunk { text: "Hel".to_owned() }),
-        ),
-        (
-            TurnEvent::Model(yuke_ai::Event::ReasoningDelta(reasoning)),
-            Some(LiveUpdate::AgentThoughtChunk { text: "Hmm".to_owned() }),
-        ),
-        (TurnEvent::ToolStarted(&call), Some(LiveUpdate::ToolCall(call.clone()))),
-        (
-            TurnEvent::ToolOutput {
-                call_id: "c1",
-                text: "line",
-            },
-            Some(LiveUpdate::ToolCallOutput {
-                call_id: "c1".to_owned(),
-                text: "line".to_owned(),
-            }),
-        ),
-        (
-            TurnEvent::ToolFinished(&result),
-            Some(LiveUpdate::ToolCallResult(result.clone())),
-        ),
-        (
-            TurnEvent::RetryScheduled {
-                after: Duration::from_millis(1500),
-                error: &attempt_error,
-            },
-            Some(LiveUpdate::RetryScheduled {
-                after_ms: 1500,
-                error: attempt_error.to_string(),
-            }),
-        ),
-        (
-            TurnEvent::RoundFailed(&round_error),
-            Some(LiveUpdate::RoundFailed {
-                error: round_error.to_string(),
-            }),
-        ),
-        (TurnEvent::Model(yuke_ai::Event::ReasoningSectionStarted(1)), None),
-        // The saved context keeps a refusal as answer text, so the live update shows it the same way.
-        (
-            TurnEvent::Model(yuke_ai::Event::RefusalDelta(yuke_ai::Delta { block: 2, text: "No" })),
-            Some(LiveUpdate::AgentMessageChunk { text: "No".to_owned() }),
-        ),
-    ];
-    for (event, update) in cases {
-        assert_eq!(LiveUpdate::from_turn_event(&event), update);
+        assert_json(&json, &update);
     }
 }

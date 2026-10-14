@@ -28,23 +28,45 @@ use crate::turn_state::{Action, CANCELLED_REASON, Commit, Outcome, TurnState, no
 /// data that it keeps.
 #[derive(Debug)]
 pub enum TurnEvent<'a> {
+    /// A provider attempt starts. Its block ids start at zero.
+    ResponseStarted,
+
+    /// A provider attempt failed. None of its blocks enter the context.
+    ResponseFailed(&'a AttemptError),
+
+    /// A cancel ends the provider attempt. Its partial output still includes reasoning that the context omits.
+    ResponseCancelled {
+        /// The original identities and content of the retained partial blocks, in start order.
+        blocks: &'a [yuke_ai::PartialBlock],
+    },
+
     /// One event of a model reply, in source order.
     Model(yuke_ai::Event<'a>),
 
     /// The driver handles this call. This event comes before [`Hooks::before_tool`], so a blocked call also has it.
-    ToolStarted(&'a ToolCall),
+    ToolStarted {
+        /// The zero-based block index of the call in its answer commit.
+        block_index: usize,
+        /// The resolved call, after the deferred-tool bridge.
+        call: &'a ToolCall,
+    },
 
     /// A running call showed live output through [`ToolContext::output`]. The model never sees it.
     ToolOutput {
-        /// The id of the call.
-        call_id: &'a str,
+        /// The zero-based block index of the call in its answer commit.
+        block_index: usize,
 
         /// The output text.
         text: &'a str,
     },
 
     /// A call finished with this result. The approved calls of one parallel group finish in any order.
-    ToolFinished(&'a ToolResult),
+    ToolFinished {
+        /// The zero-based block index of the call in its answer commit.
+        block_index: usize,
+        /// The result of the call.
+        result: &'a ToolResult,
+    },
 
     /// A round failed after its retries. The model events of the round came before it, and the context keeps none of
     /// them. The driver then asks [`Hooks::before_round`] whether the round runs again.
@@ -212,12 +234,13 @@ impl<'a> Driver<'a> {
 
     /// The call that `call` runs, and its result when it runs nothing. The model calls a deferred tool through the
     /// bridge, but the hooks and the observer see the real call.
-    fn resolve<'c>(&self, call: &'c ToolCall) -> Resolved<'c> {
+    fn resolve<'c>(&self, block_index: usize, call: &'c ToolCall) -> Resolved<'c> {
         let call = if call.name == TOOL_CALL_NAME && self.toolset.deferred().next().is_some() {
             match search::unwrap_call(self.toolset, call) {
                 Ok(real) => Cow::Owned(real),
                 Err(refused) => {
                     return Resolved {
+                        block_index,
                         call: Cow::Borrowed(call),
                         result: Some(refused),
                     };
@@ -230,7 +253,11 @@ impl<'a> Driver<'a> {
         let result = serde_json::from_str::<serde::de::IgnoredAny>(&call.arguments)
             .err()
             .map(|error| not_executed(&call, &format!("its arguments are not valid JSON: {error}.")));
-        Resolved { call, result }
+        Resolved {
+            block_index,
+            call,
+            result,
+        }
     }
 
     /// Whether `call` runs the built-in search of the deferred tools.
@@ -258,8 +285,16 @@ impl<'a> Driver<'a> {
         cancellation_token: &CancellationToken,
     ) -> Vec<ToolResult> {
         // After this loop, a call without a result is a call that the hooks let run.
-        for Resolved { call, result } in &mut group {
-            observer.event(&TurnEvent::ToolStarted(call));
+        for Resolved {
+            block_index,
+            call,
+            result,
+        } in &mut group
+        {
+            observer.event(&TurnEvent::ToolStarted {
+                block_index: *block_index,
+                call,
+            });
             if result.is_none() {
                 *result = match race(self.hooks.before_tool(call), pin!(cancellation_token.cancelled())).await {
                     Raced::Done(ToolDecision::Run) => None,
@@ -268,16 +303,28 @@ impl<'a> Driver<'a> {
                 };
             }
             if let Some(result) = result {
-                observer.event(&TurnEvent::ToolFinished(result));
+                observer.event(&TurnEvent::ToolFinished {
+                    block_index: *block_index,
+                    result,
+                });
             }
         }
 
-        let calls = group.into_iter().map(|Resolved { call, result }| async move {
-            match result {
-                Some(result) => result,
-                None => self.run_call(&call, search_mode, observer, cancellation_token).await,
-            }
-        });
+        let calls = group.into_iter().map(
+            |Resolved {
+                 block_index,
+                 call,
+                 result,
+             }| async move {
+                match result {
+                    Some(result) => result,
+                    None => {
+                        self.run_call(block_index, &call, search_mode, observer, cancellation_token)
+                            .await
+                    }
+                }
+            },
+        );
         join_all(calls).await
     }
 
@@ -285,6 +332,7 @@ impl<'a> Driver<'a> {
     /// nothing.
     async fn run_call(
         &self,
+        block_index: usize,
         call: &ToolCall,
         search_mode: SearchMode,
         observer: &dyn Observer,
@@ -300,11 +348,14 @@ impl<'a> Driver<'a> {
                 Raced::Cancelled => not_executed(call, CANCELLED_REASON),
             }
         } else {
-            let context = ToolContext::new(call, cancellation_token, observer);
+            let context = ToolContext::new(block_index, call, cancellation_token, observer);
             let result = self.toolset.call(call, &context).await;
             self.after_tool(call, result, cancellation_token).await
         };
-        observer.event(&TurnEvent::ToolFinished(&result));
+        observer.event(&TurnEvent::ToolFinished {
+            block_index,
+            result: &result,
+        });
         result
     }
 
@@ -457,6 +508,7 @@ impl<'a> Driver<'a> {
         let mut cancelled = pin!(cancellation_token.cancelled());
         let mut number = NonZeroU32::MIN;
         loop {
+            observer.event(&TurnEvent::ResponseStarted);
             let opened = race(
                 Reply::open(
                     self.transport,
@@ -469,6 +521,7 @@ impl<'a> Driver<'a> {
                 cancelled.as_mut(),
             );
             let Raced::Done(mut reply) = opened.await else {
+                observer.event(&TurnEvent::ResponseCancelled { blocks: &[] });
                 return Sent::Cancelled(Vec::new());
             };
 
@@ -477,7 +530,11 @@ impl<'a> Driver<'a> {
                 match race(reply.next(), cancelled.as_mut()).await {
                     Raced::Done(Some(Ok(event))) => observer.event(&TurnEvent::Model(event)),
                     Raced::Done(_) => break,
-                    Raced::Cancelled => return Sent::Cancelled(reply.cancel()),
+                    Raced::Cancelled => {
+                        let blocks = reply.cancel();
+                        observer.event(&TurnEvent::ResponseCancelled { blocks: &blocks });
+                        return Sent::Cancelled(blocks.into_iter().map(|block| block.content).collect());
+                    }
                 }
             }
 
@@ -485,6 +542,7 @@ impl<'a> Driver<'a> {
                 Ok(response) => return Sent::Finished(Ok(response)),
                 Err(error) => error,
             };
+            observer.event(&TurnEvent::ResponseFailed(&error));
             // The reply sets `output_seen` when it yields a showable event, and the observer gets that event at once.
             let Some(delay) = retry::decide(self.retry_policy, &error, number, fastrand::f64()) else {
                 return Sent::Finished(Err(error.into()));
@@ -584,10 +642,18 @@ impl<'a> Turn<'a> {
                     };
                 }
 
-                Action::CallTools(calls, commit) => {
+                Action::CallTools(commit) => {
                     driver.save(&commit).await?;
                     // A closure kept across an await makes the turn future lose `Send`, so the calls resolve first.
-                    let resolved: Vec<Resolved<'_>> = calls.iter().map(|call| driver.resolve(call)).collect();
+                    let resolved: Vec<Resolved<'_>> = commit
+                        .blocks
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(block_index, block)| match block {
+                            Block::ToolCall(call) => Some(driver.resolve(block_index, call)),
+                            _ => None,
+                        })
+                        .collect();
                     let mut resolved = resolved.into_iter().peekable();
                     let mut results = Vec::new();
                     // Consecutive parallel calls form one group. A serial call forms a group of its own.
@@ -645,6 +711,9 @@ impl<'a> Turn<'a> {
 
 /// A tool call after the bridge and the JSON check.
 struct Resolved<'c> {
+    /// The call's block index in the answer commit.
+    block_index: usize,
+
     /// The call that the hooks and the observer see.
     call: Cow<'c, ToolCall>,
 

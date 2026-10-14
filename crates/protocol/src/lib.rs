@@ -10,7 +10,7 @@ mod session;
 mod update;
 
 pub use event::{SessionEvent, StoredEvent};
-pub use id::{EventNumber, InputId, SessionId};
+pub use id::{DraftId, EventNumber, InputId, SessionId};
 pub use message::{
     CancelParams, ClientNotification, ClientRequest, ForkSessionParams, ForkSessionResult, Implementation,
     InitializeParams, InitializeResult, InputParams, InputResult, JsonRpc, LoadSessionParams, LoadSessionResult,
@@ -18,4 +18,4 @@ pub use message::{
     ResponseOutcome, ServerNotification, SetSettingsParams, SetSettingsResult,
 };
 pub use session::{ModelReference, PendingInput, SessionSettings};
-pub use update::{LiveUpdate, SessionUpdate, SessionUpdateParams};
+pub use update::{BlockPosition, DraftDiscardReason, LiveUpdate, ModelUpdate, SessionUpdate, SessionUpdateParams};

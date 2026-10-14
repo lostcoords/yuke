@@ -142,8 +142,8 @@ fn two_parallel_calls_run_together_and_each_output_names_its_call() {
         driver
             .turn(&mut Vec::new(), vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
-                if let TurnEvent::ToolOutput { call_id, text } = event {
-                    outputs.lock().unwrap().push(format!("{call_id}: {text}"));
+                if let TurnEvent::ToolOutput { block_index, text } = event {
+                    outputs.lock().unwrap().push(format!("{block_index}: {text}"));
                 }
             })
             .run(),
@@ -151,7 +151,7 @@ fn two_parallel_calls_run_together_and_each_output_names_its_call() {
     .unwrap();
 
     assert_eq!(log.most.load(Ordering::SeqCst), 2);
-    assert_eq!(*outputs.lock().unwrap(), ["c1: output of c1", "c2: output of c2"]);
+    assert_eq!(*outputs.lock().unwrap(), ["0: output of c1", "1: output of c2"]);
 }
 
 #[test]
@@ -208,7 +208,7 @@ fn results_go_back_in_call_order_when_the_finish_order_differs() {
         driver
             .turn(&mut context, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
-                if let TurnEvent::ToolFinished(result) = event {
+                if let TurnEvent::ToolFinished { result, .. } = event {
                     finished.lock().unwrap().push(result.call_id.clone());
                 }
             })

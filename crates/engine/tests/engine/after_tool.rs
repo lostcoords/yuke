@@ -27,7 +27,7 @@ fn result_in_context(driver: Driver<'_>) -> ToolResult {
         driver
             .turn(&mut context, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
-                if let TurnEvent::ToolFinished(result) = event {
+                if let TurnEvent::ToolFinished { result, .. } = event {
                     finished.lock().unwrap().push((*result).clone());
                 }
             })

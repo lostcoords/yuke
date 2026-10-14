@@ -67,11 +67,13 @@ pub trait Store: Send + Sync {
 
     /// Save `commit` after the commits of session `id`, and remove the `consumed` pending inputs, in one step. Replay
     /// the saved commits in order: apply `replaced`, then append `blocks`.
+    /// Return the assigned event number within this session only after the durable write succeeds.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the save fails.
-    async fn commit(&self, id: SessionId, commit: &Commit<'_>, consumed: &[InputId]) -> Result<(), StoreError>;
+    async fn commit(&self, id: SessionId, commit: &Commit<'_>, consumed: &[InputId])
+    -> Result<EventNumber, StoreError>;
 
     /// The inputs of session `id` that no commit consumed, in id order.
     ///

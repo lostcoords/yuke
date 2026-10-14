@@ -53,6 +53,7 @@ macro_rules! store_tests {
             a_new_session_has_its_settings_as_its_first_event,
             each_commit_and_each_new_settings_is_the_next_event_and_an_input_is_no_event,
             a_saved_commit_reads_back_equal,
+            a_commit_receipt_names_its_saved_event_after_settings_and_a_fork,
             events_after_a_number_are_the_newer_events,
             a_fork_has_the_events_of_its_source_and_numbers_on_from_them,
             each_session_numbers_its_own_events,
@@ -942,4 +943,43 @@ pub async fn a_fork_is_the_newest_session_of_its_folder(store: &dyn Store) {
     let fork = store.fork_session(source, None).await.unwrap().id;
 
     assert_eq!(store.newest_session(Path::new("/work")).await.unwrap(), Some(fork));
+}
+
+/// A receipt gives the saved commit's session-local event number after settings changes, other-session writes, and a fork.
+pub async fn a_commit_receipt_names_its_saved_event_after_settings_and_a_fork(store: &dyn Store) {
+    let source = store.create_session(&settings("one")).await.unwrap();
+    let other = store.create_session(&settings("other")).await.unwrap();
+    store.commit(other.id, &end(&[]), &[]).await.unwrap();
+    store.set_settings(source.id, &settings("two")).await.unwrap();
+    let blocks = [yuke_ai::Block::user_text("task")];
+    let input = store.accept_input(source.id, &blocks).await.unwrap();
+    let receipt = store.commit(source.id, &end(&blocks), &[input]).await.unwrap();
+    assert_eq!(receipt, EventNumber(3));
+    assert_eq!(
+        store.events(source.id, Some(EventNumber(2))).await.unwrap(),
+        [StoredEvent {
+            event_number: EventNumber(3),
+            event: SessionEvent::Commit {
+                commit: end(&blocks).into_owned(),
+                consumed: vec![input],
+            },
+        }]
+    );
+    assert_eq!(store.pending(source.id).await.unwrap(), []);
+
+    let fork = store.fork_session(source.id, Some(receipt)).await.unwrap();
+    let fork_receipt = store.commit(fork.id, &end(&[]), &[]).await.unwrap();
+    let source_receipt = store.commit(source.id, &end(&[]), &[]).await.unwrap();
+    assert_eq!(fork_receipt, EventNumber(4));
+    assert_eq!(source_receipt, EventNumber(4));
+    assert_eq!(
+        store.events(fork.id, Some(receipt)).await.unwrap(),
+        [StoredEvent {
+            event_number: EventNumber(4),
+            event: SessionEvent::Commit {
+                commit: end(&[]).into_owned(),
+                consumed: vec![],
+            },
+        }]
+    );
 }

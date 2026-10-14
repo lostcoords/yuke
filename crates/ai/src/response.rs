@@ -132,7 +132,9 @@ pub type BlockId = u32;
 
 /// The kind of a streamed block. A refusal is the text of a model that declined the request. The library keeps the
 /// refusal apart from the answer text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
 pub enum BlockKind {
     /// Answer text.
     Text,
@@ -252,6 +254,15 @@ impl From<Content> for Block {
             Content::ToolCall(call) => Block::ToolCall(call),
         }
     }
+}
+
+/// A retained block of a cancelled reply, with its original stream identity.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PartialBlock {
+    /// The block id assigned when this block started.
+    pub block: BlockId,
+    /// The retained text or complete call, without provider replay state.
+    pub content: Partial,
 }
 
 /// One output part of a failed attempt, in start order. It holds text and complete tool calls, but no replay

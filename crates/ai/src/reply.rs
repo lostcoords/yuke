@@ -4,7 +4,9 @@
 use crate::encoder::Encoded;
 use crate::failure::Failure;
 use crate::request::{Reasoning, ReasoningReplay};
-use crate::response::{AttemptError, BlockKind, BlockResult, Completion, Content, Event, Partial, Response};
+use crate::response::{
+    AttemptError, BlockKind, BlockResult, Completion, Content, Event, Partial, PartialBlock, Response,
+};
 use crate::stream::{Options, Stream};
 use crate::transport::Transport;
 
@@ -75,16 +77,16 @@ impl Reply {
             End::Failed(cause) => Err(AttemptError {
                 cause,
                 info,
-                partial: partial(self.parts),
+                partial: partial(self.parts).map(|block| block.content).collect(),
             }),
             End::Open => unreachable!("a stream ends with `done` or a failure"),
         }
     }
 
-    /// Stop the attempt, close its stream, and return the partial output of the events so far. A call cut off in its
-    /// arguments is not in the output.
-    pub fn cancel(self) -> Vec<Partial> {
-        partial(self.parts)
+    /// Stop the attempt and close its stream. Return partial output with the original block ids.
+    /// Omit empty text and calls with incomplete arguments.
+    pub fn cancel(self) -> Vec<PartialBlock> {
+        partial(self.parts).collect()
     }
 }
 
@@ -138,25 +140,28 @@ fn complete(parts: Vec<Part>) -> Vec<Content> {
 
 /// Keep the text of every block and each complete tool call, in start order. Provider state never survives a
 /// failure.
-fn partial(parts: Vec<Part>) -> Vec<Partial> {
-    parts
-        .into_iter()
-        .filter_map(|part| {
-            let (text_part, text): (fn(String) -> Partial, String) = match part {
-                Part::Stopped(Content::ToolCall(call)) => return Some(Partial::ToolCall(call)),
-                // A call cut off in its arguments does not exist.
-                Part::Open(BlockKind::ToolCall, _) => return None,
-                Part::Open(BlockKind::Text, text) | Part::Stopped(Content::Text(text)) => (Partial::Text, text),
-                Part::Open(BlockKind::Refusal, text) | Part::Stopped(Content::Refusal(text)) => {
-                    (Partial::Refusal, text)
-                }
-                Part::Open(BlockKind::Reasoning, text) | Part::Stopped(Content::Reasoning(Reasoning { text, .. })) => {
-                    (Partial::Reasoning, text)
-                }
-            };
-            (!text.is_empty()).then(|| text_part(text))
+fn partial(parts: Vec<Part>) -> impl Iterator<Item = PartialBlock> {
+    (0..).zip(parts).filter_map(|(block, part)| {
+        let (text_part, text): (fn(String) -> Partial, String) = match part {
+            Part::Stopped(Content::ToolCall(call)) => {
+                return Some(PartialBlock {
+                    block,
+                    content: Partial::ToolCall(call),
+                });
+            }
+            // A call cut off in its arguments does not exist.
+            Part::Open(BlockKind::ToolCall, _) => return None,
+            Part::Open(BlockKind::Text, text) | Part::Stopped(Content::Text(text)) => (Partial::Text, text),
+            Part::Open(BlockKind::Refusal, text) | Part::Stopped(Content::Refusal(text)) => (Partial::Refusal, text),
+            Part::Open(BlockKind::Reasoning, text) | Part::Stopped(Content::Reasoning(Reasoning { text, .. })) => {
+                (Partial::Reasoning, text)
+            }
+        };
+        (!text.is_empty()).then(|| PartialBlock {
+            block,
+            content: text_part(text),
         })
-        .collect()
+    })
 }
 
 #[cfg(test)]
@@ -216,7 +221,13 @@ mod tests {
 
         let partial = reply.cancel();
 
-        assert_eq!(partial, [Partial::Text("Hello from the mock provider.".to_owned())]);
+        assert_eq!(
+            partial,
+            [PartialBlock {
+                block: 0,
+                content: Partial::Text("Hello from the mock provider.".to_owned())
+            }]
+        );
         assert_eq!(canned.closes(), 1);
     }
 

@@ -262,7 +262,12 @@ impl Store for SqliteStore {
         Ok(loaded.into_opened(id, file.map(|file| self.lease(id, file))))
     }
 
-    async fn commit(&self, id: SessionId, commit: &Commit<'_>, consumed: &[InputId]) -> Result<(), StoreError> {
+    async fn commit(
+        &self,
+        id: SessionId,
+        commit: &Commit<'_>,
+        consumed: &[InputId],
+    ) -> Result<EventNumber, StoreError> {
         let owner = self.owner(id);
         let params = commit_params(id, commit, consumed).map_err(failed)?;
         let consumed: Vec<u64> = consumed.iter().map(|input| input.0).collect();
@@ -403,13 +408,14 @@ fn save_commit(
     connection: &mut Connection,
     params: &events::InsertCommitParams,
     consumed: &[u64],
-) -> Result<(), StoreError> {
+) -> Result<EventNumber, StoreError> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(failed)?;
-    if events::insert_commit(&transaction, params).map_err(failed)? == 0 {
-        return Err(StoreError::NotFound);
-    }
+    let row = events::insert_commit(&transaction, params)
+        .opt()
+        .map_err(failed)?
+        .ok_or(StoreError::NotFound)?;
 
     for &input in consumed {
         let params = pending_inputs::DeletePendingInputParams {
@@ -419,7 +425,8 @@ fn save_commit(
         pending_inputs::delete_pending_input(&transaction, &params).map_err(failed)?;
     }
 
-    transaction.commit().map_err(failed)
+    transaction.commit().map_err(failed)?;
+    Ok(EventNumber(row.seq))
 }
 
 /// The newest event of session `source` that a fork copies: event `through`, which must end a completed turn, or the

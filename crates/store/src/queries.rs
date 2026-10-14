@@ -59,6 +59,17 @@ pub(crate) mod events {
     }
 
     #[derive(Debug, Clone, PartialEq)]
+    pub(crate) struct InsertCommit {
+        pub(crate) seq: u64,
+    }
+
+    impl FromRow for InsertCommit {
+        fn from_row(row: &Row<'_>) -> Result<Self> {
+            Ok(Self { seq: row.get("seq")? })
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
     pub(crate) struct ForkCut {
         pub(crate) cut: u64,
     }
@@ -195,8 +206,11 @@ FROM sessions WHERE id = :session_id;",
     }
 
     /// Add a commit event with the next event number of the session. It adds no row for an unknown session.
-    pub(crate) fn insert_commit(connection: &Connection, params: &InsertCommitParams) -> Result<usize> {
-        execute(
+    pub(crate) fn insert_commit<'a>(
+        connection: &'a Connection,
+        params: &InsertCommitParams,
+    ) -> Query<'a, InsertCommit> {
+        Query::new(
             connection,
             r"INSERT INTO events(
     session_id, seq, kind, blocks, consumed, head, keep, model, base_url, input_tokens, output_tokens,
@@ -206,7 +220,8 @@ SELECT
     id, (SELECT coalesce(max(seq), 0) + 1 FROM events WHERE session_id = :session_id), 'commit', :blocks, :consumed,
     :head, :keep, :model, :base_url, :input_tokens, :output_tokens, :reasoning_tokens, :cache_read_tokens,
     :cache_write_tokens, :finish_reason, :end_kind, :end_finish_reason, :end_message
-FROM sessions WHERE id = :session_id;",
+FROM sessions WHERE id = :session_id
+RETURNING seq;",
             &[
                 (":session_id", &params.session_id),
                 (":blocks", &params.blocks),

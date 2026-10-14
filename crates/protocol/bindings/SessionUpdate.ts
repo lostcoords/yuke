@@ -3,6 +3,6 @@ import type { LiveUpdate } from "./LiveUpdate";
 import type { StoredEvent } from "./StoredEvent";
 
 /**
- * A saved event with its event number, or a live update with none. The `sessionUpdate` field of each names its kind.
+ * A saved event or a temporary fact of a turn.
  */
 export type SessionUpdate = StoredEvent | LiveUpdate;

@@ -47,6 +47,7 @@ pub fn parse_arguments<T: DeserializeOwned>(arguments: &str) -> Result<T, String
 
 /// What a call gives its tool besides the arguments.
 pub struct ToolContext<'a> {
+    block_index: usize,
     call: &'a ToolCall,
     cancellation_token: &'a CancellationToken,
     observer: &'a dyn Observer,
@@ -62,11 +63,13 @@ impl std::fmt::Debug for ToolContext<'_> {
 
 impl<'a> ToolContext<'a> {
     pub(crate) fn new(
+        block_index: usize,
         call: &'a ToolCall,
         cancellation_token: &'a CancellationToken,
         observer: &'a dyn Observer,
     ) -> Self {
         ToolContext {
+            block_index,
             call,
             cancellation_token,
             observer,
@@ -88,7 +91,7 @@ impl<'a> ToolContext<'a> {
     /// [`ToolContent`].
     pub fn output(&self, text: &str) {
         self.observer.event(&TurnEvent::ToolOutput {
-            call_id: &self.call.call_id,
+            block_index: self.block_index,
             text,
         });
     }

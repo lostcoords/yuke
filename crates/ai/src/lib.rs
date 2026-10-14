@@ -33,7 +33,7 @@ pub use request::{
 };
 pub use response::{
     AttemptError, AttemptInfo, BlockId, BlockKind, BlockResult, BlockStarted, BlockStopped, Completion, Content, Delta,
-    Done, Error, Event, FinishReason, Partial, Response, ResponseLimits, Usage,
+    Done, Error, Event, FinishReason, Partial, PartialBlock, Response, ResponseLimits, Usage,
 };
 pub use stream::Options;
 use transport::Transport;

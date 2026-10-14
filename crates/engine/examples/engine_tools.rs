@@ -82,8 +82,8 @@ struct Transcript {
 impl Observer for Transcript {
     fn event(&self, event: &TurnEvent<'_>) {
         match event {
-            TurnEvent::ToolStarted(call) => println!("call {} {}", call.name, call.arguments),
-            TurnEvent::ToolFinished(result) => {
+            TurnEvent::ToolStarted { call, .. } => println!("call {} {}", call.name, call.arguments),
+            TurnEvent::ToolFinished { result, .. } => {
                 println!("result {}", result.content);
                 self.tool_runs.fetch_add(1, Ordering::Relaxed);
             }

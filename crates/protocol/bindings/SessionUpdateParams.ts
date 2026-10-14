@@ -7,7 +7,7 @@ import type { SessionUpdate } from "./SessionUpdate";
  */
 export type SessionUpdateParams = { 
 /**
- * The session of the update.
+ * The session of the update. All positions in the update belong to this session.
  */
 sessionId: SessionId, 
 /**

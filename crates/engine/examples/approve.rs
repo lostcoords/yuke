@@ -84,7 +84,7 @@ impl Observer for PrintText {
                 std::io::stdout().flush().expect("Couldn't flush");
                 self.line_open.store(true, Ordering::Relaxed);
             }
-            TurnEvent::ToolStarted(_) if self.line_open.swap(false, Ordering::Relaxed) => println!(),
+            TurnEvent::ToolStarted { .. } if self.line_open.swap(false, Ordering::Relaxed) => println!(),
             _ => {}
         }
     }

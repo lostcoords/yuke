@@ -8,7 +8,7 @@ INSERT INTO events(session_id, seq, kind, settings)
 SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM events WHERE session_id = :session_id), 'settings', :settings
 FROM sessions WHERE id = :session_id;
 
---! insert_commit (session_id: [u8; 16], blocks: String, consumed: String, head?: String, keep?: usize, model?: String, base_url?: String, input_tokens?: u64, output_tokens?: u64, reasoning_tokens?: u64, cache_read_tokens?: u64, cache_write_tokens?: u64, finish_reason?: String, end_kind?: String, end_finish_reason?: String, end_message?: String)
+--! insert_commit (session_id: [u8; 16], blocks: String, consumed: String, head?: String, keep?: usize, model?: String, base_url?: String, input_tokens?: u64, output_tokens?: u64, reasoning_tokens?: u64, cache_read_tokens?: u64, cache_write_tokens?: u64, finish_reason?: String, end_kind?: String, end_finish_reason?: String, end_message?: String) : (seq: u64)
 --- Add a commit event with the next event number of the session. It adds no row for an unknown session.
 INSERT INTO events(
     session_id, seq, kind, blocks, consumed, head, keep, model, base_url, input_tokens, output_tokens,
@@ -18,7 +18,8 @@ SELECT
     id, (SELECT coalesce(max(seq), 0) + 1 FROM events WHERE session_id = :session_id), 'commit', :blocks, :consumed,
     :head, :keep, :model, :base_url, :input_tokens, :output_tokens, :reasoning_tokens, :cache_read_tokens,
     :cache_write_tokens, :finish_reason, :end_kind, :end_finish_reason, :end_message
-FROM sessions WHERE id = :session_id;
+FROM sessions WHERE id = :session_id
+RETURNING seq;
 
 --! fork_cut (id: [u8; 16]) : (cut: u64)
 --- The newest event number that a fork with no `through` copies: the end of the newest completed turn. With no completed

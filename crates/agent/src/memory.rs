@@ -52,10 +52,11 @@ struct Saved {
 
 impl Saved {
     /// Save `event` with the next number of the session. `write` is the order number of the write.
-    fn push_event(&mut self, event: SessionEvent, write: u64) {
+    fn push_event(&mut self, event: SessionEvent, write: u64) -> EventNumber {
         let event_number = EventNumber(self.events.len() as u64 + 1);
         self.events.push(StoredEvent { event_number, event });
         self.newest_write = write;
+        event_number
     }
 
     /// The settings of the newest settings event.
@@ -225,19 +226,24 @@ impl Store for MemoryStore {
         Ok(saved.to_opened(id, lease))
     }
 
-    async fn commit(&self, id: SessionId, commit: &Commit<'_>, consumed: &[InputId]) -> Result<(), StoreError> {
+    async fn commit(
+        &self,
+        id: SessionId,
+        commit: &Commit<'_>,
+        consumed: &[InputId],
+    ) -> Result<EventNumber, StoreError> {
         let mut state = lock(&self.state);
         let write = state.next_write();
         let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
         saved.pending.retain(|input| !consumed.contains(&input.id));
-        saved.push_event(
+        let event_number = saved.push_event(
             SessionEvent::Commit {
                 commit: commit.clone().into_owned(),
                 consumed: consumed.to_vec(),
             },
             write,
         );
-        Ok(())
+        Ok(event_number)
     }
 
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError> {

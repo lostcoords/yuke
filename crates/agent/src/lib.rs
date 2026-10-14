@@ -7,12 +7,14 @@ mod session;
 mod store;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+mod updates;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub use memory::MemoryStore;
 pub use session::{InputSender, Session, SessionError, SessionTurn};
 pub use store::{Access, Lease, Opened, Store, StoreError, blob_of};
+pub use updates::SessionObserver;
 
 // Each change of a guarded value is complete before the next statement, so a panic of another holder leaves a valid
 // value.

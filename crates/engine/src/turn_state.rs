@@ -29,7 +29,7 @@ pub(crate) enum Action<'a> {
 
     /// Run these calls, then give the results to [`TurnState::tools_finished`] in call order. The commit holds the
     /// answer.
-    CallTools(ToolCalls<'a>, Commit<'a>),
+    CallTools(Commit<'a>),
 
     /// A round ended, and its answer and tool results are in the context. Call [`TurnState::proceed`],
     /// [`TurnState::continue_turn`], or [`TurnState::stop`].
@@ -174,22 +174,6 @@ pub struct Answer {
     pub finish_reason: FinishReason,
 }
 
-/// The tool calls of one answer. It borrows the blocks of the answer, so the calls are not copied.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ToolCalls<'a> {
-    blocks: &'a [Block],
-}
-
-impl<'a> ToolCalls<'a> {
-    /// The calls, in answer order.
-    pub(crate) fn iter(self) -> impl Iterator<Item = &'a ToolCall> {
-        self.blocks.iter().filter_map(|block| match block {
-            Block::ToolCall(call) => Some(call),
-            _ => None,
-        })
-    }
-}
-
 /// How a turn ended without a failure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -275,18 +259,12 @@ impl<'c> TurnState<'c> {
         }
 
         if matches!(finish_reason, FinishReason::ToolCalls | FinishReason::Stop) {
-            let start = self.context.len();
             self.context.extend(completion.into_blocks());
             let saved = self.take_unsaved();
-            return Action::CallTools(
-                ToolCalls {
-                    blocks: &self.context[start..],
-                },
-                Commit {
-                    answer: Some(answer),
-                    ..Commit::blocks(&self.context[saved..])
-                },
-            );
+            return Action::CallTools(Commit {
+                answer: Some(answer),
+                ..Commit::blocks(&self.context[saved..])
+            });
         }
 
         // No call runs, but each call gets a result, so the next request stays valid.

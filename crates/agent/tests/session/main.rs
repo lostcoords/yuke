@@ -3,6 +3,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used, reason = "a test fails by panicking")]
 
 mod support;
+mod updates;
 
 use std::sync::Arc;
 

@@ -145,6 +145,9 @@ fn tool_error_reaches_the_model_and_the_turn_continues() {
 /// A short label for `event`, so a test can compare whole event lists.
 fn label(event: &TurnEvent<'_>) -> String {
     match event {
+        TurnEvent::ResponseStarted => "response started".to_owned(),
+        TurnEvent::ResponseFailed(_) => "response failed".to_owned(),
+        TurnEvent::ResponseCancelled { .. } => "response cancelled".to_owned(),
         TurnEvent::Model(yuke_ai::Event::BlockStarted(started)) => {
             format!("start {} {:?}", started.block, started.kind)
         }
@@ -152,8 +155,8 @@ fn label(event: &TurnEvent<'_>) -> String {
         TurnEvent::Model(yuke_ai::Event::ToolInputDelta(delta)) => format!("arguments {} {}", delta.block, delta.text),
         TurnEvent::Model(yuke_ai::Event::BlockStopped(stopped)) => format!("stop {}", stopped.block),
         TurnEvent::Model(yuke_ai::Event::Done(done)) => format!("done {:?}", done.finish_reason),
-        TurnEvent::ToolStarted(call) => format!("tool {}", call.call_id),
-        TurnEvent::ToolFinished(result) => format!("result {} {}", result.call_id, result.content),
+        TurnEvent::ToolStarted { call, .. } => format!("tool {}", call.call_id),
+        TurnEvent::ToolFinished { result, .. } => format!("result {} {}", result.call_id, result.content),
         TurnEvent::RoundFailed(_) => "round failed".to_owned(),
         other => format!("other {other:?}"),
     }
@@ -190,6 +193,7 @@ fn observer_receives_every_event_of_each_round_in_source_order() {
     assert_eq!(
         *seen.lock().unwrap(),
         [
+            "response started",
             "start 0 ToolCall",
             "arguments 0 {}",
             "stop 0",
@@ -201,6 +205,7 @@ fn observer_receives_every_event_of_each_round_in_source_order() {
             "result c1 result 1",
             "tool c2",
             "result c2 result 2",
+            "response started",
             "start 0 Text",
             "text done",
             "stop 0",
@@ -226,7 +231,16 @@ fn failed_reply_delivers_its_events_then_fails_with_the_partial_output() {
             .run(),
     );
 
-    assert_eq!(*seen.lock().unwrap(), ["start 0 Text", "text cut", "round failed"]);
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            "response started",
+            "start 0 Text",
+            "text cut",
+            "response failed",
+            "round failed"
+        ]
+    );
     let Err(TurnError::Model(yuke_ai::Error::Attempt(error))) = outcome else {
         panic!("expected a failed attempt, got {outcome:?}");
     };
@@ -678,7 +692,10 @@ fn cancel_during_the_stream_keeps_the_partial_text_and_delivers_every_event() {
     );
 
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
-    assert_eq!(*seen.lock().unwrap(), ["start 0 Text", "text cut"]);
+    assert_eq!(
+        *seen.lock().unwrap(),
+        ["response started", "start 0 Text", "text cut", "response cancelled"]
+    );
     assert_eq!(context, [Block::user_text("go"), Block::assistant_text("cut")]);
 }
 

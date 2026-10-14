@@ -4,9 +4,10 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use yuke_engine::{CancellationToken, Commit, Driver, Inbox, Journal, Observer, Outcome, TurnEnd, TurnError};
+use yuke_engine::{CancellationToken, Commit, Driver, Inbox, Journal, Outcome, TurnEnd, TurnError};
 
 use crate::lock;
+use crate::updates::{SessionObserver, Updates};
 use yuke_protocol::{EventNumber, InputId, PendingInput, SessionId, SessionSettings};
 
 use crate::store::{Access, Lease, Opened, Store, StoreError};
@@ -70,15 +71,21 @@ impl SessionJournal {
     }
 }
 
+struct TurnJournal<'a> {
+    journal: &'a SessionJournal,
+    updates: &'a Updates<'a>,
+}
+
 #[async_trait]
-impl Journal for SessionJournal {
+impl Journal for TurnJournal<'_> {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // The first commit after a take holds the blocks of the taken inputs, so it consumes their ids. The ids leave
         // `taken` before the save: after a failed save, the next turn takes the inputs that are still pending again.
-        let consumed = std::mem::take(&mut lock(&self.inputs).taken);
-        self.store.commit(self.id, commit, &consumed).await?;
+        let consumed = std::mem::take(&mut lock(&self.journal.inputs).taken);
+        let event_number = self.journal.store.commit(self.journal.id, commit, &consumed).await?;
+        self.updates.committed(event_number, commit, consumed);
         // The inbox then gives the input that arrived during the round.
-        self.load_pending().await?;
+        self.journal.load_pending().await?;
         Ok(())
     }
 }
@@ -287,7 +294,7 @@ impl InputSender {
 pub struct SessionTurn<'s> {
     session: &'s mut Session,
     driver: Driver<'s>,
-    observer: Option<&'s dyn Observer>,
+    observer: Option<&'s dyn SessionObserver>,
     cancellation_token: CancellationToken,
 }
 
@@ -301,8 +308,8 @@ impl fmt::Debug for SessionTurn<'_> {
 }
 
 impl<'s> SessionTurn<'s> {
-    /// Give each event of the turn to `observer`.
-    pub fn observer(self, observer: &'s dyn Observer) -> Self {
+    /// Give each saved commit and live fact of the turn to `observer`.
+    pub fn observer(self, observer: &'s dyn SessionObserver) -> Self {
         SessionTurn {
             observer: Some(observer),
             ..self
@@ -340,17 +347,20 @@ impl<'s> SessionTurn<'s> {
         let input = session.journal.take_waiting();
         let session_id = session.journal.id.to_string();
         let journal: &SessionJournal = &session.journal;
-        let mut turn = driver
+        let updates = Updates::new(session.journal.id, observer);
+        let turn_journal = TurnJournal {
+            journal,
+            updates: &updates,
+        };
+        let turn = driver
             .settings(&session.settings.settings)
             .session_id(&session_id)
-            .journal(journal)
+            .journal(&turn_journal)
             .inbox(journal)
             .blobs(journal)
             .turn(&mut session.context, input)
-            .cancellation_token(cancellation_token);
-        if let Some(observer) = observer {
-            turn = turn.observer(observer);
-        }
+            .cancellation_token(cancellation_token)
+            .observer(&updates);
         match turn.run().await {
             Ok(outcome) => {
                 session.lease = lease;

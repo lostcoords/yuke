@@ -38,7 +38,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         answer: None,
         end: Some(TurnEnd::Outcome(Outcome::Stopped)),
     };
-    store.commit(id, &commit, &[input]).await?;
+    let event_number = store.commit(id, &commit, &[input]).await?;
+    println!("commit event: {}", event_number.0);
     println!("pending after commit: {}", store.pending(id).await?.len());
     drop(opened);
 

@@ -1,4 +1,4 @@
-//! The ids of a session and of a pending input, and the number of an event in its session.
+//! Session, input, and ephemeral draft identities, and session-local event numbers.
 
 use std::fmt;
 use std::str::FromStr;
@@ -55,3 +55,17 @@ pub struct EventNumber(pub u64);
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(transparent)]
 pub struct InputId(pub u64);
+
+/// The ephemeral identity of one live provider attempt. The store never saves it.
+/// A reconnect cannot resume this draft. The client replaces prior drafts with saved history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(transparent)]
+pub struct DraftId(#[cfg_attr(test, ts(type = "string"))] uuid::Uuid);
+
+impl DraftId {
+    /// Create an identity for a new draft.
+    pub fn generate() -> Self {
+        Self(uuid::Uuid::now_v7())
+    }
+}

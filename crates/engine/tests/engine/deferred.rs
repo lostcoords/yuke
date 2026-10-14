@@ -170,7 +170,7 @@ fn tool_call_runs_a_deferred_tool_and_the_hooks_and_the_observer_see_the_real_ca
         driver
             .turn(&mut context, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
-                if let TurnEvent::ToolStarted(call) = event {
+                if let TurnEvent::ToolStarted { call, .. } = event {
                     started.lock().unwrap().push(format!("{} {}", call.call_id, call.name));
                 }
             })

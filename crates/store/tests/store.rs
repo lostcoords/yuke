@@ -259,3 +259,47 @@ async fn a_create_that_cannot_make_its_folder_leaves_no_session_row() {
         .unwrap();
     assert_eq!(rows, 0);
 }
+
+#[tokio::test]
+async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
+    let folder = folder("a_failed_transaction_returns_no_receipt_and_keeps_the_input");
+    let store = SqliteStore::open(&folder).await.unwrap();
+    let session = store.create_session(&settings("one")).await.unwrap();
+    let blocks = [yuke_ai::Block::user_text("task")];
+    let input = store.accept_input(session.id, &blocks).await.unwrap();
+    let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
+    // A deferred constraint lets both statements run, but it makes COMMIT fail.
+    connection
+        .execute_batch(
+            "CREATE TABLE receipt_parent (id INTEGER PRIMARY KEY);
+         CREATE TABLE receipt_child (parent INTEGER REFERENCES receipt_parent(id) DEFERRABLE INITIALLY DEFERRED);
+         CREATE TRIGGER reject_commit AFTER DELETE ON pending_inputs
+         BEGIN INSERT INTO receipt_child VALUES (1); END;",
+        )
+        .unwrap();
+
+    let error = store.commit(session.id, &end(&blocks), &[input]).await.unwrap_err();
+    assert!(
+        std::error::Error::source(&error)
+            .unwrap()
+            .to_string()
+            .contains("FOREIGN KEY constraint failed"),
+        "{error}"
+    );
+    assert_eq!(store.events(session.id, None).await.unwrap().len(), 1);
+    let pending = store.pending(session.id).await.unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, input);
+    assert_eq!(pending[0].blocks, blocks);
+
+    connection.execute_batch("DROP TRIGGER reject_commit;").unwrap();
+    let receipt = store.commit(session.id, &end(&blocks), &[input]).await.unwrap();
+    assert_eq!(receipt, EventNumber(2));
+    assert_eq!(store.pending(session.id).await.unwrap(), []);
+    let id = session.id;
+    drop(session);
+    drop(store);
+    let reopened = SqliteStore::open(&folder).await.unwrap();
+    let events = reopened.events(id, None).await.unwrap();
+    assert_eq!(events.last().unwrap().event_number, EventNumber(2));
+}

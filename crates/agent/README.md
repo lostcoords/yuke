@@ -27,6 +27,30 @@ turn reads the blobs of its media from the store, so the driver needs no blob st
 - An input from `Session::input` is pending in the store until a commit consumes it. An open starts no turn.
 - After a failed commit, or when the caller drops a turn, the next turn opens the session again from the store.
 
+## Session updates
+
+`SessionTurn::observer` accepts a `SessionObserver`. It receives typed `SessionUpdateParams`, with no JSON round trip.
+The callback receives owned parameters and must return without a wait. The caller owns any delivery queue.
+
+Each provider attempt starts a distinct draft. Model updates retain block ids, boundaries, reasoning sections,
+argument fragments, and response completion. A response completion does not confirm a save or end the turn.
+
+`Store::commit` returns its assigned event number after the durable write succeeds. The session publishes that saved
+commit before it reconciles the draft. `DraftCommitted` carries the event number and the original draft block ids.
+The array index is the destination block index within that commit.
+The client removes the whole draft, including blocks absent from the array, and uses the saved event as history.
+A failed attempt discards its draft. An unconfirmed write or dropped turn also discards its draft. Reload the journal
+to resolve a write whose result is uncertain. `TurnUnconfirmed` marks a turn that stops without a confirmed terminal
+commit. Discard its provisional tool state and reload the journal. Results in confirmed saved events remain valid.
+
+Tool updates identify the call by its saved event number and block index within that event. The enclosing session id
+completes this identity. Provider call ids remain model data and can repeat. Parallel tool results can arrive in a
+different order from their saved order. A live result remains provisional until a saved commit confirms it.
+`TurnUnconfirmed` invalidates provisional results. The client must then reload the journal.
+
+This observer covers commits and live facts of its turn. It is not a subscription to other store writes.
+Reconnect snapshots, settings publication, and client queue policy belong to the server delivery layer.
+
 ## Shared store tests
 
 The `testing` feature gives one test function for each store behavior. `store_tests!(make_store)` writes one

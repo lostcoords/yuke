@@ -34,7 +34,14 @@ fn lines(context: &[Block]) -> Vec<String> {
 /// The names of the calls that `action` asks to run.
 fn called_names(action: Action<'_>) -> Vec<String> {
     match action {
-        Action::CallTools(calls, _) => calls.iter().map(|call| call.name.clone()).collect(),
+        Action::CallTools(commit) => commit
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::ToolCall(call) => Some(call.name.clone()),
+                _ => None,
+            })
+            .collect(),
         other => panic!("expected tool calls, got {other:?}"),
     }
 }

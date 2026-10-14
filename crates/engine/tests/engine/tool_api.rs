@@ -130,11 +130,13 @@ fn tool_output_reaches_the_observer_between_the_start_and_the_end_of_its_call() 
         driver
             .turn(&mut Vec::new(), vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| match event {
-                TurnEvent::ToolStarted(call) => seen.lock().unwrap().push(format!("started {}", call.call_id)),
-                TurnEvent::ToolOutput { call_id, text } => {
-                    seen.lock().unwrap().push(format!("output {call_id} {text}"));
+                TurnEvent::ToolStarted { call, .. } => seen.lock().unwrap().push(format!("started {}", call.call_id)),
+                TurnEvent::ToolOutput { block_index, text } => {
+                    seen.lock().unwrap().push(format!("output {block_index} {text}"));
                 }
-                TurnEvent::ToolFinished(result) => seen.lock().unwrap().push(format!("finished {}", result.content)),
+                TurnEvent::ToolFinished { result, .. } => {
+                    seen.lock().unwrap().push(format!("finished {}", result.content));
+                }
                 _ => {}
             })
             .run(),
@@ -145,8 +147,8 @@ fn tool_output_reaches_the_observer_between_the_start_and_the_end_of_its_call() 
         *seen.lock().unwrap(),
         [
             "started c1",
-            "output c1 line 1\n",
-            "output c1 line 2\n",
+            "output 0 line 1\n",
+            "output 0 line 2\n",
             "finished printed for c1"
         ]
     );
