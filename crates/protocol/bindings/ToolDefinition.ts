@@ -18,7 +18,7 @@ description: string,
 inputSchema: string, 
 /**
  * Exclude the definition from the prompt until a tool search names it. A request with a deferred tool asks for
- * the native search, so send it only to a target with [`Target::tool_search`]. The encoder does not check it.
+ * the native tool search, so the encoder refuses it for a target without [`Target::tool_search`].
  */
 deferLoading: boolean, 
 /**

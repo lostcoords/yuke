@@ -163,12 +163,13 @@ pub(crate) mod events {
         pub(crate) settings: String,
     }
 
-    /// Add a settings event with the number that `take_seq` took.
+    /// Add a settings event with the next event number of the session. It adds no row for an unknown session.
     pub(crate) fn insert_settings(connection: &Connection, params: &InsertSettingsParams) -> Result<usize> {
         execute(
             connection,
             r"INSERT INTO events(session_id, seq, kind, settings)
-SELECT id, last_seq, 'settings', :settings FROM sessions WHERE id = :session_id;",
+SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM events WHERE session_id = :session_id), 'settings', :settings
+FROM sessions WHERE id = :session_id;",
             &[(":session_id", &params.session_id), (":settings", &params.settings)],
         )
     }
@@ -193,7 +194,7 @@ SELECT id, last_seq, 'settings', :settings FROM sessions WHERE id = :session_id;
         pub(crate) end_message: Option<String>,
     }
 
-    /// Add a commit event with the number that `take_seq` took.
+    /// Add a commit event with the next event number of the session. It adds no row for an unknown session.
     pub(crate) fn insert_commit(connection: &Connection, params: &InsertCommitParams) -> Result<usize> {
         execute(
             connection,
@@ -202,9 +203,9 @@ SELECT id, last_seq, 'settings', :settings FROM sessions WHERE id = :session_id;
     reasoning_tokens, cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message
 )
 SELECT
-    id, last_seq, 'commit', :blocks, :consumed, :head, :keep, :model, :base_url, :input_tokens, :output_tokens,
-    :reasoning_tokens, :cache_read_tokens, :cache_write_tokens, :finish_reason, :end_kind, :end_finish_reason,
-    :end_message
+    id, (SELECT coalesce(max(seq), 0) + 1 FROM events WHERE session_id = :session_id), 'commit', :blocks, :consumed,
+    :head, :keep, :model, :base_url, :input_tokens, :output_tokens, :reasoning_tokens, :cache_read_tokens,
+    :cache_write_tokens, :finish_reason, :end_kind, :end_finish_reason, :end_message
 FROM sessions WHERE id = :session_id;",
             &[
                 (":session_id", &params.session_id),
@@ -236,7 +237,7 @@ FROM sessions WHERE id = :session_id;",
             r"SELECT coalesce(
     (SELECT max(seq) FROM events WHERE session_id = :id AND kind = 'commit' AND end_kind = 'completed'),
     (SELECT min(seq) - 1 FROM events WHERE session_id = :id AND kind = 'commit'),
-    last_seq
+    (SELECT max(seq) FROM events WHERE session_id = :id)
 ) AS cut
 FROM sessions WHERE id = :id;",
             &[(":id", &id)],
@@ -482,30 +483,6 @@ pub(crate) mod sessions {
 
     pub(crate) fn insert_session(connection: &Connection, id: [u8; 16]) -> Result<usize> {
         execute(connection, r"INSERT INTO sessions(id) VALUES (:id);", &[(":id", &id)])
-    }
-
-    #[derive(Debug)]
-    pub(crate) struct InsertForkParams {
-        pub(crate) id: [u8; 16],
-        pub(crate) cut: u64,
-    }
-
-    /// Add session `id` of a fork, with `cut` as its newest event number.
-    pub(crate) fn insert_fork(connection: &Connection, params: &InsertForkParams) -> Result<usize> {
-        execute(
-            connection,
-            r"INSERT INTO sessions(id, last_seq) VALUES (:id, :cut);",
-            &[(":id", &params.id), (":cut", &params.cut)],
-        )
-    }
-
-    /// Take the next event number of the session. It changes no row for an unknown session.
-    pub(crate) fn take_seq(connection: &Connection, id: [u8; 16]) -> Result<usize> {
-        execute(
-            connection,
-            r"UPDATE sessions SET last_seq = last_seq + 1 WHERE id = :id;",
-            &[(":id", &id)],
-        )
     }
 
     /// The number of sessions with this id: 0 or 1.

@@ -17,7 +17,7 @@ pub(crate) struct HeadText {
 impl HeadText {
     /// Copy the URL, the headers, and the origin of a request to `target`. Headers go in credential, identity,
     /// route, and session order.
-    pub(crate) fn build(&mut self, target: &Target, session_id: &str) -> Result<(), EncodeError> {
+    pub(crate) fn build(&mut self, target: &Target, session_id: Option<&str>) -> Result<(), EncodeError> {
         let route = &target.route;
         let credential = &target.credential;
         if route.credential_header.is_none() != matches!(credential, Credential::None) {
@@ -28,16 +28,16 @@ impl HeadText {
             Credential::ApiKey(key) => (key, &[]),
             Credential::OAuth(grant) => (&grant.access_token, &grant.headers),
         };
-        let session_header = route.session_header.name().filter(|_| !session_id.is_empty());
+        let session = route.session_header.name().zip(session_id);
         // The encoder writes these two headers. A second copy of one lets a gateway choose either value.
         let written = [
             route.credential_header.map_or("", CredentialHeader::name),
-            session_header.unwrap_or(""),
+            session.map_or("", |(name, _)| name),
         ];
         let invalid = route::invalid_header(identity, &written)
             .or_else(|| route::invalid_header(&route.headers, &written))
             .or_else(|| (!route::valid_header_value(secret)).then_some(written[0]))
-            .or_else(|| session_header.filter(|_| !route::valid_header_value(session_id)));
+            .or_else(|| session.and_then(|(name, value)| (!route::valid_header_value(value)).then_some(name)));
         if let Some(name) = invalid {
             return Err(EncodeError::InvalidHeader { name: name.to_owned() });
         }
@@ -60,8 +60,8 @@ impl HeadText {
         }
         self.headers
             .extend(identity.iter().chain(route.headers.iter()).cloned());
-        if let Some(name) = session_header {
-            self.headers.push(Header::new(name, session_id.to_owned()));
+        if let Some((name, value)) = session {
+            self.headers.push(Header::new(name, value.to_owned()));
         }
         Ok(())
     }
@@ -119,7 +119,8 @@ mod tests {
             tool_search: false,
         };
         let mut head = HeadText::default();
-        head.build(&target, session_id)?;
+        // An empty id stands for a request without one.
+        head.build(&target, Some(session_id).filter(|id| !id.is_empty()))?;
         Ok(head)
     }
 
@@ -432,7 +433,7 @@ mod tests {
                 wire: Wire::OpenaiChat(ChatWire::default()),
                 tool_search: false,
             };
-            head.build(&target, "").unwrap();
+            head.build(&target, None).unwrap();
             assert_eq!(head.headers, want);
         }
     }

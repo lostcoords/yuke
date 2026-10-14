@@ -251,11 +251,7 @@ async fn turn_in_runtime(
     for (definition, tool) in runtime.tools(host).await.map_err(|error| describe(&error))? {
         toolset.add(definition, tool).map_err(|error| describe(&error))?;
     }
-    let mut settings = session.settings().settings.clone();
-    settings.session_id = session.id().to_string();
-    let driver = Driver::new(machine.transport, target, &TokioTimer)
-        .toolset(&toolset)
-        .settings(&settings);
+    let driver = Driver::new(machine.transport, target, &TokioTimer).toolset(&toolset);
 
     session
         .input()

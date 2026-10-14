@@ -131,6 +131,7 @@ pub struct Driver<'a> {
     inbox: &'a dyn Inbox,
     journal: Option<&'a dyn Journal>,
     settings: &'a Settings,
+    session_id: Option<&'a str>,
     blob_store: Option<&'a dyn BlobStore>,
     tool_search: &'a dyn ToolSearch,
     retry_policy: retry::Policy,
@@ -166,6 +167,7 @@ impl<'a> Driver<'a> {
             inbox: &NoInput,
             journal: None,
             settings: &NO_SETTINGS,
+            session_id: None,
             blob_store: None,
             tool_search: &Bm25,
             retry_policy: retry::Policy::default(),
@@ -334,6 +336,16 @@ impl<'a> Driver<'a> {
         Driver { settings, ..self }
     }
 
+    /// Send the session id `session_id` with each request, for routing and the Responses cache key. See
+    /// [`Request::session_id`].
+    #[must_use]
+    pub fn session_id(self, session_id: &'a str) -> Self {
+        Driver {
+            session_id: Some(session_id),
+            ..self
+        }
+    }
+
     /// Read the media of each request from `blob_store`. Without a store, a request with media fails to encode.
     #[must_use]
     pub fn blobs(self, blob_store: &'a dyn BlobStore) -> Self {
@@ -410,16 +422,11 @@ impl<'a> Driver<'a> {
             let target = plan.target.as_ref().unwrap_or(self.target);
             let settings = plan.settings.as_ref().unwrap_or(self.settings);
             let tools = declared.tools(target.tool_search);
-            match self
-                .send(
-                    encoder,
-                    Request::new(turn_state.context()).tools(tools).settings(settings),
-                    target,
-                    observer,
-                    cancellation_token,
-                )
-                .await
-            {
+            let mut request = Request::new(turn_state.context()).tools(tools).settings(settings);
+            if let Some(session_id) = self.session_id {
+                request = request.session_id(session_id);
+            }
+            match self.send(encoder, request, target, observer, cancellation_token).await {
                 Sent::Finished(Err(error)) => {
                     observer.event(&TurnEvent::RoundFailed(&error));
                     failure = Some(error);

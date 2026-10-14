@@ -149,6 +149,7 @@ pub fn valid_cost(bands: &[PriceBand]) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Caps {
     /// Whether the model calls tools.
+    // @todo(xyaman): No request reads this yet. Leave out the tools for a model that cannot call them.
     pub tools: Option<bool>,
     /// Deferred tools and tool references need explicit support for the resolved model and endpoint.
     pub tool_search: Option<bool>,
@@ -220,6 +221,7 @@ pub struct Model<'a> {
     /// How a request asks the model to reason.
     pub dialect: Dialect,
     /// The kinds the model reads and writes.
+    // @todo(xyaman): No request reads this yet. Replace the media that a model cannot read with a note.
     pub modalities: Modalities<'a>,
 }
 

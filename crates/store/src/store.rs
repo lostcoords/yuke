@@ -362,17 +362,10 @@ fn read<T>(
     Ok(value)
 }
 
-/// Take the next event number of session `session`, and return `false` for an unknown session. The insert of the event
-/// reads the number from the session row. Call it in the write transaction of that insert, so a failed save leaves no gap.
-fn take_seq(connection: &Connection, session: [u8; 16]) -> rusqlite::Result<bool> {
-    Ok(sessions::take_seq(connection, session)? > 0)
-}
-
 /// Save a new session row and its first event, which holds its settings, in one transaction.
 fn insert_session(connection: &mut Connection, session: [u8; 16], settings: String) -> rusqlite::Result<()> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     sessions::insert_session(&transaction, session)?;
-    take_seq(&transaction, session)?;
     let params = events::InsertSettingsParams {
         session_id: session,
         settings,
@@ -384,14 +377,13 @@ fn insert_session(connection: &mut Connection, session: [u8; 16], settings: Stri
 /// Save a settings event in one transaction. Returns `false` for an unknown session.
 fn save_settings(connection: &mut Connection, session: [u8; 16], settings: String) -> rusqlite::Result<bool> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if !take_seq(&transaction, session)? {
-        return Ok(false);
-    }
     let params = events::InsertSettingsParams {
         session_id: session,
         settings,
     };
-    events::insert_settings(&transaction, &params)?;
+    if events::insert_settings(&transaction, &params)? == 0 {
+        return Ok(false);
+    }
     transaction.commit()?;
     Ok(true)
 }
@@ -403,10 +395,9 @@ fn save_commit(
     consumed: &[u64],
 ) -> rusqlite::Result<bool> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if !take_seq(&transaction, params.session_id)? {
+    if events::insert_commit(&transaction, params)? == 0 {
         return Ok(false);
     }
-    events::insert_commit(&transaction, params)?;
 
     for &input in consumed {
         let params = pending_inputs::DeletePendingInputParams {
@@ -458,8 +449,7 @@ fn copy_rows(
             .ok_or(StoreError::NotFound)?,
     };
 
-    let params = sessions::InsertForkParams { id: fork, cut };
-    sessions::insert_fork(&transaction, &params).map_err(failed)?;
+    sessions::insert_session(&transaction, fork).map_err(failed)?;
     let params = events::CopyEventsParams {
         source,
         session_id: fork,

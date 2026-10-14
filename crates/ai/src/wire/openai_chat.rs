@@ -840,18 +840,21 @@ mod tests {
         );
     }
 
+    // Chat has no tool search, so it refuses a deferred tool even when the target claims a native tool search.
     #[test]
     fn rejects_deferred_tools() {
         let blocks = [Block::user_text("read")];
         let tools = [ToolDefinition::new("mcp_read", "read", "{}").deferred()];
-        expect_error(
-            EncodeError::Unsupported,
-            "chat",
-            chat(),
-            Request::new(&blocks)
-                .tools(&tools)
-                .settings(&Settings::new().max_output_tokens(100)),
-        );
+        let target = Target {
+            tool_search: true,
+            ..crate::wire::testing::target_of("chat", chat())
+        };
+
+        let result = crate::Encoder::new()
+            .encode(&target, Request::new(&blocks).tools(&tools))
+            .map(|_| ());
+
+        crate::testing::assert_same(result, Err(EncodeError::Unsupported));
     }
 
     #[test]

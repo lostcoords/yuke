@@ -14,8 +14,9 @@ pub(crate) fn target_of(model: &str, wire: Wire) -> Target {
         model: model.to_owned().into(),
         route: Route::default(),
         credential: Credential::None,
+        // The helper enables the native tool search for each protocol that has one, so a request can defer a tool.
+        tool_search: !matches!(wire, Wire::OpenaiChat(_)),
         wire,
-        tool_search: false,
     }
 }
 

@@ -3,20 +3,21 @@
 --: Event(seq: u64, kind, blocks?: Json<Vec<yuke_ai::Block>>, settings?: Json<yuke_protocol::SessionSettings>, consumed?: Json<Vec<yuke_protocol::InputId>>, head?: Json<Vec<yuke_ai::Block>>, keep?: usize, model?, base_url?, input_tokens?: u64, output_tokens?: u64, reasoning_tokens?: u64, cache_read_tokens?: u64, cache_write_tokens?: u64, finish_reason?, end_kind?, end_finish_reason?, end_message?)
 
 --! insert_settings (session_id: [u8; 16], settings: String)
---- Add a settings event with the number that `take_seq` took.
+--- Add a settings event with the next event number of the session. It adds no row for an unknown session.
 INSERT INTO events(session_id, seq, kind, settings)
-SELECT id, last_seq, 'settings', :settings FROM sessions WHERE id = :session_id;
+SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM events WHERE session_id = :session_id), 'settings', :settings
+FROM sessions WHERE id = :session_id;
 
 --! insert_commit (session_id: [u8; 16], blocks: String, consumed: String, head?: String, keep?: usize, model?: String, base_url?: String, input_tokens?: u64, output_tokens?: u64, reasoning_tokens?: u64, cache_read_tokens?: u64, cache_write_tokens?: u64, finish_reason?: String, end_kind?: String, end_finish_reason?: String, end_message?: String)
---- Add a commit event with the number that `take_seq` took.
+--- Add a commit event with the next event number of the session. It adds no row for an unknown session.
 INSERT INTO events(
     session_id, seq, kind, blocks, consumed, head, keep, model, base_url, input_tokens, output_tokens,
     reasoning_tokens, cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message
 )
 SELECT
-    id, last_seq, 'commit', :blocks, :consumed, :head, :keep, :model, :base_url, :input_tokens, :output_tokens,
-    :reasoning_tokens, :cache_read_tokens, :cache_write_tokens, :finish_reason, :end_kind, :end_finish_reason,
-    :end_message
+    id, (SELECT coalesce(max(seq), 0) + 1 FROM events WHERE session_id = :session_id), 'commit', :blocks, :consumed,
+    :head, :keep, :model, :base_url, :input_tokens, :output_tokens, :reasoning_tokens, :cache_read_tokens,
+    :cache_write_tokens, :finish_reason, :end_kind, :end_finish_reason, :end_message
 FROM sessions WHERE id = :session_id;
 
 --! fork_cut (id: [u8; 16]) : (cut: u64)
@@ -26,7 +27,7 @@ FROM sessions WHERE id = :session_id;
 SELECT coalesce(
     (SELECT max(seq) FROM events WHERE session_id = :id AND kind = 'commit' AND end_kind = 'completed'),
     (SELECT min(seq) - 1 FROM events WHERE session_id = :id AND kind = 'commit'),
-    last_seq
+    (SELECT max(seq) FROM events WHERE session_id = :id)
 ) AS cut
 FROM sessions WHERE id = :id;
 

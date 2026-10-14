@@ -14,6 +14,8 @@ use support::{
     text_reply, tool_reply,
 };
 use yuke_agent::{Access, MemoryStore, Session, SessionError, Store, StoreError};
+use yuke_ai::route::SessionHeader;
+use yuke_ai::transport::Header;
 use yuke_ai::{Block, Media, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::{Commit, Driver, Toolset};
 use yuke_protocol::{InputId, ModelReference, SessionEvent, SessionSettings};
@@ -138,6 +140,33 @@ async fn a_pending_input_waits_for_the_next_turn_after_an_open() {
     assert_eq!(before.context, []);
     assert_in_order(&transport.requests()[0], &["one"]);
     assert_eq!(store.pending(id).await.unwrap(), []);
+}
+
+// The caller gives the driver no settings and no session id, so both come from the session.
+#[tokio::test]
+async fn a_turn_sends_the_settings_and_the_id_of_its_session() {
+    let store = Arc::new(MemoryStore::new());
+    let transport = ScriptedTransport::new([text_reply("two")]);
+    let mut target = target();
+    target.route.session_header = SessionHeader::XOpencodeSession;
+    let mut session_settings = settings();
+    session_settings.settings = yuke_ai::Settings::new().system("Be brief.");
+    let mut session = Session::create(store, session_settings).await.unwrap();
+    session.input().send(&[Block::user_text("one")]).await.unwrap();
+
+    session
+        .turn(Driver::new(&transport, &target, &NoWait))
+        .run()
+        .await
+        .unwrap();
+
+    assert_in_order(&transport.requests()[0], &["Be brief.", "one"]);
+    let session_header = Header::new("x-opencode-session", session.id().to_string());
+    assert!(
+        transport.headers()[0].contains(&session_header),
+        "the request headers lack the session header: {:?}",
+        transport.headers()
+    );
 }
 
 #[tokio::test]

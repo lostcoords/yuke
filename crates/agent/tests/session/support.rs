@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use yuke_agent::{Access, InputSender, MemoryStore, Opened, Store, StoreError};
 use yuke_ai::route::{Credential, Route};
-use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
+use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Header, Outgoing, Transport};
 use yuke_ai::{AnthropicWire, Block, Target, Wire};
 use yuke_engine::{Commit, Timer, Tool, ToolContent, ToolContext};
 use yuke_protocol::{EventNumber, InputId, ModelReference, PendingInput, SessionId, SessionSettings, StoredEvent};
@@ -101,6 +101,7 @@ fn sse(events: &[String]) -> String {
 pub(crate) struct ScriptedTransport {
     replies: Mutex<VecDeque<String>>,
     requests: Mutex<Vec<String>>,
+    headers: Mutex<Vec<Vec<Header>>>,
 }
 
 impl ScriptedTransport {
@@ -108,12 +109,18 @@ impl ScriptedTransport {
         ScriptedTransport {
             replies: Mutex::new(replies.into_iter().collect()),
             requests: Mutex::default(),
+            headers: Mutex::default(),
         }
     }
 
     /// The request bodies, in send order.
     pub(crate) fn requests(&self) -> Vec<String> {
         self.requests.lock().unwrap().clone()
+    }
+
+    /// The headers of each request, in send order.
+    pub(crate) fn headers(&self) -> Vec<Vec<Header>> {
+        self.headers.lock().unwrap().clone()
     }
 }
 
@@ -125,6 +132,7 @@ impl Transport for ScriptedTransport {
     ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
         let body = String::from_utf8(request.body().flatten().copied().collect()).unwrap();
         self.requests.lock().unwrap().push(body);
+        self.headers.lock().unwrap().push(request.headers().to_vec());
         let reply = self
             .replies
             .lock()

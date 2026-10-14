@@ -189,7 +189,11 @@ const DEFAULT_LIMIT: usize = 5;
 const MAX_LIMIT: usize = 20;
 
 /// The arguments of both search tools.
-const SEARCH_SCHEMA: &str = r#"{"type":"object","properties":{"query":{"type":"string","description":"Keywords that describe the tool."},"limit":{"type":"integer","minimum":1,"maximum":20,"description":"The most matches. The default is 5."}},"required":["query"],"additionalProperties":false}"#;
+fn search_schema() -> String {
+    format!(
+        r#"{{"type":"object","properties":{{"query":{{"type":"string","description":"Keywords that describe the tool."}},"limit":{{"type":"integer","minimum":1,"maximum":{MAX_LIMIT},"description":"The most matches. The default is {DEFAULT_LIMIT}."}}}},"required":["query"],"additionalProperties":false}}"#
+    )
+}
 
 /// The arguments of [`TOOL_CALL_NAME`].
 const CALL_SCHEMA: &str = r#"{"type":"object","properties":{"name":{"type":"string","description":"The name of the tool."},"arguments":{"type":"object","description":"The arguments of the tool, as its input schema says."}},"required":["name","arguments"],"additionalProperties":false}"#;
@@ -200,7 +204,7 @@ static NATIVE_SEARCH: LazyLock<ToolDefinition> = LazyLock::new(|| {
         SEARCH_TOOL_NAME,
         "Find more tools. Many tools are not listed here. When no listed tool fits the task, search them by \
          keywords. Each match becomes callable by its name.",
-        SEARCH_SCHEMA,
+        search_schema(),
     )
 });
 
@@ -210,7 +214,7 @@ static BRIDGE_SEARCH: LazyLock<ToolDefinition> = LazyLock::new(|| {
         SEARCH_TOOL_NAME,
         "Find more tools. Many tools are not listed here. When no listed tool fits the task, search them by \
          keywords. The result shows each match with its input schema. Call a match with tool_call.",
-        SEARCH_SCHEMA,
+        search_schema(),
     )
 });
 

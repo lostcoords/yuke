@@ -19,8 +19,8 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire
     // The caller owns the context, so the endpoint never keeps a copy.
     jw.field_bool("store", false);
     // A stable key sends every round of one session to the same cache node.
-    if !request.settings.session_id.is_empty() {
-        jw.field_str("prompt_cache_key", &request.settings.session_id);
+    if let Some(session_id) = request.session_id {
+        jw.field_str("prompt_cache_key", session_id);
     }
     if standard {
         if let Some(limit) = request.settings.max_output_tokens {
@@ -592,13 +592,17 @@ mod tests {
             r#"{"model":"gpt-5.6","stream":true,"store":false,"prompt_cache_key":"0123456789abcdef","max_output_tokens":8,"input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#,
             "gpt-5.6",
             responses(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).session_id("0123456789abcdef")),
+            Request::new(&blocks)
+                .settings(&Settings::new().max_output_tokens(8))
+                .session_id("0123456789abcdef"),
         );
         expect_json(
             r#"{"model":"gpt-5.6","stream":true,"store":false,"prompt_cache_key":"0123456789abcdef","input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#,
             "gpt-5.6",
             codex(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).session_id("0123456789abcdef")),
+            Request::new(&blocks)
+                .settings(&Settings::new().max_output_tokens(8))
+                .session_id("0123456789abcdef"),
         );
     }
 

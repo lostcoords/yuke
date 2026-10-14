@@ -55,6 +55,7 @@ macro_rules! store_tests {
             a_saved_commit_reads_back_equal,
             events_after_a_number_are_the_newer_events,
             a_fork_has_the_events_of_its_source_and_numbers_on_from_them,
+            each_session_numbers_its_own_events,
             the_context_holds_only_commit_blocks_across_pending_inputs_and_settings_events,
             the_newest_session_of_a_folder_has_the_newest_event,
             a_session_works_in_the_folder_of_its_newest_settings,
@@ -824,6 +825,29 @@ pub async fn a_fork_has_the_events_of_its_source_and_numbers_on_from_them(store:
         }
     );
     assert_eq!(store.events(source, None).await.unwrap(), source_events);
+}
+
+/// The event numbers of a session do not depend on the events of other sessions.
+pub async fn each_session_numbers_its_own_events(store: &dyn Store) {
+    let busy = store.create_session(&settings("busy")).await.unwrap().id;
+    for text in ["one", "two"] {
+        store
+            .commit(busy, &end(&[yuke_ai::Block::user_text(text)]), &[])
+            .await
+            .unwrap();
+    }
+
+    let quiet = store.create_session(&settings("quiet")).await.unwrap().id;
+    store.set_settings(quiet, &settings("still quiet")).await.unwrap();
+
+    let numbers: Vec<EventNumber> = store
+        .events(quiet, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|event| event.event_number)
+        .collect();
+    assert_eq!(numbers, [EventNumber(1), EventNumber(2)]);
 }
 
 /// The context holds the blocks of the commits only. Pending inputs and settings events before and after a replacement

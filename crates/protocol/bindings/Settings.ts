@@ -33,10 +33,6 @@ topP: number | null,
  */
 toolChoice: ToolChoice, 
 /**
- * A stable session ID for routing and the Responses cache key. An empty ID writes none.
- */
-sessionId: string, 
-/**
  * The schema of the response. `None` leaves the response free.
  */
 outputSchema: OutputSchema | null, };

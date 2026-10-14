@@ -498,7 +498,7 @@ pub struct ToolDefinition {
     /// A JSON Schema object text, written verbatim. The caller checks it.
     pub input_schema: String,
     /// Exclude the definition from the prompt until a tool search names it. A request with a deferred tool asks for
-    /// the native search, so send it only to a target with [`Target::tool_search`]. The encoder does not check it.
+    /// the native tool search, so the encoder refuses it for a target without [`Target::tool_search`].
     pub defer_loading: bool,
     /// Constrain the arguments to `input_schema`, as OpenAI and Anthropic both offer. A schema that strict mode does
     /// not admit returns 400 when it is on.
@@ -764,8 +764,8 @@ pub struct Target {
     /// How the request is written for this host and model. Its variant selects the protocol.
     /// [`crate::catalog::Entry::wire`] derives it from the catalog.
     pub wire: Wire,
-    /// The model searches deferred tools natively: Anthropic tool references, or the Responses client search. Chat
-    /// Completions has no such search. The encoder does not read it. A caller defers a tool only when it is true.
+    /// The model has a native tool search: Anthropic tool references, or the Responses client search. Chat Completions
+    /// has none. Without a native tool search, the encoder refuses a request with a deferred tool.
     pub tool_search: bool,
 }
 
@@ -787,8 +787,6 @@ pub struct Settings {
     pub top_p: Option<f64>,
     /// The tool control.
     pub tool_choice: ToolChoice,
-    /// A stable session ID for routing and the Responses cache key. An empty ID writes none.
-    pub session_id: String,
     /// The schema of the response. `None` leaves the response free.
     pub output_schema: Option<OutputSchema>,
 }
@@ -806,7 +804,6 @@ impl Settings {
             temperature: None,
             top_p: None,
             tool_choice: ToolChoice::Auto,
-            session_id: String::new(),
             output_schema: None,
         }
     }
@@ -885,16 +882,6 @@ impl Settings {
         Settings { tool_choice, ..self }
     }
 
-    /// A stable session ID for routing and the Responses cache key. A route can send it as a header, so it must be a
-    /// valid header value. The ChatGPT host refuses a key longer than 64 bytes.
-    #[must_use]
-    pub fn session_id(self, session_id: impl Into<String>) -> Self {
-        Settings {
-            session_id: session_id.into(),
-            ..self
-        }
-    }
-
     /// The schema of the response.
     #[must_use]
     pub fn output_schema(self, schema: OutputSchema) -> Self {
@@ -919,6 +906,7 @@ pub struct Request<'a> {
     pub(crate) tools: &'a [ToolDefinition],
     pub(crate) blobs: Option<&'a dyn BlobStore>,
     pub(crate) settings: &'a Settings,
+    pub(crate) session_id: Option<&'a str>,
 }
 
 /// The settings of a request without [`Request::settings`]: each value at its endpoint default.
@@ -933,6 +921,7 @@ impl<'a> Request<'a> {
             tools: &[],
             blobs: None,
             settings: &DEFAULT_SETTINGS,
+            session_id: None,
         }
     }
 
@@ -940,6 +929,16 @@ impl<'a> Request<'a> {
     #[must_use]
     pub fn settings(self, settings: &'a Settings) -> Self {
         Request { settings, ..self }
+    }
+
+    /// The session id of this request, for routing and the Responses cache key. A route can send the session id as a
+    /// header, so it must be a valid header value. The ChatGPT host refuses a key longer than 64 bytes.
+    #[must_use]
+    pub fn session_id(self, session_id: &'a str) -> Self {
+        Request {
+            session_id: Some(session_id),
+            ..self
+        }
     }
 
     /// The tool declarations.
@@ -1105,20 +1104,19 @@ mod tests {
             .temperature(0.5)
             .top_p(0.9)
             .tool_choice(ToolChoice::None)
-            .session_id("s1")
             .output_schema(OutputSchema::new(r#"{"type":"object"}"#));
         let cases = [
             (
                 full,
-                r#"{"system":"Be brief.","maxOutputTokens":1000,"reasoning":{"thinking":{"adaptive":"summarized"},"effort":"xhigh"},"temperature":0.5,"topP":0.9,"toolChoice":"none","sessionId":"s1","outputSchema":{"name":"response","schema":"{\"type\":\"object\"}","strict":true}}"#,
+                r#"{"system":"Be brief.","maxOutputTokens":1000,"reasoning":{"thinking":{"adaptive":"summarized"},"effort":"xhigh"},"temperature":0.5,"topP":0.9,"toolChoice":"none","outputSchema":{"name":"response","schema":"{\"type\":\"object\"}","strict":true}}"#,
             ),
             (
                 Settings::new().thinking(Thinking::Budget(2048)),
-                r#"{"system":"","maxOutputTokens":null,"reasoning":{"thinking":{"budget":2048},"effort":null},"temperature":null,"topP":null,"toolChoice":"auto","sessionId":"","outputSchema":null}"#,
+                r#"{"system":"","maxOutputTokens":null,"reasoning":{"thinking":{"budget":2048},"effort":null},"temperature":null,"topP":null,"toolChoice":"auto","outputSchema":null}"#,
             ),
             (
                 Settings::new().thinking(Thinking::Off),
-                r#"{"system":"","maxOutputTokens":null,"reasoning":{"thinking":"off","effort":null},"temperature":null,"topP":null,"toolChoice":"auto","sessionId":"","outputSchema":null}"#,
+                r#"{"system":"","maxOutputTokens":null,"reasoning":{"thinking":"off","effort":null},"temperature":null,"topP":null,"toolChoice":"auto","outputSchema":null}"#,
             ),
         ];
         for (settings, json) in cases {

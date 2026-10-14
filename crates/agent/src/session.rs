@@ -191,7 +191,8 @@ impl Session {
     }
 
     /// The next turn with `driver`. The turn takes each pending input as its input. When the turn runs, the session
-    /// gives the driver its journal, its inbox, and its blob store.
+    /// gives the driver its session settings, session id, journal, inbox, and blob store. These replace the values that
+    /// the caller set on the driver.
     pub fn turn<'s>(&'s mut self, driver: Driver<'s>) -> SessionTurn<'s> {
         SessionTurn {
             session: self,
@@ -333,8 +334,11 @@ impl<'s> SessionTurn<'s> {
         // The future holds the lease while the turn runs, so a dropped future releases it.
         let lease = session.lease.take();
         let input = session.journal.take_waiting();
+        let session_id = session.journal.id.to_string();
         let journal: &SessionJournal = &session.journal;
         let mut turn = driver
+            .settings(&session.settings.settings)
+            .session_id(&session_id)
             .journal(journal)
             .inbox(journal)
             .blobs(journal)

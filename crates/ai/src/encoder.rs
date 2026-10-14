@@ -135,8 +135,11 @@ impl Encoder {
         {
             return Err(EncodeError::InvalidSampling);
         }
+        if !target.tool_search && request.tools.iter().any(|tool| tool.defer_loading) {
+            return Err(EncodeError::Unsupported);
+        }
 
-        self.head.build(target, &request.settings.session_id)?;
+        self.head.build(target, request.session_id)?;
         let elements_end = self.serialize(target, &request)?;
         let items = &self.items;
         let body = [&items[elements_end..], &items[..elements_end], b"]}".as_slice()];
@@ -479,6 +482,27 @@ mod tests {
             for tools in [&deferred[..], &plain[..], &deferred[..]] {
                 encode_checked(&mut encoder, "m", wire, Request::new(&searched).tools(tools)).unwrap();
             }
+        }
+    }
+
+    // A deferred tool asks for the native tool search, so a target without one cannot take the request.
+    #[test]
+    fn deferred_tool_needs_native_tool_search() {
+        let tools = [ToolDefinition::new("read", "Read.", "{}").deferred()];
+        let blocks = [text(U, "go")];
+        for wire in [ALL_WIRES[0], Wire::OpenaiResponses(ResponsesWire::default())] {
+            let searching = target_of("m", wire);
+            let plain = Target {
+                tool_search: false,
+                ..searching.clone()
+            };
+            let request = Request::new(&blocks).tools(&tools);
+
+            let refused = Encoder::new().encode(&plain, request).map(|_| ());
+            let accepted = Encoder::new().encode(&searching, request).map(|_| ());
+
+            crate::testing::assert_same(refused, Err(EncodeError::Unsupported));
+            crate::testing::assert_same(accepted, Ok(()));
         }
     }
 

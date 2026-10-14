@@ -3,7 +3,6 @@
 
 CREATE TABLE sessions (
     id BLOB PRIMARY KEY NOT NULL,          -- 16 bytes of a version 7 UUID, so new rows go near the end of the key
-    last_seq INTEGER NOT NULL DEFAULT 0,   -- the number of the newest event of the session
     created_at INTEGER NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)) -- Unix milliseconds
 ) STRICT;
 
