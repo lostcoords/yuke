@@ -85,13 +85,11 @@ async fn a_command_leads_its_own_session_without_the_terminal_of_yuke() {
     let folder = folder("a_command_leads_its_own_session_without_the_terminal_of_yuke");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
 
-    // The shell leads its session when its session id is its own process id.
-    let text = run(&tools, "echo $$; ps -o sid= -p $$").await;
+    // The `ps` of Linux and of macOS both mark a session leader with `s` in the process state.
+    let text = run(&tools, "ps -o stat= -p $$").await;
 
-    let mut lines = text.lines();
-    let shell = lines.next().unwrap().trim();
-    let session = lines.next().unwrap().trim();
-    assert_eq!(session, shell, "{text}");
+    let state = text.lines().next().unwrap().trim();
+    assert!(state.contains('s'), "{text}");
 }
 
 #[tokio::test]

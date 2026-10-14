@@ -27,7 +27,8 @@ fn folder(name: &str) -> PathBuf {
         Err(error) => panic!("{}: {error}", folder.display()),
     }
     std::fs::create_dir_all(&folder).unwrap();
-    folder
+    // On macOS, the temporary folder is a symbolic link. A command reports the canonical path of its working folder.
+    folder.canonicalize().unwrap()
 }
 
 /// The module name of the file `file` below `folder`: its absolute path.
