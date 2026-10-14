@@ -1,5 +1,8 @@
 //! Decide whether a failed provider attempt may repeat. The decision is pure: no I/O and no state.
 
+use std::num::NonZeroU32;
+use std::time::Duration;
+
 use crate::failure::{Failure, ProviderKind};
 use crate::response::AttemptError;
 use crate::transport::Fault;
@@ -43,7 +46,9 @@ fn classify(cause: Failure) -> Class {
             | Fault::RedirectRefused
             | Fault::BadUrl
             | Fault::MalformedResponse
-            | Fault::TlsSetupFailed => Class::NonRetryable,
+            | Fault::TlsSetupFailed
+            // The same certificate fails the check again.
+            | Fault::CertificateRejected => Class::NonRetryable,
         },
         // A stream without its terminal event is a truncation, not a malformed stream.
         Failure::IncompleteStream => Class::Transient,
@@ -55,40 +60,31 @@ fn classify(cause: Failure) -> Class {
 /// The bounds of the attempts of one request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Policy {
-    /// The most attempts of one request, the first included. At least 1.
-    pub max_attempts: u32,
-    /// The first computed delay.
-    pub base_ms: u64,
-    /// The cap for a computed delay. A server delay uses `retry_after_cap_ms`.
-    pub cap_ms: u64,
+    /// The most attempts of one request, the first included.
+    pub max_attempts: NonZeroU32,
+    /// The first computed delay. A base above `cap` waits `cap`.
+    pub base: Duration,
+    /// The cap for a computed delay. A server delay uses `retry_after_cap`.
+    pub cap: Duration,
     /// Above this server delay the request stops, so a provider outage never becomes a retry storm.
-    pub retry_after_cap_ms: u64,
+    pub retry_after_cap: Duration,
 }
 
 impl Default for Policy {
     fn default() -> Self {
         Policy {
-            max_attempts: 5,
-            base_ms: 500,
-            cap_ms: 8_000,
-            retry_after_cap_ms: 120_000,
+            max_attempts: NonZeroU32::new(5).unwrap_or(NonZeroU32::MIN),
+            base: Duration::from_millis(500),
+            cap: Duration::from_secs(8),
+            retry_after_cap: Duration::from_secs(120),
         }
     }
 }
 
-/// Return the delay in milliseconds before the next attempt, or `None` when the request must stop. `number` is the
-/// 1-based number of the attempt that failed with `attempt_error`. `jitter` is a draw in `[0, 1)`.
-///
-/// # Panics
-///
-/// In a debug build, `decide` panics on input that breaks a precondition: `jitter` outside `[0, 1)`, a `number` of 0,
-/// a `policy.max_attempts` of 0, or a `policy.base_ms` above `policy.cap_ms`.
-pub fn decide(policy: Policy, attempt_error: &AttemptError, number: u32, jitter: f64) -> Option<u64> {
-    debug_assert!(policy.max_attempts >= 1);
-    debug_assert!(policy.base_ms <= policy.cap_ms);
-    debug_assert!(number >= 1);
-    debug_assert!((0.0..1.0).contains(&jitter));
-
+/// Return the delay before the next attempt, or `None` when the request must stop. `number` is the number of the
+/// attempt that failed with `attempt_error`, from 1. `jitter` is a draw in `[0, 1)`. A value outside counts as its
+/// nearest bound, and NaN counts as 0.
+pub fn decide(policy: Policy, attempt_error: &AttemptError, number: NonZeroU32, jitter: f64) -> Option<Duration> {
     let info = &attempt_error.info;
     let failure = attempt_error.cause;
     // The caller got an event of the attempt, so a repeat would show it again.
@@ -115,28 +111,22 @@ pub fn decide(policy: Policy, attempt_error: &AttemptError, number: u32, jitter:
     }
 
     let computed = backoff(policy, number, jitter);
-    let Some(asked) = info.retry_after_ms else {
+    let Some(asked) = info.retry_after_ms.map(Duration::from_millis) else {
         return Some(computed);
     };
-    if asked > policy.retry_after_cap_ms {
+    if asked > policy.retry_after_cap {
         return None;
     }
     Some(asked.max(computed)) // A server delay is a floor, so `retry-after: 0` cannot skip the backoff.
 }
 
-fn backoff(policy: Policy, number: u32, jitter: f64) -> u64 {
-    let shift = (number - 1).min(16);
-    let raw = policy.base_ms.saturating_mul(1 << shift);
-    #[expect(clippy::cast_precision_loss, reason = "a delay of a few seconds fits f64 exactly")]
-    let capped = raw.min(policy.cap_ms) as f64;
-    // Keep 75% to 100% of the delay, as the SDKs do. The AWS form `random(0, cap)` differs.
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "the value is a small positive delay"
-    )]
-    let delay = (capped * (1.0 - jitter * 0.25)) as u64;
-    delay
+fn backoff(policy: Policy, number: NonZeroU32, jitter: f64) -> Duration {
+    let shift = (number.get() - 1).min(16);
+    let capped = policy.base.saturating_mul(1 << shift).min(policy.cap);
+    // Keep 75% to 100% of the delay, as the SDKs do. The AWS form `random(0, cap)` differs. A cut of at most a quarter
+    // cannot overflow.
+    let jitter = if jitter.is_nan() { 0.0 } else { jitter.clamp(0.0, 1.0) };
+    capped.saturating_sub(capped.mul_f64(jitter * 0.25))
 }
 
 #[cfg(test)]
@@ -152,8 +142,22 @@ mod tests {
         }
     }
 
+    fn nth(number: u32) -> NonZeroU32 {
+        NonZeroU32::new(number).unwrap()
+    }
+
+    /// The delay in milliseconds, so the expected values read as plain numbers.
+    fn millis(delay: Option<Duration>) -> Option<u64> {
+        delay.map(|delay| u64::try_from(delay.as_millis()).unwrap())
+    }
+
     fn decide_with(info: &AttemptInfo, failure: Failure, number: u32) -> Option<u64> {
-        decide(Policy::default(), &attempt_error(failure, info.clone()), number, 0.0)
+        millis(decide(
+            Policy::default(),
+            &attempt_error(failure, info.clone()),
+            nth(number),
+            0.0,
+        ))
     }
 
     fn failed(failure: Failure, number: u32) -> Option<u64> {
@@ -176,7 +180,7 @@ mod tests {
         for failure in repeats.into_iter().chain([Failure::IncompleteStream]) {
             assert!(failed(failure, 1).is_some(), "{failure:?}");
         }
-        for fault in [Fault::InvalidRequest, Fault::TlsSetupFailed] {
+        for fault in [Fault::InvalidRequest, Fault::TlsSetupFailed, Fault::CertificateRejected] {
             assert_eq!(failed(Failure::Transport(fault), 1), None, "{fault:?}");
         }
     }
@@ -188,16 +192,32 @@ mod tests {
         assert_eq!(Some(500), failed(Failure::Provider(ProviderKind::Conflict), 1));
         // The jitter removes at most a quarter, so a full draw leaves 750 of 1000.
         let server = attempt_error(Failure::Provider(ProviderKind::ServerError), AttemptInfo::default());
-        assert_eq!(Some(750), decide(Policy::default(), &server, 2, 0.999));
+        assert_eq!(Some(750), millis(decide(Policy::default(), &server, nth(2), 0.999)));
 
         // The attempt limit permits both calls, so only the computed delay cap bounds them.
         let policy = Policy {
-            max_attempts: 41,
+            max_attempts: nth(41),
             ..Policy::default()
         };
         for number in [8, 40] {
-            assert_eq!(Some(8000), decide(policy, &server, number, 0.0));
+            assert_eq!(Some(8000), millis(decide(policy, &server, nth(number), 0.0)));
         }
+
+        // A base above the cap waits the cap. A jitter outside `[0, 1)` counts as its nearest bound, and NaN as 0.
+        let inverted = Policy {
+            base: Duration::from_secs(10),
+            cap: Duration::from_secs(2),
+            ..Policy::default()
+        };
+        assert_eq!(Some(2000), millis(decide(inverted, &server, nth(1), -3.0)));
+        assert_eq!(Some(1500), millis(decide(inverted, &server, nth(1), 7.0)));
+        assert_eq!(Some(2000), millis(decide(inverted, &server, nth(1), f64::NAN)));
+        let largest = Policy {
+            base: Duration::MAX,
+            cap: Duration::MAX,
+            ..Policy::default()
+        };
+        assert!(decide(largest, &server, nth(1), 0.0).is_some());
     }
 
     #[test]
@@ -300,7 +320,8 @@ mod tests {
         // A provider sent `retry-after: 0`, and five attempts fired within 8 ms.
         assert_eq!(Some(500), at(0));
         // Above the cap the request stops. It must not fall back to a shorter local delay.
-        assert_eq!(None, at(Policy::default().retry_after_cap_ms + 1));
+        let cap = u64::try_from(Policy::default().retry_after_cap.as_millis()).unwrap();
+        assert_eq!(None, at(cap + 1));
     }
 
     #[test]

@@ -206,7 +206,11 @@ impl Reducer {
         let Some(kind) = part_kind(part_type(root)?) else {
             return Ok(());
         };
-        if self.outputs[position].block(kind).is_some() {
+        // The parts of one kind come one after another, so a new part takes the slot of its kind. A delta selects its
+        // block by kind, so an overlapping part of one kind is a protocol error.
+        if let Some(previous) = self.outputs[position].block(kind)
+            && self.draft.open(previous).is_ok()
+        {
             return Err(DecodeError::Protocol);
         }
         let id = self.draft.start(kind)?;
@@ -773,6 +777,40 @@ mod tests {
              stop 0 text\n\
              done tool_calls \"completed\"",
         );
+    }
+
+    // A message can hold several parts of one kind, each after the end of the one before.
+    #[test]
+    fn later_part_of_one_kind_opens_its_own_block() {
+        let mut h = Harness::new(PROTOCOL);
+        h.feed(&[
+            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
+            r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
+            r#"{"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"a"}"#,
+            r#"{"type":"response.content_part.done","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
+            r#"{"type":"response.content_part.added","output_index":0,"content_index":1,"part":{"type":"output_text"}}"#,
+            r#"{"type":"response.output_text.delta","output_index":0,"content_index":1,"delta":"b"}"#,
+            r#"{"type":"response.content_part.done","output_index":0,"content_index":1,"part":{"type":"output_text"}}"#,
+            r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
+        ])
+        .unwrap();
+        h.expect_trace(
+            "start 0 text\n\
+             text_delta 0 \"a\"\n\
+             stop 0 text\n\
+             start 1 text\n\
+             text_delta 1 \"b\"\n\
+             stop 1 text\n\
+             done stop \"completed\"",
+        );
+
+        // A part that starts while another of its kind is open has no block of its own.
+        let overlapping = Harness::new(PROTOCOL).feed(&[
+            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
+            r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
+            r#"{"type":"response.content_part.added","output_index":0,"content_index":1,"part":{"type":"output_text"}}"#,
+        ]);
+        assert_eq!(overlapping, Err(DecodeError::Protocol));
     }
 
     // The replaced item names no text block, so a text delta for it rejects the frame.

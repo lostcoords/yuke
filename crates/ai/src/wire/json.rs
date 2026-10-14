@@ -196,6 +196,13 @@ pub(crate) fn object_text(text: &str) -> &str {
     if text.is_empty() { "{}" } else { text }
 }
 
+/// The arguments of a call when they are a JSON object, else `{}`. A model can write arguments that are not a JSON
+/// object, and a provider refuses a later request that repeats them.
+pub(crate) fn call_arguments(text: &str) -> &str {
+    let object = text.trim_start().starts_with('{') && serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok();
+    if object { text } else { "{}" }
+}
+
 /// The escape of each byte: 0 for none, `u` for `\u00XX`, else the letter after the backslash.
 const ESCAPE: [u8; 256] = {
     let mut table = [0u8; 256];

@@ -16,7 +16,7 @@ use std::time::Duration;
 use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::process::{Child, Command};
 use tokio::runtime::Handle;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use yuke_engine::CancellationToken;
 
 use crate::tools::SessionHost;
@@ -25,8 +25,14 @@ use crate::tools::SessionHost;
 const FIRST_JOB_NUMBER: u32 = 36 * 36 * 36;
 const JOB_NUMBERS: u32 = 36 * 36 * 36 * 36 - FIRST_JOB_NUMBER;
 
+/// The answer to a job start after the shutdown.
+const SHUTTING_DOWN: &str = "the job did not start: yuke is shutting down";
+
 /// The time between SIGTERM and SIGKILL when a process group stops.
 const GRACE: Duration = Duration::from_secs(2);
+
+/// The wait between two checks for a process that remains in a stopping group.
+const GROUP_POLL: Duration = Duration::from_millis(20);
 
 /// The bytes that one read of the output takes.
 const CHUNK: usize = 64 * 1024;
@@ -36,7 +42,7 @@ const TAIL_LINES: usize = 20;
 
 /// The child processes of the tools. The consumer creates one for the process inside its tokio runtime, which must
 /// enable I/O and time. It gives the same value to every JavaScript runtime of the process. The full outputs of the
-/// commands and the logs of the jobs go to `folder`. The consumer removes the folder.
+/// commands and the logs of the jobs go to `folder`. [`Processes::shutdown`] removes the folder.
 pub struct Processes {
     folder: PathBuf,
     handle: Handle,
@@ -45,7 +51,7 @@ pub struct Processes {
     /// rarely names a job of this one.
     last_job: AtomicU32,
     /// The running jobs. The task of a job removes it at its end.
-    jobs: Arc<Mutex<Vec<Job>>>,
+    jobs: Arc<Mutex<Jobs>>,
     /// Whether a job can start. A process that ends with its turn has no one to receive the end of a job.
     starts_jobs: bool,
 }
@@ -56,6 +62,14 @@ impl fmt::Debug for Processes {
             .field("folder", &self.folder)
             .finish_non_exhaustive()
     }
+}
+
+/// The running jobs, and whether the list still takes a job.
+#[derive(Default)]
+struct Jobs {
+    running: Vec<Job>,
+    /// The consumer shut the processes down, so a job that starts now stops at once.
+    closed: bool,
 }
 
 /// A running background job.
@@ -99,7 +113,7 @@ pub(crate) struct RunningCommand {
     /// Each chunk of output, on whole UTF-8 characters.
     pub(crate) output: mpsc::UnboundedReceiver<String>,
     /// The end of the command, or the text of a failure.
-    pub(crate) end: tokio::sync::oneshot::Receiver<Result<CommandEnd, String>>,
+    pub(crate) end: oneshot::Receiver<Result<CommandEnd, String>>,
     /// Stops the command. A drop of the command stops it too, so a dropped call ends its command.
     pub(crate) stop: StopOnDrop,
 }
@@ -142,24 +156,37 @@ impl Processes {
             last_job: AtomicU32::new(
                 u32::try_from(RandomState::new().hash_one(0_u8) % u64::from(JOB_NUMBERS)).unwrap_or(0),
             ),
-            jobs: Arc::new(Mutex::new(Vec::new())),
+            jobs: Arc::new(Mutex::new(Jobs::default())),
             starts_jobs,
         }
     }
 
-    /// Stop each running job: SIGTERM to its process group, then SIGKILL after a grace. Wait for the ends.
-    pub async fn shutdown(&self) {
-        let ends: Vec<_> = lock(&self.jobs)
-            .iter()
-            .map(|job| {
-                job.stop.cancel();
-                job.end.clone()
-            })
-            .collect();
+    /// Stop each running job: SIGTERM to its process group, then SIGKILL after a grace. Wait for the ends. Then remove
+    /// the folder of the full outputs and the logs.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of the removal of the folder. A missing folder is no error.
+    pub async fn shutdown(&self) -> io::Result<()> {
+        let ends: Vec<_> = {
+            let mut jobs = lock(&self.jobs);
+            jobs.closed = true;
+            jobs.running
+                .iter()
+                .map(|job| {
+                    job.stop.cancel();
+                    job.end.clone()
+                })
+                .collect()
+        };
         for mut end in ends {
             if end.wait_for(Option::is_some).await.is_err() {
                 // The task of the job has ended, so the job has ended too.
             }
+        }
+        match std::fs::remove_dir_all(&self.folder) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            result => result,
         }
     }
 
@@ -186,7 +213,7 @@ impl Processes {
         stop: CancellationToken,
     ) -> RunningCommand {
         let (chunks, output) = mpsc::unbounded_channel();
-        let (finish, end) = tokio::sync::oneshot::channel();
+        let (finish, end) = oneshot::channel();
         let file = self.folder.join(format!("exec-{}.log", self.number()));
         let task_stop = stop.clone();
         self.handle.spawn(async move {
@@ -215,38 +242,72 @@ impl Processes {
                     .to_owned(),
             );
         }
+        if lock(&self.jobs).closed {
+            return Err(SHUTTING_DOWN.to_owned());
+        }
         let id = self.job_id();
         let log = self.folder.join(format!("{id}.log"));
         let folder = owner.folder().to_owned();
-        let task_log = log.clone();
-        // The child joins the runtime of the consumer, and its log file is blocking work.
-        let started = self
-            .handle
-            .spawn_blocking(move || spawn_logged(&command, &folder, &task_log))
-            .await
-            .map_err(|error| format!("the job did not start: {error}"))?;
-        let (child, group) = started.map_err(|error| format!("the job did not start: {error}"))?;
-
-        let stop = CancellationToken::new();
-        let (finish, end) = watch::channel(None);
-        lock(&self.jobs).push(Job {
-            id: id.clone(),
-            owner: Arc::clone(&owner),
-            log: log.clone(),
-            group,
-            stop: stop.clone(),
-            end,
-        });
-        let task_id = id.clone();
-        let task_log = log.clone();
+        let (task_id, task_log) = (id.clone(), log.clone());
         let jobs = Arc::clone(&self.jobs);
+        let (started_sender, started) = oneshot::channel();
+        // One task on the runtime of the consumer owns the job from its spawn to its end, so a dropped call loses no
+        // child.
         self.handle.spawn(async move {
+            let spawn_log = task_log.clone();
+            // The log file is blocking work.
+            let spawned = tokio::task::spawn_blocking(move || spawn_logged(&command, &folder, &spawn_log))
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|spawned| spawned.map_err(|error| error.to_string()));
+            let (mut child, group) = match spawned {
+                Ok(spawned) => spawned,
+                Err(error) => {
+                    answer_start(started_sender, Err(format!("the job did not start: {error}")));
+                    return;
+                }
+            };
+            let stop = CancellationToken::new();
+            let (finish, end) = watch::channel(None);
+            let registered = {
+                let mut running = lock(&jobs);
+                if !running.closed {
+                    running.running.push(Job {
+                        id: task_id.clone(),
+                        owner: Arc::clone(&owner),
+                        log: task_log.clone(),
+                        group,
+                        stop: stop.clone(),
+                        end,
+                    });
+                }
+                !running.closed
+            };
+            // A shutdown that came during the spawn found no such job, so the job ends here. The spawn made the log and
+            // the folder that the shutdown removed.
+            if !registered {
+                if signal_group(group, Signal::KILL).is_err() {
+                    // A process of the group that the kill misses ends by itself.
+                }
+                if child.wait().await.is_err() {
+                    // The child is gone either way.
+                }
+                if std::fs::remove_file(&task_log).is_ok()
+                    && let Some(folder) = task_log.parent()
+                    && std::fs::remove_dir(folder).is_err()
+                {
+                    // Another file keeps the folder, and the next shutdown removes it.
+                }
+                answer_start(started_sender, Err(SHUTTING_DOWN.to_owned()));
+                return;
+            }
+            answer_start(started_sender, Ok(()));
             let label = wait_job(child, group, &stop).await;
             // The removal and the check of the stop share the lock, so a stop either finds the job and silences its end
             // message, or finds no job.
             let stopped = {
                 let mut running = lock(&jobs);
-                running.retain(|job| job.id != task_id);
+                running.running.retain(|job| job.id != task_id);
                 stop.is_cancelled()
             };
             if finish.send(Some(label.clone())).is_err() {
@@ -257,6 +318,9 @@ impl Processes {
                 owner.job_ended(JobEnded { id: task_id, text });
             }
         });
+        started
+            .await
+            .map_err(|_| "the job did not start: the runtime of yuke ended".to_owned())??;
         Ok((id, log))
     }
 
@@ -265,7 +329,10 @@ impl Processes {
     pub(crate) async fn stop_job(&self, id: &str, owner: &Arc<dyn SessionHost>) -> Option<(String, PathBuf)> {
         let (mut end, log) = {
             let jobs = lock(&self.jobs);
-            let job = jobs.iter().find(|job| job.id == id && same_host(&job.owner, owner))?;
+            let job = jobs
+                .running
+                .iter()
+                .find(|job| job.id == id && same_host(&job.owner, owner))?;
             job.stop.cancel();
             (job.end.clone(), job.log.clone())
         };
@@ -279,6 +346,7 @@ impl Processes {
     /// The ids of the running jobs of `owner`.
     pub(crate) fn running_jobs(&self, owner: &Arc<dyn SessionHost>) -> Vec<String> {
         lock(&self.jobs)
+            .running
             .iter()
             .filter(|job| same_host(&job.owner, owner))
             .map(|job| job.id.clone())
@@ -290,7 +358,9 @@ impl Drop for Processes {
     /// Kill each running job, so no job outlives the consumer. [`Processes::shutdown`] stops them with a grace first.
     /// The stop goes first, so a killed job sends no end message.
     fn drop(&mut self) {
-        for job in lock(&self.jobs).iter() {
+        let mut jobs = lock(&self.jobs);
+        jobs.closed = true;
+        for job in &jobs.running {
             job.stop.cancel();
             if signal_group(job.group, Signal::KILL).is_err() {
                 // The system refused the kill, and the consumer has nothing left to tell.
@@ -300,8 +370,15 @@ impl Drop for Processes {
 }
 
 /// The running jobs. A panic of another holder leaves a valid list, so a poisoned lock still serves.
-fn lock(jobs: &Mutex<Vec<Job>>) -> std::sync::MutexGuard<'_, Vec<Job>> {
+fn lock(jobs: &Mutex<Jobs>) -> std::sync::MutexGuard<'_, Jobs> {
     jobs.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Answer the call that started a job. A dropped call gets no answer, and the task still owns the job.
+fn answer_start(sender: oneshot::Sender<Result<(), String>>, answer: Result<(), String>) {
+    if sender.send(answer).is_err() {
+        // The call has left.
+    }
 }
 
 /// Whether two hosts are the same session.
@@ -381,14 +458,27 @@ fn signal_group(group: Pid, signal: Signal) -> io::Result<()> {
     }
 }
 
-/// Stop `group`: SIGTERM, then SIGKILL when the leader `child` has not ended after the grace. Answer its status.
+/// Stop `group`: SIGTERM, then SIGKILL to each process that remains after the grace. The grace covers every process of
+/// the group, not only the leader `child`. Answer the status of the leader.
 async fn stop_group(group: Pid, child: &mut Child) -> io::Result<ExitStatus> {
     signal_group(group, Signal::TERM)?;
-    if let Ok(status) = tokio::time::timeout(GRACE, child.wait()).await {
-        return status;
+    let deadline = tokio::time::Instant::now() + GRACE;
+    let Ok(status) = tokio::time::timeout_at(deadline, child.wait()).await else {
+        signal_group(group, Signal::KILL)?;
+        return child.wait().await;
+    };
+    // The wait reaped the leader, so a check finds only the other processes. They get the rest of the grace.
+    while group_has_processes(group) && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(GROUP_POLL).await;
     }
     signal_group(group, Signal::KILL)?;
-    child.wait().await
+    status
+}
+
+/// Whether `group` still holds a process. Only `ESRCH` says that it holds none. A refused check, for example of a
+/// process that changed its user, still counts as a process, so the kill after the grace comes.
+fn group_has_processes(group: Pid) -> bool {
+    rustix::process::test_kill_process_group(group) != Err(rustix::io::Errno::SRCH)
 }
 
 /// The run of one command: start it, read its output, and stop it at the deadline or at a stop.
@@ -463,8 +553,11 @@ fn read_output(mut reader: io::PipeReader, capture: &Mutex<Capture>, chunks: &mp
     let mut partial = Vec::new();
     loop {
         let count = match reader.read(&mut buffer) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
             Ok(count) => count,
+            // A signal stopped the read before any byte came, so the read goes on.
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
         };
         let bytes = &buffer[..count];
         capture
@@ -484,11 +577,18 @@ fn read_output(mut reader: io::PipeReader, capture: &Mutex<Capture>, chunks: &mp
 
 /// The text of the whole UTF-8 characters at the start of `bytes`. The bytes of a character that a read cut stay in
 /// `bytes` for the next read.
-fn whole_characters(bytes: &mut Vec<u8>) -> String {
-    // Only an incomplete character at the end waits. An invalid byte becomes U+FFFD now.
-    let keep = match std::str::from_utf8(bytes) {
-        Err(error) if error.error_len().is_none() => bytes.len() - error.valid_up_to(),
-        _ => 0,
+pub(crate) fn whole_characters(bytes: &mut Vec<u8>) -> String {
+    // Only an incomplete character at the end waits. Each invalid sequence before it becomes U+FFFD now, so the check
+    // goes on past each one.
+    let mut start = 0;
+    let keep = loop {
+        match std::str::from_utf8(&bytes[start..]) {
+            Ok(_) => break 0,
+            Err(error) => match error.error_len() {
+                Some(invalid) => start += error.valid_up_to() + invalid,
+                None => break bytes.len() - start - error.valid_up_to(),
+            },
+        }
     };
     let rest = bytes.split_off(bytes.len() - keep);
     let text = String::from_utf8_lossy(bytes).into_owned();

@@ -223,11 +223,9 @@ impl Body for CannedBody {
             return Poll::Pending;
         }
         self.waited = false;
-        if let Some(fault) = self.read_error {
-            return Poll::Ready(Some(Err(fault)));
-        }
+        // A connection that breaks ends the body after the bytes it carried.
         if self.bytes.is_empty() {
-            return Poll::Ready(None);
+            return Poll::Ready(self.read_error.map(Err));
         }
         let take = self.chunk_size.min(self.bytes.len());
         Poll::Ready(Some(Ok(self.bytes.split_to(take))))

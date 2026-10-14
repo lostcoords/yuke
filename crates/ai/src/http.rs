@@ -65,8 +65,9 @@ impl std::error::Error for InvalidUserAgent {}
 pub struct HttpTransport {
     idle_timeout: Option<Duration>,
     user_agent: HeaderValue,
-    /// The TLS configuration, which the first `https` open builds. `None` keeps a failed build.
-    tls: OnceLock<Option<Arc<rustls::ClientConfig>>>,
+    /// The TLS configuration, which the first successful `https` open builds. A failed build is not kept, so the next
+    /// open builds again.
+    tls: OnceLock<Arc<rustls::ClientConfig>>,
 }
 
 impl HttpTransport {
@@ -84,18 +85,22 @@ impl HttpTransport {
         })
     }
 
-    /// The TLS configuration. A failed build fails every `https` open of this transport.
+    /// The TLS configuration. A failed build fails this open only.
     fn tls(&self) -> Result<Arc<rustls::ClientConfig>, Fault> {
-        self.tls
-            .get_or_init(|| {
-                let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-                let builder = rustls::ClientConfig::builder_with_provider(provider)
-                    .with_safe_default_protocol_versions()
-                    .ok()?;
-                Some(Arc::new(with_verifier(builder)?.with_no_client_auth()))
-            })
-            .clone()
-            .ok_or(Fault::TlsSetupFailed)
+        if let Some(config) = self.tls.get() {
+            return Ok(Arc::clone(config));
+        }
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let builder = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .map_err(|_| Fault::TlsSetupFailed)?;
+        let built = Arc::new(
+            with_verifier(builder)
+                .ok_or(Fault::TlsSetupFailed)?
+                .with_no_client_auth(),
+        );
+        // Two opens can build at once. The first set wins, and both use its value.
+        Ok(Arc::clone(self.tls.get_or_init(|| built)))
     }
 
     async fn exchange(&self, request: &Outgoing<'_>, deadline: Option<Instant>) -> Result<(Head, BoxBody), Fault> {
@@ -200,7 +205,7 @@ impl HttpTransport {
             let stream = tokio_rustls::TlsConnector::from(tls)
                 .connect(name, tcp)
                 .await
-                .map_err(|_| Fault::ConnectFailed)?;
+                .map_err(|error| handshake_fault(&error))?;
             Box::new(stream)
         } else {
             Box::new(tcp)
@@ -247,6 +252,14 @@ fn with_verifier(
     builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier>,
 ) -> Option<rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>> {
     rustls_platform_verifier::BuilderVerifierExt::with_platform_verifier(builder).ok()
+}
+
+/// The fault of a failed TLS handshake. The connector wraps the rustls error in the I/O error.
+fn handshake_fault(error: &io::Error) -> Fault {
+    match error.get_ref().and_then(|inner| inner.downcast_ref::<rustls::Error>()) {
+        Some(rustls::Error::InvalidCertificate(_)) => Fault::CertificateRejected,
+        _ => Fault::ConnectFailed,
+    }
 }
 
 /// The byte stream of one connection: plain TCP, or TLS over TCP.

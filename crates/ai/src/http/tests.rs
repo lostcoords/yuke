@@ -764,6 +764,19 @@ fn ssl_cert_dir_names_the_exact_roots() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+// The connector wraps the rustls error in the I/O error, and a rejected certificate gets a fault of its own.
+#[test]
+fn a_rejected_certificate_is_its_own_fault() {
+    let refused = io::Error::new(
+        io::ErrorKind::InvalidData,
+        rustls::Error::InvalidCertificate(rustls::CertificateError::Expired),
+    );
+    let other = io::Error::new(io::ErrorKind::InvalidData, rustls::Error::DecryptError);
+
+    assert_eq!(handshake_fault(&refused), Fault::CertificateRejected);
+    assert_eq!(handshake_fault(&other), Fault::ConnectFailed);
+}
+
 #[test]
 fn invalid_user_agent_is_rejected() {
     let options = HttpOptions::new("bad\r\n");

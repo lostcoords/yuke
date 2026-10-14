@@ -177,8 +177,12 @@ impl Session {
         if self.lease.is_none() {
             self.reopen().await?;
         }
+        // The store can save after the caller drops this future. So the future holds the lease, and a dropped write
+        // makes the next turn open the session again from the store.
+        let lease = self.lease.take();
         self.journal.store.set_settings(self.journal.id, &settings).await?;
         self.settings = settings;
+        self.lease = lease;
         Ok(())
     }
 

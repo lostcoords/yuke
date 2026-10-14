@@ -369,12 +369,12 @@ mod tests {
     #[test]
     fn faults_keep_attempt_info() {
         for during_open in [false, true] {
-            let canned = CannedTransport::new(canned_reply()).request_id("req-exchange");
             let canned = if during_open {
-                canned.open_error(Fault::ConnectionLost)
+                CannedTransport::new(canned_reply()).open_error(Fault::ConnectionLost)
             } else {
-                canned.read_error(Fault::ConnectionLost)
-            };
+                CannedTransport::new(String::new()).read_error(Fault::ConnectionLost)
+            }
+            .request_id("req-exchange");
             let response = generate_text(&canned, &target(Protocol::AnthropicMessages), "hello");
             assert_eq!(failed(&response).cause, Failure::Transport(Fault::ConnectionLost));
             // An open that failed read no head. A read that failed keeps the head it read.
@@ -384,14 +384,14 @@ mod tests {
         }
     }
 
+    // A connection can break after the error body arrived. The body still names the cause of the status.
     #[test]
-    fn error_body_read_fault_keeps_status_class() {
-        let canned = CannedTransport::new(String::new())
-            .status(503)
-            .read_error(Fault::ConnectionLost);
+    fn error_body_read_fault_keeps_the_bytes_so_far() {
+        let body = r#"{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#;
+        let canned = CannedTransport::new(body).status(429).read_error(Fault::ConnectionLost);
         let response = generate_text(&canned, &target(Protocol::AnthropicMessages), "hello");
-        assert_eq!(failed(&response).cause, Failure::Provider(ProviderKind::ServerError));
-        assert_eq!(info(&response).error_body, None);
+        assert_eq!(failed(&response).cause, Failure::Provider(ProviderKind::RateLimited));
+        assert_eq!(info(&response).error_body.as_deref(), Some(body.as_bytes()));
         assert_eq!(canned.closes(), 1);
     }
 

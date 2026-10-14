@@ -174,10 +174,11 @@ impl Store for SqliteStore {
         // The copy of the blobs runs on the thread of the connection, as a put does. Forks are rare.
         let (loaded, file) = self
             .call(move |connection| {
-                // The rows come before the folder, as in `create_session`, so the sweep finds no live folder without
-                // its row.
-                copy_rows(connection, source_bytes, fork, through)?;
+                let cut = fork_point(connection, source_bytes, through)?;
+                // The blobs come before the rows, so a fork that a reader finds has each of its blobs. The lock of the
+                // new folder keeps the sweep away from the folder until the rows exist.
                 let forked = copy_folder(&source_folder, &folder, &sessions_folder).and_then(|file| {
+                    copy_rows(connection, source_bytes, fork, cut)?;
                     let loaded = read(connection, |connection| context::load(connection, fork))?;
                     Ok((loaded.ok_or(StoreError::NotFound)?, file))
                 });
@@ -411,17 +412,10 @@ fn save_commit(
     Ok(true)
 }
 
-/// Copy the session row and the events of session `source` up to the cut to session `fork` in one transaction. The cut
-/// is event `through`, which must end a completed turn, or the cut that `fork_cut` gives.
-fn copy_rows(
-    connection: &mut Connection,
-    source: [u8; 16],
-    fork: [u8; 16],
-    through: Option<EventNumber>,
-) -> Result<(), StoreError> {
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(failed)?;
+/// The newest event of session `source` that a fork copies: event `through`, which must end a completed turn, or the
+/// cut that `fork_cut` gives.
+fn fork_point(connection: &mut Connection, source: [u8; 16], through: Option<EventNumber>) -> Result<u64, StoreError> {
+    let transaction = connection.transaction().map_err(failed)?;
     let cut = match through {
         Some(EventNumber(through)) => {
             ensure_session(&transaction, source)?;
@@ -448,7 +442,17 @@ fn copy_rows(
             .map_err(failed)?
             .ok_or(StoreError::NotFound)?,
     };
+    transaction.commit().map_err(failed)?;
+    Ok(cut)
+}
 
+/// Copy the session row and the events of session `source` up to event `cut` to session `fork` in one transaction.
+fn copy_rows(connection: &mut Connection, source: [u8; 16], fork: [u8; 16], cut: u64) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(failed)?;
+    // Another writer can delete the source between the read of the cut and this write.
+    ensure_session(&transaction, source)?;
     sessions::insert_session(&transaction, fork).map_err(failed)?;
     let params = events::CopyEventsParams {
         source,

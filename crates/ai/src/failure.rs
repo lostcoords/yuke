@@ -212,6 +212,14 @@ impl<'v> Fields<'v> {
         if let Some(kind) = names.iter().flatten().find_map(|name| by_name(name)) {
             return Some(kind);
         }
+        // Anthropic names an input over the context window only in the message of a general request error.
+        if self.kind == Some("invalid_request_error")
+            && self
+                .message
+                .is_some_and(|message| message.starts_with("prompt is too long"))
+        {
+            return Some(ProviderKind::ContextOverflow);
+        }
         let status = u16::try_from(self.status?).ok()?;
         if status < 400 {
             return None;
@@ -406,6 +414,17 @@ mod tests {
             event(r#"{"type":"response.failed","response":{"error":{"code":"bio_policy","message":"refused"}}}"#)
         );
         assert_eq!(ProviderFailed, event(r#"{"type":"response.failed"}"#));
+    }
+
+    // Anthropic answers an input over the context window with a general request error and this message.
+    #[test]
+    fn anthropic_prompt_too_long_is_context_overflow() {
+        let too_long = br#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 208310 tokens > 200000 maximum"}}"#;
+        let other =
+            br#"{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: must be positive"}}"#;
+
+        assert_eq!(status_kind(400, Some(too_long)), ProviderKind::ContextOverflow);
+        assert_ne!(status_kind(400, Some(other)), ProviderKind::ContextOverflow);
     }
 
     #[test]

@@ -296,6 +296,26 @@ fn cancelled_request_keeps_its_text_and_calls_but_not_its_reasoning() {
 }
 
 // The protocol sends a commit as this JSON. The SQLite store saves the parts of a commit in columns instead.
+// A transparent error gives its cause only through `source`. The saved text must keep that cause.
+#[test]
+fn a_failed_turn_saves_the_causes_of_its_error() {
+    let error = yuke_ai::Error::Encode(yuke_ai::EncodeError::BlobRead {
+        digest: [0; 32],
+        source: std::sync::Arc::new(std::io::Error::other("the disk is gone")),
+    });
+
+    let commit = Commit::end(&[], Err(&error));
+
+    let Some(TurnEnd::Failed(text)) = commit.end else {
+        panic!("{:?}", commit.end);
+    };
+    assert!(
+        text.starts_with("the blob store failed to read the attachment blob 0000"),
+        "{text}"
+    );
+    assert!(text.ends_with(": the disk is gone"), "{text}");
+}
+
 #[test]
 fn a_commit_reads_back_from_its_json() {
     let head = [Block::user_text("summary")];

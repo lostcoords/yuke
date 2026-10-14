@@ -485,6 +485,32 @@ mod tests {
         }
     }
 
+    // The model can write arguments that are not a JSON object. The next request repeats the call, so it must stay
+    // valid.
+    #[test]
+    fn call_with_invalid_arguments_keeps_the_request_valid() {
+        let blocks = [
+            text(U, "go"),
+            Block::ToolCall(ToolCall::new("call_1", "read", r#"{"path":"#)),
+            Block::ToolResult(ToolResult::error("call_1", "not valid JSON")),
+        ];
+        for wire in ALL_WIRES {
+            let target = target_of("m", wire);
+            let mut encoder = Encoder::new();
+
+            let sent = String::from_utf8(body(&encoder.encode(&target, Request::new(&blocks)).unwrap())).unwrap();
+
+            assert!(serde_json::from_str::<serde_json::Value>(&sent).is_ok(), "{sent}");
+            assert!(!sent.contains("path"), "{sent}");
+            // The call stays, with empty arguments.
+            assert!(sent.contains("call_1"), "{sent}");
+            assert!(
+                sent.contains(r#""input":{}"#) || sent.contains(r#""arguments":"{}""#),
+                "{sent}"
+            );
+        }
+    }
+
     // A deferred tool asks for the native tool search, so a target without one cannot take the request.
     #[test]
     fn deferred_tool_needs_native_tool_search() {

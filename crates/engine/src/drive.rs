@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::future::poll_fn;
+use std::num::NonZeroU32;
 use std::pin::{Pin, pin};
 use std::sync::{Mutex, PoisonError};
 use std::task::Poll;
@@ -455,7 +456,7 @@ impl<'a> Driver<'a> {
         };
         // One waiter serves the whole request, so a stream event costs no new registration.
         let mut cancelled = pin!(cancellation_token.cancelled());
-        let mut number = 1;
+        let mut number = NonZeroU32::MIN;
         loop {
             let opened = race(
                 Reply::open(
@@ -490,12 +491,14 @@ impl<'a> Driver<'a> {
                 return Sent::Finished(Err(error.into()));
             };
 
-            let after = Duration::from_millis(delay);
-            observer.event(&TurnEvent::RetryScheduled { after, error: &error });
-            if let Raced::Cancelled = race(self.timer.sleep(after), cancelled.as_mut()).await {
+            observer.event(&TurnEvent::RetryScheduled {
+                after: delay,
+                error: &error,
+            });
+            if let Raced::Cancelled = race(self.timer.sleep(delay), cancelled.as_mut()).await {
                 return Sent::Cancelled(Vec::new());
             }
-            number += 1;
+            number = number.saturating_add(1);
         }
     }
 }

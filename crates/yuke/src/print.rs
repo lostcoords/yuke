@@ -117,7 +117,7 @@ pub(crate) async fn run(
         }
     };
 
-    // The full outputs of the commands go to a folder of this process, which the run removes at its end.
+    // The full outputs of the commands go to a folder of this process, which the shutdown of `processes` removes.
     let processes_folder = std::env::temp_dir().join(format!(
         "yuke-{}-{:016x}",
         std::process::id(),
@@ -134,12 +134,8 @@ pub(crate) async fn run(
         cancellation_token,
     )
     .await;
-    processes.shutdown().await;
-    match std::fs::remove_dir_all(&processes_folder) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => {
-            warn(&format!("{}: {error}", processes_folder.display()));
-        }
-        _ => {}
+    if let Err(error) = processes.shutdown().await {
+        warn(&format!("{}: {error}", processes_folder.display()));
     }
     finished
 }
@@ -221,10 +217,15 @@ async fn turn(
     })
     .await
     .map_err(|error| describe(&error))?;
-    tokio::spawn(report(faults));
+    let reporter = tokio::spawn(report(faults));
     let finished = turn_in_runtime(prompt, session, store, target, machine, &runtime, cancellation_token).await;
     if let Err(error) = runtime.shutdown().await {
         warn(&describe(&error));
+    }
+    // The shutdown ends the thread of the runtime, which closes the channel of the faults. The reporter then prints the
+    // last faults and ends.
+    if let Err(error) = reporter.await {
+        warn(&format!("yuke could not report the script faults: {error}"));
     }
     finished
 }

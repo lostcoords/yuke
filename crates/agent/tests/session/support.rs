@@ -196,12 +196,14 @@ impl Tool for SendsInput {
     }
 }
 
-/// A memory store whose commit number `fail_at`, counted from 1, fails without a save.
+/// A memory store whose commit number `fail_at`, counted from 1, fails without a save. With `stalls_settings`, a
+/// settings write saves and then never answers.
 #[derive(Debug)]
 pub(crate) struct FailingStore {
     store: MemoryStore,
     fail_at: usize,
     commits: AtomicUsize,
+    stalls_settings: bool,
 }
 
 impl FailingStore {
@@ -210,6 +212,15 @@ impl FailingStore {
             store: MemoryStore::new(),
             fail_at,
             commits: AtomicUsize::new(0),
+            stalls_settings: false,
+        })
+    }
+
+    /// A store whose settings write saves and then never answers, as a write that the caller drops after the save.
+    pub(crate) fn stalling_settings() -> Arc<Self> {
+        Arc::new(FailingStore {
+            stalls_settings: true,
+            ..Arc::into_inner(FailingStore::new(0)).unwrap()
         })
     }
 }
@@ -225,7 +236,11 @@ impl Store for FailingStore {
     }
 
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {
-        self.store.set_settings(id, settings).await
+        self.store.set_settings(id, settings).await?;
+        if self.stalls_settings {
+            std::future::pending::<()>().await;
+        }
+        Ok(())
     }
 
     async fn accept_input(&self, id: SessionId, blocks: &[Block]) -> Result<InputId, StoreError> {

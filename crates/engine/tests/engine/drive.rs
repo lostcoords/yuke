@@ -312,9 +312,9 @@ fn the_retry_policy_of_the_driver_bounds_the_attempts_and_the_wait() {
     let target = target();
     let waits = Waits::default();
     let retry_policy = yuke_ai::retry::Policy {
-        max_attempts: 2,
-        base_ms: 2_000,
-        cap_ms: 2_000,
+        max_attempts: std::num::NonZeroU32::new(2).unwrap(),
+        base: Duration::from_secs(2),
+        cap: Duration::from_secs(2),
         ..yuke_ai::retry::Policy::default()
     };
     let driver = Driver::new(&transport, &target, &waits).retry_policy(retry_policy);

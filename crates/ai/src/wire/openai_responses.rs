@@ -6,7 +6,7 @@ use crate::request::{
     SEARCH_TOOL_NAME, Target, ToolChoice, ToolDefinition, ToolResult, read_blob,
 };
 
-use super::json::{JsonWriter, object_text};
+use super::json::{JsonWriter, call_arguments};
 
 /// Write the request up to the open `input` array, which holds no element yet.
 pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire, request: &Request<'_>) -> bool {
@@ -185,13 +185,13 @@ pub(crate) fn write_group(
                 jw.field_str("execution", "client");
                 jw.field_str("call_id", &call.call_id);
                 jw.field_str("status", "completed");
-                jw.field_raw("arguments", &call.arguments);
+                jw.field_raw("arguments", call_arguments(&call.arguments));
             } else {
                 jw.field_str("type", "function_call");
                 jw.field_str("call_id", &call.call_id);
                 jw.field_str("name", &call.name);
                 // A caller may send no arguments. The endpoint reads a JSON object text.
-                jw.field_str("arguments", object_text(&call.arguments));
+                jw.field_str("arguments", call_arguments(&call.arguments));
             }
             jw.end_object();
         }

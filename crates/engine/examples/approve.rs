@@ -14,19 +14,26 @@ use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason, HttpOptions, HttpTransport, ToolCall};
 use yuke_engine::{
     Driver, Hooks, Observer, Outcome, RoundDecision, Timer, Tool, ToolContent, ToolContext, ToolDecision, Toolset,
-    TurnEvent,
+    TurnEvent, parse_arguments,
 };
 
 /// The number of rounds before the hooks stop the turn.
 const ROUND_LIMIT: u32 = 5;
 
-/// Return the argument text in uppercase.
+/// Return the `text` argument in uppercase.
 struct Uppercase;
+
+/// The arguments of [`Uppercase`].
+#[derive(serde::Deserialize)]
+struct UppercaseArguments {
+    text: String,
+}
 
 #[async_trait]
 impl Tool for Uppercase {
     async fn call(&self, arguments: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
-        Ok(arguments.to_uppercase().into())
+        let arguments: UppercaseArguments = parse_arguments(arguments)?;
+        Ok(arguments.text.to_uppercase().into())
     }
 }
 

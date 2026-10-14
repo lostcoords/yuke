@@ -6,7 +6,7 @@ use crate::request::{
     ReplayKind, Request, Target, ThinkingFormat, ToolChoice, ToolResult, read_blob,
 };
 
-use super::json::{JsonWriter, object_text};
+use super::json::{JsonWriter, call_arguments};
 
 /// Write the request up to the open `messages` array. Return whether it wrote the system message into it.
 pub(crate) fn write_head(
@@ -253,7 +253,7 @@ fn write_assistant_message(jw: &mut JsonWriter<'_>, target: &Target, replay: Rea
                 jw.begin_object();
                 jw.field_str("name", &call.name);
                 // A caller may send no arguments. The endpoint reads a JSON object text.
-                jw.field_str("arguments", object_text(&call.arguments));
+                jw.field_str("arguments", call_arguments(&call.arguments));
                 jw.end_object();
                 jw.end_object();
             }

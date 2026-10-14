@@ -1,12 +1,12 @@
-//! Chat through the engine. The answer text prints while it streams. Press Ctrl-C to cancel an answer. Press Ctrl-D
-//! to exit.
+//! Chat through the engine. The answer text prints while it streams. Press Ctrl-C to cancel an answer. Press Ctrl-C at
+//! the prompt, or Ctrl-D, to exit.
 #![expect(clippy::print_stdout, clippy::print_stderr, reason = "an example prints the chat")]
 #![expect(
     clippy::expect_used,
     reason = "an example stops when it cannot write to the terminal"
 )]
 
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -54,9 +54,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cancelled = false;
 
-    print!("You> ");
-    std::io::stdout().flush()?;
-    for line in std::io::stdin().lock().lines() {
+    loop {
+        print!("You> ");
+        std::io::stdout().flush()?;
+        // The read of stdin blocks. It runs on a blocking thread, so a Ctrl-C at the prompt can end the chat.
+        let read = tokio::task::spawn_blocking(|| {
+            let mut line = String::new();
+            std::io::stdin()
+                .read_line(&mut line)
+                .map(|count| (count > 0).then_some(line))
+        });
+        let line = tokio::select! {
+            read = read => read??,
+            _ = tokio::signal::ctrl_c() => {
+                println!();
+                // The read of stdin still blocks its thread, and the runtime waits for that thread at the end of
+                // `main`.
+                std::process::exit(0);
+            }
+        };
+        let Some(line) = line else {
+            break;
+        };
         print!("AI> ");
         // A cancelled token cannot be reset, so each turn gets a new token.
         let cancellation_token = CancellationToken::new();
@@ -74,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if std::mem::take(&mut cancelled) {
             input.push(Block::user_text(INTERRUPTED));
         }
-        input.push(Block::user_text(line?));
+        input.push(Block::user_text(line.trim_end_matches(['\r', '\n'])));
         let outcome = driver
             .turn(&mut context, input)
             .observer(&observer)
@@ -92,9 +111,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(error) => eprintln!("{error}"),
         }
-
-        print!("You> ");
-        std::io::stdout().flush()?;
     }
     Ok(())
 }

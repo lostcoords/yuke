@@ -145,7 +145,8 @@ pub const TOOL_CALL_NAME: &str = "tool_call";
 #[derive(Default)]
 pub struct Toolset {
     definitions: Vec<yuke_ai::ToolDefinition>,
-    /// One handler for each definition, at the same index.
+    /// One handler for each definition, at the same index. The definitions stay one slice, so a request without a
+    /// deferred tool borrows them without a copy.
     handlers: Vec<Box<dyn Tool>>,
 }
 

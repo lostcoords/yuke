@@ -4,7 +4,7 @@ use crate::encoder::EncodeError;
 use crate::request::read_blob;
 use crate::request::{AnthropicWire, Block, Media, Modality, Reasoning, ReplayKind, Request, Target, Thinking};
 
-use super::json::JsonWriter;
+use super::json::{JsonWriter, call_arguments};
 
 /// Write the request up to the open `messages` array, which holds no element yet.
 pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: AnthropicWire, request: &Request<'_>) -> bool {
@@ -176,7 +176,7 @@ fn write_block(
             jw.field_str("type", "tool_use");
             jw.field_str("id", &call.call_id);
             jw.field_str("name", &call.name);
-            jw.field_raw("input", &call.arguments);
+            jw.field_raw("input", call_arguments(&call.arguments));
             write_cache_control(jw, cache);
             jw.end_object();
         }

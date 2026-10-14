@@ -142,6 +142,31 @@ async fn a_pending_input_waits_for_the_next_turn_after_an_open() {
     assert_eq!(store.pending(id).await.unwrap(), []);
 }
 
+// A store can save new settings after the caller dropped the write, so the session must not trust its old copy.
+#[tokio::test]
+async fn a_dropped_settings_write_leaves_the_next_turn_with_the_saved_settings() {
+    let store = FailingStore::stalling_settings();
+    let transport = ScriptedTransport::new([text_reply("two")]);
+    let target = target();
+    let mut session = Session::create(store, settings()).await.unwrap();
+    let mut brief = settings();
+    brief.settings = yuke_ai::Settings::new().system("Be brief.");
+    {
+        let mut write = pin!(session.set_settings(brief));
+        let polled = write.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+        assert!(polled.is_pending());
+    }
+    session.input().send(&[Block::user_text("one")]).await.unwrap();
+
+    session
+        .turn(Driver::new(&transport, &target, &NoWait))
+        .run()
+        .await
+        .unwrap();
+
+    assert_in_order(&transport.requests()[0], &["Be brief.", "one"]);
+}
+
 // The caller gives the driver no settings and no session id, so both come from the session.
 #[tokio::test]
 async fn a_turn_sends_the_settings_and_the_id_of_its_session() {

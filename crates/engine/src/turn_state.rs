@@ -114,7 +114,7 @@ impl<'a> Commit<'a> {
     pub(crate) fn end(tail: &'a [Block], result: Result<&Outcome, &yuke_ai::Error>) -> Self {
         let end = match result {
             Ok(outcome) => TurnEnd::Outcome(outcome.clone()),
-            Err(error) => TurnEnd::Failed(error.to_string()),
+            Err(error) => TurnEnd::Failed(chain_text(error)),
         };
         Commit {
             end: Some(end),
@@ -437,6 +437,15 @@ impl<'c> TurnState<'c> {
     fn take_unsaved(&mut self) -> usize {
         std::mem::replace(&mut self.saved, self.context.len())
     }
+}
+
+/// The text of `error` and of each of its causes, joined by colons. The saved text is all that a reader of the turn
+/// gets, so it keeps the causes.
+fn chain_text(error: &dyn std::error::Error) -> String {
+    std::iter::successors(Some(error), |error| error.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
 }
 
 /// The reason of a call that did not run, because the user cancelled the turn.

@@ -408,6 +408,38 @@ async fn a_rejection_without_a_handler_is_a_fault() {
     }
 }
 
+// The report of a rejection reads the message of its error, and that read runs script that can reject again.
+#[tokio::test]
+async fn a_rejection_during_the_report_of_a_rejection_is_a_fault_too() {
+    let folder = folder("a_rejection_during_the_report_of_a_rejection_is_a_fault_too");
+    let (runtime, mut faults) = start(&folder).await;
+
+    evaluate::<()>(
+        &runtime,
+        "let first = true;
+         const error = new Error();
+         Object.defineProperty(error, 'message', {
+           get() {
+             if (first) { first = false; Promise.reject(new Error('inner')); }
+             return 'outer';
+           },
+         });
+         Promise.reject(error);",
+    )
+    .await
+    .unwrap();
+
+    let mut messages = Vec::new();
+    for _ in 0..2 {
+        match next_fault(&mut faults).await {
+            Fault::Script(error) => messages.push(error.message),
+            other @ Fault::Interrupted => panic!("expected a script fault, got {other:?}"),
+        }
+    }
+    messages.sort();
+    assert_eq!(messages, ["inner", "outer"]);
+}
+
 #[tokio::test]
 async fn a_rejection_that_gets_a_handler_in_its_slice_is_no_fault() {
     let folder = folder("a_rejection_that_gets_a_handler_in_its_slice_is_no_fault");

@@ -383,11 +383,13 @@ struct Rejections {
 impl Rejections {
     fn track<'js>(&self, ctx: &Ctx<'js>, promise: Value<'js>, reason: &Value<'js>, handled: bool) {
         let promise = Persistent::save(ctx, promise);
-        let mut pending = self.pending.borrow_mut();
         if handled {
-            pending.retain(|(rejected, _)| *rejected != promise);
+            self.pending.borrow_mut().retain(|(rejected, _)| *rejected != promise);
         } else {
-            pending.push((promise, ScriptError::from_value(ctx, reason)));
+            // The conversion can run a getter that rejects another promise and calls this function again. So the
+            // conversion comes before the borrow of `pending`.
+            let error = ScriptError::from_value(ctx, reason);
+            self.pending.borrow_mut().push((promise, error));
         }
     }
 }

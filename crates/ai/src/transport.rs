@@ -62,6 +62,9 @@ pub enum Fault {
     DnsFailed,
     /// The socket or the TLS handshake never carried a request.
     ConnectFailed,
+    /// The TLS handshake rejected the certificate of the provider, for example an expired one or one of an unknown
+    /// issuer.
+    CertificateRejected,
     /// A deadline passed before the request was sent.
     ConnectTimeout,
     /// The TLS configuration could not be built, for example because the platform gives no root certificate.
@@ -85,6 +88,7 @@ impl fmt::Display for Fault {
             Self::IdleTimeout => "the provider exchange exceeded the idle timeout",
             Self::RequestTimeout => "the provider exchange exceeded the request timeout",
             Self::ConnectFailed => "the provider connection failed",
+            Self::CertificateRejected => "the client rejected the TLS certificate of the provider",
             Self::ConnectTimeout => "the provider connection timed out before the request left",
             Self::DnsFailed => "the provider host did not resolve",
             Self::ConnectionLost => "the provider connection ended",

@@ -140,7 +140,7 @@ impl Stream {
         stream.info.retry_after_ms = head.retry_after_ms;
         stream.info.should_retry = head.should_retry;
         if head.status != 200 {
-            stream.info.error_body = read_error_body(&mut body, limits.max_error_body_bytes).await;
+            stream.info.error_body = Some(read_error_body(&mut body, limits.max_error_body_bytes).await);
             let kind = failure::status_kind(head.status, stream.info.error_body.as_deref());
             stream.state = State::Failed(Failure::Provider(kind));
         }
@@ -264,17 +264,16 @@ impl Stream {
     }
 }
 
-/// Read at most `max` bytes of a failed answer. A peer fault leaves no detail.
-async fn read_error_body(body: &mut BoxBody, max: usize) -> Option<Vec<u8>> {
+/// Read at most `max` bytes of a failed answer. A read fault ends the read and keeps the bytes before it.
+async fn read_error_body(body: &mut BoxBody, max: usize) -> Vec<u8> {
     let mut bytes = Vec::new();
     while bytes.len() < max {
         match transport::next_chunk(body).await {
             Some(Ok(chunk)) => bytes.extend_from_slice(&chunk[..chunk.len().min(max - bytes.len())]),
-            Some(Err(_)) => return None,
-            None => break,
+            Some(Err(_)) | None => break,
         }
     }
-    Some(bytes)
+    bytes
 }
 
 #[cfg(test)]

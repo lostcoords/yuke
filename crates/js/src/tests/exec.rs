@@ -11,7 +11,7 @@ use yuke_engine::CancellationToken;
 use super::tools::{TestHost, call, call_with, error_of, text_of, tools_in, tools_of};
 use super::{LIMITS, folder};
 use crate::native;
-use crate::processes::recovered_home;
+use crate::processes::{recovered_home, whole_characters};
 use crate::{Options, Processes, Runtime, SessionHost};
 
 /// The id of the job that the start text `started` names, for example `job-a1b2`.
@@ -128,6 +128,22 @@ async fn exec_at_its_deadline_stops_the_process_group() {
         text.starts_with("begun\n[timeout: 200 ms. yuke stopped the process group."),
         "{text}"
     );
+}
+
+// The shell ends at once on SIGTERM, but another process of its group needs time to clean up.
+#[tokio::test]
+async fn each_process_of_a_stopped_group_gets_the_grace() {
+    let folder = folder("each_process_of_a_stopped_group_gets_the_grace");
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let command = "sh -c 'trap \"sleep 0.3; echo done > cleaned; exit 0\" TERM; while :; do sleep 0.05; done' & wait";
+
+    text_of(
+        &tools["exec"],
+        &format!(r#"{{"command": {}, "timeout_ms": 300}}"#, json_string(command)),
+    )
+    .await;
+
+    assert_eq!(std::fs::read_to_string(folder.join("cleaned")).unwrap(), "done\n");
 }
 
 #[tokio::test]
@@ -389,6 +405,44 @@ async fn a_job_outlives_a_reload_of_the_runtime() {
 }
 
 #[tokio::test]
+async fn a_shutdown_of_the_processes_removes_their_folder() {
+    let folder = folder("a_shutdown_of_the_processes_removes_their_folder");
+    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let host = Arc::new(TestHost {
+        folder: folder.clone(),
+        ..TestHost::default()
+    });
+    let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
+    text_of(&exec, r#"{"command": "sleep 30", "background": true}"#).await;
+    let had_log = folder.join("processes").exists();
+
+    processes.shutdown().await.unwrap();
+
+    assert!(had_log);
+    assert!(!folder.join("processes").exists());
+}
+
+// A job start after the shutdown fails, and it leaves no job and no folder.
+#[tokio::test]
+async fn a_job_start_after_the_shutdown_fails_and_leaves_no_job() {
+    let folder = folder("a_job_start_after_the_shutdown_fails_and_leaves_no_job");
+    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let host = Arc::new(TestHost {
+        folder: folder.clone(),
+        ..TestHost::default()
+    });
+    let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
+    processes.shutdown().await.unwrap();
+
+    let error = error_of(&exec, r#"{"command": "sleep 30", "background": true}"#).await;
+
+    assert!(error.contains("yuke is shutting down"), "{error}");
+    let owner: Arc<dyn SessionHost> = host;
+    assert_eq!(processes.running_jobs(&owner), Vec::<String>::new());
+    assert!(!folder.join("processes").exists());
+}
+
+#[tokio::test]
 async fn a_shutdown_of_the_processes_stops_each_job_without_an_end_message() {
     let folder = folder("a_shutdown_of_the_processes_stops_each_job_without_an_end_message");
     let processes = Arc::new(Processes::new(folder.join("processes")));
@@ -401,6 +455,7 @@ async fn a_shutdown_of_the_processes_stops_each_job_without_an_end_message() {
 
     tokio::time::timeout(Duration::from_secs(5), processes.shutdown())
         .await
+        .unwrap()
         .unwrap();
 
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -468,6 +523,18 @@ async fn two_processes_start_their_job_ids_at_different_numbers() {
 
     // A random start repeats once in 1,632,960 runs.
     assert_ne!(first, second);
+}
+
+// A read can end inside a character after an invalid byte. Only the incomplete character waits for the next read.
+#[test]
+fn live_output_keeps_an_incomplete_character_after_an_invalid_byte() {
+    let mut bytes = vec![0xFF, 0xE2];
+    let first = whole_characters(&mut bytes);
+    bytes.extend_from_slice(&[0x82, 0xAC]);
+    let second = whole_characters(&mut bytes);
+
+    assert_eq!(first + &second, "\u{FFFD}\u{20AC}");
+    assert_eq!(bytes, Vec::<u8>::new());
 }
 
 #[test]
