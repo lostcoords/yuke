@@ -92,7 +92,7 @@ fn quoted(text: &str) -> String {
 /// done stop "end_turn" input=120 output=5
 /// ```
 ///
-/// A string is a JSON string, and `done` names only the usage counts that are not zero.
+/// A string is a JSON string, and `done` names only the usage counts that the provider reported.
 pub(crate) fn trace_line(event: &Event<'_>) -> String {
     match event {
         Event::BlockStarted(started) => format!("start {} {}", started.block, kind_name(started.kind)),
@@ -136,7 +136,7 @@ pub(crate) fn trace_line(event: &Event<'_>) -> String {
                 ("cache_read", usage.cache_read),
                 ("cache_write", usage.cache_write),
             ] {
-                if count != 0 {
+                if let Some(count) = count {
                     _ = write!(line, " {name}={count}");
                 }
             }

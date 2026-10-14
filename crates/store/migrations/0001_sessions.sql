@@ -2,8 +2,7 @@
 -- that only yuke reads back is JSON. Facts that a query can ask about are columns.
 
 CREATE TABLE sessions (
-    id BLOB PRIMARY KEY NOT NULL,          -- 16 bytes of a version 7 UUID, so new rows go near the end of the key
-    created_at INTEGER NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)) -- Unix milliseconds
+    id BLOB PRIMARY KEY NOT NULL           -- 16 bytes of a version 7 UUID, so new rows go near the end of the key
 ) STRICT;
 
 CREATE TABLE events (                      -- the commits and the settings of each session, numbered 1, 2, 3, and so on
@@ -17,7 +16,7 @@ CREATE TABLE events (                      -- the commits and the settings of ea
     keep INTEGER,                          -- set with head: the number of earlier blocks that stay after head
     model TEXT,                            -- the origin of an answer
     base_url TEXT,                         -- set with model
-    input_tokens INTEGER,                  -- the usage of an answer, set with model
+    input_tokens INTEGER,                  -- the usage of an answer. NULL marks a count that the provider left out.
     output_tokens INTEGER,
     reasoning_tokens INTEGER,
     cache_read_tokens INTEGER,
@@ -36,6 +35,5 @@ CREATE INDEX events_replace ON events(session_id, seq) WHERE keep IS NOT NULL;
 CREATE TABLE pending_inputs (              -- the inputs that no commit consumed
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, -- AUTOINCREMENT never gives the id of a deleted input again
     session_id BLOB NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    blocks TEXT NOT NULL,                  -- JSON blocks
-    accepted_at INTEGER NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER))
+    blocks TEXT NOT NULL                   -- JSON blocks
 ) STRICT;

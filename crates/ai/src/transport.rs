@@ -52,7 +52,6 @@ pub(crate) async fn next_chunk(body: &mut BoxBody) -> Option<Result<Bytes, Fault
 
 /// The faults of an exchange. An HTTP status is response data, not a fault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Fault {
     /// The request holds an invalid header or too many headers. The request never left.
     InvalidRequest,

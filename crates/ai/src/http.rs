@@ -374,8 +374,8 @@ impl Target {
     fn parse(url: &str) -> Result<Self, Fault> {
         let uri: Uri = url.parse().map_err(|_| Fault::BadUrl)?;
         let tls = match uri.scheme_str() {
-            Some("http" | "ws") => false,
-            Some("https" | "wss") => true,
+            Some("http") => false,
+            Some("https") => true,
             _ => return Err(Fault::BadUrl),
         };
         let authority = uri.authority().ok_or(Fault::BadUrl)?;

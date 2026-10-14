@@ -413,7 +413,7 @@ mod tests {
                 canned_reply(),
                 200,
                 false,
-                "start 0 text\ntext_delta 0 \"Hello from the mock provider.\"\nstop 0 text\ndone stop \"end_turn\" output=8",
+                "start 0 text\ntext_delta 0 \"Hello from the mock provider.\"\nstop 0 text\ndone stop \"end_turn\" input=0 output=8",
             ),
             (canned_reply(), 200, true, "start 0 text"),
             (truncated, 200, false, "failed IncompleteStream"),

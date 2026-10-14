@@ -88,12 +88,12 @@ impl<'a> Value<'a> {
     }
 
     /// Read a token count. Usage is no part of the answer, so an absent, null, negative, or malformed count reads as
-    /// zero rather than failing the response.
-    pub(crate) fn count(&self, key: &str) -> u64 {
+    /// `None` rather than failing the response.
+    pub(crate) fn count(&self, key: &str) -> Option<u64> {
         match self.get(key) {
-            Some(Value::Integer(n)) => u64::try_from(*n).unwrap_or(0),
-            Some(Value::Unsigned(n)) => *n,
-            _ => 0,
+            Some(Value::Integer(n)) => u64::try_from(*n).ok(),
+            Some(Value::Unsigned(n)) => Some(*n),
+            _ => None,
         }
     }
 }
@@ -254,11 +254,11 @@ mod tests {
                 .unwrap();
         assert_eq!(value.get_int("i"), Some(-3));
         assert_eq!(value.get_index("p"), Ok(5));
-        assert_eq!(value.count("i"), 0);
+        assert_eq!(value.count("i"), None);
         // A number above `i64::MAX` is a count, but not an integer.
         assert_eq!(value.get_int("big"), None);
-        assert_eq!(value.count("big"), u64::MAX);
-        // A number past `u64::MAX` or below `i64::MIN` reads as a float. It is not an integer, and its count is zero.
+        assert_eq!(value.count("big"), Some(u64::MAX));
+        // A number past `u64::MAX` or below `i64::MIN` reads as a float. It is not an integer, and it has no count.
         for (key, expected) in [
             ("huge", 18_446_744_073_709_551_616.0),
             ("low", -9_223_372_036_854_775_808.0),
@@ -266,7 +266,7 @@ mod tests {
         ] {
             assert_eq!(value.get(key), Some(&Value::Float(expected)), "{key}");
             assert_eq!(value.get_int(key), None, "{key}");
-            assert_eq!(value.count(key), 0, "{key}");
+            assert_eq!(value.count(key), None, "{key}");
         }
         assert_eq!(value.get_index("i"), Err(Malformed));
     }

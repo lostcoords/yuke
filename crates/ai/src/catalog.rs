@@ -302,7 +302,6 @@ impl Model<'_> {
 /// A selector that names nothing, an entry that cannot bind, or a reasoning level that a model does not support.
 /// Every baked entry binds, so only an entry built from caller configuration can fail to bind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Error {
     /// The selector is not `provider/model`.
     MalformedSelector,

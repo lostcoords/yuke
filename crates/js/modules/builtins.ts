@@ -106,7 +106,12 @@ define({
     type: "object",
     properties: {
       command: { type: "string" },
-      timeout_ms: { type: "integer", minimum: 1, maximum: LONGEST_TIMEOUT, description: "The default is 120000." },
+      timeout_ms: {
+        type: "integer",
+        minimum: 1,
+        maximum: LONGEST_TIMEOUT,
+        description: `The default is ${DEFAULT_TIMEOUT}.`,
+      },
       background: { type: "boolean", description: "Run a server or watcher as a job and return at once." },
     },
     required: ["command"],

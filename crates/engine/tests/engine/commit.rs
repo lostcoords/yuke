@@ -347,8 +347,10 @@ fn each_answer_commit_names_the_target_of_its_round_with_usage_and_finish_reason
 
     block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
 
+    // The reply reports `input_tokens: 0` and leaves out the other counts.
     let usage = Usage {
-        output: 1,
+        input: Some(0),
+        output: Some(1),
         ..Usage::default()
     };
     let answers: Vec<Option<Answer>> = journal.saved().into_iter().map(|saved| saved.answer).collect();

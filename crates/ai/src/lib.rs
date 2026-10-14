@@ -20,7 +20,7 @@ mod wyhash;
 #[cfg(test)]
 mod testing;
 
-pub use encoder::{EncodeError, Encoded, Encoder};
+pub use encoder::{EncodeError, Encoded, Encoder, Unsupported};
 pub use failure::{Failure, ProviderKind, detail_text};
 #[cfg(feature = "http-tokio")]
 pub use http::{HttpOptions, HttpTransport, InvalidUserAgent};

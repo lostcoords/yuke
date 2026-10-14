@@ -515,14 +515,17 @@ async fn each_job_of_a_process_gets_a_new_id() {
 }
 
 #[tokio::test]
-async fn two_processes_start_their_job_ids_at_different_numbers() {
-    let folder = folder("two_processes_start_their_job_ids_at_different_numbers");
+async fn processes_start_their_job_ids_at_different_numbers() {
+    let folder = folder("processes_start_their_job_ids_at_different_numbers");
 
-    let first = Processes::new(folder.join("first")).job_id();
-    let second = Processes::new(folder.join("second")).job_id();
+    let mut firsts: Vec<String> = (0..5)
+        .map(|number| Processes::new(folder.join(number.to_string())).job_id())
+        .collect();
 
-    // A random start repeats once in 1,632,960 runs.
-    assert_ne!(first, second);
+    // Two random starts are equal once in 1,632,960 runs. Five equal starts are about 1 in 10^25.
+    firsts.sort_unstable();
+    firsts.dedup();
+    assert!(firsts.len() > 1, "{firsts:?}");
 }
 
 // A read can end inside a character after an invalid byte. Only the incomplete character waits for the next read.

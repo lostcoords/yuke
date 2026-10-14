@@ -34,11 +34,11 @@ keeps a folder for each session in `folder/sessions/<id>/`, with the lock file a
 ## Fork
 
 - `fork_session` copies the session up to the end of a completed turn: the event that the fork names, or the newest
-  completed turn. One transaction finds that end and copies the events up to it. A copied event keeps its number, its
-  token usage, and its creation time. The new session row gets the time of the fork, and the newest copied settings event gives its settings. The
-  pending inputs stay with the source.
-- Then it locks the new folder and copies each blob file through a temporary file. On a file system with reflinks, such as
-  btrfs or APFS, the copy can share the blocks of the source file.
+  completed turn. A copied event keeps its number, its token usage, and its creation time. The newest copied settings
+  event gives the settings of the fork. The pending inputs stay with the source.
+- The blobs come before the rows, so a reader finds every blob of a fork. The fork locks its new folder and
+  copies each blob file through a temporary file. Then one transaction copies the rows. On a file system with
+  reflinks, such as btrfs or APFS, a copy can share the blocks of the source file.
 - The fork takes no lock on the source, so a writer of the source can keep its lease during the fork.
 - When the copy fails, the store deletes the rows and the folder of the fork. An error of that delete returns in
   place of the error of the copy.

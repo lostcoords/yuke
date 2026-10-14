@@ -496,11 +496,11 @@ fn commit_params(
     let (end_kind, end_finish_reason, end_message) = match &commit.end {
         None => (None, None, None),
         Some(TurnEnd::Outcome(Outcome::Completed { finish_reason })) => {
-            (Some("completed"), Some(finish_reason.as_str()), None)
+            (Some(event::COMPLETED), Some(finish_reason.as_str()), None)
         }
-        Some(TurnEnd::Outcome(Outcome::Stopped)) => (Some("stopped"), None, None),
-        Some(TurnEnd::Outcome(Outcome::Cancelled)) => (Some("cancelled"), None, None),
-        Some(TurnEnd::Failed(message)) => (Some("failed"), None, Some(message.clone())),
+        Some(TurnEnd::Outcome(Outcome::Stopped)) => (Some(event::STOPPED), None, None),
+        Some(TurnEnd::Outcome(Outcome::Cancelled)) => (Some(event::CANCELLED), None, None),
+        Some(TurnEnd::Failed(message)) => (Some(event::FAILED), None, Some(message.clone())),
     };
 
     Ok(events::InsertCommitParams {
@@ -511,11 +511,11 @@ fn commit_params(
         keep,
         model: answer.map(|answer| answer.origin.model.clone()),
         base_url: answer.map(|answer| answer.origin.base_url.clone()),
-        input_tokens: usage.map(|usage| usage.input),
-        output_tokens: usage.map(|usage| usage.output),
-        reasoning_tokens: usage.map(|usage| usage.reasoning),
-        cache_read_tokens: usage.map(|usage| usage.cache_read),
-        cache_write_tokens: usage.map(|usage| usage.cache_write),
+        input_tokens: usage.and_then(|usage| usage.input),
+        output_tokens: usage.and_then(|usage| usage.output),
+        reasoning_tokens: usage.and_then(|usage| usage.reasoning),
+        cache_read_tokens: usage.and_then(|usage| usage.cache_read),
+        cache_write_tokens: usage.and_then(|usage| usage.cache_write),
         finish_reason: answer.map(|answer| answer.finish_reason.as_str().to_owned()),
         end_kind: end_kind.map(str::to_owned),
         end_finish_reason: end_finish_reason.map(str::to_owned),

@@ -52,7 +52,7 @@ pub(crate) struct Reducer {
     /// drops.
     slots: Vec<Option<BlockId>>,
     /// The largest `input_tokens` so far, which counts no cache token.
-    uncached_input: u64,
+    uncached_input: Option<u64>,
 }
 
 impl Reducer {
@@ -60,7 +60,7 @@ impl Reducer {
         Reducer {
             draft,
             slots: Vec::new(),
-            uncached_input: 0,
+            uncached_input: None,
         }
     }
 
@@ -115,10 +115,11 @@ impl Reducer {
         self.uncached_input = self.uncached_input.max(usage.count("input_tokens"));
         total.cache_read = total.cache_read.max(usage.count("cache_read_input_tokens"));
         total.cache_write = total.cache_write.max(usage.count("cache_creation_input_tokens"));
-        total.input = self
-            .uncached_input
-            .saturating_add(total.cache_read)
-            .saturating_add(total.cache_write);
+        total.input = self.uncached_input.map(|uncached| {
+            uncached
+                .saturating_add(total.cache_read.unwrap_or(0))
+                .saturating_add(total.cache_write.unwrap_or(0))
+        });
     }
 
     fn on_block_start(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
@@ -241,12 +242,11 @@ impl Reducer {
         }
         // The final message_delta reports thinking tokens as a subset of output_tokens.
         if let Some(usage) = root.get_object("usage") {
-            // A compatible host may leave the count out of a later event, which keeps the one it sent.
-            if usage.get("output_tokens").is_some() {
-                self.draft.usage.output = usage.count("output_tokens");
-            }
+            // The counts are cumulative, and a compatible host may leave one out of a later event, so the larger stays.
+            let total = &mut self.draft.usage;
+            total.output = total.output.max(usage.count("output_tokens"));
             if let Some(details) = usage.get_object("output_tokens_details") {
-                self.draft.usage.reasoning = details.count("thinking_tokens");
+                total.reasoning = total.reasoning.max(details.count("thinking_tokens"));
             }
             self.fold_prompt_usage(usage);
         }
@@ -350,10 +350,24 @@ mod tests {
         }
     }
 
-    // Usage is no part of the answer, so a malformed or null count reads as zero. Anthropic declares every count
-    // nullable, so a null count must not fail the response.
+    // The usage counts are cumulative, so a later event with a smaller or a missing count keeps the larger count.
     #[test]
-    fn invalid_or_null_usage_count_reads_as_zero() {
+    fn a_later_usage_event_keeps_the_larger_count() {
+        let mut h = Harness::new(PROTOCOL);
+        h.feed(&[
+            r#"{"type":"message_start","message":{"usage":{"input_tokens":10}}}"#,
+            r#"{"type":"message_delta","delta":{},"usage":{"output_tokens":5,"output_tokens_details":{"thinking_tokens":2}}}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3,"output_tokens_details":{}}}"#,
+            r#"{"type":"message_stop"}"#,
+        ])
+        .unwrap();
+        h.expect_trace("done stop \"end_turn\" input=10 output=5 reasoning=2");
+    }
+
+    // Usage is no part of the answer, so a malformed or null count reads as a missing count. Anthropic declares every
+    // count nullable, so a null count must not fail the response.
+    #[test]
+    fn invalid_or_null_usage_count_reads_as_missing() {
         let cases: [(&[&str], &str); 2] = [
             (
                 &[

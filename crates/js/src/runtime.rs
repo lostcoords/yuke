@@ -230,7 +230,7 @@ fn serve(
             return;
         }
     };
-    tokio::task::LocalSet::new().block_on(&tokio_runtime, serve_calls(options, calls, stopped, faults, ready));
+    tokio_runtime.block_on(serve_calls(options, calls, stopped, faults, ready));
 }
 
 async fn serve_calls(

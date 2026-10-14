@@ -170,7 +170,7 @@ fn lines(full: &Path, offset: u32, limit: u32, max_bytes: usize) -> Result<Lines
         }
         number = number.saturating_add(1);
         if number < offset {
-            skip_line(&mut reader).map_err(|error| describe(&error))?;
+            reader.skip_until(b'\n').map_err(|error| describe(&error))?;
             continue;
         }
         if taken == limit {
@@ -203,7 +203,7 @@ fn lines(full: &Path, offset: u32, limit: u32, max_bytes: usize) -> Result<Lines
             // The first line alone is over the limit: the read gives its start.
             let end = entry.floor_char_boundary(max_bytes);
             if !whole {
-                skip_line(&mut reader).map_err(|error| describe(&error))?;
+                reader.skip_until(b'\n').map_err(|error| describe(&error))?;
             }
             let more = !reader.fill_buf().map_err(|error| describe(&error))?.is_empty();
             return Ok(Lines::Text {
@@ -244,22 +244,6 @@ fn read_line(reader: &mut impl BufRead, max_bytes: usize, line: &mut Vec<u8>) ->
                 return Ok(false);
             }
         }
-    }
-}
-
-/// Skip one line, its line feed included.
-fn skip_line(reader: &mut impl BufRead) -> io::Result<()> {
-    loop {
-        let buffer = reader.fill_buf()?;
-        if buffer.is_empty() {
-            return Ok(());
-        }
-        if let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
-            reader.consume(end + 1);
-            return Ok(());
-        }
-        let length = buffer.len();
-        reader.consume(length);
     }
 }
 

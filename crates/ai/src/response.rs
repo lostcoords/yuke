@@ -14,7 +14,6 @@ use crate::request::{Block, Reasoning, ReasoningReplayRef, ToolCall, ToolCallRef
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum FinishReason {
     /// The model finished its answer.
     Stop,
@@ -61,21 +60,22 @@ impl FinishReason {
     }
 }
 
-/// Token counts of one attempt, in the convention of OpenAI: a total includes the parts named after it.
+/// Token counts of one attempt, in the convention of OpenAI: a total includes the parts named after it. A provider can
+/// leave out a count. Then the count is `None`, not `Some(0)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Usage {
     /// Every prompt token, `cache_read` and `cache_write` among them.
-    pub input: u64,
+    pub input: Option<u64>,
     /// Every generated token, `reasoning` among them.
-    pub output: u64,
+    pub output: Option<u64>,
     /// The output tokens the model spent on reasoning.
-    pub reasoning: u64,
+    pub reasoning: Option<u64>,
     /// The input tokens read from the prompt cache.
-    pub cache_read: u64,
+    pub cache_read: Option<u64>,
     /// The input tokens written to the prompt cache.
-    pub cache_write: u64,
+    pub cache_write: Option<u64>,
 }
 
 /// Bounds on what an untrusted response can make the library hold. A response past one fails with
@@ -133,7 +133,6 @@ pub type BlockId = u32;
 /// The kind of a streamed block. A refusal is the text of a model that declined the request. The library keeps the
 /// refusal apart from the answer text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum BlockKind {
     /// Answer text.
     Text,
@@ -147,7 +146,6 @@ pub enum BlockKind {
 
 /// One event of a stream. Its text borrows the stream until the next call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Event<'a> {
     /// A block starts. Ids are dense from 0, in start order.
     BlockStarted(BlockStarted),
@@ -221,7 +219,6 @@ pub struct Done<'a> {
 
 /// The block-stop result carries provider-only state that deltas cannot carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum BlockResult<'a> {
     /// A text block.
     Text,
@@ -235,7 +232,6 @@ pub enum BlockResult<'a> {
 
 /// One part of a completed answer: a block that stopped.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Content {
     /// Answer text.
     Text(String),
@@ -261,7 +257,6 @@ impl From<Content> for Block {
 /// One output part of a failed attempt, in start order. It holds text and complete tool calls, but no replay
 /// state. A reasoning part replays as text only.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Partial {
     /// Answer text, cut off where the attempt failed when its block never stopped.
     Text(String),
@@ -369,7 +364,6 @@ impl std::error::Error for AttemptError {
 
 /// The errors of [`crate::generate`]: a request that cannot be encoded, or an attempt that failed.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub enum Error {
     /// The request cannot be encoded. Nothing was sent.
     Encode(EncodeError),

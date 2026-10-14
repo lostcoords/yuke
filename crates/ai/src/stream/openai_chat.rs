@@ -445,14 +445,7 @@ impl Reducer {
             (Some(usage), "cached_tokens"),
         ]
         .into_iter()
-        .find_map(|(object, key)| {
-            let object = object?;
-            object
-                .get(key)
-                .filter(|value| **value != Value::Null)
-                .map(|_| object.count(key))
-        })
-        .unwrap_or(0);
+        .find_map(|(object, key)| object?.count(key));
         if let Some(details) = prompt {
             total.cache_write = details.count("cache_write_tokens");
         }

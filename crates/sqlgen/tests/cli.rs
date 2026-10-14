@@ -35,6 +35,24 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+// A format step can fail with a cause, and the error keeps that cause.
+#[test]
+fn a_rustfmt_that_does_not_start_names_its_cause() {
+    let folder = crate_folder("no-rustfmt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_yuke-sqlgen"))
+        .args(["--crate", folder.to_str().unwrap()])
+        .env("RUSTFMT", folder.join("missing-rustfmt"))
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = text(&output.stderr);
+    assert!(stderr.contains("rustfmt does not start: "), "{stderr}");
+    assert!(stderr.contains("No such file or directory"), "{stderr}");
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
 #[test]
 fn help_shows_the_options_and_examples() {
     let output = run(&["--help"]);

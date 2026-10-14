@@ -1,6 +1,6 @@
 //! Serialize an Anthropic Messages request from the neutral request.
 
-use crate::encoder::EncodeError;
+use crate::encoder::{EncodeError, Unsupported};
 use crate::request::read_blob;
 use crate::request::{AnthropicWire, Block, Media, Modality, Reasoning, ReplayKind, Request, Target, Thinking};
 
@@ -229,7 +229,9 @@ fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media, ca
         // A document is a PDF or plain text, and no other type has a source shape on this API.
         Modality::Pdf | Modality::Text => "document",
         // Anthropic reads no sound and no moving picture.
-        Modality::Audio | Modality::Video | Modality::Other => return Err(EncodeError::Unsupported),
+        modality @ (Modality::Audio | Modality::Video | Modality::Other) => {
+            return Err(EncodeError::Unsupported(Unsupported::Media(modality)));
+        }
     };
     jw.begin_object();
     jw.field_str("type", block_type);
@@ -532,10 +534,10 @@ mod tests {
 
     #[test]
     fn rejects_audio_and_video() {
-        for mime in ["audio/mpeg", "video/mp4"] {
+        for (mime, modality) in [("audio/mpeg", Modality::Audio), ("video/mp4", Modality::Video)] {
             let blocks = [Block::Media(image("ab", mime))];
             expect_error(
-                EncodeError::Unsupported,
+                EncodeError::Unsupported(Unsupported::Media(modality)),
                 "claude",
                 anthropic(8),
                 Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
@@ -616,7 +618,7 @@ mod tests {
         // A document is a PDF or plain text. Anything else has no source shape and must not be mislabelled.
         let spreadsheet = [Block::Media(image("ab", "application/zip"))];
         expect_error(
-            EncodeError::Unsupported,
+            EncodeError::Unsupported(Unsupported::Media(Modality::Other)),
             "claude",
             anthropic(8),
             Request::new(&spreadsheet).settings(&Settings::new().max_output_tokens(8)),

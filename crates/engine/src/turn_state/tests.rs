@@ -1,9 +1,8 @@
 use std::borrow::Cow;
 
-use yuke_ai::route::{Credential, Route};
 use yuke_ai::{
-    AnthropicWire, AttemptError, AttemptInfo, Block, Completion, Content, Encoder, Failure, FinishReason, Partial,
-    ProviderKind, Reasoning, Request, Response, Target, ToolCall, ToolResult, Usage, Wire,
+    AttemptError, AttemptInfo, Block, Completion, Content, Failure, FinishReason, Partial, ProviderKind, Reasoning,
+    Response, ToolCall, ToolResult, Usage,
 };
 
 use super::{Action, Answer, Commit, Outcome, Replaced, TurnEnd, TurnState};
@@ -16,37 +15,26 @@ fn origin() -> yuke_ai::Origin {
     }
 }
 
-/// The body that a request of `context` encodes to for an Anthropic target.
-fn body(context: &[Block]) -> String {
-    let target = Target {
-        model: "test-model".into(),
-        route: Route {
-            base_url: "https://example.test/v1".into(),
-            ..Route::default()
-        },
-        credential: Credential::None,
-        wire: Wire::AnthropicMessages(AnthropicWire {
-            max_tokens: 64,
-            cache: false,
-        }),
-        tool_search: false,
-    };
-    let mut encoder = Encoder::new();
-    let encoded = encoder.encode(&target, Request::new(context)).unwrap();
-    String::from_utf8(encoded.http.body().flatten().copied().collect()).unwrap()
-}
-
-/// Assert that each of `texts` appears as a JSON string in `body`, in order.
-fn assert_in_order(body: &str, texts: &[&str]) {
-    let positions: Vec<Option<usize>> = texts.iter().map(|text| body.find(&format!("\"{text}\""))).collect();
-    assert!(positions.iter().all(Option::is_some), "{body}");
-    assert!(positions.is_sorted(), "{body}");
+/// Each block of `context` as one line.
+fn lines(context: &[Block]) -> Vec<String> {
+    context
+        .iter()
+        .map(|block| match block {
+            Block::UserText(text) => format!("user {text}"),
+            Block::AssistantText(text) => format!("assistant {text}"),
+            Block::Reasoning(reasoning) => format!("reasoning {}", reasoning.text),
+            Block::ToolCall(call) => format!("call {}", call.call_id),
+            Block::ToolResult(result) if result.is_error => format!("error {} {}", result.call_id, result.content),
+            Block::ToolResult(result) => format!("result {} {}", result.call_id, result.content),
+            Block::Media(media) => format!("media {}", media.mime),
+        })
+        .collect()
 }
 
 /// The names of the calls that `action` asks to run.
 fn called_names(action: Action<'_>) -> Vec<String> {
     match action {
-        Action::CallTools(calls, _) => calls.into_iter().map(|call| call.name.clone()).collect(),
+        Action::CallTools(calls, _) => calls.iter().map(|call| call.name.clone()).collect(),
         other => panic!("expected tool calls, got {other:?}"),
     }
 }
@@ -99,7 +87,7 @@ fn second_turn_sends_the_first_turn_context() {
         Action::Send(_)
     ));
 
-    assert_in_order(&body(&context), &["one", "first answer", "two"]);
+    assert_eq!(lines(&context), ["user one", "assistant first answer", "user two"]);
 }
 
 #[test]
@@ -135,7 +123,7 @@ fn continue_turn_sends_another_request_without_input() {
 
     assert!(matches!(turn_state.continue_turn(Vec::new()), Action::Send(_)));
 
-    assert_in_order(&body(&context), &["one", "done"]);
+    assert_eq!(lines(&context), ["user one", "assistant done"]);
 }
 
 #[test]
@@ -180,9 +168,19 @@ fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_ne
         turn_state.proceed(vec![Block::user_text("also run the tests")]),
         Action::Send(_)
     ));
-    assert_in_order(
-        &body(&context),
-        &["one", "c1", "c2", "file text", "written", "also run the tests"],
+    assert_eq!(
+        lines(&context),
+        [
+            "user one",
+            "assistant Let me check.",
+            "reasoning Two files.",
+            "call c1",
+            "assistant And the other.",
+            "call c2",
+            "result c1 file text",
+            "result c2 written",
+            "user also run the tests",
+        ]
     );
 }
 
@@ -213,15 +211,20 @@ fn length_finish_runs_no_tool_and_asks_the_model_again() {
     ));
     assert!(matches!(turn_state.proceed(Vec::new()), Action::Send(_)));
 
-    let body = body(&context);
-    assert_in_order(&body, &["one", "c1", "c2"]);
+    let not_run = "was not executed: the response hit the output token limit, so its arguments may be truncated.";
     assert_eq!(
-        body.matches("was not executed: the response hit the output token limit")
-            .count(),
-        2,
-        "{body}"
+        lines(&context),
+        [
+            "user one".to_owned(),
+            "assistant Let me check.".to_owned(),
+            "reasoning Two files.".to_owned(),
+            "call c1".to_owned(),
+            "assistant And the other.".to_owned(),
+            "call c2".to_owned(),
+            format!("error c1 Tool call \"read\" {not_run}"),
+            format!("error c2 Tool call \"write\" {not_run}"),
+        ]
     );
-    assert_eq!(body.matches(r#""is_error":true"#).count(), 2, "{body}");
 }
 
 #[test]
@@ -259,7 +262,7 @@ fn start_sends_every_block_of_the_input() {
 
     let _ = turn_state.start(vec![Block::user_text("look at this"), Block::user_text("and this")]);
 
-    assert_in_order(&body(&context), &["look at this", "and this"]);
+    assert_eq!(lines(&context), ["user look at this", "user and this"]);
 }
 
 #[test]
@@ -334,11 +337,11 @@ fn a_commit_reads_back_from_its_json() {
                         base_url: "https://h".to_owned(),
                     },
                     usage: Usage {
-                        input: 1,
-                        output: 2,
-                        reasoning: 3,
-                        cache_read: 4,
-                        cache_write: 5,
+                        input: Some(1),
+                        output: Some(2),
+                        reasoning: Some(3),
+                        cache_read: Some(4),
+                        cache_write: Some(5),
                     },
                     finish_reason: FinishReason::Stop,
                 }),

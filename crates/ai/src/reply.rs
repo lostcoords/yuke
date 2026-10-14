@@ -523,11 +523,11 @@ mod tests {
         assert_eq!(
             completion.usage,
             Usage {
-                input: 10,
-                output: 20,
-                reasoning: 3,
-                cache_read: 2,
-                cache_write: 1
+                input: Some(10),
+                output: Some(20),
+                reasoning: Some(3),
+                cache_read: Some(2),
+                cache_write: Some(1)
             }
         );
         assert_eq!(completion.content.len(), 5);

@@ -11,6 +11,13 @@ use crate::context::required;
 use crate::queries::events;
 use crate::store::failed;
 
+/// The four `end_kind` names of a turn end. The writer and the reader of a commit row use these constants, and the
+/// queries and the schema use the same names in SQL.
+pub(crate) const COMPLETED: &str = "completed";
+pub(crate) const STOPPED: &str = "stopped";
+pub(crate) const CANCELLED: &str = "cancelled";
+pub(crate) const FAILED: &str = "failed";
+
 /// Decode an event row as a [`StoredEvent`].
 pub(crate) fn stored_event(mut row: events::Event) -> Result<StoredEvent, StoreError> {
     let event_number = EventNumber(row.seq);
@@ -42,11 +49,11 @@ fn commit(row: events::Event) -> rusqlite::Result<Commit<'static>> {
                 base_url: required(row.base_url, "base_url")?,
             },
             usage: yuke_ai::Usage {
-                input: required(row.input_tokens, "input_tokens")?,
-                output: required(row.output_tokens, "output_tokens")?,
-                reasoning: required(row.reasoning_tokens, "reasoning_tokens")?,
-                cache_read: required(row.cache_read_tokens, "cache_read_tokens")?,
-                cache_write: required(row.cache_write_tokens, "cache_write_tokens")?,
+                input: row.input_tokens,
+                output: row.output_tokens,
+                reasoning: row.reasoning_tokens,
+                cache_read: row.cache_read_tokens,
+                cache_write: row.cache_write_tokens,
             },
             finish_reason: finish_reason(&required(row.finish_reason, "finish_reason")?, "finish_reason")?,
         }),
@@ -54,15 +61,15 @@ fn commit(row: events::Event) -> rusqlite::Result<Commit<'static>> {
     };
     let end = match row.end_kind.as_deref() {
         None => None,
-        Some("completed") => Some(TurnEnd::Outcome(Outcome::Completed {
+        Some(COMPLETED) => Some(TurnEnd::Outcome(Outcome::Completed {
             finish_reason: finish_reason(
                 &required(row.end_finish_reason, "end_finish_reason")?,
                 "end_finish_reason",
             )?,
         })),
-        Some("stopped") => Some(TurnEnd::Outcome(Outcome::Stopped)),
-        Some("cancelled") => Some(TurnEnd::Outcome(Outcome::Cancelled)),
-        Some("failed") => Some(TurnEnd::Failed(required(row.end_message, "end_message")?)),
+        Some(STOPPED) => Some(TurnEnd::Outcome(Outcome::Stopped)),
+        Some(CANCELLED) => Some(TurnEnd::Outcome(Outcome::Cancelled)),
+        Some(FAILED) => Some(TurnEnd::Failed(required(row.end_message, "end_message")?)),
         Some(_) => return Err(invalid("end_kind")),
     };
     Ok(Commit {

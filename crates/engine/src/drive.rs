@@ -27,7 +27,6 @@ use crate::turn_state::{Action, CANCELLED_REASON, Commit, Outcome, TurnState, no
 /// One fact of a turn, for an observer. It borrows turn data until the observer returns, so an observer copies the
 /// data that it keeps.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum TurnEvent<'a> {
     /// One event of a model reply, in source order.
     Model(yuke_ai::Event<'a>),
@@ -588,7 +587,7 @@ impl<'a> Turn<'a> {
                 Action::CallTools(calls, commit) => {
                     driver.save(&commit).await?;
                     // A closure kept across an await makes the turn future lose `Send`, so the calls resolve first.
-                    let resolved: Vec<Resolved<'_>> = calls.into_iter().map(|call| driver.resolve(call)).collect();
+                    let resolved: Vec<Resolved<'_>> = calls.iter().map(|call| driver.resolve(call)).collect();
                     let mut resolved = resolved.into_iter().peekable();
                     let mut results = Vec::new();
                     // Consecutive parallel calls form one group. A serial call forms a group of its own.

@@ -70,12 +70,15 @@ pub enum LiveUpdate {
 
 impl LiveUpdate {
     /// The live update of the turn event `event`, or `None` for an event that a client does not show live: a block
-    /// start or stop, a refusal delta, a tool input delta, the end of a response. The next saved commit holds those.
+    /// start or stop, a tool input delta, the end of a response. The next saved commit holds those. A refusal is answer
+    /// text, as the saved context keeps it, and the finish reason of the turn marks it.
     pub fn from_turn_event(event: &TurnEvent<'_>) -> Option<Self> {
         match event {
-            TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => Some(LiveUpdate::AgentMessageChunk {
-                text: delta.text.to_owned(),
-            }),
+            TurnEvent::Model(yuke_ai::Event::TextDelta(delta) | yuke_ai::Event::RefusalDelta(delta)) => {
+                Some(LiveUpdate::AgentMessageChunk {
+                    text: delta.text.to_owned(),
+                })
+            }
             TurnEvent::Model(yuke_ai::Event::ReasoningDelta(delta)) => Some(LiveUpdate::AgentThoughtChunk {
                 text: delta.text.to_owned(),
             }),
@@ -92,8 +95,15 @@ impl LiveUpdate {
             TurnEvent::RoundFailed(error) => Some(LiveUpdate::RoundFailed {
                 error: error.to_string(),
             }),
-            // The other model events send nothing, and so does a turn event that the engine adds later.
-            _ => None,
+            // A client gets the blocks from the delta events, the calls from the tool events, and the end from the
+            // turn.
+            TurnEvent::Model(
+                yuke_ai::Event::BlockStarted(_)
+                | yuke_ai::Event::ReasoningSectionStarted(_)
+                | yuke_ai::Event::ToolInputDelta(_)
+                | yuke_ai::Event::BlockStopped(_)
+                | yuke_ai::Event::Done(_),
+            ) => None,
         }
     }
 }

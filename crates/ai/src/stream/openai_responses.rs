@@ -90,18 +90,15 @@ fn slot(kind: BlockKind) -> usize {
 #[derive(Debug)]
 pub(crate) struct Reducer {
     pub(super) draft: Draft,
-    /// The output items, in the order they first arrived. A repeated `output_index` replaces its item.
-    outputs: Vec<Output>,
-    /// The position in `outputs` of each `output_index`.
-    positions: HashMap<usize, usize, BuildHasherDefault<Wyhash>>,
+    /// The output items by their `output_index`. A repeated `output_index` replaces its item.
+    outputs: HashMap<usize, Output, BuildHasherDefault<Wyhash>>,
 }
 
 impl Reducer {
     pub(super) fn new(draft: Draft) -> Self {
         Reducer {
             draft,
-            outputs: Vec::new(),
-            positions: HashMap::default(),
+            outputs: HashMap::default(),
         }
     }
 
@@ -152,27 +149,21 @@ impl Reducer {
             blocks: [None; 4],
             last_summary_index: None,
         };
-        let position = if let Some(&position) = self.positions.get(&index) {
-            self.outputs[position] = fresh;
-            position
-        } else {
-            // An ignored item opens no block, so the items need their own bound.
-            if self.outputs.len() >= self.draft.limits.max_blocks as usize {
-                return Err(DecodeError::TooLarge);
-            }
-            self.outputs.push(fresh);
-            self.positions.insert(index, self.outputs.len() - 1);
-            self.outputs.len() - 1
-        };
+        // An ignored item opens no block, so the items need their own bound. A repeated index replaces the earlier
+        // item.
+        if !self.outputs.contains_key(&index) && self.outputs.len() >= self.draft.limits.max_blocks as usize {
+            return Err(DecodeError::TooLarge);
+        }
+        self.outputs.insert(index, fresh);
 
         match item_type {
             "message" => {
-                self.outputs[position].kind = ItemKind::Message;
+                self.output_mut(index)?.kind = ItemKind::Message;
                 return Ok(());
             }
             "reasoning" => {
                 // Its block opens lazily: on a delta, a content part, or encrypted content at done.
-                self.outputs[position].kind = ItemKind::Reasoning;
+                self.output_mut(index)?.kind = ItemKind::Reasoning;
                 return Ok(());
             }
             _ => {}
@@ -195,26 +186,26 @@ impl Reducer {
             None => return Err(DecodeError::Protocol),
         };
         let id = self.draft.start_tool(call_id, name)?;
-        let output = &mut self.outputs[position];
+        let output = self.output_mut(index)?;
         output.kind = ItemKind::Tool;
         output.blocks[slot(BlockKind::ToolCall)] = Some(id);
         Ok(())
     }
 
     fn on_content_part_added(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
-        let position = self.output_for(root)?;
+        let output_index = Self::output_for(root)?;
         let Some(kind) = part_kind(part_type(root)?) else {
             return Ok(());
         };
         // The parts of one kind come one after another, so a new part takes the slot of its kind. A delta selects its
         // block by kind, so an overlapping part of one kind is a protocol error.
-        if let Some(previous) = self.outputs[position].block(kind)
+        if let Some(previous) = self.output(output_index)?.block(kind)
             && self.draft.open(previous).is_ok()
         {
             return Err(DecodeError::Protocol);
         }
         let id = self.draft.start(kind)?;
-        self.outputs[position].blocks[slot(kind)] = Some(id);
+        self.output_mut(output_index)?.blocks[slot(kind)] = Some(id);
         Ok(())
     }
 
@@ -244,67 +235,66 @@ impl Reducer {
         kind: BlockKind,
         delta: Result<&str, DecodeError>,
     ) -> Result<(), DecodeError> {
-        let id = self.outputs[self.position(index)?].require(kind)?;
+        let id = self.output(index)?.require(kind)?;
         self.draft.delta(id, delta?)
     }
 
     fn reasoning_delta(
         &mut self,
-        index: usize,
+        output_index: usize,
         summary: Option<i64>,
         delta: Result<&str, DecodeError>,
     ) -> Result<(), DecodeError> {
-        let position = self.position(index)?;
-        let id = self.reasoning_block(position)?;
+        let id = self.reasoning_block(output_index)?;
         let delta = delta?;
         // Each summary section opens with a bold title, so sections joined without a break read as one run of titles.
         if let Some(index) = summary {
-            let last = self.outputs[position].last_summary_index;
+            let last = self.output(output_index)?.last_summary_index;
             if last.is_some_and(|last| last != index) {
                 self.draft.delta(id, "\n\n")?;
             }
             if last != Some(index) {
                 self.draft.section(id)?;
             }
-            self.outputs[position].last_summary_index = Some(index);
+            self.output_mut(output_index)?.last_summary_index = Some(index);
         }
         self.draft.delta(id, delta)
     }
 
     fn arguments_delta(&mut self, index: usize, delta: Result<&str, DecodeError>) -> Result<(), DecodeError> {
-        let id = self.outputs[self.position(index)?].require(BlockKind::ToolCall)?;
+        let id = self.output(index)?.require(BlockKind::ToolCall)?;
         self.draft.tool_delta(id, delta?)
     }
 
     fn on_text_done(&mut self, root: &Value<'_>, kind: BlockKind) -> Result<(), DecodeError> {
         // An item with no block of this kind sent no delta of it, so the event closes nothing.
-        match self.outputs[self.output_for(root)?].block(kind) {
+        match self.output(Self::output_for(root)?)?.block(kind) {
             Some(id) => self.draft.stop_if_open(id),
             None => Ok(()),
         }
     }
 
     fn on_content_part_done(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
-        let position = self.output_for(root)?;
+        let output_index = Self::output_for(root)?;
         let Some(kind) = part_kind(part_type(root)?) else {
             return Ok(());
         };
-        match self.outputs[position].block(kind) {
+        match self.output(output_index)?.block(kind) {
             Some(id) => self.draft.stop_if_open(id),
             None => Ok(()),
         }
     }
 
     fn on_tool_arguments_done(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
-        let id = self.outputs[self.output_for(root)?].require(BlockKind::ToolCall)?;
+        let id = self.output(Self::output_for(root)?)?.require(BlockKind::ToolCall)?;
         self.draft.final_args(id, root.require_str("arguments")?)
     }
 
     fn on_output_item_done(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
-        let position = self.output_for(root)?;
+        let output_index = Self::output_for(root)?;
         let item = root.get("item").ok_or(DecodeError::Protocol)?;
 
-        let output = self.outputs[position];
+        let output = *self.output(output_index)?;
         match output.kind {
             ItemKind::Message | ItemKind::Ignored => Ok(()),
             ItemKind::Reasoning => {
@@ -313,7 +303,7 @@ impl Reducer {
                 if output.block(BlockKind::Reasoning).is_none() && encrypted.is_empty() {
                     return Ok(());
                 }
-                let id = self.reasoning_block(position)?;
+                let id = self.reasoning_block(output_index)?;
                 if !encrypted.is_empty() {
                     let block = self.draft.open(id)?;
                     block.replay = Some(ReplayKind::ResponsesEncrypted);
@@ -410,22 +400,27 @@ impl Reducer {
         }
     }
 
-    /// Find the item an event names by its `output_index`, as the OpenAI SDK and pi do.
-    fn output_for(&self, root: &Value<'_>) -> Result<usize, DecodeError> {
-        self.position(root.get_index("output_index")?)
+    /// The `output_index` of the event `root`.
+    fn output_for(root: &Value<'_>) -> Result<usize, DecodeError> {
+        Ok(root.get_index("output_index")?)
     }
 
-    /// Return the position in `outputs` of the item at `output_index`.
-    fn position(&self, index: usize) -> Result<usize, DecodeError> {
-        self.positions.get(&index).copied().ok_or(DecodeError::Protocol)
+    /// The item at `output_index`. An unknown index is a protocol error.
+    fn output(&self, output_index: usize) -> Result<&Output, DecodeError> {
+        self.outputs.get(&output_index).ok_or(DecodeError::Protocol)
     }
 
-    fn reasoning_block(&mut self, position: usize) -> Result<BlockId, DecodeError> {
-        if let Some(id) = self.outputs[position].block(BlockKind::Reasoning) {
+    /// The item at `output_index`, for a change. An unknown index is a protocol error.
+    fn output_mut(&mut self, output_index: usize) -> Result<&mut Output, DecodeError> {
+        self.outputs.get_mut(&output_index).ok_or(DecodeError::Protocol)
+    }
+
+    fn reasoning_block(&mut self, output_index: usize) -> Result<BlockId, DecodeError> {
+        if let Some(id) = self.output(output_index)?.block(BlockKind::Reasoning) {
             return Ok(id);
         }
         let id = self.draft.start(BlockKind::Reasoning)?;
-        self.outputs[position].blocks[slot(BlockKind::Reasoning)] = Some(id);
+        self.output_mut(output_index)?.blocks[slot(BlockKind::Reasoning)] = Some(id);
         Ok(id)
     }
 

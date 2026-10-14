@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
-use yuke_ai::{Block, FinishReason, Origin, Partial, Response, Role, ToolCall, ToolResult, Usage};
+use yuke_ai::{Block, FinishReason, Origin, Partial, Response, ToolCall, ToolResult, Usage};
 
 /// The decisions of one turn on the caller's context.
 #[derive(Debug)]
@@ -180,31 +180,10 @@ pub(crate) struct ToolCalls<'a> {
     blocks: &'a [Block],
 }
 
-impl<'a> IntoIterator for ToolCalls<'a> {
-    type Item = &'a ToolCall;
-    type IntoIter = ToolCallsIter<'a>;
-
-    fn into_iter(self) -> ToolCallsIter<'a> {
-        ToolCallsIter {
-            blocks: self.blocks.iter(),
-        }
-    }
-}
-
-/// The iterator over the calls of [`ToolCalls`], in answer order.
-#[derive(Debug, Clone)]
-pub(crate) struct ToolCallsIter<'a> {
-    blocks: std::slice::Iter<'a, Block>,
-}
-
-// The slice iterator stays empty after its end, so this iterator does too.
-impl std::iter::FusedIterator for ToolCallsIter<'_> {}
-
-impl<'a> Iterator for ToolCallsIter<'a> {
-    type Item = &'a ToolCall;
-
-    fn next(&mut self) -> Option<&'a ToolCall> {
-        self.blocks.find_map(|block| match block {
+impl<'a> ToolCalls<'a> {
+    /// The calls, in answer order.
+    pub(crate) fn iter(self) -> impl Iterator<Item = &'a ToolCall> {
+        self.blocks.iter().filter_map(|block| match block {
             Block::ToolCall(call) => Some(call),
             _ => None,
         })
@@ -367,34 +346,27 @@ impl<'c> TurnState<'c> {
     /// End the turn as [`Outcome::Cancelled`] after [`Action::Send`]. The `partial` output of the cancelled attempt
     /// joins the context, except its reasoning, which has no provider state. Each tool call in it gets an error result.
     pub(crate) fn model_cancelled(&mut self, partial: Vec<Partial>) -> Action<'_> {
-        self.context.extend(
-            partial
-                .into_iter()
-                .filter(|part| !matches!(part, Partial::Reasoning(_)))
-                .map(Block::from),
-        );
-        self.tools_cancelled(Vec::new())
-    }
-
-    /// End the turn as [`Outcome::Cancelled`] after [`Action::CallTools`]. Give the `results` of the first calls, in call
-    /// order, such as the results of the calls that ran. Each later call gets an error result.
-    pub(crate) fn tools_cancelled(&mut self, results: Vec<ToolResult>) -> Action<'_> {
-        let answer = self
-            .context
-            .iter()
-            .rposition(|block| block.role() != Role::Assistant)
-            .map_or(0, |index| index + 1);
-        let not_run: Vec<Block> = self.context[answer..]
+        let blocks: Vec<Block> = partial
+            .into_iter()
+            .filter(|part| !matches!(part, Partial::Reasoning(_)))
+            .map(Block::from)
+            .collect();
+        let not_run: Vec<Block> = blocks
             .iter()
             .filter_map(|block| match block {
                 Block::ToolCall(call) => Some(Block::ToolResult(not_executed(call, CANCELLED_REASON))),
                 _ => None,
             })
-            .skip(results.len())
             .collect();
-
-        self.context.extend(results.into_iter().map(Block::ToolResult));
+        self.context.extend(blocks);
         self.context.extend(not_run);
+        self.cancel()
+    }
+
+    /// End the turn as [`Outcome::Cancelled`] after [`Action::CallTools`], with the `results` of every call, in call
+    /// order. A call that did not run has its error result among them.
+    pub(crate) fn tools_cancelled(&mut self, results: Vec<ToolResult>) -> Action<'_> {
+        self.context.extend(results.into_iter().map(Block::ToolResult));
         self.cancel()
     }
 

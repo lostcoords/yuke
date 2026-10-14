@@ -344,9 +344,10 @@ fn each_turn_event_that_a_client_shows_becomes_a_live_update() {
             }),
         ),
         (TurnEvent::Model(yuke_ai::Event::ReasoningSectionStarted(1)), None),
+        // The saved context keeps a refusal as answer text, so the live update shows it the same way.
         (
             TurnEvent::Model(yuke_ai::Event::RefusalDelta(yuke_ai::Delta { block: 2, text: "No" })),
-            None,
+            Some(LiveUpdate::AgentMessageChunk { text: "No".to_owned() }),
         ),
     ];
     for (event, update) in cases {

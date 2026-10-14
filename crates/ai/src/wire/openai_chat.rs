@@ -1,6 +1,6 @@
 //! Serialize OpenAI Chat Completions requests from the neutral request.
 
-use crate::encoder::EncodeError;
+use crate::encoder::{EncodeError, Unsupported};
 use crate::request::{
     Block, ChatDialect, ChatWire, MaxTokensField, Media, Modality, Reasoning, ReasoningReplayMode, ReasoningSettings,
     ReplayKind, Request, Target, ThinkingFormat, ToolChoice, ToolResult, read_blob,
@@ -16,7 +16,7 @@ pub(crate) fn write_head(
     request: &Request<'_>,
 ) -> Result<bool, EncodeError> {
     if super::defers_tools(request.tools) {
-        return Err(EncodeError::Unsupported);
+        return Err(EncodeError::Unsupported(Unsupported::DeferredTool));
     }
     let mut jw = JsonWriter::new(out);
     jw.begin_object();
@@ -348,7 +348,7 @@ fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media) ->
         // Every document travels as a file part, which names its media type in the data URL.
         Modality::Pdf | Modality::Text | Modality::Other => {
             if media.filename.is_empty() {
-                return Err(EncodeError::Unsupported); // The endpoint names the file.
+                return Err(EncodeError::Unsupported(Unsupported::UnnamedDocument));
             }
             let data = read_blob(request.blobs, &media.blob)?;
             jw.begin_object();
@@ -361,7 +361,7 @@ fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media) ->
             jw.end_object();
             jw.end_object();
         }
-        Modality::Video => return Err(EncodeError::Unsupported),
+        Modality::Video => return Err(EncodeError::Unsupported(Unsupported::Media(Modality::Video))),
     }
     Ok(())
 }
@@ -371,7 +371,7 @@ fn audio_format(mime: &str) -> Result<&'static str, EncodeError> {
     match mime {
         "audio/wav" | "audio/x-wav" => Ok("wav"),
         "audio/mpeg" | "audio/mp3" => Ok("mp3"),
-        _ => Err(EncodeError::Unsupported),
+        _ => Err(EncodeError::Unsupported(Unsupported::AudioFormat)),
     }
 }
 
@@ -819,13 +819,13 @@ mod tests {
     #[test]
     fn rejects_unsupported_media() {
         // A document must name itself, and the endpoint takes no video and only wav or mp3 sound.
-        for media in [
-            media("ab", "application/pdf", ""),
-            media("ab", "video/mp4", ""),
-            media("ab", "audio/flac", ""),
+        for (media, reason) in [
+            (media("ab", "application/pdf", ""), Unsupported::UnnamedDocument),
+            (media("ab", "video/mp4", ""), Unsupported::Media(Modality::Video)),
+            (media("ab", "audio/flac", ""), Unsupported::AudioFormat),
         ] {
             let blocks = [Block::Media(media)];
-            expect_error(EncodeError::Unsupported, "m", chat(), request(&blocks));
+            expect_error(EncodeError::Unsupported(reason), "m", chat(), request(&blocks));
         }
     }
 
@@ -854,7 +854,7 @@ mod tests {
             .encode(&target, Request::new(&blocks).tools(&tools))
             .map(|_| ());
 
-        crate::testing::assert_same(result, Err(EncodeError::Unsupported));
+        crate::testing::assert_same(result, Err(EncodeError::Unsupported(Unsupported::DeferredTool)));
     }
 
     #[test]

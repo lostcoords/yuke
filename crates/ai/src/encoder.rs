@@ -5,18 +5,52 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::request::{Block, OriginRef, Protocol, Request, Target, Wire};
+use crate::request::{Block, Modality, OriginRef, Protocol, Request, Target, Wire};
 use crate::transport::Outgoing;
 use crate::wire::{self, json::JsonWriter, outgoing::HeadText};
 use crate::wyhash::Wyhash;
 
+/// The part of a request that a protocol or a target cannot carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Unsupported {
+    /// The request defers a tool, and the target or its protocol has no native tool search.
+    DeferredTool,
+    /// The protocol carries no media of this kind.
+    Media(Modality),
+    /// The protocol names each document, and the document has no file name.
+    UnnamedDocument,
+    /// The protocol takes only WAV and MP3 audio.
+    AudioFormat,
+}
+
+impl fmt::Display for Unsupported {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DeferredTool => {
+                f.write_str("the request defers a tool, and the target or its protocol has no native tool search")
+            }
+            Self::Media(modality) => {
+                let kind = match modality {
+                    Modality::Text => "text",
+                    Modality::Image => "image",
+                    Modality::Audio => "audio",
+                    Modality::Video => "video",
+                    Modality::Pdf => "PDF",
+                    Modality::Other => "other",
+                };
+                write!(f, "the protocol carries no {kind} media")
+            }
+            Self::UnnamedDocument => f.write_str("the protocol needs a file name for each document"),
+            Self::AudioFormat => f.write_str("the protocol takes only WAV and MP3 audio"),
+        }
+    }
+}
+
 /// A request that cannot be encoded. The encoder sends nothing then.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub enum EncodeError {
-    /// The protocol has no shape for some content or tool.
-    // @todo(xyaman): Add a precise reason for unsupported requests.
-    Unsupported,
+    /// The protocol or the target cannot carry a part of the request.
+    Unsupported(Unsupported),
     /// The blob store lacks a blob, or answers bytes of another length.
     UnresolvedBlob {
         /// The digest of the blob.
@@ -44,7 +78,7 @@ pub enum EncodeError {
 impl fmt::Display for EncodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unsupported => f.write_str("the protocol cannot carry this content or tool"),
+            Self::Unsupported(reason) => fmt::Display::fmt(reason, f),
             Self::UnresolvedBlob { digest } => {
                 f.write_str("the caller could not resolve the attachment blob ")?;
                 digest.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
@@ -136,7 +170,7 @@ impl Encoder {
             return Err(EncodeError::InvalidSampling);
         }
         if !target.tool_search && request.tools.iter().any(|tool| tool.defer_loading) {
-            return Err(EncodeError::Unsupported);
+            return Err(EncodeError::Unsupported(Unsupported::DeferredTool));
         }
 
         self.head.build(target, request.session_id)?;
@@ -527,7 +561,7 @@ mod tests {
             let refused = Encoder::new().encode(&plain, request).map(|_| ());
             let accepted = Encoder::new().encode(&searching, request).map(|_| ());
 
-            crate::testing::assert_same(refused, Err(EncodeError::Unsupported));
+            crate::testing::assert_same(refused, Err(EncodeError::Unsupported(Unsupported::DeferredTool)));
             crate::testing::assert_same(accepted, Ok(()));
         }
     }

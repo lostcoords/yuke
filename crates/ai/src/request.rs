@@ -11,7 +11,6 @@ use crate::route::{Credential, Route};
 
 /// The wire protocol of one endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Protocol {
     /// Anthropic Messages.
     AnthropicMessages,
@@ -26,7 +25,6 @@ pub enum Protocol {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum ReplayKind {
     /// The `signature` of an Anthropic thinking block. A compatible host may send an empty one.
     AnthropicSignature,
@@ -129,7 +127,6 @@ impl From<ReasoningReplayRef<'_>> for ReasoningReplay {
 /// A kind of content: what an attachment holds, and what a model reads or writes. `Other` is a media type that no
 /// protocol names, and no model lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Modality {
     /// Text.
     Text,
@@ -699,7 +696,6 @@ impl ReasoningSettings {
 
 /// The wire facts of one protocol. Its variant selects the serializer. The model and the route fill it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Wire {
     /// Anthropic Messages.
     AnthropicMessages(AnthropicWire),

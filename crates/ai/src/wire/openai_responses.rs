@@ -1,6 +1,6 @@
 //! Serialize an OpenAI Responses request from the neutral request.
 
-use crate::encoder::EncodeError;
+use crate::encoder::{EncodeError, Unsupported};
 use crate::request::{
     Block, Media, Modality, Reasoning, ReasoningSettings, ReplayKind, Request, ResponsesDialect, ResponsesWire,
     SEARCH_TOOL_NAME, Target, ToolChoice, ToolDefinition, ToolResult, read_blob,
@@ -327,7 +327,7 @@ fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media) ->
         // Every document travels as an input file, which names its media type in the data URL.
         Modality::Pdf | Modality::Text | Modality::Other => {
             if media.filename.is_empty() {
-                return Err(EncodeError::Unsupported); // The endpoint names the file.
+                return Err(EncodeError::Unsupported(Unsupported::UnnamedDocument));
             }
             let data = read_blob(request.blobs, &media.blob)?;
             jw.begin_object();
@@ -338,7 +338,9 @@ fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media) ->
             jw.end_object();
         }
         // This API takes text, image and file alone. Sound needs the Chat Completions endpoint.
-        Modality::Audio | Modality::Video => return Err(EncodeError::Unsupported),
+        modality @ (Modality::Audio | Modality::Video) => {
+            return Err(EncodeError::Unsupported(Unsupported::Media(modality)));
+        }
     }
     Ok(())
 }
@@ -548,7 +550,7 @@ mod tests {
         // The Responses input union is text, image and file alone. Audio needs Chat Completions.
         let blocks = [Block::Media(media("ab", "audio/wav", ""))];
         expect_error(
-            EncodeError::Unsupported,
+            EncodeError::Unsupported(Unsupported::Media(Modality::Audio)),
             "gpt-5",
             responses(),
             Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
