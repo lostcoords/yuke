@@ -20,7 +20,7 @@ use yuke_ai::{
 };
 
 use crate::hooks::{Hooks, NoHooks, RoundDecision, ToolDecision};
-use crate::search::{self, Bm25, Declared, ToolSearch};
+use crate::search::{self, Bm25, Declared, SearchMode, ToolSearch};
 use crate::tool::{Concurrency, TOOL_CALL_NAME, ToolContext, Toolset};
 use crate::turn_state::{Action, CANCELLED_REASON, Commit, Outcome, TurnState, not_executed};
 
@@ -253,7 +253,7 @@ impl<'a> Driver<'a> {
     async fn call_group(
         &self,
         mut group: Vec<Resolved<'_>>,
-        native: bool,
+        search_mode: SearchMode,
         observer: &dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> Vec<ToolResult> {
@@ -275,7 +275,7 @@ impl<'a> Driver<'a> {
         let calls = group.into_iter().map(|Resolved { call, result }| async move {
             match result {
                 Some(result) => result,
-                None => self.run_call(&call, native, observer, cancellation_token).await,
+                None => self.run_call(&call, search_mode, observer, cancellation_token).await,
             }
         });
         join_all(calls).await
@@ -286,7 +286,7 @@ impl<'a> Driver<'a> {
     async fn run_call(
         &self,
         call: &ToolCall,
-        native: bool,
+        search_mode: SearchMode,
         observer: &dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> ToolResult {
@@ -294,7 +294,7 @@ impl<'a> Driver<'a> {
         let result = if cancellation_token.is_cancelled() {
             not_executed(call, CANCELLED_REASON)
         } else if self.is_search(call) {
-            let searched = search::search(self.tool_search, self.toolset, call, native);
+            let searched = search::search(self.tool_search, self.toolset, call, search_mode);
             match race(searched, pin!(cancellation_token.cancelled())).await {
                 Raced::Done(result) => self.after_tool(call, result, cancellation_token).await,
                 Raced::Cancelled => not_executed(call, CANCELLED_REASON),
@@ -421,7 +421,7 @@ impl<'a> Driver<'a> {
             }
             let target = plan.target.as_ref().unwrap_or(self.target);
             let settings = plan.settings.as_ref().unwrap_or(self.settings);
-            let tools = declared.tools(target.tool_search);
+            let tools = declared.tools(SearchMode::for_target(target));
             let mut request = Request::new(turn_state.context()).tools(tools).settings(settings);
             if let Some(session_id) = self.session_id {
                 request = request.session_id(session_id);
@@ -562,7 +562,7 @@ impl<'a> Turn<'a> {
         };
         let declared = Declared::new(driver.toolset);
         // The calls of a round use the kind of search of the target of that round.
-        let mut native = false;
+        let mut search_mode = SearchMode::Bridge;
         // The encoder lives for one turn. Its first request encodes the whole context, and each later request of the
         // turn encodes only the changed elements.
         let mut encoder = Encoder::new();
@@ -577,7 +577,7 @@ impl<'a> Turn<'a> {
                     let round = driver
                         .send_round(&mut turn_state, &mut encoder, &declared, observer, &cancellation_token)
                         .await?;
-                    native = round.native;
+                    search_mode = round.search_mode;
                     action = match round.sent {
                         Sent::Finished(result) => turn_state.model_finished(result, round.origin),
                         Sent::Cancelled(partial) => turn_state.model_cancelled(partial),
@@ -600,7 +600,11 @@ impl<'a> Turn<'a> {
                         {
                             group.push(next);
                         }
-                        results.extend(driver.call_group(group, native, observer, &cancellation_token).await);
+                        results.extend(
+                            driver
+                                .call_group(group, search_mode, observer, &cancellation_token)
+                                .await,
+                        );
                     }
 
                     action = if cancellation_token.is_cancelled() {
@@ -684,8 +688,8 @@ impl std::error::Error for TurnError {
 struct Round {
     /// How the request ended.
     sent: Sent,
-    /// Whether the target searches deferred tools natively.
-    native: bool,
+    /// The search mode for deferred tools.
+    search_mode: SearchMode,
     /// The model and host of the target.
     origin: Origin,
 }
@@ -694,7 +698,7 @@ impl Round {
     fn new(sent: Sent, target: &Target) -> Self {
         Round {
             sent,
-            native: target.tool_search,
+            search_mode: SearchMode::for_target(target),
             origin: Origin::from(OriginRef::of(target)),
         }
     }

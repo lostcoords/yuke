@@ -17,9 +17,15 @@ use json::JsonWriter;
 /// Chat system message is one.
 pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, request: &Request<'_>) -> Result<bool, EncodeError> {
     match &target.wire {
-        Wire::AnthropicMessages(wire) => Ok(anthropic::write_head(out, target, *wire, request)),
+        Wire::AnthropicMessages(wire) => {
+            anthropic::write_head(out, target, *wire, request);
+            Ok(false)
+        }
         Wire::OpenaiChat(wire) => openai_chat::write_head(out, target, *wire, request),
-        Wire::OpenaiResponses(wire) => Ok(openai_responses::write_head(out, target, *wire, request)),
+        Wire::OpenaiResponses(wire) => {
+            openai_responses::write_head(out, target, *wire, request);
+            Ok(false)
+        }
     }
 }
 

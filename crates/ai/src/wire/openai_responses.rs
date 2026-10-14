@@ -2,14 +2,14 @@
 
 use crate::encoder::{EncodeError, Unsupported};
 use crate::request::{
-    Block, Media, Modality, Reasoning, ReasoningSettings, ReplayKind, Request, ResponsesDialect, ResponsesWire,
-    SEARCH_TOOL_NAME, Target, ToolChoice, ToolDefinition, ToolResult, read_blob,
+    BlobStore, Block, Media, Modality, Reasoning, ReasoningSettings, ReplayKind, Request, ResponsesDialect,
+    ResponsesWire, SEARCH_TOOL_NAME, Target, ToolChoice, ToolDefinition, ToolResult, read_blob,
 };
 
 use super::json::{JsonWriter, call_arguments};
 
 /// Write the request up to the open `input` array, which holds no element yet.
-pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire, request: &Request<'_>) -> bool {
+pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire, request: &Request<'_>) {
     // The Codex backend refuses the sampling limits an API key accepts.
     let standard = wire.dialect == ResponsesDialect::Standard;
     let mut jw = JsonWriter::new(out);
@@ -79,7 +79,6 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire
 
     jw.key("input");
     jw.begin_array();
-    false
 }
 
 /// One item holds each block, except that a message holds a run of text and media of one role.
@@ -165,7 +164,7 @@ pub(crate) fn write_group(
                         jw.field_str("text", text);
                         jw.end_object();
                     }
-                    Block::Media(media) => write_media(jw, request, media)?,
+                    Block::Media(media) => write_media(jw, request.blobs, media)?,
                     // `group_end` admits only empty reasoning beside the message content.
                     _ => debug_assert!(!writes(target, block)),
                 }
@@ -216,7 +215,7 @@ pub(crate) fn write_group(
                     jw.end_object();
                 }
                 for media in &result.media {
-                    write_media(jw, request, media)?;
+                    write_media(jw, request.blobs, media)?;
                 }
                 jw.end_array();
             }
@@ -312,11 +311,11 @@ fn write_search_output(jw: &mut JsonWriter<'_>, result: &ToolResult) {
 }
 
 /// Write one attachment. Responses names the image URL as a plain string, not an object.
-fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media) -> Result<(), EncodeError> {
+fn write_media(jw: &mut JsonWriter<'_>, blobs: Option<&dyn BlobStore>, media: &Media) -> Result<(), EncodeError> {
     match media.kind() {
         // The schema requires `detail`, and `auto` is the documented default.
         Modality::Image => {
-            let data = read_blob(request.blobs, &media.blob)?;
+            let data = read_blob(blobs, &media.blob)?;
             jw.begin_object();
             jw.field_str("type", "input_image");
             jw.key("image_url");
@@ -329,7 +328,7 @@ fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media) ->
             if media.filename.is_empty() {
                 return Err(EncodeError::Unsupported(Unsupported::UnnamedDocument));
             }
-            let data = read_blob(request.blobs, &media.blob)?;
+            let data = read_blob(blobs, &media.blob)?;
             jw.begin_object();
             jw.field_str("type", "input_file");
             jw.field_str("filename", &media.filename);
@@ -348,9 +347,10 @@ fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ToolResult;
     use crate::Wire;
     use crate::request::{Effort, OutputSchema, Settings, Thinking};
-    use crate::wire::testing::{blob, call, expect_error, expect_json, replay, result};
+    use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
 
     fn responses() -> Wire {
         Wire::OpenaiResponses(ResponsesWire::default())
@@ -424,7 +424,7 @@ mod tests {
             reasoning("check", ReplayKind::ResponsesEncrypted, "sig_1"),
             Block::assistant_text("checking"),
             call("call_1", "run", r#"{"c":1}"#),
-            Block::ToolResult(result("call_1", "ok", false)),
+            Block::ToolResult(ToolResult::success("call_1", "ok")),
         ];
         expect_json(
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"check"}],"encrypted_content":"sig_1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_1","name":"run","arguments":"{\"c\":1}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}"#,
@@ -438,7 +438,7 @@ mod tests {
     fn error_result_prefixes_text() {
         let blocks = [
             call("call_1", "run", "{}"),
-            Block::ToolResult(result("call_1", "no \"x\"", true)),
+            Block::ToolResult(ToolResult::error("call_1", "no \"x\"")),
         ];
         expect_json(
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"function_call","call_id":"call_1","name":"run","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"Error: no \"x\""}]}"#,
@@ -450,10 +450,13 @@ mod tests {
 
     #[test]
     fn tool_result_with_image() {
-        for (text, is_error, output) in [("PNG image", false, "PNG image"), ("", true, "Error: ")] {
+        for (result, output) in [
+            (ToolResult::success("call_1", "PNG image"), "PNG image"),
+            (ToolResult::error("call_1", ""), "Error: "),
+        ] {
             let blocks = [
                 call("call_1", "read", "{}"),
-                Block::ToolResult(result("call_1", text, is_error).with_media(vec![media("ab", "image/png", "")])),
+                Block::ToolResult(result.with_media(vec![media("ab", "image/png", "")])),
             ];
             let expected = format!(
                 r#"{{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{{"type":"function_call","call_id":"call_1","name":"read","arguments":"{{}}"}},{{"type":"function_call_output","call_id":"call_1","output":[{{"type":"input_text","text":"{output}"}},{{"type":"input_image","image_url":"data:image/png;base64,YWI=","detail":"auto"}}]}}]}}"#
@@ -470,13 +473,26 @@ mod tests {
     #[test]
     fn deferred_tools_use_client_search() {
         let tools = [
-            ToolDefinition::new(SEARCH_TOOL_NAME, "Find.", r#"{"type":"object"}"#),
-            ToolDefinition::new("mcp_read", "Read.", "{}").deferred(),
+            ToolDefinition {
+                name: SEARCH_TOOL_NAME.into(),
+                description: "Find.".to_owned(),
+                input_schema: r#"{"type":"object"}"#.to_owned(),
+                defer_loading: false,
+                strict: false,
+            },
+            ToolDefinition {
+                name: "mcp_read".to_owned(),
+                description: "Read.".to_owned(),
+                input_schema: "{}".to_owned(),
+                defer_loading: false,
+                strict: false,
+            }
+            .deferred(),
         ];
         let blocks = [
             Block::user_text("go"),
             call("call_1", SEARCH_TOOL_NAME, r#"{"query":"read"}"#),
-            Block::ToolResult(result("call_1", "found", false).with_loaded(tools[1..].to_vec())),
+            Block::ToolResult(ToolResult::success("call_1", "found").with_loaded(tools[1..].to_vec())),
         ];
         expect_json(
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"tool_search","execution":"client","description":"Find.","parameters":{"type":"object"}},{"type":"function","name":"mcp_read","description":"Read.","defer_loading":true,"parameters":{},"strict":false}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]},{"type":"tool_search_call","execution":"client","call_id":"call_1","status":"completed","arguments":{"query":"read"}},{"type":"tool_search_output","execution":"client","call_id":"call_1","status":"completed","tools":[{"type":"function","name":"mcp_read","description":"Read.","defer_loading":true,"parameters":{},"strict":false}]}]}"#,
@@ -500,10 +516,22 @@ mod tests {
     #[test]
     fn tool_schema_and_strict_mode() {
         let tools = [
-            ToolDefinition::new("run", "run a command", r#"{"type":"object"}"#),
+            ToolDefinition {
+                name: "run".to_owned(),
+                description: "run a command".to_owned(),
+                input_schema: r#"{"type":"object"}"#.to_owned(),
+                defer_loading: false,
+                strict: false,
+            },
             ToolDefinition {
                 strict: true,
-                ..ToolDefinition::new("strict_run", "run strictly", r#"{"type":"object"}"#)
+                ..ToolDefinition {
+                    name: "strict_run".to_owned(),
+                    description: "run strictly".to_owned(),
+                    input_schema: r#"{"type":"object"}"#.to_owned(),
+                    defer_loading: false,
+                    strict: false,
+                }
             },
         ];
         let blocks = [Block::user_text("go")];
@@ -588,7 +616,7 @@ mod tests {
 
     #[test]
     fn cache_key_in_every_dialect() {
-        let blocks = [Block::ToolResult(result("c1", "ok", false))];
+        let blocks = [Block::ToolResult(ToolResult::success("c1", "ok"))];
         // The codex route marks no breakpoint, so the key is the only cache control it carries.
         expect_json(
             r#"{"model":"gpt-5.6","stream":true,"store":false,"prompt_cache_key":"0123456789abcdef","max_output_tokens":8,"input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#,
@@ -611,7 +639,7 @@ mod tests {
     #[test]
     fn breakpoint_needs_user_text() {
         // The endpoint refuses a breakpoint on instructions, so a tool-result-only turn marks nothing.
-        let only_result = [Block::ToolResult(result("c1", "ok", false))];
+        let only_result = [Block::ToolResult(ToolResult::success("c1", "ok"))];
         expect_json(
             r#"{"model":"gpt-5.6","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#,
             "gpt-5.6",
@@ -622,7 +650,7 @@ mod tests {
         let after = [
             Block::user_text("q"),
             call("c1", "ls", "{}"),
-            Block::ToolResult(result("c1", "ok", false)),
+            Block::ToolResult(ToolResult::success("c1", "ok")),
         ];
         expect_json(
             r#"{"model":"gpt-5.6","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"q","prompt_cache_breakpoint":{"mode":"explicit"}}]},{"type":"function_call","call_id":"c1","name":"ls","arguments":"{}"},{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#,
@@ -661,7 +689,7 @@ mod tests {
 
     #[test]
     fn empty_arguments_send_empty_object() {
-        let blocks = [call("c", "ls", ""), Block::ToolResult(result("c", "ok", false))];
+        let blocks = [call("c", "ls", ""), Block::ToolResult(ToolResult::success("c", "ok"))];
         expect_json(
             r#"{"model":"m","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"function_call","call_id":"c","name":"ls","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}]}"#,
             "m",

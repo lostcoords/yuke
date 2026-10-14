@@ -2,15 +2,22 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use yuke_ai::{Block, Target, ToolCall, ToolDefinition, ToolResult};
-use yuke_engine::{Bm25, Driver, Hooks, ToolNameError, ToolSearch, Toolset, TurnEvent};
+use yuke_engine::{Bm25, Driver, Hooks, RoundPlan, ToolNameError, ToolSearch, Toolset, TurnEvent};
 
 use crate::support::{
     NoWait, Recorder, ScriptedTransport, block_on, definition, results_in_context, target, text_reply, tool_reply,
 };
 
-/// A deferred tool of `name` with `description` and any object as arguments.
-fn deferred(name: &str, description: &str) -> ToolDefinition {
-    ToolDefinition::new(name, description, r#"{"type":"object"}"#).deferred()
+/// A deferred `create_issue` tool with an object input schema.
+fn create_issue_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "create_issue".into(),
+        description: "Create an issue.".into(),
+        input_schema: r#"{"type":"object"}"#.to_owned(),
+        defer_loading: false,
+        strict: false,
+    }
+    .deferred()
 }
 
 /// The test target with a native tool search.
@@ -63,9 +70,7 @@ fn on_the_bridge_path_the_declared_tools_stay_the_same_after_a_search() {
     let target = target();
     let mut toolset = Toolset::new();
     toolset.add(definition("read"), Recorder::default()).unwrap();
-    toolset
-        .add(deferred("create_issue", "Create an issue."), Recorder::default())
-        .unwrap();
+    toolset.add(create_issue_definition(), Recorder::default()).unwrap();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
 
     let results = results_in_context(driver);
@@ -89,7 +94,14 @@ fn large(name: &str, bytes: usize) -> ToolDefinition {
         r#"{{"type":"object","properties":{{"x":{{"type":"string","description":"{}"}}}}}}"#,
         "z".repeat(bytes)
     );
-    ToolDefinition::new(name, "Alpha tool.", schema).deferred()
+    ToolDefinition {
+        name: name.into(),
+        description: "Alpha tool.".to_owned(),
+        input_schema: schema,
+        defer_loading: false,
+        strict: false,
+    }
+    .deferred()
 }
 
 #[test]
@@ -146,9 +158,7 @@ fn tool_call_runs_a_deferred_tool_and_the_hooks_and_the_observer_see_the_real_ca
     let target = target();
     let issue = Recorder::default();
     let mut toolset = Toolset::new();
-    toolset
-        .add(deferred("create_issue", "Create an issue."), issue.clone())
-        .unwrap();
+    toolset.add(create_issue_definition(), issue.clone()).unwrap();
     let hooks = SeeCalls::default();
     let driver = Driver::new(&transport, &target, &NoWait)
         .toolset(&toolset)
@@ -195,9 +205,7 @@ fn tool_call_refuses_an_eager_tool_and_an_unknown_name_and_runs_nothing() {
     let read = Recorder::default();
     let mut toolset = Toolset::new();
     toolset.add(definition("read"), read.clone()).unwrap();
-    toolset
-        .add(deferred("create_issue", "Create an issue."), Recorder::default())
-        .unwrap();
+    toolset.add(create_issue_definition(), Recorder::default()).unwrap();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
 
     let results = results_in_context(driver);
@@ -223,9 +231,7 @@ fn on_the_native_path_deferred_tools_carry_defer_loading_and_a_search_loads_its_
     ]);
     let target = native_target();
     let mut toolset = Toolset::new();
-    toolset
-        .add(deferred("create_issue", "Create an issue."), Recorder::default())
-        .unwrap();
+    toolset.add(create_issue_definition(), Recorder::default()).unwrap();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
 
     let results = results_in_context(driver);
@@ -248,8 +254,82 @@ fn on_the_native_path_deferred_tools_carry_defer_loading_and_a_search_loads_its_
             "c1",
             "Loaded 1 tools. Call each one by its name:\n- create_issue: Create an issue."
         )
-        .with_loaded(vec![deferred("create_issue", "Create an issue.")])]
+        .with_loaded(vec![create_issue_definition()])]
     );
+}
+
+/// Hooks that select another target before the first tool result.
+struct FirstSearchTarget(Target);
+
+#[async_trait]
+impl Hooks for FirstSearchTarget {
+    async fn before_round(&self, context: &[Block], _: Option<&yuke_ai::Error>) -> RoundPlan {
+        if context.iter().any(|block| matches!(block, Block::ToolResult(_))) {
+            return RoundPlan::default();
+        }
+        RoundPlan {
+            target: Some(self.0.clone()),
+            ..RoundPlan::default()
+        }
+    }
+}
+
+#[test]
+fn a_search_uses_its_round_target_mode_after_a_hook_changes_the_target() {
+    for native_first in [true, false] {
+        let transport = ScriptedTransport::new([
+            tool_reply(&[("c1", "tool_search", r#"{"query":"issue"}"#)]),
+            tool_reply(&[("c2", "tool_search", r#"{"query":"issue"}"#)]),
+            text_reply("done"),
+        ]);
+        let (first, default) = if native_first {
+            (native_target(), target())
+        } else {
+            (target(), native_target())
+        };
+        let hooks = FirstSearchTarget(first);
+        let mut toolset = Toolset::new();
+        toolset.add(create_issue_definition(), Recorder::default()).unwrap();
+        let driver = Driver::new(&transport, &default, &NoWait)
+            .toolset(&toolset)
+            .hooks(&hooks);
+
+        let results = results_in_context(driver);
+
+        let native_text = "Loaded 1 tools. Call each one by its name:\n- create_issue: Create an issue.";
+        let bridge_text = "Found 1 tools. Call one with tool_call.\n\n## create_issue\nCreate an issue.\nInput schema: {\"type\":\"object\"}";
+        let observed: Vec<_> = results
+            .iter()
+            .map(|result| {
+                (
+                    result.call_id.as_str(),
+                    result.content.as_str(),
+                    result.is_error,
+                    result.loaded.iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        let expected = if native_first {
+            [
+                ("c1", native_text, false, vec!["create_issue"]),
+                ("c2", bridge_text, false, vec![]),
+            ]
+        } else {
+            [
+                ("c1", bridge_text, false, vec![]),
+                ("c2", native_text, false, vec!["create_issue"]),
+            ]
+        };
+        assert_eq!(observed, expected);
+
+        let requests = transport.requests();
+        assert_eq!(requests.len(), 3);
+        for (request, native) in requests.iter().zip([native_first, !native_first, !native_first]) {
+            let tools = declared_tools(request);
+            assert_eq!(tools.contains(r#""defer_loading":true"#), native, "{request}");
+            assert_eq!(tools.contains(r#""name":"tool_call""#), !native, "{request}");
+        }
+    }
 }
 
 #[test]
@@ -260,9 +340,7 @@ fn a_search_limit_outside_one_to_twenty_gets_an_error_result() {
     ]);
     let target = target();
     let mut toolset = Toolset::new();
-    toolset
-        .add(deferred("create_issue", "Create an issue."), Recorder::default())
-        .unwrap();
+    toolset.add(create_issue_definition(), Recorder::default()).unwrap();
     let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
 
     assert_eq!(
@@ -271,17 +349,86 @@ fn a_search_limit_outside_one_to_twenty_gets_an_error_result() {
     );
 }
 
+// A plural folds to its singular, so a query word finds the other form.
+#[test]
+fn bm25_matches_the_singular_and_the_plural_of_a_word() {
+    let tools = [
+        ToolDefinition {
+            name: "list_entries".to_owned(),
+            description: "List the entries.".to_owned(),
+            input_schema: "{}".to_owned(),
+            defer_loading: false,
+            strict: false,
+        },
+        ToolDefinition {
+            name: "pack_box".to_owned(),
+            description: "Pack one box.".to_owned(),
+            input_schema: "{}".to_owned(),
+            defer_loading: false,
+            strict: false,
+        },
+        ToolDefinition {
+            name: "teach_classes".to_owned(),
+            description: "Teach the classes.".to_owned(),
+            input_schema: "{}".to_owned(),
+            defer_loading: false,
+            strict: false,
+        },
+        ToolDefinition {
+            name: "read_file".to_owned(),
+            description: "Read a file.".to_owned(),
+            input_schema: "{}".to_owned(),
+            defer_loading: false,
+            strict: false,
+        },
+    ];
+    let borrowed: Vec<&ToolDefinition> = tools.iter().collect();
+
+    for (query, expected) in [
+        ("entry", "list_entries"),
+        ("boxes", "pack_box"),
+        ("class", "teach_classes"),
+        ("files", "read_file"),
+    ] {
+        let found = block_on(Bm25.search(query, &borrowed, 5));
+
+        let names: Vec<&str> = found.iter().map(|&index| tools[index].name.as_str()).collect();
+        assert_eq!(names, [expected], "{query}");
+    }
+}
+
 #[test]
 fn bm25_ranks_word_matches_and_drops_tools_without_one() {
     let tools = [
-        ToolDefinition::new("read_file", "Read a file.", "{}"),
-        ToolDefinition::new("list_issues", "List the issues of a repository.", "{}"),
-        ToolDefinition::new("createIssue", "Create a GitHub issue.", "{}"),
-        ToolDefinition::new(
-            "comment",
-            "Add a comment.",
-            r#"{"anyOf":[{"type":"object","properties":{"issue_number":{"type":"integer"}}}]}"#,
-        ),
+        ToolDefinition {
+            name: "read_file".to_owned(),
+            description: "Read a file.".to_owned(),
+            input_schema: "{}".to_owned(),
+            defer_loading: false,
+            strict: false,
+        },
+        ToolDefinition {
+            name: "list_issues".to_owned(),
+            description: "List the issues of a repository.".to_owned(),
+            input_schema: "{}".to_owned(),
+            defer_loading: false,
+            strict: false,
+        },
+        ToolDefinition {
+            name: "createIssue".to_owned(),
+            description: "Create a GitHub issue.".to_owned(),
+            input_schema: "{}".to_owned(),
+            defer_loading: false,
+            strict: false,
+        },
+        ToolDefinition {
+            name: "comment".to_owned(),
+            description: "Add a comment.".to_owned(),
+            input_schema: r#"{"anyOf":[{"type":"object","properties":{"issue_number":{"type":"integer"}}}]}"#
+                .to_owned(),
+            defer_loading: false,
+            strict: false,
+        },
     ];
     let borrowed: Vec<&ToolDefinition> = tools.iter().collect();
 

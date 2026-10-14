@@ -174,11 +174,18 @@ impl Store for SqliteStore {
         // The copy of the blobs runs on the thread of the connection, as a put does. Forks are rare.
         let (loaded, file) = self
             .call(move |connection| {
-                let cut = fork_point(connection, source_bytes, through)?;
+                let rows = events::CopyEventsParams {
+                    source: source_bytes,
+                    session_id: fork,
+                    cut: fork_point(connection, source_bytes, through)?,
+                };
                 // The blobs come before the rows, so a fork that a reader finds has each of its blobs. The lock of the
                 // new folder keeps the sweep away from the folder until the rows exist.
-                let forked = copy_folder(&source_folder, &folder, &sessions_folder).and_then(|file| {
-                    copy_rows(connection, source_bytes, fork, cut)?;
+                let forked = files::take_lock(&folder).and_then(|file| {
+                    // A crash must not lose the new folder entry. The fork syncs its parent folder.
+                    files::sync_folder(&sessions_folder).map_err(failed)?;
+                    files::copy_blobs(&source_folder, &folder).map_err(failed)?;
+                    copy_rows(connection, &rows)?;
                     let loaded = read(connection, |connection| context::load(connection, fork))?;
                     Ok((loaded.ok_or(StoreError::NotFound)?, file))
                 });
@@ -190,7 +197,7 @@ impl Store for SqliteStore {
             })
             .await?;
 
-        Ok(loaded.opened(id, Some(self.lease(id, file))))
+        Ok(loaded.into_opened(id, Some(self.lease(id, file))))
     }
 
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {
@@ -199,9 +206,9 @@ impl Store for SqliteStore {
         let settings_json = serde_json::to_string(settings).map_err(failed)?;
 
         self.call(move |connection| {
-            let saved = save_settings(connection, session, settings_json).map_err(failed)?;
+            let saved = save_settings(connection, session, settings_json);
             drop(owner);
-            ensure_found(saved)
+            saved
         })
         .await
     }
@@ -252,7 +259,7 @@ impl Store for SqliteStore {
             })
             .await?;
 
-        Ok(loaded.opened(id, file.map(|file| self.lease(id, file))))
+        Ok(loaded.into_opened(id, file.map(|file| self.lease(id, file))))
     }
 
     async fn commit(&self, id: SessionId, commit: &Commit<'_>, consumed: &[InputId]) -> Result<(), StoreError> {
@@ -261,9 +268,9 @@ impl Store for SqliteStore {
         let consumed: Vec<u64> = consumed.iter().map(|input| input.0).collect();
 
         self.call(move |connection| {
-            let saved = save_commit(connection, &params, &consumed).map_err(failed)?;
+            let saved = save_commit(connection, &params, &consumed);
             drop(owner);
-            ensure_found(saved)
+            saved
         })
         .await
     }
@@ -375,29 +382,33 @@ fn insert_session(connection: &mut Connection, session: [u8; 16], settings: Stri
     transaction.commit()
 }
 
-/// Save a settings event in one transaction. Returns `false` for an unknown session.
-fn save_settings(connection: &mut Connection, session: [u8; 16], settings: String) -> rusqlite::Result<bool> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+/// Save a settings event in one transaction. Returns [`StoreError::NotFound`] for an unknown session.
+fn save_settings(connection: &mut Connection, session: [u8; 16], settings: String) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(failed)?;
     let params = events::InsertSettingsParams {
         session_id: session,
         settings,
     };
-    if events::insert_settings(&transaction, &params)? == 0 {
-        return Ok(false);
+    if events::insert_settings(&transaction, &params).map_err(failed)? == 0 {
+        return Err(StoreError::NotFound);
     }
-    transaction.commit()?;
-    Ok(true)
+    transaction.commit().map_err(failed)
 }
 
-/// Save the commit event and remove the consumed inputs in one transaction. Returns `false` for an unknown session.
+/// Save the commit event and remove the consumed inputs in one transaction. Returns [`StoreError::NotFound`] for an
+/// unknown session.
 fn save_commit(
     connection: &mut Connection,
     params: &events::InsertCommitParams,
     consumed: &[u64],
-) -> rusqlite::Result<bool> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if events::insert_commit(&transaction, params)? == 0 {
-        return Ok(false);
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(failed)?;
+    if events::insert_commit(&transaction, params).map_err(failed)? == 0 {
+        return Err(StoreError::NotFound);
     }
 
     for &input in consumed {
@@ -405,11 +416,10 @@ fn save_commit(
             session_id: params.session_id,
             id: input,
         };
-        pending_inputs::delete_pending_input(&transaction, &params)?;
+        pending_inputs::delete_pending_input(&transaction, &params).map_err(failed)?;
     }
 
-    transaction.commit()?;
-    Ok(true)
+    transaction.commit().map_err(failed)
 }
 
 /// The newest event of session `source` that a fork copies: event `through`, which must end a completed turn, or the
@@ -446,30 +456,16 @@ fn fork_point(connection: &mut Connection, source: [u8; 16], through: Option<Eve
     Ok(cut)
 }
 
-/// Copy the session row and the events of session `source` up to event `cut` to session `fork` in one transaction.
-fn copy_rows(connection: &mut Connection, source: [u8; 16], fork: [u8; 16], cut: u64) -> Result<(), StoreError> {
+/// Add session `rows.session_id`. Copy events from `rows.source` through `rows.cut` in the same transaction.
+fn copy_rows(connection: &mut Connection, rows: &events::CopyEventsParams) -> Result<(), StoreError> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(failed)?;
     // Another writer can delete the source between the read of the cut and this write.
-    ensure_session(&transaction, source)?;
-    sessions::insert_session(&transaction, fork).map_err(failed)?;
-    let params = events::CopyEventsParams {
-        source,
-        session_id: fork,
-        cut,
-    };
-    events::copy_events(&transaction, &params).map_err(failed)?;
+    ensure_session(&transaction, rows.source)?;
+    sessions::insert_session(&transaction, rows.session_id).map_err(failed)?;
+    events::copy_events(&transaction, rows).map_err(failed)?;
     transaction.commit().map_err(failed)
-}
-
-/// Take the lock of the new session folder `folder`, and copy the blobs of the session folder `source` into it.
-fn copy_folder(source: &Path, folder: &Path, sessions_folder: &Path) -> Result<File, StoreError> {
-    let file = files::take_lock(folder)?;
-    // A crash must not lose the entry of the new folder, so the call syncs the folder that holds it.
-    files::sync_folder(sessions_folder).map_err(failed)?;
-    files::copy_blobs(source, folder).map_err(failed)?;
-    Ok(file)
 }
 
 /// Delete the rows and the folder of a new session whose creation or fork failed. Its lock is already free. An error
@@ -537,16 +533,7 @@ fn ensure_session(connection: &Connection, session: [u8; 16]) -> Result<(), Stor
         .map_err(failed)?
         .count;
 
-    ensure_found(count > 0)
-}
-
-/// `Ok` when the session was found, and [`StoreError::NotFound`] otherwise.
-fn ensure_found(session_found: bool) -> Result<(), StoreError> {
-    if session_found {
-        Ok(())
-    } else {
-        Err(StoreError::NotFound)
-    }
+    if count > 0 { Ok(()) } else { Err(StoreError::NotFound) }
 }
 
 pub(crate) fn failed(error: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> StoreError {

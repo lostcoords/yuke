@@ -23,6 +23,13 @@ impl From<Malformed> for DecodeError {
     }
 }
 
+/// The action for each open tool call at the end of a response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OpenTools {
+    Keep,
+    Drop,
+}
+
 /// The state of one block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BlockState {
@@ -310,16 +317,15 @@ impl Draft {
         self.finish_reason = finish_reason;
     }
 
-    /// Close every open block, then end the draft. An open tool holds partial arguments, so `drop_open_tools` drops it
-    /// rather than reporting an unfinished call.
-    pub(crate) fn close_and_finish(&mut self, drop_open_tools: bool) -> Result<(), DecodeError> {
+    /// Close every open block, then end the draft. `OpenTools::Drop` discards unfinished tool calls.
+    pub(crate) fn close_and_finish(&mut self, open_tools: OpenTools) -> Result<(), DecodeError> {
         for index in 0..self.blocks.len() {
             let block = &self.blocks[index];
             if block.state != BlockState::Open {
                 continue;
             }
             let id = BlockId::try_from(index).map_err(|_| DecodeError::TooLarge)?;
-            if drop_open_tools && block.kind == BlockKind::ToolCall {
+            if open_tools == OpenTools::Drop && block.kind == BlockKind::ToolCall {
                 self.drop_block(id)?;
             } else {
                 self.stop(id)?;

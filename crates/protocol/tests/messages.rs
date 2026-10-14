@@ -35,7 +35,10 @@ fn settings_json() -> Value {
 
 fn settings() -> SessionSettings {
     SessionSettings {
-        model: ModelReference::new("test", "test-model"),
+        model: ModelReference {
+            provider: "test".to_owned(),
+            model: "test-model".to_owned(),
+        },
         settings: yuke_ai::Settings::new(),
         cwd: "/work".into(),
     }
@@ -251,7 +254,11 @@ fn each_live_update_reads_and_writes_its_json() {
         ),
         (
             json!({ "sessionUpdate": "tool_call", "callId": "c1", "name": "read", "arguments": "{}" }),
-            LiveUpdate::ToolCall(yuke_ai::ToolCall::new("c1", "read", "{}")),
+            LiveUpdate::ToolCall(yuke_ai::ToolCall {
+                call_id: "c1".to_owned(),
+                name: "read".to_owned(),
+                arguments: "{}".to_owned(),
+            }),
         ),
         (
             json!({ "sessionUpdate": "tool_call_output", "callId": "c1", "text": "line" }),
@@ -293,7 +300,11 @@ fn each_live_update_reads_and_writes_its_json() {
 
 #[test]
 fn each_turn_event_that_a_client_shows_becomes_a_live_update() {
-    let call = yuke_ai::ToolCall::new("c1", "read", "{}");
+    let call = yuke_ai::ToolCall {
+        call_id: "c1".to_owned(),
+        name: "read".to_owned(),
+        arguments: "{}".to_owned(),
+    };
     let result = yuke_ai::ToolResult::success("c1", "text");
     let text = yuke_ai::Delta { block: 0, text: "Hel" };
     let reasoning = yuke_ai::Delta { block: 1, text: "Hmm" };

@@ -62,9 +62,17 @@ fn tool_answer(finish_reason: FinishReason) -> Response {
                     text: "Two files.".to_owned(),
                     replay: None,
                 }),
-                Content::ToolCall(ToolCall::new("c1", "read", "{}")),
+                Content::ToolCall(ToolCall {
+                    call_id: "c1".to_owned(),
+                    name: "read".to_owned(),
+                    arguments: "{}".to_owned(),
+                }),
                 Content::Text("And the other.".to_owned()),
-                Content::ToolCall(ToolCall::new("c2", "write", "{}")),
+                Content::ToolCall(ToolCall {
+                    call_id: "c2".to_owned(),
+                    name: "write".to_owned(),
+                    arguments: "{}".to_owned(),
+                }),
             ],
             finish_reason,
             raw_finish_reason: finish_reason.as_str().to_owned(),
@@ -274,7 +282,11 @@ fn cancelled_request_keeps_its_text_and_calls_but_not_its_reasoning() {
     let action = turn_state.model_cancelled(vec![
         Partial::Reasoning("Two files.".to_owned()),
         Partial::Text("Let me check.".to_owned()),
-        Partial::ToolCall(ToolCall::new("c1", "read", "{}")),
+        Partial::ToolCall(ToolCall {
+            call_id: "c1".to_owned(),
+            name: "read".to_owned(),
+            arguments: "{}".to_owned(),
+        }),
     ]);
 
     assert!(matches!(
@@ -289,7 +301,11 @@ fn cancelled_request_keeps_its_text_and_calls_but_not_its_reasoning() {
         [
             Block::user_text("one"),
             Block::assistant_text("Let me check."),
-            Block::ToolCall(ToolCall::new("c1", "read", "{}")),
+            Block::ToolCall(ToolCall {
+                call_id: "c1".to_owned(),
+                name: "read".to_owned(),
+                arguments: "{}".to_owned()
+            }),
             Block::ToolResult(ToolResult::error(
                 "c1",
                 "Tool call \"read\" was not executed: the user cancelled the turn."

@@ -62,9 +62,9 @@ pub(crate) fn write_blob(folder: &Path, bytes: &[u8]) -> io::Result<yuke_ai::Blo
     Ok(blob)
 }
 
-/// Copy each blob file of the session folder `source` into the session folder `folder`, and make the copies durable.
-/// Each copy goes through a temporary file, because a read does not check the digest of a blob.
-pub(crate) fn copy_blobs(source: &Path, folder: &Path) -> io::Result<()> {
+/// Copy each blob file of the session folder `source` into the session folder `destination`, and make the copies
+/// durable. Each copy goes through a temporary file, because a read does not check the digest of a blob.
+pub(crate) fn copy_blobs(source: &Path, destination: &Path) -> io::Result<()> {
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -72,14 +72,14 @@ pub(crate) fn copy_blobs(source: &Path, folder: &Path) -> io::Result<()> {
             continue;
         }
 
-        let temporary = temporary_file(folder);
+        let temporary = temporary_file(destination);
         // On a file system with reflinks, such as btrfs or APFS, the copy can share the blocks of the source file.
         std::fs::copy(entry.path(), &temporary)?;
         // Windows syncs only a file that is open for writing.
         OpenOptions::new().write(true).open(&temporary)?.sync_all()?;
-        std::fs::rename(&temporary, folder.join(name))?;
+        std::fs::rename(&temporary, destination.join(name))?;
     }
-    sync_folder(folder)
+    sync_folder(destination)
 }
 
 /// A new temporary file name in `folder`.

@@ -43,8 +43,7 @@ declare module "yuke:internal/native/tools" {
      */
     readonly exec: (
       command: string,
-      timeoutMs: number,
-      maxBytes: number,
+      limits: { readonly timeoutMs: number; readonly maxBytes: number },
       signal: CallSignal,
       onOutput: (text: string) => void,
     ) => Promise<CommandEnd>;

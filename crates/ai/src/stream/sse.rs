@@ -3,6 +3,8 @@
 
 use bytes::Bytes;
 
+use crate::response::ResponseLimits;
+
 /// A size bound stopped the parser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TooLarge;
@@ -59,10 +61,11 @@ pub(crate) struct Sse {
 }
 
 impl Sse {
-    pub(crate) fn new(max_total: usize, max_event: usize) -> Self {
+    /// Create a parser with the response and event limits in `limits`.
+    pub(crate) fn new(limits: &ResponseLimits) -> Self {
         Sse {
-            max_total,
-            max_event,
+            max_total: limits.max_response_bytes,
+            max_event: limits.max_event_bytes,
             line: Vec::new(),
             data: Vec::new(),
             data_seen: false,
@@ -202,7 +205,11 @@ mod tests {
 
     /// Run the parser over `chunks` in order, and copy each payload, because the parser reuses its buffer.
     fn frame_with(chunks: &[&[u8]], max_total: usize, max_event: usize) -> Result<Vec<Vec<u8>>, TooLarge> {
-        let mut sse = Sse::new(max_total, max_event);
+        let mut sse = Sse::new(&ResponseLimits {
+            max_response_bytes: max_total,
+            max_event_bytes: max_event,
+            ..ResponseLimits::default()
+        });
         let mut chunks = chunks.iter();
         let mut ended = false;
         let mut out = Vec::new();

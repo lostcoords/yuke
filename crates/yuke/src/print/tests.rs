@@ -112,7 +112,13 @@ async fn a_new_run_saves_a_session_in_the_current_folder_and_answers_the_last_te
     assert_eq!(finished.text, "Hello.");
     let opened = place.store().await.open(finished.session, Access::Read).await.unwrap();
     assert_eq!(opened.settings.cwd, place.cwd);
-    assert_eq!(opened.settings.model, ModelReference::new("minimax", "MiniMax-M3"));
+    assert_eq!(
+        opened.settings.model,
+        ModelReference {
+            provider: "minimax".to_owned(),
+            model: "MiniMax-M3".to_owned()
+        }
+    );
     assert!(opened.settings.settings.system.starts_with("You are yuke"));
     assert_eq!(
         opened.context,
@@ -144,7 +150,13 @@ async fn the_model_of_a_new_session_comes_from_the_config_when_the_command_line_
         .open(finished.unwrap().session, Access::Read)
         .await
         .unwrap();
-    assert_eq!(opened.settings.model, ModelReference::new("minimax", "MiniMax-M2.7"));
+    assert_eq!(
+        opened.settings.model,
+        ModelReference {
+            provider: "minimax".to_owned(),
+            model: "MiniMax-M2.7".to_owned()
+        }
+    );
 }
 
 #[tokio::test]
@@ -315,7 +327,10 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
             SessionEvent::Commit { .. } => None,
         })
         .collect();
-    let minimax_m3 = ModelReference::new("minimax", "MiniMax-M3");
+    let minimax_m3 = ModelReference {
+        provider: "minimax".to_owned(),
+        model: "MiniMax-M3".to_owned(),
+    };
     assert_eq!(settings.len(), 3);
     assert_eq!(settings[1].model, minimax_m3);
     assert_eq!(
@@ -326,7 +341,13 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
         }
     );
     // A new model without a level takes the default level.
-    assert_eq!(settings[2].model, ModelReference::new("minimax", "MiniMax-M2.7"));
+    assert_eq!(
+        settings[2].model,
+        ModelReference {
+            provider: "minimax".to_owned(),
+            model: "MiniMax-M2.7".to_owned()
+        }
+    );
     assert_eq!(settings[2].settings.reasoning, yuke_ai::ReasoningSettings::default());
     assert_eq!(settings[2].settings.system, settings[0].settings.system);
 }

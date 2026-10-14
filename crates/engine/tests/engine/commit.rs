@@ -74,7 +74,11 @@ impl Journal for Replay {
 }
 
 fn call(id: &str) -> Block {
-    Block::ToolCall(ToolCall::new(id, "echo", "{}"))
+    Block::ToolCall(ToolCall {
+        call_id: id.into(),
+        name: "echo".to_owned(),
+        arguments: "{}".to_owned(),
+    })
 }
 
 #[test]

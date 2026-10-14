@@ -157,7 +157,10 @@ async fn new_session(
         now: SystemTime::now(),
     })?;
     let settings = SessionSettings {
-        model: ModelReference::new(entry.provider.id, entry.model.id),
+        model: ModelReference {
+            provider: entry.provider.id.into(),
+            model: entry.model.id.into(),
+        },
         settings: yuke_ai::Settings {
             system,
             reasoning: reasoning(&entry, task.reasoning)?,
@@ -165,7 +168,7 @@ async fn new_session(
         },
         cwd: machine.cwd.clone(),
     };
-    let session = Session::create(Arc::clone(store), settings)
+    let session = Session::create(Arc::clone(store), &settings)
         .await
         .map_err(|error| describe(&error))?;
     Ok((session, target))
@@ -193,7 +196,10 @@ async fn existing_session(
     let entry = catalog::lookup(&selector).map_err(|error| format!("{selector}: {error}"))?;
     let target = target(&entry, machine)?;
     if task.model.is_some() || task.reasoning.is_some() {
-        settings.model = ModelReference::new(entry.provider.id, entry.model.id);
+        settings.model = ModelReference {
+            provider: entry.provider.id.into(),
+            model: entry.model.id.into(),
+        };
         settings.settings.reasoning = reasoning(&entry, task.reasoning)?;
         session.set_settings(settings).await.map_err(|error| describe(&error))?;
     }
@@ -218,7 +224,39 @@ async fn turn(
     .await
     .map_err(|error| describe(&error))?;
     let reporter = tokio::spawn(report(faults));
-    let finished = turn_in_runtime(prompt, session, store, target, machine, &runtime, cancellation_token).await;
+    // The shutdown must also run after an error, so the fallible work stays in one block.
+    let finished = async {
+        runtime
+            .import("yuke:builtins")
+            .await
+            .map_err(|error| describe(&error))?;
+        let host = Arc::new(Host {
+            folder: session.settings().cwd.clone(),
+            store: Arc::clone(store),
+            session: session.id(),
+        });
+        let mut toolset = Toolset::new();
+        for (definition, tool) in runtime.tools(host).await.map_err(|error| describe(&error))? {
+            toolset.add(definition, tool).map_err(|error| describe(&error))?;
+        }
+        let driver = Driver::new(machine.transport, target, &TokioTimer).toolset(&toolset);
+
+        session
+            .input()
+            .send(&[Block::user_text(prompt)])
+            .await
+            .map_err(|error| describe(&error))?;
+        let end = match session.turn(driver).cancellation_token(cancellation_token).run().await {
+            Ok(outcome) => TurnEnd::Outcome(outcome),
+            Err(error) => TurnEnd::Failed(describe(&error)),
+        };
+        Ok::<_, String>(Finished {
+            session: session.id(),
+            end,
+            text: answer_text(session.context()),
+        })
+    }
+    .await;
     if let Err(error) = runtime.shutdown().await {
         warn(&describe(&error));
     }
@@ -228,46 +266,6 @@ async fn turn(
         warn(&format!("yuke could not report the script faults: {error}"));
     }
     finished
-}
-
-async fn turn_in_runtime(
-    prompt: &str,
-    session: &mut Session,
-    store: &Arc<dyn Store>,
-    target: &Target,
-    machine: &Machine<'_>,
-    runtime: &Runtime,
-    cancellation_token: CancellationToken,
-) -> Result<Finished, String> {
-    runtime
-        .import("yuke:builtins")
-        .await
-        .map_err(|error| describe(&error))?;
-    let host = Arc::new(Host {
-        folder: session.settings().cwd.clone(),
-        store: Arc::clone(store),
-        session: session.id(),
-    });
-    let mut toolset = Toolset::new();
-    for (definition, tool) in runtime.tools(host).await.map_err(|error| describe(&error))? {
-        toolset.add(definition, tool).map_err(|error| describe(&error))?;
-    }
-    let driver = Driver::new(machine.transport, target, &TokioTimer).toolset(&toolset);
-
-    session
-        .input()
-        .send(&[Block::user_text(prompt)])
-        .await
-        .map_err(|error| describe(&error))?;
-    let end = match session.turn(driver).cancellation_token(cancellation_token).run().await {
-        Ok(outcome) => TurnEnd::Outcome(outcome),
-        Err(error) => TurnEnd::Failed(describe(&error)),
-    };
-    Ok(Finished {
-        session: session.id(),
-        end,
-        text: answer_text(session.context()),
-    })
 }
 
 /// The target of `entry` with the credential from the environment of `machine`.

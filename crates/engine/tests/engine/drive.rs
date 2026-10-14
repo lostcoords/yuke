@@ -628,8 +628,16 @@ fn cancel_during_a_tool_keeps_its_own_result_and_runs_no_later_call() {
         context,
         [
             Block::user_text("go"),
-            Block::ToolCall(ToolCall::new("c1", "build", "{}")),
-            Block::ToolCall(ToolCall::new("c2", "echo", "{}")),
+            Block::ToolCall(ToolCall {
+                call_id: "c1".to_owned(),
+                name: "build".to_owned(),
+                arguments: "{}".to_owned()
+            }),
+            Block::ToolCall(ToolCall {
+                call_id: "c2".to_owned(),
+                name: "echo".to_owned(),
+                arguments: "{}".to_owned()
+            }),
             Block::ToolResult(ToolResult::error("c1", "step 1 done\nCommand aborted")),
             Block::ToolResult(ToolResult::error(
                 "c2",

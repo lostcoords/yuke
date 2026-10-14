@@ -68,7 +68,7 @@ impl Saved {
 
     /// The session `id` as a load gives it, with `lease`. A replay of the events gives the settings and the context.
     #[expect(clippy::expect_used, reason = "a create and a fork each save a settings event first")]
-    fn opened(&self, id: SessionId, lease: Option<Lease>) -> Opened {
+    fn to_opened(&self, id: SessionId, lease: Option<Lease>) -> Opened {
         let mut settings = None;
         let mut context = Vec::new();
         let mut turn_open = false;
@@ -164,7 +164,7 @@ impl Store for MemoryStore {
             newest_write: 0,
         };
         saved.push_event(SessionEvent::Settings(settings.clone()), state.next_write());
-        let opened = saved.opened(id, Some(self.take_writer(id)?));
+        let opened = saved.to_opened(id, Some(self.take_writer(id)?));
         state.sessions.insert(id, saved);
         Ok(opened)
     }
@@ -180,7 +180,7 @@ impl Store for MemoryStore {
             blobs: saved.blobs.clone(),
             newest_write: write,
         };
-        let opened = fork.opened(id, Some(self.take_writer(id)?));
+        let opened = fork.to_opened(id, Some(self.take_writer(id)?));
         state.sessions.insert(id, fork);
         Ok(opened)
     }
@@ -222,7 +222,7 @@ impl Store for MemoryStore {
             Access::Read => None,
             Access::Write => Some(self.take_writer(id)?),
         };
-        Ok(saved.opened(id, lease))
+        Ok(saved.to_opened(id, lease))
     }
 
     async fn commit(&self, id: SessionId, commit: &Commit<'_>, consumed: &[InputId]) -> Result<(), StoreError> {

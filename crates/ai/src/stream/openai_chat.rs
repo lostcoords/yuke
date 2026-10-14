@@ -12,7 +12,7 @@ use crate::request::ReplayKind;
 use crate::response::{BlockId, BlockKind, FinishReason};
 use crate::wire::json::JsonWriter;
 
-use super::draft::{DecodeError, Draft};
+use super::draft::{DecodeError, Draft, OpenTools};
 
 /// The kind of one OpenRouter `reasoning_details` entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -458,7 +458,7 @@ impl Reducer {
         // A signature can arrive after the text, so the entries are final only here.
         self.store_details()?;
         // This dialect stops no block before `[DONE]`, so every call is complete here.
-        self.draft.close_and_finish(false)
+        self.draft.close_and_finish(OpenTools::Keep)
     }
 }
 

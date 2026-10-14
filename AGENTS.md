@@ -30,6 +30,10 @@ Ask the user before you add a dependency.
 
 - A comment says why, in one or two lines. Docs say what an item does, not how it came to be.
 - Use full words in names.
+  Follow Rust conventions.
+  Use short generic parameters (`T`, `F`).
+  Use standard trait parameter names (`f: &mut Formatter`).
+  Use common ecosystem names (`ctx`, `args`, `_ms`).
 - Do not discard a fallible result with `let _ =`. Propagate with `?` or handle it.
 - Give each error one of two shapes. Never mix them, or a printer of the chain shows a text twice.
   - A context error writes its own text and returns the cause from `source`.

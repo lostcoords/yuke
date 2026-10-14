@@ -2,12 +2,14 @@
 
 use crate::encoder::{EncodeError, Unsupported};
 use crate::request::read_blob;
-use crate::request::{AnthropicWire, Block, Media, Modality, Reasoning, ReplayKind, Request, Target, Thinking};
+use crate::request::{
+    AnthropicWire, BlobStore, Block, Media, Modality, Reasoning, ReplayKind, Request, Target, Thinking,
+};
 
 use super::json::{JsonWriter, call_arguments};
 
 /// Write the request up to the open `messages` array, which holds no element yet.
-pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: AnthropicWire, request: &Request<'_>) -> bool {
+pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: AnthropicWire, request: &Request<'_>) {
     let mut jw = JsonWriter::new(out);
     jw.begin_object();
     jw.field_str("model", &target.model);
@@ -75,7 +77,6 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: AnthropicWire
 
     jw.key("messages");
     jw.begin_array();
-    false
 }
 
 /// Write the message of the run of blocks with one role from `start`, and return the end of the run.
@@ -154,7 +155,7 @@ fn write_block(
             write_cache_control(jw, cache);
             jw.end_object();
         }
-        Block::Media(media) => write_media(jw, request, media, cache)?,
+        Block::Media(media) => write_media(jw, request.blobs, media, cache)?,
         Block::Reasoning(reasoning) => match replayed(target, reasoning) {
             Some((ReplayKind::AnthropicSignature, signature)) => {
                 jw.begin_object();
@@ -203,7 +204,7 @@ fn write_block(
                     jw.end_object();
                 }
                 for media in &result.media {
-                    write_media(jw, request, media, false)?;
+                    write_media(jw, request.blobs, media, false)?;
                 }
                 for tool in loaded {
                     jw.begin_object();
@@ -222,7 +223,12 @@ fn write_block(
 }
 
 /// Write one attachment. An image is an `image` block and every other document is a `document` block.
-fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media, cache: bool) -> Result<(), EncodeError> {
+fn write_media(
+    jw: &mut JsonWriter<'_>,
+    blobs: Option<&dyn BlobStore>,
+    media: &Media,
+    cache: bool,
+) -> Result<(), EncodeError> {
     let kind = media.kind();
     let block_type = match kind {
         Modality::Image => "image",
@@ -236,7 +242,7 @@ fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media, ca
     jw.begin_object();
     jw.field_str("type", block_type);
     jw.key("source");
-    let data = read_blob(request.blobs, &media.blob)?;
+    let data = read_blob(blobs, &media.blob)?;
     jw.begin_object();
     // Plain text rides in a `text` source, which carries the characters rather than base64. Its media type is
     // `text/plain` whatever kind of text the attachment holds: the API types it as that literal.
@@ -284,10 +290,11 @@ pub(crate) fn cacheable(block: &Block) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ToolResult;
     use crate::request::{
         Blob, BlobStore, Effort, Origin, OutputSchema, ReasoningReplay, Settings, ThinkingDisplay, ToolDefinition,
     };
-    use crate::wire::testing::{blob, call, expect_error, expect_json, replay, result};
+    use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
 
     fn anthropic(max_tokens: u32) -> crate::Wire {
         crate::Wire::AnthropicMessages(AnthropicWire {
@@ -399,7 +406,7 @@ mod tests {
         let blocks = [
             Block::assistant_text("checking"),
             call("toolu_1", "run", r#"{"c":1}"#),
-            Block::ToolResult(result("toolu_1", "ok", false)),
+            Block::ToolResult(ToolResult::success("toolu_1", "ok")),
         ];
         expect_json(
             r#"{"model":"claude","max_tokens":64,"stream":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"checking"},{"type":"tool_use","id":"toolu_1","name":"run","input":{"c":1}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok","is_error":false}]}]}"#,
@@ -413,7 +420,7 @@ mod tests {
     fn error_result_sets_flag() {
         let blocks = [
             call("toolu_1", "run", "{}"),
-            Block::ToolResult(result("toolu_1", "no", true)),
+            Block::ToolResult(ToolResult::error("toolu_1", "no")),
         ];
         expect_json(
             r#"{"model":"claude","max_tokens":64,"stream":true,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"run","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"no","is_error":true}]}]}"#,
@@ -428,8 +435,8 @@ mod tests {
         let images = [image("ab", "image/png")];
         let blocks = [
             call("toolu_1", "read", "{}"),
-            Block::ToolResult(result("toolu_1", "PNG image", false).with_media(images.to_vec())),
-            Block::ToolResult(result("toolu_2", "", false).with_media(images.to_vec())),
+            Block::ToolResult(ToolResult::success("toolu_1", "PNG image").with_media(images.to_vec())),
+            Block::ToolResult(ToolResult::success("toolu_2", "").with_media(images.to_vec())),
         ];
         expect_json(
             r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"read","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"PNG image"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}}],"is_error":false},{"type":"tool_result","tool_use_id":"toolu_2","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}}],"is_error":false,"cache_control":{"type":"ephemeral"}}]}]}"#,
@@ -442,13 +449,33 @@ mod tests {
     #[test]
     fn tool_result_loads_deferred_tools() {
         let tools = [
-            ToolDefinition::new("tool_search", "Find.", "{}"),
-            ToolDefinition::new("mcp_read", "Read.", "{}").deferred(),
-            ToolDefinition::new("mcp_write", "Write.", "{}").deferred(),
+            ToolDefinition {
+                name: "tool_search".to_owned(),
+                description: "Find.".to_owned(),
+                input_schema: "{}".to_owned(),
+                defer_loading: false,
+                strict: false,
+            },
+            ToolDefinition {
+                name: "mcp_read".to_owned(),
+                description: "Read.".to_owned(),
+                input_schema: "{}".to_owned(),
+                defer_loading: false,
+                strict: false,
+            }
+            .deferred(),
+            ToolDefinition {
+                name: "mcp_write".to_owned(),
+                description: "Write.".to_owned(),
+                input_schema: "{}".to_owned(),
+                defer_loading: false,
+                strict: false,
+            }
+            .deferred(),
         ];
         let blocks = [
             call("toolu_1", "tool_search", "{}"),
-            Block::ToolResult(result("toolu_1", "found", false).with_loaded(tools[1..].to_vec())),
+            Block::ToolResult(ToolResult::success("toolu_1", "found").with_loaded(tools[1..].to_vec())),
         ];
         expect_json(
             r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"tool_search","description":"Find.","input_schema":{}},{"name":"mcp_read","description":"Read.","defer_loading":true,"input_schema":{}},{"name":"mcp_write","description":"Write.","defer_loading":true,"input_schema":{}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"tool_search","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"found"},{"type":"tool_reference","tool_name":"mcp_read"},{"type":"tool_reference","tool_name":"mcp_write"}],"is_error":false}]}]}"#,
@@ -473,10 +500,22 @@ mod tests {
     #[test]
     fn tool_schema_and_strict_mode() {
         let tools = [
-            ToolDefinition::new("run", "run a command", r#"{"type":"object"}"#),
+            ToolDefinition {
+                name: "run".to_owned(),
+                description: "run a command".to_owned(),
+                input_schema: r#"{"type":"object"}"#.to_owned(),
+                defer_loading: false,
+                strict: false,
+            },
             ToolDefinition {
                 strict: true,
-                ..ToolDefinition::new("read", "read a file", "{}")
+                ..ToolDefinition {
+                    name: "read".to_owned(),
+                    description: "read a file".to_owned(),
+                    input_schema: "{}".to_owned(),
+                    defer_loading: false,
+                    strict: false,
+                }
             },
         ];
         let blocks = [Block::user_text("go")];
@@ -710,7 +749,7 @@ mod tests {
                 r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"c","name":"n","input":{},"cache_control":{"type":"ephemeral"}}]}]}"#,
             ),
             (
-                Block::ToolResult(result("c", "", false)),
+                Block::ToolResult(ToolResult::success("c", "")),
                 r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"c","content":"","is_error":false,"cache_control":{"type":"ephemeral"}}]}]}"#,
             ),
             (

@@ -20,11 +20,12 @@ impl Tool for Answers {
 }
 
 /// Run one turn in which the model calls `print` once. Return the tool result in the context.
-fn result_in_context(driver: Driver<'_>, context: &mut Vec<Block>) -> ToolResult {
+fn result_in_context(driver: Driver<'_>) -> ToolResult {
+    let mut context = Vec::new();
     let finished = Mutex::new(Vec::new());
     block_on(
         driver
-            .turn(context, vec![Block::user_text("go")])
+            .turn(&mut context, vec![Block::user_text("go")])
             .observer(&|event: &TurnEvent<'_>| {
                 if let TurnEvent::ToolFinished(result) = event {
                     finished.lock().unwrap().push((*result).clone());
@@ -70,7 +71,7 @@ fn after_tool_replaces_a_result_and_the_replacement_keeps_its_call_id() {
         .toolset(&toolset)
         .hooks(&hooks);
 
-    let result = result_in_context(driver, &mut Vec::new());
+    let result = result_in_context(driver);
 
     assert_eq!(*hooks.seen.lock().unwrap(), ["printed"]);
     assert_eq!(result, ToolResult::error("c1", "replaced"));
@@ -105,7 +106,7 @@ fn after_tool_does_not_run_for_a_blocked_call() {
         .toolset(&toolset)
         .hooks(&hooks);
 
-    let result = result_in_context(driver, &mut Vec::new());
+    let result = result_in_context(driver);
 
     assert_eq!(result, ToolResult::error("c1", "The user blocked this call."));
     assert_eq!(hooks.after_tool_calls.load(Ordering::Relaxed), 0);

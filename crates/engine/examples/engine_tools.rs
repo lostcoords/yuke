@@ -50,11 +50,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http = HttpTransport::new(HttpOptions::new("engine-example"))?;
     let mut toolset = Toolset::new();
     toolset.add(
-        yuke_ai::ToolDefinition::new(
-            "uppercase",
-            "Convert text to uppercase.",
-            r#"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}"#,
-        ),
+        yuke_ai::ToolDefinition {
+            name: "uppercase".to_owned(),
+            description: "Convert text to uppercase.".to_owned(),
+            input_schema: r#"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}"#.to_owned(),
+            defer_loading: false,
+            strict: false,
+        },
         Uppercase,
     )?;
     let driver = Driver::new(&http, &target, &TokioTimer).toolset(&toolset);

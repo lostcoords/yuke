@@ -114,7 +114,13 @@ pub(crate) fn cut_reply(calls: &[(&str, &str, &str)]) -> String {
 
 /// A definition of `name` that takes any object.
 pub(crate) fn definition(name: &str) -> yuke_ai::ToolDefinition {
-    yuke_ai::ToolDefinition::new(name, "A test tool.", r#"{"type":"object"}"#)
+    yuke_ai::ToolDefinition {
+        name: name.into(),
+        description: "A test tool.".to_owned(),
+        input_schema: r#"{"type":"object"}"#.to_owned(),
+        defer_loading: false,
+        strict: false,
+    }
 }
 
 /// A tool that records the arguments of each call, and answers the call with "result N", counted from 1.

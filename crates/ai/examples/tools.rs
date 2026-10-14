@@ -20,11 +20,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = std::env::var("OPENAI_API_KEY")?;
     let target = yuke_ai::catalog::resolve("openai/gpt-6-astra", yuke_ai::route::Credential::ApiKey(key.into()))?;
     let http = HttpTransport::new(HttpOptions::new("ai-example"))?;
-    let tools = [ToolDefinition::new(
-        "uppercase_ascii",
-        "Convert ASCII letters in text to uppercase. Leave other characters unchanged.",
-        SCHEMA,
-    )];
+    let tools = [ToolDefinition {
+        name: "uppercase_ascii".to_owned(),
+        description: "Convert ASCII letters in text to uppercase. Leave other characters unchanged.".to_owned(),
+        input_schema: SCHEMA.into(),
+        defer_loading: false,
+        strict: false,
+    }];
 
     let mut context = vec![Block::user_text(
         "Use uppercase_ascii on 'Hello, Rust!' and report its result.",

@@ -156,7 +156,7 @@ fn words(text: &str, out: &mut Vec<String>) {
 /// Move `word` to `out` in its singular form, unless it has one character.
 fn push_word(word: &mut String, out: &mut Vec<String>) {
     if word.chars().nth(1).is_some() {
-        out.push(singular(&std::mem::take(word)));
+        out.push(singular(std::mem::take(word)));
     } else {
         word.clear();
     }
@@ -164,24 +164,22 @@ fn push_word(word: &mut String, out: &mut Vec<String>) {
 
 /// Fold an English plural to its singular, so `issues` matches `issue`. The rules stay naive on purpose: a catalog
 /// holds short names and descriptions.
-fn singular(word: &str) -> String {
+fn singular(mut word: String) -> String {
+    // Each suffix is ASCII, so each cut falls on a character boundary.
     let length = word.chars().count();
-    if length > 4
-        && let Some(stem) = word.strip_suffix("ies")
-    {
-        return format!("{stem}y");
-    }
-    if length > 4
+    if length > 4 && word.ends_with("ies") {
+        word.truncate(word.len() - 3);
+        word.push('y');
+    } else if length > 4
         && ["ches", "shes", "sses", "xes", "zes"]
             .iter()
             .any(|suffix| word.ends_with(suffix))
     {
-        return word[..word.len() - 2].to_owned();
+        word.truncate(word.len() - 2);
+    } else if length > 3 && word.ends_with('s') && !word.ends_with("ss") {
+        word.truncate(word.len() - 1);
     }
-    if length > 3 && word.ends_with('s') && !word.ends_with("ss") {
-        return word[..word.len() - 1].to_owned();
-    }
-    word.to_owned()
+    word
 }
 
 /// The default and the maximum count of matches of one search.
@@ -199,33 +197,52 @@ fn search_schema() -> String {
 const CALL_SCHEMA: &str = r#"{"type":"object","properties":{"name":{"type":"string","description":"The name of the tool."},"arguments":{"type":"object","description":"The arguments of the tool, as its input schema says."}},"required":["name","arguments"],"additionalProperties":false}"#;
 
 /// The search tool of a target with a native search. A match becomes callable by its name.
-static NATIVE_SEARCH: LazyLock<ToolDefinition> = LazyLock::new(|| {
-    ToolDefinition::new(
-        SEARCH_TOOL_NAME,
-        "Find more tools. Many tools are not listed here. When no listed tool fits the task, search them by \
-         keywords. Each match becomes callable by its name.",
-        search_schema(),
-    )
+static NATIVE_SEARCH: LazyLock<ToolDefinition> = LazyLock::new(|| ToolDefinition {
+    name: SEARCH_TOOL_NAME.into(),
+    description: "Find more tools. Many tools are not listed here. When no listed tool fits the task, search them by \
+         keywords. Each match becomes callable by its name."
+        .to_owned(),
+    input_schema: search_schema(),
+    defer_loading: false,
+    strict: false,
 });
 
 /// The search tool of a target without a native search. A match is callable through [`TOOL_CALL_NAME`].
-static BRIDGE_SEARCH: LazyLock<ToolDefinition> = LazyLock::new(|| {
-    ToolDefinition::new(
-        SEARCH_TOOL_NAME,
-        "Find more tools. Many tools are not listed here. When no listed tool fits the task, search them by \
-         keywords. The result shows each match with its input schema. Call a match with tool_call.",
-        search_schema(),
-    )
+static BRIDGE_SEARCH: LazyLock<ToolDefinition> = LazyLock::new(|| ToolDefinition {
+    name: SEARCH_TOOL_NAME.into(),
+    description: "Find more tools. Many tools are not listed here. When no listed tool fits the task, search them by \
+         keywords. The result shows each match with its input schema. Call a match with tool_call."
+        .to_owned(),
+    input_schema: search_schema(),
+    defer_loading: false,
+    strict: false,
 });
 
 /// The tool that calls a deferred tool on a target without a native search.
-static BRIDGE_CALL: LazyLock<ToolDefinition> = LazyLock::new(|| {
-    ToolDefinition::new(
-        TOOL_CALL_NAME,
-        "Call a deferred tool that tool_search found. Pass its name and its arguments.",
-        CALL_SCHEMA,
-    )
+static BRIDGE_CALL: LazyLock<ToolDefinition> = LazyLock::new(|| ToolDefinition {
+    name: TOOL_CALL_NAME.into(),
+    description: "Call a deferred tool that tool_search found. Pass its name and its arguments.".to_owned(),
+    input_schema: CALL_SCHEMA.into(),
+    defer_loading: false,
+    strict: false,
 });
+
+/// The search mode for deferred tools.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SearchMode {
+    Native,
+    Bridge,
+}
+
+impl SearchMode {
+    pub(crate) fn for_target(target: &yuke_ai::Target) -> Self {
+        if target.tool_search {
+            SearchMode::Native
+        } else {
+            SearchMode::Bridge
+        }
+    }
+}
 
 /// The definitions that the requests of one turn declare, built once for each kind of target. Without a deferred
 /// tool, they are the toolset's. On a native target, they add the search tool. On another target, they leave out each
@@ -246,12 +263,12 @@ impl<'a> Declared<'a> {
     }
 
     /// The definitions for a target with a native search, or for another target.
-    pub(crate) fn tools(&self, native: bool) -> &[ToolDefinition] {
+    pub(crate) fn tools(&self, mode: SearchMode) -> &[ToolDefinition] {
         let definitions = self.toolset.definitions();
         if !definitions.iter().any(|definition| definition.defer_loading) {
             return definitions;
         }
-        if native {
+        if mode == SearchMode::Native {
             return self.native.get_or_init(|| {
                 let mut declared = definitions.to_vec();
                 declared.push(NATIVE_SEARCH.clone());
@@ -280,7 +297,12 @@ struct SearchArguments {
 
 /// Run the search `call` over the deferred tools of `toolset`. On a native target, the result loads the matches.
 /// On another target, it shows them with their input schemas.
-pub(crate) async fn search(ranker: &dyn ToolSearch, toolset: &Toolset, call: &ToolCall, native: bool) -> ToolResult {
+pub(crate) async fn search(
+    ranker: &dyn ToolSearch,
+    toolset: &Toolset,
+    call: &ToolCall,
+    mode: SearchMode,
+) -> ToolResult {
     let arguments: SearchArguments = match parse_arguments(&call.arguments) {
         Ok(arguments) => arguments,
         Err(error) => return ToolResult::error(&call.call_id, error),
@@ -303,7 +325,7 @@ pub(crate) async fn search(ranker: &dyn ToolSearch, toolset: &Toolset, call: &To
         );
     }
 
-    if native {
+    if mode == SearchMode::Native {
         let lines: Vec<String> = found
             .iter()
             .map(|tool| format!("- {}: {}", tool.name, tool.description))
@@ -341,9 +363,11 @@ pub(crate) fn unwrap_call(toolset: &Toolset, call: &ToolCall) -> Result<ToolCall
     let arguments: CallArguments =
         parse_arguments(&call.arguments).map_err(|error| ToolResult::error(&call.call_id, error))?;
     match toolset.definition(&arguments.name) {
-        Some(definition) if definition.defer_loading => {
-            Ok(ToolCall::new(&call.call_id, &arguments.name, arguments.arguments.get()))
-        }
+        Some(definition) if definition.defer_loading => Ok(ToolCall {
+            call_id: call.call_id.clone(),
+            name: arguments.name,
+            arguments: arguments.arguments.get().to_owned(),
+        }),
         Some(_) => Err(ToolResult::error(
             &call.call_id,
             format!("\"{}\" is not a deferred tool. Call it directly.", arguments.name),

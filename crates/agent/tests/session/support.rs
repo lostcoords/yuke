@@ -37,7 +37,10 @@ pub(crate) fn target() -> Target {
 /// Session settings for [`target`].
 pub(crate) fn settings() -> SessionSettings {
     SessionSettings {
-        model: ModelReference::new("test", "test-model"),
+        model: ModelReference {
+            provider: "test".to_owned(),
+            model: "test-model".to_owned(),
+        },
         settings: yuke_ai::Settings::new(),
         cwd: std::path::PathBuf::from("/work"),
     }
@@ -73,13 +76,11 @@ pub(crate) fn failed_reply(text: &str) -> String {
     ])
 }
 
-/// One complete Anthropic answer that asks for one call of `name` with the id `id` and no arguments, as SSE.
-pub(crate) fn tool_reply(id: &str, name: &str) -> String {
+/// A complete Anthropic SSE answer that requests the `send` tool with no arguments.
+pub(crate) fn send_input_reply() -> String {
     sse(&[
         r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#.to_owned(),
-        format!(
-            r#"{{"type":"content_block_start","index":0,"content_block":{{"type":"tool_use","id":"{id}","name":"{name}","input":{{}}}}}}"#
-        ),
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"c1","name":"send","input":{}}}"#.to_owned(),
         r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}"#
             .to_owned(),
         r#"{"type":"content_block_stop","index":0}"#.to_owned(),
@@ -196,31 +197,29 @@ impl Tool for SendsInput {
     }
 }
 
-/// A memory store whose commit number `fail_at`, counted from 1, fails without a save. With `stalls_settings`, a
-/// settings write saves and then never answers.
+/// A failure mode for a test store.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum StoreBehavior {
+    /// Fail the commit at this position without a save. Count commits from 1.
+    FailCommit(usize),
+    /// Save the settings. Do not answer the write.
+    StallSettings,
+}
+
+/// A memory store with one selected failure mode.
 #[derive(Debug)]
 pub(crate) struct FailingStore {
     store: MemoryStore,
-    fail_at: usize,
+    behavior: StoreBehavior,
     commits: AtomicUsize,
-    stalls_settings: bool,
 }
 
 impl FailingStore {
-    pub(crate) fn new(fail_at: usize) -> Arc<Self> {
+    pub(crate) fn new(behavior: StoreBehavior) -> Arc<Self> {
         Arc::new(FailingStore {
             store: MemoryStore::new(),
-            fail_at,
+            behavior,
             commits: AtomicUsize::new(0),
-            stalls_settings: false,
-        })
-    }
-
-    /// A store whose settings write saves and then never answers, as a write that the caller drops after the save.
-    pub(crate) fn stalling_settings() -> Arc<Self> {
-        Arc::new(FailingStore {
-            stalls_settings: true,
-            ..Arc::into_inner(FailingStore::new(0)).unwrap()
         })
     }
 }
@@ -237,7 +236,7 @@ impl Store for FailingStore {
 
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {
         self.store.set_settings(id, settings).await?;
-        if self.stalls_settings {
+        if matches!(self.behavior, StoreBehavior::StallSettings) {
             std::future::pending::<()>().await;
         }
         Ok(())
@@ -256,7 +255,9 @@ impl Store for FailingStore {
     }
 
     async fn commit(&self, id: SessionId, commit: &Commit<'_>, consumed: &[InputId]) -> Result<(), StoreError> {
-        if self.commits.fetch_add(1, Ordering::SeqCst) + 1 == self.fail_at {
+        if let StoreBehavior::FailCommit(fail_at) = self.behavior
+            && self.commits.fetch_add(1, Ordering::SeqCst) + 1 == fail_at
+        {
             return Err(StoreError::Failed("the disk is full".into()));
         }
         self.store.commit(id, commit, consumed).await

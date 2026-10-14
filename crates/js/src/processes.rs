@@ -40,6 +40,16 @@ const CHUNK: usize = 64 * 1024;
 /// The lines of the log that the end message of a job shows.
 const TAIL_LINES: usize = 20;
 
+/// The parameters for one command call.
+pub(crate) struct Request {
+    pub(crate) command: String,
+    pub(crate) folder: PathBuf,
+    pub(crate) timeout: Duration,
+    pub(crate) max_bytes: usize,
+    /// The token that stops the command.
+    pub(crate) stop: CancellationToken,
+}
+
 /// The child processes of the tools. The consumer creates one for the process inside its tokio runtime, which must
 /// enable I/O and time. It gives the same value to every JavaScript runtime of the process. The full outputs of the
 /// commands and the logs of the jobs go to `folder`. [`Processes::shutdown`] removes the folder.
@@ -191,33 +201,26 @@ impl Processes {
     }
 
     /// The next number of a full output file.
-    fn number(&self) -> u64 {
+    fn next_output_number(&self) -> u64 {
         self.last_number.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// A new job id: `job-` and four base-36 digits. The counter gives each id once, until it wraps after every
     /// four-digit number.
-    pub(crate) fn job_id(&self) -> String {
+    pub(crate) fn next_job_id(&self) -> String {
         let next = self.last_job.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         format!("job-{}", base36(FIRST_JOB_NUMBER + next % JOB_NUMBERS))
     }
 
-    /// Run `command` in `folder` until it ends, `timeout` passes, or `stop` fires. The answer keeps at most `max_bytes`
-    /// of the output.
-    pub(crate) fn run(
-        &self,
-        command: String,
-        folder: PathBuf,
-        timeout: Duration,
-        max_bytes: usize,
-        stop: CancellationToken,
-    ) -> RunningCommand {
+    /// Run `request.command` until it ends, `request.timeout` expires, or the caller cancels `request.stop`.
+    /// The answer keeps at most `request.max_bytes` output bytes.
+    pub(crate) fn run(&self, request: Request) -> RunningCommand {
         let (chunks, output) = mpsc::unbounded_channel();
         let (finish, end) = oneshot::channel();
-        let file = self.folder.join(format!("exec-{}.log", self.number()));
-        let task_stop = stop.clone();
+        let file = self.folder.join(format!("exec-{}.log", self.next_output_number()));
+        let stop = request.stop.clone();
         self.handle.spawn(async move {
-            let answer = run(&command, &folder, timeout, max_bytes, file, chunks, task_stop).await;
+            let answer = run(request, file, chunks).await;
             if finish.send(answer).is_err() {
                 // The call has left.
             }
@@ -245,7 +248,7 @@ impl Processes {
         if lock(&self.jobs).closed {
             return Err(SHUTTING_DOWN.to_owned());
         }
-        let id = self.job_id();
+        let id = self.next_job_id();
         let log = self.folder.join(format!("{id}.log"));
         let folder = owner.folder().to_owned();
         let (task_id, task_log) = (id.clone(), log.clone());
@@ -332,7 +335,7 @@ impl Processes {
             let job = jobs
                 .running
                 .iter()
-                .find(|job| job.id == id && same_host(&job.owner, owner))?;
+                .find(|job| job.id == id && Arc::ptr_eq(&job.owner, owner))?;
             job.stop.cancel();
             (job.end.clone(), job.log.clone())
         };
@@ -348,7 +351,7 @@ impl Processes {
         lock(&self.jobs)
             .running
             .iter()
-            .filter(|job| same_host(&job.owner, owner))
+            .filter(|job| Arc::ptr_eq(&job.owner, owner))
             .map(|job| job.id.clone())
             .collect()
     }
@@ -379,11 +382,6 @@ fn answer_start(sender: oneshot::Sender<Result<(), String>>, answer: Result<(), 
     if sender.send(answer).is_err() {
         // The call has left.
     }
-}
-
-/// Whether two hosts are the same session.
-fn same_host(left: &Arc<dyn SessionHost>, right: &Arc<dyn SessionHost>) -> bool {
-    std::ptr::addr_eq(Arc::as_ptr(left), Arc::as_ptr(right))
 }
 
 /// `number` in base 36, with the digits `0-9` and `a-z`.
@@ -482,17 +480,16 @@ fn group_has_processes(group: Pid) -> bool {
 }
 
 /// The run of one command: start it, read its output, and stop it at the deadline or at a stop.
-async fn run(
-    command: &str,
-    folder: &Path,
-    timeout: Duration,
-    max_bytes: usize,
-    file: PathBuf,
-    chunks: mpsc::UnboundedSender<String>,
-    stop: CancellationToken,
-) -> Result<CommandEnd, String> {
+async fn run(request: Request, file: PathBuf, chunks: mpsc::UnboundedSender<String>) -> Result<CommandEnd, String> {
+    let Request {
+        command,
+        folder,
+        timeout,
+        max_bytes,
+        stop,
+    } = request;
     let (reader, writer) = io::pipe().map_err(|error| format!("the command did not start: {error}"))?;
-    let mut shell_command = shell_command(command, folder);
+    let mut shell_command = shell_command(&command, &folder);
     let error_writer = writer
         .try_clone()
         .map_err(|error| format!("the command did not start: {error}"))?;

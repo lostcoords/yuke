@@ -350,20 +350,9 @@ mod tests {
         Ok(())
     }
 
-    fn text(user: bool, value: &str) -> Block {
-        if user {
-            Block::user_text(value)
-        } else {
-            Block::assistant_text(value)
-        }
-    }
-
     fn image(data: &'static str) -> Block {
         Block::Media(Media::new(blob(data), "image/png"))
     }
-
-    const U: bool = true;
-    const A: bool = false;
 
     /// A store that counts its reads and answers from the test store.
     #[derive(Default)]
@@ -392,9 +381,21 @@ mod tests {
     #[test]
     fn missing_blob_fails_and_fixed_request_resumes() {
         let missing = image("zz");
-        let short = [text(U, "a"), text(A, "b"), text(U, "c")];
-        let long_missing = [text(U, "a"), text(A, "b"), text(U, "c"), text(A, "d"), missing.clone()];
-        let long = [text(U, "a"), text(A, "b"), text(U, "c"), text(A, "d"), text(U, "e")];
+        let short = [Block::user_text("a"), Block::assistant_text("b"), Block::user_text("c")];
+        let long_missing = [
+            Block::user_text("a"),
+            Block::assistant_text("b"),
+            Block::user_text("c"),
+            Block::assistant_text("d"),
+            missing.clone(),
+        ];
+        let long = [
+            Block::user_text("a"),
+            Block::assistant_text("b"),
+            Block::user_text("c"),
+            Block::assistant_text("d"),
+            Block::user_text("e"),
+        ];
         let calls: [(&[Block], bool); 6] = [
             (std::slice::from_ref(&missing), false),
             (std::slice::from_ref(&missing), false),
@@ -421,9 +422,21 @@ mod tests {
     // reads no blob. `encode_checked` proves the kept body equals a fresh one.
     #[test]
     fn head_setting_change_keeps_elements() {
-        let blocks = [image("ab"), text(A, "b"), text(U, "c")];
-        let before = [ToolDefinition::new("read", "Read.", "{}")];
-        let after = [ToolDefinition::new("read", "Read a file.", "{}")];
+        let blocks = [image("ab"), Block::assistant_text("b"), Block::user_text("c")];
+        let before = [ToolDefinition {
+            name: "read".to_owned(),
+            description: "Read.".to_owned(),
+            input_schema: "{}".to_owned(),
+            defer_loading: false,
+            strict: false,
+        }];
+        let after = [ToolDefinition {
+            name: "read".to_owned(),
+            description: "Read a file.".to_owned(),
+            input_schema: "{}".to_owned(),
+            defer_loading: false,
+            strict: false,
+        }];
         let pairs = [
             (
                 Wire::AnthropicMessages(AnthropicWire {
@@ -484,13 +497,13 @@ mod tests {
     #[test]
     fn element_setting_change_reencodes_elements() {
         let replayed = [
-            text(U, "a"),
+            Block::user_text("a"),
             Block::Reasoning(Reasoning {
                 text: "r".to_string(),
                 replay: None,
             }),
-            text(A, "b"),
-            text(U, "c"),
+            Block::assistant_text("b"),
+            Block::user_text("c"),
         ];
         let mut chat = Encoder::new();
         for mode in [ReasoningReplayMode::None, ReasoningReplayMode::ReasoningContent] {
@@ -501,15 +514,35 @@ mod tests {
             encode_checked(&mut chat, "m", wire, Request::new(&replayed)).unwrap();
         }
 
-        let plain = [ToolDefinition::new(SEARCH_TOOL_NAME, "Find.", "{}")];
-        let deferred = [plain[0].clone(), ToolDefinition::new("read", "Read.", "{}").deferred()];
+        let plain = [ToolDefinition {
+            name: SEARCH_TOOL_NAME.into(),
+            description: "Find.".to_owned(),
+            input_schema: "{}".to_owned(),
+            defer_loading: false,
+            strict: false,
+        }];
+        let deferred = [
+            plain[0].clone(),
+            ToolDefinition {
+                name: "read".to_owned(),
+                description: "Read.".to_owned(),
+                input_schema: "{}".to_owned(),
+                defer_loading: false,
+                strict: false,
+            }
+            .deferred(),
+        ];
         let searched = [
-            text(U, "go"),
-            Block::ToolCall(ToolCall::new("call_1", SEARCH_TOOL_NAME, "{}")),
+            Block::user_text("go"),
+            Block::ToolCall(ToolCall {
+                call_id: "call_1".to_owned(),
+                name: SEARCH_TOOL_NAME.into(),
+                arguments: "{}".to_owned(),
+            }),
             Block::ToolResult(ToolResult::success("call_1", "found").with_loaded(deferred[1..].to_vec())),
             // Later blocks keep the cache marker off the result, so only the key can encode it again.
-            text(A, "done"),
-            text(U, "next"),
+            Block::assistant_text("done"),
+            Block::user_text("next"),
         ];
         for wire in [ALL_WIRES[0], Wire::OpenaiResponses(ResponsesWire::default())] {
             let mut encoder = Encoder::new();
@@ -524,8 +557,12 @@ mod tests {
     #[test]
     fn call_with_invalid_arguments_keeps_the_request_valid() {
         let blocks = [
-            text(U, "go"),
-            Block::ToolCall(ToolCall::new("call_1", "read", r#"{"path":"#)),
+            Block::user_text("go"),
+            Block::ToolCall(ToolCall {
+                call_id: "call_1".to_owned(),
+                name: "read".to_owned(),
+                arguments: r#"{"path":"#.to_owned(),
+            }),
             Block::ToolResult(ToolResult::error("call_1", "not valid JSON")),
         ];
         for wire in ALL_WIRES {
@@ -548,8 +585,15 @@ mod tests {
     // A deferred tool asks for the native tool search, so a target without one cannot take the request.
     #[test]
     fn deferred_tool_needs_native_tool_search() {
-        let tools = [ToolDefinition::new("read", "Read.", "{}").deferred()];
-        let blocks = [text(U, "go")];
+        let tools = [ToolDefinition {
+            name: "read".to_owned(),
+            description: "Read.".to_owned(),
+            input_schema: "{}".to_owned(),
+            defer_loading: false,
+            strict: false,
+        }
+        .deferred()];
+        let blocks = [Block::user_text("go")];
         for wire in [ALL_WIRES[0], Wire::OpenaiResponses(ResponsesWire::default())] {
             let searching = target_of("m", wire);
             let plain = Target {
@@ -570,19 +614,60 @@ mod tests {
     #[test]
     fn incremental_encode_matches_fresh_after_append_edit_and_marker_move() {
         let rounds: [&[Block]; 9] = [
-            &[text(U, "a")],
-            &[text(U, "a"), text(A, "b"), text(U, "c")],
-            &[text(U, "a"), text(A, "b"), text(U, "c"), text(A, "d"), text(U, "e")],
-            &[text(U, "x"), text(A, "b"), text(U, "c"), text(A, "d"), text(U, "e")],
+            &[Block::user_text("a")],
+            &[Block::user_text("a"), Block::assistant_text("b"), Block::user_text("c")],
+            &[
+                Block::user_text("a"),
+                Block::assistant_text("b"),
+                Block::user_text("c"),
+                Block::assistant_text("d"),
+                Block::user_text("e"),
+            ],
+            &[
+                Block::user_text("x"),
+                Block::assistant_text("b"),
+                Block::user_text("c"),
+                Block::assistant_text("d"),
+                Block::user_text("e"),
+            ],
             // The last user text goes, so the marker moves back to an element that a resume would keep.
-            &[text(U, "x"), text(A, "b"), text(U, "c"), text(A, "d")],
-            &[image("ab"), text(A, "b"), text(U, "c"), text(A, "d"), text(U, "e")],
+            &[
+                Block::user_text("x"),
+                Block::assistant_text("b"),
+                Block::user_text("c"),
+                Block::assistant_text("d"),
+            ],
+            &[
+                image("ab"),
+                Block::assistant_text("b"),
+                Block::user_text("c"),
+                Block::assistant_text("d"),
+                Block::user_text("e"),
+            ],
             // Only the digest changes, so the element must encode again.
-            &[image("cd"), text(A, "b"), text(U, "c"), text(A, "d"), text(U, "e")],
+            &[
+                image("cd"),
+                Block::assistant_text("b"),
+                Block::user_text("c"),
+                Block::assistant_text("d"),
+                Block::user_text("e"),
+            ],
             // A changed role merges the elements around it, so the element before the change encodes again.
-            &[image("cd"), text(U, "b"), text(U, "c"), text(A, "d"), text(U, "e")],
+            &[
+                image("cd"),
+                Block::user_text("b"),
+                Block::user_text("c"),
+                Block::assistant_text("d"),
+                Block::user_text("e"),
+            ],
             // Equal text under the other role is another block, so the element encodes again.
-            &[image("cd"), text(U, "b"), text(U, "c"), text(U, "d"), text(U, "e")],
+            &[
+                image("cd"),
+                Block::user_text("b"),
+                Block::user_text("c"),
+                Block::user_text("d"),
+                Block::user_text("e"),
+            ],
         ];
         for wire in ALL_WIRES {
             let mut encoder = Encoder::new();
@@ -599,13 +684,13 @@ mod tests {
     #[test]
     fn model_change_reencodes_without_reasoning_state() {
         let blocks = [
-            text(U, "a"),
+            Block::user_text("a"),
             Block::Reasoning(Reasoning {
                 text: "t".to_string(),
                 replay: Some(replay("m", ReplayKind::AnthropicSignature, "sig")),
             }),
-            text(A, "b"),
-            text(U, "c"),
+            Block::assistant_text("b"),
+            Block::user_text("c"),
         ];
         let mut encoder = Encoder::new();
         for model in ["m", "n", "m"] {
@@ -619,8 +704,18 @@ mod tests {
 
     #[test]
     fn incremental_encode_matches_fresh_after_tools_and_reasoning_changes() {
-        let read_tool = [ToolDefinition::new("read", "Read.", "{}")];
-        let call = Block::ToolCall(ToolCall::new("c", "read", "{}"));
+        let read_tool = [ToolDefinition {
+            name: "read".to_owned(),
+            description: "Read.".to_owned(),
+            input_schema: "{}".to_owned(),
+            defer_loading: false,
+            strict: false,
+        }];
+        let call = Block::ToolCall(ToolCall {
+            call_id: "c".to_owned(),
+            name: "read".to_owned(),
+            arguments: "{}".to_owned(),
+        });
         let shot =
             Block::ToolResult(ToolResult::success("c", "img").with_media(vec![Media::new(blob("ab"), "image/png")]));
         let unsigned = Block::Reasoning(Reasoning {
@@ -628,32 +723,41 @@ mod tests {
             replay: None,
         });
         let rounds: [(&[Block], &[ToolDefinition]); 5] = [
-            (&[text(U, "a"), text(A, "b"), text(U, "c")], &[]),
+            (
+                &[Block::user_text("a"), Block::assistant_text("b"), Block::user_text("c")],
+                &[],
+            ),
             // An edit in the middle encodes again from the element that holds it.
-            (&[text(U, "a"), text(A, "B"), text(U, "c")], &[]),
+            (
+                &[Block::user_text("a"), Block::assistant_text("B"), Block::user_text("c")],
+                &[],
+            ),
             // Ordinary tools change the request head, not the retained elements.
-            (&[text(U, "a"), text(A, "B"), text(U, "c")], &read_tool),
+            (
+                &[Block::user_text("a"), Block::assistant_text("B"), Block::user_text("c")],
+                &read_tool,
+            ),
             // Responses writes no item for reasoning without a signature, and Chat moves tool images into the next
             // user message.
             (
                 &[
-                    text(U, "a"),
+                    Block::user_text("a"),
                     unsigned.clone(),
                     call.clone(),
                     shot.clone(),
-                    text(U, "what"),
+                    Block::user_text("what"),
                 ],
                 &read_tool,
             ),
             (
                 &[
-                    text(U, "a"),
+                    Block::user_text("a"),
                     unsigned.clone(),
                     call,
                     shot,
-                    text(U, "what"),
+                    Block::user_text("what"),
                     unsigned,
-                    text(A, "it"),
+                    Block::assistant_text("it"),
                 ],
                 &read_tool,
             ),
@@ -686,7 +790,7 @@ mod tests {
             }
         }
 
-        let blocks = [image("ab"), image("cd"), text(U, "both")];
+        let blocks = [image("ab"), image("cd"), Block::user_text("both")];
         for wire in plain_wires() {
             let target = target_of("m", wire);
             let expected = body(
@@ -735,7 +839,12 @@ mod tests {
             }
         }
 
-        let blocks = [text(U, "a"), text(A, "b"), image("ab"), text(U, "c")];
+        let blocks = [
+            Block::user_text("a"),
+            Block::assistant_text("b"),
+            image("ab"),
+            Block::user_text("c"),
+        ];
         for wire in plain_wires() {
             let flaky = Flaky { fail: true.into() };
             let mut encoder = Encoder::new();
@@ -755,7 +864,7 @@ mod tests {
     // JSON has no NaN or infinity, so the request fails before any byte is written.
     #[test]
     fn non_finite_sampling_value_is_rejected() {
-        let blocks = [text(U, "hi")];
+        let blocks = [Block::user_text("hi")];
         for wire in ALL_WIRES {
             for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
                 let target = target_of("m", wire);
@@ -782,7 +891,7 @@ mod tests {
     // A log line of an encoder or its request must not carry a credential.
     #[test]
     fn debug_output_redacts_credentials() {
-        let blocks = [text(U, "hi")];
+        let blocks = [Block::user_text("hi")];
         let target = Target {
             route: Route {
                 credential_header: Some(CredentialHeader::XApiKey),

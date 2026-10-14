@@ -3,9 +3,7 @@
 use std::borrow::Cow;
 
 use crate::encoder::{EncodeError, Encoder};
-use crate::request::{
-    Blob, BlobStore, Block, Origin, ReasoningReplay, ReplayKind, Request, Target, ToolCall, ToolResult, Wire,
-};
+use crate::request::{Blob, BlobStore, Block, Origin, ReasoningReplay, ReplayKind, Request, Target, ToolCall, Wire};
 use crate::route::{Credential, Route};
 
 /// A target with `model` and `wire`, and no route or credential: an encoder reads neither.
@@ -63,16 +61,11 @@ pub(crate) fn blob(data: &str) -> Blob {
 
 /// A tool call block.
 pub(crate) fn call(call_id: &str, name: &str, arguments: &str) -> Block {
-    Block::ToolCall(ToolCall::new(call_id, name, arguments))
-}
-
-/// A tool result: an error result if `is_error` is true, else a success result.
-pub(crate) fn result(call_id: &str, content: &str, is_error: bool) -> ToolResult {
-    if is_error {
-        ToolResult::error(call_id, content)
-    } else {
-        ToolResult::success(call_id, content)
-    }
+    Block::ToolCall(ToolCall {
+        call_id: call_id.into(),
+        name: name.into(),
+        arguments: arguments.into(),
+    })
 }
 
 /// The test store. It answers each blob from `STORED`, so it holds no state.

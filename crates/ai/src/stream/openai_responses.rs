@@ -12,7 +12,7 @@ use crate::response::{BlockId, BlockKind, FinishReason};
 use crate::wire::json::JsonWriter;
 use crate::wyhash::Wyhash;
 
-use super::draft::{BlockState, DecodeError, Draft};
+use super::draft::{BlockState, DecodeError, Draft, OpenTools};
 
 /// A delta of text, a refusal, reasoning, or tool arguments, read with no tree. Other events take the tree path. The
 /// typed read rejects a duplicate of a field that it reads, and ignores a duplicate of another field.
@@ -369,7 +369,7 @@ impl Reducer {
             FinishReason::Stop
         };
         self.draft.set_finish(reason, "completed");
-        self.draft.close_and_finish(true)
+        self.draft.close_and_finish(OpenTools::Drop)
     }
 
     fn on_incomplete(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
@@ -381,7 +381,7 @@ impl Reducer {
             None => "incomplete",
         };
         self.draft.set_finish(incomplete_reason(reason), reason);
-        self.draft.close_and_finish(true)
+        self.draft.close_and_finish(OpenTools::Drop)
     }
 
     fn read_usage(&mut self, response: &Value<'_>) {

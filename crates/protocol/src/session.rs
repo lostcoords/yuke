@@ -31,16 +31,6 @@ pub struct ModelReference {
     pub model: String,
 }
 
-impl ModelReference {
-    /// The model `model` of the provider `provider`.
-    pub fn new(provider: impl Into<String>, model: impl Into<String>) -> Self {
-        ModelReference {
-            provider: provider.into(),
-            model: model.into(),
-        }
-    }
-}
-
 /// An input that no commit consumed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]

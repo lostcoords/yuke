@@ -104,8 +104,8 @@ impl Session {
     /// # Errors
     ///
     /// Returns the error of [`Store::create_session`].
-    pub async fn create(store: Arc<dyn Store>, settings: SessionSettings) -> Result<Session, StoreError> {
-        let opened = store.create_session(&settings).await?;
+    pub async fn create(store: Arc<dyn Store>, settings: &SessionSettings) -> Result<Session, StoreError> {
+        let opened = store.create_session(settings).await?;
         Ok(Session::from_opened(store, opened))
     }
 

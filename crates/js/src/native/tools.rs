@@ -43,7 +43,13 @@ pub(super) fn exports<'js>(ctx: &Ctx<'js>, registry: &Rc<Registry>) -> rquickjs:
                         ));
                     }
                 };
-                let definition = yuke_ai::ToolDefinition::new(name, description, parameters);
+                let definition = yuke_ai::ToolDefinition {
+                    name,
+                    description,
+                    input_schema: parameters,
+                    defer_loading: false,
+                    strict: false,
+                };
                 registry
                     .add(&ctx, definition, concurrency, start)
                     .map_err(|message| throw(&ctx, "TypeError", &message))

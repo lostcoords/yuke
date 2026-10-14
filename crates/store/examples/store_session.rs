@@ -16,7 +16,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a session. This process owns the session until `opened.lease` drops.
     let settings = SessionSettings {
-        model: ModelReference::new("minimax", "MiniMax-M3"),
+        model: ModelReference {
+            provider: "minimax".to_owned(),
+            model: "MiniMax-M3".to_owned(),
+        },
         settings: yuke_ai::Settings::new(),
         cwd: std::env::current_dir()?,
     };

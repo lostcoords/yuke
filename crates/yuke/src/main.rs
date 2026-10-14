@@ -74,7 +74,7 @@ enum Mode {
 
 impl Cli {
     /// The mode that the flags name.
-    fn mode(self) -> Mode {
+    fn into_mode(self) -> Mode {
         if self.rpc {
             return Mode::Rpc;
         }
@@ -135,7 +135,7 @@ struct Report<'a> {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
-    match Cli::parse().mode() {
+    match Cli::parse().into_mode() {
         Mode::Tui => not_implemented("the terminal interface"),
         Mode::Rpc => not_implemented("the protocol server"),
         Mode::Print { task, json } => print_task(&task, json).await,
@@ -249,7 +249,7 @@ mod tests {
 
     fn mode(arguments: &[&str]) -> Result<Mode, ErrorKind> {
         Cli::try_parse_from(std::iter::once("yuke").chain(arguments.iter().copied()))
-            .map(Cli::mode)
+            .map(Cli::into_mode)
             .map_err(|error| error.kind())
     }
 

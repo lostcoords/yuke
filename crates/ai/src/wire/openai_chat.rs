@@ -2,8 +2,8 @@
 
 use crate::encoder::{EncodeError, Unsupported};
 use crate::request::{
-    Block, ChatDialect, ChatWire, MaxTokensField, Media, Modality, Reasoning, ReasoningReplayMode, ReasoningSettings,
-    ReplayKind, Request, Target, ThinkingFormat, ToolChoice, ToolResult, read_blob,
+    BlobStore, Block, ChatDialect, ChatWire, MaxTokensField, Media, Modality, Reasoning, ReasoningReplayMode,
+    ReasoningSettings, ReplayKind, Request, Target, ThinkingFormat, ToolChoice, ToolResult, read_blob,
 };
 
 use super::json::{JsonWriter, call_arguments};
@@ -125,12 +125,17 @@ pub(crate) fn write_group(
             // A tool message holds text only, so its images move into a user message. A strict host refuses two user
             // messages in a row, so the images join the user blocks that follow.
             let end = user_end(blocks, results_end);
-            write_user_message(jw, request, &blocks[start..results_end], &blocks[results_end..end])?;
+            write_user_message(
+                jw,
+                request.blobs,
+                &blocks[start..results_end],
+                &blocks[results_end..end],
+            )?;
             Ok(end)
         }
         Block::UserText(_) | Block::Media(_) => {
             let end = user_end(blocks, start);
-            write_user_message(jw, request, &[], &blocks[start..end])?;
+            write_user_message(jw, request.blobs, &[], &blocks[start..end])?;
             Ok(end)
         }
         Block::AssistantText(_) | Block::Reasoning(_) | Block::ToolCall(_) => {
@@ -155,7 +160,7 @@ pub(crate) fn write_group(
 /// `blocks` holds user text and media alone, as `group` groups them.
 fn write_user_message(
     jw: &mut JsonWriter<'_>,
-    request: &Request<'_>,
+    blobs: Option<&dyn BlobStore>,
     results: &[Block],
     blocks: &[Block],
 ) -> Result<(), EncodeError> {
@@ -168,7 +173,7 @@ fn write_user_message(
         if let Block::ToolResult(result) = result {
             for media in &result.media {
                 write_attachment_label(jw, &result.call_id);
-                write_media(jw, request, media)?;
+                write_media(jw, blobs, media)?;
             }
         }
     }
@@ -180,7 +185,7 @@ fn write_user_message(
                 jw.field_str("text", text);
                 jw.end_object();
             }
-            Block::Media(media) => write_media(jw, request, media)?,
+            Block::Media(media) => write_media(jw, blobs, media)?,
             // `group` admits no other block.
             Block::ToolResult(_) | Block::AssistantText(_) | Block::Reasoning(_) | Block::ToolCall(_) => {}
         }
@@ -317,11 +322,11 @@ fn write_tool_result(jw: &mut JsonWriter<'_>, result: &ToolResult) {
 }
 
 /// Write one attachment. This endpoint names a different part for each kind.
-fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media) -> Result<(), EncodeError> {
+fn write_media(jw: &mut JsonWriter<'_>, blobs: Option<&dyn BlobStore>, media: &Media) -> Result<(), EncodeError> {
     match media.kind() {
         // This part reads a URL alone, so the bytes travel as a data URL.
         Modality::Image => {
-            let data = read_blob(request.blobs, &media.blob)?;
+            let data = read_blob(blobs, &media.blob)?;
             jw.begin_object();
             jw.field_str("type", "image_url");
             jw.key("image_url");
@@ -333,7 +338,7 @@ fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media) ->
         }
         // The part carries raw base64 with no envelope.
         Modality::Audio => {
-            let data = read_blob(request.blobs, &media.blob)?;
+            let data = read_blob(blobs, &media.blob)?;
             let format = audio_format(&media.mime)?;
             jw.begin_object();
             jw.field_str("type", "input_audio");
@@ -350,7 +355,7 @@ fn write_media(jw: &mut JsonWriter<'_>, request: &Request<'_>, media: &Media) ->
             if media.filename.is_empty() {
                 return Err(EncodeError::Unsupported(Unsupported::UnnamedDocument));
             }
-            let data = read_blob(request.blobs, &media.blob)?;
+            let data = read_blob(blobs, &media.blob)?;
             jw.begin_object();
             jw.field_str("type", "file");
             jw.key("file");
@@ -448,8 +453,9 @@ fn write_effort_object(jw: &mut JsonWriter<'_>, level: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ToolResult;
     use crate::request::{Effort, OutputSchema, Settings, Thinking, ToolDefinition, Wire};
-    use crate::wire::testing::{blob, call, expect_error, expect_json, replay, result};
+    use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
 
     fn chat() -> Wire {
         Wire::OpenaiChat(ChatWire::default())
@@ -698,7 +704,7 @@ mod tests {
         let blocks = [
             Block::assistant_text("checking"),
             call("call_1", "run", r#"{"c":1}"#),
-            Block::ToolResult(result("call_1", "ok", false)),
+            Block::ToolResult(ToolResult::success("call_1", "ok")),
         ];
         expect_json(
             r#"{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_tokens":64,"messages":[{"role":"assistant","content":"checking","tool_calls":[{"id":"call_1","type":"function","function":{"name":"run","arguments":"{\"c\":1}"}}]},{"role":"tool","tool_call_id":"call_1","content":"ok"}]}"#,
@@ -712,7 +718,7 @@ mod tests {
     fn error_result_prefixes_text() {
         let blocks = [
             call("call_1", "run", "{}"),
-            Block::ToolResult(result("call_1", "no \"x\"", true)),
+            Block::ToolResult(ToolResult::error("call_1", "no \"x\"")),
         ];
         expect_json(
             r#"{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_tokens":64,"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"run","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"Error: no \"x\""}]}"#,
@@ -730,9 +736,9 @@ mod tests {
             call("call_1", "read", "{}"),
             call("call_2", "read", "{}"),
             call("call_3", "read", "{}"),
-            Block::ToolResult(result("call_1", "text", false)),
-            Block::ToolResult(result("call_2", "PNG image", false).with_media(image.to_vec())),
-            Block::ToolResult(result("call_3", "text", false)),
+            Block::ToolResult(ToolResult::success("call_1", "text")),
+            Block::ToolResult(ToolResult::success("call_2", "PNG image").with_media(image.to_vec())),
+            Block::ToolResult(ToolResult::success("call_3", "text")),
             Block::assistant_text("three files"),
         ];
         expect_json(
@@ -745,7 +751,7 @@ mod tests {
         // A canceled turn ends on the result, so the next user text takes the image instead of a second user message.
         let merged = [
             call("call_1", "read", "{}"),
-            Block::ToolResult(result("call_1", "PNG image", false).with_media(image.to_vec())),
+            Block::ToolResult(ToolResult::success("call_1", "PNG image").with_media(image.to_vec())),
             Block::user_text("what is it"),
         ];
         expect_json(
@@ -759,10 +765,22 @@ mod tests {
     #[test]
     fn tool_schema_and_strict_mode() {
         let tools = [
-            ToolDefinition::new("run", "run a command", r#"{"type":"object"}"#),
+            ToolDefinition {
+                name: "run".to_owned(),
+                description: "run a command".to_owned(),
+                input_schema: r#"{"type":"object"}"#.to_owned(),
+                defer_loading: false,
+                strict: false,
+            },
             ToolDefinition {
                 strict: true,
-                ..ToolDefinition::new("read", "read a file", "{}")
+                ..ToolDefinition {
+                    name: "read".to_owned(),
+                    description: "read a file".to_owned(),
+                    input_schema: "{}".to_owned(),
+                    defer_loading: false,
+                    strict: false,
+                }
             },
         ];
         let blocks = [Block::user_text("go")];
@@ -844,7 +862,14 @@ mod tests {
     #[test]
     fn rejects_deferred_tools() {
         let blocks = [Block::user_text("read")];
-        let tools = [ToolDefinition::new("mcp_read", "read", "{}").deferred()];
+        let tools = [ToolDefinition {
+            name: "mcp_read".to_owned(),
+            description: "read".to_owned(),
+            input_schema: "{}".to_owned(),
+            defer_loading: false,
+            strict: false,
+        }
+        .deferred()];
         let target = Target {
             tool_search: true,
             ..crate::wire::testing::target_of("chat", chat())
@@ -859,7 +884,7 @@ mod tests {
 
     #[test]
     fn empty_arguments_send_empty_object() {
-        let blocks = [call("c", "ls", ""), Block::ToolResult(result("c", "ok", false))];
+        let blocks = [call("c", "ls", ""), Block::ToolResult(ToolResult::success("c", "ok"))];
         expect_json(
             r#"{"model":"m","stream":true,"stream_options":{"include_usage":true},"max_tokens":8,"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"c","type":"function","function":{"name":"ls","arguments":"{}"}}]},{"role":"tool","tool_call_id":"c","content":"ok"}]}"#,
             "m",

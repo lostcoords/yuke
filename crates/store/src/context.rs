@@ -13,7 +13,11 @@ pub(crate) struct Loaded {
 
 impl Loaded {
     /// The session `id` with this state and `lease`.
-    pub(crate) fn opened(self, id: yuke_protocol::SessionId, lease: Option<yuke_agent::Lease>) -> yuke_agent::Opened {
+    pub(crate) fn into_opened(
+        self,
+        id: yuke_protocol::SessionId,
+        lease: Option<yuke_agent::Lease>,
+    ) -> yuke_agent::Opened {
         yuke_agent::Opened {
             id,
             settings: self.settings,

@@ -101,7 +101,7 @@ mod tests {
         route: &Route,
         protocol: Protocol,
         credential: &Credential,
-        session_id: &str,
+        session_id: Option<&str>,
     ) -> Result<HeadText, EncodeError> {
         let wire = match protocol {
             Protocol::AnthropicMessages => Wire::AnthropicMessages(AnthropicWire {
@@ -119,12 +119,11 @@ mod tests {
             tool_search: false,
         };
         let mut head = HeadText::default();
-        // An empty id stands for a request without one.
-        head.build(&target, Some(session_id).filter(|id| !id.is_empty()))?;
+        head.build(&target, session_id)?;
         Ok(head)
     }
 
-    fn built(route: &Route, protocol: Protocol, credential: &Credential, session_id: &str) -> HeadText {
+    fn built(route: &Route, protocol: Protocol, credential: &Credential, session_id: Option<&str>) -> HeadText {
         try_build(route, protocol, credential, session_id).unwrap()
     }
 
@@ -134,7 +133,7 @@ mod tests {
             name: &'a str,
             route: Route,
             credential: Credential,
-            session_id: &'a str,
+            session_id: Option<&'a str>,
             want: Vec<Header>,
         }
         let languages = [
@@ -152,7 +151,7 @@ mod tests {
                     ..Route::default()
                 },
                 credential: Credential::ApiKey("sk-secret".into()),
-                session_id: "",
+                session_id: None,
                 want: vec![
                     header("x-api-key", "sk-secret"),
                     header("anthropic-version", "2023-06-01"),
@@ -166,7 +165,7 @@ mod tests {
                     ..Route::default()
                 },
                 credential: Credential::ApiKey("sk-2".into()),
-                session_id: "",
+                session_id: None,
                 want: vec![header("Authorization", "Bearer sk-2")],
             },
             Case {
@@ -177,7 +176,7 @@ mod tests {
                     ..Route::default()
                 },
                 credential: Credential::ApiKey("az-key".into()),
-                session_id: "",
+                session_id: None,
                 want: vec![header("api-key", "az-key")],
             },
             // An oauth grant is a bearer that carries its own identity header. A list-valued route header keeps its
@@ -194,7 +193,7 @@ mod tests {
                     access_token: "token".into(),
                     headers: vec![header("ChatGPT-Account-ID", "account")].into(),
                 }),
-                session_id: "session",
+                session_id: Some("session"),
                 want: vec![
                     header("Authorization", "Bearer token"),
                     header("ChatGPT-Account-ID", "account"),
@@ -213,7 +212,7 @@ mod tests {
                     ..Route::default()
                 },
                 credential: Credential::None,
-                session_id: "",
+                session_id: None,
                 want: vec![header("x-note", "local")],
             },
         ];
@@ -235,7 +234,12 @@ mod tests {
             session_header: SessionHeader::SessionId,
             ..Route::default()
         };
-        let carried = built(&codex, Protocol::OpenaiResponses, &Credential::None, "0123456789abcdef");
+        let carried = built(
+            &codex,
+            Protocol::OpenaiResponses,
+            &Credential::None,
+            Some("0123456789abcdef"),
+        );
         assert_eq!(carried.headers, [header("session-id", "0123456789abcdef")].as_slice());
 
         // The header follows the host, not the protocol: OpenCode reads it on every path it serves.
@@ -249,7 +253,7 @@ mod tests {
                 session_header: SessionHeader::XOpencodeSession,
                 ..Route::default()
             };
-            let sent = built(&opencode, protocol, &Credential::None, "0123456789abcdef");
+            let sent = built(&opencode, protocol, &Credential::None, Some("0123456789abcdef"));
             assert_eq!(
                 sent.headers,
                 [header("x-opencode-session", "0123456789abcdef")].as_slice()
@@ -265,13 +269,16 @@ mod tests {
             &standard,
             Protocol::OpenaiResponses,
             &Credential::None,
-            "0123456789abcdef",
+            Some("0123456789abcdef"),
         );
         assert_eq!(plain.headers, []);
 
         // A caller that names no session leaves the header off rather than sending an empty one.
-        let absent = built(&codex, Protocol::OpenaiResponses, &Credential::None, "");
+        let absent = built(&codex, Protocol::OpenaiResponses, &Credential::None, None);
         assert_eq!(absent.headers, []);
+
+        let empty = built(&codex, Protocol::OpenaiResponses, &Credential::None, Some(""));
+        assert_eq!(empty.headers, [header("session-id", "")].as_slice());
     }
 
     #[test]
@@ -280,7 +287,7 @@ mod tests {
             base_url: "https://api.anthropic.com/v1/".into(),
             ..Route::default()
         };
-        let head = built(&route, Protocol::AnthropicMessages, &Credential::None, "");
+        let head = built(&route, Protocol::AnthropicMessages, &Credential::None, None);
         assert_eq!(head.url, "https://api.anthropic.com/v1/messages");
     }
 
@@ -292,7 +299,7 @@ mod tests {
             credential_header: Some(CredentialHeader::XApiKey),
             ..Route::default()
         };
-        let mismatch = try_build(&keyed, Protocol::OpenaiChat, &Credential::None, "");
+        let mismatch = try_build(&keyed, Protocol::OpenaiChat, &Credential::None, None);
         assert_same(mismatch.err(), Some(EncodeError::CredentialMismatch));
         let broken = [header("bad name", "x")];
         let route = Route {
@@ -301,7 +308,7 @@ mod tests {
             ..Route::default()
         };
         assert_same(
-            try_build(&route, Protocol::OpenaiChat, &Credential::None, "").err(),
+            try_build(&route, Protocol::OpenaiChat, &Credential::None, None).err(),
             Some(invalid("bad name")),
         );
         let owned = [header("User-Agent", "other")];
@@ -311,7 +318,7 @@ mod tests {
             ..Route::default()
         };
         assert_same(
-            try_build(&route, Protocol::OpenaiChat, &Credential::None, "").err(),
+            try_build(&route, Protocol::OpenaiChat, &Credential::None, None).err(),
             Some(invalid("User-Agent")),
         );
         let session = Route {
@@ -319,7 +326,7 @@ mod tests {
             session_header: SessionHeader::SessionId,
             ..Route::default()
         };
-        let control = try_build(&session, Protocol::OpenaiChat, &Credential::None, "a\r\nb");
+        let control = try_build(&session, Protocol::OpenaiChat, &Credential::None, Some("a\r\nb"));
         assert_same(control.err(), Some(invalid("session-id")));
     }
 
@@ -335,7 +342,7 @@ mod tests {
             &keyed,
             Protocol::AnthropicMessages,
             &Credential::ApiKey("sk-secret\n".into()),
-            "",
+            None,
         )
         .err();
         assert!(!error.clone().unwrap().to_string().contains("sk-secret"));
@@ -358,10 +365,10 @@ mod tests {
             headers: bad_route.to_vec().into(),
             ..Route::default()
         };
-        let error = try_build(&bearer, Protocol::OpenaiChat, &grant, "").err();
+        let error = try_build(&bearer, Protocol::OpenaiChat, &grant, None).err();
         assert_same(error, Some(invalid("ChatGPT-Account-ID")));
         let key = Credential::ApiKey("k".into());
-        let error = try_build(&bearer, Protocol::OpenaiChat, &key, "").err();
+        let error = try_build(&bearer, Protocol::OpenaiChat, &key, None).err();
         assert_same(error, Some(invalid("x-note")));
     }
 
@@ -376,7 +383,7 @@ mod tests {
             ..Route::default()
         };
         let key = Credential::ApiKey("k".into());
-        let repeated = try_build(&keyed, Protocol::AnthropicMessages, &key, "");
+        let repeated = try_build(&keyed, Protocol::AnthropicMessages, &key, None);
         assert_same(repeated.err(), Some(invalid("X-API-Key")));
 
         let repeat_auth = [header("authorization", "Bearer other")];
@@ -389,7 +396,7 @@ mod tests {
             credential_header: Some(CredentialHeader::AuthorizationBearer),
             ..Route::default()
         };
-        let repeated = try_build(&bearer, Protocol::OpenaiChat, &grant, "");
+        let repeated = try_build(&bearer, Protocol::OpenaiChat, &grant, None);
         assert_same(repeated.err(), Some(invalid("authorization")));
 
         let repeat_session = [header("Session-Id", "s0")];
@@ -399,10 +406,11 @@ mod tests {
             headers: repeat_session.to_vec().into(),
             ..Route::default()
         };
-        let repeated = try_build(&session, Protocol::OpenaiResponses, &Credential::None, "s1");
+        let repeated = try_build(&session, Protocol::OpenaiResponses, &Credential::None, Some("s1"));
         assert_same(repeated.err(), Some(invalid("Session-Id")));
         // With no session id, the encoder writes no session header, so the pinned one is the only copy.
-        assert!(try_build(&session, Protocol::OpenaiResponses, &Credential::None, "").is_ok());
+        let pinned = built(&session, Protocol::OpenaiResponses, &Credential::None, None);
+        assert_eq!(pinned.headers, [header("Session-Id", "s0")].as_slice());
 
         // A route with no credential header may carry its own credential field.
         let own = [header("Authorization", "Bearer own")];
@@ -411,7 +419,8 @@ mod tests {
             headers: own.to_vec().into(),
             ..Route::default()
         };
-        assert!(try_build(&open, Protocol::OpenaiChat, &Credential::None, "").is_ok());
+        let own = built(&open, Protocol::OpenaiChat, &Credential::None, None);
+        assert_eq!(own.headers, [header("Authorization", "Bearer own")].as_slice());
     }
 
     // The encoder keeps one head, so the second request must show only its own headers.

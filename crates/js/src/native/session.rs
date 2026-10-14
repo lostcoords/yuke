@@ -10,9 +10,10 @@ use rquickjs::function::Async;
 use rquickjs::{Ctx, Function, Object};
 use yuke_engine::CancellationToken;
 
-use super::exec::{Request, exec};
+use super::exec::exec;
 use crate::error::throw;
 use crate::processes::Processes;
+use crate::processes::Request;
 use crate::tools::SessionHost;
 
 /// The session object for one call. `host` is the session of the call. `stop` is the cancellation token of the call: it
@@ -33,19 +34,23 @@ pub(crate) fn object<'js>(
             Async(
                 move |ctx: Ctx<'js>,
                       command: String,
-                      timeout_ms: u32,
-                      max_bytes: u32,
+                      limits: Object<'js>,
                       signal: Object<'js>,
                       on_output: Function<'js>| {
                     let processes = Arc::clone(&exec_processes);
-                    let request = Request {
-                        command,
-                        folder: folder.clone(),
-                        timeout: Duration::from_millis(timeout_ms.into()),
-                        max_bytes: max_bytes as usize,
-                        stop: exec_stop.clone(),
-                    };
-                    async move { exec(ctx, &processes, request, signal, on_output).await }
+                    let (folder, stop) = (folder.clone(), exec_stop.clone());
+                    async move {
+                        let timeout_ms: u32 = limits.get("timeoutMs")?;
+                        let max_bytes: u32 = limits.get("maxBytes")?;
+                        let request = Request {
+                            command,
+                            folder,
+                            timeout: Duration::from_millis(timeout_ms.into()),
+                            max_bytes: max_bytes as usize,
+                            stop,
+                        };
+                        exec(ctx, &processes, request, signal, on_output).await
+                    }
                 },
             ),
         )?,

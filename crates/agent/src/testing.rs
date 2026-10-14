@@ -76,7 +76,10 @@ macro_rules! store_tests {
 /// Settings with the system prompt `system`.
 pub fn settings(system: &str) -> SessionSettings {
     SessionSettings {
-        model: ModelReference::new("test", "test-model"),
+        model: ModelReference {
+            provider: "test".to_owned(),
+            model: "test-model".to_owned(),
+        },
         settings: yuke_ai::Settings {
             system: system.to_owned(),
             ..yuke_ai::Settings::new()

@@ -1,24 +1,10 @@
 //! `exec` of the session object: run a shell command until it ends, its deadline passes, or its call stops it.
 
-use std::path::PathBuf;
-use std::time::Duration;
-
 use rquickjs::function::This;
 use rquickjs::{Ctx, Function, Object};
-use yuke_engine::CancellationToken;
 
 use crate::error::throw;
-use crate::processes::Processes;
-
-/// One command of a call.
-pub(crate) struct Request {
-    pub(crate) command: String,
-    pub(crate) folder: PathBuf,
-    pub(crate) timeout: Duration,
-    pub(crate) max_bytes: usize,
-    /// The cancellation token of the call. It cancels when the call ends or drops.
-    pub(crate) stop: CancellationToken,
-}
+use crate::processes::{Processes, Request};
 
 /// Run the command of `request`. Each chunk of output goes to `on_output`. The abort of `signal` and the stop of the
 /// call stop the command. It answers `{ output, code, signal, timedOut, stopped }`.
@@ -29,13 +15,10 @@ pub(crate) async fn exec<'js>(
     signal: Object<'js>,
     on_output: Function<'js>,
 ) -> rquickjs::Result<Object<'js>> {
-    let mut running = processes.run(
-        request.command,
-        request.folder,
-        request.timeout,
-        request.max_bytes,
-        request.stop.child_token(),
-    );
+    let mut running = processes.run(Request {
+        stop: request.stop.child_token(),
+        ..request
+    });
     let stop = running.stop.0.clone();
     let on_abort: Function<'js> = signal.get("onAbort")?;
     let remove: Function<'js> = on_abort.call((This(signal), Function::new(ctx.clone(), move || stop.cancel())?))?;

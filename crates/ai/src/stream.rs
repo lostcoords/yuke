@@ -123,7 +123,7 @@ impl Stream {
             body_ended: false,
             state: State::Streaming,
             reducer: Reducer::new(request.protocol, draft),
-            parser: Sse::new(limits.max_response_bytes, limits.max_event_bytes),
+            parser: Sse::new(&limits),
             payload: String::new(),
             payload_lent: false,
             next_event: 0,

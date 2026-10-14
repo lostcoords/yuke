@@ -389,17 +389,6 @@ pub struct ToolCall {
     pub arguments: String,
 }
 
-impl ToolCall {
-    /// A call of the tool `name` with the provider's `call_id` and the JSON object text `arguments`.
-    pub fn new(call_id: impl Into<String>, name: impl Into<String>, arguments: impl Into<String>) -> Self {
-        ToolCall {
-            call_id: call_id.into(),
-            name: name.into(),
-            arguments: arguments.into(),
-        }
-    }
-}
-
 /// A borrowed [`ToolCall`] that a stream event returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ToolCallRef<'a> {
@@ -503,17 +492,6 @@ pub struct ToolDefinition {
 }
 
 impl ToolDefinition {
-    /// A tool with a name, a description for the model, and a JSON Schema object text for its arguments.
-    pub fn new(name: impl Into<String>, description: impl Into<String>, input_schema: impl Into<String>) -> Self {
-        ToolDefinition {
-            name: name.into(),
-            description: description.into(),
-            input_schema: input_schema.into(),
-            defer_loading: false,
-            strict: false,
-        }
-    }
-
     /// The same tool, left out of the prompt until a tool search names it.
     #[must_use]
     pub fn deferred(self) -> Self {
@@ -758,7 +736,7 @@ pub struct Target {
     /// The secret the route presents.
     pub credential: Credential,
     /// How the request is written for this host and model. Its variant selects the protocol.
-    /// [`crate::catalog::Entry::wire`] derives it from the catalog.
+    /// [`crate::catalog::Entry::bind`] derives it from the catalog.
     pub wire: Wire,
     /// The model has a native tool search: Anthropic tool references, or the Responses client search. Chat Completions
     /// has none. Without a native tool search, the encoder refuses a request with a deferred tool.
@@ -1050,7 +1028,7 @@ mod tests {
                 r#"{"reasoning":{"text":"think","replay":{"origin":{"model":"m","baseUrl":"https://h/v1"},"kind":"anthropic_signature","data":"sig"}}}"#.to_owned(),
             ),
             (
-                Block::ToolCall(ToolCall::new("c1", "read", r#"{"path":"a"}"#)),
+                Block::ToolCall(ToolCall { call_id: "c1".to_owned(), name: "read".to_owned(), arguments: r#"{"path":"a"}"#.to_owned() }),
                 r#"{"tool_call":{"callId":"c1","name":"read","arguments":"{\"path\":\"a\"}"}}"#.to_owned(),
             ),
             (
@@ -1061,7 +1039,7 @@ mod tests {
                 Block::ToolResult(
                     ToolResult::error("c1", "failed")
                         .with_media(vec![Media::new(blob, "image/png")])
-                        .with_loaded(vec![ToolDefinition::new("grep", "Search.", "{}").deferred()]),
+                        .with_loaded(vec![ToolDefinition { name: "grep".to_owned(), description: "Search.".to_owned(), input_schema: "{}".to_owned(), defer_loading: false, strict: false }.deferred()]),
                 ),
                 format!(
                     r#"{{"tool_result":{{"callId":"c1","content":"failed","isError":true,"media":[{{"blob":{{"digest":"{digest}","len":3}},"mime":"image/png"}}],"loaded":[{{"name":"grep","description":"Search.","inputSchema":"{{}}","deferLoading":true,"strict":false}}]}}}}"#

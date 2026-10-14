@@ -364,14 +364,8 @@ impl Entry<'_> {
             .ok_or(Error::MissingEndpoint)
     }
 
-    /// The wire settings of this model on its endpoint. The caller may change any of them before a call.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::MissingEndpoint`] if the provider declares no endpoint for the model. Returns
-    /// [`Error::MissingOutputLimit`] if an Anthropic model has no output limit.
-    pub fn wire(&self) -> Result<Wire, Error> {
-        let served = self.endpoint()?;
+    /// The wire settings for this model at endpoint `served`. An Anthropic model needs an output limit.
+    fn wire(&self, served: Endpoint) -> Result<Wire, Error> {
         // MiniMax M3 caches but refuses a marker, so only a model that states it takes one gets one.
         let cache = served.cache_breakpoint && self.model.caps.cache_breakpoint == Some(true);
         Ok(match served.protocol {
@@ -399,29 +393,26 @@ impl Entry<'_> {
         })
     }
 
-    /// Build the route of this model from the host fields and the credential header of its endpoint. The route copies
-    /// the strings once. A `'static` header keeps its borrowed text.
-    fn route(&self) -> Result<Route, Error> {
-        Ok(Route {
-            base_url: Cow::Owned(self.provider.base_url.to_owned()),
-            credential_header: self.endpoint()?.credential_header,
-            headers: Cow::Owned(self.provider.headers.to_vec()),
-            session_header: self.provider.session_header,
-        })
-    }
-
-    /// Bind this model to a target that presents `credential`. The target owns its configuration, so it outlives this
-    /// entry.
+    /// Bind this model to a target that presents `credential`. The target owns its configuration and can outlive
+    /// this entry. The caller may change any of the wire settings before a call.
     ///
     /// # Errors
     ///
-    /// Returns the [`Entry::wire`] errors.
+    /// Returns [`Error::MissingEndpoint`] if the provider declares no endpoint for the model. Returns
+    /// [`Error::MissingOutputLimit`] if an Anthropic model has no output limit.
     pub fn bind(&self, credential: Credential) -> Result<Target, Error> {
+        let served = self.endpoint()?;
         Ok(Target {
             model: Cow::Owned(self.model.upstream_id.to_owned()),
-            route: self.route()?,
+            // The route copies the strings once. A `'static` header keeps its borrowed text.
+            route: Route {
+                base_url: Cow::Owned(self.provider.base_url.to_owned()),
+                credential_header: served.credential_header,
+                headers: Cow::Owned(self.provider.headers.to_vec()),
+                session_header: self.provider.session_header,
+            },
             credential,
-            wire: self.wire()?,
+            wire: self.wire(served)?,
             // Chat Completions has no native search of deferred tools, whatever the model can do elsewhere.
             tool_search: self.model.caps.tool_search == Some(true) && self.model.protocol != Protocol::OpenaiChat,
         })
@@ -712,7 +703,7 @@ mod tests {
             model: &host.models[2],
         };
         assert_eq!(
-            big.wire(),
+            big.bind(Credential::ApiKey("k".into())).map(|target| target.wire),
             Ok(Wire::AnthropicMessages(AnthropicWire {
                 max_tokens: u32::MAX,
                 cache: false
