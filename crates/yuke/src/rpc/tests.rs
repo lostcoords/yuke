@@ -1,13 +1,19 @@
 //! The protocol server against a scripted provider, through a pair of pipes.
 
+use std::ffi::OsString;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, Lines};
-use yuke_protocol::{ModelReference, SessionSettings};
+use yuke_agent::{Session, Store};
+use yuke_ai::transport::Transport;
+use yuke_protocol::{Input, InputSource, ModelReference, SessionId, SessionSettings};
+use yuke_store::SqliteStore;
 
 use super::*;
-use crate::testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
+use crate::paths::Paths;
+use crate::testing::{PanicsOnce, ScriptedTransport, Stalled, text_reply, tool_reply};
 
 /// The folders of one test: the profile and the folder of its sessions.
 struct Place {
@@ -33,14 +39,13 @@ impl Place {
         }
     }
 
-    /// The setup of a server in the place, with the key of MiniMax.
-    fn setup(&self, transport: Box<dyn Transport>) -> Setup {
-        Setup {
+    /// The machine of a server in the place, with the key of MiniMax.
+    fn machine(&self, transport: Box<dyn Transport>) -> Machine {
+        Machine {
             paths: self.paths.clone(),
             home: None,
             variable: Box::new(|name| (name == "MINIMAX_API_KEY").then(|| OsString::from("test-key"))),
             transport,
-            drain_limit: Duration::from_secs(10),
         }
     }
 
@@ -70,7 +75,12 @@ impl Client {
     fn start(place: &Place, transport: Box<dyn Transport>) -> Client {
         let (input, server_input) = tokio::io::duplex(1 << 16);
         let (server_output, output) = tokio::io::duplex(1 << 16);
-        let server = tokio::spawn(serve(place.setup(transport), server_input, server_output));
+        let server = tokio::spawn(serve(
+            place.machine(transport),
+            Duration::from_secs(10),
+            server_input,
+            server_output,
+        ));
         Client {
             input,
             output: BufReader::new(output).lines(),
@@ -683,11 +693,8 @@ async fn a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends
     let (mut input, server_input) = tokio::io::duplex(1 << 16);
     // The client keeps its end of the output and never reads it, so the small pipe fills.
     let (server_output, _unread) = tokio::io::duplex(1 << 10);
-    let setup = Setup {
-        drain_limit: Duration::from_millis(100),
-        ..place.setup(Box::new(ScriptedTransport::new(&[])))
-    };
-    let server = tokio::spawn(serve(setup, server_input, server_output));
+    let machine = place.machine(Box::new(ScriptedTransport::new(&[])));
+    let server = tokio::spawn(serve(machine, Duration::from_millis(100), server_input, server_output));
     let request = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
         "protocolVersion": 1, "clientInfo": { "name": "test", "version": "1" }
     } });
@@ -699,4 +706,98 @@ async fn a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends
     let ended = tokio::time::timeout(Duration::from_secs(5), server).await;
 
     ended.expect("the server still waits for the client").unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_panic_in_a_turn_ends_the_turn_and_a_load_runs_the_session_again() {
+    let place = Place::new("a_panic_in_a_turn_ends_the_turn_and_a_load_runs_the_session_again");
+    let transport = PanicsOnce::new(&[text_reply("back")]);
+    let mut client = Client::initialized(&place, Box::new(transport)).await;
+    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    client
+        .request(
+            "session/input",
+            json!({ "sessionId": session, "content": [{ "user_text": "first" }] }),
+        )
+        .await;
+
+    let failed = client.until(|message| message["method"] == "notice").await;
+    client
+        .call(
+            "session/input",
+            json!({ "sessionId": session, "content": [{ "user_text": "second" }] }),
+        )
+        .await
+        .unwrap();
+    // A task that still ran would start a turn at once.
+    let started = tokio::time::timeout(
+        Duration::from_millis(300),
+        client.until(|message| message["params"]["update"]["state"] == "running"),
+    )
+    .await;
+    let id = client
+        .request("session/close", json!({ "sessionId": session, "stopJobs": false }))
+        .await;
+    let closed = client.until(|message| message["id"] == json!(id)).await;
+    let loaded = client.call("session/load", json!({ "sessionId": session })).await;
+    client
+        .request(
+            "session/input",
+            json!({ "sessionId": session, "content": [{ "user_text": "third" }] }),
+        )
+        .await;
+    let again = client.until(is_idle).await;
+
+    let labels: Vec<String> = failed.iter().filter_map(label).collect();
+    assert!(labels.contains(&"state running".to_owned()), "{labels:?}");
+    // The unwind drops the turn, which tells the client that its provisional state is gone.
+    assert_eq!(labels[labels.len() - 2..], ["turn_unconfirmed", "state idle"]);
+    let notice = &failed.last().unwrap()["params"];
+    assert!(
+        notice["message"].as_str().unwrap().starts_with("the turn failed:"),
+        "{notice}"
+    );
+    assert_eq!(notice["level"], "error");
+    // The task ended, so the second input waits and starts no turn.
+    assert!(started.is_err(), "a turn started after the panic");
+    assert_eq!(closed.iter().filter_map(label).collect::<Vec<_>>(), ["response"]);
+    let loaded = loaded.unwrap();
+    assert_eq!(loaded["state"], "idle");
+    // The turn saved the first input before its request, so only the second waits.
+    assert_eq!(loaded["pending"][0]["content"][0]["user_text"], "second", "{loaded}");
+    assert_eq!(loaded["pending"].as_array().unwrap().len(), 1, "{loaded}");
+    let saved: Vec<&Value> = again
+        .iter()
+        .filter(|message| message["params"]["update"]["sessionUpdate"] == "commit")
+        .collect();
+    assert!(
+        saved.iter().any(|message| message.to_string().contains("back")),
+        "{again:?}"
+    );
+    client.end().await;
+}
+
+#[tokio::test]
+async fn a_server_that_ends_without_its_shutdown_still_stops_its_turns() {
+    let place = Place::new("a_server_that_ends_without_its_shutdown_still_stops_its_turns");
+    let mut client = Client::initialized(&place, Box::new(Stalled)).await;
+    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    client
+        .request(
+            "session/input",
+            json!({ "sessionId": session, "content": [{ "user_text": "hi" }] }),
+        )
+        .await;
+    client
+        .until(|message| message["params"]["update"]["state"] == "running")
+        .await;
+
+    client.server.abort();
+    // Each running task holds the output open, so its end shows that the stalled turn stopped.
+    let drained = tokio::time::timeout(Duration::from_secs(5), async {
+        while client.output.next_line().await.is_ok_and(|line| line.is_some()) {}
+    })
+    .await;
+
+    assert!(drained.is_ok(), "a turn still runs after the server ended");
 }

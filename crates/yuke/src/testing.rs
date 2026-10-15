@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Instant;
@@ -93,6 +94,35 @@ impl Transport for Rejecting {
     fn open<'a>(&'a self, _: &'a Outgoing<'_>, _: Option<Instant>) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
         let body: BoxBody = Box::pin(OneChunk(Some(Bytes::from_static(b"{}"))));
         Box::pin(std::future::ready(Ok((Head::new(401), body))))
+    }
+}
+
+/// Panics at its first request, as a provider path with a bug, and then answers as its script.
+pub(crate) struct PanicsOnce {
+    panicked: AtomicBool,
+    script: ScriptedTransport,
+}
+
+impl PanicsOnce {
+    pub(crate) fn new(replies: &[String]) -> Self {
+        PanicsOnce {
+            panicked: AtomicBool::new(false),
+            script: ScriptedTransport::new(replies),
+        }
+    }
+}
+
+impl Transport for PanicsOnce {
+    fn open<'a>(
+        &'a self,
+        request: &'a Outgoing<'_>,
+        deadline: Option<Instant>,
+    ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
+        assert!(
+            self.panicked.swap(true, Ordering::SeqCst),
+            "the first request panics on purpose"
+        );
+        self.script.open(request, deadline)
     }
 }
 

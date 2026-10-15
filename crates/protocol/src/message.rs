@@ -65,7 +65,8 @@ pub enum ClientRequest {
     #[serde(rename = "session/fork")]
     ForkSession(ForkSessionParams),
     /// Open a session, and read it. The server sends its saved events as `session/update` notifications before the
-    /// result. A load starts no turn, also when input waits. Result: [`LoadSessionResult`].
+    /// result. The live updates that come during the load follow the saved events. A load starts no turn, also when
+    /// input waits. Result: [`LoadSessionResult`].
     #[serde(rename = "session/load")]
     LoadSession(LoadSessionParams),
     /// Stop the running turn and the background jobs of a session, and free the session. The session stays saved, and

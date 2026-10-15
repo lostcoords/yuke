@@ -2,6 +2,7 @@
 //! one task with no view (`-p`). The terminal interface does not exist yet. `--rpc` serves stdin and stdout. `-p` writes
 //! the answer to stdout, and the end of the turn picks the exit status.
 
+mod app;
 mod config;
 mod paths;
 mod print;
@@ -24,8 +25,9 @@ use yuke_ai::catalog::ReasoningLevel;
 use yuke_engine::{CancellationToken, Outcome, TurnEnd};
 use yuke_protocol::SessionId;
 
+use crate::app::{Machine, describe, warn};
 use crate::paths::Paths;
-use crate::print::{Finished, Machine, SessionChoice, Task, describe, warn};
+use crate::print::{Finished, SessionChoice, Task};
 
 /// The longest wait of `yuke --rpc` for the client to read the last messages after the end of its input.
 const DRAIN_LIMIT: Duration = Duration::from_secs(5);
@@ -199,21 +201,8 @@ async fn print_task(task: &Task, json: bool) -> ExitCode {
 
 /// Serve the protocol on stdin and stdout until stdin ends.
 async fn serve_rpc() -> ExitCode {
-    let home = std::env::home_dir().filter(|home| home.is_absolute());
-    let setup = Paths::of(&|name| std::env::var_os(name), home.as_deref()).and_then(|paths| {
-        let transport =
-            yuke_ai::HttpTransport::new(yuke_ai::HttpOptions::new(concat!("yuke/", env!("CARGO_PKG_VERSION"))))
-                .map_err(|error| describe(&error))?;
-        Ok(rpc::Setup {
-            paths,
-            home,
-            variable: Box::new(|name| std::env::var_os(name)),
-            transport: Box::new(transport),
-            drain_limit: DRAIN_LIMIT,
-        })
-    });
-    let served = match setup {
-        Ok(setup) => rpc::serve(setup, tokio::io::stdin(), tokio::io::stdout()).await,
+    let served = match machine() {
+        Ok(machine) => rpc::serve(machine, DRAIN_LIMIT, tokio::io::stdin(), tokio::io::stdout()).await,
         Err(error) => Err(error),
     };
     match served {
@@ -225,24 +214,27 @@ async fn serve_rpc() -> ExitCode {
     }
 }
 
-/// Run `task` on this machine: its environment, its folders, and an HTTP transport.
+/// Run `task` on this machine, in the current folder.
 async fn run_here(task: &Task, cancellation_token: CancellationToken) -> Result<Finished, String> {
-    let home = std::env::home_dir().filter(|home| home.is_absolute());
-    let paths = Paths::of(&|name| std::env::var_os(name), home.as_deref())?;
+    let machine = machine()?;
     let cwd = std::env::current_dir()
         .and_then(std::fs::canonicalize)
         .map_err(|error| format!("the current folder: {error}"))?;
+    print::run(task, machine, &cwd, cancellation_token).await
+}
+
+/// The facts of this machine: its environment, its folders, and an HTTP transport.
+fn machine() -> Result<Machine, String> {
+    let home = std::env::home_dir().filter(|home| home.is_absolute());
+    let paths = Paths::of(&|name| std::env::var_os(name), home.as_deref())?;
     let transport = yuke_ai::HttpTransport::new(yuke_ai::HttpOptions::new(concat!("yuke/", env!("CARGO_PKG_VERSION"))))
         .map_err(|error| describe(&error))?;
-    let variable = |name: &str| std::env::var_os(name);
-    let machine = Machine {
+    Ok(Machine {
         paths,
-        cwd,
         home,
-        variable: &variable,
-        transport: &transport,
-    };
-    print::run(task, &machine, cancellation_token).await
+        variable: Box::new(|name| std::env::var_os(name)),
+        transport: Box::new(transport),
+    })
 }
 
 /// Write the answer, or the `--json` report, to stdout.

@@ -1,36 +1,22 @@
 //! `yuke -p`: one turn with no view. A run opens or creates a session, runs one turn with the built-in tools, and
-//! answers how the turn ended and the text of the last answer.
+//! answers how the turn ended and the text of the last answer. It drives the session through the app, as the protocol
+//! server does.
 
-use std::error::Error;
-use std::ffi::OsString;
-use std::hash::{BuildHasher, RandomState};
-use std::io::{self, Write};
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-use tokio::sync::mpsc;
-use yuke_agent::{Session, Store, StoreError};
-use yuke_ai::catalog::{self, Auth, Entry, ReasoningLevel};
-use yuke_ai::route::Credential;
-use yuke_ai::transport::Transport;
-use yuke_ai::{Block, Role, Target};
-use yuke_engine::{CancellationToken, Driver, Timer, Toolset, TurnEnd};
-use yuke_js::{Fault, JobEnded, Limits, Options, Processes, Runtime, SessionHost};
-use yuke_protocol::{Input, InputSource, ModelReference, SessionId, SessionSettings};
-use yuke_store::SqliteStore;
-
-use crate::config::Config;
-use crate::paths::Paths;
-use crate::prompt::{self, Environment};
-
-/// The limits of the JavaScript: the heap, the stack, and the longest uninterrupted stretch.
-pub(crate) const LIMITS: Limits = Limits {
-    memory: 64 * 1024 * 1024,
-    stack: 4 * 1024 * 1024,
-    slice: Duration::from_secs(1),
+use tokio::sync::Notify;
+use yuke_agent::{Session, StoreError};
+use yuke_ai::catalog::{self, Entry, ReasoningLevel};
+use yuke_ai::{Block, Role};
+use yuke_engine::{CancellationToken, Outcome, TurnEnd};
+use yuke_protocol::{
+    LiveUpdate, ModelReference, NoticeLevel, ServerNotification, SessionEvent, SessionId, SessionSettings,
+    SessionState, SessionUpdate, StoredEvent,
 };
+
+use crate::app::{App, Jobs, Machine, Observer, describe, lock, warn};
+use crate::config::Config;
 
 /// What one run of `yuke -p` does.
 #[derive(Debug, PartialEq)]
@@ -56,20 +42,6 @@ pub(crate) enum SessionChoice {
     Newest,
 }
 
-/// The facts of the machine that a run reads.
-pub(crate) struct Machine<'a> {
-    /// The folders of the profile.
-    pub(crate) paths: Paths,
-    /// The current folder, without links. A new session works in it.
-    pub(crate) cwd: PathBuf,
-    /// The home folder of the user.
-    pub(crate) home: Option<PathBuf>,
-    /// Reads one environment variable, for the API key of a provider.
-    pub(crate) variable: &'a (dyn Fn(&str) -> Option<OsString> + Sync),
-    /// Sends the requests of the model.
-    pub(crate) transport: &'a dyn Transport,
-}
-
 /// A run that reached its turn.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Finished {
@@ -81,210 +53,133 @@ pub(crate) struct Finished {
     pub(crate) text: String,
 }
 
-/// Run `task` on `machine`. A cancel of `cancellation_token` stops the turn. An error before the turn is a text for the
-/// user.
+/// Run `task` on `machine`, in the current folder `cwd` without links. A cancel of `cancellation_token` stops the
+/// turn. An error before the turn is a text for the user.
 pub(crate) async fn run(
     task: &Task,
-    machine: &Machine<'_>,
+    machine: Machine,
+    cwd: &Path,
     cancellation_token: CancellationToken,
 ) -> Result<Finished, String> {
-    let store: Arc<dyn Store> = Arc::new(
-        SqliteStore::open(&machine.paths.data)
-            .await
-            .map_err(|error| describe(&error))?,
-    );
-    let (mut session, target) = match task.session {
+    let config_path = machine.paths.config.join("config.json");
+    let watcher = Arc::new(Watcher::default());
+    let mut app = App::start(machine, Jobs::Refused, Arc::clone(&watcher) as Arc<dyn Observer>).await?;
+    // The shutdown must also run after an error.
+    let finished = run_turn(task, &mut app, cwd, &config_path, &watcher, &cancellation_token).await;
+    app.shutdown().await;
+    finished
+}
+
+/// Open the session of `task` in `cwd`, run its turn, and close the session. A new session reads its model from the
+/// config file `config_path`.
+async fn run_turn(
+    task: &Task,
+    app: &mut App,
+    cwd: &Path,
+    config_path: &Path,
+    watcher: &Watcher,
+    cancellation_token: &CancellationToken,
+) -> Result<Finished, String> {
+    let id = match task.session {
         SessionChoice::New => {
             // Only a new session reads the config, so a broken config does not block a continued session.
-            let config_path = machine.paths.config.join("config.json");
-            let config = Config::load(&config_path)?;
+            let config = Config::load(config_path)?;
             let selector = task.model.as_deref().or(config.model.as_deref()).ok_or_else(|| {
                 format!(
                     "no model: pass --model <provider/model>, or set \"model\" in {}",
                     config_path.display()
                 )
             })?;
-            new_session(task, selector, machine, &store).await?
+            let settings = new_settings(task, selector, cwd)?;
+            app.create(settings).await.map_err(|error| describe(&error))?
         }
-        SessionChoice::Id(id) => existing_session(task, id, machine, &store).await?,
+        SessionChoice::Id(id) => existing_session(task, id, app).await?,
         SessionChoice::Newest => {
-            let id = store
-                .newest_session(&machine.cwd)
+            let id = app
+                .store()
+                .newest_session(cwd)
                 .await
                 .map_err(|error| describe(&error))?
-                .ok_or_else(|| format!("no session works in {}", machine.cwd.display()))?;
-            existing_session(task, id, machine, &store).await?
+                .ok_or_else(|| format!("no session works in {}", cwd.display()))?;
+            existing_session(task, id, app).await?
         }
     };
 
-    // The full outputs of the commands go to a folder of this process, which the shutdown of `processes` removes.
-    let processes_folder = std::env::temp_dir().join(format!(
-        "yuke-{}-{:016x}",
-        std::process::id(),
-        RandomState::new().hash_one(0_u8)
-    ));
-    let processes = Arc::new(Processes::without_jobs(processes_folder.clone()));
-    let finished = turn(
-        &task.prompt,
-        &mut session,
-        &store,
-        &target,
-        machine,
-        &processes,
-        cancellation_token,
-    )
-    .await;
-    if let Err(error) = processes.shutdown().await {
-        warn(&format!("{}: {error}", processes_folder.display()));
+    let input_id = app
+        .input(id, vec![Block::user_text(&task.prompt)])
+        .await
+        .map_err(|error| describe(&error))?;
+    tokio::select! {
+        () = watcher.ended.notified() => {}
+        () = cancellation_token.cancelled() => {}
     }
-    finished
+    // The close cancels a running turn, and that turn saves its end before the close returns.
+    app.close(id, true).await.map_err(|error| describe(&error))?;
+    let watched = std::mem::take(&mut *lock(&watcher.watched));
+    // A cancel before the turn leaves the input pending, and a later run must not answer it. After a failure, the input
+    // stays for a later run.
+    if cancellation_token.is_cancelled() && !watched.ran {
+        app.store()
+            .remove_input(id, input_id)
+            .await
+            .map_err(|error| describe(&error))?;
+    }
+
+    let end = match (watched.end, watched.failure) {
+        (Some(end), _) => end,
+        (None, Some(failure)) => TurnEnd::Failed(failure),
+        (None, None) if cancellation_token.is_cancelled() => TurnEnd::Outcome(Outcome::Cancelled),
+        (None, None) => TurnEnd::Failed("the turn saved no end".to_owned()),
+    };
+    Ok(Finished {
+        session: id,
+        end,
+        text: answer_text(&watched.blocks),
+    })
 }
 
-/// Create a session in the current folder with the model `selector`, and answer it with its target. A missing
-/// credential stops the run before the session exists.
-async fn new_session(
-    task: &Task,
-    selector: &str,
-    machine: &Machine<'_>,
-    store: &Arc<dyn Store>,
-) -> Result<(Session, Target), String> {
+/// The settings of a new session in `cwd` with the model `selector`. The app writes the system prompt.
+fn new_settings(task: &Task, selector: &str, cwd: &Path) -> Result<SessionSettings, String> {
     let entry = catalog::lookup(selector).map_err(|error| format!("{selector}: {error}"))?;
-    let target = target(&entry, machine.variable)?;
-    let system = prompt::system_prompt(&Environment {
-        workspace: &machine.cwd,
-        home: machine.home.as_deref(),
-        shell: yuke_js::shell(),
-        now: SystemTime::now(),
-    })?;
-    let settings = SessionSettings {
+    Ok(SessionSettings {
         model: ModelReference {
             provider: entry.provider.id.into(),
             model: entry.model.id.into(),
         },
         settings: yuke_ai::Settings {
-            system,
             reasoning: reasoning(&entry, task.reasoning)?,
             ..yuke_ai::Settings::new()
         },
-        cwd: machine.cwd.clone(),
-    };
-    let session = Session::create(Arc::clone(store), &settings)
-        .await
-        .map_err(|error| describe(&error))?;
-    Ok((session, target))
+        cwd: cwd.to_owned(),
+    })
 }
 
-/// Open session `id`, and answer it with its target. A model or a level of `task` replaces the one of the session
-/// with a settings event; a new model without a level takes the default level.
-async fn existing_session(
-    task: &Task,
-    id: SessionId,
-    machine: &Machine<'_>,
-    store: &Arc<dyn Store>,
-) -> Result<(Session, Target), String> {
-    let mut session = Session::open(Arc::clone(store), id)
+/// Open session `id` in `app`. A model or a level of `task` replaces the one of the session with a settings event; a
+/// new model without a level takes the default level.
+async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<SessionId, String> {
+    let mut session = Session::open(Arc::clone(app.store()), id)
         .await
         .map_err(|error| match error {
             StoreError::NotFound => format!("no session has the id {id}"),
             other => describe(&other),
         })?;
-    let mut settings = session.settings().clone();
-    let selector = match &task.model {
-        Some(model) => model.clone(),
-        None => format!("{}/{}", settings.model.provider, settings.model.model),
-    };
-    let entry = catalog::lookup(&selector).map_err(|error| format!("{selector}: {error}"))?;
-    let target = target(&entry, machine.variable)?;
     if task.model.is_some() || task.reasoning.is_some() {
+        let mut settings = session.settings().clone();
+        let selector = match &task.model {
+            Some(model) => model.clone(),
+            None => format!("{}/{}", settings.model.provider, settings.model.model),
+        };
+        let entry = catalog::lookup(&selector).map_err(|error| format!("{selector}: {error}"))?;
         settings.model = ModelReference {
             provider: entry.provider.id.into(),
             model: entry.model.id.into(),
         };
         settings.settings.reasoning = reasoning(&entry, task.reasoning)?;
+        // The credential comes first, so a model that cannot run saves no settings.
+        app.target(&settings).map_err(|error| describe(&error))?;
         session.set_settings(settings).await.map_err(|error| describe(&error))?;
     }
-    Ok((session, target))
-}
-
-/// Run one turn of `session` with `prompt` as its input and the built-in tools.
-async fn turn(
-    prompt: &str,
-    session: &mut Session,
-    store: &Arc<dyn Store>,
-    target: &Target,
-    machine: &Machine<'_>,
-    processes: &Arc<Processes>,
-    cancellation_token: CancellationToken,
-) -> Result<Finished, String> {
-    let (runtime, faults) = Runtime::start(Options {
-        limits: LIMITS,
-        cache: machine.paths.cache.join("js"),
-        processes: Arc::clone(processes),
-    })
-    .await
-    .map_err(|error| describe(&error))?;
-    let reporter = tokio::spawn(report(faults));
-    // The shutdown must also run after an error, so the fallible work stays in one block.
-    let finished = async {
-        runtime
-            .import("yuke:builtins")
-            .await
-            .map_err(|error| describe(&error))?;
-        let host = Arc::new(Host {
-            folder: session.settings().cwd.clone(),
-            store: Arc::clone(store),
-            session: session.id(),
-        });
-        let mut toolset = Toolset::new();
-        for (definition, tool) in runtime.tools(host).await.map_err(|error| describe(&error))? {
-            toolset.add(definition, tool).map_err(|error| describe(&error))?;
-        }
-        let driver = Driver::new(machine.transport, target, &TokioTimer).toolset(&toolset);
-
-        let input = Input::new(InputSource::User, vec![Block::user_text(prompt)]).map_err(|error| describe(&error))?;
-        session.input().send(input).await.map_err(|error| describe(&error))?;
-        let end = match session.turn(driver).cancellation_token(cancellation_token).run().await {
-            Ok(outcome) => TurnEnd::Outcome(outcome),
-            Err(error) => TurnEnd::Failed(describe(&error)),
-        };
-        Ok::<_, String>(Finished {
-            session: session.id(),
-            end,
-            text: answer_text(session.context()),
-        })
-    }
-    .await;
-    if let Err(error) = runtime.shutdown().await {
-        warn(&describe(&error));
-    }
-    // The shutdown ends the thread of the runtime, which closes the channel of the faults. The reporter then prints the
-    // last faults and ends.
-    if let Err(error) = reporter.await {
-        warn(&format!("yuke could not report the script faults: {error}"));
-    }
-    finished
-}
-
-/// The target of `entry` with the credential that `variable` reads from the environment.
-pub(crate) fn target(
-    entry: &Entry<'_>,
-    variable: &(dyn Fn(&str) -> Option<OsString> + Sync),
-) -> Result<Target, String> {
-    let provider = entry.provider;
-    let credential = match provider.auth {
-        Auth::ApiKey(Some(name)) => {
-            let key = variable(name)
-                .and_then(|key| key.into_string().ok())
-                .filter(|key| !key.is_empty())
-                .ok_or_else(|| format!("no API key: set {name} for {}", provider.name))?;
-            Credential::ApiKey(key.into())
-        }
-        Auth::ApiKey(None) => Credential::None,
-        Auth::OAuth(_) => return Err(format!("{} needs a login, and yuke has no login yet", provider.name)),
-    };
-    entry
-        .bind(credential)
-        .map_err(|error| format!("{}/{}: {error}", provider.id, entry.model.id))
+    app.open(session).await.map_err(|error| describe(&error))
 }
 
 /// The reasoning settings of `level` on the model of `entry`. No level leaves the default of the endpoint.
@@ -314,64 +209,58 @@ fn answer_text(context: &[Block]) -> String {
     texts.join("\n")
 }
 
-/// The text of `error` and of each of its causes.
-pub(crate) fn describe(error: &dyn Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
+/// Keeps what a run needs from the notifications of its session: the saved blocks of the turn, its end, and a
+/// failure. Other notices go to stderr.
+#[derive(Default)]
+struct Watcher {
+    watched: Mutex<Watched>,
+    /// Wakes the run when the turn ends, or when a failure stops the session before its turn.
+    ended: Notify,
 }
 
-/// Write `text` to stderr as a notice of yuke.
-pub(crate) fn warn(text: &str) {
-    if writeln!(io::stderr(), "yuke: {text}").is_err() {
-        // No one reads stderr, so the notice has nowhere to go.
-    }
+#[derive(Default)]
+struct Watched {
+    /// Whether a turn started.
+    ran: bool,
+    blocks: Vec<Block>,
+    end: Option<TurnEnd>,
+    failure: Option<String>,
 }
 
-/// Write each fault of the JavaScript to stderr.
-async fn report(mut faults: mpsc::UnboundedReceiver<Fault>) {
-    while let Some(fault) = faults.recv().await {
-        warn(&format!("a script failed: {fault}"));
+impl Observer for Watcher {
+    fn notify(&self, notification: ServerNotification) {
+        match notification {
+            ServerNotification::SessionUpdate(params) => match params.update {
+                SessionUpdate::Saved(StoredEvent {
+                    event: SessionEvent::Commit { commit, .. },
+                    ..
+                }) => {
+                    let mut watched = lock(&self.watched);
+                    // A replacement starts the context again, and the answer comes after it.
+                    if commit.replaced.is_some() {
+                        watched.blocks.clear();
+                    }
+                    watched.blocks.extend(commit.blocks.into_owned());
+                    if commit.end.is_some() {
+                        watched.end = commit.end;
+                    }
+                }
+                SessionUpdate::Live(LiveUpdate::State {
+                    state: SessionState::Running,
+                }) => lock(&self.watched).ran = true,
+                SessionUpdate::Live(LiveUpdate::State {
+                    state: SessionState::Idle,
+                }) => self.ended.notify_one(),
+                _ => {}
+            },
+            ServerNotification::Notice(notice) if notice.session_id.is_some() && notice.level == NoticeLevel::Error => {
+                lock(&self.watched).failure = Some(notice.message);
+                self.ended.notify_one();
+            }
+            ServerNotification::Notice(notice) => warn(&notice.message),
+            _ => {}
+        }
     }
-}
-
-/// Waits with the tokio timer.
-pub(crate) struct TokioTimer;
-
-#[async_trait]
-impl Timer for TokioTimer {
-    async fn sleep(&self, duration: Duration) {
-        tokio::time::sleep(duration).await;
-    }
-}
-
-/// The session of the tools: its folder and its blob store.
-struct Host {
-    folder: PathBuf,
-    store: Arc<dyn Store>,
-    session: SessionId,
-}
-
-#[async_trait]
-impl SessionHost for Host {
-    fn folder(&self) -> PathBuf {
-        self.folder.clone()
-    }
-
-    async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String> {
-        self.store
-            .put_blob(self.session, bytes)
-            .await
-            .map_err(|error| describe(&error))
-    }
-
-    // `Processes::without_jobs` starts no job, so no job ends.
-    async fn job_ended(&self, _ended: JobEnded) {}
 }
 
 #[cfg(test)]

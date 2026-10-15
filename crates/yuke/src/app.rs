@@ -1,0 +1,515 @@
+//! The core that the modes of yuke share: the store, the JavaScript runtime, the jobs, and the open sessions. `yuke -p`
+//! and `yuke --rpc` drive their sessions through an [`App`], and the app tells them what happens with the notifications
+//! of the protocol.
+
+mod live;
+
+use std::collections::HashMap;
+use std::error::Error;
+use std::ffi::OsString;
+use std::fmt;
+use std::hash::{BuildHasher, RandomState};
+use std::io::{self, Write};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, SystemTime};
+
+use async_trait::async_trait;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use yuke_agent::{Session, Store, StoreError};
+use yuke_ai::catalog::{self, Auth};
+use yuke_ai::route::Credential;
+use yuke_ai::transport::Transport;
+use yuke_ai::{Block, Target};
+use yuke_engine::Timer;
+use yuke_js::{Fault, Limits, Options, Processes, Runtime};
+use yuke_protocol::{
+    EventNumber, Input, InputId, InputSource, Job, LoadSessionResult, NoticeLevel, NoticeParams, ServerNotification,
+    SessionId, SessionSettings,
+};
+use yuke_store::SqliteStore;
+
+use self::live::LiveSession;
+use crate::paths::Paths;
+use crate::prompt::{self, Environment};
+
+/// The limits of the JavaScript: the heap, the stack, and the longest uninterrupted stretch.
+const LIMITS: Limits = Limits {
+    memory: 64 * 1024 * 1024,
+    stack: 4 * 1024 * 1024,
+    slice: Duration::from_secs(1),
+};
+
+/// The source of the notices of yuke.
+const SOURCE: &str = "host:yuke";
+
+/// A function that reads one environment variable.
+pub(crate) type Variable = dyn Fn(&str) -> Option<OsString> + Send + Sync;
+
+/// The facts of the machine that the app reads.
+pub(crate) struct Machine {
+    /// The folders of the profile.
+    pub(crate) paths: Paths,
+    /// The home folder of the user.
+    pub(crate) home: Option<PathBuf>,
+    /// Reads one environment variable, for the API key of a provider.
+    pub(crate) variable: Box<Variable>,
+    /// Sends the requests of the model.
+    pub(crate) transport: Box<dyn Transport>,
+}
+
+/// Whether the sessions can start background jobs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Jobs {
+    /// A job runs until it ends, until a stop, or until the close of its session.
+    Allowed,
+    /// A background command fails, because the run ends with its turn.
+    Refused,
+}
+
+/// Receives the notifications of the app: the updates of each open session, and the notices.
+pub(crate) trait Observer: Send + Sync {
+    /// Receive one notification. A call must not block, because a turn waits for it.
+    fn notify(&self, notification: ServerNotification);
+}
+
+/// The parts of the app that each open session uses.
+struct Shared {
+    machine: Machine,
+    store: Arc<dyn Store>,
+    processes: Arc<Processes>,
+    observer: Arc<dyn Observer>,
+}
+
+/// The open sessions of one client, and the parts that they share.
+///
+/// # Cancel safety
+///
+/// The methods are not cancel safe. A caller awaits each call to its end, as the request loop of `yuke --rpc` does. A
+/// dropped close can leave the jobs of a session running, and a dropped settings change can leave the target of the
+/// session behind its saved settings.
+pub(crate) struct App {
+    shared: Arc<Shared>,
+    runtime: Runtime,
+    reporter: JoinHandle<()>,
+    processes_folder: PathBuf,
+    sessions: HashMap<SessionId, LiveSession>,
+}
+
+impl App {
+    /// Open the store, and start the JavaScript runtime with the built-in tools. The app tells `observer` what happens.
+    ///
+    /// # Errors
+    ///
+    /// Returns a text for the user when a part does not start.
+    pub(crate) async fn start(machine: Machine, jobs: Jobs, observer: Arc<dyn Observer>) -> Result<App, String> {
+        let store: Arc<dyn Store> = Arc::new(
+            SqliteStore::open(&machine.paths.data)
+                .await
+                .map_err(|error| describe(&error))?,
+        );
+        // The full outputs of the commands and the logs of the jobs go to a folder of this process, which the shutdown
+        // removes.
+        let processes_folder = std::env::temp_dir().join(format!(
+            "yuke-{}-{:016x}",
+            std::process::id(),
+            RandomState::new().hash_one(0_u8)
+        ));
+        let processes = Arc::new(match jobs {
+            Jobs::Allowed => Processes::new(processes_folder.clone()),
+            Jobs::Refused => Processes::without_jobs(processes_folder.clone()),
+        });
+        let (runtime, faults) = match Runtime::start(Options {
+            limits: LIMITS,
+            cache: machine.paths.cache.join("js"),
+            processes: Arc::clone(&processes),
+        })
+        .await
+        {
+            Ok(started) => started,
+            Err(error) => {
+                if let Err(shutdown) = processes.shutdown().await {
+                    warn(&format!("{}: {shutdown}", processes_folder.display()));
+                }
+                return Err(describe(&error));
+            }
+        };
+        let reporter = tokio::spawn(report(faults, Arc::clone(&observer)));
+        let app = App {
+            shared: Arc::new(Shared {
+                machine,
+                store,
+                processes,
+                observer,
+            }),
+            runtime,
+            reporter,
+            processes_folder,
+            sessions: HashMap::new(),
+        };
+        match app.runtime.import("yuke:builtins").await {
+            Ok(()) => Ok(app),
+            Err(error) => {
+                app.shutdown().await;
+                Err(describe(&error))
+            }
+        }
+    }
+
+    /// The store of the sessions.
+    pub(crate) fn store(&self) -> &Arc<dyn Store> {
+        &self.shared.store
+    }
+
+    /// The target of the model of `settings`, with its credential from the environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for an unknown model or a missing credential.
+    pub(crate) fn target(&self, settings: &SessionSettings) -> Result<Target, AppError> {
+        target_of(settings, &*self.shared.machine.variable)
+    }
+
+    /// Create a session with `settings`, and open it. The folder loses its links, and the app writes the system prompt
+    /// of that folder. A missing credential stops the create before the session exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for a folder that does not exist or a model that cannot run, and
+    /// [`AppError::Store`] when the store fails.
+    pub(crate) async fn create(&mut self, mut settings: SessionSettings) -> Result<SessionId, AppError> {
+        settings.cwd = canonical(settings.cwd).await?;
+        settings.settings.system = system_prompt(settings.cwd.clone(), self.shared.machine.home.clone()).await?;
+        let target = self.target(&settings)?;
+        let session = Session::create(Arc::clone(&self.shared.store), &settings)
+            .await
+            .map_err(AppError::Store)?;
+        self.start_new(session, Ok(target)).await
+    }
+
+    /// Fork session `id` through event `through`, and open the fork.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Store`] when the store fails, and [`AppError::Invalid`] for a model that cannot run.
+    pub(crate) async fn fork(&mut self, id: SessionId, through: Option<EventNumber>) -> Result<SessionId, AppError> {
+        let session = Session::fork(Arc::clone(&self.shared.store), id, through)
+            .await
+            .map_err(AppError::Store)?;
+        let target = self.target(session.settings());
+        self.start_new(session, target).await
+    }
+
+    /// Open `session`, which the caller opened from the store. An open alone runs no turn.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for a model that cannot run.
+    pub(crate) async fn open(&mut self, session: Session) -> Result<SessionId, AppError> {
+        let target = self.target(session.settings())?;
+        self.start_session(session, target).await
+    }
+
+    /// Open session `id` when it is not open, send its saved events after `after`, and answer its pending inputs and
+    /// its state. The live updates of the session that come during the load follow the saved events.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Store`] when the store fails, and [`AppError::Invalid`] for a model that cannot run.
+    pub(crate) async fn load(
+        &mut self,
+        id: SessionId,
+        after: Option<EventNumber>,
+    ) -> Result<LoadSessionResult, AppError> {
+        if !self.sessions.contains_key(&id) {
+            let session = Session::open(Arc::clone(&self.shared.store), id)
+                .await
+                .map_err(AppError::Store)?;
+            self.open(session).await?;
+        }
+        self.live(id)?.load(after).await
+    }
+
+    /// Close session `id`: its turn stops, and its task ends. Waiting input stays saved. A session with running jobs
+    /// closes only with `stop_jobs`, which stops them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotOpen`], or [`AppError::JobsRun`] for running jobs without `stop_jobs`.
+    pub(crate) async fn close(&mut self, id: SessionId, stop_jobs: bool) -> Result<(), AppError> {
+        let jobs = self.live(id)?.jobs();
+        if !jobs.is_empty() && !stop_jobs {
+            return Err(AppError::JobsRun(jobs.into_iter().map(|job| job.id).collect()));
+        }
+        if let Some(live) = self.sessions.remove(&id) {
+            live.close().await;
+        }
+        Ok(())
+    }
+
+    /// Cancel the running turn of session `id`. A session that is not open or runs no turn has nothing to cancel.
+    pub(crate) fn cancel(&self, id: SessionId) {
+        if let Some(live) = self.sessions.get(&id) {
+            live.cancel();
+        }
+    }
+
+    /// Save `content` as an input of the user, and start a turn when the session is idle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for content that is no input, and [`AppError::Store`] when the store fails.
+    pub(crate) async fn input(&self, id: SessionId, content: Vec<Block>) -> Result<InputId, AppError> {
+        let live = self.live(id)?;
+        let input = Input::new(InputSource::User, content).map_err(|error| AppError::Invalid(describe(&error)))?;
+        live.accept(input).await.map_err(AppError::Store)
+    }
+
+    /// Remove the pending input `input_id` of session `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Store`] when the input is not pending or the store fails.
+    pub(crate) async fn remove_input(&self, id: SessionId, input_id: InputId) -> Result<(), AppError> {
+        self.live(id)?.remove(input_id).await.map_err(AppError::Store)
+    }
+
+    /// Save `settings` for session `id`. The session keeps its system prompt.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Busy`] while a turn runs or input waits, and [`AppError::Invalid`] for a folder or a model
+    /// that cannot work.
+    pub(crate) async fn set_settings(&self, id: SessionId, settings: SessionSettings) -> Result<(), AppError> {
+        self.live(id)?.set_settings(settings).await
+    }
+
+    /// The running background jobs of session `id`, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotOpen`].
+    pub(crate) fn jobs(&self, id: SessionId) -> Result<Vec<Job>, AppError> {
+        Ok(self.live(id)?.jobs())
+    }
+
+    /// Stop the job `job_id` of session `id`, and wait for its end.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NoJob`] when the session runs no such job.
+    pub(crate) async fn stop_job(&self, id: SessionId, job_id: &str) -> Result<(), AppError> {
+        if self.live(id)?.stop_job(job_id).await {
+            Ok(())
+        } else {
+            Err(AppError::NoJob(job_id.to_owned()))
+        }
+    }
+
+    /// Close each session, stop the runtime, and stop the jobs.
+    pub(crate) async fn shutdown(self) {
+        let App {
+            shared,
+            runtime,
+            reporter,
+            processes_folder,
+            mut sessions,
+        } = self;
+        // Each session stops before the first wait, so the sessions end together.
+        for live in sessions.values() {
+            live.stop();
+        }
+        for (_, live) in sessions.drain() {
+            live.close().await;
+        }
+        if let Err(error) = runtime.shutdown().await {
+            warn(&describe(&error));
+        }
+        // The shutdown of the runtime closes the channel of the faults, so the reporter ends.
+        if let Err(error) = reporter.await {
+            warn(&format!("yuke could not report the script faults: {error}"));
+        }
+        if let Err(error) = shared.processes.shutdown().await {
+            warn(&format!("{}: {error}", processes_folder.display()));
+        }
+    }
+
+    /// Start the task of `session`, which this app saved just now, on `target`. A session that cannot start is deleted
+    /// again, so no session that cannot run stays in the store.
+    async fn start_new(&mut self, session: Session, target: Result<Target, AppError>) -> Result<SessionId, AppError> {
+        let id = session.id();
+        let started = match target {
+            Ok(target) => self.start_session(session, target).await,
+            Err(error) => {
+                drop(session);
+                Err(error)
+            }
+        };
+        if started.is_err() {
+            self.shared.store.delete_session(id).await.map_err(AppError::Store)?;
+        }
+        started
+    }
+
+    /// Start the task of `session`, and answer its id.
+    async fn start_session(&mut self, session: Session, target: Target) -> Result<SessionId, AppError> {
+        let id = session.id();
+        let live = LiveSession::start(session, target, &self.runtime, Arc::clone(&self.shared)).await?;
+        self.sessions.insert(id, live);
+        Ok(id)
+    }
+
+    /// The open session `id`.
+    fn live(&self, id: SessionId) -> Result<&LiveSession, AppError> {
+        self.sessions.get(&id).ok_or(AppError::NotOpen(id))
+    }
+}
+
+/// Why the app refused or failed a request.
+#[derive(Debug)]
+pub(crate) enum AppError {
+    /// The session is not open.
+    NotOpen(SessionId),
+    /// A value of the request cannot work: a model, a folder, or an input. The text tells why.
+    Invalid(String),
+    /// A turn runs or input waits, so the settings cannot change.
+    Busy,
+    /// The session runs the jobs with these ids.
+    JobsRun(Vec<String>),
+    /// The session runs no job with this id.
+    NoJob(String),
+    /// The store failed.
+    Store(StoreError),
+    /// A part of yuke failed. The text tells why.
+    Internal(String),
+}
+
+impl fmt::Display for AppError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AppError::NotOpen(id) => write!(f, "the session {id} is not open: create, fork, or load it first"),
+            AppError::Invalid(text) | AppError::Internal(text) => f.write_str(text),
+            AppError::Busy => f.write_str("a turn runs or waits: change the settings after it ends"),
+            AppError::JobsRun(ids) => write!(
+                f,
+                "the session runs the jobs {}: stop them, or close with stopJobs: true",
+                ids.join(", ")
+            ),
+            AppError::NoJob(id) => write!(f, "the session runs no job {id}"),
+            AppError::Store(error) => fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl Error for AppError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            AppError::Store(error) => error.source(),
+            _ => None,
+        }
+    }
+}
+
+/// The target of the model of `settings`, with its credential from `variable`.
+fn target_of(settings: &SessionSettings, variable: &Variable) -> Result<Target, AppError> {
+    let selector = format!("{}/{}", settings.model.provider, settings.model.model);
+    let entry = catalog::lookup(&selector).map_err(|error| AppError::Invalid(format!("{selector}: {error}")))?;
+    let provider = entry.provider;
+    let credential = match provider.auth {
+        Auth::ApiKey(Some(name)) => {
+            let key = variable(name)
+                .and_then(|key| key.into_string().ok())
+                .filter(|key| !key.is_empty())
+                .ok_or_else(|| AppError::Invalid(format!("no API key: set {name} for {}", provider.name)))?;
+            Credential::ApiKey(key.into())
+        }
+        Auth::ApiKey(None) => Credential::None,
+        Auth::OAuth(_) => {
+            return Err(AppError::Invalid(format!(
+                "{} needs a login, and yuke has no login yet",
+                provider.name
+            )));
+        }
+    };
+    entry
+        .bind(credential)
+        .map_err(|error| AppError::Invalid(format!("{}/{}: {error}", provider.id, entry.model.id)))
+}
+
+/// `folder` without links. It must exist.
+async fn canonical(folder: PathBuf) -> Result<PathBuf, AppError> {
+    blocking(move || {
+        folder
+            .canonicalize()
+            .map_err(|error| AppError::Invalid(format!("{}: {error}", folder.display())))
+    })
+    .await
+}
+
+/// The system prompt of a session in `workspace`.
+async fn system_prompt(workspace: PathBuf, home: Option<PathBuf>) -> Result<String, AppError> {
+    blocking(move || {
+        prompt::system_prompt(&Environment {
+            workspace: &workspace,
+            home: home.as_deref(),
+            shell: yuke_js::shell(),
+            now: SystemTime::now(),
+        })
+        .map_err(AppError::Internal)
+    })
+    .await
+}
+
+/// Run `f` on a thread for blocking work, so a slow file system does not hold the other sessions.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, AppError> + Send + 'static) -> Result<T, AppError> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|error| AppError::Internal(error.to_string()))?
+}
+
+/// Send each script fault to `observer` as a notice.
+async fn report(mut faults: mpsc::UnboundedReceiver<Fault>, observer: Arc<dyn Observer>) {
+    while let Some(fault) = faults.recv().await {
+        observer.notify(ServerNotification::Notice(NoticeParams {
+            session_id: None,
+            level: NoticeLevel::Warn,
+            source: SOURCE.to_owned(),
+            message: format!("a script failed: {fault}"),
+        }));
+    }
+}
+
+/// The text of `error` and of each of its causes.
+pub(crate) fn describe(error: &dyn Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
+/// Write `text` to stderr as a notice of yuke.
+pub(crate) fn warn(text: &str) {
+    if writeln!(io::stderr(), "yuke: {text}").is_err() {
+        // No one reads stderr, so the notice has nowhere to go.
+    }
+}
+
+/// Lock `mutex`. A panic of another holder leaves a valid value.
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Waits with the tokio timer.
+struct TokioTimer;
+
+#[async_trait]
+impl Timer for TokioTimer {
+    async fn sleep(&self, duration: Duration) {
+        tokio::time::sleep(duration).await;
+    }
+}

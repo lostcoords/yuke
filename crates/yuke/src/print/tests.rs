@@ -1,12 +1,18 @@
 //! Whole runs of `yuke -p` against a scripted provider.
 
-use yuke_agent::Access;
+use std::ffi::OsString;
+use std::path::PathBuf;
+use std::time::Instant;
+
+use yuke_agent::{Access, Store};
 use yuke_ai::Effort;
-use yuke_engine::Outcome;
-use yuke_protocol::SessionEvent;
+use yuke_ai::transport::{BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
+use yuke_store::SqliteStore;
 
 use super::*;
-use crate::testing::{Rejecting, ScriptedTransport, text_reply, tool_reply};
+use crate::app::Variable;
+use crate::paths::Paths;
+use crate::testing::{Rejecting, ScriptedTransport, Stalled, text_reply, tool_reply};
 
 const MODEL: &str = "minimax/MiniMax-M3";
 
@@ -40,6 +46,16 @@ impl Place {
         }
     }
 
+    /// The machine of a run in the place.
+    fn machine(&self, variable: Box<Variable>, transport: Box<dyn Transport>) -> Machine {
+        Machine {
+            paths: self.paths.clone(),
+            home: Some(self.home.clone()),
+            variable,
+            transport,
+        }
+    }
+
     /// The store of the place, opened again.
     async fn store(&self) -> SqliteStore {
         SqliteStore::open(&self.paths.data).await.unwrap()
@@ -57,25 +73,24 @@ fn no_variable(_: &str) -> Option<OsString> {
 
 /// Run `task` in `place` with `replies` as the answers of the provider. Answer the run and the request bodies.
 async fn run_with(place: &Place, task: &Task, replies: &[String]) -> (Result<Finished, String>, Vec<String>) {
-    run_in(place, task, replies, &with_key, CancellationToken::new()).await
+    run_in(place, task, replies, Box::new(with_key), CancellationToken::new()).await
 }
 
 async fn run_in(
     place: &Place,
     task: &Task,
     replies: &[String],
-    variable: &(dyn Fn(&str) -> Option<OsString> + Sync),
+    variable: Box<Variable>,
     cancellation_token: CancellationToken,
 ) -> (Result<Finished, String>, Vec<String>) {
     let transport = ScriptedTransport::new(replies);
-    let machine = Machine {
-        paths: place.paths.clone(),
-        cwd: place.cwd.clone(),
-        home: Some(place.home.clone()),
-        variable,
-        transport: &transport,
-    };
-    let finished = run(task, &machine, cancellation_token).await;
+    let finished = run(
+        task,
+        place.machine(variable, Box::new(transport.clone())),
+        &place.cwd,
+        cancellation_token,
+    )
+    .await;
     (finished, transport.requests())
 }
 
@@ -175,9 +190,9 @@ async fn no_model_is_an_error_that_names_the_config_file() {
 #[tokio::test]
 async fn a_missing_or_empty_api_key_is_an_error_and_saves_no_session() {
     let place = Place::new("no_key");
-    let empty = |_: &str| Some(OsString::new());
+    let empty: Box<Variable> = Box::new(|_| Some(OsString::new()));
 
-    for variable in [&no_variable as &(dyn Fn(&str) -> Option<OsString> + Sync), &empty] {
+    for variable in [Box::new(no_variable) as Box<Variable>, empty] {
         let (finished, _) = run_in(
             &place,
             &task("Hi.", SessionChoice::New),
@@ -396,35 +411,73 @@ async fn a_background_command_fails_because_the_run_ends_with_its_turn() {
 }
 
 #[tokio::test]
-async fn a_cancelled_run_ends_its_turn_as_cancelled() {
+async fn a_run_cancelled_before_its_turn_ends_as_cancelled_and_leaves_no_input() {
     let place = Place::new("cancelled");
     let cancellation_token = CancellationToken::new();
     cancellation_token.cancel();
 
-    let (finished, _) = run_in(
+    let (finished, requests) = run_in(
         &place,
         &task("Hi.", SessionChoice::New),
         &[text_reply("Hi.")],
-        &with_key,
+        Box::new(with_key),
         cancellation_token,
     )
     .await;
 
-    assert_eq!(finished.unwrap().end, TurnEnd::Outcome(Outcome::Cancelled));
+    let finished = finished.unwrap();
+    assert_eq!(finished.end, TurnEnd::Outcome(Outcome::Cancelled));
+    assert_eq!(requests, Vec::<String>::new());
+    // A later run of the session must not answer this prompt.
+    assert_eq!(place.store().await.pending(finished.session).await.unwrap(), []);
+}
+
+/// Cancels a run when the turn sends its request, and then holds the answer open.
+struct CancelsAtRequest(CancellationToken);
+
+impl Transport for CancelsAtRequest {
+    fn open<'a>(
+        &'a self,
+        request: &'a Outgoing<'_>,
+        deadline: Option<Instant>,
+    ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
+        self.0.cancel();
+        Stalled.open(request, deadline)
+    }
+}
+
+#[tokio::test]
+async fn a_run_cancelled_during_its_turn_saves_the_turn_as_cancelled() {
+    let place = Place::new("cancelled_turn");
+    let cancellation_token = CancellationToken::new();
+    let transport = CancelsAtRequest(cancellation_token.clone());
+
+    let finished = run(
+        &task("Hi.", SessionChoice::New),
+        place.machine(Box::new(with_key), Box::new(transport)),
+        &place.cwd,
+        cancellation_token,
+    )
+    .await;
+
+    let finished = finished.unwrap();
+    assert_eq!(finished.end, TurnEnd::Outcome(Outcome::Cancelled));
+    let opened = place.store().await.open(finished.session, Access::Read).await.unwrap();
+    assert_eq!(opened.context.first(), Some(&Block::user_text("Hi.")));
 }
 
 #[tokio::test]
 async fn a_rejected_credential_ends_the_turn_with_its_text_once() {
     let place = Place::new("rejected");
-    let machine = Machine {
-        paths: place.paths.clone(),
-        cwd: place.cwd.clone(),
-        home: Some(place.home.clone()),
-        variable: &with_key,
-        transport: &Rejecting,
-    };
+    let machine = place.machine(Box::new(with_key), Box::new(Rejecting));
 
-    let finished = run(&task("Hi.", SessionChoice::New), &machine, CancellationToken::new()).await;
+    let finished = run(
+        &task("Hi.", SessionChoice::New),
+        machine,
+        &place.cwd,
+        CancellationToken::new(),
+    )
+    .await;
 
     assert_eq!(
         finished.unwrap().end,

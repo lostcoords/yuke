@@ -27,9 +27,10 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - During a turn, a client can add and remove inputs, cancel the turn, close the session, and list and stop jobs. The
   settings (model, request settings, system prompt, folder) do not change: `session/set_settings` fails while a turn
   runs or input waits.
-- A client subscribes first, then loads, and it keeps the updates of that wait. After the load, it applies the kept
-  updates in order. It drops a saved event that it has (by `seq`) and an `input_accepted` that it has (by `inputId`).
-  The server disconnects a client that falls behind. The client then loads again.
+- `session/load` sends the saved events first. The server holds the live updates of the session that come during the
+  load, and sends them after the saved events, without the saved events that the load already sent. A client drops a
+  saved event that it has (by `seq`) and an `input_accepted` that it has (by `inputId`). The server disconnects a
+  client that falls behind. The client then loads again.
 - Live model updates belong to a draft and retain native block ids and boundaries. They exclude provider replay state.
 - `draft_committed` carries one `eventNumber` and an array of original draft block ids, in saved block order.
   Array index `i` maps to block index `i` in that commit. A client replaces the whole draft.
