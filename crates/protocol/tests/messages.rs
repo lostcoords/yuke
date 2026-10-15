@@ -10,9 +10,10 @@ use serde_json::{Value, json};
 use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_protocol::{
     ClientNotification, ClientRequest, ConsumedInput, EventNumber, ExtensionEventParams, Input, InputError, InputId,
-    InputSource, LiveUpdate, LoadSessionResult, ModelReference, NoticeLevel, NoticeParams, Notification, PendingInput,
-    Request, Response, ServerNotification, SessionEvent, SessionId, SessionSettings, SessionUpdate,
-    SessionUpdateParams, StoredEvent,
+    InputSource, InteractionClosedParams, InteractionId, InteractionRequest, InteractionRequestedParams,
+    InteractionRespondParams, InteractionResponse, LiveUpdate, LoadSessionResult, ModelReference, NoticeLevel,
+    NoticeParams, Notification, PendingInput, Request, Response, ServerNotification, SessionEvent, SessionId,
+    SessionSettings, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 const SESSION: &str = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9d";
@@ -268,6 +269,68 @@ fn queue_updates_and_an_empty_result_read_and_write_their_json() {
         },
     );
     assert_json(&json!({}), &yuke_protocol::EmptyResult {});
+}
+
+#[test]
+fn an_interaction_question_its_close_and_its_answer_read_and_write_their_json() {
+    let notification = |message| Notification {
+        jsonrpc: yuke_protocol::JsonRpc::V2,
+        message,
+    };
+
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "method": "interaction/requested", "params": {
+            "interactionId": 7, "sessionId": SESSION,
+            "request": { "kind": "select", "title": "Which branch?", "options": ["main", "dev"] }
+        } }),
+        &notification(ServerNotification::InteractionRequested(InteractionRequestedParams {
+            interaction_id: InteractionId(7),
+            session_id: Some(session()),
+            request: InteractionRequest::Select {
+                title: "Which branch?".to_owned(),
+                options: vec!["main".to_owned(), "dev".to_owned()],
+            },
+        })),
+    );
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "method": "interaction/requested", "params": {
+            "interactionId": 8, "request": { "kind": "input", "title": "Token", "secret": true }
+        } }),
+        &notification(ServerNotification::InteractionRequested(InteractionRequestedParams {
+            interaction_id: InteractionId(8),
+            session_id: None,
+            request: InteractionRequest::Input {
+                title: "Token".to_owned(),
+                placeholder: None,
+                secret: true,
+            },
+        })),
+    );
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "method": "interaction/closed", "params": { "interactionId": 7 } }),
+        &notification(ServerNotification::InteractionClosed(InteractionClosedParams {
+            interaction_id: InteractionId(7),
+        })),
+    );
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "id": 9, "method": "interaction/respond", "params": {
+            "interactionId": 7, "response": { "kind": "confirm", "value": true }
+        } }),
+        &request(
+            9,
+            ClientRequest::InteractionRespond(InteractionRespondParams {
+                interaction_id: InteractionId(7),
+                response: InteractionResponse::Confirm { value: true },
+            }),
+        ),
+    );
+    assert_json(
+        &json!({ "interactionId": 8, "response": { "kind": "canceled" } }),
+        &InteractionRespondParams {
+            interaction_id: InteractionId(8),
+            response: InteractionResponse::Canceled,
+        },
+    );
 }
 
 #[test]

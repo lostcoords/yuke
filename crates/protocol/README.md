@@ -5,8 +5,12 @@ Agent Client Protocol (ACP): `"jsonrpc": "2.0"`, `noun/verb` methods, camelCase 
 is not ACP: for example, it has `session/input` in place of `session/prompt`, and a tool update uses a saved call position rather than a provider call id.
 
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/input`, `session/remove_input`,
-  `session/set_settings`.
-- Notifications: `session/cancel` from a client. `session/update`, `notice`, and `extension/event` from the server.
+  `session/set_settings`, `interaction/respond`.
+- Notifications: `session/cancel` from a client. `session/update`, `notice`, `extension/event`,
+  `interaction/requested`, and `interaction/closed` from the server.
+- A plugin can ask the user a question: `confirm`, `select`, or `input`. yuke itself asks nothing. The client answers
+  with `interaction/respond`, or with `canceled`. `interaction/closed` removes a question that ended without this
+  client's answer. The types exist, but the server does not send or answer them yet.
 - `notice` is a message for the user, for the whole process or one session. `extension/event` is an event of a plugin.
   The plugin chooses its kind and its data, and it puts a version in the data when the shape changes. A client ignores
   an extension that it does not know. Neither is part of session history.

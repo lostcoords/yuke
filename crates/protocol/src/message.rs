@@ -6,7 +6,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{EventNumber, InputId, PendingInput, SessionId, SessionSettings, SessionUpdateParams};
+use crate::{
+    EventNumber, InputId, InteractionClosedParams, InteractionRequestedParams, InteractionRespondParams, PendingInput,
+    SessionId, SessionSettings, SessionUpdateParams,
+};
 
 /// The protocol version that this crate speaks. A breaking change of the messages takes the next number.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -72,6 +75,9 @@ pub enum ClientRequest {
     /// fails. Result: [`EmptyResult`].
     #[serde(rename = "session/remove_input")]
     RemoveInput(RemoveInputParams),
+    /// Answer a question of a plugin. Result: [`EmptyResult`].
+    #[serde(rename = "interaction/respond")]
+    InteractionRespond(InteractionRespondParams),
 }
 
 /// A notification: a message that a server or a client sends with no id. It gets no response.
@@ -110,6 +116,12 @@ pub enum ServerNotification {
     /// An event of a plugin. It is not part of session history. A client ignores an extension that it does not know.
     #[serde(rename = "extension/event")]
     ExtensionEvent(ExtensionEventParams),
+    /// A plugin asks the user a question. The client answers with `interaction/respond`.
+    #[serde(rename = "interaction/requested")]
+    InteractionRequested(InteractionRequestedParams),
+    /// A question ended without an answer of this client. The client removes it.
+    #[serde(rename = "interaction/closed")]
+    InteractionClosed(InteractionClosedParams),
 }
 
 /// The params of `notice`.

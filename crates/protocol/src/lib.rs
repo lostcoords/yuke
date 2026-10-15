@@ -6,6 +6,7 @@ mod bindings;
 mod event;
 mod id;
 mod input;
+mod interaction;
 mod message;
 mod session;
 mod update;
@@ -13,6 +14,10 @@ mod update;
 pub use event::{SessionEvent, StoredEvent};
 pub use id::{DraftId, EventNumber, InputId, SessionId};
 pub use input::{ConsumedInput, Input, InputError, InputSource, PendingInput};
+pub use interaction::{
+    InteractionClosedParams, InteractionId, InteractionRequest, InteractionRequestedParams, InteractionRespondParams,
+    InteractionResponse,
+};
 pub use message::{
     CancelParams, ClientNotification, ClientRequest, EmptyResult, ExtensionEventParams, ForkSessionParams,
     ForkSessionResult, Implementation, InitializeParams, InitializeResult, InputParams, InputResult, JsonRpc,
