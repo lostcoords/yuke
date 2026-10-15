@@ -153,6 +153,8 @@ pub struct Caps {
     pub tools: Option<bool>,
     /// Deferred tools and tool references need explicit support for the resolved model and endpoint.
     pub tool_search: Option<bool>,
+    /// The source claim that this endpoint and model accept privileged instructions inside conversation history.
+    pub system_updates: Option<bool>,
     /// Whether the model can stop reasoning. `None` is unknown, so a caller may still ask.
     pub disable_reasoning: Option<bool>,
     /// Whether the model accepts an explicit marker. MiniMax M3 caches and refuses one.

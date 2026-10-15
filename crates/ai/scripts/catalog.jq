@@ -86,6 +86,7 @@ def model:
   + "cost: " + (.cost | map(band) | list) + ",\n"
   + "caps: Caps { tools: " + (.flags.supports_tools | option(bool))
       + ", tool_search: " + (.flags.supports_tool_search | option(bool))
+      + ", system_updates: " + (.flags.supports_system_updates | option(bool))
       + ", disable_reasoning: " + (.flags.can_disable_reasoning | option(bool))
       + ", cache_breakpoint: " + (.flags.supports_cache_breakpoint | option(bool)) + " },\n"
   + "reasoning_levels: " + (.reasoning_levels | map(reasoning_level) | list) + ",\n"
@@ -112,7 +113,7 @@ def provider:
 + "use crate::catalog::{AnthropicThinking, Auth, Caps, ChatFlags, Dialect, Endpoint, Limits, Modalities, Model, PriceBand, Provider};\n"
 + "use crate::request::{ChatDialect, Effort, MaxTokensField, Modality, Protocol, ReasoningReplayMode, ResponsesDialect, ThinkingFormat};\n"
 + "use crate::route::{CredentialHeader, SessionHeader};\nuse crate::transport::Header;\n\n"
-+ "/// The catalog revision these static rows come from.\n"
++ "/// The identifier of this catalog snapshot.\n"
 + "pub const REVISION: &str = " + (.catalog_rev | rust_string) + ";\n\n"
 + "/// The provider table. All slices borrow static storage.\n"
 + "pub static PROVIDERS: &[Provider<'static>] = &[\n" + (.providers | map(provider) | join(",\n")) + "\n];\n"

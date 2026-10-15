@@ -33,7 +33,7 @@ cat > "$tmp/catalog.json" <<'JSON'
       "id": "selector-id", "upstream_id": "wire-id", "name": "Fixture", "protocol": "anthropic_messages",
       "limits": {"context_window": null, "max_output_tokens": 0},
       "cost": [{"min_prompt_tokens": 0, "input": 0, "output": null, "reasoning": 2.5, "cache_read": null, "cache_write": null}],
-      "flags": {"supports_tools": false, "supports_tool_search": false, "can_disable_reasoning": false, "anthropic_thinking": "budget", "reasoning_budget_min": -1, "reasoning_budget_max": 0, "thinking_format": "openrouter", "max_tokens_field": "max_completion_tokens"},
+      "flags": {"supports_tools": false, "supports_tool_search": false, "supports_system_updates": false, "can_disable_reasoning": false, "anthropic_thinking": "budget", "reasoning_budget_min": -1, "reasoning_budget_max": 0, "thinking_format": "openrouter", "max_tokens_field": "max_completion_tokens"},
       "modalities": {"input": ["text", "image", "future-kind"], "output": []},
       "reasoning_levels": [null, "high", "future-level"]
     }]
@@ -42,7 +42,11 @@ cat > "$tmp/catalog.json" <<'JSON'
 JSON
 
 # An OAuth endpoint selects bearer format even when the source names another key header.
-jq '.providers += [(.providers[0] | .id = "oauth-fixture" | .auth = {kind: "oauth", flow: "fixture"})]' \
+jq '.providers[0].models += [
+      (.providers[0].models[0] | .id = "supported" | .flags.supports_system_updates = true),
+      (.providers[0].models[0] | .id = "absent" | del(.flags.supports_system_updates)),
+      (.providers[0].models[0] | .id = "null" | .flags.supports_system_updates = null)
+    ] | .providers += [(.providers[0] | .id = "oauth-fixture" | .auth = {kind: "oauth", flow: "fixture"})]' \
     "$tmp/catalog.json" > "$tmp/input.json"
 bash "$scripts/generate-catalog.sh" "$tmp/input.json" "$tmp/crates/ai/src/catalog/fixture.rs"
 cat > "$tmp/crates/ai/src/catalog/fixture_test.rs" <<'RUST'
@@ -56,6 +60,7 @@ use crate::route::CredentialHeader;
 fn catalog_translation_preserves_strings_nulls_false_and_zero() {
     let provider = &PROVIDERS[0];
     let model = &provider.models[0];
+    assert_eq!(super::fixture::REVISION, "fixture");
     assert_eq!(provider.name, "quote \" slash \\ literal \\b \u{8}\u{c}\n\r\t\0\u{1b} café 🚀");
     assert_eq!(provider.auth, super::Auth::ApiKey(None));
     assert_eq!(provider.headers, &[crate::transport::Header::from_static("x-fixture", "quote \" value")]);
@@ -69,6 +74,10 @@ fn catalog_translation_preserves_strings_nulls_false_and_zero() {
     assert_eq!(model.upstream_id, "wire-id");
     assert_eq!(model.caps.tools, Some(false));
     assert_eq!(model.caps.tool_search, Some(false));
+    assert_eq!(model.caps.system_updates, Some(false));
+    assert_eq!(provider.models[1].caps.system_updates, Some(true));
+    assert_eq!(provider.models[2].caps.system_updates, None);
+    assert_eq!(provider.models[3].caps.system_updates, None);
     assert_eq!(model.caps.disable_reasoning, Some(false));
     assert_eq!(model.caps.cache_breakpoint, None);
     assert_eq!(model.limits.context_window, None);
