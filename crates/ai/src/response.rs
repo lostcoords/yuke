@@ -357,6 +357,7 @@ pub struct AttemptError {
     /// The attempt facts, which the retry decision reads.
     pub info: AttemptInfo,
     /// What the attempt produced before it failed. The caller decides whether the context keeps it.
+    // @todo(xyaman): No caller reads this yet. A failed turn could keep this text, as a cancelled turn does.
     pub partial: Vec<Partial>,
 }
 

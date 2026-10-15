@@ -147,11 +147,16 @@ fn label(event: &TurnEvent<'_>) -> String {
     match event {
         TurnEvent::ResponseStarted => "response started".to_owned(),
         TurnEvent::ResponseFailed(_) => "response failed".to_owned(),
-        TurnEvent::ResponseCancelled { .. } => "response cancelled".to_owned(),
+        TurnEvent::ResponseCancelled { blocks } => {
+            blocks.iter().fold("response cancelled".to_owned(), |label, block| {
+                format!("{label} {}", block.block)
+            })
+        }
         TurnEvent::Model(yuke_ai::Event::BlockStarted(started)) => {
             format!("start {} {:?}", started.block, started.kind)
         }
         TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => format!("text {}", delta.text),
+        TurnEvent::Model(yuke_ai::Event::ReasoningDelta(delta)) => format!("reasoning {}", delta.text),
         TurnEvent::Model(yuke_ai::Event::ToolInputDelta(delta)) => format!("arguments {} {}", delta.block, delta.text),
         TurnEvent::Model(yuke_ai::Event::BlockStopped(stopped)) => format!("stop {}", stopped.block),
         TurnEvent::Model(yuke_ai::Event::Done(done)) => format!("done {:?}", done.finish_reason),
@@ -663,11 +668,13 @@ fn cancel_during_a_tool_keeps_its_own_result_and_runs_no_later_call() {
 }
 
 #[test]
-fn cancel_during_the_stream_keeps_the_partial_text_and_delivers_every_event() {
+fn cancel_during_the_stream_keeps_the_partial_text_without_reasoning_and_delivers_every_event() {
     let partial = [
         r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,
-        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
-        r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"cut"}}"#,
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"private"}}"#,
+        r#"{"type":"content_block_stop","index":0}"#,
+        r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+        r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"cut"}}"#,
     ]
     .map(|json| format!("data: {json}\n\n"))
     .concat();
@@ -694,7 +701,15 @@ fn cancel_during_the_stream_keeps_the_partial_text_and_delivers_every_event() {
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
     assert_eq!(
         *seen.lock().unwrap(),
-        ["response started", "start 0 Text", "text cut", "response cancelled"]
+        [
+            "response started",
+            "start 0 Reasoning",
+            "reasoning private",
+            "stop 0",
+            "start 1 Text",
+            "text cut",
+            "response cancelled 1"
+        ]
     );
     assert_eq!(context, [Block::user_text("go"), Block::assistant_text("cut")]);
 }

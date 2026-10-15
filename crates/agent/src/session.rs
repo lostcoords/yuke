@@ -23,7 +23,8 @@ const TURN_STOPPED: &str = "the turn stopped before it saved its end";
 pub struct Session {
     settings: SessionSettings,
     context: Vec<yuke_ai::Block>,
-    journal: SessionJournal,
+    store: Arc<dyn Store>,
+    id: SessionId,
     /// `None` after a failed or dropped turn, until the next turn opens the session again.
     lease: Option<Lease>,
 }
@@ -31,37 +32,30 @@ pub struct Session {
 impl fmt::Debug for Session {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Session")
-            .field("id", &self.journal.id)
+            .field("id", &self.id)
             .field("settings", &self.settings)
             .field("context", &self.context)
             .finish_non_exhaustive()
     }
 }
 
-/// The journal, the inbox, and the blob store of the turns of a session. It saves each commit in the store of the
-/// session, and it reads the blobs of the session from the store.
-struct SessionJournal {
-    store: Arc<dyn Store>,
+/// The journal, the inbox, and the blob store of one turn. The turn owns its input state. A dropped turn drops that
+/// state, and the next turn loads the pending inputs from the store.
+struct TurnJournal<'a> {
+    store: &'a dyn Store,
     id: SessionId,
+    updates: &'a Updates<'a>,
     inputs: Mutex<Inputs>,
 }
 
-#[derive(Default)]
 struct Inputs {
-    /// The pending inputs of the store that no turn took, as the newest load gave them.
+    /// The pending inputs from the latest load of the store that the turn did not take.
     waiting: Vec<PendingInput>,
-    /// The ids of the inputs that a turn took and that no saved commit consumed.
+    /// The ids of the inputs that the turn took and that no saved commit consumed.
     taken: Vec<InputId>,
 }
 
-impl SessionJournal {
-    /// Load the pending inputs of the store as the waiting inputs.
-    async fn load_pending(&self) -> Result<(), StoreError> {
-        let pending = self.store.pending(self.id).await?;
-        lock(&self.inputs).waiting = pending;
-        Ok(())
-    }
-
+impl TurnJournal<'_> {
     /// Move each waiting input to the taken inputs, and return their blocks in input order.
     fn take_waiting(&self) -> Vec<yuke_ai::Block> {
         let mut inputs = lock(&self.inputs);
@@ -71,32 +65,28 @@ impl SessionJournal {
     }
 }
 
-struct TurnJournal<'a> {
-    journal: &'a SessionJournal,
-    updates: &'a Updates<'a>,
-}
-
 #[async_trait]
 impl Journal for TurnJournal<'_> {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // The first commit after a take holds the blocks of the taken inputs, so it consumes their ids. The ids leave
         // `taken` before the save: after a failed save, the next turn takes the inputs that are still pending again.
-        let consumed = std::mem::take(&mut lock(&self.journal.inputs).taken);
-        let event_number = self.journal.store.commit(self.journal.id, commit, &consumed).await?;
+        let consumed = std::mem::take(&mut lock(&self.inputs).taken);
+        let event_number = self.store.commit(self.id, commit, &consumed).await?;
         self.updates.committed(event_number, commit, consumed);
         // The inbox then gives the input that arrived during the round.
-        self.journal.load_pending().await?;
+        let pending = self.store.pending(self.id).await?;
+        lock(&self.inputs).waiting = pending;
         Ok(())
     }
 }
 
-impl Inbox for SessionJournal {
+impl Inbox for TurnJournal<'_> {
     fn take(&self) -> Vec<yuke_ai::Block> {
         self.take_waiting()
     }
 }
 
-impl yuke_ai::BlobStore for SessionJournal {
+impl yuke_ai::BlobStore for TurnJournal<'_> {
     fn read(
         &self,
         digest: &yuke_ai::Digest,
@@ -148,18 +138,15 @@ impl Session {
         Session {
             settings: opened.settings,
             context: opened.context,
-            journal: SessionJournal {
-                store,
-                id: opened.id,
-                inputs: Mutex::default(),
-            },
+            store,
+            id: opened.id,
             lease: opened.lease,
         }
     }
 
     /// The id of the session.
     pub fn id(&self) -> SessionId {
-        self.journal.id
+        self.id
     }
 
     /// The current settings.
@@ -187,7 +174,7 @@ impl Session {
         // The store can save after the caller drops this future. So the future holds the lease, and a dropped write
         // makes the next turn open the session again from the store.
         let lease = self.lease.take();
-        self.journal.store.set_settings(self.journal.id, &settings).await?;
+        self.store.set_settings(self.id, &settings).await?;
         self.settings = settings;
         self.lease = lease;
         Ok(())
@@ -196,8 +183,8 @@ impl Session {
     /// A sender of input. Another task can send input while a turn runs.
     pub fn input(&self) -> InputSender {
         InputSender {
-            store: Arc::clone(&self.journal.store),
-            id: self.journal.id,
+            store: Arc::clone(&self.store),
+            id: self.id,
         }
     }
 
@@ -216,7 +203,7 @@ impl Session {
     /// Open the session again after a failed or dropped turn. The store holds the truth about the context and the
     /// pending inputs.
     async fn reopen(&mut self) -> Result<(), StoreError> {
-        let opened = open_for_writing(&*self.journal.store, self.journal.id).await?;
+        let opened = open_for_writing(&*self.store, self.id).await?;
         self.settings = opened.settings;
         self.context = opened.context;
         self.lease = opened.lease;
@@ -224,14 +211,10 @@ impl Session {
     }
 }
 
-/// Open session `id` for writing, and end a turn that was open when its process stopped.
+/// Open session `id` for writing. A turn that the store holds as open ends as failed. Each of its calls without a
+/// result gets an error result.
 async fn open_for_writing(store: &dyn Store, id: SessionId) -> Result<Opened, StoreError> {
-    let opened = store.open(id, Access::Write).await?;
-    end_open_turn(store, opened).await
-}
-
-/// End the open turn of `opened`: each call without a result gets an error result, and the turn ends as failed.
-async fn end_open_turn(store: &dyn Store, mut opened: Opened) -> Result<Opened, StoreError> {
+    let mut opened = store.open(id, Access::Write).await?;
     if opened.turn_open {
         let results = open_calls(&opened.context)
             .map(|call_id| yuke_ai::Block::ToolResult(yuke_ai::ToolResult::error(call_id, OUTCOME_UNKNOWN)))
@@ -301,7 +284,7 @@ pub struct SessionTurn<'s> {
 impl fmt::Debug for SessionTurn<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SessionTurn")
-            .field("session", &self.session.journal.id)
+            .field("session", &self.session.id)
             .field("driver", &self.driver)
             .finish_non_exhaustive()
     }
@@ -341,23 +324,27 @@ impl<'s> SessionTurn<'s> {
         if session.lease.is_none() {
             session.reopen().await?;
         }
-        session.journal.load_pending().await?;
+        let waiting = session.store.pending(session.id).await?;
         // The future holds the lease while the turn runs, so a dropped future releases it.
         let lease = session.lease.take();
-        let input = session.journal.take_waiting();
-        let session_id = session.journal.id.to_string();
-        let journal: &SessionJournal = &session.journal;
-        let updates = Updates::new(session.journal.id, observer);
+        let updates = Updates::new(session.id, observer);
         let turn_journal = TurnJournal {
-            journal,
+            store: &*session.store,
+            id: session.id,
             updates: &updates,
+            inputs: Mutex::new(Inputs {
+                waiting,
+                taken: Vec::new(),
+            }),
         };
+        let input = turn_journal.take_waiting();
+        let session_id = session.id.to_string();
         let turn = driver
             .settings(&session.settings.settings)
             .session_id(&session_id)
             .journal(&turn_journal)
-            .inbox(journal)
-            .blobs(journal)
+            .inbox(&turn_journal)
+            .blobs(&turn_journal)
             .turn(&mut session.context, input)
             .cancellation_token(cancellation_token)
             .observer(&updates);

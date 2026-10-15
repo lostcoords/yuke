@@ -151,13 +151,7 @@ impl Observer for Updates<'_> {
             TurnEvent::ResponseCancelled { blocks } => {
                 let mut state = lock(&self.state);
                 let draft = state.draft.as_mut().expect("a response has a draft");
-                // The engine omits reasoning from cancelled context. Reply supplies the other retained blocks.
-                draft.blocks = blocks
-                    .iter()
-                    .filter_map(|block| {
-                        (!matches!(block.content, yuke_ai::Partial::Reasoning(_))).then_some(block.block)
-                    })
-                    .collect();
+                draft.blocks = blocks.iter().map(|block| block.block).collect();
                 draft.ready = true;
             }
             TurnEvent::Model(event) => {

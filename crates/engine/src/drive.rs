@@ -34,9 +34,10 @@ pub enum TurnEvent<'a> {
     /// A provider attempt failed. None of its blocks enter the context.
     ResponseFailed(&'a AttemptError),
 
-    /// A cancel ends the provider attempt. Its partial output still includes reasoning that the context omits.
+    /// A cancel ends the provider attempt. The event carries the partial blocks that enter the context.
     ResponseCancelled {
-        /// The original identities and content of the retained partial blocks, in start order.
+        /// The partial blocks that enter the context, with their original block ids, in start order. Reasoning blocks
+        /// do not enter the context.
         blocks: &'a [yuke_ai::PartialBlock],
     },
 
@@ -531,7 +532,9 @@ impl<'a> Driver<'a> {
                     Raced::Done(Some(Ok(event))) => observer.event(&TurnEvent::Model(event)),
                     Raced::Done(_) => break,
                     Raced::Cancelled => {
-                        let blocks = reply.cancel();
+                        let mut blocks = reply.cancel();
+                        // Cancelled reasoning has no provider replay state, so the context omits it.
+                        blocks.retain(|block| !matches!(block.content, Partial::Reasoning(_)));
                         observer.event(&TurnEvent::ResponseCancelled { blocks: &blocks });
                         return Sent::Cancelled(blocks.into_iter().map(|block| block.content).collect());
                     }

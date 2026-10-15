@@ -1,6 +1,5 @@
 //! Public session observations across model streams, tool execution, and durable writes.
 
-use std::fmt::Write;
 use std::pin::pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
@@ -15,8 +14,8 @@ use yuke_protocol::{
 };
 
 use super::support::{
-    FailingStore, NoWait, ScriptedTransport, Stalled, StoreBehavior, failed_reply, send_input_reply, settings, target,
-    text_reply,
+    FailingStore, NoWait, ScriptedTransport, Stalled, StoreBehavior, failed_reply, send_input_reply, settings, sse,
+    target, text_reply,
 };
 
 #[derive(Default)]
@@ -66,14 +65,6 @@ impl Capture {
             })
             .collect()
     }
-}
-
-fn sse(events: &[&str]) -> String {
-    let mut output = String::new();
-    for event in events {
-        write!(output, "data: {event}\n\n").unwrap();
-    }
-    output
 }
 
 #[tokio::test]
@@ -437,6 +428,25 @@ async fn an_unconfirmed_answer_save_discards_the_draft_and_starts_no_tool() {
         0
     );
     assert_eq!(store.events(session.id(), None).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_failed_load_of_the_pending_inputs_starts_no_turn_and_sends_no_update() {
+    let store = FailingStore::new(StoreBehavior::FailPending);
+    let transport = ScriptedTransport::new([]);
+    let target = target();
+    let mut session = Session::create(store, &settings()).await.unwrap();
+    let capture = Capture::default();
+
+    let failed = session
+        .turn(Driver::new(&transport, &target, &NoWait))
+        .observer(&capture)
+        .run()
+        .await;
+
+    assert!(failed.is_err(), "{failed:?}");
+    assert!(capture.0.lock().unwrap().is_empty());
+    assert_eq!(transport.requests(), Vec::<String>::new());
 }
 
 #[tokio::test]

@@ -1,6 +1,7 @@
 //! A scripted transport, reply fixtures, and a store that fails a chosen commit.
 
 use std::collections::VecDeque;
+use std::fmt::Write;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -55,46 +56,50 @@ pub(crate) fn assert_in_order(body: &str, texts: &[&str]) {
 
 /// One complete Anthropic text answer, as SSE.
 pub(crate) fn text_reply(text: &str) -> String {
+    let delta =
+        format!(r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{text}"}}}}"#);
     sse(&[
-        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#.to_owned(),
-        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#.to_owned(),
-        format!(r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{text}"}}}}"#),
-        r#"{"type":"content_block_stop","index":0}"#.to_owned(),
-        r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#.to_owned(),
-        r#"{"type":"message_stop"}"#.to_owned(),
+        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        &delta,
+        r#"{"type":"content_block_stop","index":0}"#,
+        r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#,
+        r#"{"type":"message_stop"}"#,
     ])
 }
 
 /// An Anthropic answer that streams `text`, then fails with an overload error, as SSE. The output before the error
 /// stops a retry, so the request fails at once.
 pub(crate) fn failed_reply(text: &str) -> String {
+    let delta =
+        format!(r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{text}"}}}}"#);
     sse(&[
-        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#.to_owned(),
-        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#.to_owned(),
-        format!(r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{text}"}}}}"#),
-        r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#.to_owned(),
+        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        &delta,
+        r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
     ])
 }
 
 /// A complete Anthropic SSE answer that requests the `send` tool with no arguments.
 pub(crate) fn send_input_reply() -> String {
     sse(&[
-        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#.to_owned(),
-        r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"c1","name":"send","input":{}}}"#.to_owned(),
-        r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}"#
-            .to_owned(),
-        r#"{"type":"content_block_stop","index":0}"#.to_owned(),
-        r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}"#.to_owned(),
-        r#"{"type":"message_stop"}"#.to_owned(),
+        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"c1","name":"send","input":{}}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}"#,
+        r#"{"type":"content_block_stop","index":0}"#,
+        r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}"#,
+        r#"{"type":"message_stop"}"#,
     ])
 }
 
-fn sse(events: &[String]) -> String {
-    events
-        .iter()
-        .map(|json| format!("data: {json}\n\n"))
-        .collect::<Vec<_>>()
-        .concat()
+/// `events` as one SSE body: each event is the data of one message.
+pub(crate) fn sse(events: &[&str]) -> String {
+    let mut output = String::new();
+    for event in events {
+        write!(output, "data: {event}\n\n").unwrap();
+    }
+    output
 }
 
 /// Answer each open with the next scripted reply, and record each request body.
@@ -208,6 +213,8 @@ pub(crate) enum StoreBehavior {
     StallCommit(usize),
     /// Save the settings. Do not answer the write.
     StallSettings,
+    /// Fail each read of the pending inputs.
+    FailPending,
 }
 
 /// A memory store with one selected failure mode.
@@ -285,6 +292,9 @@ impl Store for FailingStore {
     }
 
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError> {
+        if matches!(self.behavior, StoreBehavior::FailPending) {
+            return Err(StoreError::Failed("the disk is gone".into()));
+        }
         self.store.pending(id).await
     }
 

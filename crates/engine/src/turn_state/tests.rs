@@ -281,13 +281,12 @@ fn start_sends_every_block_of_the_input() {
 }
 
 #[test]
-fn cancelled_request_keeps_its_text_and_calls_but_not_its_reasoning() {
+fn cancelled_request_keeps_its_text_and_gives_each_call_an_error_result() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context);
     let _ = turn_state.start(vec![Block::user_text("one")]);
 
     let action = turn_state.model_cancelled(vec![
-        Partial::Reasoning("Two files.".to_owned()),
         Partial::Text("Let me check.".to_owned()),
         Partial::ToolCall(ToolCall {
             call_id: "c1".to_owned(),

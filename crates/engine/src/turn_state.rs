@@ -322,13 +322,9 @@ impl<'c> TurnState<'c> {
     }
 
     /// End the turn as [`Outcome::Cancelled`] after [`Action::Send`]. The `partial` output of the cancelled attempt
-    /// joins the context, except its reasoning, which has no provider state. Each tool call in it gets an error result.
+    /// joins the context. Each tool call in it gets an error result.
     pub(crate) fn model_cancelled(&mut self, partial: Vec<Partial>) -> Action<'_> {
-        let blocks: Vec<Block> = partial
-            .into_iter()
-            .filter(|part| !matches!(part, Partial::Reasoning(_)))
-            .map(Block::from)
-            .collect();
+        let blocks: Vec<Block> = partial.into_iter().map(Block::from).collect();
         let not_run: Vec<Block> = blocks
             .iter()
             .filter_map(|block| match block {

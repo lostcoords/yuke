@@ -383,6 +383,44 @@ async fn a_dropped_turn_releases_the_lease_and_the_next_turn_opens_the_session_a
 }
 
 #[tokio::test]
+async fn after_a_dropped_turn_of_an_empty_input_the_next_turn_consumes_the_input_once() {
+    let store = Arc::new(MemoryStore::new());
+    let target = target();
+    let transport = ScriptedTransport::new([text_reply("two"), text_reply("three")]);
+    let mut session = Session::create(store.clone(), &settings()).await.unwrap();
+    let first = session.input().send(&[Block::user_text("one")]).await.unwrap();
+    session
+        .turn(Driver::new(&transport, &target, &NoWait))
+        .run()
+        .await
+        .unwrap();
+    let empty = session.input().send(&[]).await.unwrap();
+    {
+        let mut run = pin!(session.turn(Driver::new(&Stalled, &target, &NoWait)).run());
+        // The turn takes the empty input and sends its request before its first commit.
+        assert!(run.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+    }
+
+    session
+        .turn(Driver::new(&transport, &target, &NoWait))
+        .run()
+        .await
+        .unwrap();
+
+    let consumed: Vec<InputId> = store
+        .events(session.id(), None)
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|stored| match stored.event {
+            SessionEvent::Commit { consumed, .. } => consumed,
+            SessionEvent::Settings(_) => Vec::new(),
+        })
+        .collect();
+    assert_eq!(consumed, [first, empty]);
+}
+
+#[tokio::test]
 async fn new_settings_after_a_dropped_turn_get_owned_while_another_writer_holds_the_session() {
     let store = Arc::new(MemoryStore::new());
     let target = target();
