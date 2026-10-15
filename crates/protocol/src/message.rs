@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    EventNumber, InputId, InteractionClosedParams, InteractionRequestedParams, InteractionRespondParams, PendingInput,
-    SessionId, SessionSettings, SessionState, SessionUpdateParams,
+    EventNumber, InputId, InteractionClosedParams, InteractionRequestedParams, InteractionRespondParams, SessionId,
+    SessionSettings, SessionUpdateParams,
 };
 
 /// The protocol version that this crate speaks. A breaking change of the messages takes the next number.
@@ -64,9 +64,10 @@ pub enum ClientRequest {
     /// Fork a session at the end of a completed turn. Result: [`ForkSessionResult`].
     #[serde(rename = "session/fork")]
     ForkSession(ForkSessionParams),
-    /// Open a session, and read it. The server sends its saved events as `session/update` notifications before the
-    /// result. The live updates that come during the load follow the saved events. A load starts no turn, also when
-    /// input waits. Result: [`LoadSessionResult`].
+    /// Open a session, and send it as `session/update` notifications: the saved events, a `state` update, an
+    /// `input_accepted` update for each pending input, and a `job` update for each running job. The live updates that
+    /// come during the load follow them. The result comes last. A load starts no turn, also when input waits. Result:
+    /// [`EmptyResult`].
     #[serde(rename = "session/load")]
     LoadSession(LoadSessionParams),
     /// Stop the running turn and the background jobs of a session, and free the session. The session stays saved, and
@@ -88,7 +89,8 @@ pub enum ClientRequest {
     /// List the running background jobs of an open session. Result: [`ListJobsResult`].
     #[serde(rename = "job/list")]
     ListJobs(ListJobsParams),
-    /// Stop a running background job, and wait for its end. A stopped job sends no end input. Result: [`EmptyResult`].
+    /// Stop a running background job, and wait for its end. The `job` update with the end comes before the answer. A
+    /// stopped job sends no end input. Result: [`EmptyResult`].
     #[serde(rename = "job/stop")]
     StopJob(StopJobParams),
     /// Answer a question of a plugin. Result: [`EmptyResult`].
@@ -328,17 +330,6 @@ pub struct LoadSessionParams {
     pub after: Option<EventNumber>,
 }
 
-/// The result of `session/load`. The saved events arrive before it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct LoadSessionResult {
-    /// The inputs that no commit consumed, in id order.
-    pub pending: Vec<PendingInput>,
-    /// Whether a turn runs.
-    pub state: SessionState,
-}
-
 /// The params of `session/close`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -369,7 +360,7 @@ pub struct ListJobsResult {
     pub jobs: Vec<Job>,
 }
 
-/// A running background job.
+/// A background job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -380,6 +371,29 @@ pub struct Job {
     pub command: String,
     /// The file that holds the output of the job.
     pub log: PathBuf,
+    /// Whether the job runs, and how it ended.
+    #[serde(flatten)]
+    pub state: JobState,
+}
+
+/// Whether a job runs, and how it ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "state", rename_all = "snake_case", rename_all_fields = "camelCase")]
+pub enum JobState {
+    /// The process runs.
+    Running,
+    /// The process ended. Without an exit code and a signal, the wait for the process failed.
+    Ended {
+        /// The exit code, when the process exited.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        /// The signal that ended the process.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signal: Option<i32>,
+        /// A stop ended the job: `job/stop`, a close, or the end of the server.
+        stopped: bool,
+    },
 }
 
 /// The params of `job/stop`.

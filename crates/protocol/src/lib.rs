@@ -21,7 +21,7 @@ pub use interaction::{
 pub use message::{
     CancelParams, ClientNotification, ClientRequest, CloseSessionParams, EmptyResult, ExtensionEventParams,
     ForkSessionParams, ForkSessionResult, Implementation, InitializeParams, InitializeResult, InputParams, InputResult,
-    Job, JsonRpc, ListJobsParams, ListJobsResult, LoadSessionParams, LoadSessionResult, NewSessionResult, NoticeLevel,
+    Job, JobState, JsonRpc, ListJobsParams, ListJobsResult, LoadSessionParams, NewSessionResult, NoticeLevel,
     NoticeParams, Notification, PROTOCOL_VERSION, RemoveInputParams, Request, RequestId, Response, ResponseError,
     ResponseOutcome, ServerNotification, SetSettingsParams, StopJobParams,
 };

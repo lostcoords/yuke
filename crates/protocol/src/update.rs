@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{DraftId, EventNumber, Input, InputId, SessionId, StoredEvent};
+use crate::{DraftId, EventNumber, Input, InputId, Job, SessionId, StoredEvent};
 
 /// The params of `session/update`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -68,6 +68,12 @@ pub enum LiveUpdate {
     State {
         /// Whether a turn runs.
         state: SessionState,
+    },
+    /// A background job of the session started or ended. The update holds the whole job, so a client replaces its
+    /// copy.
+    Job {
+        /// The job.
+        job: Job,
     },
     /// The session accepted an input. It is pending until a saved commit names it in `consumed`, or until a removal.
     InputAccepted {

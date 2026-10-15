@@ -5,6 +5,7 @@ import type { DraftId } from "./DraftId";
 import type { EventNumber } from "./EventNumber";
 import type { Input } from "./Input";
 import type { InputId } from "./InputId";
+import type { Job } from "./Job";
 import type { ModelUpdate } from "./ModelUpdate";
 import type { SessionState } from "./SessionState";
 import type { ToolCall } from "./ToolCall";
@@ -17,7 +18,11 @@ export type LiveUpdate = { "sessionUpdate": "state",
 /**
  * Whether a turn runs.
  */
-state: SessionState, } | { "sessionUpdate": "input_accepted", 
+state: SessionState, } | { "sessionUpdate": "job", 
+/**
+ * The job.
+ */
+job: Job, } | { "sessionUpdate": "input_accepted", 
 /**
  * The id of the input.
  */

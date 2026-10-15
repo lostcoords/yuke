@@ -128,14 +128,11 @@ impl fmt::Display for InputError {
 impl std::error::Error for InputError {}
 
 /// An input that no commit consumed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PendingInput {
     /// The id that `Store::accept_input` of `yuke-agent` gave.
     pub id: InputId,
     /// The input.
-    #[serde(flatten)]
     pub input: Input,
 }
 

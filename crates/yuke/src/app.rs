@@ -25,8 +25,8 @@ use yuke_ai::{Block, Target};
 use yuke_engine::Timer;
 use yuke_js::{Fault, Limits, Options, Processes, Runtime};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InputSource, Job, LoadSessionResult, NoticeLevel, NoticeParams, ServerNotification,
-    SessionId, SessionSettings,
+    EventNumber, Input, InputId, InputSource, Job, NoticeLevel, NoticeParams, ServerNotification, SessionId,
+    SessionSettings,
 };
 use yuke_store::SqliteStore;
 
@@ -211,17 +211,13 @@ impl App {
         self.start_session(session, target).await
     }
 
-    /// Open session `id` when it is not open, send its saved events after `after`, and answer its pending inputs and
-    /// its state. The live updates of the session that come during the load follow the saved events.
+    /// Open session `id` when it is not open, and send it as updates: its saved events after `after`, its state, its
+    /// pending inputs, and its running jobs. The live updates of the session that come during the load follow them.
     ///
     /// # Errors
     ///
     /// Returns [`AppError::Store`] when the store fails, and [`AppError::Invalid`] for a model that cannot run.
-    pub(crate) async fn load(
-        &mut self,
-        id: SessionId,
-        after: Option<EventNumber>,
-    ) -> Result<LoadSessionResult, AppError> {
+    pub(crate) async fn load(&mut self, id: SessionId, after: Option<EventNumber>) -> Result<(), AppError> {
         if !self.sessions.contains_key(&id) {
             let session = Session::open(Arc::clone(&self.shared.store), id)
                 .await
@@ -294,7 +290,7 @@ impl App {
         Ok(self.live(id)?.jobs())
     }
 
-    /// Stop the job `job_id` of session `id`, and wait for its end.
+    /// Stop the job `job_id` of session `id`, and wait for its end. The `job` update with the end comes first.
     ///
     /// # Errors
     ///

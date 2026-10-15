@@ -11,9 +11,9 @@ use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_protocol::{
     ClientNotification, ClientRequest, ConsumedInput, EventNumber, ExtensionEventParams, Input, InputError, InputId,
     InputSource, InteractionClosedParams, InteractionId, InteractionRequest, InteractionRequestedParams,
-    InteractionRespondParams, InteractionResponse, LiveUpdate, LoadSessionResult, ModelReference, NoticeLevel,
-    NoticeParams, Notification, PendingInput, Request, Response, ServerNotification, SessionEvent, SessionId,
-    SessionSettings, SessionUpdate, SessionUpdateParams, StoredEvent,
+    InteractionRespondParams, InteractionResponse, JobState, LiveUpdate, ModelReference, NoticeLevel, NoticeParams,
+    Notification, Request, Response, ServerNotification, SessionEvent, SessionId, SessionSettings, SessionUpdate,
+    SessionUpdateParams, StoredEvent,
 };
 
 const SESSION: &str = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9d";
@@ -235,7 +235,7 @@ fn a_response_holds_a_result_or_an_error() {
 }
 
 #[test]
-fn a_pending_input_reads_and_writes_its_json_with_its_model_content_only_when_it_differs() {
+fn an_accepted_input_reads_and_writes_its_json_with_its_model_content_only_when_it_differs() {
     let input = Input::new(InputSource::User, vec![yuke_ai::Block::user_text("Review @main.rs")]).unwrap();
     let same = input
         .clone()
@@ -245,26 +245,21 @@ fn a_pending_input_reads_and_writes_its_json_with_its_model_content_only_when_it
         .clone()
         .with_model_content(vec![yuke_ai::Block::user_text("Review main.rs, and read it first.")])
         .unwrap();
+    let accepted = |id, input| LiveUpdate::InputAccepted {
+        input_id: InputId(id),
+        input,
+    };
 
     assert_json(
-        &json!({ "pending": [
-            { "id": 1, "source": { "kind": "user" }, "content": [{ "user_text": "Review @main.rs" }] },
-            { "id": 2, "source": { "kind": "user" }, "content": [{ "user_text": "Review @main.rs" }],
-              "modelContent": [{ "user_text": "Review main.rs, and read it first." }] }
-        ], "state": "running" }),
-        &LoadSessionResult {
-            pending: vec![
-                PendingInput {
-                    id: InputId(1),
-                    input: same,
-                },
-                PendingInput {
-                    id: InputId(2),
-                    input: other,
-                },
-            ],
-            state: yuke_protocol::SessionState::Running,
-        },
+        &json!({ "sessionUpdate": "input_accepted", "inputId": 1,
+            "input": { "source": { "kind": "user" }, "content": [{ "user_text": "Review @main.rs" }] } }),
+        &accepted(1, same),
+    );
+    assert_json(
+        &json!({ "sessionUpdate": "input_accepted", "inputId": 2,
+            "input": { "source": { "kind": "user" }, "content": [{ "user_text": "Review @main.rs" }],
+              "modelContent": [{ "user_text": "Review main.rs, and read it first." }] } }),
+        &accepted(2, other),
     );
 }
 
@@ -320,14 +315,50 @@ fn queue_updates_and_an_empty_result_read_and_write_their_json() {
     );
     assert_json(&json!({}), &yuke_protocol::EmptyResult {});
     assert_json(
-        &json!({ "jobs": [{ "id": "job-1a2b", "command": "sleep 30", "log": "/tmp/job-1a2b.log" }] }),
+        &json!({ "jobs": [{ "id": "job-1a2b", "command": "sleep 30", "log": "/tmp/job-1a2b.log", "state": "running" }] }),
         &yuke_protocol::ListJobsResult {
-            jobs: vec![yuke_protocol::Job {
-                id: "job-1a2b".to_owned(),
-                command: "sleep 30".to_owned(),
-                log: "/tmp/job-1a2b.log".into(),
-            }],
+            jobs: vec![job(JobState::Running)],
         },
+    );
+}
+
+fn job(state: JobState) -> yuke_protocol::Job {
+    yuke_protocol::Job {
+        id: "job-1a2b".to_owned(),
+        command: "sleep 30".to_owned(),
+        log: "/tmp/job-1a2b.log".into(),
+        state,
+    }
+}
+
+#[test]
+fn a_job_update_holds_the_whole_job_and_its_end() {
+    let update = |job| SessionUpdateParams {
+        session_id: session(),
+        update: SessionUpdate::Live(LiveUpdate::Job { job }),
+    };
+
+    assert_json(
+        &json!({ "sessionId": SESSION, "update": { "sessionUpdate": "job", "job": {
+            "id": "job-1a2b", "command": "sleep 30", "log": "/tmp/job-1a2b.log", "state": "ended", "exitCode": 0,
+            "stopped": false
+        } } }),
+        &update(job(JobState::Ended {
+            exit_code: Some(0),
+            signal: None,
+            stopped: false,
+        })),
+    );
+    assert_json(
+        &json!({ "sessionId": SESSION, "update": { "sessionUpdate": "job", "job": {
+            "id": "job-1a2b", "command": "sleep 30", "log": "/tmp/job-1a2b.log", "state": "ended", "signal": 15,
+            "stopped": true
+        } } }),
+        &update(job(JobState::Ended {
+            exit_code: None,
+            signal: Some(15),
+            stopped: true,
+        })),
     );
 }
 

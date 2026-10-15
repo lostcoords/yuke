@@ -32,6 +32,9 @@ pub trait SessionHost: Send + Sync {
     /// Returns the text of the failure. The model receives it as the error of the tool call.
     async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String>;
 
+    /// A background job of the session started or ended. The call must not wait.
+    fn job_changed(&self, job: yuke_protocol::Job);
+
     /// A background job of the session ended by itself. Give [`JobEnded::text`] to the session as an input that is not
     /// from the user. A close and a shutdown wait for the return.
     async fn job_ended(&self, ended: JobEnded);

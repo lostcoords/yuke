@@ -19,6 +19,7 @@ use tokio::process::{Child, Command};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use yuke_engine::CancellationToken;
+use yuke_protocol::JobState;
 
 use crate::tools::SessionHost;
 
@@ -116,10 +117,43 @@ struct Job {
     /// The process group while the process runs. `None` before the spawn and after the end of the process.
     group: Option<Pid>,
     stop: CancellationToken,
-    /// A stop of this one job came. Its caller reports the end, so the job sends no end message.
+    /// A stop of this one job came, so the job sends no end message.
     silenced: bool,
-    /// The label of the end, for example `exited 0`, after the job has delivered its end.
-    end: watch::Receiver<Option<String>>,
+    /// The end, after the job has delivered it.
+    end: watch::Receiver<Option<JobEnd>>,
+}
+
+/// How a job ended.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct JobEnd {
+    exit_code: Option<i32>,
+    signal: Option<i32>,
+    /// A stop ended the job.
+    stopped: bool,
+}
+
+impl JobEnd {
+    /// The end in words, for example `exited 0`.
+    fn label(self) -> String {
+        match self {
+            JobEnd { stopped: true, .. } => "stopped".to_owned(),
+            JobEnd {
+                exit_code: Some(code), ..
+            } => format!("exited {code}"),
+            JobEnd {
+                signal: Some(signal), ..
+            } => format!("signal {signal}"),
+            JobEnd { .. } => "failed".to_owned(),
+        }
+    }
+
+    fn state(self) -> JobState {
+        JobState::Ended {
+            exit_code: self.exit_code,
+            signal: self.signal,
+            stopped: self.stopped,
+        }
+    }
 }
 
 /// A background job that ended by itself. The consumer gives [`JobEnded::text`] to the session as an input that is not
@@ -298,6 +332,7 @@ impl Processes {
         }
         let job = JobTask {
             id: id.clone(),
+            command: command.clone(),
             log: log.clone(),
             jobs: Arc::clone(&self.jobs),
             stop,
@@ -313,8 +348,9 @@ impl Processes {
         Ok((id, log))
     }
 
-    /// Stop the running job `id` of `owner` and answer how it ended and its log, or `None` when `owner` runs no such
-    /// job. A stopped job sends no end message.
+    /// Stop the running job `id` of `owner`, wait for its end, and answer the end in words and the log. Answer `None`
+    /// when `owner` runs no such job. [`SessionHost::job_changed`] gets the end before the answer. A stopped job sends
+    /// no end message.
     pub async fn stop_job(&self, id: &str, owner: &Arc<dyn SessionHost>) -> Option<(String, PathBuf)> {
         let (mut end, log) = {
             let mut jobs = lock(&self.jobs);
@@ -327,8 +363,8 @@ impl Processes {
             (job.end.clone(), job.log.clone())
         };
         let label = match end.wait_for(Option::is_some).await {
-            Ok(label) => label.clone().unwrap_or_default(),
-            Err(_) => "failed".to_owned(),
+            Ok(end) => end.unwrap_or_default().label(),
+            Err(_) => JobEnd::default().label(),
         };
         Some((label, log))
     }
@@ -367,6 +403,7 @@ impl Processes {
                 id: job.id.clone(),
                 command: job.command.clone(),
                 log: job.log.clone(),
+                state: JobState::Running,
             })
             .collect()
     }
@@ -394,10 +431,11 @@ impl Drop for Processes {
 /// The task of one job: it spawns the process, waits for its end, and delivers the end.
 struct JobTask {
     id: String,
+    command: String,
     log: PathBuf,
     jobs: Arc<Mutex<Jobs>>,
     stop: CancellationToken,
-    finish: watch::Sender<Option<String>>,
+    finish: watch::Sender<Option<JobEnd>>,
 }
 
 impl JobTask {
@@ -421,14 +459,16 @@ impl JobTask {
             }
         };
         self.set_group(Some(group));
+        owner.job_changed(self.job(JobState::Running));
         answer_start(started, Ok(()));
         // A stop that came during the spawn ends the process here, with the grace.
-        let (label, stopped) = wait_job(child, group, &self.stop).await;
-        // A process that ended by itself reports its end, also when a close came after the end. A stop of this one job
-        // reports the end to its caller instead.
+        let end = wait_job(child, group, &self.stop).await;
+        // A process that ended by itself sends its end message, also when a close came after the end. A stop of this
+        // one job sends none.
         let silenced = self.set_group(None);
-        if !stopped && !silenced {
-            let text = end_message(&self.id, &label, self.log.clone()).await;
+        owner.job_changed(self.job(end.state()));
+        if !end.stopped && !silenced {
+            let text = end_message(&self.id, &end.label(), self.log.clone()).await;
             owner
                 .job_ended(JobEnded {
                     id: self.id.clone(),
@@ -436,7 +476,17 @@ impl JobTask {
                 })
                 .await;
         }
-        self.end(Some(label));
+        self.end(Some(end));
+    }
+
+    /// The job in `state`, for its owner.
+    fn job(&self, state: JobState) -> yuke_protocol::Job {
+        yuke_protocol::Job {
+            id: self.id.clone(),
+            command: self.command.clone(),
+            log: self.log.clone(),
+            state,
+        }
     }
 
     /// Set the process group of the job, and answer whether a stop of this one job came. A stop takes the same lock, so
@@ -451,13 +501,9 @@ impl JobTask {
     }
 
     /// Remove the job from the list, then tell each waiter, so a waiter finds the list without it.
-    fn end(self, label: Option<String>) {
+    fn end(self, end: Option<JobEnd>) {
         lock(&self.jobs).running.retain(|job| job.id != self.id);
-        if self
-            .finish
-            .send(Some(label.unwrap_or_else(|| "failed".to_owned())))
-            .is_err()
-        {
+        if self.finish.send(Some(end.unwrap_or_default())).is_err() {
             // No stop waits for the end.
         }
     }
@@ -807,24 +853,19 @@ fn spawn_logged(command: &str, folder: &Path, log: &Path) -> io::Result<(Child, 
     Ok((child, group))
 }
 
-/// Wait for the end of a job, or stop it. Answer the label of the end, for example `exited 0` or `stopped`, and whether
-/// the stop ended the process.
-async fn wait_job(mut child: Child, group: Pid, stop: &CancellationToken) -> (String, bool) {
+/// Wait for the end of a job, or stop it, and answer how it ended.
+async fn wait_job(mut child: Child, group: Pid, stop: &CancellationToken) -> JobEnd {
     let (status, stopped) = tokio::select! {
         status = child.wait() => (status, false),
         () = stop.cancelled() => (stop_group(group, &mut child).await, true),
     };
     kill_rest_of_group(group);
-    let label = match status {
-        Ok(_) if stopped => "stopped".to_owned(),
-        Ok(status) => match (status.code(), std::os::unix::process::ExitStatusExt::signal(&status)) {
-            (Some(code), _) => format!("exited {code}"),
-            (None, Some(signal)) => format!("signal {signal}"),
-            (None, None) => "failed".to_owned(),
-        },
-        Err(_) => "failed".to_owned(),
-    };
-    (label, stopped)
+    let status = status.ok();
+    JobEnd {
+        exit_code: status.and_then(|status| status.code()),
+        signal: status.and_then(|status| std::os::unix::process::ExitStatusExt::signal(&status)),
+        stopped,
+    }
 }
 
 /// The end message of a job for the model: the end, the log file, and the last lines of the log.

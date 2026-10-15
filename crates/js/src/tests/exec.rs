@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use yuke_engine::CancellationToken;
+use yuke_protocol::JobState;
 
 use super::tools::{TestHost, call, call_with, error_of, text_of, tools_in, tools_of};
 use super::{LIMITS, folder};
@@ -630,4 +631,74 @@ fn the_native_module_declares_the_names_that_it_exports() {
     let mut exported = native::EXPORTS.to_vec();
     exported.sort_unstable();
     assert_eq!(declared, exported);
+}
+
+#[tokio::test]
+async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
+    let folder = folder("the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers");
+    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let host = Arc::new(TestHost {
+        folder: folder.clone(),
+        ..TestHost::default()
+    });
+    let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
+    let owner: Arc<dyn SessionHost> = Arc::clone(&host) as Arc<dyn SessionHost>;
+    let start = |command: &'static str| {
+        let exec = &exec;
+        async move {
+            let arguments = format!(r#"{{"command": {}, "background": true}}"#, json_string(command));
+            job_id(&text_of(exec, &arguments).await)
+        }
+    };
+    let ended = start("exit 3").await;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while host.changed.lock().unwrap().len() < 2 {
+        assert!(Instant::now() < deadline, "the job did not end");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let stopped = start("exec sleep 30").await;
+    let first_closed = start("exec sleep 31").await;
+    let second_closed = start("exec sleep 32").await;
+
+    let answered = processes.stop_job(&stopped, &owner).await;
+    let changed_at_answer = host.changed.lock().unwrap().len();
+    processes.close_owner(&owner).await;
+
+    assert_eq!(answered.map(|(label, _)| label), Some("stopped".to_owned()));
+    // The host has the end of the stopped job before the stop answers.
+    assert_eq!(changed_at_answer, 6);
+    let job = |id: &str, command: &str, state| yuke_protocol::Job {
+        id: id.to_owned(),
+        command: command.to_owned(),
+        log: folder.join("processes").join(format!("{id}.log")),
+        state,
+    };
+    let end = |exit_code, signal, stopped| JobState::Ended {
+        exit_code,
+        signal,
+        stopped,
+    };
+    let changed = host.changed.lock().unwrap().clone();
+    assert_eq!(
+        changed[..6],
+        [
+            job(&ended, "exit 3", JobState::Running),
+            job(&ended, "exit 3", end(Some(3), None, false)),
+            job(&stopped, "exec sleep 30", JobState::Running),
+            job(&first_closed, "exec sleep 31", JobState::Running),
+            job(&second_closed, "exec sleep 32", JobState::Running),
+            job(&stopped, "exec sleep 30", end(None, Some(15), true)),
+        ]
+    );
+    // The close stops both of its jobs, in any order.
+    let mut closed = changed[6..].to_vec();
+    closed.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut expected = vec![
+        job(&first_closed, "exec sleep 31", end(None, Some(15), true)),
+        job(&second_closed, "exec sleep 32", end(None, Some(15), true)),
+    ];
+    expected.sort_by(|left, right| left.id.cmp(&right.id));
+    assert_eq!(closed, expected);
+    // A stopped job sends no end message.
+    assert_eq!(host.ended.lock().unwrap().len(), 1);
 }

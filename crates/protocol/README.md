@@ -8,9 +8,10 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   `session/remove_input`, `session/set_settings`, `job/list`, `job/stop`, `interaction/respond`.
 - A session is open after `session/new`, `session/fork`, or `session/load`, until `session/close` or the end of the
   connection. The other session requests need an open session. Many sessions can be open at once.
-- The background jobs of a session run while the session is open. `job/list` lists them, and `job/stop` stops one.
-  `session/close` fails while jobs run, unless it has `stopJobs: true`. The end of a job that ends by itself arrives
-  as an input from `host:jobs`.
+- The background jobs of a session run while the session is open. `job/list` lists them. A `job` update holds the
+  whole job at its start and at its end. `job/stop` waits for the end, and its `job` update comes first.
+  `session/close` fails while jobs run, unless it has `stopJobs: true`. A job that ends by itself also sends an input
+  from `host:jobs`, after its `job` update.
 - Notifications: `session/cancel` from a client. `session/update`, `notice`, `extension/event`,
   `interaction/requested`, and `interaction/closed` from the server.
 - A plugin can ask the user a question: `confirm`, `select`, or `input`. yuke itself asks nothing. The client answers
@@ -27,10 +28,11 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - During a turn, a client can add and remove inputs, cancel the turn, close the session, and list and stop jobs. The
   settings (model, request settings, system prompt, folder) do not change: `session/set_settings` fails while a turn
   runs or input waits.
-- `session/load` sends the saved events first. The server holds the live updates of the session that come during the
-  load, and sends them after the saved events, without the saved events that the load already sent. A client drops a
-  saved event that it has (by `seq`) and an `input_accepted` that it has (by `inputId`). The server disconnects a
-  client that falls behind. The client then loads again.
+- `session/load` sends the session as updates: the saved events, a `state` update, an `input_accepted` for each
+  pending input, and a `job` update for each running job. Then come the live updates of the load time that these do
+  not hold, and the empty answer. A client applies the updates in order. It drops a saved event that it has (by
+  `seq`) and an `input_accepted` that it has (by `inputId`). The server disconnects a client that falls behind. The
+  client then loads again.
 - Live model updates belong to a draft and retain native block ids and boundaries. They exclude provider replay state.
 - `draft_committed` carries one `eventNumber` and an array of original draft block ids, in saved block order.
   Array index `i` maps to block index `i` in that commit. A client replaces the whole draft.

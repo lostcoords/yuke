@@ -22,6 +22,8 @@ pub(super) struct TestHost {
     pub(super) folder: PathBuf,
     pub(super) media: Mutex<Vec<Vec<u8>>>,
     pub(super) ended: Mutex<Vec<JobEnded>>,
+    /// Each start and end of a job, in order.
+    pub(super) changed: Mutex<Vec<yuke_protocol::Job>>,
     /// Holds each job end until a notify, when it is set.
     pub(super) end_gate: Option<Arc<tokio::sync::Notify>>,
 }
@@ -39,6 +41,10 @@ impl SessionHost for TestHost {
         };
         self.media.lock().unwrap().push(bytes);
         Ok(blob)
+    }
+
+    fn job_changed(&self, job: yuke_protocol::Job) {
+        self.changed.lock().unwrap().push(job);
     }
 
     async fn job_ended(&self, ended: JobEnded) {

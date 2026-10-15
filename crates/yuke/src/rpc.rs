@@ -187,7 +187,10 @@ impl Server {
             ClientRequest::ForkSession(params) => result(&ForkSessionResult {
                 session_id: app.fork(params.session_id, params.through).await?,
             }),
-            ClientRequest::LoadSession(params) => result(&app.load(params.session_id, params.after).await?),
+            ClientRequest::LoadSession(params) => {
+                app.load(params.session_id, params.after).await?;
+                result(&EmptyResult {})
+            }
             ClientRequest::CloseSession(params) => {
                 app.close(params.session_id, params.stop_jobs).await?;
                 result(&EmptyResult {})

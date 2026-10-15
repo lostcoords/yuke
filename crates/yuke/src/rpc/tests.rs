@@ -172,6 +172,47 @@ impl Client {
     }
 }
 
+/// What a load sent before its empty answer: its messages, and the state, the pending inputs, and the running jobs that
+/// its updates told.
+struct LoadedSession {
+    messages: Vec<Value>,
+    state: Value,
+    pending: Vec<Value>,
+    jobs: Vec<Value>,
+}
+
+impl Client {
+    /// Load `session` with the params `extra`, and answer what the load sent.
+    async fn load(&mut self, session: &Value, extra: Value) -> LoadedSession {
+        let mut params = json!({ "sessionId": session });
+        for (key, value) in extra.as_object().unwrap() {
+            params[key] = value.clone();
+        }
+        let id = self.request("session/load", params).await;
+        let messages = self.until(|message| message["id"] == json!(id)).await;
+        assert_eq!(messages.last().unwrap()["result"], json!({}), "{messages:?}");
+        let updates = |kind: &str| -> Vec<Value> {
+            messages
+                .iter()
+                .map(|message| &message["params"]["update"])
+                .filter(|update| update["sessionUpdate"] == kind)
+                .cloned()
+                .collect()
+        };
+        LoadedSession {
+            state: updates("state")
+                .last()
+                .map_or(Value::Null, |update| update["state"].clone()),
+            pending: updates("input_accepted")
+                .into_iter()
+                .map(|update| update["input"].clone())
+                .collect(),
+            jobs: updates("job").into_iter().map(|update| update["job"].clone()).collect(),
+            messages,
+        }
+    }
+}
+
 /// A short name of a message, so a test can compare whole sequences. Model deltas have no name.
 fn label(message: &Value) -> Option<String> {
     if message.get("id").is_some() {
@@ -230,8 +271,8 @@ async fn an_input_starts_a_turn_and_the_client_sees_its_updates_in_order() {
 }
 
 #[tokio::test]
-async fn a_load_sends_the_saved_events_then_answers_the_pending_inputs_and_the_state() {
-    let place = Place::new("a_load_sends_the_saved_events_then_answers_the_pending_inputs_and_the_state");
+async fn a_load_sends_the_saved_events_then_the_state_then_an_empty_answer() {
+    let place = Place::new("a_load_sends_the_saved_events_then_the_state_then_an_empty_answer");
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new(&[text_reply("hello")]))).await;
     let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
     client
@@ -242,18 +283,17 @@ async fn a_load_sends_the_saved_events_then_answers_the_pending_inputs_and_the_s
         .await;
     client.until(is_idle).await;
 
-    let id = client.request("session/load", json!({ "sessionId": session })).await;
-    let messages = client.until(|message| message["id"] == json!(id)).await;
+    let loaded = client.load(&session, json!({})).await;
 
-    let numbers: Vec<&Value> = messages[..messages.len() - 1]
+    let numbers: Vec<&Value> = loaded
+        .messages
         .iter()
-        .map(|message| &message["params"]["update"]["seq"])
+        .filter_map(|message| message["params"]["update"].get("seq"))
         .collect();
     assert_eq!(numbers, [&json!(1), &json!(2), &json!(3), &json!(4)]);
-    assert_eq!(
-        messages.last().unwrap()["result"],
-        json!({ "pending": [], "state": "idle" })
-    );
+    let state = &loaded.messages[loaded.messages.len() - 2];
+    assert_eq!(label(state).unwrap(), "state idle");
+    assert_eq!((loaded.pending, loaded.jobs), (Vec::new(), Vec::new()));
     client.end().await;
 }
 
@@ -417,30 +457,36 @@ async fn a_load_only_reads_and_waiting_input_blocks_new_settings() {
     let session = saved_session(&place, "minimax", "MiniMax-M3").await;
     let mut client = Client::initialized(&place, Box::new(Stalled)).await;
 
-    let id = client.request("session/load", json!({ "sessionId": session })).await;
-    let loaded = client.until(|message| message["id"] == json!(id)).await;
+    let loaded = client.load(&json!(session), json!({})).await;
     let mut settings = place.settings();
     settings["sessionId"] = json!(session);
     let id = client.request("session/set_settings", settings).await;
     let refused = client.until(|message| message["id"] == json!(id)).await;
-    let id = client
-        .request("session/load", json!({ "sessionId": session, "after": 1 }))
-        .await;
-    let reloaded = client.until(|message| message["id"] == json!(id)).await;
+    let reloaded = client.load(&json!(session), json!({ "after": 1 })).await;
 
-    let labels: Vec<String> = loaded.iter().filter_map(label).collect();
-    assert_eq!(labels, ["settings", "response"]);
-    // No turn started: no state update came, and the session is still idle.
+    let labels: Vec<String> = loaded.messages.iter().filter_map(label).collect();
+    assert_eq!(labels, ["settings", "state idle", "input_accepted", "response"]);
+    // No turn started: the session is still idle, and the input still waits.
     assert!(
         !refused
             .iter()
-            .chain(&reloaded)
-            .any(|message| message["params"]["update"]["sessionUpdate"] == "state")
+            .chain(&reloaded.messages)
+            .any(|message| message["params"]["update"]["state"] == "running")
     );
-    assert_eq!(reloaded.last().unwrap()["result"]["state"], "idle");
-    let result = &loaded.last().unwrap()["result"];
-    assert_eq!(result["state"], "idle");
-    assert_eq!(result["pending"][0]["content"][0]["user_text"], "waiting");
+    assert_eq!(reloaded.state, "idle");
+    // The session has one saved event, and the reload asked for the events after it.
+    assert!(
+        !reloaded
+            .messages
+            .iter()
+            .any(|message| message["params"]["update"].get("seq").is_some()),
+        "{:?}",
+        reloaded.messages
+    );
+    assert_eq!(loaded.state, "idle");
+    assert_eq!(loaded.pending.len(), 1);
+    assert_eq!(loaded.pending[0]["content"][0]["user_text"], "waiting");
+    assert_eq!(reloaded.pending, loaded.pending);
     assert_eq!(
         refused.last().unwrap()["error"]["code"],
         json!(ResponseError::INVALID_REQUEST)
@@ -497,7 +543,7 @@ async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_
     let closed_again = client
         .call("session/close", json!({ "sessionId": session, "stopJobs": false }))
         .await;
-    let loaded = client.call("session/load", json!({ "sessionId": session })).await;
+    let loaded = client.load(&session, json!({})).await;
 
     let labels: Vec<String> = closed.iter().filter_map(label).collect();
     assert_eq!(labels.last().unwrap(), "response");
@@ -509,11 +555,9 @@ async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_
         closed_again.unwrap_err()["code"],
         json!(ResponseError::SESSION_NOT_FOUND)
     );
-    let loaded = loaded.unwrap();
-    assert_eq!(loaded["state"], "idle");
-    let pending: Vec<&Value> = loaded["pending"]
-        .as_array()
-        .unwrap()
+    assert_eq!(loaded.state, "idle");
+    let pending: Vec<&Value> = loaded
+        .pending
         .iter()
         .map(|input| &input["content"][0]["user_text"])
         .collect();
@@ -624,10 +668,11 @@ async fn a_close_needs_stop_jobs_while_jobs_run_and_then_ends_them() {
         .call("session/close", json!({ "sessionId": session, "stopJobs": false }))
         .await;
     let runs_after_refusal = job_runs(&place);
-    let closed = client
-        .call("session/close", json!({ "sessionId": session, "stopJobs": true }))
+    let id = client
+        .request("session/close", json!({ "sessionId": session, "stopJobs": true }))
         .await;
-    let loaded = client.call("session/load", json!({ "sessionId": session })).await;
+    let closed = client.until(|message| message["id"] == json!(id)).await;
+    let loaded = client.load(&session, json!({})).await;
 
     let refused = refused.unwrap_err();
     assert_eq!(refused["code"], json!(ResponseError::INVALID_REQUEST));
@@ -636,35 +681,114 @@ async fn a_close_needs_stop_jobs_while_jobs_run_and_then_ends_them() {
         "{refused}"
     );
     assert!(runs_after_refusal);
-    assert_eq!(closed.unwrap(), json!({}));
+    let labels: Vec<String> = closed.iter().filter_map(label).collect();
+    assert_eq!(labels, ["job", "response"]);
+    let ended = &closed[0]["params"]["update"]["job"];
+    assert_eq!(
+        (&ended["id"], &ended["state"], &ended["stopped"]),
+        (&job, &json!("ended"), &json!(true))
+    );
+    assert_eq!(closed[1]["result"], json!({}));
     // The close waits for the end of the job, so its process is gone.
     assert!(!job_runs(&place));
-    assert_eq!(loaded.unwrap()["state"], "idle");
+    assert_eq!((loaded.state, loaded.jobs), (json!("idle"), Vec::new()));
     client.end().await;
 }
 
 #[tokio::test]
-async fn job_stop_ends_a_job_and_then_the_session_closes_without_stop_jobs() {
-    let place = Place::new("job_stop_ends_a_job_and_then_the_session_closes_without_stop_jobs");
+async fn job_stop_waits_for_the_end_and_its_job_update_comes_first() {
+    let place = Place::new("job_stop_waits_for_the_end_and_its_job_update_comes_first");
     let (mut client, session, _transport) = session_with_a_job(&place).await;
     let job = the_job(&mut client, &session).await;
 
-    let stopped = client
-        .call("job/stop", json!({ "sessionId": session, "jobId": job }))
+    let loaded = client.load(&session, json!({})).await;
+    let id = client
+        .request("job/stop", json!({ "sessionId": session, "jobId": job }))
         .await;
-    let after = client.call("job/list", json!({ "sessionId": session })).await;
+    let stopped = client.until(|message| message["id"] == json!(id)).await;
     let again = client
         .call("job/stop", json!({ "sessionId": session, "jobId": job }))
         .await;
-    let closed = client
-        .call("session/close", json!({ "sessionId": session, "stopJobs": false }))
+    // The close waits for the job task, so an end input of the stopped job would come before its response.
+    let id = client
+        .request("session/close", json!({ "sessionId": session, "stopJobs": false }))
+        .await;
+    let closed = client.until(|message| message["id"] == json!(id)).await;
+
+    assert_eq!(loaded.jobs.len(), 1);
+    let loaded_job = &loaded.jobs[0];
+    assert_eq!((&loaded_job["id"], &loaded_job["state"]), (&job, &json!("running")));
+    // The snapshot holds the whole job.
+    assert!(
+        loaded_job["command"].as_str().unwrap().ends_with(" && exec sleep 3600"),
+        "{loaded_job}"
+    );
+    let log = PathBuf::from(loaded_job["log"].as_str().unwrap());
+    assert_eq!(
+        log.file_name().unwrap(),
+        format!("{}.log", job.as_str().unwrap()).as_str()
+    );
+    // The stop waits, so the process is gone, and the end update comes before the answer.
+    assert!(!job_runs(&place));
+    assert_eq!(
+        stopped.iter().filter_map(label).collect::<Vec<_>>(),
+        ["job", "response"]
+    );
+    assert_eq!(stopped[1]["result"], json!({}));
+    let ended = &stopped[0]["params"]["update"]["job"];
+    assert_eq!(ended["id"], job);
+    assert_eq!(ended["state"], "ended");
+    assert_eq!(ended["stopped"], true);
+    // The job is `exec sleep`, so SIGTERM ends it.
+    assert_eq!(ended["signal"], 15, "{ended}");
+    assert_eq!(again.unwrap_err()["code"], json!(ResponseError::JOB_NOT_FOUND));
+    assert_eq!(closed.iter().filter_map(label).collect::<Vec<_>>(), ["response"]);
+    assert_eq!(closed[0]["result"], json!({}));
+    client.end().await;
+}
+
+#[tokio::test]
+async fn job_updates_tell_the_start_and_the_end_before_the_end_input() {
+    let place = Place::new("job_updates_tell_the_start_and_the_end_before_the_end_input");
+    let arguments = json!({ "command": "exit 3", "background": true }).to_string();
+    let transport = ScriptedTransport::new(&[
+        tool_reply("c1", "exec", &arguments),
+        text_reply("started"),
+        text_reply("noted"),
+    ]);
+    let mut client = Client::initialized(&place, Box::new(transport)).await;
+    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+
+    client
+        .request(
+            "session/input",
+            json!({ "sessionId": session, "content": [{ "user_text": "start a job" }] }),
+        )
+        .await;
+    let messages = client
+        .until(|message| message["params"]["update"]["input"]["source"]["name"] == "host:jobs")
         .await;
 
-    assert_eq!(stopped.unwrap(), json!({}));
-    assert!(!job_runs(&place));
-    assert_eq!(after.unwrap(), json!({ "jobs": [] }));
-    assert_eq!(again.unwrap_err()["code"], json!(ResponseError::JOB_NOT_FOUND));
-    assert_eq!(closed.unwrap(), json!({}));
+    let jobs: Vec<&Value> = messages
+        .iter()
+        .filter(|message| message["params"]["update"]["sessionUpdate"] == "job")
+        .map(|message| &message["params"]["update"]["job"])
+        .collect();
+    assert_eq!(jobs.len(), 2, "{jobs:?}");
+    assert_eq!(jobs[0]["state"], "running");
+    assert_eq!(jobs[0]["command"], "exit 3");
+    // The end update holds the whole job.
+    assert_eq!(
+        (&jobs[1]["id"], &jobs[1]["command"], &jobs[1]["log"]),
+        (&jobs[0]["id"], &jobs[0]["command"], &jobs[0]["log"])
+    );
+    assert_eq!(
+        (&jobs[1]["state"], &jobs[1]["exitCode"], &jobs[1]["stopped"]),
+        (&json!("ended"), &json!(3), &json!(false))
+    );
+    // The end update comes before the end input, which is the last message.
+    assert_eq!(label(messages.last().unwrap()).unwrap(), "input_accepted");
+    client.until(is_idle).await;
     client.end().await;
 }
 
@@ -739,7 +863,7 @@ async fn a_panic_in_a_turn_ends_the_turn_and_a_load_runs_the_session_again() {
         .request("session/close", json!({ "sessionId": session, "stopJobs": false }))
         .await;
     let closed = client.until(|message| message["id"] == json!(id)).await;
-    let loaded = client.call("session/load", json!({ "sessionId": session })).await;
+    let loaded = client.load(&session, json!({})).await;
     client
         .request(
             "session/input",
@@ -761,11 +885,10 @@ async fn a_panic_in_a_turn_ends_the_turn_and_a_load_runs_the_session_again() {
     // The task ended, so the second input waits and starts no turn.
     assert!(started.is_err(), "a turn started after the panic");
     assert_eq!(closed.iter().filter_map(label).collect::<Vec<_>>(), ["response"]);
-    let loaded = loaded.unwrap();
-    assert_eq!(loaded["state"], "idle");
+    assert_eq!(loaded.state, "idle");
     // The turn saved the first input before its request, so only the second waits.
-    assert_eq!(loaded["pending"][0]["content"][0]["user_text"], "second", "{loaded}");
-    assert_eq!(loaded["pending"].as_array().unwrap().len(), 1, "{loaded}");
+    assert_eq!(loaded.pending.len(), 1);
+    assert_eq!(loaded.pending[0]["content"][0]["user_text"], "second");
     let saved: Vec<&Value> = again
         .iter()
         .filter(|message| message["params"]["update"]["sessionUpdate"] == "commit")

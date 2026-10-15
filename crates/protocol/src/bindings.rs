@@ -8,7 +8,7 @@ use ts_rs::{Config, TS};
 
 use crate::{
     ClientNotification, ClientRequest, EmptyResult, ForkSessionResult, InitializeResult, InputResult, ListJobsResult,
-    LoadSessionResult, NewSessionResult, Notification, Request, Response, ServerNotification,
+    NewSessionResult, Notification, Request, Response, ServerNotification,
 };
 
 /// Export each message and each result, with the types that they use, to `folder`.
@@ -25,7 +25,6 @@ fn export(folder: &Path) {
     InitializeResult::export_all(&config).unwrap();
     NewSessionResult::export_all(&config).unwrap();
     ForkSessionResult::export_all(&config).unwrap();
-    LoadSessionResult::export_all(&config).unwrap();
     InputResult::export_all(&config).unwrap();
     ListJobsResult::export_all(&config).unwrap();
     EmptyResult::export_all(&config).unwrap();
