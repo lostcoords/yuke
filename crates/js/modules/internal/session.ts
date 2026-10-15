@@ -1,4 +1,4 @@
-import type { Session } from "yuke:internal/native/tools";
+import type { Session } from "yuke:internal/native";
 import type { ToolContext } from "yuke:tools";
 
 /** The session object of each call, by its context. A tool of a plugin cannot import this module, so it cannot reach it. */

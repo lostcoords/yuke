@@ -1,62 +1,12 @@
 //! Generated from the query files by `yuke-sqlgen`. Do not edit.
 
-use super::*;
-
 /// The SQL of each migration in number order. The `user_version` of a database counts its applied migrations.
 /// A database at `user_version` `n` runs `MIGRATIONS[n..]`.
 pub(crate) const MIGRATIONS: &[&str] = &[include_str!(r"../migrations/0001_sessions.sql")];
 
 pub(crate) mod events {
-    use super::*;
     use yuke_sql::rusqlite::{Connection, Result, Row};
     use yuke_sql::{FromRow, Query, execute};
-
-    #[derive(Debug, Clone, PartialEq)]
-    pub(crate) struct Event {
-        pub(crate) seq: u64,
-        pub(crate) kind: String,
-        pub(crate) blocks: Option<Json<Vec<yuke_ai::Block>>>,
-        pub(crate) settings: Option<Json<yuke_protocol::SessionSettings>>,
-        pub(crate) consumed: Option<Json<Vec<yuke_protocol::ConsumedInput>>>,
-        pub(crate) head: Option<Json<Vec<yuke_ai::Block>>>,
-        pub(crate) keep: Option<usize>,
-        pub(crate) model: Option<String>,
-        pub(crate) base_url: Option<String>,
-        pub(crate) input_tokens: Option<u64>,
-        pub(crate) output_tokens: Option<u64>,
-        pub(crate) reasoning_tokens: Option<u64>,
-        pub(crate) cache_read_tokens: Option<u64>,
-        pub(crate) cache_write_tokens: Option<u64>,
-        pub(crate) finish_reason: Option<String>,
-        pub(crate) end_kind: Option<String>,
-        pub(crate) end_finish_reason: Option<String>,
-        pub(crate) end_message: Option<String>,
-    }
-
-    impl FromRow for Event {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                seq: row.get("seq")?,
-                kind: row.get("kind")?,
-                blocks: row.get("blocks")?,
-                settings: row.get("settings")?,
-                consumed: row.get("consumed")?,
-                head: row.get("head")?,
-                keep: row.get("keep")?,
-                model: row.get("model")?,
-                base_url: row.get("base_url")?,
-                input_tokens: row.get("input_tokens")?,
-                output_tokens: row.get("output_tokens")?,
-                reasoning_tokens: row.get("reasoning_tokens")?,
-                cache_read_tokens: row.get("cache_read_tokens")?,
-                cache_write_tokens: row.get("cache_write_tokens")?,
-                finish_reason: row.get("finish_reason")?,
-                end_kind: row.get("end_kind")?,
-                end_finish_reason: row.get("end_finish_reason")?,
-                end_message: row.get("end_message")?,
-            })
-        }
-    }
 
     #[derive(Debug, Clone, PartialEq)]
     pub(crate) struct InsertCommit {
@@ -94,8 +44,55 @@ pub(crate) mod events {
     }
 
     #[derive(Debug, Clone, PartialEq)]
+    pub(crate) struct EventsAfter {
+        pub(crate) seq: u64,
+        pub(crate) kind: String,
+        pub(crate) blocks: Option<crate::Json<Vec<yuke_ai::Block>>>,
+        pub(crate) settings: Option<crate::Json<yuke_protocol::SessionSettings>>,
+        pub(crate) consumed: Option<crate::Json<Vec<yuke_protocol::ConsumedInput>>>,
+        pub(crate) head: Option<crate::Json<Vec<yuke_ai::Block>>>,
+        pub(crate) keep: Option<usize>,
+        pub(crate) model: Option<String>,
+        pub(crate) base_url: Option<String>,
+        pub(crate) input_tokens: Option<u64>,
+        pub(crate) output_tokens: Option<u64>,
+        pub(crate) reasoning_tokens: Option<u64>,
+        pub(crate) cache_read_tokens: Option<u64>,
+        pub(crate) cache_write_tokens: Option<u64>,
+        pub(crate) finish_reason: Option<String>,
+        pub(crate) end_kind: Option<String>,
+        pub(crate) end_finish_reason: Option<String>,
+        pub(crate) end_message: Option<String>,
+    }
+
+    impl FromRow for EventsAfter {
+        fn from_row(row: &Row<'_>) -> Result<Self> {
+            Ok(Self {
+                seq: row.get("seq")?,
+                kind: row.get("kind")?,
+                blocks: row.get("blocks")?,
+                settings: row.get("settings")?,
+                consumed: row.get("consumed")?,
+                head: row.get("head")?,
+                keep: row.get("keep")?,
+                model: row.get("model")?,
+                base_url: row.get("base_url")?,
+                input_tokens: row.get("input_tokens")?,
+                output_tokens: row.get("output_tokens")?,
+                reasoning_tokens: row.get("reasoning_tokens")?,
+                cache_read_tokens: row.get("cache_read_tokens")?,
+                cache_write_tokens: row.get("cache_write_tokens")?,
+                finish_reason: row.get("finish_reason")?,
+                end_kind: row.get("end_kind")?,
+                end_finish_reason: row.get("end_finish_reason")?,
+                end_message: row.get("end_message")?,
+            })
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
     pub(crate) struct NewestSettings {
-        pub(crate) settings: Option<Json<yuke_protocol::SessionSettings>>,
+        pub(crate) settings: Option<crate::Json<yuke_protocol::SessionSettings>>,
     }
 
     impl FromRow for NewestSettings {
@@ -109,7 +106,7 @@ pub(crate) mod events {
     #[derive(Debug, Clone, PartialEq)]
     pub(crate) struct NewestReplacement {
         pub(crate) seq: u64,
-        pub(crate) head: Option<Json<Vec<yuke_ai::Block>>>,
+        pub(crate) head: Option<crate::Json<Vec<yuke_ai::Block>>>,
         pub(crate) keep: Option<usize>,
     }
 
@@ -126,9 +123,9 @@ pub(crate) mod events {
     #[derive(Debug, Clone, PartialEq)]
     pub(crate) struct PreviousCommit {
         pub(crate) seq: u64,
-        pub(crate) head: Option<Json<Vec<yuke_ai::Block>>>,
+        pub(crate) head: Option<crate::Json<Vec<yuke_ai::Block>>>,
         pub(crate) keep: Option<usize>,
-        pub(crate) blocks: Option<Json<Vec<yuke_ai::Block>>>,
+        pub(crate) blocks: Option<crate::Json<Vec<yuke_ai::Block>>>,
     }
 
     impl FromRow for PreviousCommit {
@@ -144,7 +141,7 @@ pub(crate) mod events {
 
     #[derive(Debug, Clone, PartialEq)]
     pub(crate) struct CommitsFrom {
-        pub(crate) blocks: Option<Json<Vec<yuke_ai::Block>>>,
+        pub(crate) blocks: Option<crate::Json<Vec<yuke_ai::Block>>>,
         pub(crate) end_kind: Option<String>,
     }
 
@@ -316,7 +313,7 @@ ORDER BY seq;",
     }
 
     /// The events of the session with a number above `after`, in number order.
-    pub(crate) fn events_after<'a>(connection: &'a Connection, params: &EventsAfterParams) -> Query<'a, Event> {
+    pub(crate) fn events_after<'a>(connection: &'a Connection, params: &EventsAfterParams) -> Query<'a, EventsAfter> {
         Query::new(
             connection,
             r"SELECT
@@ -406,7 +403,6 @@ LIMIT 1;",
 }
 
 pub(crate) mod pending_inputs {
-    use super::*;
     use yuke_sql::rusqlite::{Connection, Result, Row};
     use yuke_sql::{FromRow, Query, execute};
 
@@ -424,7 +420,7 @@ pub(crate) mod pending_inputs {
     #[derive(Debug, Clone, PartialEq)]
     pub(crate) struct PendingInputs {
         pub(crate) id: u64,
-        pub(crate) input: Json<yuke_protocol::Input>,
+        pub(crate) input: crate::Json<yuke_protocol::Input>,
     }
 
     impl FromRow for PendingInputs {

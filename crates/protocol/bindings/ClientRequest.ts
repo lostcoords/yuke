@@ -3,10 +3,10 @@ import type { ForkSessionParams } from "./ForkSessionParams";
 import type { InitializeParams } from "./InitializeParams";
 import type { InputParams } from "./InputParams";
 import type { LoadSessionParams } from "./LoadSessionParams";
-import type { NewSessionParams } from "./NewSessionParams";
+import type { SessionSettings } from "./SessionSettings";
 import type { SetSettingsParams } from "./SetSettingsParams";
 
 /**
  * The method and the params of a client request.
  */
-export type ClientRequest = { "method": "initialize", "params": InitializeParams } | { "method": "session/new", "params": NewSessionParams } | { "method": "session/fork", "params": ForkSessionParams } | { "method": "session/load", "params": LoadSessionParams } | { "method": "session/input", "params": InputParams } | { "method": "session/set_settings", "params": SetSettingsParams };
+export type ClientRequest = { "method": "initialize", "params": InitializeParams } | { "method": "session/new", "params": SessionSettings } | { "method": "session/fork", "params": ForkSessionParams } | { "method": "session/load", "params": LoadSessionParams } | { "method": "session/input", "params": InputParams } | { "method": "session/set_settings", "params": SetSettingsParams };

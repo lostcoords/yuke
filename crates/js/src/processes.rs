@@ -124,7 +124,8 @@ pub(crate) struct RunningCommand {
     pub(crate) output: mpsc::UnboundedReceiver<String>,
     /// The end of the command, or the text of a failure.
     pub(crate) end: oneshot::Receiver<Result<CommandEnd, String>>,
-    /// Stops the command. A drop of the command stops it too, so a dropped call ends its command.
+    /// Stops the command when it drops, so a dropped call ends its command.
+    #[expect(dead_code, reason = "only the drop of the guard matters: it stops the command")]
     pub(crate) stop: StopOnDrop,
 }
 

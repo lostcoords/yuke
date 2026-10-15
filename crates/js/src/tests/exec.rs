@@ -1,4 +1,4 @@
-//! The tools `exec` and `stop`, the background jobs, and the declarations of the native modules.
+//! The tools `exec` and `stop`, the background jobs, and the declarations of the native module.
 
 use std::ffi::OsStr;
 use std::fmt::Write as _;
@@ -550,22 +550,15 @@ fn a_child_gets_the_home_folder_of_the_user_when_home_is_missing_or_empty() {
 }
 
 #[test]
-fn each_native_module_declares_the_names_that_it_exports() {
+fn the_native_module_declares_the_names_that_it_exports() {
     let declarations = include_str!("../../types/native.d.ts");
-    for (name, exports) in native::modules() {
-        let start = declarations
-            .find(&format!("declare module \"{name}\""))
-            .unwrap_or_else(|| panic!("native.d.ts does not declare {name}"));
-        let block = &declarations[start..];
-        let block = &block[..block[1..].find("\ndeclare module").map_or(block.len(), |end| end + 1)];
-        let mut declared: Vec<&str> = block
-            .lines()
-            .filter_map(|line| line.trim().strip_prefix("export function "))
-            .map(|line| line.split('(').next().unwrap_or_default())
-            .collect();
-        declared.sort_unstable();
-        let mut exported = exports.to_vec();
-        exported.sort_unstable();
-        assert_eq!(declared, exported, "{name}");
-    }
+    let mut declared: Vec<&str> = declarations
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("export function "))
+        .map(|line| line.split('(').next().unwrap_or_default())
+        .collect();
+    declared.sort_unstable();
+    let mut exported = native::EXPORTS.to_vec();
+    exported.sort_unstable();
+    assert_eq!(declared, exported);
 }

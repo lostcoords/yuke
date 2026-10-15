@@ -91,18 +91,6 @@ fn all_returns_the_rows_in_query_order() {
 }
 
 #[test]
-fn map_changes_each_row() {
-    let connection = notes();
-
-    let titles = Query::<Note>::new(&connection, ALL, &[])
-        .map(|note| note.title)
-        .all()
-        .unwrap();
-
-    assert_eq!(titles, ["first", "second"]);
-}
-
-#[test]
 fn execute_returns_the_number_of_changed_rows() {
     let connection = notes();
 

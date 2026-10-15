@@ -9,7 +9,7 @@ use yuke_sql::rusqlite::{self, Connection, ToSql};
 #[path = "fixture/src/queries.rs"]
 mod queries;
 
-/// The id of a note. The generated code finds this domain type through `use super::*`.
+/// The id of a note. The query annotations name this domain type as `crate::NoteId`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct NoteId(i64);
 
@@ -77,10 +77,7 @@ fn a_returning_query_returns_its_typed_row() {
             pinned: 0,
         }
     );
-    let title = queries::notes::note_by_id(&connection, NoteId(1))
-        .map(|note| note.title)
-        .one()
-        .unwrap();
+    let title = queries::notes::note_by_id(&connection, NoteId(1)).one().unwrap().title;
     assert_eq!(title, "first");
 }
 
@@ -134,23 +131,30 @@ fn the_generated_queries_run_against_the_fixture_schema() {
 
     assert_eq!(
         notes::note_by_id(&connection, NoteId(1)).one().unwrap(),
-        notes::Note {
+        notes::NoteById {
             id: NoteId(1),
             author: "ada".to_owned(),
             title: "first".to_owned(),
             body: None,
         }
     );
-    let bodies: Vec<Option<String>> = notes::notes_of(&connection, "ada").map(|note| note.body).all().unwrap();
+    let bodies: Vec<Option<String>> = notes::notes_of(&connection, "ada")
+        .all()
+        .unwrap()
+        .into_iter()
+        .map(|note| note.body)
+        .collect();
     assert_eq!(bodies, [None, Some("text".to_owned())]);
     let titled = notes::NotesTitledParams {
         stars: 0,
         title: Some("second"),
     };
-    let found = notes::notes_titled(&connection, &titled)
-        .map(|note| note.id)
+    let found: Vec<NoteId> = notes::notes_titled(&connection, &titled)
         .all()
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .map(|note| note.id)
+        .collect();
     assert_eq!(found, [NoteId(2)]);
     assert_eq!(notes::note_count(&connection).one().unwrap().count, 2);
     assert_eq!(notes::star_note(&connection, NoteId(2)).unwrap(), 1);

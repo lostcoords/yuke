@@ -25,7 +25,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         description: "Convert ASCII letters in text to uppercase. Leave other characters unchanged.".to_owned(),
         input_schema: SCHEMA.into(),
         defer_loading: false,
-        strict: false,
     }];
 
     let mut context = vec![Block::user_text(

@@ -4,34 +4,19 @@
 //! An `Option` field that JSON can omit has `serde(default)` beside `skip_serializing_if`: serde needs only the second,
 //! and ts-rs marks the field optional only with both.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::{EventNumber, InputId, PendingInput, SessionId, SessionSettings, SessionUpdateParams};
 
 /// The protocol version that this crate speaks. A breaking change of the messages takes the next number.
 pub const PROTOCOL_VERSION: u32 = 1;
 
-/// The `jsonrpc` member of each message. It writes `"2.0"`, and a read of another text fails.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct JsonRpc;
-
-impl Serialize for JsonRpc {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str("2.0")
-    }
-}
-
-impl<'de> Deserialize<'de> for JsonRpc {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let version = String::deserialize(deserializer)?;
-        if version == "2.0" {
-            Ok(JsonRpc)
-        } else {
-            Err(serde::de::Error::custom(format!(
-                "the JSON-RPC version {version} is not 2.0"
-            )))
-        }
-    }
+/// The `jsonrpc` member of each message. It is `"2.0"`, and a read of another text fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JsonRpc {
+    /// JSON-RPC 2.0.
+    #[serde(rename = "2.0")]
+    V2,
 }
 
 /// The id of a request: a number or a text, as the client chose it.
@@ -67,9 +52,9 @@ pub enum ClientRequest {
     /// Agree on the protocol version. The first request of a connection.
     #[serde(rename = "initialize")]
     Initialize(InitializeParams),
-    /// Create a session. Result: [`NewSessionResult`].
+    /// Create a session with these settings. Each field is required. Result: [`NewSessionResult`].
     #[serde(rename = "session/new")]
-    NewSession(NewSessionParams),
+    NewSession(SessionSettings),
     /// Fork a session at the end of a completed turn. Result: [`ForkSessionResult`].
     #[serde(rename = "session/fork")]
     ForkSession(ForkSessionParams),
@@ -77,7 +62,7 @@ pub enum ClientRequest {
     /// Result: [`LoadSessionResult`].
     #[serde(rename = "session/load")]
     LoadSession(LoadSessionParams),
-    /// Add input to a session. The server starts a turn when the session runs none. Result: [`InputResult`].
+    /// Add input to a session. Result: [`InputResult`].
     #[serde(rename = "session/input")]
     Input(InputParams),
     /// Replace the settings of a session. Result: [`SetSettingsResult`].
@@ -264,17 +249,6 @@ pub struct InitializeResult {
     pub protocol_version: u32,
     /// The server.
     pub agent_info: Implementation,
-}
-
-/// The params of `session/new`: the settings of the new session. Each field is required, and a null value keeps the
-/// endpoint default.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct NewSessionParams {
-    /// The model, the request settings, and the working folder.
-    #[serde(flatten)]
-    pub settings: SessionSettings,
 }
 
 /// The result of `session/new`.

@@ -460,11 +460,13 @@ fn fork_point(connection: &mut Connection, source: [u8; 16], through: Option<Eve
             }
             through
         }
-        None => events::fork_cut(&transaction, source)
-            .map(|row| row.cut)
-            .opt()
-            .map_err(failed)?
-            .ok_or(StoreError::NotFound)?,
+        None => {
+            events::fork_cut(&transaction, source)
+                .opt()
+                .map_err(failed)?
+                .ok_or(StoreError::NotFound)?
+                .cut
+        }
     };
     transaction.commit().map_err(failed)?;
     Ok(cut)

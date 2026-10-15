@@ -249,7 +249,6 @@ async fn input_that_arrives_during_a_turn_joins_the_next_request_and_stays_pendi
                 description: "Send input.".to_owned(),
                 input_schema: r#"{"type":"object"}"#.to_owned(),
                 defer_loading: false,
-                strict: false,
             },
             tool,
         )

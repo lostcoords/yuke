@@ -1,7 +1,5 @@
 //! Generated from the query files by `yuke-sqlgen`. Do not edit.
 
-use super::*;
-
 /// The SQL of each migration in number order. The `user_version` of a database counts its applied migrations.
 /// A database at `user_version` `n` runs `MIGRATIONS[n..]`.
 pub(crate) const MIGRATIONS: &[&str] = &[
@@ -11,19 +9,56 @@ pub(crate) const MIGRATIONS: &[&str] = &[
 ];
 
 pub(crate) mod notes {
-    use super::*;
     use yuke_sql::rusqlite::{Connection, Result, Row};
     use yuke_sql::{FromRow, Query, execute};
 
     #[derive(Debug, Clone, PartialEq)]
-    pub(crate) struct Note {
-        pub(crate) id: NoteId,
+    pub(crate) struct NoteById {
+        pub(crate) id: crate::NoteId,
         pub(crate) author: String,
         pub(crate) title: String,
         pub(crate) body: Option<String>,
     }
 
-    impl FromRow for Note {
+    impl FromRow for NoteById {
+        fn from_row(row: &Row<'_>) -> Result<Self> {
+            Ok(Self {
+                id: row.get("id")?,
+                author: row.get("author")?,
+                title: row.get("title")?,
+                body: row.get("body")?,
+            })
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub(crate) struct NotesOf {
+        pub(crate) title: String,
+        pub(crate) body: Option<String>,
+        pub(crate) author: String,
+        pub(crate) id: crate::NoteId,
+    }
+
+    impl FromRow for NotesOf {
+        fn from_row(row: &Row<'_>) -> Result<Self> {
+            Ok(Self {
+                title: row.get("title")?,
+                body: row.get("body")?,
+                author: row.get("author")?,
+                id: row.get("id")?,
+            })
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub(crate) struct NotesTitled {
+        pub(crate) id: crate::NoteId,
+        pub(crate) author: String,
+        pub(crate) title: String,
+        pub(crate) body: Option<String>,
+    }
+
+    impl FromRow for NotesTitled {
         fn from_row(row: &Row<'_>) -> Result<Self> {
             Ok(Self {
                 id: row.get("id")?,
@@ -62,7 +97,7 @@ pub(crate) mod notes {
 
     #[derive(Debug, Clone, PartialEq)]
     pub(crate) struct AddNote {
-        pub(crate) id: NoteId,
+        pub(crate) id: crate::NoteId,
         pub(crate) pinned: i64,
     }
 
@@ -111,7 +146,7 @@ pub(crate) mod notes {
     }
 
     /// The note with this id.
-    pub(crate) fn note_by_id(connection: &Connection, id: NoteId) -> Query<'_, Note> {
+    pub(crate) fn note_by_id(connection: &Connection, id: crate::NoteId) -> Query<'_, NoteById> {
         Query::new(
             connection,
             r"SELECT id, author, title, body FROM notes WHERE id = :id;",
@@ -120,7 +155,7 @@ pub(crate) mod notes {
     }
 
     /// The notes of this author. A blank line can come before the doc lines.
-    pub(crate) fn notes_of<'a>(connection: &'a Connection, author: &str) -> Query<'a, Note> {
+    pub(crate) fn notes_of<'a>(connection: &'a Connection, author: &str) -> Query<'a, NotesOf> {
         Query::new(
             connection,
             r"SELECT title, body, author, id FROM notes WHERE author = :author ORDER BY id;",
@@ -134,7 +169,10 @@ pub(crate) mod notes {
         pub(crate) title: Option<&'a str>,
     }
 
-    pub(crate) fn notes_titled<'a>(connection: &'a Connection, params: &NotesTitledParams<'_>) -> Query<'a, Note> {
+    pub(crate) fn notes_titled<'a>(
+        connection: &'a Connection,
+        params: &NotesTitledParams<'_>,
+    ) -> Query<'a, NotesTitled> {
         Query::new(
             connection,
             r"SELECT id, author, title, body FROM notes WHERE stars >= :stars AND (:title IS NULL OR title = :title);",
@@ -146,7 +184,7 @@ pub(crate) mod notes {
         Query::new(connection, r"SELECT count(*) AS count FROM notes;", &[])
     }
 
-    pub(crate) fn star_note(connection: &Connection, id: NoteId) -> Result<usize> {
+    pub(crate) fn star_note(connection: &Connection, id: crate::NoteId) -> Result<usize> {
         execute(
             connection,
             r"UPDATE notes SET stars = stars + 1 WHERE id = :id;",
@@ -154,7 +192,7 @@ pub(crate) mod notes {
         )
     }
 
-    pub(crate) fn stars_of(connection: &Connection, id: NoteId) -> Query<'_, StarsOf> {
+    pub(crate) fn stars_of(connection: &Connection, id: crate::NoteId) -> Query<'_, StarsOf> {
         Query::new(connection, r"SELECT stars FROM notes WHERE id = :id;", &[(":id", &id)])
     }
 

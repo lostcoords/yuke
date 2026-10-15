@@ -119,7 +119,6 @@ pub(crate) fn definition(name: &str) -> yuke_ai::ToolDefinition {
         description: "A test tool.".to_owned(),
         input_schema: r#"{"type":"object"}"#.to_owned(),
         defer_loading: false,
-        strict: false,
     }
 }
 

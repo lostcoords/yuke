@@ -6,7 +6,7 @@ INSERT INTO pending_inputs(session_id, input)
 SELECT id, :input FROM sessions WHERE id = :session_id
 RETURNING id;
 
---! pending_inputs (session_id: [u8; 16]) : (id: u64, input: Json<yuke_protocol::Input>)
+--! pending_inputs (session_id: [u8; 16]) : (id: u64, input: crate::Json<yuke_protocol::Input>)
 SELECT id, input FROM pending_inputs WHERE session_id = :session_id ORDER BY id;
 
 --! delete_pending_input (session_id: [u8; 16], id: u64)

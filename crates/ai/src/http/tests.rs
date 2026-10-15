@@ -462,7 +462,7 @@ async fn request_deadline_wins_over_longer_idle_timeout() {
     }
 }
 
-// No leg starts once the deadline passed, so the request never leaves and the fault is `ConnectTimeout`.
+// No leg starts once the deadline passed, so the request never leaves. The fault names the deadline.
 #[tokio::test]
 async fn expired_deadline_fails_before_send() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -473,15 +473,15 @@ async fn expired_deadline_fails_before_send() {
         Some(std::time::Instant::now()),
     )
     .await;
-    assert_eq!(out.err, Some(Fault::ConnectTimeout));
+    assert_eq!(out.err, Some(Fault::RequestTimeout));
     // An expired request opens no connection.
     let accepted = tokio::time::timeout(Duration::from_millis(50), listener.accept()).await;
     assert!(accepted.is_err(), "the client connected after its deadline");
 }
 
-// The handshake never ends, so the idle deadline passes before the request leaves, and the fault names the connect.
+// The handshake never ends, so the idle deadline passes before the request leaves.
 #[tokio::test]
-async fn stalled_handshake_hits_connect_timeout() {
+async fn stalled_handshake_hits_the_idle_timeout() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let peer = tokio::spawn(async move {
@@ -495,7 +495,7 @@ async fn stalled_handshake_hits_connect_timeout() {
         .open(&request, None)
         .await
         .err();
-    assert_eq!(fault, Some(Fault::ConnectTimeout));
+    assert_eq!(fault, Some(Fault::IdleTimeout));
     peer.abort();
 }
 

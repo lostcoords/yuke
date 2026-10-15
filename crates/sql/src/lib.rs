@@ -4,6 +4,8 @@
 
 pub use rusqlite;
 
+use std::marker::PhantomData;
+
 use rusqlite::{CachedStatement, Connection, ToSql};
 
 /// A row type that reads itself from a row of a query.
@@ -24,11 +26,8 @@ pub struct Query<'a, Row> {
     /// The statement with its parameters, or the error of its preparation or binding. The error waits for the call
     /// that reads the rows, so a generated function returns the query directly.
     statement: rusqlite::Result<CachedStatement<'a>>,
-    map: RowReader<'a, Row>,
+    row: PhantomData<fn() -> Row>,
 }
-
-/// Reads one row of a query into the row type.
-type RowReader<'a, Row> = Box<dyn FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<Row> + 'a>;
 
 impl<Row> std::fmt::Debug for Query<'_, Row> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -36,7 +35,7 @@ impl<Row> std::fmt::Debug for Query<'_, Row> {
     }
 }
 
-impl<'a, Row: FromRow + 'a> Query<'a, Row> {
+impl<'a, Row: FromRow> Query<'a, Row> {
     /// Prepare `sql` on `connection` through the statement cache, and bind each named parameter. Each name starts
     /// with `:`, as in the SQL.
     pub fn new(connection: &'a Connection, sql: &str, parameters: &[(&str, &dyn ToSql)]) -> Self {
@@ -48,12 +47,10 @@ impl<'a, Row: FromRow + 'a> Query<'a, Row> {
         });
         Query {
             statement,
-            map: Box::new(Row::from_row),
+            row: PhantomData,
         }
     }
-}
 
-impl<'a, Row: 'a> Query<'a, Row> {
     /// Read the one row of the query.
     ///
     /// # Errors
@@ -72,13 +69,12 @@ impl<'a, Row: 'a> Query<'a, Row> {
     /// Returns [`rusqlite::Error::QueryReturnedMoreThanOneRow`] when the query has a second row. Returns the error of
     /// SQLite or of the row type otherwise.
     pub fn opt(self) -> rusqlite::Result<Option<Row>> {
-        let Query { statement, mut map } = self;
-        let mut statement = statement?;
+        let mut statement = self.statement?;
         let mut rows = statement.raw_query();
         let Some(row) = rows.next()? else {
             return Ok(None);
         };
-        let value = map(row)?;
+        let value = Row::from_row(row)?;
         // The caller asked for at most one row, so a second row is an error, not a row to drop.
         if rows.next()?.is_some() {
             return Err(rusqlite::Error::QueryReturnedMoreThanOneRow);
@@ -92,26 +88,13 @@ impl<'a, Row: 'a> Query<'a, Row> {
     ///
     /// Returns the error of SQLite or of the row type.
     pub fn all(self) -> rusqlite::Result<Vec<Row>> {
-        let Query { statement, mut map } = self;
-        let mut statement = statement?;
+        let mut statement = self.statement?;
         let mut rows = statement.raw_query();
         let mut values = Vec::new();
         while let Some(row) = rows.next()? {
-            values.push(map(row)?);
+            values.push(Row::from_row(row)?);
         }
         Ok(values)
-    }
-
-    /// Change each row into the type of the caller as the query reads it, for example a message row into a block.
-    pub fn map<T>(self, mut map: impl FnMut(Row) -> T + 'a) -> Query<'a, T> {
-        let Query {
-            statement,
-            map: mut read,
-        } = self;
-        Query {
-            statement,
-            map: Box::new(move |row| read(row).map(&mut map)),
-        }
     }
 }
 

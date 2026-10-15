@@ -1,4 +1,4 @@
-import { readLines, readText, writeText } from "yuke:internal/native/fs";
+import { readLines, readText, writeText } from "yuke:internal/native";
 import { sessionOf } from "yuke:internal/session";
 import { define, OUTPUT_BYTES } from "yuke:tools";
 
@@ -130,12 +130,7 @@ define({
     }
 
     const timeout = (args.timeout_ms as number | undefined) ?? DEFAULT_TIMEOUT;
-    const end = await sessionOf(context).exec(
-      command,
-      { timeoutMs: timeout, maxBytes: OUTPUT_BYTES },
-      context.signal,
-      context.output,
-    );
+    const end = await sessionOf(context).exec(command, { timeoutMs: timeout, maxBytes: OUTPUT_BYTES }, context.output);
     let text = end.output.length === 0 ? "[no output]\n" : endLine(end.output);
     if (end.stopped) text += "[stopped: the tool call was cancelled.]";
     else if (end.timedOut) {

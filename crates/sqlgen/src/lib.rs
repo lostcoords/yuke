@@ -6,18 +6,17 @@
 //! A query file holds annotated queries:
 //!
 //! ```sql
-//! --: Note(id: NoteId, author, title, body?)
-//!
-//! --! note_by_id (id: NoteId) : Note
+//! --! note_by_id (id: crate::NoteId) : (id: crate::NoteId, author, title, body?)
 //! --- The note with this id.
 //! SELECT id, author, title, body FROM notes WHERE id = :id;
 //! ```
 //!
-//! `--!` names a query, with its parameters in parentheses and its columns after `:`. `--:` names a row type that
-//! more than one query can return. Each row declaration lists every returned column exactly once. The field order
-//! can differ from the column order in the query. A query that returns columns needs an inline declaration or a
-//! shared row type. The `---` lines before the SQL of a query are its doc comment. A field is not null, and `?` makes
-//! it an `Option`. Only a `NOT NULL` constraint lets a table column go without `?`.
+//! `--!` names a query, with its parameters in parentheses and its columns after `:`. A query that returns columns
+//! gets a row struct with the name of the query in `PascalCase`, for example `NoteById`. The row declaration lists every
+//! returned column exactly once. The field order can differ from the column order in the query. The `---` lines before
+//! the SQL of a query are its doc comment. A field is not null, and `?` makes it an `Option`. Only a `NOT NULL`
+//! constraint lets a table column go without `?`. A type of the crate needs its full path, for example
+//! `crate::NoteId`, because the generated modules import no name of their parent.
 //!
 //! SQLite reports the table column of a result, not whether the result can be `NULL`. So the generator rejects only a
 //! nullable table column without `?`. Some queries return `NULL` from a `NOT NULL` column. These queries are an outer

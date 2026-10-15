@@ -278,7 +278,8 @@ fn write_function_tool(jw: &mut JsonWriter<'_>, tool: &ToolDefinition, defer_loa
         jw.field_bool("defer_loading", true);
     }
     jw.field_raw("parameters", &tool.input_schema);
-    jw.field_bool("strict", tool.strict);
+    // A function tool never asks for strict mode here, so the member stays explicit and false.
+    jw.field_bool("strict", false);
     jw.end_object();
 }
 
@@ -478,14 +479,12 @@ mod tests {
                 description: "Find.".to_owned(),
                 input_schema: r#"{"type":"object"}"#.to_owned(),
                 defer_loading: false,
-                strict: false,
             },
             ToolDefinition {
                 name: "mcp_read".to_owned(),
                 description: "Read.".to_owned(),
                 input_schema: "{}".to_owned(),
                 defer_loading: false,
-                strict: false,
             }
             .deferred(),
         ];
@@ -514,29 +513,16 @@ mod tests {
     }
 
     #[test]
-    fn tool_schema_and_strict_mode() {
-        let tools = [
-            ToolDefinition {
-                name: "run".to_owned(),
-                description: "run a command".to_owned(),
-                input_schema: r#"{"type":"object"}"#.to_owned(),
-                defer_loading: false,
-                strict: false,
-            },
-            ToolDefinition {
-                strict: true,
-                ..ToolDefinition {
-                    name: "strict_run".to_owned(),
-                    description: "run strictly".to_owned(),
-                    input_schema: r#"{"type":"object"}"#.to_owned(),
-                    defer_loading: false,
-                    strict: false,
-                }
-            },
-        ];
+    fn tool_schema() {
+        let tools = [ToolDefinition {
+            name: "run".to_owned(),
+            description: "run a command".to_owned(),
+            input_schema: r#"{"type":"object"}"#.to_owned(),
+            defer_loading: false,
+        }];
         let blocks = [Block::user_text("go")];
         expect_json(
-            r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"function","name":"run","description":"run a command","parameters":{"type":"object"},"strict":false},{"type":"function","name":"strict_run","description":"run strictly","parameters":{"type":"object"},"strict":true}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}"#,
+            r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"function","name":"run","description":"run a command","parameters":{"type":"object"},"strict":false}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}"#,
             "gpt-5",
             responses(),
             Request::new(&blocks)

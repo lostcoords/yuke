@@ -52,7 +52,7 @@ fn assert_json<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(js
 
 fn request(id: i64, call: ClientRequest) -> Request {
     Request {
-        jsonrpc: yuke_protocol::JsonRpc,
+        jsonrpc: yuke_protocol::JsonRpc::V2,
         id: yuke_protocol::RequestId::Number(id),
         call,
     }
@@ -79,10 +79,7 @@ fn each_request_reads_and_writes_its_json() {
         ),
         (
             json!({ "jsonrpc": "2.0", "id": 1, "method": "session/new", "params": settings_json() }),
-            request(
-                1,
-                ClientRequest::NewSession(yuke_protocol::NewSessionParams { settings: settings() }),
-            ),
+            request(1, ClientRequest::NewSession(settings())),
         ),
         (
             json!({ "jsonrpc": "2.0", "id": 2, "method": "session/fork", "params": {
@@ -128,7 +125,7 @@ fn each_request_reads_and_writes_its_json() {
     assert_json(
         &json!({ "jsonrpc": "2.0", "id": "five", "method": "session/set_settings", "params": set_settings }),
         &Request {
-            jsonrpc: yuke_protocol::JsonRpc,
+            jsonrpc: yuke_protocol::JsonRpc::V2,
             id: yuke_protocol::RequestId::Text("five".to_owned()),
             call: ClientRequest::SetSettings(yuke_protocol::SetSettingsParams {
                 session_id: session(),
@@ -152,7 +149,7 @@ fn a_response_holds_a_result_or_an_error() {
     assert_json(
         &json!({ "jsonrpc": "2.0", "id": 1, "result": { "sessionId": SESSION } }),
         &Response {
-            jsonrpc: yuke_protocol::JsonRpc,
+            jsonrpc: yuke_protocol::JsonRpc::V2,
             id: Some(yuke_protocol::RequestId::Number(1)),
             outcome: yuke_protocol::ResponseOutcome::Result(json!({ "sessionId": SESSION })),
         },
@@ -160,7 +157,7 @@ fn a_response_holds_a_result_or_an_error() {
     assert_json(
         &json!({ "jsonrpc": "2.0", "id": 2, "error": { "code": -32002, "message": "the store has no such session" } }),
         &Response {
-            jsonrpc: yuke_protocol::JsonRpc,
+            jsonrpc: yuke_protocol::JsonRpc::V2,
             id: Some(yuke_protocol::RequestId::Number(2)),
             outcome: yuke_protocol::ResponseOutcome::Error(yuke_protocol::ResponseError {
                 code: yuke_protocol::ResponseError::SESSION_NOT_FOUND,
@@ -173,7 +170,7 @@ fn a_response_holds_a_result_or_an_error() {
     assert_json(
         &json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": "the message is no JSON" } }),
         &Response {
-            jsonrpc: yuke_protocol::JsonRpc,
+            jsonrpc: yuke_protocol::JsonRpc::V2,
             id: None,
             outcome: yuke_protocol::ResponseOutcome::Error(yuke_protocol::ResponseError {
                 code: yuke_protocol::ResponseError::PARSE_ERROR,
@@ -237,7 +234,7 @@ fn an_input_without_content_or_with_empty_model_content_does_not_read() {
 #[test]
 fn notice_and_extension_event_notifications_read_and_write_their_json() {
     let notification = |message| Notification {
-        jsonrpc: yuke_protocol::JsonRpc,
+        jsonrpc: yuke_protocol::JsonRpc::V2,
         message,
     };
 
@@ -282,7 +279,7 @@ fn cancel_and_update_notifications_read_and_write_their_json() {
     assert_json(
         &json!({ "jsonrpc": "2.0", "method": "session/cancel", "params": { "sessionId": SESSION } }),
         &Notification {
-            jsonrpc: yuke_protocol::JsonRpc,
+            jsonrpc: yuke_protocol::JsonRpc::V2,
             message: ClientNotification::Cancel(yuke_protocol::CancelParams { session_id: session() }),
         },
     );
@@ -321,7 +318,7 @@ fn cancel_and_update_notifications_read_and_write_their_json() {
             }
         } }),
         &Notification {
-            jsonrpc: yuke_protocol::JsonRpc,
+            jsonrpc: yuke_protocol::JsonRpc::V2,
             message: ServerNotification::SessionUpdate(SessionUpdateParams {
                 session_id: session(),
                 update: SessionUpdate::Saved(commit),

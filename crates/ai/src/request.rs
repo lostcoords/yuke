@@ -486,9 +486,6 @@ pub struct ToolDefinition {
     /// Exclude the definition from the prompt until a tool search names it. A request with a deferred tool asks for
     /// the native tool search, so the encoder refuses it for a target without [`Target::tool_search`].
     pub defer_loading: bool,
-    /// Constrain the arguments to `input_schema`, as OpenAI and Anthropic both offer. A schema that strict mode does
-    /// not admit returns 400 when it is on.
-    pub strict: bool,
 }
 
 impl ToolDefinition {
@@ -592,8 +589,6 @@ pub enum ReasoningReplayMode {
     /// Return no reasoning.
     #[default]
     None,
-    /// Return the text as `reasoning`.
-    Reasoning,
     /// Return the text as `reasoning_content`.
     ReasoningContent,
     /// Return the OpenRouter `reasoning_details` array.
@@ -614,8 +609,6 @@ pub enum ThinkingFormat {
     Deepseek,
     Zai,
     Qwen,
-    Together,
-    AntLing,
 }
 
 /// Whether and how the model thinks before it answers.
@@ -1039,10 +1032,10 @@ mod tests {
                 Block::ToolResult(
                     ToolResult::error("c1", "failed")
                         .with_media(vec![Media::new(blob, "image/png")])
-                        .with_loaded(vec![ToolDefinition { name: "grep".to_owned(), description: "Search.".to_owned(), input_schema: "{}".to_owned(), defer_loading: false, strict: false }.deferred()]),
+                        .with_loaded(vec![ToolDefinition { name: "grep".to_owned(), description: "Search.".to_owned(), input_schema: "{}".to_owned(), defer_loading: false }.deferred()]),
                 ),
                 format!(
-                    r#"{{"tool_result":{{"callId":"c1","content":"failed","isError":true,"media":[{{"blob":{{"digest":"{digest}","len":3}},"mime":"image/png"}}],"loaded":[{{"name":"grep","description":"Search.","inputSchema":"{{}}","deferLoading":true,"strict":false}}]}}}}"#
+                    r#"{{"tool_result":{{"callId":"c1","content":"failed","isError":true,"media":[{{"blob":{{"digest":"{digest}","len":3}},"mime":"image/png"}}],"loaded":[{{"name":"grep","description":"Search.","inputSchema":"{{}}","deferLoading":true}}]}}}}"#
                 ),
             ),
         ];

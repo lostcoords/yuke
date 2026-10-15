@@ -232,7 +232,6 @@ fn tools() -> yuke_engine::Toolset {
                 description: "Echo arguments.".into(),
                 input_schema: r#"{"type":"object"}"#.into(),
                 defer_loading: false,
-                strict: false,
             },
             Echo,
         )

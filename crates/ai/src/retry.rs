@@ -38,7 +38,6 @@ fn classify(cause: Failure) -> Class {
         Failure::Transport(fault) => match fault {
             Fault::IdleTimeout
             | Fault::RequestTimeout
-            | Fault::ConnectTimeout
             | Fault::ConnectFailed
             | Fault::ConnectionLost
             | Fault::DnsFailed => Class::Transient,
@@ -170,7 +169,6 @@ mod tests {
     fn transport_failures_repeat_unless_they_fail_the_same_way_each_time() {
         let repeats = [
             Fault::ConnectFailed,
-            Fault::ConnectTimeout,
             Fault::ConnectionLost,
             Fault::DnsFailed,
             Fault::IdleTimeout,

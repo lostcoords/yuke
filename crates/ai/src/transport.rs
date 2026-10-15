@@ -18,7 +18,7 @@ pub type BoxBody = Pin<Box<dyn Body>>;
 
 /// Send one request and return its head and body.
 ///
-/// Return [`Fault::ConnectFailed`] or [`Fault::ConnectTimeout`] only before the request leaves. Return
+/// Return [`Fault::ConnectFailed`] only before the request leaves. Return
 /// [`Fault::ConnectionLost`] when the connection breaks after the request starts. Put a connection back in a pool only
 /// after its body ended with no fault.
 pub trait Transport: Send + Sync {
@@ -64,8 +64,6 @@ pub enum Fault {
     /// The TLS handshake rejected the certificate of the provider, for example an expired one or one of an unknown
     /// issuer.
     CertificateRejected,
-    /// A deadline passed before the request was sent.
-    ConnectTimeout,
     /// The TLS configuration could not be built, for example because the platform gives no root certificate.
     TlsSetupFailed,
     /// A wait for the peer (the send, the head, or a body read) passed the idle deadline.
@@ -88,7 +86,6 @@ impl fmt::Display for Fault {
             Self::RequestTimeout => "the provider exchange exceeded the request timeout",
             Self::ConnectFailed => "the provider connection failed",
             Self::CertificateRejected => "the client rejected the TLS certificate of the provider",
-            Self::ConnectTimeout => "the provider connection timed out before the request left",
             Self::DnsFailed => "the provider host did not resolve",
             Self::ConnectionLost => "the provider connection ended",
             Self::RedirectRefused => "the provider attempted a redirect",

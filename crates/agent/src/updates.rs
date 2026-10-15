@@ -39,7 +39,6 @@ struct State {
 struct Draft {
     id: DraftId,
     blocks: Vec<yuke_ai::BlockId>,
-    ready: bool,
 }
 
 impl<'a> Updates<'a> {
@@ -94,11 +93,8 @@ impl<'a> Updates<'a> {
             {
                 state.execution_event = Some(event_number);
             }
-            if state.draft.as_ref().is_some_and(|draft| draft.ready) {
-                state.draft.take()
-            } else {
-                None
-            }
+            // The engine saves an answer only after its response ends, so a draft is complete when its commit comes.
+            state.draft.take()
         };
         self.emit(SessionUpdate::Saved(StoredEvent {
             event_number,
@@ -143,7 +139,6 @@ impl Observer for Updates<'_> {
                 lock(&self.state).draft = Some(Draft {
                     id: draft_id,
                     blocks: Vec::new(),
-                    ready: false,
                 });
                 self.live(LiveUpdate::DraftStarted { draft_id });
             }
@@ -152,7 +147,6 @@ impl Observer for Updates<'_> {
                 let mut state = lock(&self.state);
                 let draft = state.draft.as_mut().expect("a response has a draft");
                 draft.blocks = blocks.iter().map(|block| block.block).collect();
-                draft.ready = true;
             }
             TurnEvent::Model(event) => {
                 let draft_id = {
@@ -160,10 +154,7 @@ impl Observer for Updates<'_> {
                     let draft = state.draft.as_mut().expect("a response has a draft");
                     match event {
                         yuke_ai::Event::BlockStopped(stopped) => draft.blocks.push(stopped.block),
-                        yuke_ai::Event::Done(_) => {
-                            draft.blocks.sort_unstable();
-                            draft.ready = true;
-                        }
+                        yuke_ai::Event::Done(_) => draft.blocks.sort_unstable(),
                         yuke_ai::Event::BlockStarted(_)
                         | yuke_ai::Event::TextDelta(_)
                         | yuke_ai::Event::RefusalDelta(_)

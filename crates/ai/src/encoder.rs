@@ -428,14 +428,12 @@ mod tests {
             description: "Read.".to_owned(),
             input_schema: "{}".to_owned(),
             defer_loading: false,
-            strict: false,
         }];
         let after = [ToolDefinition {
             name: "read".to_owned(),
             description: "Read a file.".to_owned(),
             input_schema: "{}".to_owned(),
             defer_loading: false,
-            strict: false,
         }];
         let pairs = [
             (
@@ -519,7 +517,6 @@ mod tests {
             description: "Find.".to_owned(),
             input_schema: "{}".to_owned(),
             defer_loading: false,
-            strict: false,
         }];
         let deferred = [
             plain[0].clone(),
@@ -528,7 +525,6 @@ mod tests {
                 description: "Read.".to_owned(),
                 input_schema: "{}".to_owned(),
                 defer_loading: false,
-                strict: false,
             }
             .deferred(),
         ];
@@ -590,7 +586,6 @@ mod tests {
             description: "Read.".to_owned(),
             input_schema: "{}".to_owned(),
             defer_loading: false,
-            strict: false,
         }
         .deferred()];
         let blocks = [Block::user_text("go")];
@@ -709,7 +704,6 @@ mod tests {
             description: "Read.".to_owned(),
             input_schema: "{}".to_owned(),
             defer_loading: false,
-            strict: false,
         }];
         let call = Block::ToolCall(ToolCall {
             call_id: "c".to_owned(),

@@ -230,8 +230,8 @@ impl ScriptTool {
                         }
                     }),
                 )?;
-                // The guard stops the commands of the call when the call ends, and also when the call drops.
-                let stop = CancellationToken::new();
+                // A cancel of the call stops its commands. The guard also stops them when the call ends or drops.
+                let stop = token.child_token();
                 #[expect(
                     unused_variables,
                     reason = "only the drop of the guard matters: it stops the commands"

@@ -1,5 +1,5 @@
 import { checkArguments, checkSchema, type ObjectSchema } from "yuke:internal/arguments";
-import { register } from "yuke:internal/native/tools";
+import { register } from "yuke:internal/native";
 import { bindSession } from "yuke:internal/session";
 import { CallSignal } from "yuke:internal/signal";
 
@@ -40,6 +40,11 @@ export interface Tool {
   readonly parameters: ObjectSchema;
   /** `parallel` lets the calls run together with other parallel calls. `serial` runs each call alone. */
   readonly concurrency: "serial" | "parallel";
+  /**
+   * `true` keeps the tool out of each request until the model finds it with the tool search. Use it for a tool that
+   * the model rarely needs. The default is `false`.
+   */
+  readonly defer?: boolean;
   readonly execute: (args: Record<string, unknown>, context: ToolContext) => ToolAnswer | Promise<ToolAnswer>;
 }
 
@@ -51,6 +56,7 @@ export function define(tool: Tool): void {
     tool.description,
     JSON.stringify(tool.parameters),
     tool.concurrency,
+    tool.defer === true,
     (text, callId, folder, output, session) => {
       const signal = new CallSignal();
       const context: ToolContext = { callId, folder, signal, output };

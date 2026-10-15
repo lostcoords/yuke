@@ -226,6 +226,37 @@ async fn the_built_in_tools_come_with_their_definitions() {
 }
 
 #[tokio::test]
+async fn a_deferred_tool_is_defined_for_the_tool_search_and_others_are_not() {
+    let folder = folder("a_deferred_tool_is_defined_for_the_tool_search_and_others_are_not");
+    let empty = "parameters: { type: 'object', properties: {} }, execute: () => 'x'";
+    write(
+        &folder,
+        &[(
+            "main.ts",
+            &format!(
+                "import {{ define }} from 'yuke:tools';\n\
+                 define({{ name: 'rare', description: 'd', concurrency: 'serial', defer: true, {empty} }});\n\
+                 define({{ name: 'common', description: 'd', concurrency: 'serial', {empty} }});\n"
+            ),
+        )],
+    );
+    let (runtime, _faults) = start(&folder).await;
+    runtime.import(&module(&folder, "main.ts")).await.unwrap();
+    let host: Arc<dyn SessionHost> = Arc::new(TestHost {
+        folder: folder.clone(),
+        ..TestHost::default()
+    });
+
+    let tools = runtime.tools(host).await.unwrap();
+
+    let deferred: Vec<(&str, bool)> = tools
+        .iter()
+        .map(|(definition, _)| (definition.name.as_str(), definition.defer_loading))
+        .collect();
+    assert_eq!(deferred, [("rare", true), ("common", false)]);
+}
+
+#[tokio::test]
 async fn a_second_tool_with_one_name_throws() {
     let folder = folder("a_second_tool_with_one_name_throws");
     let tool = "{ name: 'twice', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} }, execute: () => 'x' }";

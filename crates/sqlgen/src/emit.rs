@@ -7,9 +7,6 @@ use crate::resolve::{Module, Parameter, Query, RowType, pascal_case};
 /// The generated file for `modules`. `migrations` holds the migration file names in number order.
 pub(crate) fn emit(migrations: &[String], modules: &[Module]) -> Result<String, fmt::Error> {
     let mut code = String::from("//! Generated from the query files by `yuke-sqlgen`. Do not edit.\n\n");
-    if modules.iter().any(uses_parent) {
-        code.push_str("use super::*;\n\n");
-    }
     // `include_str!` finds a path from the file that calls it. The generated file is `src/queries.rs` of the crate.
     code.push_str(
         "/// The SQL of each migration in number order. The `user_version` of a database counts its applied migrations.\n\
@@ -28,9 +25,6 @@ pub(crate) fn emit(migrations: &[String], modules: &[Module]) -> Result<String, 
 
 fn emit_module(code: &mut String, module: &Module) -> fmt::Result {
     writeln!(code, "pub(crate) mod {} {{", module.name)?;
-    if uses_parent(module) {
-        code.push_str("use super::*;\n");
-    }
     // The module imports each name that it uses, so no path in it can be shorter, whatever the parent imports.
     let rows = !module.rows.is_empty();
     let executes = module.queries.iter().any(|query| query.row.is_none());
@@ -188,55 +182,6 @@ fn raw_string(text: &str) -> String {
     format!("r{hashes}\"{text}\"{hashes}")
 }
 
-/// Whether a type of `module` names something of the parent module, so the module needs `use super::*`.
-fn uses_parent(module: &Module) -> bool {
-    let row_types = module
-        .rows
-        .iter()
-        .flat_map(|row| &row.fields)
-        .map(|field| field.rust_type.as_str());
-    let parameter_types = module
-        .queries
-        .iter()
-        .flat_map(|query| &query.parameters)
-        .map(|parameter| parameter.rust_type.as_str());
-    row_types.chain(parameter_types).any(names_parent)
-}
-
-/// Whether `rust_type` holds a path whose first segment is not a primitive, a prelude type, a crate root, or a
-/// keyword. `NoteId`, `models::NoteId`, and `Option<NoteId>` name the parent. `i64`, `Option<String>`, and
-/// `crate::id::NoteId` do not.
-fn names_parent(rust_type: &str) -> bool {
-    const OWN: &[&str] = &[
-        "bool", "char", "str", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
-        "f32", "f64", "String", "Vec", "Option", "Box", "Result", "crate", "std", "core", "alloc", "self", "super",
-        "mut", "dyn", "const",
-    ];
-    let mut paths = Vec::new();
-    let mut start = None;
-    for (index, character) in rust_type.char_indices().chain([(rust_type.len(), ' ')]) {
-        let in_path = character.is_ascii_alphanumeric() || character == '_' || character == ':';
-        match (start, in_path) {
-            (None, true) => start = Some(index),
-            (Some(first), false) => {
-                // A lifetime such as `'a` is not a path.
-                if !rust_type[..first].ends_with('\'') {
-                    paths.push(&rust_type[first..index]);
-                }
-                start = None;
-            }
-            _ => {}
-        }
-    }
-    paths.into_iter().any(|path| {
-        // A path that starts with `::` is absolute, and a number is an array length.
-        let segment = path.split("::").next().unwrap_or_default();
-        !path.starts_with("::")
-            && !segment.starts_with(|character: char| character.is_ascii_digit())
-            && !OWN.contains(&segment)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,31 +191,6 @@ mod tests {
             name: "value".to_owned(),
             rust_type: rust_type.to_owned(),
             nullable: false,
-        }
-    }
-
-    #[test]
-    fn a_type_names_the_parent_when_a_path_starts_outside_the_prelude_and_the_crate_roots() {
-        for rust_type in [
-            "NoteId",
-            "&NoteId",
-            "models::NoteId",
-            "Option<NoteId>",
-            "std::option::Option<NoteId>",
-        ] {
-            assert!(names_parent(rust_type), "{rust_type}");
-        }
-        for rust_type in [
-            "i64",
-            "&str",
-            "&'static str",
-            "[u8; 16]",
-            "Option<String>",
-            "Result<i64, String>",
-            "crate::id::NoteId",
-            "::std::time::Duration",
-        ] {
-            assert!(!names_parent(rust_type), "{rust_type}");
         }
     }
 

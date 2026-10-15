@@ -5,94 +5,80 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, OnceLock};
 
-use async_trait::async_trait;
 use yuke_ai::{SEARCH_TOOL_NAME, ToolCall, ToolDefinition, ToolResult};
 
 use crate::tool::{TOOL_CALL_NAME, Toolset, parse_arguments};
-
-/// Ranks the deferred tools for a search. The default ranker is [`Bm25`]. A caller can supply another one, for
-/// example a ranker that compares embeddings.
-#[async_trait]
-pub trait ToolSearch: Send + Sync {
-    /// Return the indices of the tools in `tools` that match `query`, best first, at most `limit`.
-    async fn search(&self, query: &str, tools: &[&ToolDefinition], limit: usize) -> Vec<usize>;
-}
-
-/// The default ranker: BM25 over the words of the name, the description, and the schema properties of each tool.
-/// A tool that shares no word with the query does not match. Equal scores sort by name.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Bm25;
 
 /// The term frequency saturation of BM25: a repeated word adds less with each repeat.
 const K1: f64 = 1.2;
 /// The document length normalization of BM25: a long document counts its words less.
 const B: f64 = 0.75;
 
-#[async_trait]
-impl ToolSearch for Bm25 {
-    async fn search(&self, query: &str, tools: &[&ToolDefinition], limit: usize) -> Vec<usize> {
-        let documents: Vec<Vec<String>> = tools.iter().map(|tool| tool_words(tool)).collect();
-        let mut terms = Vec::new();
-        words(query, &mut terms);
-        terms.sort_unstable();
-        terms.dedup();
-        if documents.is_empty() || terms.is_empty() {
-            return Vec::new();
-        }
-
-        #[expect(clippy::cast_precision_loss, reason = "a catalog holds far fewer than 2^52 words")]
-        let average = documents.iter().map(Vec::len).sum::<usize>() as f64 / documents.len() as f64;
-        #[expect(clippy::cast_precision_loss, reason = "a catalog holds far fewer than 2^52 tools")]
-        let count = documents.len() as f64;
-        let frequencies: Vec<HashMap<&str, usize>> = documents
-            .iter()
-            .map(|document| {
-                let mut frequency = HashMap::new();
-                for word in document {
-                    *frequency.entry(word.as_str()).or_insert(0) += 1;
-                }
-                frequency
-            })
-            .collect();
-
-        // The whole catalog sets the rarity of a term, so the search computes each rarity once.
-        let rarities: Vec<f64> = terms
-            .iter()
-            .map(|term| {
-                #[expect(clippy::cast_precision_loss, reason = "a catalog holds far fewer than 2^52 tools")]
-                let containing = frequencies
-                    .iter()
-                    .filter(|frequency| frequency.contains_key(term.as_str()))
-                    .count() as f64;
-                (1.0 + (count - containing + 0.5) / (containing + 0.5)).ln()
-            })
-            .collect();
-
-        let mut scored: Vec<(usize, f64)> = Vec::new();
-        for (index, frequency) in frequencies.iter().enumerate() {
-            #[expect(clippy::cast_precision_loss, reason = "a tool has far fewer than 2^52 words")]
-            let length = documents[index].len() as f64;
-            let mut score = 0.0;
-            for (term, rarity) in terms.iter().zip(&rarities) {
-                let Some(&occurrences) = frequency.get(term.as_str()) else {
-                    continue;
-                };
-                #[expect(clippy::cast_precision_loss, reason = "the counts are small")]
-                let occurrences = occurrences as f64;
-                score += rarity * occurrences * (K1 + 1.0) / (occurrences + K1 * (1.0 - B + B * length / average));
-            }
-            if score > 0.0 {
-                scored.push((index, score));
-            }
-        }
-        scored.sort_by(|left, right| {
-            right
-                .1
-                .total_cmp(&left.1)
-                .then_with(|| tools[left.0].name.cmp(&tools[right.0].name))
-        });
-        scored.into_iter().take(limit).map(|(index, _)| index).collect()
+/// The indices of the tools in `tools` that match `query`, best first, at most `limit`. BM25 ranks the words of the
+/// name, the description, and the schema properties of each tool. A tool that shares no word with the query does not
+/// match. Equal scores sort by name.
+fn bm25(query: &str, tools: &[&ToolDefinition], limit: usize) -> Vec<usize> {
+    let documents: Vec<Vec<String>> = tools.iter().map(|tool| tool_words(tool)).collect();
+    let mut terms = Vec::new();
+    words(query, &mut terms);
+    terms.sort_unstable();
+    terms.dedup();
+    if documents.is_empty() || terms.is_empty() {
+        return Vec::new();
     }
+
+    #[expect(clippy::cast_precision_loss, reason = "a catalog holds far fewer than 2^52 words")]
+    let average = documents.iter().map(Vec::len).sum::<usize>() as f64 / documents.len() as f64;
+    #[expect(clippy::cast_precision_loss, reason = "a catalog holds far fewer than 2^52 tools")]
+    let count = documents.len() as f64;
+    let frequencies: Vec<HashMap<&str, usize>> = documents
+        .iter()
+        .map(|document| {
+            let mut frequency = HashMap::new();
+            for word in document {
+                *frequency.entry(word.as_str()).or_insert(0) += 1;
+            }
+            frequency
+        })
+        .collect();
+
+    // The whole catalog sets the rarity of a term, so the search computes each rarity once.
+    let rarities: Vec<f64> = terms
+        .iter()
+        .map(|term| {
+            #[expect(clippy::cast_precision_loss, reason = "a catalog holds far fewer than 2^52 tools")]
+            let containing = frequencies
+                .iter()
+                .filter(|frequency| frequency.contains_key(term.as_str()))
+                .count() as f64;
+            (1.0 + (count - containing + 0.5) / (containing + 0.5)).ln()
+        })
+        .collect();
+
+    let mut scored: Vec<(usize, f64)> = Vec::new();
+    for (index, frequency) in frequencies.iter().enumerate() {
+        #[expect(clippy::cast_precision_loss, reason = "a tool has far fewer than 2^52 words")]
+        let length = documents[index].len() as f64;
+        let mut score = 0.0;
+        for (term, rarity) in terms.iter().zip(&rarities) {
+            let Some(&occurrences) = frequency.get(term.as_str()) else {
+                continue;
+            };
+            #[expect(clippy::cast_precision_loss, reason = "the counts are small")]
+            let occurrences = occurrences as f64;
+            score += rarity * occurrences * (K1 + 1.0) / (occurrences + K1 * (1.0 - B + B * length / average));
+        }
+        if score > 0.0 {
+            scored.push((index, score));
+        }
+    }
+    scored.sort_by(|left, right| {
+        right
+            .1
+            .total_cmp(&left.1)
+            .then_with(|| tools[left.0].name.cmp(&tools[right.0].name))
+    });
+    scored.into_iter().take(limit).map(|(index, _)| index).collect()
 }
 
 /// The words of `tool` for the index. The name counts twice, because a name match says the most.
@@ -204,7 +190,6 @@ static NATIVE_SEARCH: LazyLock<ToolDefinition> = LazyLock::new(|| ToolDefinition
         .to_owned(),
     input_schema: search_schema(),
     defer_loading: false,
-    strict: false,
 });
 
 /// The search tool of a target without a native search. A match is callable through [`TOOL_CALL_NAME`].
@@ -215,7 +200,6 @@ static BRIDGE_SEARCH: LazyLock<ToolDefinition> = LazyLock::new(|| ToolDefinition
         .to_owned(),
     input_schema: search_schema(),
     defer_loading: false,
-    strict: false,
 });
 
 /// The tool that calls a deferred tool on a target without a native search.
@@ -224,7 +208,6 @@ static BRIDGE_CALL: LazyLock<ToolDefinition> = LazyLock::new(|| ToolDefinition {
     description: "Call a deferred tool that tool_search found. Pass its name and its arguments.".to_owned(),
     input_schema: CALL_SCHEMA.into(),
     defer_loading: false,
-    strict: false,
 });
 
 /// The search mode for deferred tools.
@@ -297,12 +280,7 @@ struct SearchArguments {
 
 /// Run the search `call` over the deferred tools of `toolset`. On a native target, the result loads the matches.
 /// On another target, it shows them with their input schemas.
-pub(crate) async fn search(
-    ranker: &dyn ToolSearch,
-    toolset: &Toolset,
-    call: &ToolCall,
-    mode: SearchMode,
-) -> ToolResult {
+pub(crate) fn search(toolset: &Toolset, call: &ToolCall, mode: SearchMode) -> ToolResult {
     let arguments: SearchArguments = match parse_arguments(&call.arguments) {
         Ok(arguments) => arguments,
         Err(error) => return ToolResult::error(&call.call_id, error),
@@ -312,11 +290,9 @@ pub(crate) async fn search(
         return ToolResult::error(&call.call_id, format!("The limit must be 1 to {MAX_LIMIT}."));
     }
     let deferred: Vec<&ToolDefinition> = toolset.deferred().collect();
-    let found: Vec<&ToolDefinition> = ranker
-        .search(&arguments.query, &deferred, limit)
-        .await
+    let found: Vec<&ToolDefinition> = bm25(&arguments.query, &deferred, limit)
         .into_iter()
-        .filter_map(|index| deferred.get(index).copied())
+        .map(|index| deferred[index])
         .collect();
     if found.is_empty() {
         return ToolResult::success(
@@ -357,27 +333,17 @@ struct CallArguments {
     arguments: Box<serde_json::value::RawValue>,
 }
 
-/// The real call that the bridge `call` asks for, under the call id of `call`. A name outside the deferred tools of
-/// `toolset` gets an error result instead, so a search never grants a tool.
-pub(crate) fn unwrap_call(toolset: &Toolset, call: &ToolCall) -> Result<ToolCall, ToolResult> {
+/// The real call that the bridge `call` asks for, under the call id of `call`. The real call goes through the hooks and
+/// the toolset as a direct call does, so a name without a tool gets an error result there.
+pub(crate) fn unwrap_call(call: &ToolCall) -> Result<ToolCall, ToolResult> {
     let arguments: CallArguments =
         parse_arguments(&call.arguments).map_err(|error| ToolResult::error(&call.call_id, error))?;
-    match toolset.definition(&arguments.name) {
-        Some(definition) if definition.defer_loading => Ok(ToolCall {
-            call_id: call.call_id.clone(),
-            name: arguments.name,
-            arguments: arguments.arguments.get().to_owned(),
-        }),
-        Some(_) => Err(ToolResult::error(
-            &call.call_id,
-            format!("\"{}\" is not a deferred tool. Call it directly.", arguments.name),
-        )),
-        None => Err(ToolResult::error(
-            &call.call_id,
-            format!(
-                "No deferred tool has the name \"{}\". Find one with tool_search.",
-                arguments.name
-            ),
-        )),
-    }
+    Ok(ToolCall {
+        call_id: call.call_id.clone(),
+        name: arguments.name,
+        arguments: arguments.arguments.get().to_owned(),
+    })
 }
+
+#[cfg(test)]
+mod tests;

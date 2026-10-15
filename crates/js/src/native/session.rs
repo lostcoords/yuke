@@ -32,11 +32,7 @@ pub(crate) fn object<'js>(
         Function::new(
             ctx.clone(),
             Async(
-                move |ctx: Ctx<'js>,
-                      command: String,
-                      limits: Object<'js>,
-                      signal: Object<'js>,
-                      on_output: Function<'js>| {
+                move |ctx: Ctx<'js>, command: String, limits: Object<'js>, on_output: Function<'js>| {
                     let processes = Arc::clone(&exec_processes);
                     let (folder, stop) = (folder.clone(), exec_stop.clone());
                     async move {
@@ -49,7 +45,7 @@ pub(crate) fn object<'js>(
                             max_bytes: max_bytes as usize,
                             stop,
                         };
-                        exec(ctx, &processes, request, signal, on_output).await
+                        exec(ctx, &processes, request, on_output).await
                     }
                 },
             ),

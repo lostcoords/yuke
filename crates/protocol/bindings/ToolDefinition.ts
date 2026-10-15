@@ -20,9 +20,4 @@ inputSchema: string,
  * Exclude the definition from the prompt until a tool search names it. A request with a deferred tool asks for
  * the native tool search, so the encoder refuses it for a target without [`Target::tool_search`].
  */
-deferLoading: boolean, 
-/**
- * Constrain the arguments to `input_schema`, as OpenAI and Anthropic both offer. A schema that strict mode does
- * not admit returns 400 when it is on.
- */
-strict: boolean, };
+deferLoading: boolean, };

@@ -66,10 +66,6 @@ pub(crate) fn write_head(
             jw.field_str("name", &tool.name);
             jw.field_str("description", &tool.description);
             jw.field_raw("parameters", &tool.input_schema);
-            // Some compatible hosts refuse a member they do not know, so only strict mode writes it, as pi does.
-            if tool.strict {
-                jw.field_bool("strict", true);
-            }
             jw.end_object();
             jw.end_object();
         }
@@ -227,12 +223,8 @@ fn write_assistant_message(jw: &mut JsonWriter<'_>, target: &Target, replay: Rea
         ReasoningReplayMode::None => {}
         // DeepSeek answers 400 when an assistant message returns without the member, even one that never reasoned,
         // so every message carries it, empty when it has no reasoning, as pi and opencode write it.
-        ReasoningReplayMode::Reasoning | ReasoningReplayMode::ReasoningContent => {
-            jw.key(if replay == ReasoningReplayMode::Reasoning {
-                "reasoning"
-            } else {
-                "reasoning_content"
-            });
+        ReasoningReplayMode::ReasoningContent => {
+            jw.key("reasoning_content");
             jw.string_parts(blocks.iter().filter_map(|block| match block {
                 Block::Reasoning(reasoning) => Some(reasoning.text.as_str()),
                 _ => None,
@@ -404,11 +396,6 @@ fn write_reasoning(jw: &mut JsonWriter<'_>, format: ThinkingFormat, reasoning: R
         ThinkingFormat::None => {}
         ThinkingFormat::Openai => jw.field_str("reasoning_effort", level),
         ThinkingFormat::Openrouter => write_effort_object(jw, level),
-        ThinkingFormat::AntLing => {
-            if on {
-                write_effort_object(jw, level);
-            }
-        }
         ThinkingFormat::Deepseek => {
             jw.key("thinking");
             jw.begin_object();
@@ -430,13 +417,6 @@ fn write_reasoning(jw: &mut JsonWriter<'_>, format: ThinkingFormat, reasoning: R
         }
         ThinkingFormat::Qwen => {
             jw.field_bool("enable_thinking", on);
-            write_effort(jw);
-        }
-        ThinkingFormat::Together => {
-            jw.key("reasoning");
-            jw.begin_object();
-            jw.field_bool("enabled", on);
-            jw.end_object();
             write_effort(jw);
         }
     }
@@ -546,18 +526,12 @@ mod tests {
             reasoning("then stop"),
             Block::assistant_text("answer"),
         ];
-        for (mode, expected) in [
-            (
-                ReasoningReplayMode::ReasoningContent,
-                r#"{"model":"m","stream":true,"stream_options":{"include_usage":true},"max_tokens":8,"messages":[{"role":"assistant","content":"answer","reasoning_content":"say \"hi\"\nthen stop"}]}"#,
-            ),
-            (
-                ReasoningReplayMode::Reasoning,
-                r#"{"model":"m","stream":true,"stream_options":{"include_usage":true},"max_tokens":8,"messages":[{"role":"assistant","content":"answer","reasoning":"say \"hi\"\nthen stop"}]}"#,
-            ),
-        ] {
-            expect_json(expected, "m", replaying(mode), request(&blocks));
-        }
+        expect_json(
+            r#"{"model":"m","stream":true,"stream_options":{"include_usage":true},"max_tokens":8,"messages":[{"role":"assistant","content":"answer","reasoning_content":"say \"hi\"\nthen stop"}]}"#,
+            "m",
+            replaying(ReasoningReplayMode::ReasoningContent),
+            request(&blocks),
+        );
     }
 
     // A message needs content or tool calls ("either content or tool_calls, but not none"), so pi skips one with
@@ -631,8 +605,6 @@ mod tests {
                 r#""reasoning":{"effort":"high"},"#,
                 r#""reasoning":{"effort":"none"},"#,
             ),
-            // This host has no off switch, so `off` leaves its default.
-            (ThinkingFormat::AntLing, r#""reasoning":{"effort":"high"},"#, ""),
             // A toggle host takes a named effort beside its switch. Z.ai preserves thinking when on.
             (
                 ThinkingFormat::Deepseek,
@@ -648,11 +620,6 @@ mod tests {
                 ThinkingFormat::Qwen,
                 r#""enable_thinking":true,"reasoning_effort":"high","#,
                 r#""enable_thinking":false,"#,
-            ),
-            (
-                ThinkingFormat::Together,
-                r#""reasoning":{"enabled":true},"reasoning_effort":"high","#,
-                r#""reasoning":{"enabled":false},"#,
             ),
         ];
         let head = r#"{"model":"m","stream":true,"stream_options":{"include_usage":true},"max_tokens":8,"#;
@@ -763,29 +730,16 @@ mod tests {
     }
 
     #[test]
-    fn tool_schema_and_strict_mode() {
-        let tools = [
-            ToolDefinition {
-                name: "run".to_owned(),
-                description: "run a command".to_owned(),
-                input_schema: r#"{"type":"object"}"#.to_owned(),
-                defer_loading: false,
-                strict: false,
-            },
-            ToolDefinition {
-                strict: true,
-                ..ToolDefinition {
-                    name: "read".to_owned(),
-                    description: "read a file".to_owned(),
-                    input_schema: "{}".to_owned(),
-                    defer_loading: false,
-                    strict: false,
-                }
-            },
-        ];
+    fn tool_schema() {
+        let tools = [ToolDefinition {
+            name: "run".to_owned(),
+            description: "run a command".to_owned(),
+            input_schema: r#"{"type":"object"}"#.to_owned(),
+            defer_loading: false,
+        }];
         let blocks = [Block::user_text("go")];
         expect_json(
-            r#"{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_tokens":8,"tools":[{"type":"function","function":{"name":"run","description":"run a command","parameters":{"type":"object"}}},{"type":"function","function":{"name":"read","description":"read a file","parameters":{},"strict":true}}],"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}"#,
+            r#"{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_tokens":8,"tools":[{"type":"function","function":{"name":"run","description":"run a command","parameters":{"type":"object"}}}],"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}"#,
             "gpt",
             chat(),
             request(&blocks).tools(&tools),
@@ -867,7 +821,6 @@ mod tests {
             description: "read".to_owned(),
             input_schema: "{}".to_owned(),
             defer_loading: false,
-            strict: false,
         }
         .deferred()];
         let target = Target {

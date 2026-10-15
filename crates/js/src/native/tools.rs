@@ -1,4 +1,4 @@
-//! `yuke:internal/native/tools`: the registry of the tools that `yuke:tools` defines.
+//! The `register` function of the native module: the registry of the tools that `yuke:tools` defines.
 
 use std::rc::Rc;
 
@@ -6,20 +6,11 @@ use rquickjs::convert::Coerced;
 use rquickjs::{Ctx, Function, Object};
 use yuke_engine::Concurrency;
 
-use super::Native;
 use crate::error::throw;
 use crate::tools::Registry;
 
-pub(crate) struct Tools;
-
-impl Native for Tools {
-    const NAME: &'static str = "yuke:internal/native/tools";
-    const EXPORTS: &'static [&'static str] = &["register"];
-}
-
-/// The export object of the module.
-pub(super) fn exports<'js>(ctx: &Ctx<'js>, registry: &Rc<Registry>) -> rquickjs::Result<Object<'js>> {
-    let object = Object::new(ctx.clone())?;
+/// Add `register` to `object`, the export object of the native module.
+pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, registry: &Rc<Registry>) -> rquickjs::Result<()> {
     let registry = Rc::clone(registry);
     object.set(
         "register",
@@ -30,6 +21,7 @@ pub(super) fn exports<'js>(ctx: &Ctx<'js>, registry: &Rc<Registry>) -> rquickjs:
                   description: String,
                   parameters: String,
                   Coerced(concurrency): Coerced<String>,
+                  defer: bool,
                   start: Function<'js>|
                   -> rquickjs::Result<()> {
                 let concurrency = match concurrency.as_str() {
@@ -47,8 +39,7 @@ pub(super) fn exports<'js>(ctx: &Ctx<'js>, registry: &Rc<Registry>) -> rquickjs:
                     name,
                     description,
                     input_schema: parameters,
-                    defer_loading: false,
-                    strict: false,
+                    defer_loading: defer,
                 };
                 registry
                     .add(&ctx, definition, concurrency, start)
@@ -56,5 +47,5 @@ pub(super) fn exports<'js>(ctx: &Ctx<'js>, registry: &Rc<Registry>) -> rquickjs:
             },
         )?,
     )?;
-    Ok(object)
+    Ok(())
 }

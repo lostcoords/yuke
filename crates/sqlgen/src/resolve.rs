@@ -1,10 +1,9 @@
 //! The checks of each query against the migrated schema, and the types that the checks find.
 
-use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use crate::Error;
-use crate::parse::{self, Field, QueryDeclaration, Row};
+use crate::parse::{self, Field, QueryDeclaration};
 
 /// The checked queries of one query file.
 #[derive(Debug)]
@@ -61,11 +60,6 @@ pub(crate) fn resolve(connection: &rusqlite::Connection, file: &Path, parsed: &p
             message: "the file name is not a module name in snake_case".to_owned(),
         })?
         .to_owned();
-    let mut shared: BTreeMap<&str, (&[Field], Option<Vec<Column>>)> = parsed
-        .types
-        .iter()
-        .map(|declaration| (declaration.name.as_str(), (declaration.fields.as_slice(), None)))
-        .collect();
     let mut rows = Vec::new();
     let mut queries = Vec::new();
     for declaration in &parsed.queries {
@@ -79,43 +73,19 @@ pub(crate) fn resolve(connection: &rusqlite::Connection, file: &Path, parsed: &p
             .map_err(|error| fail(format!("SQLite rejects the SQL: {error}")))?;
         let parameters = parameters(&statement, declaration).map_err(fail)?;
         let row = if statement.column_count() == 0 {
-            match &declaration.row {
-                Row::Inline(fields) if fields.is_empty() => None,
-                _ => {
-                    return Err(fail(
-                        "the query returns no column, so it has no row. Remove the part after `:`.".to_owned(),
-                    ));
-                }
+            if !declaration.columns.is_empty() {
+                return Err(fail(
+                    "the query returns no column, so it has no row. Remove the part after `:`.".to_owned(),
+                ));
             }
+            None
         } else {
-            Some(match &declaration.row {
-                Row::Inline(annotations) => {
-                    let name = pascal_case(&declaration.name);
-                    rows.push(RowType {
-                        name: name.clone(),
-                        fields: columns(&statement, annotations, None).map_err(fail)?,
-                    });
-                    name
-                }
-                Row::Shared(name) => {
-                    let (annotations, resolved) = shared.get_mut(name.as_str()).ok_or_else(|| {
-                        fail(format!(
-                            "no `--: {name}` type is in this file. Declare it, for example `--: {name}(id: i64)`."
-                        ))
-                    })?;
-                    let fields = columns(&statement, annotations, Some(name)).map_err(fail)?;
-                    match resolved {
-                        Some(first) if !same_columns(first, &fields) => {
-                            return Err(fail(format!(
-                                "the query returns other columns than the first query of type `{name}`, or other types"
-                            )));
-                        }
-                        Some(_) => {}
-                        None => *resolved = Some(fields),
-                    }
-                    name.clone()
-                }
-            })
+            let name = pascal_case(&declaration.name);
+            rows.push(RowType {
+                name: name.clone(),
+                fields: columns(&statement, &declaration.columns).map_err(fail)?,
+            });
+            Some(name)
         };
         queries.push(Query {
             name: declaration.name.clone(),
@@ -125,26 +95,7 @@ pub(crate) fn resolve(connection: &rusqlite::Connection, file: &Path, parsed: &p
             row,
         });
     }
-    // The shared row types come first, in the order of their declarations.
-    let mut shared_rows = Vec::new();
-    for declaration in &parsed.types {
-        let Some((_, Some(fields))) = shared.remove(declaration.name.as_str()) else {
-            return Err(Error::File {
-                file: file.to_owned(),
-                message: format!("no query returns type `{}`", declaration.name),
-            });
-        };
-        shared_rows.push(RowType {
-            name: declaration.name.clone(),
-            fields,
-        });
-    }
-    shared_rows.extend(rows);
-    Ok(Module {
-        name,
-        rows: shared_rows,
-        queries,
-    })
+    Ok(Module { name, rows, queries })
 }
 
 /// The parameters of `statement`, in the order of their annotations. Each parameter of the SQL has a `:name` and an
@@ -193,11 +144,7 @@ fn parameters(statement: &rusqlite::Statement<'_>, declaration: &QueryDeclaratio
 }
 
 /// The row fields of `statement`, in column order. Each returned column has one field declaration.
-fn columns(
-    statement: &rusqlite::Statement<'_>,
-    annotations: &[Field],
-    shared_name: Option<&str>,
-) -> Result<Vec<Column>, String> {
+fn columns(statement: &rusqlite::Statement<'_>, annotations: &[Field]) -> Result<Vec<Column>, String> {
     let names = statement.column_names();
     for annotation in annotations {
         if !names.contains(&annotation.name.as_str()) {
@@ -224,12 +171,8 @@ fn columns(
             .iter()
             .find(|annotation| annotation.name == *name)
             .ok_or_else(|| {
-                let location = match shared_name {
-                    Some(shared_name) => format!("the shared row declaration `--: {shared_name}(...)`"),
-                    None => "the row declaration after `:`".to_owned(),
-                };
                 format!(
-                    "the column `{name}` has no field declaration. Add `{name}` to {location}. \
+                    "the column `{name}` has no field declaration. Add `{name}` to the row declaration after `:`. \
                      Declare every returned column."
                 )
             })?;
@@ -299,18 +242,6 @@ fn origin(statement: &rusqlite::Statement<'_>, index: usize) -> Result<Option<Or
         declared: declared.map(|declared| declared.to_string_lossy().into_owned()),
         can_be_null: !not_null,
     }))
-}
-
-/// Whether two queries of one row type return the same fields. The rows read each column by name, so the order does
-/// not matter.
-fn same_columns(first: &[Column], other: &[Column]) -> bool {
-    fn by_name(fields: &[Column]) -> HashMap<&str, &str> {
-        fields
-            .iter()
-            .map(|field| (field.name.as_str(), field.rust_type.as_str()))
-            .collect()
-    }
-    by_name(first) == by_name(other)
 }
 
 /// `note_by_id` as `NoteById`.

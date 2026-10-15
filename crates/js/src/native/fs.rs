@@ -1,4 +1,4 @@
-//! `yuke:internal/native/fs`: file reads and writes. A relative path starts in the folder that the caller gives. Each
+//! The file functions of the native module: reads and writes. A relative path starts in the folder that the caller gives. Each
 //! function runs off the JavaScript thread, because a blocking call would spend the slice of other JavaScript.
 
 use std::fs::File;
@@ -8,23 +8,14 @@ use std::path::{Path, PathBuf};
 use rquickjs::function::Async;
 use rquickjs::{Ctx, Function, Object};
 
-use super::Native;
 use crate::error::throw;
 
-pub(crate) struct Fs;
-
-impl Native for Fs {
-    const NAME: &'static str = "yuke:internal/native/fs";
-    const EXPORTS: &'static [&'static str] = &["readLines", "readText", "writeText"];
-}
-
-/// The export object of the module.
-pub(super) fn exports<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
-    let object = Object::new(ctx.clone())?;
+/// Add the file functions to `object`, the export object of the native module.
+pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result<()> {
     object.set("readLines", Function::new(ctx.clone(), Async(read_lines))?)?;
     object.set("readText", Function::new(ctx.clone(), Async(read_text))?)?;
     object.set("writeText", Function::new(ctx.clone(), Async(write_text))?)?;
-    Ok(object)
+    Ok(())
 }
 
 /// What a read of lines gives.

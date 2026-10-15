@@ -3,15 +3,7 @@
 /// The declarations of one query file, in file order.
 #[derive(Debug, Default)]
 pub(crate) struct File {
-    pub(crate) types: Vec<TypeDeclaration>,
     pub(crate) queries: Vec<QueryDeclaration>,
-}
-
-/// A `--:` row type.
-#[derive(Debug)]
-pub(crate) struct TypeDeclaration {
-    pub(crate) name: String,
-    pub(crate) fields: Vec<Field>,
 }
 
 /// A `--!` query with its SQL.
@@ -19,18 +11,10 @@ pub(crate) struct TypeDeclaration {
 pub(crate) struct QueryDeclaration {
     pub(crate) name: String,
     pub(crate) parameters: Vec<Field>,
-    pub(crate) row: Row,
+    /// The column annotations after the `:` of the annotation. A query without `:` has none.
+    pub(crate) columns: Vec<Field>,
     pub(crate) doc: Vec<String>,
     pub(crate) sql: String,
-}
-
-/// The columns of a query, after the `:` of its annotation.
-#[derive(Debug)]
-pub(crate) enum Row {
-    /// The query has its own row type, with these column annotations.
-    Inline(Vec<Field>),
-    /// The query returns a `--:` row type of this name.
-    Shared(String),
 }
 
 /// A parameter or a column annotation: `name`, `name?`, `name: Type`, or `name?: Type`.
@@ -49,10 +33,7 @@ pub(crate) fn parse(source: &str) -> Result<File, String> {
         let number = index + 1;
         let at = |message: String| format!("line {number}: {message}");
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("--:") {
-            close(&mut file, open.take()).map_err(at)?;
-            file.types.push(type_declaration(rest).map_err(at)?);
-        } else if let Some(rest) = trimmed.strip_prefix("--!") {
+        if let Some(rest) = trimmed.strip_prefix("--!") {
             close(&mut file, open.take()).map_err(at)?;
             open = Some((query_declaration(rest).map_err(at)?, Vec::new()));
         } else if let Some((query, sql)) = &mut open {
@@ -95,25 +76,7 @@ fn close(file: &mut File, open: Option<(QueryDeclaration, Vec<&str>)>) -> Result
     Ok(())
 }
 
-/// Parse `Name(fields)`, the text after `--:`.
-fn type_declaration(text: &str) -> Result<TypeDeclaration, String> {
-    let mut cursor = Cursor(text.trim());
-    let name = cursor.name();
-    if !is_type_name(name) {
-        return Err(format!("`{name}` is not a type name in PascalCase"));
-    }
-    let fields = cursor
-        .group()?
-        .ok_or_else(|| format!("type `{name}` needs its fields in parentheses"))?;
-    cursor.end()?;
-    Ok(TypeDeclaration {
-        name: name.to_owned(),
-        fields,
-    })
-}
-
-/// Parse `name (parameters) : (columns)` or `name (parameters) : Type`, the text after `--!`. Each part after the name
-/// is optional.
+/// Parse `name (parameters) : (columns)`, the text after `--!`. Each part after the name is optional.
 fn query_declaration(text: &str) -> Result<QueryDeclaration, String> {
     let mut cursor = Cursor(text.trim());
     let name = cursor.name();
@@ -121,24 +84,18 @@ fn query_declaration(text: &str) -> Result<QueryDeclaration, String> {
         return Err(format!("`{name}` is not a query name in snake_case"));
     }
     let parameters = cursor.group()?.unwrap_or_default();
-    let row = if cursor.eat(':') {
-        if let Some(fields) = cursor.group()? {
-            Row::Inline(fields)
-        } else {
-            let shared = cursor.name();
-            if !is_type_name(shared) {
-                return Err(format!("`{shared}` after `:` is not a type name in PascalCase"));
-            }
-            Row::Shared(shared.to_owned())
-        }
+    let columns = if cursor.eat(':') {
+        cursor
+            .group()?
+            .ok_or_else(|| "the columns after `:` need parentheses, for example `: (id, title)`".to_owned())?
     } else {
-        Row::Inline(Vec::new())
+        Vec::new()
     };
     cursor.end()?;
     Ok(QueryDeclaration {
         name: name.to_owned(),
         parameters,
-        row,
+        columns,
         doc: Vec::new(),
         sql: String::new(),
     })
@@ -263,13 +220,6 @@ pub(crate) fn is_field_name(name: &str) -> bool {
             .chars()
             .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_')
         && !KEYWORDS.contains(&name)
-}
-
-/// Whether `name` is a `PascalCase` Rust type name.
-fn is_type_name(name: &str) -> bool {
-    name.starts_with(|character: char| character.is_ascii_uppercase())
-        && name.chars().all(|character| character.is_ascii_alphanumeric())
-        && name != "Self"
 }
 
 /// The strict and reserved keywords of Rust 2024 that are lowercase.

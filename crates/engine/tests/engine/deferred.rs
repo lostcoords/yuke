@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use yuke_ai::{Block, Target, ToolCall, ToolDefinition, ToolResult};
-use yuke_engine::{Bm25, Driver, Hooks, RoundPlan, ToolNameError, ToolSearch, Toolset, TurnEvent};
+use yuke_engine::{Driver, Hooks, RoundPlan, ToolNameError, Toolset, TurnEvent};
 
 use crate::support::{
     NoWait, Recorder, ScriptedTransport, block_on, definition, results_in_context, target, text_reply, tool_reply,
@@ -15,7 +15,6 @@ fn create_issue_definition() -> ToolDefinition {
         description: "Create an issue.".into(),
         input_schema: r#"{"type":"object"}"#.to_owned(),
         defer_loading: false,
-        strict: false,
     }
     .deferred()
 }
@@ -99,7 +98,6 @@ fn large(name: &str, bytes: usize) -> ToolDefinition {
         description: "Alpha tool.".to_owned(),
         input_schema: schema,
         defer_loading: false,
-        strict: false,
     }
     .deferred()
 }
@@ -193,7 +191,7 @@ fn tool_call_runs_a_deferred_tool_and_the_hooks_and_the_observer_see_the_real_ca
 }
 
 #[test]
-fn tool_call_refuses_an_eager_tool_and_an_unknown_name_and_runs_nothing() {
+fn tool_call_runs_any_tool_of_the_toolset_and_an_unknown_name_gets_an_error_after_the_hooks() {
     let transport = ScriptedTransport::new([
         tool_reply(&[
             ("c1", "tool_call", r#"{"name": "read", "arguments": {}}"#),
@@ -206,21 +204,30 @@ fn tool_call_refuses_an_eager_tool_and_an_unknown_name_and_runs_nothing() {
     let mut toolset = Toolset::new();
     toolset.add(definition("read"), read.clone()).unwrap();
     toolset.add(create_issue_definition(), Recorder::default()).unwrap();
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
+    let hooks = SeeCalls::default();
+    let driver = Driver::new(&transport, &target, &NoWait)
+        .toolset(&toolset)
+        .hooks(&hooks);
 
     let results = results_in_context(driver);
 
     assert_eq!(
         results,
         [
-            ToolResult::error("c1", "\"read\" is not a deferred tool. Call it directly."),
-            ToolResult::error(
-                "c2",
-                "No deferred tool has the name \"nope\". Find one with tool_search."
-            ),
+            ToolResult::success("c1", "result 1"),
+            ToolResult::error("c2", "Unknown tool: nope"),
         ]
     );
-    assert_eq!(read.calls(), Vec::<String>::new());
+    assert_eq!(read.calls(), ["{}"]);
+    // The hooks see each bridged call under its real name, also a name without a tool.
+    let seen: Vec<String> = hooks
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect();
+    assert_eq!(seen, ["read", "nope"]);
 }
 
 #[test]
@@ -347,94 +354,4 @@ fn a_search_limit_outside_one_to_twenty_gets_an_error_result() {
         results_in_context(driver),
         [ToolResult::error("c1", "The limit must be 1 to 20.")]
     );
-}
-
-// A plural folds to its singular, so a query word finds the other form.
-#[test]
-fn bm25_matches_the_singular_and_the_plural_of_a_word() {
-    let tools = [
-        ToolDefinition {
-            name: "list_entries".to_owned(),
-            description: "List the entries.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-            strict: false,
-        },
-        ToolDefinition {
-            name: "pack_box".to_owned(),
-            description: "Pack one box.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-            strict: false,
-        },
-        ToolDefinition {
-            name: "teach_classes".to_owned(),
-            description: "Teach the classes.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-            strict: false,
-        },
-        ToolDefinition {
-            name: "read_file".to_owned(),
-            description: "Read a file.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-            strict: false,
-        },
-    ];
-    let borrowed: Vec<&ToolDefinition> = tools.iter().collect();
-
-    for (query, expected) in [
-        ("entry", "list_entries"),
-        ("boxes", "pack_box"),
-        ("class", "teach_classes"),
-        ("files", "read_file"),
-    ] {
-        let found = block_on(Bm25.search(query, &borrowed, 5));
-
-        let names: Vec<&str> = found.iter().map(|&index| tools[index].name.as_str()).collect();
-        assert_eq!(names, [expected], "{query}");
-    }
-}
-
-#[test]
-fn bm25_ranks_word_matches_and_drops_tools_without_one() {
-    let tools = [
-        ToolDefinition {
-            name: "read_file".to_owned(),
-            description: "Read a file.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-            strict: false,
-        },
-        ToolDefinition {
-            name: "list_issues".to_owned(),
-            description: "List the issues of a repository.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-            strict: false,
-        },
-        ToolDefinition {
-            name: "createIssue".to_owned(),
-            description: "Create a GitHub issue.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-            strict: false,
-        },
-        ToolDefinition {
-            name: "comment".to_owned(),
-            description: "Add a comment.".to_owned(),
-            input_schema: r#"{"anyOf":[{"type":"object","properties":{"issue_number":{"type":"integer"}}}]}"#
-                .to_owned(),
-            defer_loading: false,
-            strict: false,
-        },
-    ];
-    let borrowed: Vec<&ToolDefinition> = tools.iter().collect();
-
-    let found = block_on(Bm25.search("github issue", &borrowed, 5));
-
-    // camelCase splits `createIssue`, and a property under `anyOf` gives `comment` the word `issue`.
-    let names: Vec<&str> = found.iter().map(|&index| tools[index].name.as_str()).collect();
-    assert_eq!(names, ["createIssue", "list_issues", "comment"]);
 }

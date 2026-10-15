@@ -69,8 +69,7 @@ pub struct Options {
     /// Bounds on what the response can make the library hold.
     pub limits: ResponseLimits,
     /// The end of the whole exchange, and it can span several attempts. Past it, the attempt fails with
-    /// [`crate::transport::Fault::RequestTimeout`]. Before the send, it fails with
-    /// [`crate::transport::Fault::ConnectTimeout`].
+    /// [`crate::transport::Fault::RequestTimeout`].
     pub deadline: Option<Instant>,
 }
 
@@ -436,12 +435,7 @@ mod tests {
 
     #[test]
     fn an_open_fault_ends_the_stream_with_no_head_facts() {
-        for cause in [
-            Fault::ConnectFailed,
-            Fault::ConnectTimeout,
-            Fault::ConnectionLost,
-            Fault::IdleTimeout,
-        ] {
+        for cause in [Fault::ConnectFailed, Fault::ConnectionLost, Fault::IdleTimeout] {
             let canned = CannedTransport::new(String::new())
                 .open_error(cause)
                 .request_id("never-read");

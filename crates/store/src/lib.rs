@@ -5,14 +5,6 @@
 mod context;
 mod event;
 mod files;
-// Clippy accepts `use super::*` in a test build, so the expectation holds only outside tests.
-#[cfg_attr(
-    not(test),
-    expect(
-        clippy::wildcard_imports,
-        reason = "the generated code finds the column types of the crate through `use super::*`"
-    )
-)]
 mod queries;
 mod schema;
 mod store;

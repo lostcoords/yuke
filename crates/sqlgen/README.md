@@ -7,9 +7,7 @@ of [`yuke-sql`](../sql).
 ## Query files
 
 ```sql
---: Note(id: NoteId, author, title, body?)
-
---! note_by_id (id: NoteId) : Note
+--! note_by_id (id: crate::NoteId) : (id: crate::NoteId, author, title, body?)
 --- The note with this id.
 SELECT id, author, title, body FROM notes WHERE id = :id;
 
@@ -20,16 +18,16 @@ INSERT INTO notes(author, title, body) VALUES (:author, :title, :body);
 | Syntax | Meaning |
 | --- | --- |
 | `--! name (parameters) : (columns)` | A query. The parameters are optional. A query that returns columns needs a row declaration. |
-| `--! name ... : Type` | A query that returns the shared row type `Type`. |
-| `--: Type(columns)` | A shared row type for more than one query. |
 | `--- text` | The doc comment of the query. |
 | `name`, `name?`, `name: Type`, `name?: Type` | A field. `?` makes it an `Option`. |
 
-- A parameter annotation is the type of the function argument, for example `&str` or `NoteId`. SQLite reports no
-  parameter type, so each parameter needs one.
+- A parameter annotation is the type of the function argument, for example `&str` or `crate::NoteId`. SQLite reports
+  no parameter type, so each parameter needs one.
+- A type of the crate needs its full path, for example `crate::NoteId`. The generated modules import no name of their
+  parent.
 - A row declaration lists every returned column exactly once. It lists no column that the query does not return.
-  The field order can differ from the column order in the query. A query that returns columns needs an inline
-  declaration, for example `--! titles : (title)`, or a shared row type.
+  The field order can differ from the column order in the query. Its row struct has the name of the query in
+  PascalCase, for example `NoteById`.
 - A column takes its type from its schema declaration: `INTEGER` is `i64`, `REAL` is `f64`, `TEXT` is `String`, and `BLOB` is
   `Vec<u8>`. A computed column needs a type annotation. A domain type needs a type override.
 - A table column without `NOT NULL` needs `?`. Write `NOT NULL` on key columns, for example
@@ -47,13 +45,13 @@ INSERT INTO notes(author, title, body) VALUES (:author, :title, :body);
 ## Generated code
 
 ```rust
-let note = queries::notes::note_by_id(&connection, id).opt()?; // Option<Note>
-let title = queries::notes::note_by_id(&connection, id).map(|note| note.title).one()?; // String
+let note = queries::notes::note_by_id(&connection, id).opt()?; // Option<NoteById>
+let title = queries::notes::note_by_id(&connection, id).one()?.title; // String
 let params = queries::notes::InsertNoteParams { author: "ada", title: "a", body: None };
 let changed = queries::notes::insert_note(&connection, &params)?; // usize
 ```
 
-A query with columns returns a `Query`: pick `one`, `opt`, or `all`, and `map` each row into your type. A query without
+A query with columns returns a `Query`: pick `one`, `opt`, or `all`. A query without
 columns runs at once and returns the number of changed rows. A query with more than one parameter takes a parameter
 struct. The fixture in [`tests/fixture`](tests/fixture) shows a full query file and its output.
 

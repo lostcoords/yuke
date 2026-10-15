@@ -199,11 +199,6 @@ impl Toolset {
         self.definitions.iter().filter(|definition| definition.defer_loading)
     }
 
-    /// The definition of the tool `name`.
-    pub(crate) fn definition(&self, name: &str) -> Option<&yuke_ai::ToolDefinition> {
-        self.definitions.iter().find(|definition| definition.name == name)
-    }
-
     /// The concurrency of the tool of `name`. A name without a tool runs nothing, so it does not wait for other calls.
     pub(crate) fn concurrency(&self, name: &str) -> Concurrency {
         match self.definitions.iter().position(|tool| tool.name == name) {

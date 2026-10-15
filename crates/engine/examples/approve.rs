@@ -112,7 +112,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             description: "Convert text to uppercase.".to_owned(),
             input_schema: r#"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}"#.to_owned(),
             defer_loading: false,
-            strict: false,
         },
         Uppercase,
     )?;

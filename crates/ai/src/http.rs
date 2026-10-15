@@ -113,18 +113,15 @@ impl HttpTransport {
 
         // Connect, send, and the head wait share the idle deadline, so a silent peer never holds the call.
         let bound = earlier(self.idle_timeout.map(|idle| Instant::now() + idle), deadline);
-        let mut sent = false;
         let head = match bound {
-            None => self.connect_and_send(&target, http_request, &mut sent).await,
+            None => self.connect_and_send(&target, http_request).await,
             Some((at, timed_out)) => {
                 // A deadline that already passed starts no leg, so an expired request is never sent.
                 if at <= Instant::now() {
-                    return Err(Fault::ConnectTimeout);
+                    return Err(timed_out);
                 }
-                let outcome =
-                    tokio::time::timeout_at(at, self.connect_and_send(&target, http_request, &mut sent)).await;
-                // A deadline that passed before the request left gives `ConnectTimeout`.
-                outcome.unwrap_or(Err(if sent { timed_out } else { Fault::ConnectTimeout }))
+                let outcome = tokio::time::timeout_at(at, self.connect_and_send(&target, http_request)).await;
+                outcome.unwrap_or(Err(timed_out))
             }
         };
         let (response, connection) = head?;
@@ -173,13 +170,11 @@ impl HttpTransport {
         Ok(http_request)
     }
 
-    /// Open the connection, send the request, and read the head. `sent` turns true once the connection carries the
-    /// request, because the provider may hold it from there.
+    /// Open the connection, send the request, and read the head.
     async fn connect_and_send(
         &self,
         target: &Target,
         request: Request<Full<Bytes>>,
-        sent: &mut bool,
     ) -> Result<(http::Response<Incoming>, Connection), Fault> {
         // A TLS configuration that fails to build fails the open before it connects.
         let tls = if target.tls { Some(self.tls()?) } else { None };
@@ -210,7 +205,6 @@ impl HttpTransport {
         } else {
             Box::new(tcp)
         };
-        *sent = true;
         send(socket, request).await
     }
 }

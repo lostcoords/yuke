@@ -20,7 +20,7 @@ use yuke_ai::{
 };
 
 use crate::hooks::{Hooks, NoHooks, RoundDecision, ToolDecision};
-use crate::search::{self, Bm25, Declared, SearchMode, ToolSearch};
+use crate::search::{self, Declared, SearchMode};
 use crate::tool::{Concurrency, TOOL_CALL_NAME, ToolContext, Toolset};
 use crate::turn_state::{Action, CANCELLED_REASON, Commit, Outcome, TurnState, not_executed};
 
@@ -156,7 +156,6 @@ pub struct Driver<'a> {
     settings: &'a Settings,
     session_id: Option<&'a str>,
     blob_store: Option<&'a dyn BlobStore>,
-    tool_search: &'a dyn ToolSearch,
     retry_policy: retry::Policy,
     response_limits: ResponseLimits,
 }
@@ -192,7 +191,6 @@ impl<'a> Driver<'a> {
             settings: &NO_SETTINGS,
             session_id: None,
             blob_store: None,
-            tool_search: &Bm25,
             retry_policy: retry::Policy::default(),
             response_limits: ResponseLimits::default(),
         }
@@ -237,7 +235,7 @@ impl<'a> Driver<'a> {
     /// bridge, but the hooks and the observer see the real call.
     fn resolve<'c>(&self, block_index: usize, call: &'c ToolCall) -> Resolved<'c> {
         let call = if call.name == TOOL_CALL_NAME && self.toolset.deferred().next().is_some() {
-            match search::unwrap_call(self.toolset, call) {
+            match search::unwrap_call(call) {
                 Ok(real) => Cow::Owned(real),
                 Err(refused) => {
                     return Resolved {
@@ -343,11 +341,8 @@ impl<'a> Driver<'a> {
         let result = if cancellation_token.is_cancelled() {
             not_executed(call, CANCELLED_REASON)
         } else if self.is_search(call) {
-            let searched = search::search(self.tool_search, self.toolset, call, search_mode);
-            match race(searched, pin!(cancellation_token.cancelled())).await {
-                Raced::Done(result) => self.after_tool(call, result, cancellation_token).await,
-                Raced::Cancelled => not_executed(call, CANCELLED_REASON),
-            }
+            let result = search::search(self.toolset, call, search_mode);
+            self.after_tool(call, result, cancellation_token).await
         } else {
             let context = ToolContext::new(block_index, call, cancellation_token, observer);
             let result = self.toolset.call(call, &context).await;
@@ -405,12 +400,6 @@ impl<'a> Driver<'a> {
             blob_store: Some(blob_store),
             ..self
         }
-    }
-
-    /// Set the ranker of the deferred tools for each search. The default ranker is [`Bm25`].
-    #[must_use]
-    pub fn tool_search(self, tool_search: &'a dyn ToolSearch) -> Self {
-        Driver { tool_search, ..self }
     }
 
     /// Set the attempt and delay bounds of each request. The default is [`retry::Policy::default`].

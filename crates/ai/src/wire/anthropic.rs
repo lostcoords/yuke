@@ -60,9 +60,6 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: AnthropicWire
                 jw.field_bool("defer_loading", true);
             }
             jw.field_raw("input_schema", &tool.input_schema);
-            if tool.strict {
-                jw.field_bool("strict", true);
-            }
             jw.end_object();
         }
         jw.end_array();
@@ -454,14 +451,12 @@ mod tests {
                 description: "Find.".to_owned(),
                 input_schema: "{}".to_owned(),
                 defer_loading: false,
-                strict: false,
             },
             ToolDefinition {
                 name: "mcp_read".to_owned(),
                 description: "Read.".to_owned(),
                 input_schema: "{}".to_owned(),
                 defer_loading: false,
-                strict: false,
             }
             .deferred(),
             ToolDefinition {
@@ -469,7 +464,6 @@ mod tests {
                 description: "Write.".to_owned(),
                 input_schema: "{}".to_owned(),
                 defer_loading: false,
-                strict: false,
             }
             .deferred(),
         ];
@@ -496,31 +490,17 @@ mod tests {
         );
     }
 
-    // The SDK types `Tool.strict?: boolean`: "When true, guarantees schema validation on tool names and inputs".
     #[test]
-    fn tool_schema_and_strict_mode() {
-        let tools = [
-            ToolDefinition {
-                name: "run".to_owned(),
-                description: "run a command".to_owned(),
-                input_schema: r#"{"type":"object"}"#.to_owned(),
-                defer_loading: false,
-                strict: false,
-            },
-            ToolDefinition {
-                strict: true,
-                ..ToolDefinition {
-                    name: "read".to_owned(),
-                    description: "read a file".to_owned(),
-                    input_schema: "{}".to_owned(),
-                    defer_loading: false,
-                    strict: false,
-                }
-            },
-        ];
+    fn tool_schema() {
+        let tools = [ToolDefinition {
+            name: "run".to_owned(),
+            description: "run a command".to_owned(),
+            input_schema: r#"{"type":"object"}"#.to_owned(),
+            defer_loading: false,
+        }];
         let blocks = [Block::user_text("go")];
         expect_json(
-            r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"run","description":"run a command","input_schema":{"type":"object"}},{"name":"read","description":"read a file","input_schema":{},"strict":true}],"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}"#,
+            r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"run","description":"run a command","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}"#,
             "claude",
             anthropic(8),
             Request::new(&blocks)

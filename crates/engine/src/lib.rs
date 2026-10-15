@@ -14,7 +14,6 @@ mod turn_state;
 
 pub use drive::{Driver, Inbox, Journal, Observer, Timer, Turn, TurnError, TurnEvent};
 pub use hooks::{Hooks, RoundDecision, RoundPlan, ToolDecision};
-pub use search::{Bm25, ToolSearch};
 pub use tokio_util::sync::CancellationToken;
 pub use tool::{Concurrency, TOOL_CALL_NAME, Tool, ToolContent, ToolContext, ToolNameError, Toolset, parse_arguments};
 pub use turn_state::{Answer, Commit, Outcome, Replace, Replaced, TurnEnd};

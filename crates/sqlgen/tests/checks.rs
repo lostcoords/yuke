@@ -114,20 +114,6 @@ fn an_inline_row_without_a_returned_field_stops_generation() {
 }
 
 #[test]
-fn a_shared_row_without_a_returned_field_stops_generation() {
-    let error = error_of(
-        "missing_shared_field",
-        "--: Note(id, body?)\n--! notes : Note\nSELECT id, title, body FROM notes;",
-    );
-
-    assert_names(&error, "notes", "the column `title` has no field declaration");
-    assert!(
-        error.contains("Add `title` to the shared row declaration `--: Note(...)`"),
-        "{error}"
-    );
-}
-
-#[test]
 fn a_query_without_declared_fields_stops_generation() {
     for (test, row) in [("missing_row", ""), ("empty_row", " : ()")] {
         let error = error_of(test, &format!("--! titles{row}\nSELECT title FROM notes;"));
@@ -148,17 +134,14 @@ fn a_returned_column_that_appears_twice_stops_generation() {
 
 #[test]
 fn complete_row_declarations_infer_types_and_match_columns_by_name() {
-    let queries = "--: Note(body?, title, id)\n\
-                   --! notes : Note\nSELECT id, title, body FROM notes;\n\
-                   --! other_notes : Note\nSELECT body, id, title FROM notes;\n\
+    let queries = "--! notes : (body?, title, id)\nSELECT id, title, body FROM notes;\n\
                    --! titles : (title, id)\nSELECT id, title FROM notes;";
     let generated = generate_with_migrations("complete_rows", &[("0001_notes.sql", SCHEMA)], queries).unwrap();
 
-    assert_eq!(generated.queries, 3);
-    assert_eq!(generated.code.matches("struct Note {").count(), 1);
+    assert_eq!(generated.queries, 2);
     for (row, expected) in [
         (
-            "Note",
+            "Notes",
             &[
                 "pub(crate) id: i64,",
                 "pub(crate) title: String,",
@@ -206,61 +189,6 @@ fn a_nullable_column_without_a_question_mark_stops_generation() {
 }
 
 #[test]
-fn a_query_with_other_columns_than_its_shared_type_stops_generation() {
-    let error = error_of(
-        "shared",
-        "--: Note(id, title, body?)\n\
-         --! all_notes : Note\nSELECT id, title, body FROM notes;\n\
-         --! some_notes : Note\nSELECT id, body FROM notes;",
-    );
-
-    assert_names(&error, "some_notes", "the annotation `title` names no column");
-}
-
-#[test]
-fn a_later_shared_query_with_other_field_names_stops_generation() {
-    for (test, columns, reason) in [
-        (
-            "extra_shared_column",
-            "id, title, body",
-            "the column `body` has no field declaration",
-        ),
-        (
-            "duplicate_shared_column",
-            "id, title, title",
-            "the column `title` appears twice",
-        ),
-    ] {
-        let error = error_of(
-            test,
-            &format!(
-                "--: Note(id, title)\n\
-                      --! notes : Note\nSELECT id, title FROM notes;\n\
-                      --! other_notes : Note\nSELECT {columns} FROM notes;"
-            ),
-        );
-
-        assert_names(&error, "other_notes", reason);
-    }
-}
-
-#[test]
-fn a_query_with_other_column_types_than_its_shared_type_stops_generation() {
-    let error = error_of(
-        "shared_types",
-        "--: Note(id, title, body?)\n\
-         --! notes : Note\nSELECT id, title, body FROM notes;\n\
-         --! drafts : Note\nSELECT id, title, body FROM drafts;",
-    );
-
-    assert_names(
-        &error,
-        "drafts",
-        "other columns than the first query of type `Note`, or other types",
-    );
-}
-
-#[test]
 fn a_row_annotation_on_a_query_without_columns_stops_generation() {
     let error = error_of(
         "exec_row",
@@ -271,14 +199,11 @@ fn a_row_annotation_on_a_query_without_columns_stops_generation() {
 }
 
 #[test]
-fn a_shared_type_that_no_query_returns_stops_generation() {
-    let error = error_of(
-        "unused_type",
-        "--: Note(id, title, body?)\n--! titles : (title)\nSELECT title FROM notes;",
-    );
+fn columns_after_a_colon_without_parentheses_stop_generation_at_their_line() {
+    let error = error_of("bare_columns", "--! titles : Note\nSELECT title FROM notes;");
 
-    assert!(error.contains("notes.sql"), "{error}");
-    assert!(error.contains("no query returns type `Note`"), "{error}");
+    assert!(error.contains("notes.sql: line 1"), "{error}");
+    assert!(error.contains("the columns after `:` need parentheses"), "{error}");
 }
 
 #[test]

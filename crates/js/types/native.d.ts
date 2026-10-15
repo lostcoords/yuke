@@ -1,8 +1,6 @@
-// The native modules: Rust functions for the built-in modules (crates/js/src/native).
+// The native module: Rust functions for the built-in modules (crates/js/src/native).
 
-declare module "yuke:internal/native/tools" {
-  import type { CallSignal } from "yuke:internal/signal";
-
+declare module "yuke:internal/native" {
   /** The start of a call: the promise of its answer, and the function that aborts its signal. */
   export interface Started {
     readonly answer: Promise<unknown>;
@@ -38,13 +36,12 @@ declare module "yuke:internal/native/tools" {
   /** The native functions that need the session or the life of a call. */
   export interface Session {
     /**
-     * Run `command` in the workspace folder with a shell. Each chunk of output goes to `onOutput`. The abort of `signal`
+     * Run `command` in the workspace folder with a shell. Each chunk of output goes to `onOutput`. A cancel of the call
      * and the end of the call stop the command.
      */
     readonly exec: (
       command: string,
       limits: { readonly timeoutMs: number; readonly maxBytes: number },
-      signal: CallSignal,
       onOutput: (text: string) => void,
     ) => Promise<CommandEnd>;
     /** Start `command` in the workspace folder as a job. Its end reaches the session as a message. */
@@ -61,6 +58,7 @@ declare module "yuke:internal/native/tools" {
     description: string,
     parameters: string,
     concurrency: "serial" | "parallel",
+    defer: boolean,
     start: (
       argumentsText: string,
       callId: string,
@@ -69,9 +67,7 @@ declare module "yuke:internal/native/tools" {
       session: Session,
     ) => Started,
   ): void;
-}
 
-declare module "yuke:internal/native/fs" {
   /** Numbered lines, or an image. */
   export type Lines =
     | {
