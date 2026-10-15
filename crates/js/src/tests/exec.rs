@@ -325,7 +325,6 @@ async fn stop_ends_a_job_and_no_end_message_follows() {
             folder.join(format!("processes/{id}.log")).display()
         )
     );
-    tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(host.ended.lock().unwrap().is_empty());
 }
 
@@ -438,8 +437,78 @@ async fn a_job_start_after_the_shutdown_fails_and_leaves_no_job() {
 
     assert!(error.contains("yuke is shutting down"), "{error}");
     let owner: Arc<dyn SessionHost> = host;
-    assert_eq!(processes.running_jobs(&owner), Vec::<String>::new());
+    assert_eq!(processes.running_jobs(&owner), []);
     assert!(!folder.join("processes").exists());
+}
+
+#[tokio::test]
+async fn close_owner_stops_only_the_jobs_of_its_owner_and_refuses_its_later_jobs() {
+    let folder = folder("close_owner_stops_only_the_jobs_of_its_owner_and_refuses_its_later_jobs");
+    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let (first, second) = (
+        Arc::new(TestHost {
+            folder: folder.clone(),
+            ..TestHost::default()
+        }),
+        Arc::new(TestHost {
+            folder: folder.clone(),
+            ..TestHost::default()
+        }),
+    );
+    let (_first_runtime, first_exec) = runtime_with(&folder, &processes, &first).await;
+    let (_second_runtime, second_exec) = runtime_with(&folder, &processes, &second).await;
+    text_of(&first_exec, r#"{"command": "sleep 30", "background": true}"#).await;
+    let kept = job_id(&text_of(&second_exec, r#"{"command": "sleep 31", "background": true}"#).await);
+    let (first_owner, second_owner): (Arc<dyn SessionHost>, Arc<dyn SessionHost>) = (first.clone(), second);
+
+    tokio::time::timeout(WAIT, processes.close_owner(&first_owner))
+        .await
+        .unwrap();
+    let late = error_of(&first_exec, r#"{"command": "sleep 32", "background": true}"#).await;
+
+    assert!(late.contains("its session is closed"), "{late}");
+    assert_eq!(processes.running_jobs(&first_owner), []);
+    let running = processes.running_jobs(&second_owner);
+    assert_eq!(
+        running
+            .iter()
+            .map(|job| (job.id.as_str(), job.command.as_str()))
+            .collect::<Vec<_>>(),
+        [(kept.as_str(), "sleep 31")]
+    );
+    assert!(first.ended.lock().unwrap().is_empty());
+    processes.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
+    let folder = folder("a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end");
+    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let host = Arc::new(TestHost {
+        folder: folder.clone(),
+        end_gate: Some(Arc::clone(&gate)),
+        ..TestHost::default()
+    });
+    let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
+    text_of(&exec, r#"{"command": "echo hello", "background": true}"#).await;
+    let owner: Arc<dyn SessionHost> = host.clone();
+    // The process has ended when the job leaves the running list. The delivery of its end waits at the gate.
+    let deadline = Instant::now() + WAIT;
+    while !processes.running_jobs(&owner).is_empty() {
+        assert!(Instant::now() < deadline, "the job did not end");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let mut shutdown = std::pin::pin!(processes.shutdown());
+    let waited = tokio::time::timeout(Duration::from_millis(100), &mut shutdown).await;
+    gate.notify_one();
+    tokio::time::timeout(WAIT, shutdown).await.unwrap().unwrap();
+
+    assert!(waited.is_err(), "the shutdown did not wait for the end");
+    let ended = host.ended.lock().unwrap().clone();
+    assert_eq!(ended.len(), 1);
+    assert!(ended[0].text.ends_with("\nhello"), "{}", ended[0].text);
 }
 
 #[tokio::test]
@@ -458,7 +527,6 @@ async fn a_shutdown_of_the_processes_stops_each_job_without_an_end_message() {
         .unwrap()
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(host.ended.lock().unwrap().is_empty());
 }
 
@@ -472,9 +540,10 @@ async fn a_dropped_processes_kills_its_jobs_without_an_end_message() {
     });
     let (runtime, exec) = runtime_with(&folder, &processes, &host).await;
     let pid_file = folder.join("pid");
+    // The rename writes the whole process id at once, so the read never sees a part of it.
     let command = format!(
-        r#"{{"command": "echo $$ > {}; exec sleep 30", "background": true}}"#,
-        pid_file.display()
+        r#"{{"command": "echo $$ > {pid}.part && mv {pid}.part {pid} && exec sleep 3600", "background": true}}"#,
+        pid = pid_file.display()
     );
     text_of(&exec, &command).await;
     let deadline = Instant::now() + WAIT;

@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -14,7 +13,7 @@ use yuke_sql::rusqlite::{self, Connection, TransactionBehavior};
 
 use crate::context;
 use crate::event;
-use crate::files;
+use crate::files::{self, SessionLock};
 use crate::queries::{events, pending_inputs, sessions};
 use crate::schema;
 
@@ -26,13 +25,12 @@ pub struct SqliteStore {
     owners: Owners,
 }
 
-/// The locked file of each session that a lease of this store holds. Each write holds a clone, so the lock stays held
-/// until the write ends, also when the lease drops while the write waits in the queue of the connection. Each change of
-/// the map is one call, so the map stays valid after a panic of another holder of the mutex.
-type Owners = Arc<Mutex<HashMap<SessionId, Arc<File>>>>;
+/// The lock of each session that a lease of this store holds. Each write holds a clone, so the lock stays held until
+/// the write ends, also when the lease drops while the write waits in the queue of the connection. Each change of the
+/// map is one call, so the map stays valid after a panic of another holder of the mutex.
+type Owners = Arc<Mutex<HashMap<SessionId, Arc<SessionLock>>>>;
 
-/// The guard of a [`Lease`]. Its drop removes the file from the owners, and the last clone of the file releases the
-/// lock.
+/// The guard of a [`Lease`]. Its drop removes the lock from the owners, and the last clone of the lock releases it.
 struct Owner {
     id: SessionId,
     owners: Owners,
@@ -104,8 +102,8 @@ impl SqliteStore {
         files::session_folder(&self.sessions, id.as_bytes())
     }
 
-    /// The lock file that a lease of this store holds for session `id`.
-    fn owner(&self, id: SessionId) -> Option<Arc<File>> {
+    /// The lock that a lease of this store holds for session `id`.
+    fn owner(&self, id: SessionId) -> Option<Arc<SessionLock>> {
         self.owners
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -113,12 +111,12 @@ impl SqliteStore {
             .cloned()
     }
 
-    /// The lease of the locked `file` of session `id`.
-    fn lease(&self, id: SessionId, file: File) -> Lease {
+    /// The lease of `lock`, the lock of session `id`.
+    fn lease(&self, id: SessionId, lock: SessionLock) -> Lease {
         self.owners
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(id, Arc::new(file));
+            .insert(id, Arc::new(lock));
 
         Lease::new(Owner {
             id,
@@ -136,15 +134,15 @@ impl Store for SqliteStore {
         let session = *id.as_bytes();
         let settings_json = serde_json::to_string(settings).map_err(failed)?;
 
-        let file = self
+        let lock = self
             .call(move |connection| {
                 // No other process knows the new id yet, so the rows can come first. Then each folder that the sweep
                 // finds for a live session has its row.
                 insert_session(connection, session, settings_json).map_err(failed)?;
-                let locked = files::take_lock(&folder).and_then(|file| {
+                let locked = files::take_lock(&folder).and_then(|lock| {
                     // A crash must not lose the entry of the new folder, so the call syncs the folder that holds it.
                     files::sync_folder(&sessions_folder).map_err(failed)?;
-                    Ok(file)
+                    Ok(lock)
                 });
                 // The caller never learns the id of a failed creation, so nothing else can open or delete it.
                 locked.or_else(|error| {
@@ -159,7 +157,7 @@ impl Store for SqliteStore {
             settings: settings.clone(),
             context: Vec::new(),
             turn_open: false,
-            lease: Some(self.lease(id, file)),
+            lease: Some(self.lease(id, lock)),
         })
     }
 
@@ -172,7 +170,7 @@ impl Store for SqliteStore {
         let sessions_folder = self.sessions.clone();
 
         // The copy of the blobs runs on the thread of the connection, as a put does. Forks are rare.
-        let (loaded, file) = self
+        let (loaded, lock) = self
             .call(move |connection| {
                 let rows = events::CopyEventsParams {
                     source: source_bytes,
@@ -181,13 +179,13 @@ impl Store for SqliteStore {
                 };
                 // The blobs come before the rows, so a fork that a reader finds has each of its blobs. The lock of the
                 // new folder keeps the sweep away from the folder until the rows exist.
-                let forked = files::take_lock(&folder).and_then(|file| {
+                let forked = files::take_lock(&folder).and_then(|lock| {
                     // A crash must not lose the new folder entry. The fork syncs its parent folder.
                     files::sync_folder(&sessions_folder).map_err(failed)?;
                     files::copy_blobs(&source_folder, &folder).map_err(failed)?;
                     copy_rows(connection, &rows)?;
                     let loaded = read(connection, |connection| context::load(connection, fork))?;
-                    Ok((loaded.ok_or(StoreError::NotFound)?, file))
+                    Ok((loaded.ok_or(StoreError::NotFound)?, lock))
                 });
                 // The caller never learns the id of a failed fork, so nothing else can open or delete it.
                 forked.or_else(|error| {
@@ -197,7 +195,7 @@ impl Store for SqliteStore {
             })
             .await?;
 
-        Ok(loaded.into_opened(id, Some(self.lease(id, file))))
+        Ok(loaded.into_opened(id, Some(self.lease(id, lock))))
     }
 
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<EventNumber, StoreError> {
@@ -276,20 +274,20 @@ impl Store for SqliteStore {
         };
         let session = *id.as_bytes();
 
-        let (loaded, file) = self
+        let (loaded, lock) = self
             .call(move |connection| {
                 // The lock comes before the load, so no other writer commits between the lock and the load.
-                let file = match folder {
+                let lock = match folder {
                     Some(folder) => Some(lock_known_session(connection, session, &folder)?),
                     None => None,
                 };
 
                 let loaded = read(connection, |connection| context::load(connection, session))?;
-                Ok((loaded.ok_or(StoreError::NotFound)?, file))
+                Ok((loaded.ok_or(StoreError::NotFound)?, lock))
             })
             .await?;
 
-        Ok(loaded.into_opened(id, file.map(|file| self.lease(id, file))))
+        Ok(loaded.into_opened(id, lock.map(|lock| self.lease(id, lock))))
     }
 
     async fn commit(
@@ -577,7 +575,7 @@ fn commit_params(
 }
 
 /// Take the lock of session `session` in `folder`. An unknown session gets [`StoreError::NotFound`] and no folder.
-fn lock_known_session(connection: &Connection, session: [u8; 16], folder: &Path) -> Result<File, StoreError> {
+fn lock_known_session(connection: &Connection, session: [u8; 16], folder: &Path) -> Result<SessionLock, StoreError> {
     ensure_session(connection, session)?;
 
     files::take_lock(folder)

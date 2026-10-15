@@ -2313,6 +2313,7 @@ dependencies = [
  "tokio",
  "yuke-ai",
  "yuke-engine",
+ "yuke-protocol",
 ]
 
 [[package]]

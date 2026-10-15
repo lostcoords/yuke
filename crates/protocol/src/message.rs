@@ -4,11 +4,13 @@
 //! An `Option` field that JSON can omit has `serde(default)` beside `skip_serializing_if`: serde needs only the second,
 //! and ts-rs marks the field optional only with both.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
     EventNumber, InputId, InteractionClosedParams, InteractionRequestedParams, InteractionRespondParams, PendingInput,
-    SessionId, SessionSettings, SessionUpdateParams,
+    SessionId, SessionSettings, SessionState, SessionUpdateParams,
 };
 
 /// The protocol version that this crate speaks. A breaking change of the messages takes the next number.
@@ -55,26 +57,39 @@ pub enum ClientRequest {
     /// Agree on the protocol version. The first request of a connection.
     #[serde(rename = "initialize")]
     Initialize(InitializeParams),
-    /// Create a session with these settings. Each field is required. Result: [`NewSessionResult`].
+    /// Create a session with these settings. Each field is required. The server replaces the system prompt of the client
+    /// with the prompt of the session folder. Result: [`NewSessionResult`].
     #[serde(rename = "session/new")]
     NewSession(SessionSettings),
     /// Fork a session at the end of a completed turn. Result: [`ForkSessionResult`].
     #[serde(rename = "session/fork")]
     ForkSession(ForkSessionParams),
-    /// Read a session. The server sends its saved events as `session/update` notifications before the result.
-    /// Result: [`LoadSessionResult`].
+    /// Open a session, and read it. The server sends its saved events as `session/update` notifications before the
+    /// result. A load starts no turn, also when input waits. Result: [`LoadSessionResult`].
     #[serde(rename = "session/load")]
     LoadSession(LoadSessionParams),
-    /// Add input to a session. Result: [`InputResult`].
+    /// Stop the running turn and the background jobs of a session, and free the session. The session stays saved, and
+    /// a load opens it again. A session with running jobs closes only with `stopJobs: true`. Result: [`EmptyResult`].
+    #[serde(rename = "session/close")]
+    CloseSession(CloseSessionParams),
+    /// Add input to a session. An idle session starts a turn. During a turn, the input joins the turn at its next
+    /// round. Result: [`InputResult`].
     #[serde(rename = "session/input")]
     Input(InputParams),
-    /// Replace the settings of a session. Result: [`EmptyResult`].
+    /// Replace the settings of a session from its next turn on. It fails while a turn runs or input waits, because
+    /// the settings of a turn do not change. Result: [`EmptyResult`].
     #[serde(rename = "session/set_settings")]
     SetSettings(SetSettingsParams),
     /// Remove a pending input of a session. An input that a commit consumed is no longer pending, so its removal
     /// fails. Result: [`EmptyResult`].
     #[serde(rename = "session/remove_input")]
     RemoveInput(RemoveInputParams),
+    /// List the running background jobs of an open session. Result: [`ListJobsResult`].
+    #[serde(rename = "job/list")]
+    ListJobs(ListJobsParams),
+    /// Stop a running background job, and wait for its end. A stopped job sends no end input. Result: [`EmptyResult`].
+    #[serde(rename = "job/stop")]
+    StopJob(StopJobParams),
     /// Answer a question of a plugin. Result: [`EmptyResult`].
     #[serde(rename = "interaction/respond")]
     InteractionRespond(InteractionRespondParams),
@@ -228,6 +243,8 @@ impl ResponseError {
     pub const SESSION_NOT_FOUND: i32 = -32_002;
     /// Another writer holds the session.
     pub const SESSION_OWNED: i32 = -32_003;
+    /// The session runs no background job with this id: the id is unknown, or the job has ended.
+    pub const JOB_NOT_FOUND: i32 = -32_004;
 }
 
 /// The name, an optional title, and the version of a client or a server.
@@ -317,6 +334,62 @@ pub struct LoadSessionParams {
 pub struct LoadSessionResult {
     /// The inputs that no commit consumed, in id order.
     pub pending: Vec<PendingInput>,
+    /// Whether a turn runs.
+    pub state: SessionState,
+}
+
+/// The params of `session/close`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CloseSessionParams {
+    /// The open session.
+    pub session_id: SessionId,
+    /// Whether to stop the running background jobs of the session. With `false`, a session with running jobs does not
+    /// close.
+    pub stop_jobs: bool,
+}
+
+/// The params of `job/list`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ListJobsParams {
+    /// The open session.
+    pub session_id: SessionId,
+}
+
+/// The result of `job/list`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ListJobsResult {
+    /// The running jobs of the session, oldest first.
+    pub jobs: Vec<Job>,
+}
+
+/// A running background job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct Job {
+    /// The id of the job, for example `job-3`.
+    pub id: String,
+    /// The command of the job.
+    pub command: String,
+    /// The file that holds the output of the job.
+    pub log: PathBuf,
+}
+
+/// The params of `job/stop`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct StopJobParams {
+    /// The open session of the job.
+    pub session_id: SessionId,
+    /// The running job.
+    pub job_id: String,
 }
 
 /// The params of `session/input`.

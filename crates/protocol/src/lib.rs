@@ -19,11 +19,13 @@ pub use interaction::{
     InteractionResponse,
 };
 pub use message::{
-    CancelParams, ClientNotification, ClientRequest, EmptyResult, ExtensionEventParams, ForkSessionParams,
-    ForkSessionResult, Implementation, InitializeParams, InitializeResult, InputParams, InputResult, JsonRpc,
-    LoadSessionParams, LoadSessionResult, NewSessionResult, NoticeLevel, NoticeParams, Notification, PROTOCOL_VERSION,
-    RemoveInputParams, Request, RequestId, Response, ResponseError, ResponseOutcome, ServerNotification,
-    SetSettingsParams,
+    CancelParams, ClientNotification, ClientRequest, CloseSessionParams, EmptyResult, ExtensionEventParams,
+    ForkSessionParams, ForkSessionResult, Implementation, InitializeParams, InitializeResult, InputParams, InputResult,
+    Job, JsonRpc, ListJobsParams, ListJobsResult, LoadSessionParams, LoadSessionResult, NewSessionResult, NoticeLevel,
+    NoticeParams, Notification, PROTOCOL_VERSION, RemoveInputParams, Request, RequestId, Response, ResponseError,
+    ResponseOutcome, ServerNotification, SetSettingsParams, StopJobParams,
 };
 pub use session::{ModelReference, SessionSettings};
-pub use update::{BlockPosition, DraftDiscardReason, LiveUpdate, ModelUpdate, SessionUpdate, SessionUpdateParams};
+pub use update::{
+    BlockPosition, DraftDiscardReason, LiveUpdate, ModelUpdate, SessionState, SessionUpdate, SessionUpdateParams,
+};

@@ -72,6 +72,21 @@ async fn a_session_keeps_its_lease_after_a_turn() {
 }
 
 #[tokio::test]
+async fn a_turn_with_no_waiting_input_asks_the_model_nothing_and_saves_nothing() {
+    let store = Arc::new(MemoryStore::new());
+    let transport = ScriptedTransport::new([text_reply("two")]);
+    let target = target();
+    let mut session = Session::create(store.clone(), &settings()).await.unwrap();
+    let before = store.load(session.id(), None).await.unwrap().events;
+
+    let ran = session.turn(Driver::new(&transport, &target, &NoWait)).run().await;
+
+    assert!(matches!(ran, Err(SessionError::NoInput)), "{ran:?}");
+    assert_eq!(transport.requests(), Vec::<String>::new());
+    assert_eq!(store.load(session.id(), None).await.unwrap().events, before);
+}
+
+#[tokio::test]
 async fn a_session_keeps_its_lease_after_a_failed_request() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([failed_reply("cut")]);

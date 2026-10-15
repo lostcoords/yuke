@@ -1,16 +1,20 @@
 //! The `yuke` program. It has three modes: the terminal interface (no mode flag), the protocol server (`--rpc`), and
-//! one task with no view (`-p`). Only `-p` runs now: the answer goes to stdout, and the end of the turn picks the exit
-//! status.
+//! one task with no view (`-p`). The terminal interface does not exist yet. `--rpc` serves stdin and stdout. `-p` writes
+//! the answer to stdout, and the end of the turn picks the exit status.
 
 mod config;
 mod paths;
 mod print;
 mod prompt;
+mod rpc;
+#[cfg(test)]
+mod testing;
 
 use std::io::{self, Write};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::time::Duration;
 
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
@@ -22,6 +26,9 @@ use yuke_protocol::SessionId;
 
 use crate::paths::Paths;
 use crate::print::{Finished, Machine, SessionChoice, Task, describe, warn};
+
+/// The longest wait of `yuke --rpc` for the client to read the last messages after the end of its input.
+const DRAIN_LIMIT: Duration = Duration::from_secs(5);
 
 /// The command line of `yuke`.
 #[derive(Debug, Parser)]
@@ -133,13 +140,24 @@ struct Report<'a> {
     text: &'a str,
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> ExitCode {
-    match Cli::parse().into_mode() {
-        Mode::Tui => not_implemented("the terminal interface"),
-        Mode::Rpc => not_implemented("the protocol server"),
-        Mode::Print { task, json } => print_task(&task, json).await,
-    }
+fn main() -> ExitCode {
+    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            warn(&format!("yuke could not start its runtime: {error}"));
+            return ExitCode::FAILURE;
+        }
+    };
+    let code = runtime.block_on(async {
+        match Cli::parse().into_mode() {
+            Mode::Tui => not_implemented("the terminal interface"),
+            Mode::Rpc => serve_rpc().await,
+            Mode::Print { task, json } => print_task(&task, json).await,
+        }
+    });
+    // A read of stdin blocks a thread that nothing can stop, and a normal shutdown waits for that thread.
+    runtime.shutdown_background();
+    code
 }
 
 /// Tell the user that `mode` does not exist yet.
@@ -172,6 +190,34 @@ async fn print_task(task: &Task, json: bool) -> ExitCode {
             }
             exit_code(&finished.end, signal_number.load(Ordering::SeqCst))
         }
+        Err(error) => {
+            warn(&error);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Serve the protocol on stdin and stdout until stdin ends.
+async fn serve_rpc() -> ExitCode {
+    let home = std::env::home_dir().filter(|home| home.is_absolute());
+    let setup = Paths::of(&|name| std::env::var_os(name), home.as_deref()).and_then(|paths| {
+        let transport =
+            yuke_ai::HttpTransport::new(yuke_ai::HttpOptions::new(concat!("yuke/", env!("CARGO_PKG_VERSION"))))
+                .map_err(|error| describe(&error))?;
+        Ok(rpc::Setup {
+            paths,
+            home,
+            variable: Box::new(|name| std::env::var_os(name)),
+            transport: Box::new(transport),
+            drain_limit: DRAIN_LIMIT,
+        })
+    });
+    let served = match setup {
+        Ok(setup) => rpc::serve(setup, tokio::io::stdin(), tokio::io::stdout()).await,
+        Err(error) => Err(error),
+    };
+    match served {
+        Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             warn(&error);
             ExitCode::FAILURE

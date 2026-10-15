@@ -48,11 +48,27 @@ pub enum DraftDiscardReason {
     Unconfirmed,
 }
 
+/// Whether a session runs a turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum SessionState {
+    /// A turn runs.
+    Running,
+    /// No turn runs.
+    Idle,
+}
+
 /// A live fact of a session. Saved events remain authoritative after reconnect.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "sessionUpdate", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum LiveUpdate {
+    /// The session starts or ends a turn.
+    State {
+        /// Whether a turn runs.
+        state: SessionState,
+    },
     /// The session accepted an input. It is pending until a saved commit names it in `consumed`, or until a removal.
     InputAccepted {
         /// The id of the input.

@@ -1,19 +1,12 @@
 //! Whole runs of `yuke -p` against a scripted provider.
 
-use std::collections::VecDeque;
-use std::pin::Pin;
-use std::sync::Mutex;
-use std::task::{Context, Poll};
-use std::time::Instant;
-
-use bytes::Bytes;
 use yuke_agent::Access;
 use yuke_ai::Effort;
-use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing};
 use yuke_engine::Outcome;
 use yuke_protocol::SessionEvent;
 
 use super::*;
+use crate::testing::{Rejecting, ScriptedTransport, text_reply, tool_reply};
 
 const MODEL: &str = "minimax/MiniMax-M3";
 
@@ -451,94 +444,4 @@ fn the_answer_text_is_the_text_after_the_last_block_of_the_user() {
 
     assert_eq!(answer_text(&context), "One.\nTwo.");
     assert_eq!(answer_text(&context[..1]), "");
-}
-
-/// One complete Anthropic text answer, as SSE.
-fn text_reply(text: &str) -> String {
-    sse(&[
-        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#.to_owned(),
-        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#.to_owned(),
-        format!(r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{text}"}}}}"#),
-        r#"{"type":"content_block_stop","index":0}"#.to_owned(),
-        r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#.to_owned(),
-        r#"{"type":"message_stop"}"#.to_owned(),
-    ])
-}
-
-/// One complete Anthropic answer that calls `name` with the JSON `arguments`, as SSE.
-fn tool_reply(id: &str, name: &str, arguments: &str) -> String {
-    let partial = serde_json::Value::String(arguments.to_owned()).to_string();
-    sse(&[
-        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#.to_owned(),
-        format!(
-            r#"{{"type":"content_block_start","index":0,"content_block":{{"type":"tool_use","id":"{id}","name":"{name}","input":{{}}}}}}"#
-        ),
-        format!(
-            r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"input_json_delta","partial_json":{partial}}}}}"#
-        ),
-        r#"{"type":"content_block_stop","index":0}"#.to_owned(),
-        r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}"#.to_owned(),
-        r#"{"type":"message_stop"}"#.to_owned(),
-    ])
-}
-
-fn sse(events: &[String]) -> String {
-    events.iter().map(|json| ["data: ", json, "\n\n"].concat()).collect()
-}
-
-/// Answers each request with the next scripted reply, and keeps each request body.
-struct ScriptedTransport {
-    replies: Mutex<VecDeque<String>>,
-    requests: Mutex<Vec<String>>,
-}
-
-impl ScriptedTransport {
-    fn new(replies: &[String]) -> Self {
-        ScriptedTransport {
-            replies: Mutex::new(replies.iter().cloned().collect()),
-            requests: Mutex::default(),
-        }
-    }
-
-    fn requests(&self) -> Vec<String> {
-        self.requests.lock().unwrap().clone()
-    }
-}
-
-impl Transport for ScriptedTransport {
-    fn open<'a>(
-        &'a self,
-        request: &'a Outgoing<'_>,
-        _: Option<Instant>,
-    ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
-        let body = String::from_utf8(request.body().flatten().copied().collect()).unwrap();
-        self.requests.lock().unwrap().push(body);
-        let reply = self
-            .replies
-            .lock()
-            .unwrap()
-            .pop_front()
-            .expect("the script has no reply left");
-        let body: BoxBody = Box::pin(OneChunk(Some(Bytes::from(reply))));
-        Box::pin(std::future::ready(Ok((Head::new(200), body))))
-    }
-}
-
-/// Answers each request with a 401: the provider rejects the credential.
-struct Rejecting;
-
-impl Transport for Rejecting {
-    fn open<'a>(&'a self, _: &'a Outgoing<'_>, _: Option<Instant>) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
-        let body: BoxBody = Box::pin(OneChunk(Some(Bytes::from_static(b"{}"))));
-        Box::pin(std::future::ready(Ok((Head::new(401), body))))
-    }
-}
-
-/// A body of one chunk.
-struct OneChunk(Option<Bytes>);
-
-impl Body for OneChunk {
-    fn poll_chunk(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Result<Bytes, Fault>>> {
-        Poll::Ready(self.0.take().map(Ok))
-    }
 }

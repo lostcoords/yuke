@@ -5,7 +5,7 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -26,7 +26,7 @@ use crate::paths::Paths;
 use crate::prompt::{self, Environment};
 
 /// The limits of the JavaScript: the heap, the stack, and the longest uninterrupted stretch.
-const LIMITS: Limits = Limits {
+pub(crate) const LIMITS: Limits = Limits {
     memory: 64 * 1024 * 1024,
     stack: 4 * 1024 * 1024,
     slice: Duration::from_secs(1),
@@ -149,7 +149,7 @@ async fn new_session(
     store: &Arc<dyn Store>,
 ) -> Result<(Session, Target), String> {
     let entry = catalog::lookup(selector).map_err(|error| format!("{selector}: {error}"))?;
-    let target = target(&entry, machine)?;
+    let target = target(&entry, machine.variable)?;
     let system = prompt::system_prompt(&Environment {
         workspace: &machine.cwd,
         home: machine.home.as_deref(),
@@ -194,7 +194,7 @@ async fn existing_session(
         None => format!("{}/{}", settings.model.provider, settings.model.model),
     };
     let entry = catalog::lookup(&selector).map_err(|error| format!("{selector}: {error}"))?;
-    let target = target(&entry, machine)?;
+    let target = target(&entry, machine.variable)?;
     if task.model.is_some() || task.reasoning.is_some() {
         settings.model = ModelReference {
             provider: entry.provider.id.into(),
@@ -265,12 +265,15 @@ async fn turn(
     finished
 }
 
-/// The target of `entry` with the credential from the environment of `machine`.
-fn target(entry: &Entry<'_>, machine: &Machine<'_>) -> Result<Target, String> {
+/// The target of `entry` with the credential that `variable` reads from the environment.
+pub(crate) fn target(
+    entry: &Entry<'_>,
+    variable: &(dyn Fn(&str) -> Option<OsString> + Sync),
+) -> Result<Target, String> {
     let provider = entry.provider;
     let credential = match provider.auth {
         Auth::ApiKey(Some(name)) => {
-            let key = (machine.variable)(name)
+            let key = variable(name)
                 .and_then(|key| key.into_string().ok())
                 .filter(|key| !key.is_empty())
                 .ok_or_else(|| format!("no API key: set {name} for {}", provider.name))?;
@@ -338,7 +341,7 @@ async fn report(mut faults: mpsc::UnboundedReceiver<Fault>) {
 }
 
 /// Waits with the tokio timer.
-struct TokioTimer;
+pub(crate) struct TokioTimer;
 
 #[async_trait]
 impl Timer for TokioTimer {
@@ -356,8 +359,8 @@ struct Host {
 
 #[async_trait]
 impl SessionHost for Host {
-    fn folder(&self) -> &Path {
-        &self.folder
+    fn folder(&self) -> PathBuf {
+        self.folder.clone()
     }
 
     async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String> {
@@ -368,7 +371,7 @@ impl SessionHost for Host {
     }
 
     // `Processes::without_jobs` starts no job, so no job ends.
-    fn job_ended(&self, _ended: JobEnded) {}
+    async fn job_ended(&self, _ended: JobEnded) {}
 }
 
 #[cfg(test)]

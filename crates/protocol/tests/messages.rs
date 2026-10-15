@@ -128,6 +128,18 @@ fn each_request_reads_and_writes_its_json() {
                 }),
             ),
         ),
+        (
+            json!({ "jsonrpc": "2.0", "id": 7, "method": "session/close", "params": {
+                "sessionId": SESSION, "stopJobs": true
+            } }),
+            request(
+                7,
+                ClientRequest::CloseSession(yuke_protocol::CloseSessionParams {
+                    session_id: session(),
+                    stop_jobs: true,
+                }),
+            ),
+        ),
     ];
     for (json, message) in cases {
         assert_json(&json, &message);
@@ -146,6 +158,34 @@ fn each_request_reads_and_writes_its_json() {
             }),
         },
     );
+}
+
+#[test]
+fn each_job_request_reads_and_writes_its_json() {
+    let cases = [
+        (
+            json!({ "jsonrpc": "2.0", "id": 8, "method": "job/list", "params": { "sessionId": SESSION } }),
+            request(
+                8,
+                ClientRequest::ListJobs(yuke_protocol::ListJobsParams { session_id: session() }),
+            ),
+        ),
+        (
+            json!({ "jsonrpc": "2.0", "id": 9, "method": "job/stop", "params": {
+                "sessionId": SESSION, "jobId": "job-1a2b"
+            } }),
+            request(
+                9,
+                ClientRequest::StopJob(yuke_protocol::StopJobParams {
+                    session_id: session(),
+                    job_id: "job-1a2b".to_owned(),
+                }),
+            ),
+        ),
+    ];
+    for (json, message) in cases {
+        assert_json(&json, &message);
+    }
 }
 
 #[test]
@@ -211,7 +251,7 @@ fn a_pending_input_reads_and_writes_its_json_with_its_model_content_only_when_it
             { "id": 1, "source": { "kind": "user" }, "content": [{ "user_text": "Review @main.rs" }] },
             { "id": 2, "source": { "kind": "user" }, "content": [{ "user_text": "Review @main.rs" }],
               "modelContent": [{ "user_text": "Review main.rs, and read it first." }] }
-        ] }),
+        ], "state": "running" }),
         &LoadSessionResult {
             pending: vec![
                 PendingInput {
@@ -223,6 +263,7 @@ fn a_pending_input_reads_and_writes_its_json_with_its_model_content_only_when_it
                     input: other,
                 },
             ],
+            state: yuke_protocol::SessionState::Running,
         },
     );
 }
@@ -262,6 +303,15 @@ fn queue_updates_and_an_empty_result_read_and_write_their_json() {
         },
     );
     assert_json(
+        &json!({ "sessionId": SESSION, "update": { "sessionUpdate": "state", "state": "idle" } }),
+        &SessionUpdateParams {
+            session_id: session(),
+            update: SessionUpdate::Live(LiveUpdate::State {
+                state: yuke_protocol::SessionState::Idle,
+            }),
+        },
+    );
+    assert_json(
         &json!({ "sessionId": SESSION, "update": { "sessionUpdate": "input_removed", "inputId": 3 } }),
         &SessionUpdateParams {
             session_id: session(),
@@ -269,6 +319,16 @@ fn queue_updates_and_an_empty_result_read_and_write_their_json() {
         },
     );
     assert_json(&json!({}), &yuke_protocol::EmptyResult {});
+    assert_json(
+        &json!({ "jobs": [{ "id": "job-1a2b", "command": "sleep 30", "log": "/tmp/job-1a2b.log" }] }),
+        &yuke_protocol::ListJobsResult {
+            jobs: vec![yuke_protocol::Job {
+                id: "job-1a2b".to_owned(),
+                command: "sleep 30".to_owned(),
+                log: "/tmp/job-1a2b.log".into(),
+            }],
+        },
+    );
 }
 
 #[test]

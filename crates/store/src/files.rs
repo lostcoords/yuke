@@ -26,9 +26,21 @@ pub(crate) fn session_folder(sessions: &Path, session: &[u8; 16]) -> PathBuf {
     sessions.join(hex(session))
 }
 
+/// The lock of a session folder. A forked child process holds a copy of each open file until its exec, and a close
+/// keeps the lock while such a copy lives. So the drop releases the lock first.
+pub(crate) struct SessionLock(File);
+
+impl Drop for SessionLock {
+    fn drop(&mut self) {
+        if self.0.unlock().is_err() {
+            // The close of the file releases the lock when no copy lives, so nothing is left to do.
+        }
+    }
+}
+
 /// Take the lock of the session in `folder`, and make the folder when it is missing. Windows does not lock a file
 /// that is open only for append, so the file opens for writing.
-pub(crate) fn take_lock(folder: &Path) -> Result<File, StoreError> {
+pub(crate) fn take_lock(folder: &Path) -> Result<SessionLock, StoreError> {
     std::fs::create_dir_all(folder).map_err(failed)?;
     let file = OpenOptions::new()
         .write(true)
@@ -38,7 +50,7 @@ pub(crate) fn take_lock(folder: &Path) -> Result<File, StoreError> {
         .map_err(failed)?;
 
     match file.try_lock() {
-        Ok(()) => Ok(file),
+        Ok(()) => Ok(SessionLock(file)),
         Err(TryLockError::WouldBlock) => Err(StoreError::Owned),
         Err(TryLockError::Error(error)) => Err(failed(error)),
     }
@@ -170,4 +182,24 @@ fn hex(bytes: &[u8]) -> String {
         text.push(char::from(DIGITS[usize::from(byte & 15)]));
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A forked child process holds a copy of the file, as `try_clone` makes one here. The copy must not keep the lock.
+    #[test]
+    fn a_released_lock_is_free_while_a_copy_of_its_file_lives() {
+        let folder = std::env::temp_dir().join(format!("yuke-store-lock-{}", std::process::id()));
+        let lock = take_lock(&folder).unwrap();
+        let copy = lock.0.try_clone().unwrap();
+
+        drop(lock);
+        let again = take_lock(&folder);
+
+        assert!(again.is_ok(), "the copy keeps the lock");
+        drop((again, copy));
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
 }

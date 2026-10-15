@@ -336,10 +336,16 @@ impl<'s> SessionTurn<'s> {
             observer,
             cancellation_token,
         } = self;
-        if session.lease.is_none() {
+        let reopened = session.lease.is_none();
+        if reopened {
             session.reopen().await?;
         }
         let waiting = session.store.pending(session.id).await?;
+        // A turn after a dropped or failed commit answers the input that the earlier turn took, so it runs without new
+        // input.
+        if waiting.is_empty() && !reopened {
+            return Err(SessionError::NoInput);
+        }
         // The future holds the lease while the turn runs, so a dropped future releases it.
         let lease = session.lease.take();
         let updates = Updates::new(session.id, observer);
@@ -388,6 +394,9 @@ pub enum SessionError {
     Model(yuke_ai::Error),
     /// The store failed.
     Store(StoreError),
+    /// No input waits and no earlier turn needs an answer, so no turn ran. A removal of the last input can come
+    /// between a check and the turn.
+    NoInput,
 }
 
 impl From<StoreError> for SessionError {
@@ -401,6 +410,7 @@ impl fmt::Display for SessionError {
         match self {
             Self::Model(error) => fmt::Display::fmt(error, f),
             Self::Store(error) => fmt::Display::fmt(error, f),
+            Self::NoInput => f.write_str("no input waits"),
         }
     }
 }
@@ -411,6 +421,7 @@ impl std::error::Error for SessionError {
         match self {
             Self::Model(error) => error.source(),
             Self::Store(error) => error.source(),
+            Self::NoInput => None,
         }
     }
 }

@@ -22,12 +22,14 @@ pub(super) struct TestHost {
     pub(super) folder: PathBuf,
     pub(super) media: Mutex<Vec<Vec<u8>>>,
     pub(super) ended: Mutex<Vec<JobEnded>>,
+    /// Holds each job end until a notify, when it is set.
+    pub(super) end_gate: Option<Arc<tokio::sync::Notify>>,
 }
 
 #[async_trait]
 impl SessionHost for TestHost {
-    fn folder(&self) -> &Path {
-        &self.folder
+    fn folder(&self) -> PathBuf {
+        self.folder.clone()
     }
 
     async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String> {
@@ -39,7 +41,10 @@ impl SessionHost for TestHost {
         Ok(blob)
     }
 
-    fn job_ended(&self, ended: JobEnded) {
+    async fn job_ended(&self, ended: JobEnded) {
+        if let Some(gate) = &self.end_gate {
+            gate.notified().await;
+        }
         self.ended.lock().unwrap().push(ended);
     }
 }

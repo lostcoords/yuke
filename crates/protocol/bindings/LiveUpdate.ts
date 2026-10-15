@@ -6,13 +6,18 @@ import type { EventNumber } from "./EventNumber";
 import type { Input } from "./Input";
 import type { InputId } from "./InputId";
 import type { ModelUpdate } from "./ModelUpdate";
+import type { SessionState } from "./SessionState";
 import type { ToolCall } from "./ToolCall";
 import type { ToolResult } from "./ToolResult";
 
 /**
  * A live fact of a session. Saved events remain authoritative after reconnect.
  */
-export type LiveUpdate = { "sessionUpdate": "input_accepted", 
+export type LiveUpdate = { "sessionUpdate": "state", 
+/**
+ * Whether a turn runs.
+ */
+state: SessionState, } | { "sessionUpdate": "input_accepted", 
 /**
  * The id of the input.
  */

@@ -2,7 +2,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::pin;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -19,11 +19,11 @@ use crate::runtime::Caller;
 
 /// What the tools of one session need from the consumer. One process can serve sessions of several workspaces at
 /// once, so each session gives its own host. Give the same host to every [`Runtime::tools`](crate::Runtime::tools)
-/// call of a session, also after a reload: the jobs of a session belong to its host.
+/// call of a session, also after a reload or a change of its folder: the jobs of a session belong to its host.
 #[async_trait]
 pub trait SessionHost: Send + Sync {
-    /// The workspace folder of the session. Relative paths and commands of the tools start here.
-    fn folder(&self) -> &Path;
+    /// The workspace folder of the session now. Relative paths and commands of the tools start here.
+    fn folder(&self) -> PathBuf;
 
     /// Store the bytes of an attachment of the session, for example an image that a tool read, and return its blob.
     ///
@@ -33,8 +33,8 @@ pub trait SessionHost: Send + Sync {
     async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String>;
 
     /// A background job of the session ended by itself. Give [`JobEnded::text`] to the session as an input that is not
-    /// from the user.
-    fn job_ended(&self, ended: JobEnded);
+    /// from the user. A close and a shutdown wait for the return.
+    async fn job_ended(&self, ended: JobEnded);
 }
 
 /// The tools that the JavaScript defined, on the JavaScript thread.
@@ -200,11 +200,9 @@ impl ScriptTool {
         token: CancellationToken,
         output: mpsc::UnboundedSender<String>,
     ) -> Result<ToolContent, String> {
-        let Some(folder) = self.host.folder().to_str().map(str::to_owned) else {
-            return Err(format!(
-                "the workspace folder {} is not UTF-8",
-                self.host.folder().display()
-            ));
+        let folder = self.host.folder();
+        let Some(folder) = folder.to_str().map(str::to_owned) else {
+            return Err(format!("the workspace folder {} is not UTF-8", folder.display()));
         };
         let id = self.id;
         let processes = Arc::clone(&self.processes);

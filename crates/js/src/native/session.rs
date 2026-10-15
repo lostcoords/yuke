@@ -26,7 +26,7 @@ pub(crate) fn object<'js>(
 ) -> rquickjs::Result<Object<'js>> {
     let object = Object::new(ctx.clone())?;
 
-    let (exec_processes, folder, exec_stop) = (Arc::clone(processes), host.folder().to_owned(), stop.clone());
+    let (exec_processes, folder, exec_stop) = (Arc::clone(processes), host.folder(), stop.clone());
     object.set(
         "exec",
         Function::new(
@@ -91,7 +91,13 @@ pub(crate) fn object<'js>(
     let (running_processes, running_host) = (Arc::clone(processes), Arc::clone(host));
     object.set(
         "runningJobs",
-        Function::new(ctx.clone(), move || running_processes.running_jobs(&running_host))?,
+        Function::new(ctx.clone(), move || {
+            running_processes
+                .running_jobs(&running_host)
+                .into_iter()
+                .map(|job| job.id)
+                .collect::<Vec<_>>()
+        })?,
     )?;
     Ok(object)
 }

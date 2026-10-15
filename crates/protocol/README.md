@@ -4,8 +4,13 @@ The yuke protocol: JSON-RPC 2.0 messages between a yuke server and its clients. 
 Agent Client Protocol (ACP): `"jsonrpc": "2.0"`, `noun/verb` methods, camelCase fields, and snake_case kinds. The protocol
 is not ACP: for example, it has `session/input` in place of `session/prompt`, and a tool update uses a saved call position rather than a provider call id.
 
-- Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/input`, `session/remove_input`,
-  `session/set_settings`, `interaction/respond`.
+- Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
+  `session/remove_input`, `session/set_settings`, `job/list`, `job/stop`, `interaction/respond`.
+- A session is open after `session/new`, `session/fork`, or `session/load`, until `session/close` or the end of the
+  connection. The other session requests need an open session. Many sessions can be open at once.
+- The background jobs of a session run while the session is open. `job/list` lists them, and `job/stop` stops one.
+  `session/close` fails while jobs run, unless it has `stopJobs: true`. The end of a job that ends by itself arrives
+  as an input from `host:jobs`.
 - Notifications: `session/cancel` from a client. `session/update`, `notice`, `extension/event`,
   `interaction/requested`, and `interaction/closed` from the server.
 - A plugin can ask the user a question: `confirm`, `select`, or `input`. yuke itself asks nothing. The client answers
@@ -17,6 +22,11 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - `session/update` carries a saved event with its event number (`seq`), or a live update of a running turn.
 - The queue: `input_accepted` and `input_removed` are live updates. A queued input leaves the queue when a saved
   commit names it in `consumed`, or when `input_removed` names it.
+- Turns: `session/input` starts a turn when the session is idle. During a turn, an input joins the turn at its next
+  round. A `state` update tells when a turn runs. `session/load` starts no turn.
+- During a turn, a client can add and remove inputs, cancel the turn, close the session, and list and stop jobs. The
+  settings (model, request settings, system prompt, folder) do not change: `session/set_settings` fails while a turn
+  runs or input waits.
 - A client subscribes first, then loads, and it keeps the updates of that wait. After the load, it applies the kept
   updates in order. It drops a saved event that it has (by `seq`) and an `input_accepted` that it has (by `inputId`).
   The server disconnects a client that falls behind. The client then loads again.
