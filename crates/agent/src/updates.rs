@@ -79,7 +79,7 @@ impl<'a> Updates<'a> {
         &self,
         event_number: EventNumber,
         commit: &Commit<'_>,
-        consumed: Vec<yuke_protocol::InputId>,
+        consumed: Vec<yuke_protocol::ConsumedInput>,
     ) {
         if self.observer.is_none() {
             return;

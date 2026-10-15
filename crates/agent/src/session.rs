@@ -8,7 +8,7 @@ use yuke_engine::{CancellationToken, Commit, Driver, Inbox, Journal, Outcome, Tu
 
 use crate::lock;
 use crate::updates::{SessionObserver, Updates};
-use yuke_protocol::{EventNumber, InputId, PendingInput, SessionId, SessionSettings};
+use yuke_protocol::{ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings};
 
 use crate::store::{Access, Lease, Opened, Store, StoreError};
 
@@ -51,25 +51,29 @@ struct TurnJournal<'a> {
 struct Inputs {
     /// The pending inputs from the latest load of the store that the turn did not take.
     waiting: Vec<PendingInput>,
-    /// The ids of the inputs that the turn took and that no saved commit consumed.
-    taken: Vec<InputId>,
+    /// The records of the inputs that the turn took and that no saved commit consumed.
+    taken: Vec<ConsumedInput>,
 }
 
 impl TurnJournal<'_> {
-    /// Move each waiting input to the taken inputs, and return their blocks in input order.
+    /// Move each waiting input to the taken inputs, and return their model blocks in input order.
     fn take_waiting(&self) -> Vec<yuke_ai::Block> {
         let mut inputs = lock(&self.inputs);
-        let waiting = std::mem::take(&mut inputs.waiting);
-        inputs.taken.extend(waiting.iter().map(|input| input.id));
-        waiting.into_iter().flat_map(|input| input.blocks).collect()
+        let mut blocks = Vec::new();
+        for input in std::mem::take(&mut inputs.waiting) {
+            let (consumed, model_blocks) = input.into_consumed();
+            inputs.taken.push(consumed);
+            blocks.extend(model_blocks);
+        }
+        blocks
     }
 }
 
 #[async_trait]
 impl Journal for TurnJournal<'_> {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // The first commit after a take holds the blocks of the taken inputs, so it consumes their ids. The ids leave
-        // `taken` before the save: after a failed save, the next turn takes the inputs that are still pending again.
+        // The first commit after a take starts with the taken model blocks, so it consumes their inputs. The records
+        // leave `taken` before the save. After a failed save, the next turn takes the pending inputs again.
         let consumed = std::mem::take(&mut lock(&self.inputs).taken);
         let event_number = self.store.commit(self.id, commit, &consumed).await?;
         self.updates.committed(event_number, commit, consumed);
@@ -261,14 +265,14 @@ impl fmt::Debug for InputSender {
 }
 
 impl InputSender {
-    /// Save `blocks` as a pending input. A turn that runs takes it after its next commit. The next turn takes it
+    /// Save `input` as a pending input. A turn that runs takes it after its next commit. The next turn takes it
     /// otherwise.
     ///
     /// # Errors
     ///
     /// Returns the error of [`Store::accept_input`].
-    pub async fn send(&self, blocks: &[yuke_ai::Block]) -> Result<InputId, StoreError> {
-        self.store.accept_input(self.id, blocks).await
+    pub async fn send(&self, input: Input) -> Result<InputId, StoreError> {
+        self.store.accept_input(self.id, input).await
     }
 }
 

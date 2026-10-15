@@ -8,9 +8,11 @@ use async_trait::async_trait;
 use yuke_engine::{Commit, Outcome, TurnEnd};
 
 use crate::lock;
-use yuke_protocol::{EventNumber, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, StoredEvent};
+use yuke_protocol::{
+    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, StoredEvent,
+};
 
-use crate::store::{Access, Lease, Opened, Store, StoreError, blob_of};
+use crate::store::{Access, Lease, Opened, Store, StoreError, blob_of, check_consumed_blocks};
 
 /// A [`Store`] that keeps its sessions in memory, for tests and for a caller that saves nothing. It refuses a second
 /// writer of a session, as a store with a file lock does.
@@ -194,16 +196,13 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn accept_input(&self, id: SessionId, blocks: &[yuke_ai::Block]) -> Result<InputId, StoreError> {
+    async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError> {
         let mut state = lock(&self.state);
-        let input = InputId(state.newest_input + 1);
+        let input_id = InputId(state.newest_input + 1);
         let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
-        saved.pending.push(PendingInput {
-            id: input,
-            blocks: blocks.to_vec(),
-        });
-        state.newest_input = input.0;
-        Ok(input)
+        saved.pending.push(PendingInput { id: input_id, input });
+        state.newest_input = input_id.0;
+        Ok(input_id)
     }
 
     async fn newest_session(&self, cwd: &Path) -> Result<Option<SessionId>, StoreError> {
@@ -230,12 +229,23 @@ impl Store for MemoryStore {
         &self,
         id: SessionId,
         commit: &Commit<'_>,
-        consumed: &[InputId],
+        consumed: &[ConsumedInput],
     ) -> Result<EventNumber, StoreError> {
+        check_consumed_blocks(commit, consumed)?;
         let mut state = lock(&self.state);
+        let saved = state.sessions.get(&id).ok_or(StoreError::NotFound)?;
+        // Each check comes before the first change, so a refused commit changes nothing.
+        for (index, input) in consumed.iter().enumerate() {
+            let taken_before = consumed[..index].iter().any(|earlier| earlier.id == input.id);
+            if taken_before || !saved.pending.iter().any(|pending| pending.id == input.id) {
+                return Err(StoreError::InputNotPending(input.id));
+            }
+        }
         let write = state.next_write();
         let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
-        saved.pending.retain(|input| !consumed.contains(&input.id));
+        saved
+            .pending
+            .retain(|pending| !consumed.iter().any(|input| input.id == pending.id));
         let event_number = saved.push_event(
             SessionEvent::Commit {
                 commit: commit.clone().into_owned(),

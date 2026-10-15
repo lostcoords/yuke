@@ -7,7 +7,7 @@ use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
 use tokio_rusqlite::rusqlite;
-use yuke_agent::testing::{end, settings, step};
+use yuke_agent::testing::{consumed, end, settings, step, user_input};
 use yuke_agent::{Access, Store, StoreError};
 use yuke_engine::{Answer, Commit};
 use yuke_protocol::EventNumber;
@@ -41,7 +41,7 @@ async fn a_session_survives_a_close_and_an_open_of_the_file() {
         .commit(id, &step(&[yuke_ai::Block::user_text("a")]), &[])
         .await
         .unwrap();
-    let input = first.accept_input(id, &[yuke_ai::Block::user_text("b")]).await.unwrap();
+    let input = first.accept_input(id, user_input("b")).await.unwrap();
     drop(opened);
     drop(first);
 
@@ -54,7 +54,7 @@ async fn a_session_survives_a_close_and_an_open_of_the_file() {
     let pending = second.pending(id).await.unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].id, input);
-    assert_eq!(pending[0].blocks, [yuke_ai::Block::user_text("b")]);
+    assert_eq!(pending[0].input, user_input("b"));
 }
 
 #[tokio::test]
@@ -266,7 +266,7 @@ async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
     let store = SqliteStore::open(&folder).await.unwrap();
     let session = store.create_session(&settings("one")).await.unwrap();
     let blocks = [yuke_ai::Block::user_text("task")];
-    let input = store.accept_input(session.id, &blocks).await.unwrap();
+    let input = store.accept_input(session.id, user_input("task")).await.unwrap();
     let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
     // A deferred constraint lets both statements run, but it makes COMMIT fail.
     connection
@@ -278,7 +278,10 @@ async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
         )
         .unwrap();
 
-    let error = store.commit(session.id, &end(&blocks), &[input]).await.unwrap_err();
+    let error = store
+        .commit(session.id, &end(&blocks), &[consumed(input, 1)])
+        .await
+        .unwrap_err();
     assert!(
         std::error::Error::source(&error)
             .unwrap()
@@ -290,10 +293,13 @@ async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
     let pending = store.pending(session.id).await.unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].id, input);
-    assert_eq!(pending[0].blocks, blocks);
+    assert_eq!(pending[0].input, user_input("task"));
 
     connection.execute_batch("DROP TRIGGER reject_commit;").unwrap();
-    let receipt = store.commit(session.id, &end(&blocks), &[input]).await.unwrap();
+    let receipt = store
+        .commit(session.id, &end(&blocks), &[consumed(input, 1)])
+        .await
+        .unwrap();
     assert_eq!(receipt, EventNumber(2));
     assert_eq!(store.pending(session.id).await.unwrap(), []);
     let id = session.id;
@@ -302,4 +308,28 @@ async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
     let reopened = SqliteStore::open(&folder).await.unwrap();
     let events = reopened.events(id, None).await.unwrap();
     assert_eq!(events.last().unwrap().event_number, EventNumber(2));
+}
+
+#[tokio::test]
+async fn a_saved_input_without_content_does_not_load() {
+    let folder = folder("a_saved_input_without_content_does_not_load");
+    let store = SqliteStore::open(&folder).await.unwrap();
+    let session = store.create_session(&settings("one")).await.unwrap();
+    let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
+    connection
+        .execute(
+            r#"INSERT INTO pending_inputs(session_id, input) VALUES (?1, '{"source":{"kind":"user"},"content":[]}')"#,
+            [session.id.as_bytes().as_slice()],
+        )
+        .unwrap();
+
+    let error = store.pending(session.id).await.unwrap_err();
+
+    let causes: Vec<String> = std::iter::successors(Some(&error as &dyn std::error::Error), |error| error.source())
+        .map(ToString::to_string)
+        .collect();
+    assert!(
+        causes.iter().any(|cause| cause.contains("the input has no content")),
+        "{causes:?}"
+    );
 }

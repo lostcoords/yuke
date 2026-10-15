@@ -5,7 +5,9 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use yuke_engine::Commit;
-use yuke_protocol::{EventNumber, InputId, PendingInput, SessionId, SessionSettings, StoredEvent};
+use yuke_protocol::{
+    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings, StoredEvent,
+};
 
 /// Saves and loads sessions. Each method is one atomic durable step. One writer at a time owns a session. A second
 /// [`Access::Write`] open gets [`StoreError::Owned`] until the [`Lease`] of the first writer drops and its writes end.
@@ -42,12 +44,12 @@ pub trait Store: Send + Sync {
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the save fails.
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError>;
 
-    /// Save `blocks` as a pending input of session `id`. The input stays pending until a commit consumes it.
+    /// Save `input` as a pending input of session `id`. The input stays pending until a commit consumes it.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the save fails.
-    async fn accept_input(&self, id: SessionId, blocks: &[yuke_ai::Block]) -> Result<InputId, StoreError>;
+    async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError>;
 
     /// The session that works in the folder `cwd` and has the newest event of those sessions. The newest settings of a
     /// session name its folder. `None` when no session works in `cwd`. A fork counts as a new event.
@@ -65,15 +67,22 @@ pub trait Store: Send + Sync {
     /// session, and [`StoreError::Failed`] when the load fails.
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError>;
 
-    /// Save `commit` after the commits of session `id`, and remove the `consumed` pending inputs, in one step. Replay
-    /// the saved commits in order: apply `replaced`, then append `blocks`.
-    /// Return the assigned event number within this session only after the durable write succeeds.
+    /// Save `commit` after the commits of session `id`. Keep the records of its `consumed` inputs in the same event,
+    /// and remove those pending inputs in the same step. The commit starts with their model blocks. Replay the saved
+    /// commits in order: apply `replaced`, then append `blocks`. Return the event number of the commit only after the
+    /// durable write succeeds.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the save fails.
-    async fn commit(&self, id: SessionId, commit: &Commit<'_>, consumed: &[InputId])
-    -> Result<EventNumber, StoreError>;
+    /// Returns [`StoreError::NotFound`] for an unknown session. Returns [`StoreError::InputNotPending`] when a consumed
+    /// input is not pending. Returns [`StoreError::InputBlocksExceedCommit`] when the consumed inputs have more blocks
+    /// than the commit. Returns [`StoreError::Failed`] when the save fails. A failed commit saves nothing.
+    async fn commit(
+        &self,
+        id: SessionId,
+        commit: &Commit<'_>,
+        consumed: &[ConsumedInput],
+    ) -> Result<EventNumber, StoreError>;
 
     /// The inputs of session `id` that no commit consumed, in id order.
     ///
@@ -121,6 +130,22 @@ pub fn blob_of(bytes: &[u8]) -> yuke_ai::Blob {
     yuke_ai::Blob {
         digest: sha2::Sha256::digest(bytes).into(),
         len: bytes.len(),
+    }
+}
+
+/// Check that the model blocks of the `consumed` inputs fit in `commit`. A commit starts with those blocks, so their
+/// counts sum to at most its block count. A store calls this before it saves a commit.
+///
+/// # Errors
+///
+/// Returns [`StoreError::InputBlocksExceedCommit`] when the counts sum to more than the blocks of `commit`.
+pub fn check_consumed_blocks(commit: &Commit<'_>, consumed: &[ConsumedInput]) -> Result<(), StoreError> {
+    let sum = consumed
+        .iter()
+        .try_fold(0_usize, |sum, input| sum.checked_add(input.block_count));
+    match sum {
+        Some(sum) if sum <= commit.blocks.len() => Ok(()),
+        _ => Err(StoreError::InputBlocksExceedCommit),
     }
 }
 
@@ -176,6 +201,10 @@ pub enum StoreError {
     NotFound,
     /// The event that a fork names does not end a completed turn.
     NotACompletedTurn,
+    /// A commit consumes this input, but the input is not pending.
+    InputNotPending(InputId),
+    /// The consumed inputs of a commit have more model blocks than the commit.
+    InputBlocksExceedCommit,
     /// The store failed to save or load.
     Failed(Box<dyn std::error::Error + Send + Sync>),
 }
@@ -186,6 +215,8 @@ impl fmt::Display for StoreError {
             Self::Owned => f.write_str("another writer holds the session"),
             Self::NotFound => f.write_str("the store has no such session"),
             Self::NotACompletedTurn => f.write_str("the event does not end a completed turn"),
+            Self::InputNotPending(InputId(id)) => write!(f, "input {id} is not pending"),
+            Self::InputBlocksExceedCommit => f.write_str("the consumed inputs have more blocks than the commit"),
             // The text names no cause, because `source` returns it.
             Self::Failed(_) => f.write_str("the store failed"),
         }
@@ -196,7 +227,11 @@ impl std::error::Error for StoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Failed(error) => Some(error.as_ref()),
-            Self::Owned | Self::NotFound | Self::NotACompletedTurn => None,
+            Self::Owned
+            | Self::NotFound
+            | Self::NotACompletedTurn
+            | Self::InputNotPending(_)
+            | Self::InputBlocksExceedCommit => None,
         }
     }
 }

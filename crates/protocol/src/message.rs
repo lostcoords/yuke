@@ -282,8 +282,8 @@ pub struct LoadSessionResult {
 pub struct InputParams {
     /// The session.
     pub session_id: SessionId,
-    /// The blocks of the input.
-    pub blocks: Vec<yuke_ai::Block>,
+    /// The blocks of the input. The server saves the input with the user as its source.
+    pub content: Vec<yuke_ai::Block>,
 }
 
 /// The result of `session/input`.

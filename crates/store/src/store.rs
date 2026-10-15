@@ -7,9 +7,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
-use yuke_agent::{Access, Lease, Opened, Store, StoreError};
+use yuke_agent::{Access, Lease, Opened, Store, StoreError, check_consumed_blocks};
 use yuke_engine::{Commit, Outcome, TurnEnd};
-use yuke_protocol::{EventNumber, InputId, PendingInput, SessionId, SessionSettings, StoredEvent};
+use yuke_protocol::{
+    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings, StoredEvent,
+};
 use yuke_sql::rusqlite::{self, Connection, TransactionBehavior};
 
 use crate::context;
@@ -213,10 +215,10 @@ impl Store for SqliteStore {
         .await
     }
 
-    async fn accept_input(&self, id: SessionId, blocks: &[yuke_ai::Block]) -> Result<InputId, StoreError> {
+    async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError> {
         let params = pending_inputs::InsertPendingInputParams {
             session_id: *id.as_bytes(),
-            blocks: serde_json::to_string(blocks).map_err(failed)?,
+            input: serde_json::to_string(&input).map_err(failed)?,
         };
 
         self.call(move |connection| {
@@ -266,11 +268,12 @@ impl Store for SqliteStore {
         &self,
         id: SessionId,
         commit: &Commit<'_>,
-        consumed: &[InputId],
+        consumed: &[ConsumedInput],
     ) -> Result<EventNumber, StoreError> {
+        check_consumed_blocks(commit, consumed)?;
         let owner = self.owner(id);
         let params = commit_params(id, commit, consumed).map_err(failed)?;
-        let consumed: Vec<u64> = consumed.iter().map(|input| input.0).collect();
+        let consumed: Vec<InputId> = consumed.iter().map(|input| input.id).collect();
 
         self.call(move |connection| {
             let saved = save_commit(connection, &params, &consumed);
@@ -300,7 +303,7 @@ impl Store for SqliteStore {
             .into_iter()
             .map(|row| PendingInput {
                 id: InputId(row.id),
-                blocks: row.blocks.0,
+                input: row.input.0,
             })
             .collect())
     }
@@ -403,11 +406,12 @@ fn save_settings(connection: &mut Connection, session: [u8; 16], settings: Strin
 }
 
 /// Save the commit event and remove the consumed inputs in one transaction. Returns [`StoreError::NotFound`] for an
-/// unknown session.
+/// unknown session, and [`StoreError::InputNotPending`] for a consumed input that is not pending. A failure saves
+/// nothing.
 fn save_commit(
     connection: &mut Connection,
     params: &events::InsertCommitParams,
-    consumed: &[u64],
+    consumed: &[InputId],
 ) -> Result<EventNumber, StoreError> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -420,9 +424,12 @@ fn save_commit(
     for &input in consumed {
         let params = pending_inputs::DeletePendingInputParams {
             session_id: params.session_id,
-            id: input,
+            id: input.0,
         };
-        pending_inputs::delete_pending_input(&transaction, &params).map_err(failed)?;
+        // A drop of the transaction rolls it back, so the error saves nothing.
+        if pending_inputs::delete_pending_input(&transaction, &params).map_err(failed)? == 0 {
+            return Err(StoreError::InputNotPending(input));
+        }
     }
 
     transaction.commit().map_err(failed)?;
@@ -486,8 +493,8 @@ fn delete_new_session(connection: &Connection, session: [u8; 16], folder: &Path)
 fn commit_params(
     id: SessionId,
     commit: &Commit<'_>,
-    consumed: &[InputId],
-) -> serde_json::Result<events::InsertCommitParams> {
+    consumed: &[ConsumedInput],
+) -> serde_json::Result<events::InsertCommitParams<'static>> {
     let (head, keep) = match &commit.replaced {
         Some(replaced) => (Some(serde_json::to_string(&replaced.head)?), Some(replaced.keep)),
         None => (None, None),
@@ -519,9 +526,9 @@ fn commit_params(
         reasoning_tokens: usage.and_then(|usage| usage.reasoning),
         cache_read_tokens: usage.and_then(|usage| usage.cache_read),
         cache_write_tokens: usage.and_then(|usage| usage.cache_write),
-        finish_reason: answer.map(|answer| answer.finish_reason.as_str().to_owned()),
-        end_kind: end_kind.map(str::to_owned),
-        end_finish_reason: end_finish_reason.map(str::to_owned),
+        finish_reason: answer.map(|answer| answer.finish_reason.as_str()),
+        end_kind,
+        end_finish_reason,
         end_message,
     })
 }

@@ -11,6 +11,6 @@ export type InputParams = {
  */
 sessionId: SessionId, 
 /**
- * The blocks of the input.
+ * The blocks of the input. The server saves the input with the user as its source.
  */
-blocks: Array<Block>, };
+content: Array<Block>, };

@@ -11,15 +11,15 @@ use std::pin::pin;
 use std::task::{Context, Waker};
 
 use support::{
-    FailingStore, NoWait, ScriptedTransport, SendsInput, Stalled, StoreBehavior, assert_in_order, failed_reply,
-    send_input_reply, settings, target, text_reply,
+    FailingStore, NoWait, ScriptedTransport, SendsInput, Stalled, StoreBehavior, assert_in_order, consumed_inputs,
+    failed_reply, send_input_reply, settings, target, text_reply, user_input,
 };
 use yuke_agent::{Access, MemoryStore, Session, SessionError, Store, StoreError};
 use yuke_ai::route::SessionHeader;
 use yuke_ai::transport::Header;
 use yuke_ai::{Block, Media, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::{Commit, Driver, Toolset};
-use yuke_protocol::{InputId, ModelReference, SessionEvent, SessionSettings};
+use yuke_protocol::{ConsumedInput, Input, InputId, InputSource, ModelReference, SessionSettings};
 
 /// A commit in the middle of a turn.
 fn step(blocks: &[Block]) -> Commit<'_> {
@@ -37,7 +37,7 @@ async fn a_session_that_opens_again_has_the_same_context() {
     let transport = ScriptedTransport::new([text_reply("two")]);
     let target = target();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
-    session.input().send(&[Block::user_text("one")]).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
 
     session
         .turn(Driver::new(&transport, &target, &NoWait))
@@ -59,7 +59,7 @@ async fn a_session_keeps_its_lease_after_a_turn() {
     let transport = ScriptedTransport::new([text_reply("two")]);
     let target = target();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
-    session.input().send(&[Block::user_text("one")]).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
 
     session
         .turn(Driver::new(&transport, &target, &NoWait))
@@ -77,7 +77,7 @@ async fn a_session_keeps_its_lease_after_a_failed_request() {
     let transport = ScriptedTransport::new([failed_reply("cut")]);
     let target = target();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
-    session.input().send(&[Block::user_text("one")]).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
 
     let failed = session.turn(Driver::new(&transport, &target, &NoWait)).run().await;
     let other_writer = store.open(session.id(), Access::Write).await;
@@ -137,7 +137,7 @@ async fn a_pending_input_waits_for_the_next_turn_after_an_open() {
     let target = target();
     let session = Session::create(store.clone(), &settings()).await.unwrap();
     let id = session.id();
-    session.input().send(&[Block::user_text("one")]).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
     drop(session);
 
     let mut session = Session::open(store.clone(), id).await.unwrap();
@@ -169,7 +169,7 @@ async fn a_dropped_settings_write_leaves_the_next_turn_with_the_saved_settings()
         let polled = write.as_mut().poll(&mut Context::from_waker(Waker::noop()));
         assert!(polled.is_pending());
     }
-    session.input().send(&[Block::user_text("one")]).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
 
     session
         .turn(Driver::new(&transport, &target, &NoWait))
@@ -190,7 +190,7 @@ async fn a_turn_sends_the_settings_and_the_id_of_its_session() {
     let mut session_settings = settings();
     session_settings.settings = yuke_ai::Settings::new().system("Be brief.");
     let mut session = Session::create(store, &session_settings).await.unwrap();
-    session.input().send(&[Block::user_text("one")]).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
 
     session
         .turn(Driver::new(&transport, &target, &NoWait))
@@ -214,8 +214,12 @@ async fn a_turn_sends_the_bytes_of_its_media_from_the_store() {
     let target = target();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     let blob = store.put_blob(session.id(), b"image-bytes".to_vec()).await.unwrap();
-    let input = [Block::user_text("look"), Block::Media(Media::new(blob, "image/png"))];
-    session.input().send(&input).await.unwrap();
+    let input = vec![Block::user_text("look"), Block::Media(Media::new(blob, "image/png"))];
+    session
+        .input()
+        .send(Input::new(InputSource::User, input).unwrap())
+        .await
+        .unwrap();
 
     session
         .turn(Driver::new(&transport, &target, &NoWait))
@@ -250,7 +254,7 @@ async fn input_that_arrives_during_a_turn_joins_the_next_request_and_stays_pendi
             tool,
         )
         .unwrap();
-    session.input().send(&[Block::user_text("one")]).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
 
     session
         .turn(Driver::new(&transport, &target, &NoWait).toolset(&toolset))
@@ -271,10 +275,10 @@ async fn a_failed_commit_makes_the_next_turn_open_the_session_again() {
     let transport = ScriptedTransport::new([text_reply("lost"), text_reply("three")]);
     let target = target();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
-    session.input().send(&[Block::user_text("one")]).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
 
     let failed = session.turn(Driver::new(&transport, &target, &NoWait)).run().await;
-    session.input().send(&[Block::user_text("two")]).await.unwrap();
+    session.input().send(user_input("two")).await.unwrap();
     session
         .turn(Driver::new(&transport, &target, &NoWait))
         .run()
@@ -300,13 +304,13 @@ async fn a_failed_commit_makes_the_next_turn_open_the_session_again() {
 }
 
 #[tokio::test]
-async fn the_input_of_a_failed_commit_joins_the_next_turn() {
+async fn the_input_of_a_failed_commit_joins_the_next_turn_and_is_consumed_once() {
     // The first commit of a turn saves its input, before any request.
     let store = FailingStore::new(StoreBehavior::FailCommit(1));
     let transport = ScriptedTransport::new([text_reply("two")]);
     let target = target();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
-    session.input().send(&[Block::user_text("one")]).await.unwrap();
+    let input = session.input().send(user_input("one")).await.unwrap();
 
     let failed = session.turn(Driver::new(&transport, &target, &NoWait)).run().await;
     session
@@ -322,36 +326,62 @@ async fn the_input_of_a_failed_commit_joins_the_next_turn() {
     let saved = store.open(session.id(), Access::Read).await.unwrap();
     assert_eq!(saved.context, [Block::user_text("one"), Block::assistant_text("two")]);
     assert_eq!(store.pending(session.id()).await.unwrap(), []);
+    let ids: Vec<InputId> = consumed_inputs(&*store, session.id())
+        .await
+        .iter()
+        .map(|consumed| consumed.id)
+        .collect();
+    assert_eq!(ids, [input]);
 }
 
 #[tokio::test]
-async fn after_a_failed_commit_the_next_turn_consumes_each_input_once() {
-    // The first commit of a turn saves its input, before any request.
-    let store = FailingStore::new(StoreBehavior::FailCommit(1));
-    let transport = ScriptedTransport::new([text_reply("two")]);
+async fn the_model_reads_the_model_content_and_the_saved_record_keeps_what_the_user_saw() {
+    let store = Arc::new(MemoryStore::new());
+    let transport = ScriptedTransport::new([text_reply("noted")]);
     let target = target();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
-    let input = session.input().send(&[Block::user_text("one")]).await.unwrap();
+    let source = InputSource::Plugin {
+        name: "host:jobs".to_owned(),
+    };
+    let input = Input::new(source.clone(), vec![Block::user_text("job-1 finished")])
+        .unwrap()
+        .with_model_content(vec![
+            Block::user_text("job-1 ended with exit code 0."),
+            Block::user_text("Read its output file."),
+        ])
+        .unwrap();
+    let first = session.input().send(input).await.unwrap();
+    let second = session.input().send(user_input("thanks")).await.unwrap();
 
-    let failed = session.turn(Driver::new(&transport, &target, &NoWait)).run().await;
     session
         .turn(Driver::new(&transport, &target, &NoWait))
         .run()
         .await
         .unwrap();
 
-    assert!(failed.is_err(), "{failed:?}");
-    let consumed: Vec<InputId> = store
-        .events(session.id(), None)
-        .await
-        .unwrap()
-        .into_iter()
-        .flat_map(|stored| match stored.event {
-            SessionEvent::Commit { consumed, .. } => consumed,
-            SessionEvent::Settings(_) => Vec::new(),
-        })
-        .collect();
-    assert_eq!(consumed, [input]);
+    let request = &transport.requests()[0];
+    assert_in_order(
+        request,
+        &["job-1 ended with exit code 0.", "Read its output file.", "thanks"],
+    );
+    assert!(!request.contains("job-1 finished"), "{request}");
+    assert_eq!(
+        consumed_inputs(&*store, session.id()).await,
+        [
+            ConsumedInput {
+                id: first,
+                source,
+                display_content: Some(vec![Block::user_text("job-1 finished")]),
+                block_count: 2,
+            },
+            ConsumedInput {
+                id: second,
+                source: InputSource::User,
+                display_content: None,
+                block_count: 1,
+            },
+        ]
+    );
 }
 
 #[tokio::test]
@@ -359,7 +389,7 @@ async fn a_dropped_turn_releases_the_lease_and_the_next_turn_opens_the_session_a
     let store = Arc::new(MemoryStore::new());
     let target = target();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
-    session.input().send(&[Block::user_text("one")]).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
 
     {
         let mut run = pin!(session.turn(Driver::new(&Stalled, &target, &NoWait)).run());
@@ -383,49 +413,11 @@ async fn a_dropped_turn_releases_the_lease_and_the_next_turn_opens_the_session_a
 }
 
 #[tokio::test]
-async fn after_a_dropped_turn_of_an_empty_input_the_next_turn_consumes_the_input_once() {
-    let store = Arc::new(MemoryStore::new());
-    let target = target();
-    let transport = ScriptedTransport::new([text_reply("two"), text_reply("three")]);
-    let mut session = Session::create(store.clone(), &settings()).await.unwrap();
-    let first = session.input().send(&[Block::user_text("one")]).await.unwrap();
-    session
-        .turn(Driver::new(&transport, &target, &NoWait))
-        .run()
-        .await
-        .unwrap();
-    let empty = session.input().send(&[]).await.unwrap();
-    {
-        let mut run = pin!(session.turn(Driver::new(&Stalled, &target, &NoWait)).run());
-        // The turn takes the empty input and sends its request before its first commit.
-        assert!(run.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
-    }
-
-    session
-        .turn(Driver::new(&transport, &target, &NoWait))
-        .run()
-        .await
-        .unwrap();
-
-    let consumed: Vec<InputId> = store
-        .events(session.id(), None)
-        .await
-        .unwrap()
-        .into_iter()
-        .flat_map(|stored| match stored.event {
-            SessionEvent::Commit { consumed, .. } => consumed,
-            SessionEvent::Settings(_) => Vec::new(),
-        })
-        .collect();
-    assert_eq!(consumed, [first, empty]);
-}
-
-#[tokio::test]
 async fn new_settings_after_a_dropped_turn_get_owned_while_another_writer_holds_the_session() {
     let store = Arc::new(MemoryStore::new());
     let target = target();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
-    session.input().send(&[Block::user_text("one")]).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
     {
         let mut run = pin!(session.turn(Driver::new(&Stalled, &target, &NoWait)).run());
         assert!(run.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());

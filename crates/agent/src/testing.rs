@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 
 use yuke_engine::{Answer, Commit, Outcome, Replaced, TurnEnd};
 
-use yuke_protocol::{EventNumber, ModelReference, SessionEvent, SessionId, SessionSettings, StoredEvent};
+use yuke_protocol::{
+    ConsumedInput, EventNumber, Input, InputId, InputSource, ModelReference, PendingInput, SessionEvent, SessionId,
+    SessionSettings, StoredEvent,
+};
 
 use crate::store::{Access, Store, StoreError, blob_of};
 
@@ -35,6 +38,9 @@ macro_rules! store_tests {
             a_reader_holds_no_lock,
             a_pending_input_stays_until_a_commit_consumes_it,
             a_consumed_input_id_is_not_given_again,
+            a_commit_of_an_input_that_is_not_pending_saves_nothing,
+            a_commit_with_fewer_blocks_than_its_inputs_saves_nothing,
+            an_input_keeps_its_source_and_both_contents_through_its_commit,
             new_settings_replace_the_old_settings,
             an_unknown_session_is_not_found,
             a_put_blob_reads_back,
@@ -86,6 +92,21 @@ pub fn settings(system: &str) -> SessionSettings {
             ..yuke_ai::Settings::new()
         },
         cwd: PathBuf::from("/work"),
+    }
+}
+
+/// An input of the user with one text block.
+pub fn user_input(text: &str) -> Input {
+    Input::new(InputSource::User, vec![yuke_ai::Block::user_text(text)]).unwrap()
+}
+
+/// The record of input `id` of the user, consumed with `block_count` model blocks that the user saw too.
+pub fn consumed(id: InputId, block_count: usize) -> ConsumedInput {
+    ConsumedInput {
+        id,
+        source: InputSource::User,
+        display_content: None,
+        block_count,
     }
 }
 
@@ -309,25 +330,19 @@ pub async fn a_reader_holds_no_lock(store: &dyn Store) {
 /// An accepted input is pending, in id order, until a commit consumes it.
 pub async fn a_pending_input_stays_until_a_commit_consumes_it(store: &dyn Store) {
     let id = store.create_session(&settings("one")).await.unwrap().id;
-    let first = store
-        .accept_input(id, &[yuke_ai::Block::user_text("one")])
-        .await
-        .unwrap();
-    let second = store
-        .accept_input(id, &[yuke_ai::Block::user_text("two")])
-        .await
-        .unwrap();
+    let first = store.accept_input(id, user_input("one")).await.unwrap();
+    let second = store.accept_input(id, user_input("two")).await.unwrap();
 
     let before = store.pending(id).await.unwrap();
     store
-        .commit(id, &step(&[yuke_ai::Block::user_text("two")]), &[second])
+        .commit(id, &step(&[yuke_ai::Block::user_text("two")]), &[consumed(second, 1)])
         .await
         .unwrap();
     let after = store.pending(id).await.unwrap();
 
     let ids: Vec<_> = before.iter().map(|input| input.id).collect();
     assert_eq!(ids, [first, second]);
-    assert_eq!(before[1].blocks, [yuke_ai::Block::user_text("two")]);
+    assert_eq!(before[1].input, user_input("two"));
     let ids: Vec<_> = after.iter().map(|input| input.id).collect();
     assert_eq!(ids, [first]);
 }
@@ -335,21 +350,126 @@ pub async fn a_pending_input_stays_until_a_commit_consumes_it(store: &dyn Store)
 /// The id of a consumed input does not go to a new input, also when the consumed input was the newest one.
 pub async fn a_consumed_input_id_is_not_given_again(store: &dyn Store) {
     let id = store.create_session(&settings("one")).await.unwrap().id;
-    let first = store
-        .accept_input(id, &[yuke_ai::Block::user_text("one")])
-        .await
-        .unwrap();
+    let first = store.accept_input(id, user_input("one")).await.unwrap();
     store
-        .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[first])
+        .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[consumed(first, 1)])
         .await
         .unwrap();
 
-    let second = store
-        .accept_input(id, &[yuke_ai::Block::user_text("two")])
-        .await
-        .unwrap();
+    let second = store.accept_input(id, user_input("two")).await.unwrap();
 
     assert!(second > first, "{second:?} after {first:?}");
+}
+
+/// A commit that consumes an input that is not pending fails, and it saves nothing: no event, and no change of the
+/// pending inputs.
+pub async fn a_commit_of_an_input_that_is_not_pending_saves_nothing(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    let first = store.accept_input(id, user_input("one")).await.unwrap();
+    store
+        .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[consumed(first, 1)])
+        .await
+        .unwrap();
+    let second = store.accept_input(id, user_input("two")).await.unwrap();
+    let events = store.events(id, None).await.unwrap();
+
+    let again = store
+        .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[consumed(first, 1)])
+        .await;
+    // The pending input comes first, so a store that deletes as it goes would delete it before the failure.
+    let mixed = store
+        .commit(
+            id,
+            &step(&[yuke_ai::Block::user_text("two"), yuke_ai::Block::user_text("one")]),
+            &[consumed(second, 1), consumed(first, 1)],
+        )
+        .await;
+
+    let twice = store
+        .commit(
+            id,
+            &step(&[yuke_ai::Block::user_text("two"), yuke_ai::Block::user_text("two")]),
+            &[consumed(second, 1), consumed(second, 1)],
+        )
+        .await;
+
+    assert!(
+        matches!(again, Err(StoreError::InputNotPending(input)) if input == first),
+        "{again:?}"
+    );
+    assert!(
+        matches!(twice, Err(StoreError::InputNotPending(input)) if input == second),
+        "{twice:?}"
+    );
+    assert!(
+        matches!(mixed, Err(StoreError::InputNotPending(input)) if input == first),
+        "{mixed:?}"
+    );
+    assert_eq!(store.events(id, None).await.unwrap(), events);
+    let pending: Vec<_> = store.pending(id).await.unwrap().iter().map(|input| input.id).collect();
+    assert_eq!(pending, [second]);
+}
+
+/// A commit whose consumed inputs have more model blocks than the commit fails, and it saves nothing.
+pub async fn a_commit_with_fewer_blocks_than_its_inputs_saves_nothing(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    let input = store.accept_input(id, user_input("one")).await.unwrap();
+    let events = store.events(id, None).await.unwrap();
+
+    let short = store.commit(id, &step(&[]), &[consumed(input, 1)]).await;
+    let overflow = store
+        .commit(
+            id,
+            &step(&[yuke_ai::Block::user_text("one")]),
+            &[consumed(input, usize::MAX), consumed(input, 2)],
+        )
+        .await;
+
+    assert!(matches!(short, Err(StoreError::InputBlocksExceedCommit)), "{short:?}");
+    assert!(
+        matches!(overflow, Err(StoreError::InputBlocksExceedCommit)),
+        "{overflow:?}"
+    );
+    assert_eq!(store.events(id, None).await.unwrap(), events);
+    let pending: Vec<_> = store.pending(id).await.unwrap().iter().map(|input| input.id).collect();
+    assert_eq!(pending, [input]);
+}
+
+/// An input keeps its source, its content, and its model content while it is pending. The commit that consumes it
+/// keeps the source and the content that the user saw.
+pub async fn an_input_keeps_its_source_and_both_contents_through_its_commit(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    let source = InputSource::Plugin {
+        name: "host:jobs".to_owned(),
+    };
+    let input = Input::new(source.clone(), vec![yuke_ai::Block::user_text("job-1 finished")])
+        .unwrap()
+        .with_model_content(vec![yuke_ai::Block::user_text("job-1 ended with exit code 0.")])
+        .unwrap();
+    let input_id = store.accept_input(id, input.clone()).await.unwrap();
+
+    let pending = store.pending(id).await.unwrap();
+    let (record, blocks) = PendingInput {
+        id: input_id,
+        input: input.clone(),
+    }
+    .into_consumed();
+    store.commit(id, &step(&blocks), &[record]).await.unwrap();
+
+    assert_eq!(pending, [PendingInput { id: input_id, input }]);
+    let events = store.events(id, None).await.unwrap();
+    assert_eq!(
+        events[1].event,
+        SessionEvent::Commit {
+            commit: step(&[yuke_ai::Block::user_text("job-1 ended with exit code 0.")]).into_owned(),
+            consumed: vec![ConsumedInput {
+                id: input_id,
+                source,
+                display_content: Some(vec![yuke_ai::Block::user_text("job-1 finished")]),
+                block_count: 1,
+            }],
+        }
+    );
 }
 
 /// New settings replace the settings that a session opens with.
@@ -367,7 +487,7 @@ pub async fn an_unknown_session_is_not_found(store: &dyn Store) {
 
     let open = store.open(id, Access::Read).await;
     let settings = store.set_settings(id, &settings("one")).await;
-    let input = store.accept_input(id, &[yuke_ai::Block::user_text("one")]).await;
+    let input = store.accept_input(id, user_input("one")).await;
     let commit = store.commit(id, &step(&[]), &[]).await;
     let pending = store.pending(id).await;
     let put = store.put_blob(id, b"image".to_vec()).await;
@@ -439,10 +559,7 @@ pub async fn a_deleted_session_is_not_found(store: &dyn Store) {
         .commit(id, &end(&[yuke_ai::Block::user_text("one")]), &[])
         .await
         .unwrap();
-    store
-        .accept_input(id, &[yuke_ai::Block::user_text("two")])
-        .await
-        .unwrap();
+    store.accept_input(id, user_input("two")).await.unwrap();
     let blob = store.put_blob(id, b"image".to_vec()).await.unwrap();
 
     store.delete_session(id).await.unwrap();
@@ -490,10 +607,7 @@ pub async fn a_fork_has_the_settings_and_the_context_of_its_source_and_no_pendin
         .commit(source, &end(&[yuke_ai::Block::assistant_text("c")]), &[])
         .await
         .unwrap();
-    store
-        .accept_input(source, &[yuke_ai::Block::user_text("d")])
-        .await
-        .unwrap();
+    store.accept_input(source, user_input("d")).await.unwrap();
     let blocks = [
         yuke_ai::Block::user_text("summary"),
         yuke_ai::Block::assistant_text("b"),
@@ -702,14 +816,14 @@ pub async fn a_new_session_has_its_settings_as_its_first_event(store: &dyn Store
 }
 
 /// A commit and new settings each save the next event. An accepted input saves no event, and the commit that
-/// consumes it names its id.
+/// consumes it keeps its record.
 pub async fn each_commit_and_each_new_settings_is_the_next_event_and_an_input_is_no_event(store: &dyn Store) {
     let id = store.create_session(&settings("one")).await.unwrap().id;
     let blocks = [yuke_ai::Block::user_text("one")];
 
-    let input = store.accept_input(id, &blocks).await.unwrap();
+    let input = store.accept_input(id, user_input("one")).await.unwrap();
     let after_input = store.events(id, None).await.unwrap();
-    store.commit(id, &step(&blocks), &[input]).await.unwrap();
+    store.commit(id, &step(&blocks), &[consumed(input, 1)]).await.unwrap();
     store.set_settings(id, &settings("two")).await.unwrap();
 
     let events = store.events(id, None).await.unwrap();
@@ -719,7 +833,7 @@ pub async fn each_commit_and_each_new_settings_is_the_next_event_and_an_input_is
         events[1].event,
         SessionEvent::Commit {
             commit: step(&blocks).into_owned(),
-            consumed: vec![input],
+            consumed: vec![consumed(input, 1)],
         }
     );
     assert_eq!(events[2].event, SessionEvent::Settings(settings("two")));
@@ -867,10 +981,7 @@ pub async fn the_context_holds_only_commit_blocks_across_pending_inputs_and_sett
         .commit(id, &step(&[yuke_ai::Block::user_text("a")]), &[])
         .await
         .unwrap();
-    store
-        .accept_input(id, &[yuke_ai::Block::user_text("queued")])
-        .await
-        .unwrap();
+    store.accept_input(id, user_input("queued")).await.unwrap();
     store
         .commit(id, &step(&[yuke_ai::Block::assistant_text("b")]), &[])
         .await
@@ -885,10 +996,7 @@ pub async fn the_context_holds_only_commit_blocks_across_pending_inputs_and_sett
         ..step(&[])
     };
     store.commit(id, &replacement, &[]).await.unwrap();
-    store
-        .accept_input(id, &[yuke_ai::Block::user_text("queued later")])
-        .await
-        .unwrap();
+    store.accept_input(id, user_input("queued later")).await.unwrap();
     store
         .commit(id, &step(&[yuke_ai::Block::user_text("c")]), &[])
         .await
@@ -957,8 +1065,11 @@ pub async fn a_commit_receipt_names_its_saved_event_after_settings_and_a_fork(st
     store.commit(other.id, &end(&[]), &[]).await.unwrap();
     store.set_settings(source.id, &settings("two")).await.unwrap();
     let blocks = [yuke_ai::Block::user_text("task")];
-    let input = store.accept_input(source.id, &blocks).await.unwrap();
-    let receipt = store.commit(source.id, &end(&blocks), &[input]).await.unwrap();
+    let input = store.accept_input(source.id, user_input("task")).await.unwrap();
+    let receipt = store
+        .commit(source.id, &end(&blocks), &[consumed(input, 1)])
+        .await
+        .unwrap();
     assert_eq!(receipt, EventNumber(3));
     assert_eq!(
         store.events(source.id, Some(EventNumber(2))).await.unwrap(),
@@ -966,7 +1077,7 @@ pub async fn a_commit_receipt_names_its_saved_event_after_settings_and_a_fork(st
             event_number: EventNumber(3),
             event: SessionEvent::Commit {
                 commit: end(&blocks).into_owned(),
-                consumed: vec![input],
+                consumed: vec![consumed(input, 1)],
             },
         }]
     );

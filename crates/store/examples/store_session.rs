@@ -4,7 +4,7 @@
 
 use yuke_agent::{Access, Store};
 use yuke_engine::{Commit, Outcome, TurnEnd};
-use yuke_protocol::{ModelReference, SessionSettings};
+use yuke_protocol::{Input, InputSource, ModelReference, PendingInput, SessionSettings};
 use yuke_store::SqliteStore;
 
 #[tokio::main(flavor = "current_thread")]
@@ -27,18 +27,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let id = opened.id;
 
     // Any caller can add input. The input stays pending until a commit consumes it.
-    let hello = [yuke_ai::Block::user_text("hello")];
-    let input = store.accept_input(id, &hello).await?;
+    let input = Input::new(InputSource::User, vec![yuke_ai::Block::user_text("hello")])?;
+    let input_id = store.accept_input(id, input.clone()).await?;
     println!("pending after accept_input: {}", store.pending(id).await?.len());
 
-    // The owner saves each commit of a turn. This commit takes the input and ends the turn.
+    // The owner saves each commit of a turn. This commit starts with the model blocks of the input, and it records
+    // the input as consumed. It also ends the turn.
+    let (consumed, blocks) = PendingInput { id: input_id, input }.into_consumed();
     let commit = Commit {
         replaced: None,
-        blocks: std::borrow::Cow::Borrowed(&hello),
+        blocks: std::borrow::Cow::Owned(blocks),
         answer: None,
         end: Some(TurnEnd::Outcome(Outcome::Stopped)),
     };
-    let event_number = store.commit(id, &commit, &[input]).await?;
+    let event_number = store.commit(id, &commit, &[consumed]).await?;
     println!("commit event: {}", event_number.0);
     println!("pending after commit: {}", store.pending(id).await?.len());
     drop(opened);

@@ -9,9 +9,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_protocol::{
-    ClientNotification, ClientRequest, EventNumber, InputId, LiveUpdate, ModelReference, Notification, Request,
-    Response, ServerNotification, SessionEvent, SessionId, SessionSettings, SessionUpdate, SessionUpdateParams,
-    StoredEvent,
+    ClientNotification, ClientRequest, ConsumedInput, EventNumber, Input, InputError, InputId, InputSource, LiveUpdate,
+    LoadSessionResult, ModelReference, Notification, PendingInput, Request, Response, ServerNotification, SessionEvent,
+    SessionId, SessionSettings, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 const SESSION: &str = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9d";
@@ -107,13 +107,13 @@ fn each_request_reads_and_writes_its_json() {
         ),
         (
             json!({ "jsonrpc": "2.0", "id": 4, "method": "session/input", "params": {
-                "sessionId": SESSION, "blocks": [{ "user_text": "hello" }]
+                "sessionId": SESSION, "content": [{ "user_text": "hello" }]
             } }),
             request(
                 4,
                 ClientRequest::Input(yuke_protocol::InputParams {
                     session_id: session(),
-                    blocks: vec![yuke_ai::Block::user_text("hello")],
+                    content: vec![yuke_ai::Block::user_text("hello")],
                 }),
             ),
         ),
@@ -184,6 +184,56 @@ fn a_response_holds_a_result_or_an_error() {
 }
 
 #[test]
+fn a_pending_input_reads_and_writes_its_json_with_its_model_content_only_when_it_differs() {
+    let input = Input::new(InputSource::User, vec![yuke_ai::Block::user_text("Review @main.rs")]).unwrap();
+    let same = input
+        .clone()
+        .with_model_content(vec![yuke_ai::Block::user_text("Review @main.rs")])
+        .unwrap();
+    let other = input
+        .clone()
+        .with_model_content(vec![yuke_ai::Block::user_text("Review main.rs, and read it first.")])
+        .unwrap();
+
+    assert_json(
+        &json!({ "pending": [
+            { "id": 1, "source": { "kind": "user" }, "content": [{ "user_text": "Review @main.rs" }] },
+            { "id": 2, "source": { "kind": "user" }, "content": [{ "user_text": "Review @main.rs" }],
+              "modelContent": [{ "user_text": "Review main.rs, and read it first." }] }
+        ] }),
+        &LoadSessionResult {
+            pending: vec![
+                PendingInput {
+                    id: InputId(1),
+                    input: same,
+                },
+                PendingInput {
+                    id: InputId(2),
+                    input: other,
+                },
+            ],
+        },
+    );
+}
+
+#[test]
+fn an_input_without_content_or_with_empty_model_content_does_not_read() {
+    let empty = serde_json::from_value::<Input>(json!({ "source": { "kind": "user" }, "content": [] }));
+    let empty_model = serde_json::from_value::<Input>(json!({
+        "source": { "kind": "user" }, "content": [{ "user_text": "go" }], "modelContent": []
+    }));
+
+    assert_eq!(Input::new(InputSource::User, Vec::new()), Err(InputError::EmptyContent));
+    assert!(empty.unwrap_err().to_string().contains("the input has no content"));
+    assert!(
+        empty_model
+            .unwrap_err()
+            .to_string()
+            .contains("the model content of the input has no block")
+    );
+}
+
+#[test]
 fn cancel_and_update_notifications_read_and_write_their_json() {
     assert_json(
         &json!({ "jsonrpc": "2.0", "method": "session/cancel", "params": { "sessionId": SESSION } }),
@@ -193,7 +243,7 @@ fn cancel_and_update_notifications_read_and_write_their_json() {
         },
     );
 
-    let blocks = [yuke_ai::Block::assistant_text("done")];
+    let blocks = [yuke_ai::Block::user_text("job-7 ended with exit code 0.")];
     let commit = StoredEvent {
         event_number: EventNumber(3),
         event: SessionEvent::Commit {
@@ -204,16 +254,26 @@ fn cancel_and_update_notifications_read_and_write_their_json() {
                 end: Some(TurnEnd::Outcome(Outcome::Cancelled)),
             }
             .into_owned(),
-            consumed: vec![InputId(7)],
+            consumed: vec![ConsumedInput {
+                id: InputId(7),
+                source: InputSource::Plugin {
+                    name: "host:jobs".to_owned(),
+                },
+                display_content: Some(vec![yuke_ai::Block::user_text("job-7 finished")]),
+                block_count: 1,
+            }],
         },
     };
     assert_json(
         &json!({ "jsonrpc": "2.0", "method": "session/update", "params": {
             "sessionId": SESSION, "update": {
                 "seq": 3, "sessionUpdate": "commit",
-                "commit": { "replaced": null, "blocks": [{ "assistant_text": "done" }], "answer": null,
-                            "end": { "outcome": "cancelled" } },
-                "consumed": [7]
+                "commit": { "replaced": null, "blocks": [{ "user_text": "job-7 ended with exit code 0." }],
+                            "answer": null, "end": { "outcome": "cancelled" } },
+                "consumed": [{
+                    "id": 7, "source": { "kind": "plugin", "name": "host:jobs" },
+                    "displayContent": [{ "user_text": "job-7 finished" }], "blockCount": 1
+                }]
             }
         } }),
         &Notification {

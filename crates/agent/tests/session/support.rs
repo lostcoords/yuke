@@ -16,7 +16,10 @@ use yuke_ai::route::{Credential, Route};
 use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Header, Outgoing, Transport};
 use yuke_ai::{AnthropicWire, Block, Target, Wire};
 use yuke_engine::{Commit, Timer, Tool, ToolContent, ToolContext};
-use yuke_protocol::{EventNumber, InputId, ModelReference, PendingInput, SessionId, SessionSettings, StoredEvent};
+use yuke_protocol::{
+    ConsumedInput, EventNumber, Input, InputId, InputSource, ModelReference, PendingInput, SessionEvent, SessionId,
+    SessionSettings, StoredEvent,
+};
 
 /// An Anthropic target at a test host, with no credential.
 pub(crate) fn target() -> Target {
@@ -45,6 +48,25 @@ pub(crate) fn settings() -> SessionSettings {
         settings: yuke_ai::Settings::new(),
         cwd: std::path::PathBuf::from("/work"),
     }
+}
+
+/// An input of the user with one text block.
+pub(crate) fn user_input(text: &str) -> Input {
+    Input::new(InputSource::User, vec![Block::user_text(text)]).unwrap()
+}
+
+/// The records of the inputs that the commits of session `id` consumed, in event order.
+pub(crate) async fn consumed_inputs(store: &dyn Store, id: SessionId) -> Vec<ConsumedInput> {
+    store
+        .events(id, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|stored| match stored.event {
+            SessionEvent::Commit { consumed, .. } => consumed,
+            SessionEvent::Settings(_) => Vec::new(),
+        })
+        .collect()
 }
 
 /// Assert that each of `texts` appears as a JSON string in `body`, in order.
@@ -195,7 +217,7 @@ pub(crate) struct SendsInput {
 impl Tool for SendsInput {
     async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
         self.sender
-            .send(&[Block::user_text(self.text)])
+            .send(user_input(self.text))
             .await
             .map_err(|error| error.to_string())?;
         Ok("sent".into())
@@ -253,8 +275,8 @@ impl Store for FailingStore {
         Ok(())
     }
 
-    async fn accept_input(&self, id: SessionId, blocks: &[Block]) -> Result<InputId, StoreError> {
-        self.store.accept_input(id, blocks).await
+    async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError> {
+        self.store.accept_input(id, input).await
     }
 
     async fn newest_session(&self, cwd: &Path) -> Result<Option<SessionId>, StoreError> {
@@ -269,7 +291,7 @@ impl Store for FailingStore {
         &self,
         id: SessionId,
         commit: &Commit<'_>,
-        consumed: &[InputId],
+        consumed: &[ConsumedInput],
     ) -> Result<EventNumber, StoreError> {
         let number = self.commits.fetch_add(1, Ordering::SeqCst) + 1;
         if let StoreBehavior::FailCommit(fail_at) = self.behavior

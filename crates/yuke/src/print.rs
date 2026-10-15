@@ -18,7 +18,7 @@ use yuke_ai::transport::Transport;
 use yuke_ai::{Block, Role, Target};
 use yuke_engine::{CancellationToken, Driver, Timer, Toolset, TurnEnd};
 use yuke_js::{Fault, JobEnded, Limits, Options, Processes, Runtime, SessionHost};
-use yuke_protocol::{ModelReference, SessionId, SessionSettings};
+use yuke_protocol::{Input, InputSource, ModelReference, SessionId, SessionSettings};
 use yuke_store::SqliteStore;
 
 use crate::config::Config;
@@ -241,11 +241,8 @@ async fn turn(
         }
         let driver = Driver::new(machine.transport, target, &TokioTimer).toolset(&toolset);
 
-        session
-            .input()
-            .send(&[Block::user_text(prompt)])
-            .await
-            .map_err(|error| describe(&error))?;
+        let input = Input::new(InputSource::User, vec![Block::user_text(prompt)]).map_err(|error| describe(&error))?;
+        session.input().send(input).await.map_err(|error| describe(&error))?;
         let end = match session.turn(driver).cancellation_token(cancellation_token).run().await {
             Ok(outcome) => TurnEnd::Outcome(outcome),
             Err(error) => TurnEnd::Failed(describe(&error)),

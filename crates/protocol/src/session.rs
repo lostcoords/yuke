@@ -1,10 +1,8 @@
-//! The settings of a session, and its inputs that no commit consumed.
+//! The settings of a session.
 
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-
-use crate::InputId;
 
 /// The current choice of a session: the model, the request settings, and the working folder. It holds no credential
 /// and no route.
@@ -29,15 +27,4 @@ pub struct ModelReference {
     pub provider: String,
     /// The id of the model at the provider.
     pub model: String,
-}
-
-/// An input that no commit consumed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct PendingInput {
-    /// The id that `Store::accept_input` of `yuke-agent` gave.
-    pub id: InputId,
-    /// The blocks of the input.
-    pub blocks: Vec<yuke_ai::Block>,
 }

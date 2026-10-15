@@ -17,7 +17,7 @@ pub(crate) mod events {
         pub(crate) kind: String,
         pub(crate) blocks: Option<Json<Vec<yuke_ai::Block>>>,
         pub(crate) settings: Option<Json<yuke_protocol::SessionSettings>>,
-        pub(crate) consumed: Option<Json<Vec<yuke_protocol::InputId>>>,
+        pub(crate) consumed: Option<Json<Vec<yuke_protocol::ConsumedInput>>>,
         pub(crate) head: Option<Json<Vec<yuke_ai::Block>>>,
         pub(crate) keep: Option<usize>,
         pub(crate) model: Option<String>,
@@ -186,7 +186,7 @@ FROM sessions WHERE id = :session_id;",
     }
 
     #[derive(Debug)]
-    pub(crate) struct InsertCommitParams {
+    pub(crate) struct InsertCommitParams<'a> {
         pub(crate) session_id: [u8; 16],
         pub(crate) blocks: String,
         pub(crate) consumed: String,
@@ -199,16 +199,16 @@ FROM sessions WHERE id = :session_id;",
         pub(crate) reasoning_tokens: Option<u64>,
         pub(crate) cache_read_tokens: Option<u64>,
         pub(crate) cache_write_tokens: Option<u64>,
-        pub(crate) finish_reason: Option<String>,
-        pub(crate) end_kind: Option<String>,
-        pub(crate) end_finish_reason: Option<String>,
+        pub(crate) finish_reason: Option<&'a str>,
+        pub(crate) end_kind: Option<&'a str>,
+        pub(crate) end_finish_reason: Option<&'a str>,
         pub(crate) end_message: Option<String>,
     }
 
     /// Add a commit event with the next event number of the session. It adds no row for an unknown session.
     pub(crate) fn insert_commit<'a>(
         connection: &'a Connection,
-        params: &InsertCommitParams,
+        params: &InsertCommitParams<'_>,
     ) -> Query<'a, InsertCommit> {
         Query::new(
             connection,
@@ -424,14 +424,14 @@ pub(crate) mod pending_inputs {
     #[derive(Debug, Clone, PartialEq)]
     pub(crate) struct PendingInputs {
         pub(crate) id: u64,
-        pub(crate) blocks: Json<Vec<yuke_ai::Block>>,
+        pub(crate) input: Json<yuke_protocol::Input>,
     }
 
     impl FromRow for PendingInputs {
         fn from_row(row: &Row<'_>) -> Result<Self> {
             Ok(Self {
                 id: row.get("id")?,
-                blocks: row.get("blocks")?,
+                input: row.get("input")?,
             })
         }
     }
@@ -439,7 +439,7 @@ pub(crate) mod pending_inputs {
     #[derive(Debug)]
     pub(crate) struct InsertPendingInputParams {
         pub(crate) session_id: [u8; 16],
-        pub(crate) blocks: String,
+        pub(crate) input: String,
     }
 
     /// Add a pending input to the session, and return its id. It adds no row for an unknown session.
@@ -449,17 +449,17 @@ pub(crate) mod pending_inputs {
     ) -> Query<'a, InsertPendingInput> {
         Query::new(
             connection,
-            r"INSERT INTO pending_inputs(session_id, blocks)
-SELECT id, :blocks FROM sessions WHERE id = :session_id
+            r"INSERT INTO pending_inputs(session_id, input)
+SELECT id, :input FROM sessions WHERE id = :session_id
 RETURNING id;",
-            &[(":session_id", &params.session_id), (":blocks", &params.blocks)],
+            &[(":session_id", &params.session_id), (":input", &params.input)],
         )
     }
 
     pub(crate) fn pending_inputs(connection: &Connection, session_id: [u8; 16]) -> Query<'_, PendingInputs> {
         Query::new(
             connection,
-            r"SELECT id, blocks FROM pending_inputs WHERE session_id = :session_id ORDER BY id;",
+            r"SELECT id, input FROM pending_inputs WHERE session_id = :session_id ORDER BY id;",
             &[(":session_id", &session_id)],
         )
     }

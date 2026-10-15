@@ -9,8 +9,9 @@ Each `Store` method is one atomic durable step: create a session, fork it, set i
 save one commit of the engine, load the pending inputs, load the events, put and read a blob, and delete a session.
 Each commit and each settings change is also a numbered event, and the first event of a session holds its settings.
 `Store::events(id, after)` gives the events after a `yuke_protocol::EventNumber`, so a reader sees each of them once and in order. An
-accepted input is no event: it waits in the queue of `Store::pending`, and the commit that consumes it holds its blocks
-and names its id. One writer at a time owns a session. A second writer gets `StoreError::Owned` until the `Lease` of the first writer drops. `MemoryStore`
+accepted input is no event. It waits in the queue of `Store::pending`. The commit that consumes it starts with its model
+blocks. The commit also keeps a record of the input: its id, its source, and its block count. The record keeps the
+content that the user saw only when that content differs. A commit of an input that is not pending saves nothing. One writer at a time owns a session. A second writer gets `StoreError::Owned` until the `Lease` of the first writer drops. `MemoryStore`
 keeps its sessions in memory.
 
 A blob belongs to one session, and `blob_of` gives its reference: the SHA-256 and the length of its bytes. A session

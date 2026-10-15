@@ -11,7 +11,7 @@ CREATE TABLE events (                      -- the commits and the settings of ea
     kind TEXT NOT NULL CHECK (kind IN ('commit', 'settings')),
     blocks TEXT,                           -- JSON blocks that a commit adds
     settings TEXT,                         -- JSON SessionSettings of a settings event
-    consumed TEXT,                         -- JSON ids of the inputs that a commit consumed
+    consumed TEXT,                         -- JSON records of the inputs that a commit consumed
     head TEXT,                             -- JSON blocks that start the context after a replacement
     keep INTEGER,                          -- set with head: the number of earlier blocks that stay after head
     model TEXT,                            -- the origin of an answer
@@ -35,5 +35,5 @@ CREATE INDEX events_replace ON events(session_id, seq) WHERE keep IS NOT NULL;
 CREATE TABLE pending_inputs (              -- the inputs that no commit consumed
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, -- AUTOINCREMENT never gives the id of a deleted input again
     session_id BLOB NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    blocks TEXT NOT NULL                   -- JSON blocks
+    input TEXT NOT NULL                    -- JSON Input: its source, its content, and its model content
 ) STRICT;

@@ -5,17 +5,19 @@
 mod bindings;
 mod event;
 mod id;
+mod input;
 mod message;
 mod session;
 mod update;
 
 pub use event::{SessionEvent, StoredEvent};
 pub use id::{DraftId, EventNumber, InputId, SessionId};
+pub use input::{ConsumedInput, Input, InputError, InputSource, PendingInput};
 pub use message::{
     CancelParams, ClientNotification, ClientRequest, ForkSessionParams, ForkSessionResult, Implementation,
     InitializeParams, InitializeResult, InputParams, InputResult, JsonRpc, LoadSessionParams, LoadSessionResult,
     NewSessionParams, NewSessionResult, Notification, PROTOCOL_VERSION, Request, RequestId, Response, ResponseError,
     ResponseOutcome, ServerNotification, SetSettingsParams, SetSettingsResult,
 };
-pub use session::{ModelReference, PendingInput, SessionSettings};
+pub use session::{ModelReference, SessionSettings};
 pub use update::{BlockPosition, DraftDiscardReason, LiveUpdate, ModelUpdate, SessionUpdate, SessionUpdateParams};
