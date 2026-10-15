@@ -115,6 +115,60 @@ pub enum ServerNotification {
     /// A saved event or a live update of a session.
     #[serde(rename = "session/update")]
     SessionUpdate(SessionUpdateParams),
+    /// A message for the user. It is not part of session history.
+    #[serde(rename = "notice")]
+    Notice(NoticeParams),
+    /// An event of a plugin. It is not part of session history. A client ignores an extension that it does not know.
+    #[serde(rename = "extension/event")]
+    ExtensionEvent(ExtensionEventParams),
+}
+
+/// The params of `notice`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeParams {
+    /// The session of the notice. The field is absent for a notice of the whole process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    /// The severity of the notice. A client uses it to show the notice.
+    pub level: NoticeLevel,
+    /// The plugin or the part of yuke that sent the notice.
+    pub source: String,
+    /// The text for the user.
+    pub message: String,
+}
+
+/// The severity of a notice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum NoticeLevel {
+    /// A diagnostic detail.
+    Debug,
+    /// Routine information.
+    Info,
+    /// A problem that needs attention.
+    Warn,
+    /// A serious problem.
+    Error,
+}
+
+/// The params of `extension/event`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionEventParams {
+    /// The session of the event. The field is absent for an event of the whole process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    /// The name that the host gives the plugin. The events of yuke itself use names that start with `host:`.
+    pub extension: String,
+    /// The name of the event. The plugin chooses it.
+    pub event: String,
+    /// The data of the event. The plugin chooses its shape, and it puts a version in it when the shape changes.
+    #[cfg_attr(test, ts(type = "unknown"))]
+    pub data: serde_json::Value,
 }
 
 /// The answer to a request: its result or its error.

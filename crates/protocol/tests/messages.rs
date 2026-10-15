@@ -9,9 +9,10 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_protocol::{
-    ClientNotification, ClientRequest, ConsumedInput, EventNumber, Input, InputError, InputId, InputSource, LiveUpdate,
-    LoadSessionResult, ModelReference, Notification, PendingInput, Request, Response, ServerNotification, SessionEvent,
-    SessionId, SessionSettings, SessionUpdate, SessionUpdateParams, StoredEvent,
+    ClientNotification, ClientRequest, ConsumedInput, EventNumber, ExtensionEventParams, Input, InputError, InputId,
+    InputSource, LiveUpdate, LoadSessionResult, ModelReference, NoticeLevel, NoticeParams, Notification, PendingInput,
+    Request, Response, ServerNotification, SessionEvent, SessionId, SessionSettings, SessionUpdate,
+    SessionUpdateParams, StoredEvent,
 };
 
 const SESSION: &str = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9d";
@@ -230,6 +231,49 @@ fn an_input_without_content_or_with_empty_model_content_does_not_read() {
             .unwrap_err()
             .to_string()
             .contains("the model content of the input has no block")
+    );
+}
+
+#[test]
+fn notice_and_extension_event_notifications_read_and_write_their_json() {
+    let notification = |message| Notification {
+        jsonrpc: yuke_protocol::JsonRpc,
+        message,
+    };
+
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "method": "notice", "params": {
+            "level": "warn", "source": "host:jobs", "message": "job-1 stopped"
+        } }),
+        &notification(ServerNotification::Notice(NoticeParams {
+            session_id: None,
+            level: NoticeLevel::Warn,
+            source: "host:jobs".to_owned(),
+            message: "job-1 stopped".to_owned(),
+        })),
+    );
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "method": "extension/event", "params": {
+            "sessionId": SESSION, "extension": "todo", "event": "changed",
+            "data": { "version": 2, "items": [{ "text": "ship P3c", "done": true }] }
+        } }),
+        &notification(ServerNotification::ExtensionEvent(ExtensionEventParams {
+            session_id: Some(session()),
+            extension: "todo".to_owned(),
+            event: "changed".to_owned(),
+            data: json!({ "version": 2, "items": [{ "text": "ship P3c", "done": true }] }),
+        })),
+    );
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "method": "extension/event", "params": {
+            "extension": "host:plugins", "event": "reloaded", "data": null
+        } }),
+        &notification(ServerNotification::ExtensionEvent(ExtensionEventParams {
+            session_id: None,
+            extension: "host:plugins".to_owned(),
+            event: "reloaded".to_owned(),
+            data: Value::Null,
+        })),
     );
 }
 

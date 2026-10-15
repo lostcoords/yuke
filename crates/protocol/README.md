@@ -5,7 +5,10 @@ Agent Client Protocol (ACP): `"jsonrpc": "2.0"`, `noun/verb` methods, camelCase 
 is not ACP: for example, it has `session/input` in place of `session/prompt`, and a tool update uses a saved call position rather than a provider call id.
 
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/input`, `session/set_settings`.
-- Notifications: `session/cancel` from a client, `session/update` from the server.
+- Notifications: `session/cancel` from a client. `session/update`, `notice`, and `extension/event` from the server.
+- `notice` is a message for the user, for the whole process or one session. `extension/event` is an event of a plugin.
+  The plugin chooses its kind and its data, and it puts a version in the data when the shape changes. A client ignores
+  an extension that it does not know. Neither is part of session history.
 - `session/update` carries a saved event with its event number (`seq`), or a live update of a running turn.
 - Live model updates belong to a draft and retain native block ids and boundaries. They exclude provider replay state.
 - `draft_committed` carries one `eventNumber` and an array of original draft block ids, in saved block order.
