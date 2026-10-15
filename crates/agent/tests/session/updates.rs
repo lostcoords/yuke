@@ -152,7 +152,14 @@ async fn session_updates_preserve_interleaved_blocks_and_confirm_the_saved_answe
             SessionUpdate::Live(_) => None,
         })
         .collect();
-    assert_eq!(saved, store.events(session.id(), Some(EventNumber(1))).await.unwrap());
+    assert_eq!(
+        saved,
+        store
+            .load(session.id(), Some(EventNumber(1)))
+            .await
+            .map(|loaded| loaded.events)
+            .unwrap()
+    );
     let confirmed = updates
         .iter()
         .position(|update| matches!(update.update, SessionUpdate::Live(LiveUpdate::DraftCommitted { .. })))
@@ -288,8 +295,9 @@ async fn repeated_provider_ids_use_distinct_saved_execution_positions() {
     drop(session);
     let reopened = Session::open(store.clone(), id).await.unwrap();
     let calls: Vec<_> = store
-        .events(id, None)
+        .load(id, None)
         .await
+        .map(|loaded| loaded.events)
         .unwrap()
         .into_iter()
         .flat_map(|stored| match stored.event {
@@ -426,7 +434,15 @@ async fn an_unconfirmed_answer_save_discards_the_draft_and_starts_no_tool() {
             .count(),
         0
     );
-    assert_eq!(store.events(session.id(), None).await.unwrap().len(), 2);
+    assert_eq!(
+        store
+            .load(session.id(), None)
+            .await
+            .map(|loaded| loaded.events)
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 #[tokio::test]
@@ -732,7 +748,7 @@ async fn an_uncertain_write_needs_journal_reload_not_a_predicted_receipt() {
     let id = session.id();
     drop(session);
     let repaired = Session::open(store.clone(), id).await.unwrap();
-    let events = store.events(id, None).await.unwrap();
+    let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
     assert_eq!(
         events.iter().map(|event| event.event_number.0).collect::<Vec<_>>(),
         [1, 2, 3, 4]

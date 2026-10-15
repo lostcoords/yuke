@@ -7,11 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
-use yuke_agent::{Access, Lease, Opened, Store, StoreError, check_consumed_blocks};
+use yuke_agent::{Access, Lease, Loaded, Opened, Store, StoreError, check_consumed_blocks};
 use yuke_engine::{Commit, Outcome, TurnEnd};
-use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings, StoredEvent,
-};
+use yuke_protocol::{ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings};
 use yuke_sql::rusqlite::{self, Connection, TransactionBehavior};
 
 use crate::context;
@@ -202,7 +200,7 @@ impl Store for SqliteStore {
         Ok(loaded.into_opened(id, Some(self.lease(id, file))))
     }
 
-    async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {
+    async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<EventNumber, StoreError> {
         let owner = self.owner(id);
         let session = *id.as_bytes();
         let settings_json = serde_json::to_string(settings).map_err(failed)?;
@@ -226,6 +224,36 @@ impl Store for SqliteStore {
                 .opt()
                 .map_err(failed)?;
             row.map(|row| InputId(row.id)).ok_or(StoreError::NotFound)
+        })
+        .await
+    }
+
+    async fn remove_input(&self, id: SessionId, input: InputId) -> Result<(), StoreError> {
+        let params = pending_inputs::DeletePendingInputParams {
+            session_id: *id.as_bytes(),
+            id: input.0,
+        };
+
+        self.call(move |connection| {
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(failed)?;
+            if pending_inputs::delete_pending_input(&transaction, &params).map_err(failed)? == 0 {
+                // No row: the session is unknown, or the input is not pending.
+                return Err(
+                    if sessions::session_count(&transaction, params.session_id)
+                        .one()
+                        .map_err(failed)?
+                        .count
+                        == 0
+                    {
+                        StoreError::NotFound
+                    } else {
+                        StoreError::InputNotPending(input)
+                    },
+                );
+            }
+            transaction.commit().map_err(failed)
         })
         .await
     }
@@ -308,26 +336,37 @@ impl Store for SqliteStore {
             .collect())
     }
 
-    async fn events(&self, id: SessionId, after: Option<EventNumber>) -> Result<Vec<StoredEvent>, StoreError> {
+    async fn load(&self, id: SessionId, after: Option<EventNumber>) -> Result<Loaded, StoreError> {
         let params = events::EventsAfterParams {
             session_id: *id.as_bytes(),
             after: after.map_or(0, |after| after.0.min(LARGEST_SEQ)),
         };
 
-        let rows = self
+        // One read transaction gives both, so they come from one moment.
+        let (events, pending) = self
             .call(move |connection| {
                 read(connection, |connection| {
                     if sessions::session_count(connection, params.session_id).one()?.count == 0 {
                         return Ok(None);
                     }
-
-                    events::events_after(connection, &params).all().map(Some)
+                    let events = events::events_after(connection, &params).all()?;
+                    let pending = pending_inputs::pending_inputs(connection, params.session_id).all()?;
+                    Ok(Some((events, pending)))
                 })?
                 .ok_or(StoreError::NotFound)
             })
             .await?;
 
-        rows.into_iter().map(event::stored_event).collect()
+        Ok(Loaded {
+            events: events.into_iter().map(event::stored_event).collect::<Result<_, _>>()?,
+            pending: pending
+                .into_iter()
+                .map(|row| PendingInput {
+                    id: InputId(row.id),
+                    input: row.input.0,
+                })
+                .collect(),
+        })
     }
 
     async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, StoreError> {
@@ -386,12 +425,12 @@ fn insert_session(connection: &mut Connection, session: [u8; 16], settings: Stri
         session_id: session,
         settings,
     };
-    events::insert_settings(&transaction, &params)?;
+    events::insert_settings(&transaction, &params).one()?;
     transaction.commit()
 }
 
 /// Save a settings event in one transaction. Returns [`StoreError::NotFound`] for an unknown session.
-fn save_settings(connection: &mut Connection, session: [u8; 16], settings: String) -> Result<(), StoreError> {
+fn save_settings(connection: &mut Connection, session: [u8; 16], settings: String) -> Result<EventNumber, StoreError> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(failed)?;
@@ -399,10 +438,12 @@ fn save_settings(connection: &mut Connection, session: [u8; 16], settings: Strin
         session_id: session,
         settings,
     };
-    if events::insert_settings(&transaction, &params).map_err(failed)? == 0 {
-        return Err(StoreError::NotFound);
-    }
-    transaction.commit().map_err(failed)
+    let row = events::insert_settings(&transaction, &params)
+        .opt()
+        .map_err(failed)?
+        .ok_or(StoreError::NotFound)?;
+    transaction.commit().map_err(failed)?;
+    Ok(EventNumber(row.seq))
 }
 
 /// Save the commit event and remove the consumed inputs in one transaction. Returns [`StoreError::NotFound`] for an

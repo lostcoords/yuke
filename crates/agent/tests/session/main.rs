@@ -412,6 +412,29 @@ async fn a_dropped_turn_releases_the_lease_and_the_next_turn_opens_the_session_a
 }
 
 #[tokio::test]
+async fn new_settings_give_their_event_number_and_a_removed_input_never_reaches_the_model() {
+    let store = Arc::new(MemoryStore::new());
+    let transport = ScriptedTransport::new([text_reply("two")]);
+    let target = target();
+    let mut session = Session::create(store.clone(), &settings()).await.unwrap();
+    let removed = session.input().send(user_input("removed")).await.unwrap();
+    session.input().send(user_input("kept")).await.unwrap();
+
+    let event_number = session.set_settings(settings()).await.unwrap();
+    session.input().remove(removed).await.unwrap();
+    session
+        .turn(Driver::new(&transport, &target, &NoWait))
+        .run()
+        .await
+        .unwrap();
+
+    assert_eq!(event_number, yuke_protocol::EventNumber(2));
+    let request = &transport.requests()[0];
+    assert_in_order(request, &["kept"]);
+    assert!(!request.contains("removed"), "{request}");
+}
+
+#[tokio::test]
 async fn new_settings_after_a_dropped_turn_get_owned_while_another_writer_holds_the_session() {
     let store = Arc::new(MemoryStore::new());
     let target = target();

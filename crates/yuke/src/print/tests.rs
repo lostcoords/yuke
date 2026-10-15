@@ -319,7 +319,13 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
     run_with(&place, &level, &[text_reply("Two.")]).await.0.unwrap();
     run_with(&place, &model, &[text_reply("Three.")]).await.0.unwrap();
 
-    let events = place.store().await.events(first.session, None).await.unwrap();
+    let events = place
+        .store()
+        .await
+        .load(first.session, None)
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
     let settings: Vec<&SessionSettings> = events
         .iter()
         .filter_map(|stored| match &stored.event {

@@ -4,12 +4,18 @@ The yuke protocol: JSON-RPC 2.0 messages between a yuke server and its clients. 
 Agent Client Protocol (ACP): `"jsonrpc": "2.0"`, `noun/verb` methods, camelCase fields, and snake_case kinds. The protocol
 is not ACP: for example, it has `session/input` in place of `session/prompt`, and a tool update uses a saved call position rather than a provider call id.
 
-- Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/input`, `session/set_settings`.
+- Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/input`, `session/remove_input`,
+  `session/set_settings`.
 - Notifications: `session/cancel` from a client. `session/update`, `notice`, and `extension/event` from the server.
 - `notice` is a message for the user, for the whole process or one session. `extension/event` is an event of a plugin.
   The plugin chooses its kind and its data, and it puts a version in the data when the shape changes. A client ignores
   an extension that it does not know. Neither is part of session history.
 - `session/update` carries a saved event with its event number (`seq`), or a live update of a running turn.
+- The queue: `input_accepted` and `input_removed` are live updates. A queued input leaves the queue when a saved
+  commit names it in `consumed`, or when `input_removed` names it.
+- A client subscribes first, then loads, and it keeps the updates of that wait. After the load, it applies the kept
+  updates in order. It drops a saved event that it has (by `seq`) and an `input_accepted` that it has (by `inputId`).
+  The server disconnects a client that falls behind. The client then loads again.
 - Live model updates belong to a draft and retain native block ids and boundaries. They exclude provider replay state.
 - `draft_committed` carries one `eventNumber` and an array of original draft block ids, in saved block order.
   Array index `i` maps to block index `i` in that commit. A client replaces the whole draft.

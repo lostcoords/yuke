@@ -14,7 +14,7 @@ use yuke_protocol::{
 /// Only the holder of the lease calls [`Store::set_settings`] and [`Store::commit`]. Any caller can accept input.
 ///
 /// Each commit and each settings change also save one [`SessionEvent`](yuke_protocol::SessionEvent) with the next event number of the session. A
-/// reader of [`Store::events`] sees each of them once and in order. An accepted input is no event: it enters the events
+/// reader of [`Store::load`] sees each of them once and in order. An accepted input is no event: it enters the events
 /// with the commit that consumes it.
 #[async_trait]
 pub trait Store: Send + Sync {
@@ -37,12 +37,13 @@ pub trait Store: Send + Sync {
     /// session. When the delete of a partial copy fails, the error of that delete returns in place of the first one.
     async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError>;
 
-    /// Replace the settings of session `id` with `settings`.
+    /// Replace the settings of session `id` with `settings`. Return the event number of the settings event only after
+    /// the durable write succeeds.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the save fails.
-    async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError>;
+    async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<EventNumber, StoreError>;
 
     /// Save `input` as a pending input of session `id`. The input stays pending until a commit consumes it.
     ///
@@ -50,6 +51,14 @@ pub trait Store: Send + Sync {
     ///
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the save fails.
     async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError>;
+
+    /// Remove the pending input `input` of session `id`. Any caller can remove an input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::NotFound`] for an unknown session. Returns [`StoreError::InputNotPending`] when the input is
+    /// not pending, for example because a commit consumed it. Returns [`StoreError::Failed`] when the save fails.
+    async fn remove_input(&self, id: SessionId, input: InputId) -> Result<(), StoreError>;
 
     /// The session that works in the folder `cwd` and has the newest event of those sessions. The newest settings of a
     /// session name its folder. `None` when no session works in `cwd`. A fork counts as a new event.
@@ -91,12 +100,14 @@ pub trait Store: Send + Sync {
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the load fails.
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError>;
 
-    /// The events of session `id` after event `after`, in event-number order. `None` gives every event.
+    /// The events of session `id` after event `after`, in event-number order, and its pending inputs, in id order. The
+    /// two come from one moment. An input that is not pending left in a returned event, in an event at or before
+    /// `after`, or by a removal. `None` gives every event.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the load fails.
-    async fn events(&self, id: SessionId, after: Option<EventNumber>) -> Result<Vec<StoredEvent>, StoreError>;
+    async fn load(&self, id: SessionId, after: Option<EventNumber>) -> Result<Loaded, StoreError>;
 
     /// Save `bytes` as a blob of session `id`, and return its [`blob_of`] reference. Only this session reads the blob.
     /// The same bytes again give the same blob. Any caller can put a blob.
@@ -158,6 +169,15 @@ pub enum Access {
     Write,
 }
 
+/// The saved events and the pending inputs of a session at one moment, as [`Store::load`] gives them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Loaded {
+    /// The events after the requested event number.
+    pub events: Vec<StoredEvent>,
+    /// The inputs that no commit consumed.
+    pub pending: Vec<PendingInput>,
+}
+
 /// A loaded session.
 #[derive(Debug)]
 pub struct Opened {
@@ -201,7 +221,7 @@ pub enum StoreError {
     NotFound,
     /// The event that a fork names does not end a completed turn.
     NotACompletedTurn,
-    /// A commit consumes this input, but the input is not pending.
+    /// A commit consumes this input, or a caller removes it, but the input is not pending.
     InputNotPending(InputId),
     /// The consumed inputs of a commit have more model blocks than the commit.
     InputBlocksExceedCommit,

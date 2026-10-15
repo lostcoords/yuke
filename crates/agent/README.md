@@ -5,10 +5,11 @@ commit of the turn in a `Store` before the turn goes on.
 
 ## Store
 
-Each `Store` method is one atomic durable step: create a session, fork it, set its settings, accept an input, open it,
-save one commit of the engine, load the pending inputs, load the events, put and read a blob, and delete a session.
-Each commit and each settings change is also a numbered event, and the first event of a session holds its settings.
-`Store::events(id, after)` gives the events after a `yuke_protocol::EventNumber`, so a reader sees each of them once and in order. An
+Each `Store` method is one atomic durable step. The methods create or fork a session, set its settings, accept or remove
+an input, open a session, save one commit of the engine, load the pending inputs, load the events with the pending
+inputs, put or read a blob, and delete a session. Each commit and each settings change is also a numbered event, and the first event of a
+session holds its settings. `Store::load(id, after)` gives the events after a `yuke_protocol::EventNumber` and the
+pending inputs from one moment, so a reader sees each event once and in order, and misses no input. An
 accepted input is no event. It waits in the queue of `Store::pending`. The commit that consumes it starts with its model
 blocks. The commit also keeps a record of the input: its id, its source, and its block count. The record keeps the
 content that the user saw only when that content differs. A commit of an input that is not pending saves nothing. One writer at a time owns a session. A second writer gets `StoreError::Owned` until the `Lease` of the first writer drops. `MemoryStore`

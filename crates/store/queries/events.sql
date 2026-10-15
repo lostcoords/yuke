@@ -1,10 +1,11 @@
 -- The queries of the events table: the numbered commits and settings of each session.
 
---! insert_settings (session_id: [u8; 16], settings: String)
+--! insert_settings (session_id: [u8; 16], settings: String) : (seq: u64)
 --- Add a settings event with the next event number of the session. It adds no row for an unknown session.
 INSERT INTO events(session_id, seq, kind, settings)
 SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM events WHERE session_id = :session_id), 'settings', :settings
-FROM sessions WHERE id = :session_id;
+FROM sessions WHERE id = :session_id
+RETURNING seq;
 
 --! insert_commit (session_id: [u8; 16], blocks: String, consumed: String, head?: String, keep?: usize, model?: String, base_url?: String, input_tokens?: u64, output_tokens?: u64, reasoning_tokens?: u64, cache_read_tokens?: u64, cache_write_tokens?: u64, finish_reason?: &str, end_kind?: &str, end_finish_reason?: &str, end_message?: String) : (seq: u64)
 --- Add a commit event with the next event number of the session. It adds no row for an unknown session.

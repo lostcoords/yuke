@@ -40,6 +40,9 @@ macro_rules! store_tests {
             a_consumed_input_id_is_not_given_again,
             a_commit_of_an_input_that_is_not_pending_saves_nothing,
             a_commit_with_fewer_blocks_than_its_inputs_saves_nothing,
+            a_load_gives_the_events_with_the_inputs_that_are_still_pending,
+            new_settings_give_the_number_of_their_event,
+            a_removed_input_is_not_pending_and_cannot_be_removed_or_consumed_again,
             an_input_keeps_its_source_and_both_contents_through_its_commit,
             new_settings_replace_the_old_settings,
             an_unknown_session_is_not_found,
@@ -371,7 +374,7 @@ pub async fn a_commit_of_an_input_that_is_not_pending_saves_nothing(store: &dyn 
         .await
         .unwrap();
     let second = store.accept_input(id, user_input("two")).await.unwrap();
-    let events = store.events(id, None).await.unwrap();
+    let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
 
     let again = store
         .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[consumed(first, 1)])
@@ -405,7 +408,7 @@ pub async fn a_commit_of_an_input_that_is_not_pending_saves_nothing(store: &dyn 
         matches!(mixed, Err(StoreError::InputNotPending(input)) if input == first),
         "{mixed:?}"
     );
-    assert_eq!(store.events(id, None).await.unwrap(), events);
+    assert_eq!(store.load(id, None).await.map(|loaded| loaded.events).unwrap(), events);
     let pending: Vec<_> = store.pending(id).await.unwrap().iter().map(|input| input.id).collect();
     assert_eq!(pending, [second]);
 }
@@ -414,7 +417,7 @@ pub async fn a_commit_of_an_input_that_is_not_pending_saves_nothing(store: &dyn 
 pub async fn a_commit_with_fewer_blocks_than_its_inputs_saves_nothing(store: &dyn Store) {
     let id = store.create_session(&settings("one")).await.unwrap().id;
     let input = store.accept_input(id, user_input("one")).await.unwrap();
-    let events = store.events(id, None).await.unwrap();
+    let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
 
     let short = store.commit(id, &step(&[]), &[consumed(input, 1)]).await;
     let overflow = store
@@ -430,9 +433,92 @@ pub async fn a_commit_with_fewer_blocks_than_its_inputs_saves_nothing(store: &dy
         matches!(overflow, Err(StoreError::InputBlocksExceedCommit)),
         "{overflow:?}"
     );
-    assert_eq!(store.events(id, None).await.unwrap(), events);
+    assert_eq!(store.load(id, None).await.map(|loaded| loaded.events).unwrap(), events);
     let pending: Vec<_> = store.pending(id).await.unwrap().iter().map(|input| input.id).collect();
     assert_eq!(pending, [input]);
+}
+
+/// A load gives the events after a number and the inputs that no commit consumed. A consumed input is in the commit
+/// event, not in the pending inputs.
+pub async fn a_load_gives_the_events_with_the_inputs_that_are_still_pending(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    let first = store.accept_input(id, user_input("one")).await.unwrap();
+    let second = store.accept_input(id, user_input("two")).await.unwrap();
+    store
+        .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[consumed(first, 1)])
+        .await
+        .unwrap();
+
+    let loaded = store.load(id, Some(EventNumber(1))).await.unwrap();
+
+    assert_eq!(
+        loaded.events,
+        [StoredEvent {
+            event_number: EventNumber(2),
+            event: SessionEvent::Commit {
+                commit: step(&[yuke_ai::Block::user_text("one")]).into_owned(),
+                consumed: vec![consumed(first, 1)],
+            },
+        }]
+    );
+    assert_eq!(
+        loaded.pending,
+        [PendingInput {
+            id: second,
+            input: user_input("two"),
+        }]
+    );
+}
+
+/// New settings give the number of the event that holds them.
+pub async fn new_settings_give_the_number_of_their_event(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    store.commit(id, &step(&[]), &[]).await.unwrap();
+
+    let event_number = store.set_settings(id, &settings("two")).await.unwrap();
+
+    assert_eq!(event_number, EventNumber(3));
+    let events = store.load(id, Some(EventNumber(2))).await.unwrap().events;
+    assert_eq!(
+        events,
+        [StoredEvent {
+            event_number,
+            event: SessionEvent::Settings(settings("two")),
+        }]
+    );
+}
+
+/// A removed input leaves the pending inputs. A second removal fails, and so does a commit that consumes it. An input
+/// that a commit consumed cannot be removed.
+pub async fn a_removed_input_is_not_pending_and_cannot_be_removed_or_consumed_again(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    let removed = store.accept_input(id, user_input("one")).await.unwrap();
+    let kept = store.accept_input(id, user_input("two")).await.unwrap();
+
+    store.remove_input(id, removed).await.unwrap();
+    let again = store.remove_input(id, removed).await;
+    let consume = store
+        .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[consumed(removed, 1)])
+        .await;
+    store
+        .commit(id, &step(&[yuke_ai::Block::user_text("two")]), &[consumed(kept, 1)])
+        .await
+        .unwrap();
+    let consumed_then_removed = store.remove_input(id, kept).await;
+
+    assert!(
+        matches!(again, Err(StoreError::InputNotPending(input)) if input == removed),
+        "{again:?}"
+    );
+    assert!(
+        matches!(consume, Err(StoreError::InputNotPending(input)) if input == removed),
+        "{consume:?}"
+    );
+    assert!(
+        matches!(consumed_then_removed, Err(StoreError::InputNotPending(input)) if input == kept),
+        "{consumed_then_removed:?}"
+    );
+    assert_eq!(store.pending(id).await.unwrap(), []);
 }
 
 /// An input keeps its source, its content, and its model content while it is pending. The commit that consumes it
@@ -457,7 +543,7 @@ pub async fn an_input_keeps_its_source_and_both_contents_through_its_commit(stor
     store.commit(id, &step(&blocks), &[record]).await.unwrap();
 
     assert_eq!(pending, [PendingInput { id: input_id, input }]);
-    let events = store.events(id, None).await.unwrap();
+    let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
     assert_eq!(
         events[1].event,
         SessionEvent::Commit {
@@ -495,7 +581,8 @@ pub async fn an_unknown_session_is_not_found(store: &dyn Store) {
     let delete = store.delete_session(id).await;
     let fork = store.fork_session(id, None).await;
     let fork_at = store.fork_session(id, Some(EventNumber(2))).await;
-    let events = store.events(id, None).await;
+    let load = store.load(id, None).await;
+    let remove = store.remove_input(id, InputId(1)).await;
 
     assert!(matches!(open, Err(StoreError::NotFound)), "{open:?}");
     assert!(matches!(settings, Err(StoreError::NotFound)), "{settings:?}");
@@ -507,7 +594,8 @@ pub async fn an_unknown_session_is_not_found(store: &dyn Store) {
     assert!(matches!(delete, Err(StoreError::NotFound)), "{delete:?}");
     assert!(matches!(fork, Err(StoreError::NotFound)), "{fork:?}");
     assert!(matches!(fork_at, Err(StoreError::NotFound)), "{fork_at:?}");
-    assert!(matches!(events, Err(StoreError::NotFound)), "{events:?}");
+    assert!(matches!(load, Err(StoreError::NotFound)), "{load:?}");
+    assert!(matches!(remove, Err(StoreError::NotFound)), "{remove:?}");
 }
 
 /// A put returns the digest and the length of the bytes, and the blob reads back.
@@ -711,7 +799,7 @@ pub async fn a_fork_of_a_source_in_a_running_turn_ends_at_its_newest_completed_t
     assert_eq!(fork.settings, settings("one"));
     assert!(!fork.turn_open);
     assert_eq!(
-        kinds(&store.events(fork.id, None).await.unwrap()),
+        kinds(&store.load(fork.id, None).await.map(|loaded| loaded.events).unwrap()),
         [(1, "settings"), (2, "commit")]
     );
 }
@@ -804,7 +892,7 @@ fn kinds(events: &[StoredEvent]) -> Vec<(u64, &'static str)> {
 pub async fn a_new_session_has_its_settings_as_its_first_event(store: &dyn Store) {
     let id = store.create_session(&settings("one")).await.unwrap().id;
 
-    let events = store.events(id, None).await.unwrap();
+    let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
 
     assert_eq!(
         events,
@@ -822,11 +910,11 @@ pub async fn each_commit_and_each_new_settings_is_the_next_event_and_an_input_is
     let blocks = [yuke_ai::Block::user_text("one")];
 
     let input = store.accept_input(id, user_input("one")).await.unwrap();
-    let after_input = store.events(id, None).await.unwrap();
+    let after_input = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
     store.commit(id, &step(&blocks), &[consumed(input, 1)]).await.unwrap();
     store.set_settings(id, &settings("two")).await.unwrap();
 
-    let events = store.events(id, None).await.unwrap();
+    let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
     assert_eq!(kinds(&after_input), [(1, "settings")]);
     assert_eq!(kinds(&events), [(1, "settings"), (2, "commit"), (3, "settings")]);
     assert_eq!(
@@ -893,7 +981,11 @@ pub async fn a_saved_commit_reads_back_equal(store: &dyn Store) {
         store.commit(id, commit, &[]).await.unwrap();
     }
 
-    let events = store.events(id, Some(EventNumber(1))).await.unwrap();
+    let events = store
+        .load(id, Some(EventNumber(1)))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
 
     let read: Vec<&SessionEvent> = events.iter().map(|stored| &stored.event).collect();
     let saved: Vec<SessionEvent> = commits
@@ -916,9 +1008,21 @@ pub async fn events_after_a_number_are_the_newer_events(store: &dyn Store) {
         .unwrap();
     store.set_settings(id, &settings("two")).await.unwrap();
 
-    let after_one = store.events(id, Some(EventNumber(1))).await.unwrap();
-    let after_last = store.events(id, Some(EventNumber(3))).await.unwrap();
-    let after_largest = store.events(id, Some(EventNumber(u64::MAX))).await.unwrap();
+    let after_one = store
+        .load(id, Some(EventNumber(1)))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
+    let after_last = store
+        .load(id, Some(EventNumber(3)))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
+    let after_largest = store
+        .load(id, Some(EventNumber(u64::MAX)))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
 
     assert_eq!(kinds(&after_one), [(2, "commit"), (3, "settings")]);
     assert_eq!(after_last, []);
@@ -933,12 +1037,12 @@ pub async fn a_fork_has_the_events_of_its_source_and_numbers_on_from_them(store:
         .commit(source, &end(&[yuke_ai::Block::user_text("one")]), &[])
         .await
         .unwrap();
-    let source_events = store.events(source, None).await.unwrap();
+    let source_events = store.load(source, None).await.map(|loaded| loaded.events).unwrap();
 
     let fork = store.fork_session(source, None).await.unwrap().id;
     store.set_settings(fork, &settings("two")).await.unwrap();
 
-    let fork_events = store.events(fork, None).await.unwrap();
+    let fork_events = store.load(fork, None).await.map(|loaded| loaded.events).unwrap();
     assert_eq!(fork_events[..2], source_events[..]);
     assert_eq!(
         fork_events[2],
@@ -947,7 +1051,10 @@ pub async fn a_fork_has_the_events_of_its_source_and_numbers_on_from_them(store:
             event: SessionEvent::Settings(settings("two")),
         }
     );
-    assert_eq!(store.events(source, None).await.unwrap(), source_events);
+    assert_eq!(
+        store.load(source, None).await.map(|loaded| loaded.events).unwrap(),
+        source_events
+    );
 }
 
 /// The event numbers of a session do not depend on the events of other sessions.
@@ -964,8 +1071,9 @@ pub async fn each_session_numbers_its_own_events(store: &dyn Store) {
     store.set_settings(quiet, &settings("still quiet")).await.unwrap();
 
     let numbers: Vec<EventNumber> = store
-        .events(quiet, None)
+        .load(quiet, None)
         .await
+        .map(|loaded| loaded.events)
         .unwrap()
         .into_iter()
         .map(|event| event.event_number)
@@ -1072,7 +1180,11 @@ pub async fn a_commit_receipt_names_its_saved_event_after_settings_and_a_fork(st
         .unwrap();
     assert_eq!(receipt, EventNumber(3));
     assert_eq!(
-        store.events(source.id, Some(EventNumber(2))).await.unwrap(),
+        store
+            .load(source.id, Some(EventNumber(2)))
+            .await
+            .map(|loaded| loaded.events)
+            .unwrap(),
         [StoredEvent {
             event_number: EventNumber(3),
             event: SessionEvent::Commit {
@@ -1089,7 +1201,11 @@ pub async fn a_commit_receipt_names_its_saved_event_after_settings_and_a_fork(st
     assert_eq!(fork_receipt, EventNumber(4));
     assert_eq!(source_receipt, EventNumber(4));
     assert_eq!(
-        store.events(fork.id, Some(receipt)).await.unwrap(),
+        store
+            .load(fork.id, Some(receipt))
+            .await
+            .map(|loaded| loaded.events)
+            .unwrap(),
         [StoredEvent {
             event_number: EventNumber(4),
             event: SessionEvent::Commit {

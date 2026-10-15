@@ -3,6 +3,8 @@ import type { BlockPosition } from "./BlockPosition";
 import type { DraftDiscardReason } from "./DraftDiscardReason";
 import type { DraftId } from "./DraftId";
 import type { EventNumber } from "./EventNumber";
+import type { Input } from "./Input";
+import type { InputId } from "./InputId";
 import type { ModelUpdate } from "./ModelUpdate";
 import type { ToolCall } from "./ToolCall";
 import type { ToolResult } from "./ToolResult";
@@ -10,7 +12,19 @@ import type { ToolResult } from "./ToolResult";
 /**
  * A live fact of a session. Saved events remain authoritative after reconnect.
  */
-export type LiveUpdate = { "sessionUpdate": "turn_unconfirmed" } | { "sessionUpdate": "draft_started", 
+export type LiveUpdate = { "sessionUpdate": "input_accepted", 
+/**
+ * The id of the input.
+ */
+inputId: InputId, 
+/**
+ * The input.
+ */
+input: Input, } | { "sessionUpdate": "input_removed", 
+/**
+ * The id of the input.
+ */
+inputId: InputId, } | { "sessionUpdate": "turn_unconfirmed" } | { "sessionUpdate": "draft_started", 
 /**
  * The identity of this attempt, distinct across turns and process restarts.
  */

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{DraftId, EventNumber, SessionId, StoredEvent};
+use crate::{DraftId, EventNumber, Input, InputId, SessionId, StoredEvent};
 
 /// The params of `session/update`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -53,6 +53,18 @@ pub enum DraftDiscardReason {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "sessionUpdate", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum LiveUpdate {
+    /// The session accepted an input. It is pending until a saved commit names it in `consumed`, or until a removal.
+    InputAccepted {
+        /// The id of the input.
+        input_id: InputId,
+        /// The input.
+        input: Input,
+    },
+    /// A pending input was removed. A turn that took it before the removal fails its next commit.
+    InputRemoved {
+        /// The id of the input.
+        input_id: InputId,
+    },
     /// The turn stopped without a confirmed terminal commit. Discard provisional tool state and reload the journal.
     /// Saved events remain authoritative, including any tool results they confirm.
     TurnUnconfirmed,

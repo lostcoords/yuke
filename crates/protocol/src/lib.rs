@@ -14,10 +14,11 @@ pub use event::{SessionEvent, StoredEvent};
 pub use id::{DraftId, EventNumber, InputId, SessionId};
 pub use input::{ConsumedInput, Input, InputError, InputSource, PendingInput};
 pub use message::{
-    CancelParams, ClientNotification, ClientRequest, ExtensionEventParams, ForkSessionParams, ForkSessionResult,
-    Implementation, InitializeParams, InitializeResult, InputParams, InputResult, JsonRpc, LoadSessionParams,
-    LoadSessionResult, NewSessionResult, NoticeLevel, NoticeParams, Notification, PROTOCOL_VERSION, Request, RequestId,
-    Response, ResponseError, ResponseOutcome, ServerNotification, SetSettingsParams, SetSettingsResult,
+    CancelParams, ClientNotification, ClientRequest, EmptyResult, ExtensionEventParams, ForkSessionParams,
+    ForkSessionResult, Implementation, InitializeParams, InitializeResult, InputParams, InputResult, JsonRpc,
+    LoadSessionParams, LoadSessionResult, NewSessionResult, NoticeLevel, NoticeParams, Notification, PROTOCOL_VERSION,
+    RemoveInputParams, Request, RequestId, Response, ResponseError, ResponseOutcome, ServerNotification,
+    SetSettingsParams,
 };
 pub use session::{ModelReference, SessionSettings};
 pub use update::{BlockPosition, DraftDiscardReason, LiveUpdate, ModelUpdate, SessionUpdate, SessionUpdateParams};

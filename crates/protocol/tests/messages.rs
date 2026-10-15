@@ -115,6 +115,18 @@ fn each_request_reads_and_writes_its_json() {
                 }),
             ),
         ),
+        (
+            json!({ "jsonrpc": "2.0", "id": 6, "method": "session/remove_input", "params": {
+                "sessionId": SESSION, "inputId": 3
+            } }),
+            request(
+                6,
+                ClientRequest::RemoveInput(yuke_protocol::RemoveInputParams {
+                    session_id: session(),
+                    input_id: InputId(3),
+                }),
+            ),
+        ),
     ];
     for (json, message) in cases {
         assert_json(&json, &message);
@@ -229,6 +241,33 @@ fn an_input_without_content_or_with_empty_model_content_does_not_read() {
             .to_string()
             .contains("the model content of the input has no block")
     );
+}
+
+#[test]
+fn queue_updates_and_an_empty_result_read_and_write_their_json() {
+    let input = Input::new(InputSource::User, vec![yuke_ai::Block::user_text("run npm ci")]).unwrap();
+
+    assert_json(
+        &json!({ "sessionId": SESSION, "update": {
+            "sessionUpdate": "input_accepted", "inputId": 3,
+            "input": { "source": { "kind": "user" }, "content": [{ "user_text": "run npm ci" }] }
+        } }),
+        &SessionUpdateParams {
+            session_id: session(),
+            update: SessionUpdate::Live(LiveUpdate::InputAccepted {
+                input_id: InputId(3),
+                input,
+            }),
+        },
+    );
+    assert_json(
+        &json!({ "sessionId": SESSION, "update": { "sessionUpdate": "input_removed", "inputId": 3 } }),
+        &SessionUpdateParams {
+            session_id: session(),
+            update: SessionUpdate::Live(LiveUpdate::InputRemoved { input_id: InputId(3) }),
+        },
+    );
+    assert_json(&json!({}), &yuke_protocol::EmptyResult {});
 }
 
 #[test]

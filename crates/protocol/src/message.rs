@@ -65,9 +65,13 @@ pub enum ClientRequest {
     /// Add input to a session. Result: [`InputResult`].
     #[serde(rename = "session/input")]
     Input(InputParams),
-    /// Replace the settings of a session. Result: [`SetSettingsResult`].
+    /// Replace the settings of a session. Result: [`EmptyResult`].
     #[serde(rename = "session/set_settings")]
     SetSettings(SetSettingsParams),
+    /// Remove a pending input of a session. An input that a commit consumed is no longer pending, so its removal
+    /// fails. Result: [`EmptyResult`].
+    #[serde(rename = "session/remove_input")]
+    RemoveInput(RemoveInputParams),
 }
 
 /// A notification: a message that a server or a client sends with no id. It gets no response.
@@ -335,14 +339,25 @@ pub struct SetSettingsParams {
     pub settings: SessionSettings,
 }
 
-/// The result of `session/set_settings`: an empty object.
+/// The params of `session/remove_input`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveInputParams {
+    /// The session.
+    pub session_id: SessionId,
+    /// The pending input to remove.
+    pub input_id: InputId,
+}
+
+/// The result of a request with no data: an empty object.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[expect(
     clippy::empty_structs_with_brackets,
     reason = "serde writes a struct with braces as `{}`, and a unit struct as `null`"
 )]
-pub struct SetSettingsResult {}
+pub struct EmptyResult {}
 
 /// The params of `session/cancel`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

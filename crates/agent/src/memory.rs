@@ -12,7 +12,7 @@ use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, StoredEvent,
 };
 
-use crate::store::{Access, Lease, Opened, Store, StoreError, blob_of, check_consumed_blocks};
+use crate::store::{Access, Lease, Loaded, Opened, Store, StoreError, blob_of, check_consumed_blocks};
 
 /// A [`Store`] that keeps its sessions in memory, for tests and for a caller that saves nothing. It refuses a second
 /// writer of a session, as a store with a file lock does.
@@ -188,12 +188,11 @@ impl Store for MemoryStore {
         Ok(opened)
     }
 
-    async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {
+    async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<EventNumber, StoreError> {
         let mut state = lock(&self.state);
         let write = state.next_write();
         let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
-        saved.push_event(SessionEvent::Settings(settings.clone()), write);
-        Ok(())
+        Ok(saved.push_event(SessionEvent::Settings(settings.clone()), write))
     }
 
     async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError> {
@@ -203,6 +202,18 @@ impl Store for MemoryStore {
         saved.pending.push(PendingInput { id: input_id, input });
         state.newest_input = input_id.0;
         Ok(input_id)
+    }
+
+    async fn remove_input(&self, id: SessionId, input: InputId) -> Result<(), StoreError> {
+        let mut state = lock(&self.state);
+        let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
+        let position = saved
+            .pending
+            .iter()
+            .position(|pending| pending.id == input)
+            .ok_or(StoreError::InputNotPending(input))?;
+        saved.pending.remove(position);
+        Ok(())
     }
 
     async fn newest_session(&self, cwd: &Path) -> Result<Option<SessionId>, StoreError> {
@@ -261,13 +272,17 @@ impl Store for MemoryStore {
         Ok(state.sessions.get(&id).ok_or(StoreError::NotFound)?.pending.clone())
     }
 
-    async fn events(&self, id: SessionId, after: Option<EventNumber>) -> Result<Vec<StoredEvent>, StoreError> {
+    async fn load(&self, id: SessionId, after: Option<EventNumber>) -> Result<Loaded, StoreError> {
+        // One lock covers both reads, so they come from one moment.
         let state = lock(&self.state);
         let saved = state.sessions.get(&id).ok_or(StoreError::NotFound)?;
         // Event number `n` sits at index `n - 1`, so the events after it start at index `n`.
         let after = after.map_or(0, |after| usize::try_from(after.0).unwrap_or(usize::MAX));
         let after = after.min(saved.events.len());
-        Ok(saved.events[after..].to_vec())
+        Ok(Loaded {
+            events: saved.events[after..].to_vec(),
+            pending: saved.pending.clone(),
+        })
     }
 
     async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, StoreError> {

@@ -11,14 +11,14 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use yuke_agent::{Access, InputSender, MemoryStore, Opened, Store, StoreError};
+use yuke_agent::{Access, InputSender, Loaded, MemoryStore, Opened, Store, StoreError};
 use yuke_ai::route::{Credential, Route};
 use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Header, Outgoing, Transport};
 use yuke_ai::{AnthropicWire, Block, Target, Wire};
 use yuke_engine::{Commit, Timer, Tool, ToolContent, ToolContext};
 use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, InputSource, ModelReference, PendingInput, SessionEvent, SessionId,
-    SessionSettings, StoredEvent,
+    SessionSettings,
 };
 
 /// An Anthropic target at a test host, with no credential.
@@ -58,8 +58,9 @@ pub(crate) fn user_input(text: &str) -> Input {
 /// The records of the inputs that the commits of session `id` consumed, in event order.
 pub(crate) async fn consumed_inputs(store: &dyn Store, id: SessionId) -> Vec<ConsumedInput> {
     store
-        .events(id, None)
+        .load(id, None)
         .await
+        .map(|loaded| loaded.events)
         .unwrap()
         .into_iter()
         .flat_map(|stored| match stored.event {
@@ -267,16 +268,20 @@ impl Store for FailingStore {
         self.store.fork_session(source, through).await
     }
 
-    async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<(), StoreError> {
-        self.store.set_settings(id, settings).await?;
+    async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<EventNumber, StoreError> {
+        let event_number = self.store.set_settings(id, settings).await?;
         if matches!(self.behavior, StoreBehavior::StallSettings) {
             std::future::pending::<()>().await;
         }
-        Ok(())
+        Ok(event_number)
     }
 
     async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError> {
         self.store.accept_input(id, input).await
+    }
+
+    async fn remove_input(&self, id: SessionId, input: InputId) -> Result<(), StoreError> {
+        self.store.remove_input(id, input).await
     }
 
     async fn newest_session(&self, cwd: &Path) -> Result<Option<SessionId>, StoreError> {
@@ -320,8 +325,8 @@ impl Store for FailingStore {
         self.store.pending(id).await
     }
 
-    async fn events(&self, id: SessionId, after: Option<EventNumber>) -> Result<Vec<StoredEvent>, StoreError> {
-        self.store.events(id, after).await
+    async fn load(&self, id: SessionId, after: Option<EventNumber>) -> Result<Loaded, StoreError> {
+        self.store.load(id, after).await
     }
 
     async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, StoreError> {

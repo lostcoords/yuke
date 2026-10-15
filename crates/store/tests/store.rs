@@ -289,7 +289,15 @@ async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
             .contains("FOREIGN KEY constraint failed"),
         "{error}"
     );
-    assert_eq!(store.events(session.id, None).await.unwrap().len(), 1);
+    assert_eq!(
+        store
+            .load(session.id, None)
+            .await
+            .map(|loaded| loaded.events)
+            .unwrap()
+            .len(),
+        1
+    );
     let pending = store.pending(session.id).await.unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].id, input);
@@ -306,7 +314,7 @@ async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
     drop(session);
     drop(store);
     let reopened = SqliteStore::open(&folder).await.unwrap();
-    let events = reopened.events(id, None).await.unwrap();
+    let events = reopened.load(id, None).await.map(|loaded| loaded.events).unwrap();
     assert_eq!(events.last().unwrap().event_number, EventNumber(2));
 }
 

@@ -9,6 +9,17 @@ pub(crate) mod events {
     use yuke_sql::{FromRow, Query, execute};
 
     #[derive(Debug, Clone, PartialEq)]
+    pub(crate) struct InsertSettings {
+        pub(crate) seq: u64,
+    }
+
+    impl FromRow for InsertSettings {
+        fn from_row(row: &Row<'_>) -> Result<Self> {
+            Ok(Self { seq: row.get("seq")? })
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
     pub(crate) struct InsertCommit {
         pub(crate) seq: u64,
     }
@@ -172,12 +183,16 @@ pub(crate) mod events {
     }
 
     /// Add a settings event with the next event number of the session. It adds no row for an unknown session.
-    pub(crate) fn insert_settings(connection: &Connection, params: &InsertSettingsParams) -> Result<usize> {
-        execute(
+    pub(crate) fn insert_settings<'a>(
+        connection: &'a Connection,
+        params: &InsertSettingsParams,
+    ) -> Query<'a, InsertSettings> {
+        Query::new(
             connection,
             r"INSERT INTO events(session_id, seq, kind, settings)
 SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM events WHERE session_id = :session_id), 'settings', :settings
-FROM sessions WHERE id = :session_id;",
+FROM sessions WHERE id = :session_id
+RETURNING seq;",
             &[(":session_id", &params.session_id), (":settings", &params.settings)],
         )
     }

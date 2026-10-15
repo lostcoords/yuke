@@ -164,24 +164,24 @@ impl Session {
         &self.context
     }
 
-    /// Save `settings` as the current settings. After a failed or dropped turn, the session first opens again, so
-    /// only the owner writes.
+    /// Save `settings` as the current settings, and return the event number of the settings event. After a failed or
+    /// dropped turn, the session first opens again, so only the owner writes.
     ///
     /// # Errors
     ///
     /// Returns the error of [`Store::open`] when the session cannot open again, for example [`StoreError::Owned`].
     /// Returns the error of [`Store::set_settings`] otherwise.
-    pub async fn set_settings(&mut self, settings: SessionSettings) -> Result<(), StoreError> {
+    pub async fn set_settings(&mut self, settings: SessionSettings) -> Result<EventNumber, StoreError> {
         if self.lease.is_none() {
             self.reopen().await?;
         }
         // The store can save after the caller drops this future. So the future holds the lease, and a dropped write
         // makes the next turn open the session again from the store.
         let lease = self.lease.take();
-        self.store.set_settings(self.id, &settings).await?;
+        let event_number = self.store.set_settings(self.id, &settings).await?;
         self.settings = settings;
         self.lease = lease;
-        Ok(())
+        Ok(event_number)
     }
 
     /// A sender of input. Another task can send input while a turn runs.
@@ -273,6 +273,17 @@ impl InputSender {
     /// Returns the error of [`Store::accept_input`].
     pub async fn send(&self, input: Input) -> Result<InputId, StoreError> {
         self.store.accept_input(self.id, input).await
+    }
+
+    /// Remove the pending input `input`. The store orders a removal and a commit that consumes the input. When the
+    /// commit comes first, the removal fails with [`StoreError::InputNotPending`]. When the removal comes first, the
+    /// commit fails with it, and the next turn opens the session again.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of [`Store::remove_input`].
+    pub async fn remove(&self, input: InputId) -> Result<(), StoreError> {
+        self.store.remove_input(self.id, input).await
     }
 }
 
