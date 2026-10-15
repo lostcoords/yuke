@@ -8,7 +8,7 @@ use crate::queries::MIGRATIONS;
 
 /// The pragmas of each open. The busy timeout comes first, so a change of the journal mode waits for another process.
 /// The page size comes before the first write of a new file, because that write fixes it. The journal mode stays WAL
-/// in the file. A commit is durable when it returns (`synchronous = FULL`).
+/// in the file. A returned commit survives a crash, but on macOS not always a power loss (plain `fsync`).
 const PRAGMAS: &str = "
     PRAGMA busy_timeout = 5000;
     PRAGMA page_size = 8192;

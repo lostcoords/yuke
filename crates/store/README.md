@@ -5,7 +5,8 @@ keeps a folder for each session in `folder/sessions/<id>/`, with the lock file a
 
 ## Database
 
-- One file holds all sessions. The connection uses WAL, and a commit is durable when it returns.
+- One file holds all sessions. The connection uses WAL. A returned commit survives a crash, but on macOS not always a
+  power loss (plain `fsync`).
 - One connection runs each read and write in call order on its own thread.
 - The `sessions` table holds one row for each session. The `events` table holds the engine commits and the settings of
   each session, numbered 1, 2, 3, and so on. The first event of a session holds its settings, and the newest settings

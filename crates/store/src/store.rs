@@ -64,12 +64,13 @@ impl SqliteStore {
     pub async fn open(folder: impl AsRef<Path>) -> Result<SqliteStore, StoreError> {
         let folder = folder.as_ref();
         let sessions = folder.join("sessions");
+        let database = folder.join("yuke.db");
+        // A sync costs milliseconds on macOS, so only an open that makes an entry syncs.
+        let new_folder = !folder.is_dir();
+        let created = new_folder || !sessions.is_dir() || !database.exists();
         std::fs::create_dir_all(&sessions).map_err(failed)?;
-        files::sync_folder(folder).map_err(failed)?;
 
-        let connection = tokio_rusqlite::Connection::open(folder.join("yuke.db"))
-            .await
-            .map_err(failed)?;
+        let connection = tokio_rusqlite::Connection::open(&database).await.map_err(failed)?;
 
         let store = SqliteStore {
             connection,
@@ -82,6 +83,12 @@ impl SqliteStore {
                 files::sweep(connection, &sessions)
             })
             .await?;
+        if created {
+            files::sync_folder(folder).map_err(failed)?;
+            if new_folder && let Some(parent) = folder.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+                files::sync_folder(parent).map_err(failed)?;
+            }
+        }
 
         Ok(store)
     }
