@@ -12,7 +12,9 @@ use yuke_store::SqliteStore;
 use super::*;
 use crate::app::Variable;
 use crate::paths::Paths;
-use crate::testing::{Rejecting, ScriptedTransport, Stalled, text_reply, tool_reply};
+use yuke_testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
+
+use crate::testing::Rejecting;
 
 const MODEL: &str = "minimax/MiniMax-M3";
 
@@ -83,7 +85,7 @@ async fn run_in(
     variable: Box<Variable>,
     cancellation_token: CancellationToken,
 ) -> (Result<Finished, String>, Vec<String>) {
-    let transport = ScriptedTransport::new(replies);
+    let transport = ScriptedTransport::new(replies.to_vec());
     let finished = run(
         task,
         place.machine(variable, Box::new(transport.clone())),
@@ -374,7 +376,7 @@ async fn the_model_runs_the_built_in_tools_in_the_folder_of_the_session() {
         &place,
         &task("Where are you?", SessionChoice::New),
         &[
-            tool_reply("call-1", "exec", r#"{"command":"pwd"}"#),
+            tool_reply(&[("call-1", "exec", r#"{"command":"pwd"}"#)]),
             text_reply("Done."),
         ],
     )
@@ -396,7 +398,7 @@ async fn a_background_command_fails_because_the_run_ends_with_its_turn() {
         &place,
         &task("Start a server.", SessionChoice::New),
         &[
-            tool_reply("call-1", "exec", r#"{"command":"touch started","background":true}"#),
+            tool_reply(&[("call-1", "exec", r#"{"command":"touch started","background":true}"#)]),
             text_reply("Done."),
         ],
     )

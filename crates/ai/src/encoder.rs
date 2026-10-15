@@ -6,6 +6,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::request::{Block, Modality, OriginRef, Protocol, Request, Target, Wire};
+use crate::route::Credential;
 use crate::transport::Outgoing;
 use crate::wire::{self, json::JsonWriter, outgoing::HeadText};
 use crate::wyhash::Wyhash;
@@ -128,6 +129,8 @@ pub struct Encoder {
     elements: Vec<Element>,
     /// The hash of the request fields that shape the elements. Another value encodes every element again.
     key: u64,
+    /// Where the elements end after the last encode, when that encode succeeded. A failed encode leaves `None`.
+    elements_end: Option<usize>,
     /// The URL, the headers, and the origin of the last request.
     head: HeadText,
 }
@@ -154,14 +157,20 @@ impl Encoder {
         Encoder::default()
     }
 
-    /// Encode `request` for `target`, and borrow both only until this returns. The result borrows this encoder until
-    /// the next `encode`. A failed call leaves the encoder ready.
+    /// Encode `request` for `target` with `credential`, and borrow all three only until this returns. The result
+    /// borrows this encoder until the next `encode`. A failed call leaves the encoder ready. An unchanged context keeps
+    /// all its elements, so a retry with a new credential reads no blob.
     ///
     /// # Errors
     ///
     /// Returns [`EncodeError`] if the protocol cannot carry the content, a blob does not resolve, the route is invalid,
     /// or a sampling value is not finite.
-    pub fn encode(&mut self, target: &Target, request: Request<'_>) -> Result<Encoded<'_>, EncodeError> {
+    pub fn encode(
+        &mut self,
+        target: &Target,
+        credential: &Credential,
+        request: Request<'_>,
+    ) -> Result<Encoded<'_>, EncodeError> {
         if ![request.settings.temperature, request.settings.top_p]
             .into_iter()
             .flatten()
@@ -173,7 +182,7 @@ impl Encoder {
             return Err(EncodeError::Unsupported(Unsupported::DeferredTool));
         }
 
-        self.head.build(target, request.session_id)?;
+        self.head.build(target, credential, request.session_id)?;
         let elements_end = self.serialize(target, &request)?;
         let items = &self.items;
         let body = [&items[elements_end..], &items[..elements_end], b"]}".as_slice()];
@@ -188,6 +197,7 @@ impl Encoder {
     /// Drop the elements that can change, and return the block to encode from. `marker` is the block of the new
     /// cache marker. The hashes of the equal blocks stay, so the caller hashes only the blocks after them.
     fn keep(&mut self, key: u64, blocks: &[Block], marker: Option<usize>) -> usize {
+        let complete = self.elements_end.take();
         // The buffer holds elements of this key from here on, also after a failure.
         if std::mem::replace(&mut self.key, key) != key {
             self.items.clear();
@@ -203,6 +213,14 @@ impl Encoder {
             .enumerate()
             .take_while(|&(i, (hash, block))| *hash == hash_block(block, marker == Some(i)))
             .count();
+        // With no new block, the last element ends where it ended before, so every element stays.
+        if let Some(end) = complete
+            && same == blocks.len()
+            && same == self.hashes.len()
+        {
+            self.items.truncate(end);
+            return same;
+        }
 
         self.hashes.truncate(same);
 
@@ -259,6 +277,7 @@ impl Encoder {
         // The next request truncates to a kept element, which drops this head too.
         let elements_end = self.items.len();
         let head_element = wire::write_head(&mut self.items, target, request)?;
+        self.elements_end = Some(elements_end);
         if head_element && elements_end != 0 {
             self.items.push(b',');
         }
@@ -297,7 +316,6 @@ mod tests {
         AnthropicWire, BlobStore, ChatWire, MaxTokensField, Media, Reasoning, ReasoningReplayMode, ReplayKind,
         ResponsesDialect, ResponsesWire, SEARCH_TOOL_NAME, ThinkingFormat, ToolCall, ToolDefinition, ToolResult,
     };
-    use crate::route::Credential;
     use crate::route::{CredentialHeader, Route};
     use crate::transport::Header;
     use crate::wire::testing::{TestBlobs, blob, replay, target_of};
@@ -338,14 +356,14 @@ mod tests {
     /// a new one.
     fn expect_fresh(encoded: &[u8], target: &Target, request: Request<'_>) {
         let mut fresh = Encoder::new();
-        let expected = body(&fresh.encode(target, request).unwrap());
+        let expected = body(&fresh.encode(target, &Credential::None, request).unwrap());
         assert_eq!(String::from_utf8_lossy(encoded), String::from_utf8_lossy(&expected));
     }
 
     /// Encode with `encoder`, and check the body against a fresh encoder.
     fn encode_checked(encoder: &mut Encoder, model: &str, wire: Wire, request: Request<'_>) -> Result<(), EncodeError> {
         let target = target_of(model, wire);
-        let encoded = body(&encoder.encode(&target, request)?);
+        let encoded = body(&encoder.encode(&target, &Credential::None, request)?);
         expect_fresh(&encoded, &target, request);
         Ok(())
     }
@@ -490,6 +508,23 @@ mod tests {
         }
     }
 
+    // A retry encodes the same request again. The image sits in the last element, which a new block would encode again.
+    #[test]
+    fn an_unchanged_request_reads_no_blob_again() {
+        let blocks = [Block::user_text("a"), Block::assistant_text("b"), image("ab")];
+        for wire in ALL_WIRES {
+            let target = target_of("m", wire);
+            let counter = Counter::default();
+            let request = Request::new(&blocks).blobs(&counter);
+            let mut encoder = Encoder::new();
+            let first = body(&encoder.encode(&target, &Credential::None, request).unwrap());
+            let second = body(&encoder.encode(&target, &Credential::None, request).unwrap());
+            assert_eq!(counter.reads(), 1);
+            assert_eq!(String::from_utf8_lossy(&first), String::from_utf8_lossy(&second));
+            expect_fresh(&second, &target, request);
+        }
+    }
+
     // Elements read the Chat replay mode and whether a tool defers, so a change to either encodes them again. A switch
     // between a native and a bridge target changes the deferral. `encode_checked` compares each body with a fresh one.
     #[test]
@@ -565,7 +600,12 @@ mod tests {
             let target = target_of("m", wire);
             let mut encoder = Encoder::new();
 
-            let sent = String::from_utf8(body(&encoder.encode(&target, Request::new(&blocks)).unwrap())).unwrap();
+            let sent = String::from_utf8(body(
+                &encoder
+                    .encode(&target, &Credential::None, Request::new(&blocks))
+                    .unwrap(),
+            ))
+            .unwrap();
 
             assert!(serde_json::from_str::<serde_json::Value>(&sent).is_ok(), "{sent}");
             assert!(!sent.contains("path"), "{sent}");
@@ -597,8 +637,10 @@ mod tests {
             };
             let request = Request::new(&blocks).tools(&tools);
 
-            let refused = Encoder::new().encode(&plain, request).map(|_| ());
-            let accepted = Encoder::new().encode(&searching, request).map(|_| ());
+            let refused = Encoder::new().encode(&plain, &Credential::None, request).map(|_| ());
+            let accepted = Encoder::new()
+                .encode(&searching, &Credential::None, request)
+                .map(|_| ());
 
             crate::testing::assert_same(refused, Err(EncodeError::Unsupported(Unsupported::DeferredTool)));
             crate::testing::assert_same(accepted, Ok(()));
@@ -789,12 +831,12 @@ mod tests {
             let target = target_of("m", wire);
             let expected = body(
                 &Encoder::new()
-                    .encode(&target, Request::new(&blocks).blobs(&TestBlobs))
+                    .encode(&target, &Credential::None, Request::new(&blocks).blobs(&TestBlobs))
                     .unwrap(),
             );
             let copied = body(
                 &Encoder::new()
-                    .encode(&target, Request::new(&blocks).blobs(&Copied))
+                    .encode(&target, &Credential::None, Request::new(&blocks).blobs(&Copied))
                     .unwrap(),
             );
             assert_eq!(expected, copied);
@@ -845,7 +887,7 @@ mod tests {
             let request = Request::new(&blocks).blobs(&flaky);
             let digest = blob("ab").digest;
             // A store failure keeps its cause, so the caller can tell it from a missing blob.
-            let Err(error) = encoder.encode(&target_of("m", wire), request) else {
+            let Err(error) = encoder.encode(&target_of("m", wire), &Credential::None, request) else {
                 panic!("a failed store read fails the encode");
             };
             assert!(matches!(error, EncodeError::BlobRead { digest: d, .. } if d == digest));
@@ -868,13 +910,14 @@ mod tests {
                     Request::new(&blocks).settings(&Settings::new().top_p(value)),
                 ] {
                     assert!(matches!(
-                        encoder.encode(&target, request),
+                        encoder.encode(&target, &Credential::None, request),
                         Err(EncodeError::InvalidSampling)
                     ));
                 }
                 encoder
                     .encode(
                         &target,
+                        &Credential::None,
                         Request::new(&blocks).settings(&Settings::new().temperature(0.5)),
                     )
                     .unwrap();
@@ -891,11 +934,11 @@ mod tests {
                 credential_header: Some(CredentialHeader::XApiKey),
                 ..Route::default()
             },
-            credential: Credential::ApiKey("sk-secret".into()),
             ..target_of("m", Wire::OpenaiChat(ChatWire::default()))
         };
+        let credential = Credential::ApiKey("sk-secret".into());
         let mut encoder = Encoder::new();
-        let encoded = encoder.encode(&target, Request::new(&blocks)).unwrap();
+        let encoded = encoder.encode(&target, &credential, Request::new(&blocks)).unwrap();
         let text = format!("{encoded:?}");
         assert!(text.contains("x-api-key"), "{text}");
         assert!(!text.contains("sk-secret"), "{text}");
@@ -923,13 +966,13 @@ mod tests {
                     headers: vec![Header::new(name, value)].into(),
                     ..Route::default()
                 },
-                credential: Credential::ApiKey(secret.into()),
                 wire: Wire::OpenaiChat(ChatWire::default()),
                 tool_search: false,
             };
             encoder
                 .encode(
                     &target,
+                    &Credential::ApiKey(secret.into()),
                     Request::new(&blocks).settings(&Settings::new().system(&system)),
                 )
                 .unwrap()
@@ -956,6 +999,7 @@ mod tests {
             let encoded = encoder
                 .encode(
                     &target_of("m", wire),
+                    &Credential::None,
                     Request::new(&[]).settings(&Settings::new().system("be brief")),
                 )
                 .unwrap();

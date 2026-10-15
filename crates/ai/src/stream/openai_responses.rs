@@ -463,6 +463,7 @@ mod tests {
     use super::*;
     use crate::request::Protocol;
     use crate::response::ResponseLimits;
+    use crate::route::Credential;
     use crate::stream::testing::Harness;
 
     const PROTOCOL: Protocol = Protocol::OpenaiResponses;
@@ -691,7 +692,11 @@ mod tests {
             let mut encoder = Encoder::new();
             let blocks = [Block::user_text("hello")];
             let encoded = encoder
-                .encode(&target(Protocol::OpenaiResponses), Request::new(&blocks))
+                .encode(
+                    &target(Protocol::OpenaiResponses),
+                    &Credential::None,
+                    Request::new(&blocks),
+                )
                 .unwrap();
             let mut stream = block_on(Stream::open(&canned, &encoded, Options::default()));
             if valid {

@@ -3,11 +3,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use yuke_ai::{Block, Settings, Target};
-use yuke_engine::{CancellationToken, Driver, Hooks, Outcome, Replace, RoundPlan, Toolset, TurnEvent};
+use yuke_engine::{CancellationToken, Driver, Hooks, Outcome, Replace, RoundError, RoundPlan, Toolset, TurnEvent};
+use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, model_of, target, text_reply, tool_reply};
 
-use crate::support::{
-    NoWait, Recorder, ScriptedTransport, block_on, definition, failed_reply, target, text_reply, tool_reply,
-};
+use crate::support::{Recorder, block_on, definition};
 
 /// The test target under another model name.
 fn other_target(model: &'static str) -> Target {
@@ -25,11 +24,11 @@ fn system(system: &str) -> Settings {
 #[test]
 fn the_driver_settings_reach_each_request() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let settings = system("Be brief.");
-    let driver = Driver::new(&transport, &target, &NoWait)
+    let driver = Driver::new(&transport, &model, &NoWait)
         .toolset(&toolset)
         .settings(&settings);
 
@@ -50,12 +49,12 @@ struct FirstRoundOnly {
 
 #[async_trait]
 impl Hooks for FirstRoundOnly {
-    async fn before_round(&self, _: &[Block], _: Option<&yuke_ai::Error>) -> RoundPlan {
+    async fn before_round(&self, _: &[Block]) -> RoundPlan {
         if self.rounds.fetch_add(1, Ordering::Relaxed) > 0 {
             return RoundPlan::default();
         }
         RoundPlan {
-            target: Some(other_target("router-model")),
+            model: Some(model_of(other_target("router-model"))),
             settings: Some(system("First round.")),
             ..RoundPlan::default()
         }
@@ -65,13 +64,11 @@ impl Hooks for FirstRoundOnly {
 #[test]
 fn a_plan_target_and_settings_apply_to_their_round_only() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let hooks = FirstRoundOnly::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
     block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
 
@@ -90,7 +87,7 @@ struct SummarizeSecondRound {
 
 #[async_trait]
 impl Hooks for SummarizeSecondRound {
-    async fn before_round(&self, _: &[Block], _: Option<&yuke_ai::Error>) -> RoundPlan {
+    async fn before_round(&self, _: &[Block]) -> RoundPlan {
         if self.rounds.fetch_add(1, Ordering::Relaxed) != 1 {
             return RoundPlan::default();
         }
@@ -107,13 +104,11 @@ impl Hooks for SummarizeSecondRound {
 #[test]
 fn a_plan_replacement_replaces_the_context_and_stays() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let hooks = SummarizeSecondRound::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
     let mut context = Vec::new();
 
     block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();
@@ -130,16 +125,16 @@ fn a_plan_replacement_replaces_the_context_and_stays() {
     );
 }
 
-/// Hooks that answer a failure with `fallback`, and keep the failures that they saw.
+/// Hooks that answer a failure with `retry`, and keep the failures that they saw.
 struct FallBack {
-    fallback: RoundPlan,
+    retry: Option<RoundPlan>,
     failures: Mutex<Vec<String>>,
 }
 
 impl FallBack {
-    fn new(fallback: RoundPlan) -> Self {
+    fn new(retry: Option<RoundPlan>) -> Self {
         FallBack {
-            fallback,
+            retry,
             failures: Mutex::new(Vec::new()),
         }
     }
@@ -147,25 +142,22 @@ impl FallBack {
 
 #[async_trait]
 impl Hooks for FallBack {
-    async fn before_round(&self, _: &[Block], failure: Option<&yuke_ai::Error>) -> RoundPlan {
-        let Some(failure) = failure else {
-            return RoundPlan::default();
-        };
+    async fn retry_round(&self, _: &[Block], failure: &RoundError) -> Option<RoundPlan> {
         self.failures.lock().unwrap().push(failure.to_string());
-        self.fallback.clone()
+        self.retry.clone()
     }
 }
 
 #[test]
-fn a_failed_round_runs_again_on_the_plan_target_in_the_same_turn() {
+fn a_failed_round_runs_again_on_the_plan_model_in_the_same_turn() {
     // The failure comes after output, so the retry policy of `ai` sends it no second attempt.
     let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("done")]);
-    let target = target();
-    let hooks = FallBack::new(RoundPlan {
-        target: Some(other_target("fallback-model")),
+    let model = model();
+    let hooks = FallBack::new(Some(RoundPlan {
+        model: Some(model_of(other_target("fallback-model"))),
         ..RoundPlan::default()
-    });
-    let driver = Driver::new(&transport, &target, &NoWait).hooks(&hooks);
+    }));
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
     let mut context = Vec::new();
     let texts = Mutex::new(Vec::new());
 
@@ -192,15 +184,32 @@ fn a_failed_round_runs_again_on_the_plan_target_in_the_same_turn() {
     assert_eq!(context, [Block::user_text("go"), Block::assistant_text("done")]);
 }
 
+// A retry plan without a model keeps the driver's model.
 #[test]
-fn a_failed_round_without_a_plan_target_ends_the_turn() {
-    let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("unused")]);
-    let target = target();
-    let hooks = FallBack::new(RoundPlan {
+fn a_retry_plan_without_a_model_runs_again_on_the_driver_model() {
+    let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("done")]);
+    let model = model();
+    let hooks = FallBack::new(Some(RoundPlan {
         settings: Some(system("Try harder.")),
         ..RoundPlan::default()
-    });
-    let driver = Driver::new(&transport, &target, &NoWait).hooks(&hooks);
+    }));
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
+
+    let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
+
+    assert!(matches!(outcome, Ok(Outcome::Completed { .. })), "{outcome:?}");
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].contains(r#""model":"test-model""#), "{}", requests[1]);
+    assert!(requests[1].contains("Try harder."), "{}", requests[1]);
+}
+
+#[test]
+fn a_failed_round_that_no_hook_retries_ends_the_turn() {
+    let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("unused")]);
+    let model = model();
+    let hooks = FallBack::new(None);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
 
     let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
 
@@ -214,7 +223,7 @@ struct CancelBeforeRound(CancellationToken);
 
 #[async_trait]
 impl Hooks for CancelBeforeRound {
-    async fn before_round(&self, _: &[Block], _: Option<&yuke_ai::Error>) -> RoundPlan {
+    async fn before_round(&self, _: &[Block]) -> RoundPlan {
         self.0.cancel();
         std::future::pending().await
     }
@@ -223,10 +232,10 @@ impl Hooks for CancelBeforeRound {
 #[test]
 fn a_cancel_during_before_round_sends_no_request() {
     let transport = ScriptedTransport::new([text_reply("unused")]);
-    let target = target();
+    let model = model();
     let cancellation_token = CancellationToken::new();
     let hooks = CancelBeforeRound(cancellation_token.clone());
-    let driver = Driver::new(&transport, &target, &NoWait).hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
     let mut context = Vec::new();
 
     let outcome = block_on(

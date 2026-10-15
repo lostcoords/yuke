@@ -21,7 +21,7 @@ ts-rs = { version = "12.0.1", optional = true }
 yuke-ai = { path = "../ai", default-features = false }
 
 [dev-dependencies]
-bytes = "1.12"
+yuke-testing = { path = "../testing" }
 tokio = { version = "1.53", features = ["macros", "rt", "signal", "time"] }
 yuke-ai = { path = "../ai", features = ["http-tokio"] }
 

@@ -11,7 +11,6 @@ pub(crate) fn target_of(model: &str, wire: Wire) -> Target {
     Target {
         model: model.to_owned().into(),
         route: Route::default(),
-        credential: Credential::None,
         // The helper enables the native tool search for each protocol that has one, so a request can defer a tool.
         tool_search: !matches!(wire, Wire::OpenaiChat(_)),
         wire,
@@ -33,7 +32,7 @@ pub(crate) fn replay(model: &str, kind: ReplayKind, data: &str) -> ReasoningRepl
 /// Encode the whole request with a fresh encoder, and join its body.
 pub(crate) fn write(model: &str, wire: Wire, request: Request<'_>) -> Result<String, EncodeError> {
     let mut encoder = Encoder::new();
-    let encoded = encoder.encode(&target_of(model, wire), request)?;
+    let encoded = encoder.encode(&target_of(model, wire), &Credential::None, request)?;
     Ok(String::from_utf8(encoded.http.body().flatten().copied().collect::<Vec<u8>>()).unwrap())
 }
 

@@ -8,15 +8,15 @@ use async_trait::async_trait;
 use tokio::sync::{Notify, OwnedMutexGuard};
 use tokio::task::JoinHandle;
 use yuke_agent::{InputSender, Loaded, Session, SessionError, SessionObserver, StoreError};
-use yuke_ai::{Block, Target};
-use yuke_engine::{CancellationToken, Driver, Outcome, Toolset};
+use yuke_ai::Block;
+use yuke_engine::{CancellationToken, Driver, Model, Outcome, Toolset};
 use yuke_js::{JobEnded, Runtime, SessionHost};
 use yuke_protocol::{
     EventNumber, Input, InputId, InputSource, Job, LiveUpdate, NoticeLevel, NoticeParams, ServerNotification,
     SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
-use super::{AppError, Observer, SOURCE, Shared, TokioTimer, canonical, describe, lock, target_of, warn};
+use super::{AppError, Observer, SOURCE, Shared, TokioTimer, canonical, describe, lock, model_of, warn};
 
 /// The source of the input that a background job sends when it ends.
 const JOBS_SOURCE: &str = "host:jobs";
@@ -24,7 +24,7 @@ const JOBS_SOURCE: &str = "host:jobs";
 /// An open session.
 pub(super) struct LiveSession {
     inbox: Inbox,
-    /// The session and its target. A turn holds the lock for its whole run, so new settings never meet a turn.
+    /// The session and its model. A turn holds the lock for its whole run, so new settings never meet a turn.
     core: Arc<tokio::sync::Mutex<Core>>,
     /// The cancellation token of the running turn, or `None` while the session is idle.
     turn: Arc<Mutex<Option<CancellationToken>>>,
@@ -39,14 +39,14 @@ pub(super) struct LiveSession {
 /// The parts of a session that only a turn or a change of the settings use.
 struct Core {
     session: Session,
-    target: Target,
+    model: Model,
 }
 
 impl LiveSession {
-    /// Load the tools of `session`, and start its task, which runs its turns on `target`.
+    /// Load the tools of `session`, and start its task, which runs its turns on `model`.
     pub(super) async fn start(
         session: Session,
-        target: Target,
+        model: Model,
         runtime: &Runtime,
         shared: Arc<Shared>,
     ) -> Result<LiveSession, AppError> {
@@ -75,7 +75,7 @@ impl LiveSession {
                 .add(definition, tool)
                 .map_err(|error| AppError::Internal(describe(&error)))?;
         }
-        let core = Arc::new(tokio::sync::Mutex::new(Core { session, target }));
+        let core = Arc::new(tokio::sync::Mutex::new(Core { session, model }));
         let turn = Arc::default();
         let closed = CancellationToken::new();
         let task = SessionTask {
@@ -158,13 +158,13 @@ impl LiveSession {
             .system
             .clone_from(&core.session.settings().settings.system);
         settings.cwd = canonical(settings.cwd).await?;
-        let target = target_of(&settings, &*self.shared.machine.variable)?;
+        let model = model_of(&settings, &*self.shared.machine.variable)?;
         let event_number = core
             .session
             .set_settings(settings.clone())
             .await
             .map_err(AppError::Store)?;
-        core.target = target;
+        core.model = model;
         lock(&self.host.folder).clone_from(&settings.cwd);
         self.inbox.output.publish(SessionUpdate::Saved(StoredEvent {
             event_number,
@@ -423,7 +423,7 @@ impl SessionTask {
                 state: SessionState::Idle,
             }));
             match ended {
-                Ok(Ok(_) | Err(SessionError::Model(_) | SessionError::NoInput)) => {}
+                Ok(Ok(_) | Err(SessionError::Round(_) | SessionError::NoInput)) => {}
                 // A store failure waits for the next wake, so it does not repeat at once.
                 Ok(Err(SessionError::Store(error))) => {
                     output.notice(NoticeLevel::Error, &describe(&error));
@@ -443,7 +443,7 @@ impl SessionTask {
     }
 }
 
-/// Run one turn of the session in `core`. A model failure is saved as the end of the turn.
+/// Run one turn of the session in `core`. A round failure is saved as the end of the turn.
 async fn run_turn(
     mut core: OwnedMutexGuard<Core>,
     shared: Arc<Shared>,
@@ -451,8 +451,8 @@ async fn run_turn(
     output: Arc<Output>,
     token: CancellationToken,
 ) -> Result<Outcome, SessionError> {
-    let Core { session, target } = &mut *core;
-    let driver = Driver::new(&*shared.machine.transport, target, &TokioTimer).toolset(&toolset);
+    let Core { session, model } = &mut *core;
+    let driver = Driver::new(&*shared.machine.transport, model, &TokioTimer).toolset(&toolset);
     session
         .turn(driver)
         .observer(&*output)

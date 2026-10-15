@@ -6,6 +6,8 @@ use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 use yuke_ai::{Block, FinishReason, Origin, Partial, Response, ToolCall, ToolResult, Usage};
 
+use crate::model::RoundError;
+
 /// The decisions of one turn on the caller's context.
 #[derive(Debug)]
 pub(crate) struct TurnState<'c> {
@@ -51,7 +53,7 @@ pub(crate) enum Action<'a> {
         tail: &'a [Block],
 
         /// How the turn ended.
-        result: Result<Outcome, yuke_ai::Error>,
+        result: Result<Outcome, RoundError>,
     },
 }
 
@@ -111,7 +113,7 @@ impl<'a> Commit<'a> {
     }
 
     /// The commit that ends a turn with `result` after the `tail` blocks.
-    pub(crate) fn end(tail: &'a [Block], result: Result<&Outcome, &yuke_ai::Error>) -> Self {
+    pub(crate) fn end(tail: &'a [Block], result: Result<&Outcome, &RoundError>) -> Self {
         let end = match result {
             Ok(outcome) => TurnEnd::Outcome(outcome.clone()),
             Err(error) => TurnEnd::Failed(chain_text(error)),
@@ -124,7 +126,7 @@ impl<'a> Commit<'a> {
 }
 
 /// How a turn ended, in a form that a journal can save. A failure keeps the text of its error, and
-/// [`crate::TurnError::Model`] gives the caller the error itself.
+/// [`crate::TurnError::Round`] gives the caller the error itself.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
@@ -239,7 +241,7 @@ impl<'c> TurnState<'c> {
     }
 
     /// Take the result of the request that [`Action::Send`] asked for. `origin` names the target that answered.
-    pub(crate) fn model_finished(&mut self, result: Result<Response, yuke_ai::Error>, origin: Origin) -> Action<'_> {
+    pub(crate) fn model_finished(&mut self, result: Result<Response, RoundError>, origin: Origin) -> Action<'_> {
         let completion = match result {
             Ok(response) => response.completion,
             Err(error) => return self.done(Err(error)),
@@ -364,7 +366,7 @@ impl<'c> TurnState<'c> {
     }
 
     /// The end of the turn with `result`, after the blocks since the last commit.
-    fn done(&mut self, result: Result<Outcome, yuke_ai::Error>) -> Action<'_> {
+    fn done(&mut self, result: Result<Outcome, RoundError>) -> Action<'_> {
         let start = self.take_unsaved();
         Action::Done {
             tail: &self.context[start..],

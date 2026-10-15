@@ -4,10 +4,9 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason};
 use yuke_engine::{Driver, Hooks, Outcome, RoundDecision, Toolset};
+use yuke_testing::{NoWait, ScriptedTransport, assert_in_order, model, text_reply, tool_reply};
 
-use crate::support::{
-    Batches, NoWait, Recorder, ScriptedTransport, assert_in_order, block_on, definition, target, text_reply, tool_reply,
-};
+use crate::support::{Batches, Recorder, block_on, definition};
 
 /// Hooks that record each `after_round` call and return the next decision.
 struct Script {
@@ -45,9 +44,9 @@ impl Hooks for Script {
 #[test]
 fn a_final_answer_gives_its_finish_reason_and_proceed_without_input_completes_the_turn() {
     let transport = ScriptedTransport::new([text_reply("done")]);
-    let target = target();
+    let model = model();
     let hooks = Script::new([RoundDecision::Proceed]);
-    let driver = Driver::new(&transport, &target, &NoWait).hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
 
     let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
 
@@ -68,7 +67,7 @@ fn continue_adds_its_input_and_a_tool_round_gives_no_finish_reason() {
         tool_reply(&[("c1", "echo", "{}")]),
         text_reply("second answer"),
     ]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let hooks = Script::new([
@@ -76,9 +75,7 @@ fn continue_adds_its_input_and_a_tool_round_gives_no_finish_reason() {
         RoundDecision::Proceed,
         RoundDecision::Proceed,
     ]);
-    let driver = Driver::new(&transport, &target, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
     let mut context = Vec::new();
 
     let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
@@ -98,10 +95,10 @@ fn continue_adds_its_input_and_a_tool_round_gives_no_finish_reason() {
 #[test]
 fn inbox_input_after_a_final_answer_continues_the_turn() {
     let transport = ScriptedTransport::new([text_reply("first answer"), text_reply("second answer")]);
-    let target = target();
+    let model = model();
     let hooks = Script::new([RoundDecision::Proceed, RoundDecision::Proceed]);
     let inbox = Mutex::new(vec![Block::user_text("later")]);
-    let driver = Driver::new(&transport, &target, &NoWait).hooks(&hooks).inbox(&inbox);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).inbox(&inbox);
 
     let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
 
@@ -117,11 +114,11 @@ fn inbox_input_goes_before_continue_input_and_the_hook_is_asked_again() {
         text_reply("second answer"),
         text_reply("third answer"),
     ]);
-    let target = target();
+    let model = model();
     let continue_with = || RoundDecision::Continue(vec![Block::user_text("from the hook")]);
     let hooks = Script::new([continue_with(), continue_with(), RoundDecision::Proceed]);
     let inbox = Batches::new([vec![Block::user_text("from the user")]]);
-    let driver = Driver::new(&transport, &target, &NoWait).hooks(&hooks).inbox(&inbox);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).inbox(&inbox);
 
     block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
 
@@ -134,9 +131,9 @@ fn inbox_input_goes_before_continue_input_and_the_hook_is_asked_again() {
 #[test]
 fn empty_continue_sends_another_request() {
     let transport = ScriptedTransport::new([text_reply("first answer"), text_reply("second answer")]);
-    let target = target();
+    let model = model();
     let hooks = Script::new([RoundDecision::Continue(Vec::new()), RoundDecision::Proceed]);
-    let driver = Driver::new(&transport, &target, &NoWait).hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
 
     let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
 
@@ -147,10 +144,10 @@ fn empty_continue_sends_another_request() {
 #[test]
 fn stop_after_the_final_answer_completes_the_turn() {
     let transport = ScriptedTransport::new([text_reply("done")]);
-    let target = target();
+    let model = model();
     let hooks = Script::new([RoundDecision::Stop]);
     let inbox = Mutex::new(vec![Block::user_text("later")]);
-    let driver = Driver::new(&transport, &target, &NoWait).hooks(&hooks).inbox(&inbox);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).inbox(&inbox);
 
     let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
 

@@ -5,10 +5,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use yuke_ai::{Blob, BlobStore, Block, Media, ToolCall, ToolResult};
 use yuke_engine::{Driver, Hooks, Tool, ToolContent, ToolContext, ToolDecision, Toolset, TurnEvent, parse_arguments};
+use yuke_testing::{NoWait, ScriptedTransport, model, text_reply, tool_reply};
 
-use crate::support::{
-    NoWait, Recorder, ScriptedTransport, block_on, definition, results_in_context, target, text_reply, tool_reply,
-};
+use crate::support::{Recorder, block_on, definition, results_in_context};
 
 /// Hooks that count the calls of `before_tool`.
 #[derive(Default)]
@@ -27,14 +26,12 @@ impl Hooks for CountBeforeTool {
 #[test]
 fn arguments_that_are_not_valid_json_reach_no_hook_and_no_tool() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", r#"{"text": "#)]), text_reply("done")]);
-    let target = target();
+    let model = model();
     let echo = Recorder::default();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), echo.clone()).unwrap();
     let hooks = CountBeforeTool::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
     let results = results_in_context(driver);
 
@@ -75,10 +72,10 @@ impl Tool for Echo {
 #[test]
 fn a_tool_receives_its_parsed_arguments() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", r#"{"text": "hi"}"#)]), text_reply("done")]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Echo::default()).unwrap();
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
     assert_eq!(results_in_context(driver), [ToolResult::success("c1", "echo hi")]);
 }
@@ -86,11 +83,11 @@ fn a_tool_receives_its_parsed_arguments() {
 #[test]
 fn a_parse_error_reaches_the_model_and_the_tool_body_does_not_run() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", r#"{"txt": "hi"}"#)]), text_reply("done")]);
-    let target = target();
+    let model = model();
     let echo = Echo::default();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), echo.clone()).unwrap();
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
     let results = results_in_context(driver);
 
@@ -120,10 +117,10 @@ impl Tool for Prints {
 #[test]
 fn tool_output_reaches_the_observer_between_the_start_and_the_end_of_its_call() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "print", "{}")]), text_reply("done")]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("print"), Prints).unwrap();
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let seen = Mutex::new(Vec::new());
 
     block_on(
@@ -190,10 +187,10 @@ impl Tool for ReadsImage {
 #[test]
 fn tool_media_reaches_the_result_and_the_next_request() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "read", "{}")]), text_reply("done")]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("read"), ReadsImage).unwrap();
-    let driver = Driver::new(&transport, &target, &NoWait)
+    let driver = Driver::new(&transport, &model, &NoWait)
         .toolset(&toolset)
         .blobs(&TwoBytes);
 

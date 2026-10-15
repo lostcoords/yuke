@@ -3,10 +3,9 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use yuke_ai::{Block, Target, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::{Driver, Hooks, RoundPlan, ToolNameError, Toolset, TurnEvent};
+use yuke_testing::{NoWait, ScriptedTransport, model, model_of, target, text_reply, tool_reply};
 
-use crate::support::{
-    NoWait, Recorder, ScriptedTransport, block_on, definition, results_in_context, target, text_reply, tool_reply,
-};
+use crate::support::{Recorder, block_on, definition, results_in_context};
 
 /// A deferred `create_issue` tool with an object input schema.
 fn create_issue_definition() -> ToolDefinition {
@@ -49,10 +48,10 @@ fn toolset_add_refuses_the_reserved_names() {
 #[test]
 fn a_toolset_without_deferred_tools_declares_no_search_tool() {
     let transport = ScriptedTransport::new([text_reply("done")]);
-    let target = native_target();
+    let model = model_of(native_target());
     let mut toolset = Toolset::new();
     toolset.add(definition("read"), Recorder::default()).unwrap();
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
     results_in_context(driver);
 
@@ -66,11 +65,11 @@ fn on_the_bridge_path_the_declared_tools_stay_the_same_after_a_search() {
         tool_reply(&[("c1", "tool_search", r#"{"query": "create issue"}"#)]),
         text_reply("done"),
     ]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("read"), Recorder::default()).unwrap();
     toolset.add(create_issue_definition(), Recorder::default()).unwrap();
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
     let results = results_in_context(driver);
 
@@ -108,13 +107,13 @@ fn a_bridge_search_shows_the_schema_of_each_match_in_name_order() {
         tool_reply(&[("c1", "tool_search", r#"{"query": "alpha"}"#)]),
         text_reply("done"),
     ]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     // Large schemas show in full. Equal scores sort by name.
     for name in ["alpha_two", "alpha_one", "alpha_three"] {
         toolset.add(large(name, 7000), Recorder::default()).unwrap();
     }
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
     let results = results_in_context(driver);
 
@@ -153,14 +152,12 @@ fn tool_call_runs_a_deferred_tool_and_the_hooks_and_the_observer_see_the_real_ca
         )]),
         text_reply("done"),
     ]);
-    let target = target();
+    let model = model();
     let issue = Recorder::default();
     let mut toolset = Toolset::new();
     toolset.add(create_issue_definition(), issue.clone()).unwrap();
     let hooks = SeeCalls::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
     let started = Mutex::new(Vec::new());
     let mut context = Vec::new();
 
@@ -199,15 +196,13 @@ fn tool_call_runs_any_tool_of_the_toolset_and_an_unknown_name_gets_an_error_afte
         ]),
         text_reply("done"),
     ]);
-    let target = target();
+    let model = model();
     let read = Recorder::default();
     let mut toolset = Toolset::new();
     toolset.add(definition("read"), read.clone()).unwrap();
     toolset.add(create_issue_definition(), Recorder::default()).unwrap();
     let hooks = SeeCalls::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
     let results = results_in_context(driver);
 
@@ -236,10 +231,10 @@ fn on_the_native_path_deferred_tools_carry_defer_loading_and_a_search_loads_its_
         tool_reply(&[("c1", "tool_search", r#"{"query": "issue"}"#)]),
         text_reply("done"),
     ]);
-    let target = native_target();
+    let model = model_of(native_target());
     let mut toolset = Toolset::new();
     toolset.add(create_issue_definition(), Recorder::default()).unwrap();
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
     let results = results_in_context(driver);
 
@@ -270,12 +265,12 @@ struct FirstSearchTarget(Target);
 
 #[async_trait]
 impl Hooks for FirstSearchTarget {
-    async fn before_round(&self, context: &[Block], _: Option<&yuke_ai::Error>) -> RoundPlan {
+    async fn before_round(&self, context: &[Block]) -> RoundPlan {
         if context.iter().any(|block| matches!(block, Block::ToolResult(_))) {
             return RoundPlan::default();
         }
         RoundPlan {
-            target: Some(self.0.clone()),
+            model: Some(model_of(self.0.clone())),
             ..RoundPlan::default()
         }
     }
@@ -297,6 +292,7 @@ fn a_search_uses_its_round_target_mode_after_a_hook_changes_the_target() {
         let hooks = FirstSearchTarget(first);
         let mut toolset = Toolset::new();
         toolset.add(create_issue_definition(), Recorder::default()).unwrap();
+        let default = model_of(default);
         let driver = Driver::new(&transport, &default, &NoWait)
             .toolset(&toolset)
             .hooks(&hooks);
@@ -345,10 +341,10 @@ fn a_search_limit_outside_one_to_twenty_gets_an_error_result() {
         tool_reply(&[("c1", "tool_search", r#"{"query": "issue", "limit": 0}"#)]),
         text_reply("done"),
     ]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(create_issue_definition(), Recorder::default()).unwrap();
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
     assert_eq!(
         results_in_context(driver),

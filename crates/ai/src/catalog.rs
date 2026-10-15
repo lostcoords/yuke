@@ -11,7 +11,7 @@ use crate::request::{
     AnthropicWire, ChatDialect, ChatWire, Effort, MaxTokensField, Modality, Protocol, ReasoningReplayMode,
     ReasoningSettings, ResponsesDialect, ResponsesWire, Target, Thinking, ThinkingDisplay, ThinkingFormat, Wire,
 };
-use crate::route::{Credential, CredentialHeader, Route, SessionHeader};
+use crate::route::{CredentialHeader, Route, SessionHeader};
 use crate::transport::Header;
 
 pub use generated::{PROVIDERS, REVISION};
@@ -395,14 +395,14 @@ impl Entry<'_> {
         })
     }
 
-    /// Bind this model to a target that presents `credential`. The target owns its configuration and can outlive
-    /// this entry. The caller may change any of the wire settings before a call.
+    /// Bind this model to a target. The target owns its configuration and can outlive this entry. The caller may
+    /// change any of the wire settings before a call.
     ///
     /// # Errors
     ///
     /// Returns [`Error::MissingEndpoint`] if the provider declares no endpoint for the model. Returns
     /// [`Error::MissingOutputLimit`] if an Anthropic model has no output limit.
-    pub fn bind(&self, credential: Credential) -> Result<Target, Error> {
+    pub fn bind(&self) -> Result<Target, Error> {
         let served = self.endpoint()?;
         Ok(Target {
             model: Cow::Owned(self.model.upstream_id.to_owned()),
@@ -413,7 +413,6 @@ impl Entry<'_> {
                 headers: Cow::Owned(self.provider.headers.to_vec()),
                 session_header: self.provider.session_header,
             },
-            credential,
             wire: self.wire(served)?,
             // Chat Completions has no native search of deferred tools, whatever the model can do elsewhere.
             tool_search: self.model.caps.tool_search == Some(true) && self.model.protocol != Protocol::OpenaiChat,
@@ -441,13 +440,13 @@ pub fn lookup(selector: &str) -> Result<Entry<'static>, Error> {
     Ok(Entry { provider, model })
 }
 
-/// Resolve `provider/model` into a call target that presents `credential`.
+/// Resolve `provider/model` into a call target.
 ///
 /// # Errors
 ///
 /// Returns the [`lookup`] and [`Entry::bind`] errors.
-pub fn resolve(selector: &str, credential: Credential) -> Result<Target, Error> {
-    lookup(selector)?.bind(credential)
+pub fn resolve(selector: &str) -> Result<Target, Error> {
+    lookup(selector)?.bind()
 }
 
 #[cfg(test)]
@@ -503,21 +502,16 @@ mod tests {
     fn resolve_parses_selectors_and_reports_lookup_errors() {
         let row = &PROVIDERS[0];
         let selector = format!("{}/{}", row.id, row.models[0].id);
-        let resolved = resolve(&selector, Credential::ApiKey("sk-test".into())).unwrap();
+        let resolved = resolve(&selector).unwrap();
         assert_eq!(resolved.model, row.models[0].upstream_id);
-        assert_eq!(resolved.credential, Credential::ApiKey("sk-test".into()));
 
-        assert_eq!(resolve("nope/model", Credential::None), Err(Error::UnknownProvider));
-        assert_eq!(resolve("anthropic/nope", Credential::None), Err(Error::UnknownModel));
+        assert_eq!(resolve("nope/model"), Err(Error::UnknownProvider));
+        assert_eq!(resolve("anthropic/nope"), Err(Error::UnknownModel));
         // An OpenRouter model id holds its own slash, so only the first one divides the selector.
-        let nova = resolve("openrouter/amazon/nova-2-lite-v1", Credential::None).unwrap();
+        let nova = resolve("openrouter/amazon/nova-2-lite-v1").unwrap();
         assert_eq!(nova.model, "amazon/nova-2-lite-v1");
         for malformed in ["anthropic", "/claude", "anthropic/"] {
-            assert_eq!(
-                resolve(malformed, Credential::None),
-                Err(Error::MalformedSelector),
-                "{malformed}"
-            );
+            assert_eq!(resolve(malformed), Err(Error::MalformedSelector), "{malformed}");
         }
     }
 
@@ -556,7 +550,7 @@ mod tests {
                 provider: &host,
                 model: &models[index],
             }
-            .bind(Credential::None)
+            .bind()
             .unwrap()
             .tool_search
         };
@@ -618,7 +612,7 @@ mod tests {
                     provider: &gateway,
                     model: &gateway.models[model],
                 }
-                .bind(Credential::ApiKey("k".into()))
+                .bind()
                 .unwrap()
             };
             let (messages, chat) = (bind(0), bind(1));
@@ -628,7 +622,6 @@ mod tests {
                 Some(CredentialHeader::AuthorizationBearer)
             );
             assert_eq!(chat.model, "wire-id");
-            assert_eq!(chat.credential, Credential::ApiKey("k".into()));
             assert_eq!(
                 chat.wire,
                 Wire::OpenaiChat(ChatWire {
@@ -666,7 +659,7 @@ mod tests {
                 provider: &provider,
                 model: &provider.models[0],
             };
-            entry.bind(Credential::ApiKey("k".into())).unwrap()
+            entry.bind().unwrap()
         };
         assert_eq!(target.model, "m");
         assert_eq!(target.route.base_url, "https://runtime.test/v1");
@@ -691,21 +684,18 @@ mod tests {
             provider: &host,
             model: &host.models[0],
         };
-        assert_eq!(chat.bind(Credential::None), Err(Error::MissingEndpoint));
+        assert_eq!(chat.bind(), Err(Error::MissingEndpoint));
         let bare = Entry {
             provider: &host,
             model: &host.models[1],
         };
-        assert_eq!(
-            bare.bind(Credential::ApiKey("k".into())),
-            Err(Error::MissingOutputLimit)
-        );
+        assert_eq!(bare.bind(), Err(Error::MissingOutputLimit));
         let big = Entry {
             provider: &host,
             model: &host.models[2],
         };
         assert_eq!(
-            big.bind(Credential::ApiKey("k".into())).map(|target| target.wire),
+            big.bind().map(|target| target.wire),
             Ok(Wire::AnthropicMessages(AnthropicWire {
                 max_tokens: u32::MAX,
                 cache: false
@@ -771,7 +761,7 @@ mod tests {
         for provider in PROVIDERS {
             for model in provider.models {
                 let entry = Entry { provider, model };
-                assert!(entry.bind(Credential::None).is_ok(), "{}/{}", provider.id, model.id);
+                assert!(entry.bind().is_ok(), "{}/{}", provider.id, model.id);
                 assert!(valid_cost(model.cost), "{}/{}", provider.id, model.id);
             }
         }

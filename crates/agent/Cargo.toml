@@ -18,7 +18,7 @@ yuke-engine = { path = "../engine" }
 yuke-protocol = { path = "../protocol" }
 
 [dev-dependencies]
-bytes = "1.12"
+yuke-testing = { path = "../testing" }
 tokio = { version = "1.53", features = ["macros", "rt"] }
 
 [lints]

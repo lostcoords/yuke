@@ -35,11 +35,12 @@ pub use response::{
     AttemptError, AttemptInfo, BlockId, BlockKind, BlockResult, BlockStarted, BlockStopped, Completion, Content, Delta,
     Done, Error, Event, FinishReason, Partial, PartialBlock, Response, ResponseLimits, Usage,
 };
+use route::Credential;
 pub use stream::Options;
 use transport::Transport;
 
-/// Encode one request, open it with `options`, and read the reply to its end. No automatic retries and no tool
-/// execution.
+/// Encode one request for `target` with `credential`, open it with `options`, and read the reply to its end. No
+/// automatic retries and no tool execution.
 ///
 /// # Errors
 ///
@@ -47,11 +48,12 @@ use transport::Transport;
 pub async fn generate(
     transport: &dyn Transport,
     target: &Target,
+    credential: &Credential,
     request: Request<'_>,
     options: Options,
 ) -> Result<Response, Error> {
     let mut encoder = Encoder::new();
-    let encoded = encoder.encode(target, request)?;
+    let encoded = encoder.encode(target, credential, request)?;
     Ok(Reply::open(transport, &encoded, options).await.finish().await?)
 }
 
@@ -83,7 +85,9 @@ mod tests {
         blocks.extend(completion.into_blocks());
         blocks.push(Block::ToolResult(ToolResult::success("c1", "ok")));
         let mut encoder = Encoder::new();
-        let encoded = encoder.encode(&target, Request::new(&blocks)).unwrap();
+        let encoded = encoder
+            .encode(&target, &Credential::None, Request::new(&blocks))
+            .unwrap();
         let body = String::from_utf8(encoded.http.body().flatten().copied().collect::<Vec<u8>>()).unwrap();
         let body: serde_json::Value = serde_json::from_str(&body).unwrap();
         let assistant = body["messages"]
@@ -155,7 +159,7 @@ mod tests {
         let request = Request::new(&blocks);
         let mut encoder = Encoder::new();
         send(&encoder);
-        let encoded = encoder.encode(&target, request).unwrap();
+        let encoded = encoder.encode(&target, &Credential::None, request).unwrap();
         let open = Reply::open(&canned, &encoded, Options::default());
         send(&open);
         let mut reply = block_on(open);
@@ -163,6 +167,12 @@ mod tests {
         let finish = reply.finish();
         send(&finish);
         send(&block_on(finish));
-        send(&generate(&canned, &target, request, Options::default()));
+        send(&generate(
+            &canned,
+            &target,
+            &Credential::None,
+            request,
+            Options::default(),
+        ));
     }
 }

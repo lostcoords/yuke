@@ -18,11 +18,11 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use yuke_agent::{Session, Store, StoreError};
+use yuke_ai::Block;
 use yuke_ai::catalog::{self, Auth};
 use yuke_ai::route::Credential;
 use yuke_ai::transport::Transport;
-use yuke_ai::{Block, Target};
-use yuke_engine::Timer;
+use yuke_engine::{Model, Timer};
 use yuke_js::{Fault, Limits, Options, Processes, Runtime};
 use yuke_protocol::{
     EventNumber, Input, InputId, InputSource, Job, NoticeLevel, NoticeParams, ServerNotification, SessionId,
@@ -87,7 +87,7 @@ struct Shared {
 /// # Cancel safety
 ///
 /// The methods are not cancel safe. A caller awaits each call to its end, as the request loop of `yuke --rpc` does. A
-/// dropped close can leave the jobs of a session running, and a dropped settings change can leave the target of the
+/// dropped close can leave the jobs of a session running, and a dropped settings change can leave the model of the
 /// session behind its saved settings.
 pub(crate) struct App {
     shared: Arc<Shared>,
@@ -162,13 +162,13 @@ impl App {
         &self.shared.store
     }
 
-    /// The target of the model of `settings`, with its credential from the environment.
+    /// The model of `settings`, with its credential from the environment.
     ///
     /// # Errors
     ///
     /// Returns [`AppError::Invalid`] for an unknown model or a missing credential.
-    pub(crate) fn target(&self, settings: &SessionSettings) -> Result<Target, AppError> {
-        target_of(settings, &*self.shared.machine.variable)
+    pub(crate) fn model(&self, settings: &SessionSettings) -> Result<Model, AppError> {
+        model_of(settings, &*self.shared.machine.variable)
     }
 
     /// Create a session with `settings`, and open it. The folder loses its links, and the app writes the system prompt
@@ -181,11 +181,11 @@ impl App {
     pub(crate) async fn create(&mut self, mut settings: SessionSettings) -> Result<SessionId, AppError> {
         settings.cwd = canonical(settings.cwd).await?;
         settings.settings.system = system_prompt(settings.cwd.clone(), self.shared.machine.home.clone()).await?;
-        let target = self.target(&settings)?;
+        let model = self.model(&settings)?;
         let session = Session::create(Arc::clone(&self.shared.store), &settings)
             .await
             .map_err(AppError::Store)?;
-        self.start_new(session, Ok(target)).await
+        self.start_new(session, Ok(model)).await
     }
 
     /// Fork session `id` through event `through`, and open the fork.
@@ -197,8 +197,8 @@ impl App {
         let session = Session::fork(Arc::clone(&self.shared.store), id, through)
             .await
             .map_err(AppError::Store)?;
-        let target = self.target(session.settings());
-        self.start_new(session, target).await
+        let model = self.model(session.settings());
+        self.start_new(session, model).await
     }
 
     /// Open `session`, which the caller opened from the store. An open alone runs no turn.
@@ -207,8 +207,8 @@ impl App {
     ///
     /// Returns [`AppError::Invalid`] for a model that cannot run.
     pub(crate) async fn open(&mut self, session: Session) -> Result<SessionId, AppError> {
-        let target = self.target(session.settings())?;
-        self.start_session(session, target).await
+        let model = self.model(session.settings())?;
+        self.start_session(session, model).await
     }
 
     /// Open session `id` when it is not open, and send it as updates: its saved events after `after`, its state, its
@@ -331,12 +331,12 @@ impl App {
         }
     }
 
-    /// Start the task of `session`, which this app saved just now, on `target`. A session that cannot start is deleted
+    /// Start the task of `session`, which this app saved just now, on `model`. A session that cannot start is deleted
     /// again, so no session that cannot run stays in the store.
-    async fn start_new(&mut self, session: Session, target: Result<Target, AppError>) -> Result<SessionId, AppError> {
+    async fn start_new(&mut self, session: Session, model: Result<Model, AppError>) -> Result<SessionId, AppError> {
         let id = session.id();
-        let started = match target {
-            Ok(target) => self.start_session(session, target).await,
+        let started = match model {
+            Ok(model) => self.start_session(session, model).await,
             Err(error) => {
                 drop(session);
                 Err(error)
@@ -349,9 +349,9 @@ impl App {
     }
 
     /// Start the task of `session`, and answer its id.
-    async fn start_session(&mut self, session: Session, target: Target) -> Result<SessionId, AppError> {
+    async fn start_session(&mut self, session: Session, model: Model) -> Result<SessionId, AppError> {
         let id = session.id();
-        let live = LiveSession::start(session, target, &self.runtime, Arc::clone(&self.shared)).await?;
+        let live = LiveSession::start(session, model, &self.runtime, Arc::clone(&self.shared)).await?;
         self.sessions.insert(id, live);
         Ok(id)
     }
@@ -407,8 +407,8 @@ impl Error for AppError {
     }
 }
 
-/// The target of the model of `settings`, with its credential from `variable`.
-fn target_of(settings: &SessionSettings, variable: &Variable) -> Result<Target, AppError> {
+/// The model of `settings`, with its credential from `variable`.
+fn model_of(settings: &SessionSettings, variable: &Variable) -> Result<Model, AppError> {
     let selector = format!("{}/{}", settings.model.provider, settings.model.model);
     let entry = catalog::lookup(&selector).map_err(|error| AppError::Invalid(format!("{selector}: {error}")))?;
     let provider = entry.provider;
@@ -428,9 +428,13 @@ fn target_of(settings: &SessionSettings, variable: &Variable) -> Result<Target, 
             )));
         }
     };
-    entry
-        .bind(credential)
-        .map_err(|error| AppError::Invalid(format!("{}/{}: {error}", provider.id, entry.model.id)))
+    let target = entry
+        .bind()
+        .map_err(|error| AppError::Invalid(format!("{}/{}: {error}", provider.id, entry.model.id)))?;
+    Ok(Model {
+        target,
+        source: Arc::new(credential),
+    })
 }
 
 /// `folder` without links. It must exist.

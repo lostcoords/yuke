@@ -6,6 +6,7 @@ use yuke_ai::{
 };
 
 use super::{Action, Answer, Commit, Outcome, Replaced, TurnEnd, TurnState};
+use crate::model::RoundError;
 
 /// The origin of the test target.
 fn origin() -> yuke_ai::Origin {
@@ -152,7 +153,7 @@ fn failed_attempt_adds_no_assistant_block() {
         partial: vec![Partial::Text("cut".to_owned())],
     };
 
-    let action = turn_state.model_finished(Err(failure.into()), origin());
+    let action = turn_state.model_finished(Err(RoundError::Model(failure.into())), origin());
 
     assert!(matches!(action, Action::Done { result: Err(_), .. }));
     assert_eq!(context, [Block::user_text("one")]);
@@ -324,10 +325,10 @@ fn cancelled_request_keeps_its_text_and_gives_each_call_an_error_result() {
 // A transparent error gives its cause only through `source`. The saved text must keep that cause.
 #[test]
 fn a_failed_turn_saves_the_causes_of_its_error() {
-    let error = yuke_ai::Error::Encode(yuke_ai::EncodeError::BlobRead {
+    let error = RoundError::Model(yuke_ai::Error::Encode(yuke_ai::EncodeError::BlobRead {
         digest: [0; 32],
         source: std::sync::Arc::new(std::io::Error::other("the disk is gone")),
-    });
+    }));
 
     let commit = Commit::end(&[], Err(&error));
 

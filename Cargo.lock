@@ -2244,6 +2244,7 @@ dependencies = [
  "yuke-js",
  "yuke-protocol",
  "yuke-store",
+ "yuke-testing",
 ]
 
 [[package]]
@@ -2251,12 +2252,12 @@ name = "yuke-agent"
 version = "0.0.1-dev"
 dependencies = [
  "async-trait",
- "bytes",
  "sha2",
  "tokio",
  "yuke-ai",
  "yuke-engine",
  "yuke-protocol",
+ "yuke-testing",
 ]
 
 [[package]]
@@ -2285,7 +2286,6 @@ name = "yuke-engine"
 version = "0.0.1-dev"
 dependencies = [
  "async-trait",
- "bytes",
  "fastrand",
  "futures-util",
  "serde",
@@ -2294,6 +2294,7 @@ dependencies = [
  "tokio-util",
  "ts-rs",
  "yuke-ai",
+ "yuke-testing",
 ]
 
 [[package]]
@@ -2358,6 +2359,17 @@ dependencies = [
  "yuke-protocol",
  "yuke-sql",
  "yuke-sqlgen",
+]
+
+[[package]]
+name = "yuke-testing"
+version = "0.0.1-dev"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "serde_json",
+ "yuke-ai",
+ "yuke-engine",
 ]
 
 [[package]]

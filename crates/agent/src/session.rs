@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use yuke_engine::{CancellationToken, Commit, Driver, Inbox, Journal, Outcome, TurnEnd, TurnError};
+use yuke_engine::{CancellationToken, Commit, Driver, Inbox, Journal, Outcome, RoundError, TurnEnd, TurnError};
 
 use crate::lock;
 use crate::updates::{SessionObserver, Updates};
@@ -327,7 +327,7 @@ impl<'s> SessionTurn<'s> {
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError::Model`] when a request fails. Returns [`SessionError::Store`] when the store fails,
+    /// Returns [`SessionError::Round`] when a round fails. Returns [`SessionError::Store`] when the store fails,
     /// also when the session cannot open again.
     pub async fn run(self) -> Result<Outcome, SessionError> {
         let SessionTurn {
@@ -374,9 +374,9 @@ impl<'s> SessionTurn<'s> {
                 session.lease = lease;
                 Ok(outcome)
             }
-            Err(TurnError::Model(error)) => {
+            Err(TurnError::Round(error)) => {
                 session.lease = lease;
-                Err(SessionError::Model(error))
+                Err(SessionError::Round(error))
             }
             // The commit can have saved or not, so the lease drops, and the next turn loads the store.
             Err(TurnError::Commit(error)) => Err(SessionError::Store(match error.downcast::<StoreError>() {
@@ -390,8 +390,8 @@ impl<'s> SessionTurn<'s> {
 /// Why a turn of a session failed.
 #[derive(Debug)]
 pub enum SessionError {
-    /// A request could not be encoded, or its last attempt failed. The store holds the end of the turn.
-    Model(yuke_ai::Error),
+    /// A round failed, and no hook sent it again. The store holds the end of the turn.
+    Round(RoundError),
     /// The store failed.
     Store(StoreError),
     /// No input waits and no earlier turn needs an answer, so no turn ran. A removal of the last input can come
@@ -408,7 +408,7 @@ impl From<StoreError> for SessionError {
 impl fmt::Display for SessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Model(error) => fmt::Display::fmt(error, f),
+            Self::Round(error) => fmt::Display::fmt(error, f),
             Self::Store(error) => fmt::Display::fmt(error, f),
             Self::NoInput => f.write_str("no input waits"),
         }
@@ -419,7 +419,7 @@ impl std::error::Error for SessionError {
     // The text is the text of the inner error, so the source is the source of the inner error.
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Model(error) => error.source(),
+            Self::Round(error) => error.source(),
             Self::Store(error) => error.source(),
             Self::NoInput => None,
         }

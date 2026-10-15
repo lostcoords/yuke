@@ -40,7 +40,6 @@ pub(crate) fn target(protocol: Protocol) -> Target {
             base_url: "https://example.test/v1".into(),
             ..Route::default()
         },
-        credential: Credential::None,
         wire: match protocol {
             Protocol::AnthropicMessages => Wire::AnthropicMessages(AnthropicWire {
                 max_tokens: 64,
@@ -92,7 +91,13 @@ pub(crate) fn generate_with(
     options: Options,
 ) -> Result<Response, AttemptError> {
     let blocks = [Block::user_text(prompt)];
-    match block_on(generate(transport, target, Request::new(&blocks), options)) {
+    match block_on(generate(
+        transport,
+        target,
+        &Credential::None,
+        Request::new(&blocks),
+        options,
+    )) {
         Ok(response) => Ok(response),
         Err(Error::Attempt(error)) => Err(error),
         Err(error) => panic!("the request does not encode: {error}"),

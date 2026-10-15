@@ -8,12 +8,14 @@
 
 mod drive;
 mod hooks;
+mod model;
 mod search;
 mod tool;
 mod turn_state;
 
 pub use drive::{Driver, Inbox, Journal, Observer, Timer, Turn, TurnError, TurnEvent};
 pub use hooks::{Hooks, RoundDecision, RoundPlan, ToolDecision};
+pub use model::{CredentialSource, Model, RoundError};
 pub use tokio_util::sync::CancellationToken;
 pub use tool::{Concurrency, TOOL_CALL_NAME, Tool, ToolContent, ToolContext, ToolNameError, Toolset, parse_arguments};
 pub use turn_state::{Answer, Commit, Outcome, Replace, Replaced, TurnEnd};

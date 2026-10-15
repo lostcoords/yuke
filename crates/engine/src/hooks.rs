@@ -2,8 +2,9 @@
 //! only watches.
 
 use async_trait::async_trait;
-use yuke_ai::{Block, FinishReason, Settings, Target, ToolCall, ToolResult};
+use yuke_ai::{Block, FinishReason, Settings, ToolCall, ToolResult};
 
+use crate::model::{Model, RoundError};
 use crate::turn_state::Replace;
 
 /// The decisions of a caller at the boundaries of a turn. Each method has a default that changes nothing, so a
@@ -11,10 +12,14 @@ use crate::turn_state::Replace;
 #[async_trait]
 pub trait Hooks: Send + Sync {
     /// Prepare the request of a round. The driver asks before the first attempt of each round, not before a retry.
-    /// After a round fails and its retries end, the driver asks again with the `failure`. A plan with a target then
-    /// sends the round again in the same turn. A plan without a target ends the turn with the failure.
-    async fn before_round(&self, _context: &[Block], _failure: Option<&yuke_ai::Error>) -> RoundPlan {
+    async fn before_round(&self, _context: &[Block]) -> RoundPlan {
         RoundPlan::default()
+    }
+
+    /// Decide whether a failed round runs again in the same turn. The driver asks after the retries of the round end.
+    /// A plan sends the round again. `None` ends the turn with the `failure`.
+    async fn retry_round(&self, _context: &[Block], _failure: &RoundError) -> Option<RoundPlan> {
+        None
     }
 
     /// Decide whether `call` runs. The driver asks before each call, in call order. In a parallel group, it asks for each
@@ -40,15 +45,15 @@ pub trait Hooks: Send + Sync {
     }
 }
 
-/// The answer of [`Hooks::before_round`]. A `None` replacement keeps the context. A `None` target or settings keeps
-/// the driver's value.
+/// The plan of a round, from [`Hooks::before_round`] or [`Hooks::retry_round`]. A `None` replacement keeps the
+/// context. A `None` model or settings keeps the driver's value.
 #[derive(Debug, Clone, Default)]
 pub struct RoundPlan {
     /// A new first part of the context and the number of old blocks that stay after it, for example a summary and the
     /// recent blocks. It replaces the context before the request, and the replacement stays after the round.
     pub replace: Option<Replace>,
-    /// The model of this round. The next round uses the driver's target again.
-    pub target: Option<Target>,
+    /// The model of this round. The next round uses the driver's model again.
+    pub model: Option<Model>,
     /// The settings of this round. The next round uses the driver's settings again.
     pub settings: Option<Settings>,
 }

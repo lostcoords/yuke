@@ -12,11 +12,11 @@ use yuke_protocol::{
     BlockPosition, DraftDiscardReason, DraftId, EventNumber, LiveUpdate, ModelUpdate, SessionEvent, SessionUpdate,
     SessionUpdateParams,
 };
-
-use super::support::{
-    FailingStore, NoWait, ScriptedTransport, Stalled, StoreBehavior, failed_reply, send_input_reply, settings, sse,
-    target, text_reply, user_input,
+use yuke_testing::{
+    NoWait, ScriptedTransport, Stalled, failed_reply, model, model_of, sse, target, text_reply, tool_reply,
 };
+
+use super::support::{FailingStore, StoreBehavior, settings, user_input};
 
 #[derive(Default)]
 struct Capture(Mutex<Vec<SessionUpdateParams>>);
@@ -76,16 +76,16 @@ async fn session_updates_preserve_interleaved_blocks_and_confirm_the_saved_answe
         r#"{"choices":[{"index":0,"delta":{"content":" world"},"finish_reason":"stop"}]}"#,
         "[DONE]",
     ])]);
-    let target = yuke_ai::Target {
+    let model = model_of(yuke_ai::Target {
         wire: Wire::OpenaiChat(yuke_ai::ChatWire::default()),
         ..target()
-    };
+    });
     let store = Arc::new(MemoryStore::new());
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     session.input().send(user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .observer(&capture)
         .run()
         .await
@@ -180,17 +180,17 @@ async fn unfinished_blocks_do_not_shift_live_to_saved_positions() {
         r#"{"type":"response.output_text.delta","output_index":1,"content_index":0,"delta":"answer"}"#,
         r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
     ])]);
-    let target = yuke_ai::Target {
+    let model = model_of(yuke_ai::Target {
         wire: Wire::OpenaiResponses(yuke_ai::ResponsesWire::default()),
         ..target()
-    };
+    });
     let mut session = Session::create(Arc::new(MemoryStore::new()), &settings())
         .await
         .unwrap();
     session.input().send(user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .observer(&capture)
         .run()
         .await
@@ -248,15 +248,19 @@ fn tools() -> yuke_engine::Toolset {
 
 #[tokio::test]
 async fn repeated_provider_ids_use_distinct_saved_execution_positions() {
-    let transport = ScriptedTransport::new([send_input_reply(), send_input_reply(), text_reply("done")]);
-    let target = target();
+    let transport = ScriptedTransport::new([
+        tool_reply(&[("c1", "send", "{}")]),
+        tool_reply(&[("c1", "send", "{}")]),
+        text_reply("done"),
+    ]);
+    let model = model();
     let tools = tools();
     let store = Arc::new(MemoryStore::new());
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     session.input().send(user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
-        .turn(Driver::new(&transport, &target, &NoWait).toolset(&tools))
+        .turn(Driver::new(&transport, &model, &NoWait).toolset(&tools))
         .observer(&capture)
         .run()
         .await
@@ -321,14 +325,14 @@ async fn repeated_provider_ids_use_distinct_saved_execution_positions() {
 async fn failed_attempts_discard_their_drafts_and_retry_uses_a_new_identity() {
     let overloaded = sse(&[r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#]);
     let transport = ScriptedTransport::new([overloaded, text_reply("done")]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(Arc::new(MemoryStore::new()), &settings())
         .await
         .unwrap();
     session.input().send(user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .observer(&capture)
         .run()
         .await
@@ -368,7 +372,7 @@ async fn failed_attempts_discard_their_drafts_and_retry_uses_a_new_identity() {
 #[tokio::test]
 async fn a_failed_stream_discards_visible_text_without_a_saved_answer() {
     let transport = ScriptedTransport::new([failed_reply("cut")]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(Arc::new(MemoryStore::new()), &settings())
         .await
         .unwrap();
@@ -376,7 +380,7 @@ async fn a_failed_stream_discards_visible_text_without_a_saved_answer() {
     let capture = Capture::default();
     assert!(
         session
-            .turn(Driver::new(&transport, &target, &NoWait))
+            .turn(Driver::new(&transport, &model, &NoWait))
             .observer(&capture)
             .run()
             .await
@@ -405,14 +409,14 @@ async fn a_failed_stream_discards_visible_text_without_a_saved_answer() {
 #[tokio::test]
 async fn an_unconfirmed_answer_save_discards_the_draft_and_starts_no_tool() {
     let store = FailingStore::new(StoreBehavior::FailCommit(2));
-    let transport = ScriptedTransport::new([send_input_reply()]);
-    let target = target();
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")])]);
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     session.input().send(user_input("go")).await.unwrap();
     let capture = Capture::default();
     assert!(
         session
-            .turn(Driver::new(&transport, &target, &NoWait))
+            .turn(Driver::new(&transport, &model, &NoWait))
             .observer(&capture)
             .run()
             .await
@@ -449,12 +453,12 @@ async fn an_unconfirmed_answer_save_discards_the_draft_and_starts_no_tool() {
 async fn a_failed_load_of_the_pending_inputs_starts_no_turn_and_sends_no_update() {
     let store = FailingStore::new(StoreBehavior::FailPending);
     let transport = ScriptedTransport::new([]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(store, &settings()).await.unwrap();
     let capture = Capture::default();
 
     let failed = session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .observer(&capture)
         .run()
         .await;
@@ -466,7 +470,7 @@ async fn a_failed_load_of_the_pending_inputs_starts_no_turn_and_sends_no_update(
 
 #[tokio::test]
 async fn a_dropped_turn_discards_its_draft() {
-    let target = target();
+    let model = model();
     let mut session = Session::create(Arc::new(MemoryStore::new()), &settings())
         .await
         .unwrap();
@@ -475,7 +479,7 @@ async fn a_dropped_turn_discards_its_draft() {
     {
         let mut future = pin!(
             session
-                .turn(Driver::new(&Stalled, &target, &NoWait))
+                .turn(Driver::new(&Stalled, &model, &NoWait))
                 .observer(&capture)
                 .run()
         );
@@ -504,7 +508,7 @@ async fn a_dropped_turn_discards_its_draft() {
 #[tokio::test]
 async fn cancelled_text_reconciles_to_the_terminal_commit() {
     let transport = ScriptedTransport::new([text_reply("partial")]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(Arc::new(MemoryStore::new()), &settings())
         .await
         .unwrap();
@@ -524,7 +528,7 @@ async fn cancelled_text_reconciles_to_the_terminal_commit() {
         capture.update(update);
     };
     let outcome = session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .observer(&observer)
         .cancellation_token(cancellation.clone())
         .run()
@@ -552,10 +556,10 @@ async fn parallel_results_keep_call_positions_when_completion_order_differs() {
             "[DONE]",
         ]),
     ]);
-    let target = yuke_ai::Target {
+    let model = model_of(yuke_ai::Target {
         wire: Wire::OpenaiChat(yuke_ai::ChatWire::default()),
         ..target()
-    };
+    });
     let tools = tools();
     let mut session = Session::create(Arc::new(MemoryStore::new()), &settings())
         .await
@@ -563,7 +567,7 @@ async fn parallel_results_keep_call_positions_when_completion_order_differs() {
     session.input().send(user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
-        .turn(Driver::new(&transport, &target, &NoWait).toolset(&tools))
+        .turn(Driver::new(&transport, &model, &NoWait).toolset(&tools))
         .observer(&capture)
         .run()
         .await
@@ -609,17 +613,17 @@ async fn reasoning_sections_reach_clients_without_provider_replay_state() {
         r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","encrypted_content":"private-replay"}}"#,
         r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
     ])]);
-    let target = yuke_ai::Target {
+    let model = model_of(yuke_ai::Target {
         wire: Wire::OpenaiResponses(yuke_ai::ResponsesWire::default()),
         ..target()
-    };
+    });
     let mut session = Session::create(Arc::new(MemoryStore::new()), &settings())
         .await
         .unwrap();
     session.input().send(user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .observer(&capture)
         .run()
         .await
@@ -674,7 +678,7 @@ async fn cancellation_omits_reasoning_but_retains_complete_calls_and_open_text()
         r#"{"type":"content_block_stop","index":1}"#,
         r#"{"type":"content_block_start","index":2,"content_block":{"type":"text","text":"partial"}}"#,
     ])]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(Arc::new(MemoryStore::new()), &settings())
         .await
         .unwrap();
@@ -695,7 +699,7 @@ async fn cancellation_omits_reasoning_but_retains_complete_calls_and_open_text()
     };
     assert_eq!(
         session
-            .turn(Driver::new(&transport, &target, &NoWait))
+            .turn(Driver::new(&transport, &model, &NoWait))
             .observer(&observer)
             .cancellation_token(cancellation.clone())
             .run()
@@ -713,14 +717,14 @@ async fn cancellation_omits_reasoning_but_retains_complete_calls_and_open_text()
 #[tokio::test]
 async fn an_uncertain_write_needs_journal_reload_not_a_predicted_receipt() {
     let store = FailingStore::new(StoreBehavior::FailAfterCommit(2));
-    let transport = ScriptedTransport::new([send_input_reply()]);
-    let target = target();
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")])]);
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     session.input().send(user_input("go")).await.unwrap();
     let capture = Capture::default();
     assert!(
         session
-            .turn(Driver::new(&transport, &target, &NoWait))
+            .turn(Driver::new(&transport, &model, &NoWait))
             .observer(&capture)
             .run()
             .await
@@ -772,10 +776,10 @@ async fn tool_argument_fragments_and_authoritative_arguments_both_reach_clients(
         ]),
         sse(&[r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#]),
     ]);
-    let target = yuke_ai::Target {
+    let model = model_of(yuke_ai::Target {
         wire: Wire::OpenaiResponses(yuke_ai::ResponsesWire::default()),
         ..target()
-    };
+    });
     let tools = tools();
     let mut session = Session::create(Arc::new(MemoryStore::new()), &settings())
         .await
@@ -783,7 +787,7 @@ async fn tool_argument_fragments_and_authoritative_arguments_both_reach_clients(
     session.input().send(user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
-        .turn(Driver::new(&transport, &target, &NoWait).toolset(&tools))
+        .turn(Driver::new(&transport, &model, &NoWait).toolset(&tools))
         .observer(&capture)
         .run()
         .await
@@ -837,7 +841,7 @@ async fn cancellation_before_or_after_completion_omits_empty_blocks_from_saved_p
             r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#,
             r#"{"type":"message_stop"}"#,
         ])]);
-        let target = target();
+        let model = model();
         let mut session = Session::create(Arc::new(MemoryStore::new()), &settings())
             .await
             .unwrap();
@@ -860,7 +864,7 @@ async fn cancellation_before_or_after_completion_omits_empty_blocks_from_saved_p
         };
         assert_eq!(
             session
-                .turn(Driver::new(&transport, &target, &NoWait))
+                .turn(Driver::new(&transport, &model, &NoWait))
                 .observer(&observer)
                 .cancellation_token(cancellation.clone())
                 .run()
@@ -892,15 +896,15 @@ async fn result_and_terminal_write_failures_invalidate_provisional_tool_state() 
         (StoreBehavior::FailCommit(5), vec![2, 3, 4, 5], false),
     ] {
         let store = FailingStore::new(behavior);
-        let transport = ScriptedTransport::new([send_input_reply(), text_reply("done")]);
-        let target = target();
+        let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")]), text_reply("done")]);
+        let model = model();
         let tools = tools();
         let mut session = Session::create(store.clone(), &settings()).await.unwrap();
         session.input().send(user_input("go")).await.unwrap();
         let capture = Capture::default();
         assert!(
             session
-                .turn(Driver::new(&transport, &target, &NoWait).toolset(&tools))
+                .turn(Driver::new(&transport, &model, &NoWait).toolset(&tools))
                 .observer(&capture)
                 .run()
                 .await
@@ -954,8 +958,8 @@ async fn result_and_terminal_write_failures_invalidate_provisional_tool_state() 
 async fn a_dropped_result_or_terminal_save_reports_an_unconfirmed_turn() {
     for (stall_at, saved_positions) in [(3, vec![(3, 0, 0)]), (5, vec![(3, 0, 0), (5, 0, 0)])] {
         let store = FailingStore::new(StoreBehavior::StallCommit(stall_at));
-        let transport = ScriptedTransport::new([send_input_reply(), text_reply("done")]);
-        let target = target();
+        let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")]), text_reply("done")]);
+        let model = model();
         let tools = tools();
         let mut session = Session::create(store, &settings()).await.unwrap();
         session.input().send(user_input("go")).await.unwrap();
@@ -963,7 +967,7 @@ async fn a_dropped_result_or_terminal_save_reports_an_unconfirmed_turn() {
         {
             let mut future = pin!(
                 session
-                    .turn(Driver::new(&transport, &target, &NoWait).toolset(&tools))
+                    .turn(Driver::new(&transport, &model, &NoWait).toolset(&tools))
                     .observer(&capture)
                     .run()
             );

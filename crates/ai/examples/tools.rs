@@ -18,7 +18,8 @@ const SCHEMA: &str = r#"{
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = std::env::var("OPENAI_API_KEY")?;
-    let target = yuke_ai::catalog::resolve("openai/gpt-6-astra", yuke_ai::route::Credential::ApiKey(key.into()))?;
+    let target = yuke_ai::catalog::resolve("openai/gpt-6-astra")?;
+    let credential = yuke_ai::route::Credential::ApiKey(key.into());
     let http = HttpTransport::new(HttpOptions::new("ai-example"))?;
     let tools = [ToolDefinition {
         name: "uppercase_ascii".to_owned(),
@@ -32,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )];
     let settings = Settings::new().max_output_tokens(4096).effort(Effort::Low);
     let request = Request::new(&context).tools(&tools).settings(&settings);
-    let first = yuke_ai::generate(&http, &target, request, Options::default())
+    let first = yuke_ai::generate(&http, &target, &credential, request, Options::default())
         .await?
         .completion;
 
@@ -50,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Send the tool results back, but don't allow another round of tool calls.
     let settings = settings.tool_choice(ToolChoice::None);
     let request = Request::new(&context).tools(&tools).settings(&settings);
-    let last = yuke_ai::generate(&http, &target, request, Options::default())
+    let last = yuke_ai::generate(&http, &target, &credential, request, Options::default())
         .await?
         .completion;
     println!("{}", last.text());

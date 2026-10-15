@@ -6,8 +6,9 @@ use yuke_ai::{Block, ToolCall, ToolResult};
 use yuke_engine::{
     CancellationToken, Driver, Hooks, Outcome, Tool, ToolContent, ToolContext, ToolDecision, Toolset, TurnEvent,
 };
+use yuke_testing::{NoWait, ScriptedTransport, model, text_reply, tool_reply};
 
-use crate::support::{NoWait, ScriptedTransport, block_on, definition, target, text_reply, tool_reply};
+use crate::support::{block_on, definition};
 
 /// A tool that answers each call with one fixed text.
 struct Answers(&'static str);
@@ -63,13 +64,11 @@ impl Hooks for ReplaceResult {
 #[test]
 fn after_tool_replaces_a_result_and_the_replacement_keeps_its_call_id() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "print", "{}")]), text_reply("done")]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("print"), Answers("printed")).unwrap();
     let hooks = ReplaceResult::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
     let result = result_in_context(driver);
 
@@ -98,13 +97,11 @@ impl Hooks for BlockAndCount {
 #[test]
 fn after_tool_does_not_run_for_a_blocked_call() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "print", "{}")]), text_reply("done")]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("print"), Answers("printed")).unwrap();
     let hooks = BlockAndCount::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
     let result = result_in_context(driver);
 
@@ -126,14 +123,12 @@ impl Hooks for CancelAfterTool {
 #[test]
 fn cancel_while_after_tool_waits_keeps_the_tool_result() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "print", "{}")])]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("print"), Answers("printed")).unwrap();
     let cancellation_token = CancellationToken::new();
     let hooks = CancelAfterTool(cancellation_token.clone());
-    let driver = Driver::new(&transport, &target, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
     let mut context = Vec::new();
 
     let outcome = block_on(

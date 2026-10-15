@@ -3,6 +3,6 @@ import type { Outcome } from "./Outcome";
 
 /**
  * How a turn ended, in a form that a journal can save. A failure keeps the text of its error, and
- * [`crate::TurnError::Model`] gives the caller the error itself.
+ * [`crate::TurnError::Round`] gives the caller the error itself.
  */
 export type TurnEnd = { "outcome": Outcome } | { "failed": string };

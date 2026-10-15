@@ -435,6 +435,7 @@ mod tests {
     use super::*;
     use crate::ToolResult;
     use crate::request::{Effort, OutputSchema, Settings, Thinking, ToolDefinition, Wire};
+    use crate::route::Credential;
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
 
     fn chat() -> Wire {
@@ -829,7 +830,7 @@ mod tests {
         };
 
         let result = crate::Encoder::new()
-            .encode(&target, Request::new(&blocks).tools(&tools))
+            .encode(&target, &Credential::None, Request::new(&blocks).tools(&tools))
             .map(|_| ());
 
         crate::testing::assert_same(result, Err(EncodeError::Unsupported(Unsupported::DeferredTool)));

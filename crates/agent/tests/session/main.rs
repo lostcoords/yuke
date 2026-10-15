@@ -1,6 +1,6 @@
 //! A session over a memory store: it opens again with its context, ends an open turn, keeps pending inputs,
 //! takes input during a turn, and opens again after a failed commit.
-#![expect(clippy::unwrap_used, clippy::expect_used, reason = "a test fails by panicking")]
+#![expect(clippy::unwrap_used, reason = "a test fails by panicking")]
 
 mod support;
 mod updates;
@@ -10,16 +10,14 @@ use std::sync::Arc;
 use std::pin::pin;
 use std::task::{Context, Waker};
 
-use support::{
-    FailingStore, NoWait, ScriptedTransport, SendsInput, Stalled, StoreBehavior, assert_in_order, consumed_inputs,
-    failed_reply, send_input_reply, settings, target, text_reply, user_input,
-};
+use support::{FailingStore, SendsInput, StoreBehavior, consumed_inputs, settings, user_input};
 use yuke_agent::{Access, MemoryStore, Session, SessionError, Store, StoreError};
 use yuke_ai::route::SessionHeader;
 use yuke_ai::transport::Header;
 use yuke_ai::{Block, Media, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::{Commit, Driver, Toolset};
 use yuke_protocol::{ConsumedInput, Input, InputId, InputSource, ModelReference, SessionSettings};
+use yuke_testing::{NoWait, ScriptedTransport, Stalled, assert_in_order, failed_reply, model, text_reply, tool_reply};
 
 /// A commit in the middle of a turn.
 fn step(blocks: &[Block]) -> Commit<'_> {
@@ -35,12 +33,12 @@ fn step(blocks: &[Block]) -> Commit<'_> {
 async fn a_session_that_opens_again_has_the_same_context() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("two")]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     session.input().send(user_input("one")).await.unwrap();
 
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .run()
         .await
         .unwrap();
@@ -57,12 +55,12 @@ async fn a_session_that_opens_again_has_the_same_context() {
 async fn a_session_keeps_its_lease_after_a_turn() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("two")]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     session.input().send(user_input("one")).await.unwrap();
 
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .run()
         .await
         .unwrap();
@@ -75,11 +73,11 @@ async fn a_session_keeps_its_lease_after_a_turn() {
 async fn a_turn_with_no_waiting_input_asks_the_model_nothing_and_saves_nothing() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("two")]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     let before = store.load(session.id(), None).await.unwrap().events;
 
-    let ran = session.turn(Driver::new(&transport, &target, &NoWait)).run().await;
+    let ran = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
 
     assert!(matches!(ran, Err(SessionError::NoInput)), "{ran:?}");
     assert_eq!(transport.requests(), Vec::<String>::new());
@@ -90,14 +88,14 @@ async fn a_turn_with_no_waiting_input_asks_the_model_nothing_and_saves_nothing()
 async fn a_session_keeps_its_lease_after_a_failed_request() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([failed_reply("cut")]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     session.input().send(user_input("one")).await.unwrap();
 
-    let failed = session.turn(Driver::new(&transport, &target, &NoWait)).run().await;
+    let failed = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
     let other_writer = store.open(session.id(), Access::Write).await;
 
-    assert!(matches!(failed, Err(SessionError::Model(_))), "{failed:?}");
+    assert!(matches!(failed, Err(SessionError::Round(_))), "{failed:?}");
     assert!(matches!(other_writer, Err(StoreError::Owned)), "{other_writer:?}");
 }
 
@@ -149,7 +147,7 @@ async fn an_open_turn_ends_with_an_error_result_for_each_call_without_a_result()
 async fn a_pending_input_waits_for_the_next_turn_after_an_open() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("two")]);
-    let target = target();
+    let model = model();
     let session = Session::create(store.clone(), &settings()).await.unwrap();
     let id = session.id();
     session.input().send(user_input("one")).await.unwrap();
@@ -159,7 +157,7 @@ async fn a_pending_input_waits_for_the_next_turn_after_an_open() {
     let before = store.open(id, Access::Read).await.unwrap();
     let pending = store.pending(id).await.unwrap();
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .run()
         .await
         .unwrap();
@@ -175,7 +173,7 @@ async fn a_pending_input_waits_for_the_next_turn_after_an_open() {
 async fn a_dropped_settings_write_leaves_the_next_turn_with_the_saved_settings() {
     let store = FailingStore::new(StoreBehavior::StallSettings);
     let transport = ScriptedTransport::new([text_reply("two")]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(store, &settings()).await.unwrap();
     let mut brief = settings();
     brief.settings = yuke_ai::Settings::new().system("Be brief.");
@@ -187,7 +185,7 @@ async fn a_dropped_settings_write_leaves_the_next_turn_with_the_saved_settings()
     session.input().send(user_input("one")).await.unwrap();
 
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .run()
         .await
         .unwrap();
@@ -200,15 +198,15 @@ async fn a_dropped_settings_write_leaves_the_next_turn_with_the_saved_settings()
 async fn a_turn_sends_the_settings_and_the_id_of_its_session() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("two")]);
-    let mut target = target();
-    target.route.session_header = SessionHeader::XOpencodeSession;
+    let mut model = model();
+    model.target.route.session_header = SessionHeader::XOpencodeSession;
     let mut session_settings = settings();
     session_settings.settings = yuke_ai::Settings::new().system("Be brief.");
     let mut session = Session::create(store, &session_settings).await.unwrap();
     session.input().send(user_input("one")).await.unwrap();
 
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .run()
         .await
         .unwrap();
@@ -226,7 +224,7 @@ async fn a_turn_sends_the_settings_and_the_id_of_its_session() {
 async fn a_turn_sends_the_bytes_of_its_media_from_the_store() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("seen")]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     let blob = store.put_blob(session.id(), b"image-bytes".to_vec()).await.unwrap();
     let input = vec![Block::user_text("look"), Block::Media(Media::new(blob, "image/png"))];
@@ -237,7 +235,7 @@ async fn a_turn_sends_the_bytes_of_its_media_from_the_store() {
         .unwrap();
 
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .run()
         .await
         .unwrap();
@@ -249,8 +247,8 @@ async fn a_turn_sends_the_bytes_of_its_media_from_the_store() {
 #[tokio::test]
 async fn input_that_arrives_during_a_turn_joins_the_next_request_and_stays_pending_no_more() {
     let store = Arc::new(MemoryStore::new());
-    let transport = ScriptedTransport::new([send_input_reply(), text_reply("done")]);
-    let target = target();
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")]), text_reply("done")]);
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     let mut toolset = Toolset::new();
     let tool = SendsInput {
@@ -271,7 +269,7 @@ async fn input_that_arrives_during_a_turn_joins_the_next_request_and_stays_pendi
     session.input().send(user_input("one")).await.unwrap();
 
     session
-        .turn(Driver::new(&transport, &target, &NoWait).toolset(&toolset))
+        .turn(Driver::new(&transport, &model, &NoWait).toolset(&toolset))
         .run()
         .await
         .unwrap();
@@ -287,14 +285,14 @@ async fn a_failed_commit_makes_the_next_turn_open_the_session_again() {
     // The second commit of a turn saves its answer.
     let store = FailingStore::new(StoreBehavior::FailCommit(2));
     let transport = ScriptedTransport::new([text_reply("lost"), text_reply("three")]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     session.input().send(user_input("one")).await.unwrap();
 
-    let failed = session.turn(Driver::new(&transport, &target, &NoWait)).run().await;
+    let failed = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
     session.input().send(user_input("two")).await.unwrap();
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .run()
         .await
         .unwrap();
@@ -322,13 +320,13 @@ async fn the_input_of_a_failed_commit_joins_the_next_turn_and_is_consumed_once()
     // The first commit of a turn saves its input, before any request.
     let store = FailingStore::new(StoreBehavior::FailCommit(1));
     let transport = ScriptedTransport::new([text_reply("two")]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     let input = session.input().send(user_input("one")).await.unwrap();
 
-    let failed = session.turn(Driver::new(&transport, &target, &NoWait)).run().await;
+    let failed = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .run()
         .await
         .unwrap();
@@ -352,7 +350,7 @@ async fn the_input_of_a_failed_commit_joins_the_next_turn_and_is_consumed_once()
 async fn the_model_reads_the_model_content_and_the_saved_record_keeps_what_the_user_saw() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("noted")]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     let source = InputSource::Plugin {
         name: "host:jobs".to_owned(),
@@ -368,7 +366,7 @@ async fn the_model_reads_the_model_content_and_the_saved_record_keeps_what_the_u
     let second = session.input().send(user_input("thanks")).await.unwrap();
 
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .run()
         .await
         .unwrap();
@@ -401,12 +399,12 @@ async fn the_model_reads_the_model_content_and_the_saved_record_keeps_what_the_u
 #[tokio::test]
 async fn a_dropped_turn_releases_the_lease_and_the_next_turn_opens_the_session_again() {
     let store = Arc::new(MemoryStore::new());
-    let target = target();
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     session.input().send(user_input("one")).await.unwrap();
 
     {
-        let mut run = pin!(session.turn(Driver::new(&Stalled, &target, &NoWait)).run());
+        let mut run = pin!(session.turn(Driver::new(&Stalled, &model, &NoWait)).run());
         // The turn saves its input, sends the request, and waits for the answer that never comes.
         let poll = run.as_mut().poll(&mut Context::from_waker(Waker::noop()));
         assert!(poll.is_pending());
@@ -414,7 +412,7 @@ async fn a_dropped_turn_releases_the_lease_and_the_next_turn_opens_the_session_a
     let other_writer = store.open(session.id(), Access::Write).await.map(drop);
     let transport = ScriptedTransport::new([text_reply("two")]);
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .run()
         .await
         .unwrap();
@@ -430,7 +428,7 @@ async fn a_dropped_turn_releases_the_lease_and_the_next_turn_opens_the_session_a
 async fn new_settings_give_their_event_number_and_a_removed_input_never_reaches_the_model() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("two")]);
-    let target = target();
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     let removed = session.input().send(user_input("removed")).await.unwrap();
     session.input().send(user_input("kept")).await.unwrap();
@@ -438,7 +436,7 @@ async fn new_settings_give_their_event_number_and_a_removed_input_never_reaches_
     let event_number = session.set_settings(settings()).await.unwrap();
     session.input().remove(removed).await.unwrap();
     session
-        .turn(Driver::new(&transport, &target, &NoWait))
+        .turn(Driver::new(&transport, &model, &NoWait))
         .run()
         .await
         .unwrap();
@@ -452,11 +450,11 @@ async fn new_settings_give_their_event_number_and_a_removed_input_never_reaches_
 #[tokio::test]
 async fn new_settings_after_a_dropped_turn_get_owned_while_another_writer_holds_the_session() {
     let store = Arc::new(MemoryStore::new());
-    let target = target();
+    let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
     session.input().send(user_input("one")).await.unwrap();
     {
-        let mut run = pin!(session.turn(Driver::new(&Stalled, &target, &NoWait)).run());
+        let mut run = pin!(session.turn(Driver::new(&Stalled, &model, &NoWait)).run());
         assert!(run.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
     }
     #[expect(

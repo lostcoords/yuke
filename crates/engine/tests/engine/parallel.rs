@@ -7,10 +7,9 @@ use yuke_engine::{
     CancellationToken, Concurrency, Driver, Hooks, Outcome, Tool, ToolContent, ToolContext, ToolDecision, Toolset,
     TurnEvent, parse_arguments,
 };
+use yuke_testing::{NoWait, ScriptedTransport, assert_in_order, model, text_reply, tool_reply};
 
-use crate::support::{
-    NoWait, ScriptedTransport, assert_in_order, block_on, definition, target, text_reply, tool_reply, yield_once,
-};
+use crate::support::{block_on, definition, yield_once};
 
 /// What the calls of a turn did, in order, and the most calls that ran at once.
 #[derive(Default)]
@@ -132,10 +131,10 @@ fn two_parallel_calls_run_together_and_each_output_names_its_call() {
         tool_reply(&[("c1", "read", r#"{"waits": 2}"#), ("c2", "read", r#"{"waits": 2}"#)]),
         text_reply("done"),
     ]);
-    let target = target();
+    let model = model();
     let log = Arc::new(Log::default());
     let toolset = toolset(&log);
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let outputs = Mutex::new(Vec::new());
 
     block_on(
@@ -167,10 +166,10 @@ fn a_serial_call_waits_for_the_group_before_it_and_runs_alone() {
         ]),
         text_reply("done"),
     ]);
-    let target = target();
+    let model = model();
     let log = Arc::new(Log::default());
     let toolset = toolset(&log);
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
     block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
 
@@ -197,10 +196,10 @@ fn results_go_back_in_call_order_when_the_finish_order_differs() {
         tool_reply(&[("c1", "read", r#"{"waits": 3}"#), ("c2", "read", r#"{"waits": 0}"#)]),
         text_reply("done"),
     ]);
-    let target = target();
+    let model = model();
     let log = Arc::new(Log::default());
     let toolset = toolset(&log);
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let finished = Mutex::new(Vec::new());
     let mut context = Vec::new();
 
@@ -233,16 +232,14 @@ fn every_before_tool_of_a_group_runs_before_any_call_of_the_group_starts() {
         tool_reply(&[("c1", "read", r#"{"waits": 1}"#), ("c2", "grep", r#"{"waits": 1}"#)]),
         text_reply("done"),
     ]);
-    let target = target();
+    let model = model();
     let log = Arc::new(Log::default());
     let toolset = toolset(&log);
     let hooks = LogHooks {
         log: Arc::clone(&log),
         cancel_at: None,
     };
-    let driver = Driver::new(&transport, &target, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
     block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
 
@@ -266,11 +263,11 @@ fn cancel_during_a_group_keeps_the_results_of_the_running_calls_and_runs_no_late
         ("c2", "read", r#"{"waits": 2}"#),
         ("c3", "edit", r#"{"waits": 1}"#),
     ])]);
-    let target = target();
+    let model = model();
     let log = Arc::new(Log::default());
     let toolset = toolset(&log);
     let cancellation_token = CancellationToken::new();
-    let driver = Driver::new(&transport, &target, &NoWait).toolset(&toolset);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let mut context = Vec::new();
 
     let outcome = block_on(
@@ -301,7 +298,7 @@ fn cancel_during_the_hooks_of_a_group_starts_no_call_of_the_group() {
         ("c1", "read", r#"{"waits": 1}"#),
         ("c2", "read", r#"{"waits": 1}"#),
     ])]);
-    let target = target();
+    let model = model();
     let log = Arc::new(Log::default());
     let toolset = toolset(&log);
     let cancellation_token = CancellationToken::new();
@@ -309,9 +306,7 @@ fn cancel_during_the_hooks_of_a_group_starts_no_call_of_the_group() {
         log: Arc::clone(&log),
         cancel_at: Some(("c2", cancellation_token.clone())),
     };
-    let driver = Driver::new(&transport, &target, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
     let mut context = Vec::new();
 
     let outcome = block_on(

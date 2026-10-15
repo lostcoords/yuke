@@ -7,7 +7,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::encoder::EncodeError;
-use crate::route::{Credential, Route};
+use crate::route::Route;
 
 /// The wire protocol of one endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -718,7 +718,7 @@ pub struct ResponsesWire {
     pub cache: bool,
 }
 
-/// Where and how one model is called. The caller supplies valid route and credential configuration.
+/// Where and how one model is called. The caller supplies a valid route, and the credential at each encode.
 /// The library applies every field as given: it reads no model capability and chooses no policy.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Target {
@@ -726,8 +726,6 @@ pub struct Target {
     pub model: Cow<'static, str>,
     /// Where the request goes.
     pub route: Route,
-    /// The secret the route presents.
-    pub credential: Credential,
     /// How the request is written for this host and model. Its variant selects the protocol.
     /// [`crate::catalog::Entry::bind`] derives it from the catalog.
     pub wire: Wire,
@@ -1101,7 +1099,6 @@ mod tests {
                     base_url: base_url.to_owned().into(),
                     ..Route::default()
                 },
-                credential: Credential::None,
                 wire: Wire::OpenaiChat(ChatWire::default()),
                 tool_search: false,
             }

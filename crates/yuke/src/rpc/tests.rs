@@ -13,7 +13,9 @@ use yuke_store::SqliteStore;
 
 use super::*;
 use crate::paths::Paths;
-use crate::testing::{PanicsOnce, ScriptedTransport, Stalled, text_reply, tool_reply};
+use yuke_testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
+
+use crate::testing::PanicsOnce;
 
 /// The folders of one test: the profile and the folder of its sessions.
 struct Place {
@@ -234,7 +236,7 @@ fn is_idle(message: &Value) -> bool {
 #[tokio::test]
 async fn an_input_starts_a_turn_and_the_client_sees_its_updates_in_order() {
     let place = Place::new("an_input_starts_a_turn_and_the_client_sees_its_updates_in_order");
-    let transport = ScriptedTransport::new(&[text_reply("hello")]);
+    let transport = ScriptedTransport::new([text_reply("hello")]);
     let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
     let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
 
@@ -273,7 +275,7 @@ async fn an_input_starts_a_turn_and_the_client_sees_its_updates_in_order() {
 #[tokio::test]
 async fn a_load_sends_the_saved_events_then_the_state_then_an_empty_answer() {
     let place = Place::new("a_load_sends_the_saved_events_then_the_state_then_an_empty_answer");
-    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new(&[text_reply("hello")]))).await;
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new([text_reply("hello")]))).await;
     let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
     client
         .request(
@@ -332,7 +334,7 @@ async fn a_running_session_refuses_new_settings_and_a_cancel_ends_its_turn() {
 #[tokio::test]
 async fn the_server_writes_the_system_prompt_of_a_new_session() {
     let place = Place::new("the_server_writes_the_system_prompt_of_a_new_session");
-    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new(&[]))).await;
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
     let mut settings = place.settings();
     settings["settings"]["system"] = json!("the prompt of the client");
 
@@ -349,7 +351,7 @@ async fn the_server_writes_the_system_prompt_of_a_new_session() {
 #[tokio::test]
 async fn a_request_before_initialize_an_unknown_method_and_no_json_get_errors() {
     let place = Place::new("a_request_before_initialize_an_unknown_method_and_no_json_get_errors");
-    let mut client = Client::start(&place, Box::new(ScriptedTransport::new(&[])));
+    let mut client = Client::start(&place, Box::new(ScriptedTransport::default()));
 
     let early = client.call("session/new", place.settings()).await;
     client
@@ -381,8 +383,8 @@ async fn a_request_before_initialize_an_unknown_method_and_no_json_get_errors() 
 #[tokio::test]
 async fn a_background_job_that_ends_sends_its_input_and_the_model_reads_it() {
     let place = Place::new("a_background_job_that_ends_sends_its_input_and_the_model_reads_it");
-    let transport = ScriptedTransport::new(&[
-        tool_reply("c1", "exec", r#"{"command":"echo done","background":true}"#),
+    let transport = ScriptedTransport::new([
+        tool_reply(&[("c1", "exec", r#"{"command":"echo done","background":true}"#)]),
         text_reply("started"),
         text_reply("noted"),
     ]);
@@ -498,7 +500,7 @@ async fn a_load_only_reads_and_waiting_input_blocks_new_settings() {
 async fn a_fork_that_has_no_credential_fails_and_leaves_no_session() {
     let place = Place::new("a_fork_that_has_no_credential_fails_and_leaves_no_session");
     let source = saved_session(&place, "anthropic", "claude-sonnet-4-5").await;
-    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new(&[]))).await;
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
 
     let forked = client.call("session/fork", json!({ "sessionId": source })).await;
     client.end().await;
@@ -575,7 +577,7 @@ async fn session_with_a_job(place: &Place) -> (Client, Value, ScriptedTransport)
         pid = pid.display()
     );
     let arguments = json!({ "command": command, "background": true }).to_string();
-    let transport = ScriptedTransport::new(&[tool_reply("c1", "exec", &arguments), text_reply("started")]);
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", "exec", &arguments)]), text_reply("started")]);
     let mut client = Client::initialized(place, Box::new(transport.clone())).await;
     let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
     client
@@ -635,8 +637,8 @@ async fn after_a_folder_change_the_tools_work_in_the_new_folder_and_stop_the_old
     settings["sessionId"] = session.clone();
     settings["cwd"] = json!(other);
     client.call("session/set_settings", settings).await.unwrap();
-    transport.push(tool_reply("c2", "stop", &json!({ "id": job }).to_string()));
-    transport.push(tool_reply("c3", "exec", r#"{"command":"pwd"}"#));
+    transport.push(tool_reply(&[("c2", "stop", &json!({ "id": job }).to_string())]));
+    transport.push(tool_reply(&[("c3", "exec", r#"{"command":"pwd"}"#)]));
     transport.push(text_reply("stopped"));
 
     client
@@ -751,8 +753,8 @@ async fn job_stop_waits_for_the_end_and_its_job_update_comes_first() {
 async fn job_updates_tell_the_start_and_the_end_before_the_end_input() {
     let place = Place::new("job_updates_tell_the_start_and_the_end_before_the_end_input");
     let arguments = json!({ "command": "exit 3", "background": true }).to_string();
-    let transport = ScriptedTransport::new(&[
-        tool_reply("c1", "exec", &arguments),
+    let transport = ScriptedTransport::new([
+        tool_reply(&[("c1", "exec", &arguments)]),
         text_reply("started"),
         text_reply("noted"),
     ]);
@@ -817,7 +819,7 @@ async fn a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends
     let (mut input, server_input) = tokio::io::duplex(1 << 16);
     // The client keeps its end of the output and never reads it, so the small pipe fills.
     let (server_output, _unread) = tokio::io::duplex(1 << 10);
-    let machine = place.machine(Box::new(ScriptedTransport::new(&[])));
+    let machine = place.machine(Box::new(ScriptedTransport::default()));
     let server = tokio::spawn(serve(machine, Duration::from_millis(100), server_input, server_output));
     let request = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
         "protocolVersion": 1, "clientInfo": { "name": "test", "version": "1" }
@@ -835,7 +837,7 @@ async fn a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends
 #[tokio::test]
 async fn a_panic_in_a_turn_ends_the_turn_and_a_load_runs_the_session_again() {
     let place = Place::new("a_panic_in_a_turn_ends_the_turn_and_a_load_runs_the_session_again");
-    let transport = PanicsOnce::new(&[text_reply("back")]);
+    let transport = PanicsOnce::new([text_reply("back")]);
     let mut client = Client::initialized(&place, Box::new(transport)).await;
     let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
     client

@@ -7,14 +7,12 @@ use async_trait::async_trait;
 use yuke_ai::transport::{BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 use yuke_ai::{Block, FinishReason, Target, ToolCall, ToolResult, Usage};
 use yuke_engine::{
-    Answer, CancellationToken, Commit, Driver, Hooks, Journal, Outcome, Replace, Replaced, RoundDecision, RoundPlan,
-    Tool, ToolContent, ToolContext, Toolset, TurnEnd, TurnError, TurnEvent,
+    Answer, CancellationToken, Commit, Driver, Hooks, Journal, Outcome, Replace, Replaced, RoundDecision, RoundError,
+    RoundPlan, Tool, ToolContent, ToolContext, Toolset, TurnEnd, TurnError, TurnEvent,
 };
+use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, model_of, target, text_reply, tool_reply};
 
-use crate::support::{
-    Batches, NoWait, Recorder, ScriptedTransport, block_on, definition, failed_reply, origin, target, text_reply,
-    tool_reply, yield_once,
-};
+use crate::support::{Batches, Recorder, block_on, definition, origin, yield_once};
 
 /// One saved commit.
 #[derive(Debug, Clone, PartialEq)]
@@ -88,12 +86,12 @@ fn the_commits_of_two_turns_replay_to_the_context_and_input_commits_before_its_r
         text_reply("done"),
         text_reply("second"),
     ]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let inbox = Batches::new([vec![Block::user_text("steer")]]);
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
+    let driver = Driver::new(&transport, &model, &NoWait)
         .toolset(&toolset)
         .inbox(&inbox)
         .journal(&journal);
@@ -132,11 +130,11 @@ impl Hooks for StopAfterRound {
 #[test]
 fn a_stopped_turn_ends_with_a_stopped_commit() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")])]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
+    let driver = Driver::new(&transport, &model, &NoWait)
         .toolset(&toolset)
         .hooks(&StopAfterRound)
         .journal(&journal);
@@ -152,14 +150,14 @@ fn a_stopped_turn_ends_with_a_stopped_commit() {
 #[test]
 fn a_failed_request_commits_an_end_after_its_input() {
     let transport = ScriptedTransport::new([failed_reply("cut")]);
-    let target = target();
+    let model = model();
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &target, &NoWait).journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait).journal(&journal);
     let mut context = Vec::new();
 
     let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
 
-    assert!(matches!(outcome, Err(TurnError::Model(_))));
+    assert!(matches!(outcome, Err(TurnError::Round(_))));
     assert_eq!(
         journal.shapes(),
         [(vec![Block::user_text("go")], None), (vec![], Some("failed"))]
@@ -170,12 +168,12 @@ fn a_failed_request_commits_an_end_after_its_input() {
 #[test]
 fn inbox_input_before_a_failed_request_commits_before_the_request() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), failed_reply("cut")]);
-    let target = target();
+    let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let inbox = Batches::new([vec![Block::user_text("steer")]]);
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
+    let driver = Driver::new(&transport, &model, &NoWait)
         .toolset(&toolset)
         .inbox(&inbox)
         .journal(&journal);
@@ -183,7 +181,7 @@ fn inbox_input_before_a_failed_request_commits_before_the_request() {
 
     let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
 
-    assert!(matches!(outcome, Err(TurnError::Model(_))));
+    assert!(matches!(outcome, Err(TurnError::Round(_))));
     assert_eq!(
         journal.shapes()[3..],
         [(vec![Block::user_text("steer")], None), (vec![], Some("failed"))]
@@ -201,9 +199,9 @@ fn a_cancel_during_the_stream_commits_the_partial_output_with_the_end() {
     .map(|json| format!("data: {json}\n\n"))
     .concat();
     let transport = ScriptedTransport::new([]).then_stall(partial);
-    let target = target();
+    let model = model();
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &target, &NoWait).journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait).journal(&journal);
     let mut context = Vec::new();
     let cancellation_token = CancellationToken::new();
 
@@ -246,7 +244,7 @@ impl Tool for CancelTurn {
 #[test]
 fn a_cancel_during_a_tool_commits_the_results_with_the_end() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "build", "{}"), ("c2", "echo", "{}")])]);
-    let target = target();
+    let model = model();
     let cancellation_token = CancellationToken::new();
     let mut toolset = Toolset::new();
     toolset
@@ -254,7 +252,7 @@ fn a_cancel_during_a_tool_commits_the_results_with_the_end() {
         .unwrap();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
+    let driver = Driver::new(&transport, &model, &NoWait)
         .toolset(&toolset)
         .journal(&journal);
     let mut context = Vec::new();
@@ -292,7 +290,7 @@ impl Tool for SeesItsCall {
 #[test]
 fn the_answer_is_saved_before_its_tool_runs() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
-    let target = target();
+    let model = model();
     let journal = Arc::new(Replay::default());
     let saw = Arc::new(Mutex::new(None));
     let tool = SeesItsCall {
@@ -301,7 +299,7 @@ fn the_answer_is_saved_before_its_tool_runs() {
     };
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), tool).unwrap();
-    let driver = Driver::new(&transport, &target, &NoWait)
+    let driver = Driver::new(&transport, &model, &NoWait)
         .toolset(&toolset)
         .journal(journal.as_ref());
 
@@ -318,12 +316,12 @@ struct SecondRoundTo {
 
 #[async_trait]
 impl Hooks for SecondRoundTo {
-    async fn before_round(&self, _: &[Block], _: Option<&yuke_ai::Error>) -> RoundPlan {
+    async fn before_round(&self, _: &[Block]) -> RoundPlan {
         if self.rounds.fetch_add(1, Ordering::Relaxed) != 1 {
             return RoundPlan::default();
         }
         RoundPlan {
-            target: Some(self.target.clone()),
+            model: Some(model_of(self.target.clone())),
             ..RoundPlan::default()
         }
     }
@@ -332,10 +330,10 @@ impl Hooks for SecondRoundTo {
 #[test]
 fn each_answer_commit_names_the_target_of_its_round_with_usage_and_finish_reason() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
-    let target = target();
+    let model = model();
     let other = Target {
         model: "other-model".into(),
-        ..target.clone()
+        ..target()
     };
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
@@ -344,7 +342,7 @@ fn each_answer_commit_names_the_target_of_its_round_with_usage_and_finish_reason
         rounds: AtomicUsize::new(0),
     };
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
+    let driver = Driver::new(&transport, &model, &NoWait)
         .toolset(&toolset)
         .hooks(&hooks)
         .journal(&journal);
@@ -399,7 +397,7 @@ fn a_failed_commit_ends_the_turn_before_the_next_step() {
     // The first save is the input, before the request. The second save is the answer, before the tool.
     for (saves, requests) in [(0, 0), (1, 1)] {
         let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("unused")]);
-        let target = target();
+        let model = model();
         let echo = Recorder::default();
         let mut toolset = Toolset::new();
         toolset.add(definition("echo"), echo.clone()).unwrap();
@@ -407,7 +405,7 @@ fn a_failed_commit_ends_the_turn_before_the_next_step() {
             saves,
             count: AtomicUsize::new(0),
         };
-        let driver = Driver::new(&transport, &target, &NoWait)
+        let driver = Driver::new(&transport, &model, &NoWait)
             .toolset(&toolset)
             .journal(&journal);
 
@@ -440,13 +438,13 @@ impl Journal for CancelDuringSave {
 #[test]
 fn a_cancel_during_a_commit_lets_the_commit_finish() {
     let transport = ScriptedTransport::new([text_reply("unused")]);
-    let target = target();
+    let model = model();
     let cancellation_token = CancellationToken::new();
     let journal = CancelDuringSave {
         cancellation_token: cancellation_token.clone(),
         replay: Replay::default(),
     };
-    let driver = Driver::new(&transport, &target, &NoWait).journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait).journal(&journal);
     let mut context = Vec::new();
 
     let outcome = block_on(
@@ -484,7 +482,7 @@ impl Summarize {
 
 #[async_trait]
 impl Hooks for Summarize {
-    async fn before_round(&self, _: &[Block], _: Option<&yuke_ai::Error>) -> RoundPlan {
+    async fn before_round(&self, _: &[Block]) -> RoundPlan {
         if self.rounds.fetch_add(1, Ordering::Relaxed) != 1 {
             return RoundPlan::default();
         }
@@ -510,12 +508,10 @@ fn a_replacement_commits_before_its_request_and_replays_to_the_new_context() {
         (&[], 1, 1, vec!["two", "second"]),
     ] {
         let transport = ScriptedTransport::new([text_reply("first"), text_reply("second")]);
-        let target = target();
+        let model = model();
         let hooks = Summarize::new(head, keep);
         let journal = Replay::default();
-        let driver = Driver::new(&transport, &target, &NoWait)
-            .hooks(&hooks)
-            .journal(&journal);
+        let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).journal(&journal);
         let mut context = Vec::new();
 
         block_on(driver.turn(&mut context, vec![Block::user_text("one")]).run()).unwrap();
@@ -546,35 +542,37 @@ struct SummarizeTwice {
 
 #[async_trait]
 impl Hooks for SummarizeTwice {
-    async fn before_round(&self, _: &[Block], failure: Option<&yuke_ai::Error>) -> RoundPlan {
+    async fn before_round(&self, _: &[Block]) -> RoundPlan {
         if self.rounds.fetch_add(1, Ordering::Relaxed) == 0 {
             return RoundPlan::default();
         }
-        // The retry keeps the first summary, the saved answer, and the input.
-        let (head, keep, target) = match failure {
-            None => ("s1", 2, None),
-            Some(_) => ("s2", 3, Some(target())),
-        };
-        RoundPlan {
-            replace: Some(Replace {
-                head: vec![Block::user_text(head)],
-                keep,
-            }),
-            target,
-            ..RoundPlan::default()
-        }
+        summary("s1", 2)
+    }
+
+    // The retry keeps the first summary, the saved answer, and the input.
+    async fn retry_round(&self, _: &[Block], _: &RoundError) -> Option<RoundPlan> {
+        Some(summary("s2", 3))
+    }
+}
+
+/// A plan that replaces the context with the summary `head` and the last `keep` blocks.
+fn summary(head: &str, keep: usize) -> RoundPlan {
+    RoundPlan {
+        replace: Some(Replace {
+            head: vec![Block::user_text(head)],
+            keep,
+        }),
+        ..RoundPlan::default()
     }
 }
 
 #[test]
 fn a_replacement_before_a_retried_round_replays_to_the_new_context() {
     let transport = ScriptedTransport::new([text_reply("first"), failed_reply("cut"), text_reply("second")]);
-    let target = target();
+    let model = model();
     let hooks = SummarizeTwice::default();
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
-        .hooks(&hooks)
-        .journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).journal(&journal);
     let mut context = Vec::new();
 
     block_on(driver.turn(&mut context, vec![Block::user_text("one")]).run()).unwrap();
@@ -619,9 +617,9 @@ fn each_request_opens_after_the_journal_saved_its_input_and_replacement() {
         journal: Arc::clone(&journal),
         seen: Mutex::default(),
     };
-    let target = target();
+    let model = model();
     let hooks = Summarize::new(&["summary"], 1);
-    let driver = Driver::new(&transport, &target, &NoWait)
+    let driver = Driver::new(&transport, &model, &NoWait)
         .hooks(&hooks)
         .journal(journal.as_ref());
     let mut context = Vec::new();
@@ -657,12 +655,10 @@ impl Hooks for ContinueOnce {
 #[test]
 fn continue_input_commits_before_its_request() {
     let transport = ScriptedTransport::new([text_reply("first"), text_reply("second")]);
-    let target = target();
+    let model = model();
     let hooks = ContinueOnce::default();
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &target, &NoWait)
-        .hooks(&hooks)
-        .journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).journal(&journal);
     let mut context = Vec::new();
 
     block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();

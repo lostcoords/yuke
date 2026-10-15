@@ -20,6 +20,7 @@ use yuke_ai::{
 };
 
 use crate::hooks::{Hooks, NoHooks, RoundDecision, ToolDecision};
+use crate::model::{Model, RoundError};
 use crate::search::{self, Declared, SearchMode};
 use crate::tool::{Concurrency, TOOL_CALL_NAME, ToolContext, Toolset};
 use crate::turn_state::{Action, CANCELLED_REASON, Commit, Outcome, TurnState, not_executed};
@@ -70,8 +71,8 @@ pub enum TurnEvent<'a> {
     },
 
     /// A round failed after its retries. The model events of the round came before it, and the context keeps none of
-    /// them. The driver then asks [`Hooks::before_round`] whether the round runs again.
-    RoundFailed(&'a yuke_ai::Error),
+    /// them. The driver then asks [`Hooks::retry_round`] whether the round runs again.
+    RoundFailed(&'a RoundError),
 
     /// An attempt failed, and the driver plans to send the same request again after `after`.
     RetryScheduled {
@@ -147,7 +148,7 @@ impl Inbox for NoInput {
 #[derive(Clone, Copy)]
 pub struct Driver<'a> {
     transport: &'a dyn Transport,
-    target: &'a Target,
+    model: &'a Model,
     timer: &'a dyn Timer,
     toolset: &'a Toolset,
     hooks: &'a dyn Hooks,
@@ -169,20 +170,20 @@ static NO_SETTINGS: Settings = Settings::new();
 impl fmt::Debug for Driver<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Driver")
-            .field("target", &self.target)
+            .field("model", &self.model)
             .field("toolset", &self.toolset)
             .finish_non_exhaustive()
     }
 }
 
 impl<'a> Driver<'a> {
-    /// A driver that sends to `target` through `transport`, and waits with `timer` before a retry. It offers no tools,
-    /// and it takes no input during a turn. Its hooks run each call and continue each round. They end each turn when
-    /// the model ends it.
-    pub fn new(transport: &'a dyn Transport, target: &'a Target, timer: &'a dyn Timer) -> Self {
+    /// A driver that sends to `model` through `transport`, and waits with `timer` before it sends an attempt again. It
+    /// offers no tools, and it takes no input during a turn. Its hooks run each call and continue each round. They end
+    /// each turn when the model ends it.
+    pub fn new(transport: &'a dyn Transport, model: &'a Model, timer: &'a dyn Timer) -> Self {
         Driver {
             transport,
-            target,
+            model,
             timer,
             toolset: &NO_TOOLS,
             hooks: &NoHooks,
@@ -432,8 +433,8 @@ impl<'a> Driver<'a> {
         }
     }
 
-    /// Send the request of one round. Ask [`Hooks::before_round`] for the plan first. After a failure, ask again, and
-    /// send the round again when the plan names a target.
+    /// Send the request of one round with the plan of [`Hooks::before_round`]. After a failure, [`Hooks::retry_round`]
+    /// decides whether the round runs again.
     async fn send_round(
         &self,
         turn_state: &mut TurnState<'_>,
@@ -442,62 +443,71 @@ impl<'a> Driver<'a> {
         observer: &dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> Result<Round, TurnError> {
-        let mut failure: Option<yuke_ai::Error> = None;
+        let cancelled = || Ok(Round::new(Sent::Cancelled(Vec::new()), &self.model.target));
+        let Raced::Done(mut plan) = race(
+            self.hooks.before_round(turn_state.context()),
+            pin!(cancellation_token.cancelled()),
+        )
+        .await
+        else {
+            return cancelled();
+        };
         loop {
-            let Raced::Done(mut plan) = race(
-                self.hooks.before_round(turn_state.context(), failure.as_ref()),
-                pin!(cancellation_token.cancelled()),
-            )
-            .await
-            else {
-                return Ok(Round::new(Sent::Cancelled(Vec::new()), self.target));
-            };
-            if let Some(error) = failure
-                && plan.target.is_none()
-            {
-                return Ok(Round::new(Sent::Finished(Err(error)), self.target));
-            }
             if let Some(replace) = plan.replace.take() {
                 self.save(&turn_state.replace(replace)).await?;
             }
-            let target = plan.target.as_ref().unwrap_or(self.target);
+            let model = plan.model.as_ref().unwrap_or(self.model);
             let settings = plan.settings.as_ref().unwrap_or(self.settings);
-            let tools = declared.tools(SearchMode::for_target(target));
+            let tools = declared.tools(SearchMode::for_target(&model.target));
             let mut request = Request::new(turn_state.context()).tools(tools).settings(settings);
             if let Some(session_id) = self.session_id {
                 request = request.session_id(session_id);
             }
-            match self.send(encoder, request, target, observer, cancellation_token).await {
-                Sent::Finished(Err(error)) => {
-                    observer.event(&TurnEvent::RoundFailed(&error));
-                    failure = Some(error);
-                }
-                sent => return Ok(Round::new(sent, target)),
-            }
+            let error = match self.send(encoder, request, model, observer, cancellation_token).await {
+                Sent::Finished(Err(error)) => error,
+                sent => return Ok(Round::new(sent, &model.target)),
+            };
+            observer.event(&TurnEvent::RoundFailed(&error));
+            let retry = race(
+                self.hooks.retry_round(turn_state.context(), &error),
+                pin!(cancellation_token.cancelled()),
+            )
+            .await;
+            plan = match retry {
+                Raced::Done(Some(plan)) => plan,
+                Raced::Done(None) => return Ok(Round::new(Sent::Finished(Err(error)), &model.target)),
+                Raced::Cancelled => return cancelled(),
+            };
         }
     }
 
-    /// Send `request` to `target`, and give each event of the reply to `observer`. If [`retry::decide`] permits a
-    /// retry, the driver waits with the caller's timer, then sends the same encoded bytes.
+    /// Send `request` to `model`, and give each event of the reply to `observer`. If [`retry::decide`] permits a retry,
+    /// wait with the caller's timer. Then send the request again with the credential of that moment.
     async fn send(
         &self,
         encoder: &mut Encoder,
         mut request: Request<'_>,
-        target: &Target,
+        model: &Model,
         observer: &dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> Sent {
         if let Some(blob_store) = self.blob_store {
             request = request.blobs(blob_store);
         }
-        let encoded = match encoder.encode(target, request) {
-            Ok(encoded) => encoded,
-            Err(error) => return Sent::Finished(Err(error.into())),
-        };
         // One waiter serves the whole request, so a stream event costs no new registration.
         let mut cancelled = pin!(cancellation_token.cancelled());
         let mut number = NonZeroU32::MIN;
         loop {
+            let credential = match race(model.source.credential(), cancelled.as_mut()).await {
+                Raced::Done(Ok(credential)) => credential,
+                Raced::Done(Err(error)) => return Sent::Finished(Err(RoundError::Credential(error.into()))),
+                Raced::Cancelled => return Sent::Cancelled(Vec::new()),
+            };
+            // A retry encodes again with its own credential. The context is unchanged, so no element encodes again.
+            let encoded = match encoder.encode(&model.target, &credential, request) {
+                Ok(encoded) => encoded,
+                Err(error) => return Sent::Finished(Err(yuke_ai::Error::from(error).into())),
+            };
             observer.event(&TurnEvent::ResponseStarted);
             let opened = race(
                 Reply::open(
@@ -537,7 +547,7 @@ impl<'a> Driver<'a> {
             observer.event(&TurnEvent::ResponseFailed(&error));
             // The reply sets `output_seen` when it yields a showable event, and the observer gets that event at once.
             let Some(delay) = retry::decide(self.retry_policy, &error, number, fastrand::f64()) else {
-                return Sent::Finished(Err(error.into()));
+                return Sent::Finished(Err(yuke_ai::Error::from(error).into()));
             };
 
             observer.event(&TurnEvent::RetryScheduled {
@@ -594,8 +604,8 @@ impl<'a> Turn<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`TurnError::Model`] when a request cannot be encoded, or when its last attempt fails. The context keeps
-    /// the blocks from before the failure. Returns [`TurnError::Commit`] when the journal fails to save a commit.
+    /// Returns [`TurnError::Round`] when a round fails and no hook sends it again. The context keeps the blocks from
+    /// before the failure. Returns [`TurnError::Commit`] when the journal fails to save a commit.
     pub async fn run(self) -> Result<Outcome, TurnError> {
         let Turn {
             driver,
@@ -694,7 +704,7 @@ impl<'a> Turn<'a> {
 
                 Action::Done { tail, result } => {
                     driver.save(&Commit::end(tail, result.as_ref())).await?;
-                    return result.map_err(TurnError::Model);
+                    return result.map_err(TurnError::Round);
                 }
             }
         }
@@ -717,8 +727,8 @@ struct Resolved<'c> {
 /// Why a turn failed.
 #[derive(Debug)]
 pub enum TurnError {
-    /// A request could not be encoded, or its last attempt failed. The context keeps the blocks from before the failure.
-    Model(yuke_ai::Error),
+    /// A round failed, and no hook sent it again. The context keeps the blocks from before the failure.
+    Round(RoundError),
 
     /// The journal did not confirm a commit. It can still have saved the commit. The context can hold blocks after the
     /// last confirmed commit, so the caller loads the context again from its store.
@@ -728,7 +738,7 @@ pub enum TurnError {
 impl fmt::Display for TurnError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Model(error) => fmt::Display::fmt(error, f),
+            Self::Round(error) => fmt::Display::fmt(error, f),
             // The text names no cause, because `source` returns it.
             Self::Commit(_) => f.write_str("the journal failed to save the turn"),
         }
@@ -739,7 +749,7 @@ impl std::error::Error for TurnError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             // The text is the text of the inner error, so the source is the source of the inner error.
-            Self::Model(error) => error.source(),
+            Self::Round(error) => error.source(),
             Self::Commit(error) => Some(error.as_ref()),
         }
     }
@@ -768,7 +778,7 @@ impl Round {
 /// How a request ended.
 enum Sent {
     /// The request finished with this result.
-    Finished(Result<Response, yuke_ai::Error>),
+    Finished(Result<Response, RoundError>),
     /// A cancel stopped the request. The output that the reply kept is here.
     Cancelled(Vec<Partial>),
 }

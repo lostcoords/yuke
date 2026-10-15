@@ -15,11 +15,15 @@ pub(crate) struct HeadText {
 }
 
 impl HeadText {
-    /// Copy the URL, the headers, and the origin of a request to `target`. Headers go in credential, identity,
-    /// route, and session order.
-    pub(crate) fn build(&mut self, target: &Target, session_id: Option<&str>) -> Result<(), EncodeError> {
+    /// Copy the URL, the headers, and the origin of a request to `target` with `credential`. Headers go in credential,
+    /// identity, route, and session order.
+    pub(crate) fn build(
+        &mut self,
+        target: &Target,
+        credential: &Credential,
+        session_id: Option<&str>,
+    ) -> Result<(), EncodeError> {
         let route = &target.route;
-        let credential = &target.credential;
         if route.credential_header.is_none() != matches!(credential, Credential::None) {
             return Err(EncodeError::CredentialMismatch);
         }
@@ -114,12 +118,11 @@ mod tests {
         let target = Target {
             model: "m".into(),
             route: route.clone(),
-            credential: credential.clone(),
             wire,
             tool_search: false,
         };
         let mut head = HeadText::default();
-        head.build(&target, session_id)?;
+        head.build(&target, credential, session_id)?;
         Ok(head)
     }
 
@@ -438,11 +441,10 @@ mod tests {
             let target = Target {
                 model: "m".into(),
                 route,
-                credential: Credential::None,
                 wire: Wire::OpenaiChat(ChatWire::default()),
                 tool_search: false,
             };
-            head.build(&target, None).unwrap();
+            head.build(&target, &Credential::None, None).unwrap();
             assert_eq!(head.headers, want);
         }
     }

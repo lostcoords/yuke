@@ -44,11 +44,14 @@ impl Timer for TokioTimer {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = std::env::var("MINIMAX_API_KEY")?;
-    let target = yuke_ai::catalog::resolve("minimax/MiniMax-M3", yuke_ai::route::Credential::ApiKey(key.into()))?;
+    let model = yuke_engine::Model {
+        target: yuke_ai::catalog::resolve("minimax/MiniMax-M3")?,
+        source: std::sync::Arc::new(yuke_ai::route::Credential::ApiKey(key.into())),
+    };
     let http = HttpTransport::new(HttpOptions::new("engine-example"))?;
 
     let settings = yuke_ai::Settings::new().system(SYSTEM);
-    let driver = Driver::new(&http, &target, &TokioTimer).settings(&settings);
+    let driver = Driver::new(&http, &model, &TokioTimer).settings(&settings);
     let mut context = Vec::new();
     let observer = PrintText;
 

@@ -171,6 +171,7 @@ mod tests {
     use crate::failure::ProviderKind;
     use crate::request::{Block, Protocol, Request, Role, ToolCall};
     use crate::response::{AttemptInfo, FinishReason, ResponseLimits, Usage};
+    use crate::route::Credential;
     use crate::testing::{
         CannedTransport, OVERLOAD_EVENT, block_on, canned_reply, completion, frame, generate_text, generate_with,
         target,
@@ -182,7 +183,11 @@ mod tests {
         let mut encoder = Encoder::new();
         let blocks = [Block::user_text("hello")];
         let encoded = encoder
-            .encode(&target(Protocol::AnthropicMessages), Request::new(&blocks))
+            .encode(
+                &target(Protocol::AnthropicMessages),
+                &Credential::None,
+                Request::new(&blocks),
+            )
             .unwrap();
         block_on(Reply::open(canned, &encoded, Options::default()))
     }

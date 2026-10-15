@@ -21,6 +21,7 @@ yuke-store = { path = "../store" }
 
 [dev-dependencies]
 bytes = "1.12"
+yuke-testing = { path = "../testing" }
 
 [lints]
 workspace = true

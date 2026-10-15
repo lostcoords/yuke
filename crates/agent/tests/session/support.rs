@@ -1,44 +1,20 @@
-//! A scripted transport, reply fixtures, and a store that fails a chosen commit.
+//! The fixtures that only the session tests use: settings, inputs, a tool that sends input, and a store that fails a
+//! chosen commit. The shared ones live in `yuke-testing`.
 
-use std::collections::VecDeque;
-use std::fmt::Write;
 use std::path::Path;
-use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use yuke_agent::{Access, InputSender, Loaded, MemoryStore, Opened, Store, StoreError};
-use yuke_ai::route::{Credential, Route};
-use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Header, Outgoing, Transport};
-use yuke_ai::{AnthropicWire, Block, Target, Wire};
-use yuke_engine::{Commit, Timer, Tool, ToolContent, ToolContext};
+use yuke_ai::Block;
+use yuke_engine::{Commit, Tool, ToolContent, ToolContext};
 use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, InputSource, ModelReference, PendingInput, SessionEvent, SessionId,
     SessionSettings,
 };
 
-/// An Anthropic target at a test host, with no credential.
-pub(crate) fn target() -> Target {
-    Target {
-        model: "test-model".into(),
-        route: Route {
-            base_url: "https://example.test/v1".into(),
-            ..Route::default()
-        },
-        credential: Credential::None,
-        wire: Wire::AnthropicMessages(AnthropicWire {
-            max_tokens: 64,
-            cache: false,
-        }),
-        tool_search: false,
-    }
-}
-
-/// Session settings for [`target`].
+/// Session settings for the shared test target.
 pub(crate) fn settings() -> SessionSettings {
     SessionSettings {
         model: ModelReference {
@@ -68,144 +44,6 @@ pub(crate) async fn consumed_inputs(store: &dyn Store, id: SessionId) -> Vec<Con
             SessionEvent::Settings(_) => Vec::new(),
         })
         .collect()
-}
-
-/// Assert that each of `texts` appears as a JSON string in `body`, in order.
-pub(crate) fn assert_in_order(body: &str, texts: &[&str]) {
-    let positions: Vec<Option<usize>> = texts.iter().map(|text| body.find(&format!("\"{text}\""))).collect();
-    assert!(positions.iter().all(Option::is_some), "{body}");
-    assert!(positions.is_sorted(), "{body}");
-}
-
-/// One complete Anthropic text answer, as SSE.
-pub(crate) fn text_reply(text: &str) -> String {
-    let delta =
-        format!(r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{text}"}}}}"#);
-    sse(&[
-        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,
-        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
-        &delta,
-        r#"{"type":"content_block_stop","index":0}"#,
-        r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#,
-        r#"{"type":"message_stop"}"#,
-    ])
-}
-
-/// An Anthropic answer that streams `text`, then fails with an overload error, as SSE. The output before the error
-/// stops a retry, so the request fails at once.
-pub(crate) fn failed_reply(text: &str) -> String {
-    let delta =
-        format!(r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{text}"}}}}"#);
-    sse(&[
-        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,
-        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
-        &delta,
-        r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
-    ])
-}
-
-/// A complete Anthropic SSE answer that requests the `send` tool with no arguments.
-pub(crate) fn send_input_reply() -> String {
-    sse(&[
-        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,
-        r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"c1","name":"send","input":{}}}"#,
-        r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}"#,
-        r#"{"type":"content_block_stop","index":0}"#,
-        r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}"#,
-        r#"{"type":"message_stop"}"#,
-    ])
-}
-
-/// `events` as one SSE body: each event is the data of one message.
-pub(crate) fn sse(events: &[&str]) -> String {
-    let mut output = String::new();
-    for event in events {
-        write!(output, "data: {event}\n\n").unwrap();
-    }
-    output
-}
-
-/// Answer each open with the next scripted reply, and record each request body.
-#[derive(Debug, Default)]
-pub(crate) struct ScriptedTransport {
-    replies: Mutex<VecDeque<String>>,
-    requests: Mutex<Vec<String>>,
-    headers: Mutex<Vec<Vec<Header>>>,
-}
-
-impl ScriptedTransport {
-    pub(crate) fn new(replies: impl IntoIterator<Item = String>) -> Self {
-        ScriptedTransport {
-            replies: Mutex::new(replies.into_iter().collect()),
-            requests: Mutex::default(),
-            headers: Mutex::default(),
-        }
-    }
-
-    /// The request bodies, in send order.
-    pub(crate) fn requests(&self) -> Vec<String> {
-        self.requests.lock().unwrap().clone()
-    }
-
-    /// The headers of each request, in send order.
-    pub(crate) fn headers(&self) -> Vec<Vec<Header>> {
-        self.headers.lock().unwrap().clone()
-    }
-}
-
-impl Transport for ScriptedTransport {
-    fn open<'a>(
-        &'a self,
-        request: &'a Outgoing<'_>,
-        _: Option<Instant>,
-    ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
-        let body = String::from_utf8(request.body().flatten().copied().collect()).unwrap();
-        self.requests.lock().unwrap().push(body);
-        self.headers.lock().unwrap().push(request.headers().to_vec());
-        let reply = self
-            .replies
-            .lock()
-            .unwrap()
-            .pop_front()
-            .expect("the script has no reply left");
-        let body: BoxBody = Box::pin(OneChunk(Some(Bytes::from(reply))));
-        Box::pin(std::future::ready(Ok((Head::new(200), body))))
-    }
-}
-
-/// A transport whose answer never ends, as a provider that holds its stream open. It is also the body of that answer.
-#[derive(Debug)]
-pub(crate) struct Stalled;
-
-impl Transport for Stalled {
-    fn open<'a>(&'a self, _: &'a Outgoing<'_>, _: Option<Instant>) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
-        let body: BoxBody = Box::pin(Stalled);
-        Box::pin(std::future::ready(Ok((Head::new(200), body))))
-    }
-}
-
-impl Body for Stalled {
-    fn poll_chunk(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Result<Bytes, Fault>>> {
-        Poll::Pending
-    }
-}
-
-/// A body of one chunk.
-#[derive(Debug)]
-struct OneChunk(Option<Bytes>);
-
-impl Body for OneChunk {
-    fn poll_chunk(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Result<Bytes, Fault>>> {
-        Poll::Ready(self.0.take().map(Ok))
-    }
-}
-
-/// A timer whose waits end at once.
-pub(crate) struct NoWait;
-
-#[async_trait]
-impl Timer for NoWait {
-    async fn sleep(&self, _: Duration) {}
 }
 
 /// A tool that sends one input to its session, and answers "sent".

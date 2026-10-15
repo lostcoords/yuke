@@ -282,6 +282,7 @@ mod tests {
     use crate::encoder::Encoder;
     use crate::request::OriginRef;
     use crate::request::{Block, Origin, Request};
+    use crate::route::Credential;
     use crate::testing::{CannedTransport, OVERLOAD_EVENT, block_on, canned_reply, frame, target};
     use crate::transport::{Fault, Outgoing};
     use testing::read_trace;
@@ -462,7 +463,9 @@ mod tests {
         let canned = CannedTransport::new(thinking_reply);
         let target = target(Protocol::AnthropicMessages);
         let blocks = [Block::user_text("hello")];
-        let encoded = encoder.encode(&target, Request::new(&blocks)).unwrap();
+        let encoded = encoder
+            .encode(&target, &Credential::None, Request::new(&blocks))
+            .unwrap();
         // A retry opens the same bytes with no second encode.
         let mut first = block_on(Stream::open(&canned, &encoded, Options::default()));
         while block_on(first.next()).is_some() {}
@@ -474,7 +477,9 @@ mod tests {
         };
         let long = "new".repeat(10_000);
         let blocks = [Block::user_text(&long)];
-        encoder.encode(&other, Request::new(&blocks)).unwrap();
+        encoder
+            .encode(&other, &Credential::None, Request::new(&blocks))
+            .unwrap();
         let mut origin = None;
         while let Some(event) = block_on(stream.next()) {
             if let Event::BlockStopped(stopped) = event.unwrap()
