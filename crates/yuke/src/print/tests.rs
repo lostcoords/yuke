@@ -12,7 +12,7 @@ use yuke_store::SqliteStore;
 use super::*;
 use crate::app::Variable;
 use crate::paths::Paths;
-use yuke_testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
+use yuke_testing::{ScriptedTransport, Stalled, assert_in_order, text_reply, tool_reply};
 
 use crate::testing::{Answers, Rejecting};
 
@@ -457,6 +457,30 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
     );
     assert_eq!(settings[2].settings.reasoning, yuke_ai::ReasoningSettings::default());
     assert_eq!(settings[2].settings.system, settings[0].settings.system);
+}
+
+#[tokio::test]
+async fn a_new_model_on_a_continued_session_also_answers_the_input_that_waits() {
+    let place = Place::new("waiting_input");
+    let first = run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])
+        .await
+        .0
+        .unwrap();
+    // The store holds an input that waits, as a failed run leaves it.
+    let waiting =
+        yuke_protocol::Input::new(yuke_protocol::InputSource::User, vec![Block::user_text("Waits.")]).unwrap();
+    place.store().await.accept_input(first.session, waiting).await.unwrap();
+    let model = Task {
+        model: Some("minimax/MiniMax-M2.7".to_owned()),
+        ..task("Next.", SessionChoice::Newest)
+    };
+
+    let (finished, requests) = run_with(&place, &model, &[text_reply("Two.")]).await;
+
+    assert_eq!(finished.unwrap().end, completed());
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].contains(r#""model":"MiniMax-M2.7""#), "{}", requests[0]);
+    assert_in_order(&requests[0], &["Waits.", "Next."]);
 }
 
 #[tokio::test]

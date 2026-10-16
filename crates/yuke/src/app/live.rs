@@ -16,7 +16,7 @@ use yuke_protocol::{
     SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
-use super::{AppError, Observer, SOURCE, Shared, TokioTimer, canonical, describe, lock, model_of, warn};
+use super::{AppError, Observer, SOURCE, Shared, TokioTimer, describe, lock, model_of, save_settings, warn};
 
 /// The source of the input that a background job sends when it ends.
 const JOBS_SOURCE: &str = "host:jobs";
@@ -132,7 +132,7 @@ impl LiveSession {
 
     /// Save `settings`. It fails while a turn runs or input waits, and it never waits for a turn. The session keeps its
     /// system prompt.
-    pub(super) async fn set_settings(&self, mut settings: SessionSettings) -> Result<(), AppError> {
+    pub(super) async fn set_settings(&self, settings: SessionSettings) -> Result<(), AppError> {
         let Ok(mut session) = self.session.try_lock() else {
             return Err(AppError::Busy);
         };
@@ -149,21 +149,8 @@ impl LiveSession {
         if session.is_stale() {
             recover(&mut session, &self.inbox.output).await?;
         }
-        settings.settings.system.clone_from(&session.settings().settings.system);
-        settings.cwd = canonical(settings.cwd).await?;
-        // The model comes first, so a model that cannot run saves no settings.
-        model_of(&settings, &self.shared)?;
-        let event_number = session
-            .set_settings(settings.clone())
-            .await
-            .map_err(|error| match error {
-                SessionError::Store(error) => AppError::Store(error),
-                error => AppError::Internal(describe(&error)),
-            })?;
-        self.inbox.output.publish(SessionUpdate::Saved(StoredEvent {
-            event_number,
-            event: SessionEvent::Settings(settings),
-        }));
+        let saved = save_settings(&mut session, settings, &self.shared).await?;
+        self.inbox.output.publish(SessionUpdate::Saved(saved));
         Ok(())
     }
 

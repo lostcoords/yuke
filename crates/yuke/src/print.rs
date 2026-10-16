@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::Notify;
-use yuke_agent::{Session, StoreError};
+use yuke_agent::StoreError;
 use yuke_ai::catalog::{Entry, ReasoningLevel};
 use yuke_ai::{Block, Role};
 use yuke_engine::{CancellationToken, Outcome, TurnEnd};
@@ -15,7 +15,7 @@ use yuke_protocol::{
     SessionState, SessionUpdate, StoredEvent,
 };
 
-use crate::app::{App, Jobs, Machine, Observer, describe, lock, warn};
+use crate::app::{App, AppError, Jobs, Machine, Observer, describe, lock, warn};
 use crate::config::Config;
 use crate::providers::Providers;
 
@@ -160,32 +160,30 @@ fn new_settings(task: &Task, providers: &Providers, selector: &str, cwd: &Path) 
 /// Open session `id` in `app`. A model or a level of `task` replaces the one of the session with a settings event; a
 /// new model without a level takes the default level.
 async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<SessionId, String> {
-    let mut session = Session::open(Arc::clone(app.store()), id)
-        .await
-        .map_err(|error| match error {
-            StoreError::NotFound => format!("no session has the id {id}"),
-            other => describe(&other),
-        })?;
-    if task.model.is_some() || task.reasoning.is_some() {
-        let mut settings = session.settings().clone();
+    let changed = |saved: &SessionSettings, providers: &Providers| {
+        if task.model.is_none() && task.reasoning.is_none() {
+            return Ok(None);
+        }
         let selector = match &task.model {
             Some(model) => model.clone(),
-            None => format!("{}/{}", settings.model.provider, settings.model.model),
+            None => format!("{}/{}", saved.model.provider, saved.model.model),
         };
-        let entry = app
-            .providers()
+        let entry = providers
             .lookup(&selector)
-            .map_err(|error| format!("{selector}: {error}"))?;
+            .map_err(|error| AppError::Invalid(format!("{selector}: {error}")))?;
+        let mut settings = saved.clone();
         settings.model = ModelReference {
             provider: entry.provider.id.to_string(),
             model: entry.model.id.to_string(),
         };
-        settings.settings.reasoning = reasoning(&entry, task.reasoning)?;
-        // The credential comes first, so a model that cannot run saves no settings.
-        app.check_model(&settings).map_err(|error| describe(&error))?;
-        session.set_settings(settings).await.map_err(|error| describe(&error))?;
+        settings.settings.reasoning = reasoning(&entry, task.reasoning).map_err(AppError::Invalid)?;
+        Ok(Some(settings))
+    };
+    match app.open(id, changed).await {
+        Ok(()) => Ok(id),
+        Err(AppError::Store(StoreError::NotFound)) => Err(format!("no session has the id {id}")),
+        Err(error) => Err(describe(&error)),
     }
-    app.open(session).await.map_err(|error| describe(&error))
 }
 
 /// The reasoning settings of `level` on the model of `entry`. No level leaves the default of the endpoint.

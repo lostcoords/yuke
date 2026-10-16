@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use yuke_agent::{Session, Store, StoreError};
+use yuke_agent::{Session, SessionError, Store, StoreError};
 use yuke_ai::Block;
 use yuke_ai::catalog::Auth;
 use yuke_ai::oauth::Flow;
@@ -26,8 +26,8 @@ use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CredentialSource, Model, Timer};
 use yuke_js::{Fault, Limits, Options, Processes, Runtime};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InputSource, Job, NoticeLevel, NoticeParams, ServerNotification, SessionId,
-    SessionSettings,
+    EventNumber, Input, InputId, InputSource, Job, NoticeLevel, NoticeParams, ServerNotification, SessionEvent,
+    SessionId, SessionSettings, StoredEvent,
 };
 use yuke_store::SqliteStore;
 
@@ -185,7 +185,7 @@ impl App {
     /// # Errors
     ///
     /// Returns [`AppError::Invalid`] for an unknown model, a missing API key, or a provider with no login flow.
-    pub(crate) fn check_model(&self, settings: &SessionSettings) -> Result<(), AppError> {
+    fn check_model(&self, settings: &SessionSettings) -> Result<(), AppError> {
         model_of(settings, &self.shared).map(drop)
     }
 
@@ -218,13 +218,29 @@ impl App {
         self.start_new(session).await
     }
 
-    /// Open `session`, which the caller opened from the store. An open alone runs no turn.
+    /// Open session `id`, which is not open. `change` gets the saved settings and the providers, and it can return new
+    /// settings. The app saves them before the session starts, so a waiting input runs with them. An open runs no turn
+    /// and sends no update. [`App::load`] sends the saved events.
     ///
     /// # Errors
     ///
-    /// Returns [`AppError::Invalid`] for a model that cannot run.
-    pub(crate) async fn open(&mut self, session: Session) -> Result<SessionId, AppError> {
-        self.check_model(session.settings())?;
+    /// Returns [`AppError::Store`] when the store fails. Returns [`AppError::Invalid`] for an open session or a model
+    /// that cannot run. Returns the error of `change` as it is.
+    pub(crate) async fn open(
+        &mut self,
+        id: SessionId,
+        change: impl FnOnce(&SessionSettings, &Providers) -> Result<Option<SessionSettings>, AppError>,
+    ) -> Result<(), AppError> {
+        if self.sessions.contains_key(&id) {
+            return Err(AppError::Invalid(format!("the session {id} is open already")));
+        }
+        let mut session = Session::open(Arc::clone(&self.shared.store), id)
+            .await
+            .map_err(AppError::Store)?;
+        match change(session.settings(), &self.shared.providers)? {
+            Some(settings) => drop(save_settings(&mut session, settings, &self.shared).await?),
+            None => self.check_model(session.settings())?,
+        }
         self.start_session(session).await
     }
 
@@ -236,10 +252,7 @@ impl App {
     /// Returns [`AppError::Store`] when the store fails, and [`AppError::Invalid`] for a model that cannot run.
     pub(crate) async fn load(&mut self, id: SessionId, after: Option<EventNumber>) -> Result<(), AppError> {
         if !self.sessions.contains_key(&id) {
-            let session = Session::open(Arc::clone(&self.shared.store), id)
-                .await
-                .map_err(AppError::Store)?;
-            self.open(session).await?;
+            self.open(id, |_, _| Ok(None)).await?;
         }
         self.live(id)?.load(after).await
     }
@@ -352,20 +365,26 @@ impl App {
     /// cannot run stays in the store.
     async fn start_new(&mut self, session: Session) -> Result<SessionId, AppError> {
         let id = session.id();
-        // A failed open drops the session, so its lease is free before the delete.
-        let started = self.open(session).await;
+        // The drop frees the lease of the session, and the delete refuses a session with a lease.
+        let started = match self.check_model(session.settings()) {
+            Ok(()) => self.start_session(session).await,
+            Err(error) => {
+                drop(session);
+                Err(error)
+            }
+        };
         if started.is_err() {
             self.shared.store.delete_session(id).await.map_err(AppError::Store)?;
         }
-        started
+        started.map(|()| id)
     }
 
-    /// Start the task of `session`, and answer its id.
-    async fn start_session(&mut self, session: Session) -> Result<SessionId, AppError> {
+    /// Start the task of `session`.
+    async fn start_session(&mut self, session: Session) -> Result<(), AppError> {
         let id = session.id();
         let live = LiveSession::start(session, &self.runtime, Arc::clone(&self.shared)).await?;
         self.sessions.insert(id, live);
-        Ok(id)
+        Ok(())
     }
 
     /// The open session `id`.
@@ -459,6 +478,31 @@ fn model_of(settings: &SessionSettings, shared: &Shared) -> Result<Model, AppErr
         .bind()
         .map_err(|error| AppError::Invalid(format!("{}/{}: {error}", provider.id, entry.model.id)))?;
     Ok(Model { target, source })
+}
+
+/// Save `settings` in `session`, and return the saved event. The settings keep the system prompt of the session. A new
+/// folder is saved without links, and the saved folder stays as it is. A model that cannot run saves nothing.
+async fn save_settings(
+    session: &mut Session,
+    mut settings: SessionSettings,
+    shared: &Shared,
+) -> Result<StoredEvent, AppError> {
+    settings.settings.system.clone_from(&session.settings().settings.system);
+    if settings.cwd != session.settings().cwd {
+        settings.cwd = canonical(settings.cwd).await?;
+    }
+    model_of(&settings, shared)?;
+    let event_number = session
+        .set_settings(settings.clone())
+        .await
+        .map_err(|error| match error {
+            SessionError::Store(error) => AppError::Store(error),
+            error => AppError::Internal(describe(&error)),
+        })?;
+    Ok(StoredEvent {
+        event_number,
+        event: SessionEvent::Settings(settings),
+    })
 }
 
 /// `folder` without links. It must be a folder.
