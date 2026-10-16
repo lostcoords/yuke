@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        default: ''
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  packages:
+    name: Packages
+    uses: ./.github/workflows/packages.yml
+    with:
+      tag: ${{ inputs.tag || '' }}
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+
+      - name: Check formatting
+        run: mise exec -- cargo fmt --all -- --check
+
+      - name: Check Clippy
+        if: ${{ !cancelled() }}
+        run: mise exec -- cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
+
+      - name: Check TypeScript
+        if: ${{ !cancelled() }}
+        run: mise exec -- tsc -p crates/js/tsconfig.json
+
+      - name: Check TypeScript format and lint
+        if: ${{ !cancelled() }}
+        run: mise exec -- biome ci --error-on-warnings
+
+      - name: Test distribution tools
+        if: ${{ !cancelled() }}
+        run: |
+          mise exec -- python3 tools/test-builder.py
+          mise exec -- python3 tools/test-release.py
+
+  test:
+    name: Test (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+          - platform: macos
+            runner: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+
+      - name: Test all features
+        run: mise exec -- cargo test --workspace --locked --all-features
+
+      # Other workspace members can enable yuke-ai's default transport through their test dependencies.
+      - name: Test yuke-ai without default features
+        if: ${{ !cancelled() }}
+        run: mise exec -- cargo test --package yuke-ai --locked --no-default-features
+
+  catalog:
+    name: Catalog generator
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+
+      - name: Test catalog generation
+        run: mise exec -- bash crates/ai/scripts/test-cataloggen.sh

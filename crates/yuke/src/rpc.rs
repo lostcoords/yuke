@@ -177,7 +177,7 @@ impl Server {
                     agent_info: Implementation {
                         name: "yuke".to_owned(),
                         title: None,
-                        version: env!("CARGO_PKG_VERSION").to_owned(),
+                        version: env!("YUKE_VERSION").to_owned(),
                     },
                 })
             }

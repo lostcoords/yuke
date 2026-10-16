@@ -1,0 +1,78 @@
+name: Release Nightly
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-nightly
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+      commit: ${{ steps.check.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - name: Require successful CI at the current main commit
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: mise exec -- python3 tools/release.py nightly-ready --commit "${RELEASE_COMMIT}"
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.skip == 'false'
+    uses: ./.github/workflows/packages.yml
+    with:
+      revision: ${{ needs.prepare.outputs.commit }}
+      nightly: true
+
+  publish:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.skip == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: dist
+      - name: Publish the four tested nightly archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: mise exec -- python3 tools/release.py publish --commit "${RELEASE_COMMIT}" --tag nightly --directory dist

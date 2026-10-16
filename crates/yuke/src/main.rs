@@ -40,8 +40,8 @@ const DRAIN_LIMIT: Duration = Duration::from_secs(5);
 #[derive(Debug, Parser)]
 #[command(
     name = "yuke",
-    version,
-    about = "A coding agent. Without -p or --rpc, yuke starts the terminal interface.",
+    version = env!("YUKE_VERSION"),
+    about = "A coding agent. Run one task with -p or serve the protocol with --rpc.",
     args_conflicts_with_subcommands = true
 )]
 struct Cli {
@@ -303,7 +303,7 @@ async fn run_here(task: &Task, cancellation_token: CancellationToken) -> Result<
 fn machine() -> Result<Machine, String> {
     let home = std::env::home_dir().filter(|home| home.is_absolute());
     let paths = Paths::of(&|name| std::env::var_os(name), home.as_deref())?;
-    let http = yuke_ai::HttpTransport::new(yuke_ai::HttpOptions::new(concat!("yuke/", env!("CARGO_PKG_VERSION"))))
+    let http = yuke_ai::HttpTransport::new(yuke_ai::HttpOptions::new(concat!("yuke/", env!("YUKE_VERSION"))))
         .map_err(|error| describe(&error))?;
     let http = Arc::new(http);
     Ok(Machine {

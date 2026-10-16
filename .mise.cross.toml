@@ -1,0 +1,3 @@
+[tools]
+# Only Linux package builds need the container tool. Normal workspace checks do not.
+"cargo:https://github.com/cross-rs/cross" = { version = "rev:526d03ddcd2f70e683074b3ea6f75ed300f33132", crate = "cross", locked = true }

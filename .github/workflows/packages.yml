@@ -1,0 +1,97 @@
+name: Packages
+
+on:
+  workflow_call:
+    inputs:
+      revision:
+        type: string
+        default: ''
+      nightly:
+        type: boolean
+        default: false
+      tag:
+        type: string
+        default: ''
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            test: true
+          # Both pinned cross images contain x86-64 host tools.
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04
+            test: false
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            test: true
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            test: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+
+      - name: Build the package
+        env:
+          PACKAGE_TARGET: ${{ matrix.target }}
+          PACKAGE_NIGHTLY: ${{ inputs.nightly }}
+          PACKAGE_TAG: ${{ inputs.tag }}
+        run: |
+          args=(--target "${PACKAGE_TARGET}" --require-clean)
+          if [ "${PACKAGE_NIGHTLY}" = true ]; then args+=(--nightly); fi
+          if [ -n "${PACKAGE_TAG}" ]; then args+=(--tag "${PACKAGE_TAG}"); fi
+          mise exec -- python3 tools/package.py "${args[@]}"
+
+      - name: Test the package on its native architecture
+        if: matrix.test
+        run: mise exec -- python3 tools/test-package.py target/packages/*.tar.gz
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ${{ matrix.test && 'package' || 'unverified-package' }}-${{ matrix.target }}
+          path: target/packages/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  test-arm64:
+    name: Test (aarch64-unknown-linux-musl)
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: unverified-package-aarch64-unknown-linux-musl
+          path: target/packages
+
+      - name: Test the package on its native architecture
+        run: mise exec -- python3 tools/test-package.py target/packages/*.tar.gz
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: package-aarch64-unknown-linux-musl
+          path: target/packages/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

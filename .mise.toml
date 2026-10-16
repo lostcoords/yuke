@@ -4,3 +4,19 @@ rust = { version = "1.99.0", components = "clippy,rustfmt,rust-docs,rust-analyze
 "github:microsoft/TypeScript" = { version = "7.0.2", bin_path = "lib", strip_components = 1 }
 # Biome checks the format and the lint rules of the TypeScript. It is one static binary.
 biome = "2.5.15"
+
+[tasks.package]
+description = "Build an installation archive with its library files"
+run = "python3 tools/package.py"
+
+[tasks."package:test"]
+description = "Test a package and its installer with an isolated home"
+run = "python3 tools/test-package.py"
+
+[tasks."package:test-builder"]
+description = "Test package input checks and concurrent output writes"
+run = "python3 tools/test-builder.py"
+
+[tasks."release:test"]
+description = "Test release publication with an isolated HTTP server"
+run = "python3 tools/test-release.py"

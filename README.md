@@ -10,6 +10,8 @@ Unleash you harness.
 git config core.hooksPath .githooks
 ```
 
+See [Packages](tools/README.md) for build, test, and installation commands.
+
 ## License
 
 [MIT](LICENSE.md)
