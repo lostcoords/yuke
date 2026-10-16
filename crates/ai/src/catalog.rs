@@ -1,5 +1,5 @@
-//! The baked provider table, the model facts it states, and the selector lookup. The baked rows live in static
-//! storage, and a caller can build its own rows from configuration with the same types.
+//! The baked provider table, the model facts it states, and the selector lookup. The baked rows borrow static storage,
+//! and a caller can build its own rows from configuration with the same types. Such a row can own its data.
 
 #[expect(clippy::unreadable_literal, reason = "generated data keeps the digits of its source")]
 mod generated;
@@ -16,25 +16,25 @@ use crate::transport::Header;
 
 pub use generated::{PROVIDERS, REVISION};
 
-/// One host and the models it serves. The source owns the referenced bytes.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// One host and the models it serves. A baked row borrows its data, and a row from configuration can own it.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Provider<'a> {
     /// The provider half of a selector.
-    pub id: &'a str,
+    pub id: Cow<'a, str>,
     /// The display name.
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     /// The authentication scheme. It never carries a secret.
     pub auth: Auth<'a>,
     /// The base URL of every endpoint.
-    pub base_url: &'a str,
+    pub base_url: Cow<'a, str>,
     /// Pinned non-secret headers. A live grant adds identity headers at run time.
-    pub headers: &'a [Header],
+    pub headers: Cow<'a, [Header]>,
     /// The header that carries the session id.
     pub session_header: SessionHeader,
     /// One entry per served protocol. Every model names one of these endpoints.
-    pub endpoints: &'a [Endpoint],
+    pub endpoints: Cow<'a, [Endpoint]>,
     /// The models of the host.
-    pub models: &'a [Model<'a>],
+    pub models: Cow<'a, [Model<'a>]>,
 }
 
 /// One protocol a host serves. The credential header can differ for each path.
@@ -53,24 +53,24 @@ pub struct Endpoint {
     pub chat_dialect: ChatDialect,
 }
 
-/// The authentication scheme of a provider. The source owns the referenced bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// The authentication scheme of a provider.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Auth<'a> {
     /// The environment variable name of the key, or `None` when none is known.
-    ApiKey(Option<&'a str>),
+    ApiKey(Option<Cow<'a, str>>),
     /// The login flow name. [`crate::oauth::Flow::named`] gives the flow, or `None` for a name that yuke does not know.
     /// The caller keeps the grant.
-    OAuth(&'a str),
+    OAuth(Cow<'a, str>),
 }
 
 /// The kinds a model reads and writes. The generator keeps only the names of [`Modality`] that a model can list, so
 /// `Other` never appears.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct Modalities<'a> {
     /// The kinds the model reads.
-    pub input: &'a [Modality],
+    pub input: Cow<'a, [Modality]>,
     /// The kinds the model writes.
-    pub output: &'a [Modality],
+    pub output: Cow<'a, [Modality]>,
 }
 
 impl Modalities<'_> {
@@ -203,24 +203,24 @@ pub struct ChatFlags {
 }
 
 /// One model in the shape every source shares. It holds no URL and no secret.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Model<'a> {
     /// The model half of a selector.
-    pub id: &'a str,
+    pub id: Cow<'a, str>,
     /// The model ID the host takes.
-    pub upstream_id: &'a str,
+    pub upstream_id: Cow<'a, str>,
     /// The display name.
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
     /// Name the endpoint that serves this model. A host can serve several endpoints.
     pub protocol: Protocol,
     /// The token limits.
     pub limits: Limits,
     /// The price bands in threshold order. The last band that the prompt reaches prices the whole request.
-    pub cost: &'a [PriceBand],
+    pub cost: Cow<'a, [PriceBand]>,
     /// What the model can do.
     pub caps: Caps,
     /// The efforts a user can pick. A `None` level means "no effort at all".
-    pub reasoning_levels: &'a [Option<Effort>],
+    pub reasoning_levels: Cow<'a, [Option<Effort>]>,
     /// How a request asks the model to reason.
     pub dialect: Dialect,
     /// The kinds the model reads and writes.
@@ -343,16 +343,18 @@ fn split(selector: &str) -> Result<(&str, &str), Error> {
     }
 }
 
-/// One catalog model and the provider that serves it.
+/// One catalog model and its provider, borrowed from a provider table. The table and the row data can have different
+/// lifetimes.
+// `Cow` holds an associated owned type, so a row is invariant in `'a`. A table of owned rows then needs its own `'t`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Entry<'a> {
+pub struct Entry<'t, 'a> {
     /// The provider of the model.
-    pub provider: &'a Provider<'a>,
+    pub provider: &'t Provider<'a>,
     /// The model.
-    pub model: &'a Model<'a>,
+    pub model: &'t Model<'a>,
 }
 
-impl Entry<'_> {
+impl Entry<'_, '_> {
     /// The endpoint that serves the model's protocol.
     ///
     /// # Errors
@@ -406,10 +408,10 @@ impl Entry<'_> {
     pub fn bind(&self) -> Result<Target, Error> {
         let served = self.endpoint()?;
         Ok(Target {
-            model: Cow::Owned(self.model.upstream_id.to_owned()),
+            model: Cow::Owned(self.model.upstream_id.clone().into_owned()),
             // The route copies the strings once. A `'static` header keeps its borrowed text.
             route: Route {
-                base_url: Cow::Owned(self.provider.base_url.to_owned()),
+                base_url: Cow::Owned(self.provider.base_url.clone().into_owned()),
                 credential_header: served.credential_header,
                 headers: Cow::Owned(self.provider.headers.to_vec()),
                 session_header: self.provider.session_header,
@@ -421,15 +423,15 @@ impl Entry<'_> {
     }
 }
 
-/// Find the baked entry a `provider/model` selector names.
+/// Find the entry of `providers` that a `provider/model` selector names.
 ///
 /// # Errors
 ///
 /// Returns [`Error::MalformedSelector`], [`Error::UnknownProvider`], or [`Error::UnknownModel`] if the selector names
-/// no catalog model.
-pub fn lookup(selector: &str) -> Result<Entry<'static>, Error> {
+/// no model of `providers`.
+pub fn lookup_in<'t, 'a>(providers: &'t [Provider<'a>], selector: &str) -> Result<Entry<'t, 'a>, Error> {
     let (provider_id, model_id) = split(selector)?;
-    let provider = PROVIDERS
+    let provider = providers
         .iter()
         .find(|provider| provider.id == provider_id)
         .ok_or(Error::UnknownProvider)?;
@@ -441,13 +443,13 @@ pub fn lookup(selector: &str) -> Result<Entry<'static>, Error> {
     Ok(Entry { provider, model })
 }
 
-/// Resolve `provider/model` into a call target.
+/// Resolve `provider/model` of the baked table into a call target.
 ///
 /// # Errors
 ///
-/// Returns the [`lookup`] and [`Entry::bind`] errors.
+/// Returns the errors of [`lookup_in`] and [`Entry::bind`].
 pub fn resolve(selector: &str) -> Result<Target, Error> {
-    lookup(selector)?.bind()
+    lookup_in(PROVIDERS, selector)?.bind()
 }
 
 #[cfg(test)]
@@ -456,14 +458,14 @@ mod tests {
 
     fn model(id: &'static str, protocol: Protocol) -> Model<'static> {
         Model {
-            id,
-            upstream_id: id,
-            name: id,
+            id: id.into(),
+            upstream_id: id.into(),
+            name: id.into(),
             protocol,
             limits: Limits::default(),
-            cost: UNKNOWN_COST,
+            cost: Cow::Borrowed(UNKNOWN_COST),
             caps: Caps::default(),
-            reasoning_levels: &[],
+            reasoning_levels: Cow::Borrowed(&[]),
             dialect: Dialect::default(),
             modalities: Modalities::default(),
         }
@@ -481,14 +483,14 @@ mod tests {
 
     fn provider<'a>(endpoints: &'a [Endpoint], models: &'a [Model<'a>]) -> Provider<'a> {
         Provider {
-            id: "host",
-            name: "Host",
+            id: "host".into(),
+            name: "Host".into(),
             auth: Auth::ApiKey(None),
-            base_url: "https://host.test/v1",
-            headers: &[],
+            base_url: "https://host.test/v1".into(),
+            headers: Cow::Borrowed(&[]),
             session_header: SessionHeader::None,
-            endpoints,
-            models,
+            endpoints: endpoints.into(),
+            models: models.into(),
         }
     }
 
@@ -497,6 +499,54 @@ mod tests {
             min_prompt_tokens,
             ..PriceBand::default()
         }
+    }
+
+    // A row from configuration owns its data, so the table outlives the text that it came from.
+    #[test]
+    fn a_lookup_searches_only_its_own_table_with_owned_rows() {
+        let table: Vec<Provider<'static>> = {
+            let id = String::from("local");
+            let models = vec![Model {
+                id: Cow::Owned(id.clone()),
+                upstream_id: Cow::Owned(format!("{id}-wire")),
+                reasoning_levels: Cow::Owned(vec![Some(Effort::High)]),
+                modalities: Modalities {
+                    input: Cow::Owned(vec![Modality::Text]),
+                    output: Cow::Owned(vec![Modality::Text]),
+                },
+                ..model("unused", Protocol::OpenaiChat)
+            }];
+            vec![Provider {
+                id: Cow::Owned(id.clone()),
+                name: Cow::Owned(id.to_uppercase()),
+                auth: Auth::ApiKey(Some(Cow::Owned(format!("{id}_KEY")))),
+                base_url: Cow::Owned(format!("http://{id}.test/v1")),
+                headers: Cow::Owned(vec![Header::new("x-team", id)]),
+                endpoints: Cow::Owned(vec![endpoint(
+                    Protocol::OpenaiChat,
+                    CredentialHeader::AuthorizationBearer,
+                    false,
+                )]),
+                models: Cow::Owned(models),
+                ..provider(&[], &[])
+            }]
+        };
+
+        let entry = lookup_in(&table, "local/local").unwrap();
+        let target = entry.bind().unwrap();
+        let baked = lookup_in(&table, "openai/gpt-5.5");
+
+        assert_eq!(target.model, "local-wire");
+        assert_eq!(target.route.base_url, "http://local.test/v1");
+        assert_eq!(*target.route.headers, [Header::new("x-team", "local")]);
+        assert_eq!(entry.provider.auth, Auth::ApiKey(Some("local_KEY".into())));
+        assert!(entry.model.reasoning(ReasoningLevel::Effort(Effort::High)).is_ok());
+        assert_eq!(
+            entry.model.reasoning(ReasoningLevel::Effort(Effort::Low)),
+            Err(Error::UnsupportedReasoning)
+        );
+        assert_eq!(entry.model.modalities.takes_input(Modality::Image), Some(false));
+        assert_eq!(baked.err(), Some(Error::UnknownProvider));
     }
 
     #[test]
@@ -585,7 +635,7 @@ mod tests {
                 ..model("a", Protocol::AnthropicMessages)
             },
             Model {
-                upstream_id: "wire-id",
+                upstream_id: "wire-id".into(),
                 dialect: Dialect {
                     chat: flags,
                     ..Dialect::default()
@@ -603,8 +653,8 @@ mod tests {
         for dialect in [ChatDialect::Mistral, ChatDialect::Standard] {
             endpoints[1].chat_dialect = dialect;
             let gateway = Provider {
-                base_url: "https://gateway.test/v1",
-                headers: &headers,
+                base_url: "https://gateway.test/v1".into(),
+                headers: Cow::Borrowed(&headers),
                 session_header: SessionHeader::XOpencodeSession,
                 ..provider(&endpoints, &models)
             };
@@ -653,7 +703,7 @@ mod tests {
             )];
             let models = [model("m", Protocol::OpenaiChat)];
             let provider = Provider {
-                base_url: &base_url,
+                base_url: Cow::Borrowed(&base_url),
                 ..provider(&endpoints, &models)
             };
             let entry = Entry {
@@ -710,15 +760,15 @@ mod tests {
         assert_eq!(none.takes_input(Modality::Image), None); // A source that lists nothing blocks nothing.
 
         let text_only = Modalities {
-            input: &[Modality::Text],
-            output: &[Modality::Text],
+            input: Cow::Borrowed(&[Modality::Text]),
+            output: Cow::Borrowed(&[Modality::Text]),
         };
         assert_eq!(text_only.takes_input(Modality::Image), Some(false));
         assert_eq!(text_only.takes_input(Modality::Text), Some(true));
 
         let media = Modalities {
-            input: &[Modality::Text, Modality::Image, Modality::Pdf],
-            output: &[],
+            input: Cow::Borrowed(&[Modality::Text, Modality::Image, Modality::Pdf]),
+            output: Cow::Borrowed(&[]),
         };
         assert_eq!(media.takes_input(Modality::Pdf), Some(true));
         assert_eq!(media.takes_input(Modality::Audio), Some(false));
@@ -760,10 +810,10 @@ mod tests {
     #[test]
     fn baked_entries_bind_with_valid_costs() {
         for provider in PROVIDERS {
-            for model in provider.models {
+            for model in provider.models.iter() {
                 let entry = Entry { provider, model };
                 assert!(entry.bind().is_ok(), "{}/{}", provider.id, model.id);
-                assert!(valid_cost(model.cost), "{}/{}", provider.id, model.id);
+                assert!(valid_cost(&model.cost), "{}/{}", provider.id, model.id);
             }
         }
     }
@@ -776,7 +826,7 @@ mod tests {
                 context_window: None,
                 max_output_tokens: Some(32_000),
             },
-            reasoning_levels: &[Some(Effort::High)],
+            reasoning_levels: Cow::Borrowed(&[Some(Effort::High)]),
             dialect: Dialect {
                 anthropic_thinking,
                 ..Dialect::default()
@@ -883,7 +933,7 @@ mod tests {
         );
 
         let unlisted = Model {
-            reasoning_levels: &[],
+            reasoning_levels: Cow::Borrowed(&[]),
             ..model
         };
         assert!(unlisted.reasoning(ReasoningLevel::Effort(Effort::Low)).is_ok());

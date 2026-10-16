@@ -140,11 +140,11 @@ async fn run_turn(
 
 /// The settings of a new session in `cwd` with the model `selector`. The app writes the system prompt.
 fn new_settings(task: &Task, selector: &str, cwd: &Path) -> Result<SessionSettings, String> {
-    let entry = catalog::lookup(selector).map_err(|error| format!("{selector}: {error}"))?;
+    let entry = catalog::lookup_in(catalog::PROVIDERS, selector).map_err(|error| format!("{selector}: {error}"))?;
     Ok(SessionSettings {
         model: ModelReference {
-            provider: entry.provider.id.into(),
-            model: entry.model.id.into(),
+            provider: entry.provider.id.to_string(),
+            model: entry.model.id.to_string(),
         },
         settings: yuke_ai::Settings {
             reasoning: reasoning(&entry, task.reasoning)?,
@@ -169,10 +169,11 @@ async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<S
             Some(model) => model.clone(),
             None => format!("{}/{}", settings.model.provider, settings.model.model),
         };
-        let entry = catalog::lookup(&selector).map_err(|error| format!("{selector}: {error}"))?;
+        let entry =
+            catalog::lookup_in(catalog::PROVIDERS, &selector).map_err(|error| format!("{selector}: {error}"))?;
         settings.model = ModelReference {
-            provider: entry.provider.id.into(),
-            model: entry.model.id.into(),
+            provider: entry.provider.id.to_string(),
+            model: entry.model.id.to_string(),
         };
         settings.settings.reasoning = reasoning(&entry, task.reasoning)?;
         // The credential comes first, so a model that cannot run saves no settings.
@@ -183,7 +184,7 @@ async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<S
 }
 
 /// The reasoning settings of `level` on the model of `entry`. No level leaves the default of the endpoint.
-fn reasoning(entry: &Entry<'_>, level: Option<ReasoningLevel>) -> Result<yuke_ai::ReasoningSettings, String> {
+fn reasoning(entry: &Entry<'_, '_>, level: Option<ReasoningLevel>) -> Result<yuke_ai::ReasoningSettings, String> {
     let Some(level) = level else {
         return Ok(yuke_ai::ReasoningSettings::default());
     };

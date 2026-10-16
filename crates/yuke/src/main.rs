@@ -224,7 +224,7 @@ async fn print_task(task: &Task, json: bool) -> ExitCode {
 /// Log in to the provider `id`.
 async fn login(id: &str) -> ExitCode {
     let provider = catalog::PROVIDERS.iter().find(|provider| provider.id == id);
-    let flow = match provider.map(|provider| provider.auth) {
+    let flow = match provider.map(|provider| &provider.auth) {
         Some(Auth::OAuth(flow_name)) => Flow::named(flow_name),
         Some(Auth::ApiKey(Some(variable))) => {
             warn(&format!("{id} takes an API key: set {variable}. {}", login_providers()));
@@ -275,8 +275,8 @@ async fn login(id: &str) -> ExitCode {
 fn login_providers() -> String {
     let ids: Vec<_> = catalog::PROVIDERS
         .iter()
-        .filter(|provider| matches!(provider.auth, Auth::OAuth(flow_name) if Flow::named(flow_name).is_some()))
-        .map(|provider| provider.id)
+        .filter(|provider| matches!(&provider.auth, Auth::OAuth(flow_name) if Flow::named(flow_name).is_some()))
+        .map(|provider| &*provider.id)
         .collect();
     format!("The providers that support a login: {}.", ids.join(", "))
 }

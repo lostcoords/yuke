@@ -63,11 +63,11 @@ fn catalog_translation_preserves_strings_nulls_false_and_zero() {
     assert_eq!(super::fixture::REVISION, "fixture");
     assert_eq!(provider.name, "quote \" slash \\ literal \\b \u{8}\u{c}\n\r\t\0\u{1b} café 🚀");
     assert_eq!(provider.auth, super::Auth::ApiKey(None));
-    assert_eq!(provider.headers, &[crate::transport::Header::from_static("x-fixture", "quote \" value")]);
+    assert_eq!(*provider.headers, [crate::transport::Header::from_static("x-fixture", "quote \" value")]);
     assert_eq!(provider.endpoints[0].credential_header, Some(CredentialHeader::XApiKey));
     assert_eq!(provider.endpoints[1].credential_header, None);
     assert_eq!(provider.endpoints[1].chat_dialect, ChatDialect::Mistral);
-    for endpoint in PROVIDERS[1].endpoints {
+    for endpoint in PROVIDERS[1].endpoints.iter() {
         assert_eq!(endpoint.credential_header, Some(CredentialHeader::AuthorizationBearer));
     }
     assert_eq!(model.id, "selector-id");
@@ -91,10 +91,10 @@ fn catalog_translation_preserves_strings_nulls_false_and_zero() {
     assert_eq!(model.dialect.chat.reasoning_replay, ReasoningReplayMode::None);
     assert_eq!(model.dialect.chat.max_tokens_field, MaxTokensField::MaxCompletionTokens);
     // A null level means no effort, and a name outside the request efforts stays out.
-    assert_eq!(model.reasoning_levels, &[None, Some(Effort::High)]);
+    assert_eq!(*model.reasoning_levels, [None, Some(Effort::High)]);
     assert!(provider.endpoints[0].cache_breakpoint);
     assert!(!provider.endpoints[1].cache_breakpoint);
-    assert_eq!(model.modalities.input, &[Modality::Text, Modality::Image]);
+    assert_eq!(*model.modalities.input, [Modality::Text, Modality::Image]);
 }
 RUST
 printf '\n#[cfg(test)]\nmod fixture;\n#[cfg(test)]\nmod fixture_test;\n' >> "$tmp/crates/ai/src/catalog.rs"

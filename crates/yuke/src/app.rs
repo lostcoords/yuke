@@ -412,9 +412,10 @@ impl Error for AppError {
 /// The model of `settings`, with the credential source of its provider: an API key, or the login of `shared`.
 fn model_of(settings: &SessionSettings, shared: &Shared) -> Result<Model, AppError> {
     let selector = format!("{}/{}", settings.model.provider, settings.model.model);
-    let entry = catalog::lookup(&selector).map_err(|error| AppError::Invalid(format!("{selector}: {error}")))?;
+    let entry = catalog::lookup_in(catalog::PROVIDERS, &selector)
+        .map_err(|error| AppError::Invalid(format!("{selector}: {error}")))?;
     let provider = entry.provider;
-    let source: Arc<dyn CredentialSource> = match provider.auth {
+    let source: Arc<dyn CredentialSource> = match &provider.auth {
         Auth::ApiKey(Some(name)) => {
             let key = (shared.machine.variable)(name)
                 .and_then(|key| key.into_string().ok())
@@ -427,10 +428,10 @@ fn model_of(settings: &SessionSettings, shared: &Shared) -> Result<Model, AppErr
             let flow = Flow::named(flow_name)
                 .ok_or_else(|| AppError::Invalid(format!("yuke has no login for {} yet", provider.id)))?;
             let source = lock(&shared.logins)
-                .entry(provider.id)
+                .entry(&provider.id)
                 .or_insert_with(|| {
                     LoginSource::new(
-                        provider.id,
+                        &provider.id,
                         flow,
                         shared.machine.paths.data.clone(),
                         Arc::clone(&shared.machine.exchange),

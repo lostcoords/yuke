@@ -24,6 +24,11 @@ def variant:
 
 def list: "&[" + join(", ") + "]";
 
+# A static row borrows its text and its lists, so it needs no allocation. A row from configuration can own them.
+def cow_string: "Cow::Borrowed(" + rust_string + ")";
+
+def cow_list: "Cow::Borrowed(" + list + ")";
+
 def option(f): if . == null then "None" else "Some(" + f + ")" end;
 
 def int: tostring;
@@ -35,7 +40,7 @@ def bool: tostring;
 
 # Modalities are open on the wire. A name this package cannot use stays out.
 def modalities:
-  map(select(. == "text" or . == "image" or . == "audio" or . == "video" or . == "pdf") | "Modality::" + variant) | list;
+  map(select(. == "text" or . == "image" or . == "audio" or . == "video" or . == "pdf") | "Modality::" + variant) | cow_list;
 
 # A breakpoint policy names the shape of one protocol, so it marks only that protocol's endpoint.
 def cache_breakpoint:
@@ -77,19 +82,19 @@ def dialect:
 
 def model:
   "Model {\n"
-  + "id: " + (.id | rust_string) + ",\n"
-  + "upstream_id: " + (.upstream_id | rust_string) + ",\n"
-  + "name: " + (.name | rust_string) + ",\n"
+  + "id: " + (.id | cow_string) + ",\n"
+  + "upstream_id: " + (.upstream_id | cow_string) + ",\n"
+  + "name: " + (.name | cow_string) + ",\n"
   + "protocol: Protocol::" + (.protocol | variant) + ",\n"
   + "limits: Limits { context_window: " + (.limits.context_window | option(int))
       + ", max_output_tokens: " + (.limits.max_output_tokens | option(int)) + " },\n"
-  + "cost: " + (.cost | map(band) | list) + ",\n"
+  + "cost: " + (.cost | map(band) | cow_list) + ",\n"
   + "caps: Caps { tools: " + (.flags.supports_tools | option(bool))
       + ", tool_search: " + (.flags.supports_tool_search | option(bool))
       + ", system_updates: " + (.flags.supports_system_updates | option(bool))
       + ", disable_reasoning: " + (.flags.can_disable_reasoning | option(bool))
       + ", cache_breakpoint: " + (.flags.supports_cache_breakpoint | option(bool)) + " },\n"
-  + "reasoning_levels: " + (.reasoning_levels | map(reasoning_level) | list) + ",\n"
+  + "reasoning_levels: " + (.reasoning_levels | map(reasoning_level) | cow_list) + ",\n"
   + "dialect: " + (.flags | dialect) + ",\n"
   + "modalities: Modalities { input: " + (.modalities.input | modalities)
       + ", output: " + (.modalities.output | modalities) + " },\n"
@@ -97,23 +102,24 @@ def model:
 
 def provider:
   "Provider {\n"
-  + "id: " + (.id | rust_string) + ",\n"
-  + "name: " + (.name | rust_string) + ",\n"
+  + "id: " + (.id | cow_string) + ",\n"
+  + "name: " + (.name | cow_string) + ",\n"
   + "auth: " + (if .auth.kind == "oauth" then
-      "Auth::OAuth(" + (.auth.flow | rust_string) + ")"
-    else "Auth::ApiKey(" + (.auth.env | option(rust_string)) + ")" end) + ",\n"
-  + "base_url: " + (.base_url | rust_string) + ",\n"
-  + "headers: " + (.headers | map("Header::from_static(" + (.name | rust_string) + ", " + (.value | rust_string) + ")") | list) + ",\n"
+      "Auth::OAuth(" + (.auth.flow | cow_string) + ")"
+    else "Auth::ApiKey(" + (.auth.env | option(cow_string)) + ")" end) + ",\n"
+  + "base_url: " + (.base_url | cow_string) + ",\n"
+  + "headers: " + (.headers | map("Header::from_static(" + (.name | rust_string) + ", " + (.value | rust_string) + ")") | cow_list) + ",\n"
   + "session_header: SessionHeader::" + (.session_header | variant) + ",\n"
-  + "endpoints: " + (.auth as $auth | .endpoints | map(endpoint($auth)) | list) + ",\n"
-  + "models: " + (.models | map(model) | list) + ",\n"
+  + "endpoints: " + (.auth as $auth | .endpoints | map(endpoint($auth)) | cow_list) + ",\n"
+  + "models: " + (.models | map(model) | cow_list) + ",\n"
   + "}";
 
 "//! Generated from the Yuke catalog. Do not edit. Run scripts/generate-catalog.sh.\n\n"
++ "use std::borrow::Cow;\n\n"
 + "use crate::catalog::{AnthropicThinking, Auth, Caps, ChatFlags, Dialect, Endpoint, Limits, Modalities, Model, PriceBand, Provider};\n"
 + "use crate::request::{ChatDialect, Effort, MaxTokensField, Modality, Protocol, ReasoningReplayMode, ResponsesDialect, ThinkingFormat};\n"
 + "use crate::route::{CredentialHeader, SessionHeader};\nuse crate::transport::Header;\n\n"
 + "/// The identifier of this catalog snapshot.\n"
 + "pub const REVISION: &str = " + (.catalog_rev | rust_string) + ";\n\n"
-+ "/// The provider table. All slices borrow static storage.\n"
++ "/// The provider table. Each row borrows static storage.\n"
 + "pub static PROVIDERS: &[Provider<'static>] = &[\n" + (.providers | map(provider) | join(",\n")) + "\n];\n"
