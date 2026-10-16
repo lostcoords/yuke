@@ -84,12 +84,20 @@ impl Flow {
         }
     }
 
+    /// The header that names the account of a grant in each model request, or `None` for a flow without accounts.
+    pub fn account_header(self) -> Option<&'static str> {
+        match self {
+            Flow::Xai => None,
+            Flow::Codex => Some(codex::ACCOUNT_HEADER),
+        }
+    }
+
     /// The credential of a model request with `access_token` of the account `account_id` ([`Grant::account_id`]).
-    /// A flow adds the identity headers of its grant here.
+    /// A flow without accounts drops the account.
     pub fn credential(self, access_token: String, account_id: Option<String>) -> Credential {
-        let headers = match (self, account_id) {
-            (Flow::Codex, Some(account_id)) => Cow::Owned(vec![Header::new(codex::ACCOUNT_HEADER, account_id)]),
-            (Flow::Xai | Flow::Codex, _) => Cow::Borrowed(&[][..]),
+        let headers = match (self.account_header(), account_id) {
+            (Some(name), Some(account_id)) => Cow::Owned(vec![Header::new(name, account_id)]),
+            _ => Cow::Borrowed(&[][..]),
         };
         Credential::OAuth(OAuth {
             access_token: access_token.into(),

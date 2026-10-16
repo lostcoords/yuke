@@ -112,10 +112,11 @@ impl Exchange for Slow {
     }
 }
 
-/// Holds each exchange until the gate opens, then answers from the script.
+/// Holds each exchange until the gate opens, then answers from the script. `arrived` tells that an exchange waits.
 #[derive(Debug, Clone, Default)]
 struct Gated {
     gate: Arc<tokio::sync::Notify>,
+    arrived: Arc<tokio::sync::Notify>,
     script: Answers,
 }
 
@@ -126,6 +127,7 @@ impl Exchange for Gated {
         deadline: Option<Instant>,
     ) -> BoxFuture<'a, Result<Answer, Fault>> {
         Box::pin(async move {
+            self.arrived.notify_one();
             self.gate.notified().await;
             self.script.exchange(request, deadline).await
         })
@@ -456,4 +458,95 @@ async fn a_refresh_keeps_the_account_and_each_credential_names_it() {
         [yuke_ai::transport::Header::new("ChatGPT-Account-Id", "account-1")]
     );
     assert_eq!(file(&folder)["openai-codex"]["account_id"], "account-1");
+}
+
+/// A pushed token that ends `ends_in` seconds from now. The test builds it as is, so it can also be expired.
+fn pushed(access_token: &str, ends_in: i64) -> Pushed {
+    Pushed {
+        access_token: access_token.to_owned(),
+        expires_at: millis(SystemTime::now()).saturating_add_signed(ends_in * 1000),
+        account_id: None,
+    }
+}
+
+#[tokio::test]
+async fn a_pushed_token_replaces_a_valid_login_and_the_newest_push_wins() {
+    let folder = folder("pushed_replaces_login");
+    save(&folder, "from-file", "refresh", 3600);
+    let source = source(&folder, Answers::default(), LOCK_LIMIT);
+    assert_eq!(token_of(&source).await, Ok("from-file".to_owned()));
+
+    // A pushed token serves until its end, with no margin, because the client refreshes it.
+    source.push(pushed("first", 60));
+    assert_eq!(token_of(&source).await, Ok("first".to_owned()));
+    source.clone().push(pushed("second", 3600));
+
+    assert_eq!(token_of(&source).await, Ok("second".to_owned()));
+    assert_eq!(saved(&folder), Some(("from-file".to_owned(), "refresh".to_owned())));
+}
+
+#[tokio::test]
+async fn an_expired_push_fails_and_never_falls_back_to_the_login_or_a_refresh() {
+    let folder = folder("expired_push");
+    // A refresh would take an answer that the script does not have, and the test would panic.
+    save(&folder, "from-file", "refresh", 3600);
+    let source = source(&folder, Answers::default(), LOCK_LIMIT);
+
+    source.push(pushed("pushed", -1));
+
+    assert_eq!(
+        token_of(&source).await,
+        Err(format!(
+            "the accessToken of credential/update for {PROVIDER} expired: send a new credential/update"
+        ))
+    );
+}
+
+#[tokio::test]
+async fn a_pushed_token_of_the_codex_flow_names_its_account() {
+    let source = LoginSource::new(
+        "openai-codex".to_owned(),
+        Flow::Codex,
+        folder("pushed_account"),
+        Arc::new(Answers::default()),
+        LOCK_LIMIT,
+    );
+
+    source.push(Pushed {
+        account_id: Some("account-1".to_owned()),
+        ..pushed("pushed", 3600)
+    });
+
+    let Ok(Credential::OAuth(oauth)) = source.credential().await else {
+        panic!("no OAuth credential");
+    };
+    assert_eq!(oauth.access_token, "pushed");
+    assert_eq!(
+        *oauth.headers,
+        [yuke_ai::transport::Header::new("ChatGPT-Account-Id", "account-1")]
+    );
+}
+
+#[tokio::test]
+async fn a_push_during_the_refresh_of_the_login_serves_that_attempt() {
+    let folder = folder("push_during_refresh");
+    save(&folder, "old", "rt", 1);
+    let gated = Gated::default();
+    gated.script.push(
+        200,
+        r#"{"access_token":"refreshed","refresh_token":"rt2","expires_in":3600}"#,
+    );
+    let source = source(&folder, gated.clone(), LOCK_LIMIT);
+    let attempt = tokio::spawn({
+        let source = source.clone();
+        async move { token_of(&source).await }
+    });
+    // The attempt found no push, and its refresh now waits at the gate.
+    gated.arrived.notified().await;
+
+    source.push(pushed("pushed", 3600));
+    gated.gate.notify_one();
+
+    assert_eq!(attempt.await.unwrap(), Ok("pushed".to_owned()));
+    assert_eq!(saved(&folder), Some(("refreshed".to_owned(), "rt2".to_owned())));
 }

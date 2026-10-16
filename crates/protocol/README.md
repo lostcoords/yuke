@@ -5,7 +5,11 @@ Agent Client Protocol (ACP): `"jsonrpc": "2.0"`, `noun/verb` methods, camelCase 
 is not ACP: for example, it has `session/input` in place of `session/prompt`, and a tool update uses a saved call position rather than a provider call id.
 
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
-  `session/remove_input`, `session/set_settings`, `job/list`, `job/stop`.
+  `session/remove_input`, `session/set_settings`, `job/list`, `job/stop`, `credential/update`.
+- `credential/update` gives the server an `accessToken` for a provider with a login flow. An orchestrator can refresh
+  one account and update many servers. The server keeps the token only in memory and never refreshes it. It uses the
+  token from the next model request on, also in a running turn. After the first update, the server never uses the
+  stored login of the provider.
 - A session is open after `session/new`, `session/fork`, or `session/load`, until `session/close` or the end of the
   connection. The other session requests need an open session. Many sessions can be open at once.
 - The background jobs of a session run while the session is open. `job/list` lists them. A `job` update holds the

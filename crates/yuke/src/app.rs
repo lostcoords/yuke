@@ -27,12 +27,12 @@ use yuke_engine::{CredentialSource, Model, Timer};
 use yuke_js::{Fault, Limits, Options, Processes, Runtime};
 use yuke_protocol::{
     EventNumber, Input, InputId, InputSource, Job, NoticeLevel, NoticeParams, ServerNotification, SessionEvent,
-    SessionId, SessionSettings, StoredEvent,
+    SessionId, SessionSettings, StoredEvent, UpdateCredentialParams,
 };
 use yuke_store::SqliteStore;
 
 use self::live::LiveSession;
-use crate::auth::{LOCK_LIMIT, LoginSource};
+use crate::auth::{LOCK_LIMIT, LoginSource, Pushed};
 use crate::paths::Paths;
 use crate::prompt::{self, Environment};
 use crate::providers::Providers;
@@ -311,6 +311,25 @@ impl App {
         self.live(id)?.set_settings(settings).await
     }
 
+    /// Use the token of `params` for each model request of its provider from the next attempt on, in place of the
+    /// stored login. Each open session of the provider takes it, also during a turn.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for a provider without a login flow and for a bad field. A refused update changes
+    /// nothing.
+    pub(crate) fn update_credential(&self, params: UpdateCredentialParams) -> Result<(), AppError> {
+        let Ok((provider, flow)) = self.shared.providers.login(&params.provider) else {
+            return Err(AppError::Invalid(format!(
+                "provider: {} has no login flow, so it takes no credential/update",
+                params.provider
+            )));
+        };
+        let source = login_source(&self.shared, &provider.id, flow);
+        source.push(Pushed::new(params, flow, SystemTime::now()).map_err(AppError::Invalid)?);
+        Ok(())
+    }
+
     /// The running background jobs of session `id`, oldest first.
     ///
     /// # Errors
@@ -458,20 +477,7 @@ fn model_of(settings: &SessionSettings, shared: &Shared) -> Result<Model, AppErr
         Auth::OAuth(flow_name) => {
             let flow = Flow::named(flow_name)
                 .ok_or_else(|| AppError::Invalid(format!("yuke has no login for {} yet", provider.id)))?;
-            let mut logins = lock(&shared.logins);
-            if let Some(source) = logins.get(&*provider.id) {
-                Arc::new(source.clone())
-            } else {
-                let source = LoginSource::new(
-                    provider.id.to_string(),
-                    flow,
-                    shared.machine.paths.data.clone(),
-                    Arc::clone(&shared.machine.exchange),
-                    LOCK_LIMIT,
-                );
-                logins.insert(provider.id.to_string(), source.clone());
-                Arc::new(source)
-            }
+            Arc::new(login_source(shared, &provider.id, flow))
         }
     };
     let target = entry
@@ -503,6 +509,24 @@ async fn save_settings(
         event_number,
         event: SessionEvent::Settings(settings),
     })
+}
+
+/// The credential source of the provider `id` with the login `flow`. Each session of the provider shares it, so one
+/// refresh and one push serve them all.
+fn login_source(shared: &Shared, id: &str, flow: Flow) -> LoginSource {
+    let mut logins = lock(&shared.logins);
+    if let Some(source) = logins.get(id) {
+        return source.clone();
+    }
+    let source = LoginSource::new(
+        id.to_owned(),
+        flow,
+        shared.machine.paths.data.clone(),
+        Arc::clone(&shared.machine.exchange),
+        LOCK_LIMIT,
+    );
+    logins.insert(id.to_owned(), source.clone());
+    source
 }
 
 /// `folder` without links. It must be a folder.

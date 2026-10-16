@@ -9,8 +9,9 @@ import type { RemoveInputParams } from "./RemoveInputParams";
 import type { SessionSettings } from "./SessionSettings";
 import type { SetSettingsParams } from "./SetSettingsParams";
 import type { StopJobParams } from "./StopJobParams";
+import type { UpdateCredentialParams } from "./UpdateCredentialParams";
 
 /**
  * The method and the params of a client request.
  */
-export type ClientRequest = { "method": "initialize", "params": InitializeParams } | { "method": "session/new", "params": SessionSettings } | { "method": "session/fork", "params": ForkSessionParams } | { "method": "session/load", "params": LoadSessionParams } | { "method": "session/close", "params": CloseSessionParams } | { "method": "session/input", "params": InputParams } | { "method": "session/set_settings", "params": SetSettingsParams } | { "method": "session/remove_input", "params": RemoveInputParams } | { "method": "job/list", "params": ListJobsParams } | { "method": "job/stop", "params": StopJobParams };
+export type ClientRequest = { "method": "initialize", "params": InitializeParams } | { "method": "session/new", "params": SessionSettings } | { "method": "session/fork", "params": ForkSessionParams } | { "method": "session/load", "params": LoadSessionParams } | { "method": "session/close", "params": CloseSessionParams } | { "method": "session/input", "params": InputParams } | { "method": "session/set_settings", "params": SetSettingsParams } | { "method": "session/remove_input", "params": RemoveInputParams } | { "method": "job/list", "params": ListJobsParams } | { "method": "job/stop", "params": StopJobParams } | { "method": "credential/update", "params": UpdateCredentialParams };

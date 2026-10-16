@@ -4,6 +4,7 @@
 //! An `Option` field that JSON can omit has `serde(default)` beside `skip_serializing_if`: serde needs only the second,
 //! and ts-rs marks the field optional only with both.
 
+use std::fmt;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -90,6 +91,12 @@ pub enum ClientRequest {
     /// stopped job sends no end input. Result: [`EmptyResult`].
     #[serde(rename = "job/stop")]
     StopJob(StopJobParams),
+    /// Use `accessToken` for each model request of a provider with a login flow, from the next attempt on, also in a
+    /// running turn. The server keeps it only in memory and never refreshes it. After the first update, the server never
+    /// uses the stored login of the provider. An expired token fails each attempt until the next update. Result:
+    /// [`EmptyResult`].
+    #[serde(rename = "credential/update")]
+    UpdateCredential(UpdateCredentialParams),
 }
 
 /// A notification: a message that a server or a client sends with no id. It gets no response.
@@ -373,6 +380,34 @@ pub struct StopJobParams {
     pub session_id: SessionId,
     /// The running job.
     pub job_id: String,
+}
+
+/// The params of `credential/update`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCredentialParams {
+    /// The provider id, such as `openai-codex`. The provider must have a login flow.
+    pub provider: String,
+    /// The access token of the model requests.
+    pub access_token: String,
+    /// The expiry time of `accessToken`, in milliseconds since the Unix epoch.
+    pub expires_at: u64,
+    /// The account id, for a login flow with accounts. Each model request names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+}
+
+// `Debug` writes no token.
+impl fmt::Debug for UpdateCredentialParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UpdateCredentialParams")
+            .field("provider", &self.provider)
+            .field("access_token", &"<redacted>")
+            .field("expires_at", &self.expires_at)
+            .field("account_id", &self.account_id)
+            .finish()
+    }
 }
 
 /// The params of `session/input`.

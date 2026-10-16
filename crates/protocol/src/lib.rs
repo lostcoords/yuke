@@ -18,7 +18,7 @@ pub use message::{
     ForkSessionResult, Implementation, InitializeParams, InitializeResult, InputParams, InputResult, Job, JobState,
     JsonRpc, ListJobsParams, ListJobsResult, LoadSessionParams, NewSessionResult, NoticeLevel, NoticeParams,
     Notification, PROTOCOL_VERSION, RemoveInputParams, Request, RequestId, Response, ResponseError, ResponseOutcome,
-    ServerNotification, SetSettingsParams, StopJobParams,
+    ServerNotification, SetSettingsParams, StopJobParams, UpdateCredentialParams,
 };
 pub use session::{ModelReference, SessionSettings};
 pub use update::{

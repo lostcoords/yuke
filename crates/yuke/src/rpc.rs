@@ -213,6 +213,10 @@ impl Server {
                 app.set_settings(params.session_id, params.settings).await?;
                 result(&EmptyResult {})
             }
+            ClientRequest::UpdateCredential(params) => {
+                app.update_credential(params)?;
+                result(&EmptyResult {})
+            }
         }
     }
 }

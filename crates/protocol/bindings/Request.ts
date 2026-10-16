@@ -10,6 +10,7 @@ import type { RequestId } from "./RequestId";
 import type { SessionSettings } from "./SessionSettings";
 import type { SetSettingsParams } from "./SetSettingsParams";
 import type { StopJobParams } from "./StopJobParams";
+import type { UpdateCredentialParams } from "./UpdateCredentialParams";
 
 /**
  * A request of a client. The server answers it with one [`Response`] of the same id.
@@ -22,4 +23,4 @@ jsonrpc: "2.0",
 /**
  * The id that the response repeats.
  */
-id: RequestId, } & ({ "method": "initialize", "params": InitializeParams } | { "method": "session/new", "params": SessionSettings } | { "method": "session/fork", "params": ForkSessionParams } | { "method": "session/load", "params": LoadSessionParams } | { "method": "session/close", "params": CloseSessionParams } | { "method": "session/input", "params": InputParams } | { "method": "session/set_settings", "params": SetSettingsParams } | { "method": "session/remove_input", "params": RemoveInputParams } | { "method": "job/list", "params": ListJobsParams } | { "method": "job/stop", "params": StopJobParams });
+id: RequestId, } & ({ "method": "initialize", "params": InitializeParams } | { "method": "session/new", "params": SessionSettings } | { "method": "session/fork", "params": ForkSessionParams } | { "method": "session/load", "params": LoadSessionParams } | { "method": "session/close", "params": CloseSessionParams } | { "method": "session/input", "params": InputParams } | { "method": "session/set_settings", "params": SetSettingsParams } | { "method": "session/remove_input", "params": RemoveInputParams } | { "method": "job/list", "params": ListJobsParams } | { "method": "job/stop", "params": StopJobParams } | { "method": "credential/update", "params": UpdateCredentialParams });

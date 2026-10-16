@@ -506,3 +506,34 @@ fn live_updates_preserve_draft_and_execution_identity_in_json() {
         assert_json(&json, &update);
     }
 }
+
+#[test]
+fn a_credential_update_reads_and_writes_its_json_and_its_debug_shows_no_token() {
+    let params = yuke_protocol::UpdateCredentialParams {
+        provider: "openai-codex".to_owned(),
+        access_token: "secret-token".to_owned(),
+        expires_at: 1_800_000_000_000,
+        account_id: Some("account-1".to_owned()),
+    };
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "id": 10, "method": "credential/update", "params": {
+            "provider": "openai-codex", "accessToken": "secret-token", "expiresAt": 1_800_000_000_000_u64,
+            "accountId": "account-1"
+        } }),
+        &request(10, ClientRequest::UpdateCredential(params.clone())),
+    );
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "id": 11, "method": "credential/update", "params": {
+            "provider": "xai-grok", "accessToken": "secret-token", "expiresAt": 1_800_000_000_000_u64
+        } }),
+        &request(
+            11,
+            ClientRequest::UpdateCredential(yuke_protocol::UpdateCredentialParams {
+                provider: "xai-grok".to_owned(),
+                account_id: None,
+                ..params.clone()
+            }),
+        ),
+    );
+    assert!(!format!("{params:?}").contains("secret-token"));
+}

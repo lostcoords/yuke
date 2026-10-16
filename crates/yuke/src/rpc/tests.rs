@@ -941,3 +941,116 @@ async fn a_server_that_ends_without_its_shutdown_still_stops_its_turns() {
 
     assert!(drained.is_ok(), "a turn still runs after the server ended");
 }
+
+/// A place where `xai-grok/test` speaks Anthropic Messages, as the scripted replies do.
+fn place_with_login_model(name: &str) -> Place {
+    let place = Place::new(name);
+    std::fs::create_dir_all(&place.paths.config).unwrap();
+    let providers = json!({ "providers": [{
+        "id": "xai-grok",
+        "endpoints": [
+            { "protocol": "openai_responses", "credential_header": "authorization_bearer" },
+            { "protocol": "anthropic_messages", "credential_header": "authorization_bearer" }
+        ],
+        "models": [{ "id": "test", "protocol": "anthropic_messages", "limits": { "max_output_tokens": 1000 } }]
+    }] });
+    std::fs::write(place.paths.config.join("providers.json"), providers.to_string()).unwrap();
+    place
+}
+
+/// Push `token` for `xai-grok`, valid for an hour.
+async fn push(client: &mut Client, token: &str) -> Result<Value, Value> {
+    let expires_at = crate::auth::millis(std::time::SystemTime::now()) + 3_600_000;
+    client
+        .call(
+            "credential/update",
+            json!({ "provider": "xai-grok", "accessToken": token, "expiresAt": expires_at }),
+        )
+        .await
+}
+
+/// A new session of `xai-grok/test`, and the params of an input to it.
+async fn login_session(client: &mut Client, place: &Place) -> Value {
+    let mut settings = place.settings();
+    settings["model"] = json!({ "provider": "xai-grok", "model": "test" });
+    let session = client.call("session/new", settings).await.unwrap()["sessionId"].clone();
+    json!({ "sessionId": session, "content": [{ "user_text": "hi" }] })
+}
+
+#[tokio::test]
+async fn a_pushed_token_serves_each_open_session_and_a_new_push_serves_the_next_request() {
+    let place = place_with_login_model("pushed_token");
+    let transport = ScriptedTransport::new([text_reply("one"), text_reply("two")]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let first_session = login_session(&mut client, &place).await;
+    let second_session = login_session(&mut client, &place).await;
+
+    assert_eq!(push(&mut client, "first").await, Ok(json!({})));
+    client.request("session/input", first_session).await;
+    client.until(is_idle).await;
+    push(&mut client, "second").await.unwrap();
+    client.request("session/input", second_session).await;
+    client.until(is_idle).await;
+
+    assert_eq!(
+        transport.header("Authorization"),
+        [Some("Bearer first".to_owned()), Some("Bearer second".to_owned())]
+    );
+    client.end().await;
+}
+
+#[tokio::test]
+async fn a_credential_update_that_cannot_serve_is_refused_and_keeps_the_token_before_it() {
+    let place = place_with_login_model("refused_push");
+    let transport = ScriptedTransport::new([text_reply("one")]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    push(&mut client, "kept").await.unwrap();
+    let later = crate::auth::millis(std::time::SystemTime::now()) + 3_600_000;
+    let update = |provider: &str, token: &str, expires_at: u64, account: Option<&str>| {
+        let mut params = json!({ "provider": provider, "accessToken": token, "expiresAt": expires_at });
+        if let Some(account) = account {
+            params["accountId"] = json!(account);
+        }
+        params
+    };
+    let bad_token = "accessToken: send a value that is not empty and has no control character";
+    let bad_account = "accountId: send a value that is not empty and has no control character";
+    let cases = [
+        (
+            update("openai", "t", later, None),
+            "provider: openai has no login flow, so it takes no credential/update",
+        ),
+        (
+            update("nobody", "t", later, None),
+            "provider: nobody has no login flow, so it takes no credential/update",
+        ),
+        (update("xai-grok", "", later, None), bad_token),
+        (update("xai-grok", "a\nb", later, None), bad_token),
+        (update("xai-grok", "a\tb", later, None), bad_token),
+        (update("xai-grok", "t", 1, None), "expiresAt: the token already expired"),
+        (
+            update("xai-grok", "t", later, Some("account")),
+            "accountId: xai-grok names no account, so send none",
+        ),
+        (update("openai-codex", "t", later, Some("")), bad_account),
+    ];
+
+    for (params, message) in cases {
+        let error = client.call("credential/update", params.clone()).await.unwrap_err();
+        assert_eq!(error["code"], json!(-32602), "{params}");
+        assert_eq!(error["message"], json!(message), "{params}");
+    }
+    let missing = client
+        .call(
+            "credential/update",
+            json!({ "provider": "xai-grok", "accessToken": "t" }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(missing["code"], json!(-32602), "{missing}");
+    let input = login_session(&mut client, &place).await;
+    client.request("session/input", input).await;
+    client.until(is_idle).await;
+    assert_eq!(transport.header("Authorization"), [Some("Bearer kept".to_owned())]);
+    client.end().await;
+}

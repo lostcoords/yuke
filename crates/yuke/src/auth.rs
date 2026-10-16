@@ -17,6 +17,7 @@ use yuke_ai::oauth::{Flow, Grant, OAuthError, PendingLogin, Poll};
 use yuke_ai::route::Credential;
 use yuke_ai::transport::Exchange;
 use yuke_engine::CredentialSource;
+use yuke_protocol::UpdateCredentialParams;
 
 use crate::app::lock;
 
@@ -86,8 +87,61 @@ impl StoredLogin {
     }
 }
 
+/// An access token from `credential/update`. Only memory holds it, and yuke never refreshes it. `Debug` writes no
+/// token.
+#[derive(Clone)]
+pub(crate) struct Pushed {
+    access_token: String,
+    /// The end of the access token, in milliseconds since the Unix epoch.
+    expires_at: u64,
+    /// The account that each model request names, for a flow with accounts.
+    account_id: Option<String>,
+}
+
+impl Pushed {
+    /// The token of `params` for a provider with `flow`, at `now`. It is valid until its end, with no margin.
+    ///
+    /// # Errors
+    ///
+    /// Returns a text that names the bad field: an empty token, a control character, an end in the past, or an
+    /// account that `flow` cannot name.
+    pub(crate) fn new(params: UpdateCredentialParams, flow: Flow, now: SystemTime) -> Result<Pushed, String> {
+        let bad = |value: &str| value.is_empty() || value.chars().any(char::is_control);
+        if bad(&params.access_token) {
+            return Err("accessToken: send a value that is not empty and has no control character".to_owned());
+        }
+        if params.expires_at <= millis(now) {
+            return Err("expiresAt: the token already expired".to_owned());
+        }
+        match &params.account_id {
+            Some(_) if flow.account_header().is_none() => {
+                return Err(format!("accountId: {} names no account, so send none", params.provider));
+            }
+            Some(account) if bad(account) => {
+                return Err("accountId: send a value that is not empty and has no control character".to_owned());
+            }
+            _ => {}
+        }
+        Ok(Pushed {
+            access_token: params.access_token,
+            expires_at: params.expires_at,
+            account_id: params.account_id,
+        })
+    }
+}
+
+impl fmt::Debug for Pushed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Pushed")
+            .field("access_token", &"<redacted>")
+            .field("expires_at", &self.expires_at)
+            .field("account_id", &self.account_id)
+            .finish()
+    }
+}
+
 /// The milliseconds of `time` since the Unix epoch. A time before the epoch is zero.
-fn millis(time: SystemTime) -> u64 {
+pub(crate) fn millis(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH)
         .map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
 }
@@ -97,6 +151,8 @@ fn millis(time: SystemTime) -> u64 {
 pub(crate) enum AuthError {
     /// No login of the provider exists.
     NoLogin(String),
+    /// The token that the client gave for the provider expired.
+    PushExpired(String),
     /// The login ended, or its refresh token can be spent.
     Ended(String),
     /// The login expired, and its refresh failed for now.
@@ -123,6 +179,10 @@ impl fmt::Display for AuthError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoLogin(provider) => write!(f, "no login for {provider}: run `yuke login {provider}`"),
+            Self::PushExpired(provider) => write!(
+                f,
+                "the accessToken of credential/update for {provider} expired: send a new credential/update"
+            ),
             Self::Ended(provider) => write!(f, "the login for {provider} ended: run `yuke login {provider}` again"),
             Self::Unavailable { provider, .. } => write!(f, "the login for {provider} expired and did not refresh"),
             Self::Locked(path) => write!(f, "{}: another process holds the lock", path.display()),
@@ -143,7 +203,12 @@ impl Error for AuthError {
             Self::File { error, .. } => Some(error),
             Self::Invalid { error, .. } => Some(error),
             Self::Task(error) => Some(error),
-            Self::NoLogin(_) | Self::Ended(_) | Self::Locked(_) | Self::Expired | Self::NoRefreshToken => None,
+            Self::NoLogin(_)
+            | Self::PushExpired(_)
+            | Self::Ended(_)
+            | Self::Locked(_)
+            | Self::Expired
+            | Self::NoRefreshToken => None,
         }
     }
 }
@@ -268,7 +333,7 @@ async fn blocking<T: Send + 'static>(
 }
 
 /// The credential of a provider with a login. It reads `auth.json` before each attempt, and it refreshes a login that
-/// ends within [`MARGIN`]. A clone shares the source.
+/// ends within [`MARGIN`]. After [`LoginSource::push`], it gives the pushed token only. A clone shares the source.
 #[derive(Clone)]
 pub(crate) struct LoginSource(Arc<Login>);
 
@@ -289,6 +354,8 @@ struct Login {
     lock_limit: Duration,
     /// The refresh tokens that a refresh can have spent while `auth.json` still holds them. None goes out again.
     spent: Mutex<HashSet<String>>,
+    /// The newest token from `credential/update`. Once set, it replaces the login for the life of the process.
+    pushed: Mutex<Option<Pushed>>,
 }
 
 impl LoginSource {
@@ -307,7 +374,13 @@ impl LoginSource {
             exchange,
             lock_limit,
             spent: Mutex::default(),
+            pushed: Mutex::default(),
         }))
+    }
+
+    /// Use `pushed` for each attempt from now on, in place of the stored login.
+    pub(crate) fn push(&self, pushed: Pushed) {
+        *lock(&self.0.pushed) = Some(pushed);
     }
 }
 
@@ -394,10 +467,22 @@ impl Login {
 #[async_trait]
 impl CredentialSource for LoginSource {
     async fn credential(&self) -> Result<Credential, Box<dyn Error + Send + Sync>> {
+        // An expired push never falls back to the login, so the account and its billing never change without a word.
+        let pushed = lock(&self.0.pushed).clone();
+        if let Some(pushed) = pushed {
+            if pushed.expires_at <= millis(SystemTime::now()) {
+                return Err(Box::new(AuthError::PushExpired(self.0.provider.clone())));
+            }
+            return Ok(self.0.flow.credential(pushed.access_token, pushed.account_id));
+        }
         let login = Arc::clone(&self.0);
         // The read and the refresh run in their own task, so a cancel cannot cut a refresh between its send and its
         // write.
         let current = tokio::spawn(async move { login.current().await }).await??;
+        // A push during the read wins over the login that the read found.
+        if let Some(pushed) = lock(&self.0.pushed).clone() {
+            return Ok(self.0.flow.credential(pushed.access_token, pushed.account_id));
+        }
         Ok(self.0.flow.credential(current.access_token, current.account_id))
     }
 }
