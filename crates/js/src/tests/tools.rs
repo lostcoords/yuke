@@ -14,7 +14,7 @@ use yuke_engine::{CancellationToken, Concurrency, Tool, ToolContent};
 
 use super::{evaluate, folder, module, next_fault, script_error, start, write};
 use crate::tools::forward;
-use crate::{Fault, JobEnded, Runtime, ScriptTool, SessionHost, baked};
+use crate::{JobEnded, Runtime, ScriptTool, SessionHost, baked};
 
 /// A session host that keeps the bytes of each stored attachment and each job end.
 #[derive(Debug, Default)]
@@ -524,10 +524,7 @@ async fn a_throw_of_an_abort_listener_is_a_fault_and_the_next_listener_runs() {
     let text = call(&tools[0].1, "{}").await.0.unwrap().text;
 
     assert_eq!(text, "x");
-    match next_fault(&mut faults).await {
-        Fault::Script(error) => assert_eq!(error.message, "the listener broke"),
-        other @ Fault::Interrupted => panic!("expected a script fault, got {other:?}"),
-    }
+    assert_eq!(next_fault(&mut faults).await.message, "the listener broke");
     assert!(evaluate::<bool>(&runtime, "return globalThis.second;").await.unwrap());
 }
 
@@ -559,10 +556,7 @@ async fn a_throw_of_a_listener_added_after_the_abort_is_a_fault() {
     let text = call(&tools[0].1, "{}").await.0.unwrap().text;
 
     assert_eq!(text, "x");
-    match next_fault(&mut faults).await {
-        Fault::Script(error) => assert_eq!(error.message, "the late listener broke"),
-        other @ Fault::Interrupted => panic!("expected a script fault, got {other:?}"),
-    }
+    assert_eq!(next_fault(&mut faults).await.message, "the late listener broke");
 }
 
 #[tokio::test]

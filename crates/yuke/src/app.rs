@@ -24,7 +24,7 @@ use yuke_ai::oauth::Flow;
 use yuke_ai::route::Credential;
 use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CredentialSource, Model, Timer};
-use yuke_js::{Fault, Limits, Options, Processes, Runtime};
+use yuke_js::{Options, Processes, Runtime, ScriptError};
 use yuke_protocol::{
     EventNumber, Input, InputId, InputSource, Job, NoticeLevel, NoticeParams, ServerNotification, SessionEvent,
     SessionId, SessionSettings, StoredEvent, UpdateCredentialParams,
@@ -36,13 +36,6 @@ use crate::auth::{LOCK_LIMIT, LoginSource, Pushed};
 use crate::paths::Paths;
 use crate::prompt::{self, Environment};
 use crate::providers::Providers;
-
-/// The limits of the JavaScript: the heap, the stack, and the longest uninterrupted stretch.
-const LIMITS: Limits = Limits {
-    memory: 64 * 1024 * 1024,
-    stack: 4 * 1024 * 1024,
-    slice: Duration::from_secs(1),
-};
 
 /// The source of the notices of yuke.
 const SOURCE: &str = "host:yuke";
@@ -131,7 +124,6 @@ impl App {
             Jobs::Refused => Processes::without_jobs(processes_folder.clone()),
         });
         let (runtime, faults) = match Runtime::start(Options {
-            limits: LIMITS,
             cache: machine.paths.cache.join("js"),
             processes: Arc::clone(&processes),
         })
@@ -565,7 +557,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, AppError> + S
 }
 
 /// Send each script fault to `observer` as a notice.
-async fn report(mut faults: mpsc::UnboundedReceiver<Fault>, observer: Arc<dyn Observer>) {
+async fn report(mut faults: mpsc::UnboundedReceiver<ScriptError>, observer: Arc<dyn Observer>) {
     while let Some(fault) = faults.recv().await {
         observer.notify(ServerNotification::Notice(NoticeParams {
             session_id: None,

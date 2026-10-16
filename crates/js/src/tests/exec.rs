@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use yuke_engine::CancellationToken;
 use yuke_protocol::JobState;
 
+use super::folder;
 use super::tools::{TestHost, call, call_with, error_of, text_of, tools_in, tools_of};
-use super::{LIMITS, folder};
 use crate::native;
 use crate::processes::{recovered_home, whole_characters};
 use crate::{Options, Processes, Runtime, SessionHost};
@@ -288,7 +288,6 @@ async fn a_background_job_starts_and_its_end_reaches_the_session() {
 async fn a_background_start_fails_when_the_processes_start_no_jobs() {
     let folder = folder("a_background_start_fails_when_the_processes_start_no_jobs");
     let (runtime, _faults) = Runtime::start(Options {
-        limits: LIMITS,
         cache: folder.join("cache"),
         processes: Arc::new(Processes::without_jobs(folder.join("processes"))),
     })
@@ -357,7 +356,6 @@ async fn a_background_command_takes_no_timeout() {
 /// A runtime with `processes` and the built-in tools, for the session of `host`.
 async fn runtime_with(folder: &Path, processes: &Arc<Processes>, host: &Arc<TestHost>) -> (Runtime, crate::ScriptTool) {
     let started = Runtime::start(Options {
-        limits: LIMITS,
         cache: folder.join("cache"),
         processes: Arc::clone(processes),
     });

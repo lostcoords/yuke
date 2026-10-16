@@ -30,7 +30,7 @@ use yuke_protocol::SessionId;
 
 use crate::app::{Machine, describe, warn};
 use crate::paths::Paths;
-use crate::print::{Finished, SessionChoice, Task};
+use crate::print::{Finished, ReasoningChoice, SessionChoice, Task};
 use crate::providers::Providers;
 
 /// The longest wait of `yuke --rpc` for the client to read the last messages after the end of its input.
@@ -61,11 +61,11 @@ struct Cli {
     #[arg(long, requires = "prompt")]
     json: bool,
 
-    /// The model, as provider/model. The default is the "model" value in config.json.
+    /// The model, as provider/model. A new session needs it.
     #[arg(long, value_name = "PROVIDER/MODEL", requires = "prompt")]
     model: Option<String>,
 
-    /// The reasoning level. Without it, the endpoint sets the level.
+    /// The reasoning choice. A new session needs it, and so does --model on a continued session.
     #[arg(long, value_enum, requires = "prompt")]
     reasoning: Option<Reasoning>,
 
@@ -118,7 +118,7 @@ impl Cli {
         let task = Task {
             prompt,
             model: self.model,
-            reasoning: self.reasoning.map(ReasoningLevel::from),
+            reasoning: self.reasoning.map(ReasoningChoice::from),
             session: match (self.session, self.continue_newest) {
                 (Some(id), _) => SessionChoice::Id(id),
                 (None, true) => SessionChoice::Newest,
@@ -130,9 +130,11 @@ impl Cli {
     }
 }
 
-/// A reasoning level on the command line.
+/// A reasoning choice on the command line.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum Reasoning {
+    /// Send no reasoning control, so the endpoint chooses the level.
+    Default,
     Off,
     Minimal,
     Low,
@@ -142,16 +144,18 @@ enum Reasoning {
     Max,
 }
 
-impl From<Reasoning> for ReasoningLevel {
+impl From<Reasoning> for ReasoningChoice {
     fn from(reasoning: Reasoning) -> Self {
+        let effort = |effort| ReasoningChoice::Level(ReasoningLevel::Effort(effort));
         match reasoning {
-            Reasoning::Off => ReasoningLevel::Off,
-            Reasoning::Minimal => ReasoningLevel::Effort(Effort::Minimal),
-            Reasoning::Low => ReasoningLevel::Effort(Effort::Low),
-            Reasoning::Medium => ReasoningLevel::Effort(Effort::Medium),
-            Reasoning::High => ReasoningLevel::Effort(Effort::High),
-            Reasoning::Xhigh => ReasoningLevel::Effort(Effort::Xhigh),
-            Reasoning::Max => ReasoningLevel::Effort(Effort::Max),
+            Reasoning::Default => ReasoningChoice::Endpoint,
+            Reasoning::Off => ReasoningChoice::Level(ReasoningLevel::Off),
+            Reasoning::Minimal => effort(Effort::Minimal),
+            Reasoning::Low => effort(Effort::Low),
+            Reasoning::Medium => effort(Effort::Medium),
+            Reasoning::High => effort(Effort::High),
+            Reasoning::Xhigh => effort(Effort::Xhigh),
+            Reasoning::Max => effort(Effort::Max),
         }
     }
 }
@@ -384,12 +388,16 @@ mod tests {
                 task: Task {
                     prompt: "Hi.".to_owned(),
                     model: Some("a/b".to_owned()),
-                    reasoning: Some(ReasoningLevel::Effort(Effort::Xhigh)),
+                    reasoning: Some(ReasoningChoice::Level(ReasoningLevel::Effort(Effort::Xhigh))),
                     session: SessionChoice::Newest,
                 },
                 json: true,
             })
         );
+        let Ok(Mode::Print { task, .. }) = mode(&["-p", "Hi.", "--reasoning", "default"]) else {
+            panic!("no print mode");
+        };
+        assert_eq!(task.reasoning, Some(ReasoningChoice::Endpoint));
     }
 
     #[test]

@@ -11,10 +11,6 @@ pub enum Error {
     /// The JavaScript threw, or the engine refused the operation.
     Script(ScriptError),
 
-    /// The slice limit stopped the JavaScript. An interrupt ends every call in flight, because the engine does not
-    /// settle the promise of an async function that the interrupt stopped.
-    Interrupted,
-
     /// The JavaScript thread has ended.
     Stopped,
 
@@ -25,30 +21,10 @@ pub enum Error {
     Panicked(String),
 }
 
-/// A failure that belongs to no call.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Fault {
-    /// A timer callback threw, or a promise rejection got no handler in its slice.
-    Script(ScriptError),
-
-    /// The slice limit stopped the JavaScript.
-    Interrupted,
-}
-
-impl fmt::Display for Fault {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Script(error) => error.fmt(f),
-            Self::Interrupted => f.write_str("the script ran past the slice limit"),
-        }
-    }
-}
-
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Script(error) => error.fmt(f),
-            Self::Interrupted => f.write_str("the script ran past the slice limit"),
             Self::Stopped => f.write_str("the JavaScript thread has ended"),
             // The text names no cause, because `source` returns it.
             Self::Thread(_) => f.write_str("the JavaScript thread did not start"),
@@ -63,7 +39,7 @@ impl std::error::Error for Error {
             // The text is the text of the inner error, so the source is the source of the inner error.
             Self::Script(error) => error.source(),
             Self::Thread(error) => Some(error),
-            Self::Interrupted | Self::Stopped | Self::Panicked(_) => None,
+            Self::Stopped | Self::Panicked(_) => None,
         }
     }
 }
@@ -144,24 +120,25 @@ fn string_form<'js>(ctx: &Ctx<'js>, value: &Value<'js>) -> String {
     format!("{value:?}")
 }
 
-/// Turn the result of an engine call into a runtime result. An interrupt becomes [`Error::Interrupted`].
+/// Turn the result of an engine call into a runtime result. An interrupt at the shutdown of the runtime becomes
+/// [`Error::Stopped`].
 pub(crate) fn caught<T>(ctx: &Ctx<'_>, result: rquickjs::Result<T>) -> Result<T, Error> {
     result.catch(ctx).map_err(|error| match error {
-        CaughtError::Exception(exception) if exception.as_value().is_uncatchable_error() => Error::Interrupted,
+        CaughtError::Exception(exception) if exception.as_value().is_uncatchable_error() => Error::Stopped,
         CaughtError::Exception(exception) => Error::Script(ScriptError::from_value(ctx, exception.as_value())),
-        CaughtError::Value(value) if value.is_uncatchable_error() => Error::Interrupted,
+        CaughtError::Value(value) if value.is_uncatchable_error() => Error::Stopped,
         CaughtError::Value(value) => Error::Script(ScriptError::from_value(ctx, &value)),
         CaughtError::Error(error) => Error::Script(ScriptError::from_engine(&error)),
     })
 }
 
 /// Add the global `reportError(error)` of the web: it reports `error` as a fault without a throw.
-pub(crate) fn install_report_error<'js>(ctx: &Ctx<'js>, faults: mpsc::UnboundedSender<Fault>) -> rquickjs::Result<()> {
+pub(crate) fn install_report_error<'js>(
+    ctx: &Ctx<'js>,
+    faults: mpsc::UnboundedSender<ScriptError>,
+) -> rquickjs::Result<()> {
     let report = Function::new(ctx.clone(), move |ctx: Ctx<'js>, error: Value<'js>| {
-        if faults
-            .send(Fault::Script(ScriptError::from_value(&ctx, &error)))
-            .is_err()
-        {
+        if faults.send(ScriptError::from_value(&ctx, &error)).is_err() {
             // The owner dropped the receiver, so it ignores faults.
         }
     })?;

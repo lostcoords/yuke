@@ -11,7 +11,7 @@ use rquickjs::{Coerced, Ctx, FromJs, Function, Persistent, Value};
 use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
 
-use crate::error::{Error, Fault, caught};
+use crate::error::{Error, ScriptError, caught};
 
 /// The longest delay. A longer delay counts as this one, as the web timers do.
 const LONGEST_DELAY: f64 = i32::MAX as f64;
@@ -156,7 +156,7 @@ fn id_of(value: Option<Value<'_>>) -> Option<u64> {
 pub(crate) fn install<'js>(
     ctx: &Ctx<'js>,
     timers: &Rc<Timers>,
-    faults: mpsc::UnboundedSender<Fault>,
+    faults: mpsc::UnboundedSender<ScriptError>,
 ) -> rquickjs::Result<()> {
     let globals = ctx.globals();
 
@@ -197,7 +197,7 @@ pub(crate) fn install<'js>(
 }
 
 /// Fire each timer at its due time, for as long as the runtime lives.
-async fn fire(ctx: Ctx<'_>, timers: Rc<Timers>, faults: mpsc::UnboundedSender<Fault>) {
+async fn fire(ctx: Ctx<'_>, timers: Rc<Timers>, faults: mpsc::UnboundedSender<ScriptError>) {
     loop {
         let Some(due) = timers.next_due() else {
             timers.changed.notified().await;
@@ -212,7 +212,7 @@ async fn fire(ctx: Ctx<'_>, timers: Rc<Timers>, faults: mpsc::UnboundedSender<Fa
             let Some(timer) = timers.start(id) else { continue };
             // The main loop reports each interrupt once, so a callback reports only its throw.
             if let Err(Error::Script(error)) = call(&ctx, &timer)
-                && faults.send(Fault::Script(error)).is_err()
+                && faults.send(error).is_err()
             {
                 // The owner dropped the receiver, so it ignores faults.
             }

@@ -16,7 +16,6 @@ use yuke_protocol::{
 };
 
 use crate::app::{App, AppError, Jobs, Machine, Observer, describe, lock, warn};
-use crate::config::Config;
 use crate::providers::Providers;
 
 /// What one run of `yuke -p` does.
@@ -24,12 +23,22 @@ use crate::providers::Providers;
 pub(crate) struct Task {
     /// The input of the turn.
     pub(crate) prompt: String,
-    /// The model as `provider/model`. For an existing session, it replaces the model of the session.
+    /// The model as `provider/model`. A new session needs it. For an existing session, it replaces the model of the
+    /// session, and the run then needs a reasoning choice too.
     pub(crate) model: Option<String>,
-    /// The reasoning level. For an existing session, it replaces the level of the session.
-    pub(crate) reasoning: Option<ReasoningLevel>,
+    /// The reasoning choice. A new session needs it. For an existing session, it replaces the level of the session.
+    pub(crate) reasoning: Option<ReasoningChoice>,
     /// The session of the turn.
     pub(crate) session: SessionChoice,
+}
+
+/// A reasoning choice of the command line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReasoningChoice {
+    /// Send no reasoning control, so the endpoint chooses the level.
+    Endpoint,
+    /// This level.
+    Level(ReasoningLevel),
 }
 
 /// The session that a run continues.
@@ -62,36 +71,27 @@ pub(crate) async fn run(
     cwd: &Path,
     cancellation_token: CancellationToken,
 ) -> Result<Finished, String> {
-    let config_path = machine.paths.config.join("config.json");
     let watcher = Arc::new(Watcher::default());
     let mut app = App::start(machine, Jobs::Refused, Arc::clone(&watcher) as Arc<dyn Observer>).await?;
     // The shutdown must also run after an error.
-    let finished = run_turn(task, &mut app, cwd, &config_path, &watcher, &cancellation_token).await;
+    let finished = run_turn(task, &mut app, cwd, &watcher, &cancellation_token).await;
     app.shutdown().await;
     finished
 }
 
-/// Open the session of `task` in `cwd`, run its turn, and close the session. A new session reads its model from the
-/// config file `config_path`.
+/// Open the session of `task` in `cwd`, run its turn, and close the session.
 async fn run_turn(
     task: &Task,
     app: &mut App,
     cwd: &Path,
-    config_path: &Path,
     watcher: &Watcher,
     cancellation_token: &CancellationToken,
 ) -> Result<Finished, String> {
     let id = match task.session {
         SessionChoice::New => {
-            // Only a new session reads the config, so a broken config does not block a continued session.
-            let config = Config::load(config_path)?;
-            let selector = task.model.as_deref().or(config.model.as_deref()).ok_or_else(|| {
-                format!(
-                    "no model: pass --model <provider/model>, or set \"model\" in {}",
-                    config_path.display()
-                )
-            })?;
-            let settings = new_settings(task, app.providers(), selector, cwd)?;
+            let selector = task.model.as_deref().ok_or("no model: pass --model <provider/model>")?;
+            let choice = task.reasoning.ok_or(NO_REASONING)?;
+            let settings = new_settings(app.providers(), selector, choice, cwd)?;
             app.create(settings).await.map_err(|error| describe(&error))?
         }
         SessionChoice::Id(id) => existing_session(task, id, app).await?,
@@ -139,8 +139,18 @@ async fn run_turn(
     })
 }
 
-/// The settings of a new session in `cwd` with the model `selector` of `providers`. The app writes the system prompt.
-fn new_settings(task: &Task, providers: &Providers, selector: &str, cwd: &Path) -> Result<SessionSettings, String> {
+/// The error of a run that needs a reasoning choice and has none.
+const NO_REASONING: &str =
+    "no reasoning choice: pass --reasoning <choice>, or --reasoning default to let the endpoint choose";
+
+/// The settings of a new session in `cwd` with the model `selector` of `providers` and the reasoning `choice`. The app
+/// writes the system prompt.
+fn new_settings(
+    providers: &Providers,
+    selector: &str,
+    choice: ReasoningChoice,
+    cwd: &Path,
+) -> Result<SessionSettings, String> {
     let entry = providers
         .lookup(selector)
         .map_err(|error| format!("{selector}: {error}"))?;
@@ -150,20 +160,23 @@ fn new_settings(task: &Task, providers: &Providers, selector: &str, cwd: &Path) 
             model: entry.model.id.to_string(),
         },
         settings: yuke_ai::Settings {
-            reasoning: reasoning(&entry, task.reasoning)?,
+            reasoning: reasoning(&entry, choice)?,
             ..yuke_ai::Settings::new()
         },
         cwd: cwd.to_owned(),
     })
 }
 
-/// Open session `id` in `app`. A model or a level of `task` replaces the one of the session with a settings event; a
-/// new model without a level takes the default level.
+/// Open session `id` in `app`. A model or a level of `task` replaces the one of the session with a settings event. A
+/// new model needs a reasoning choice too, because the level of the session may not fit it.
 async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<SessionId, String> {
+    if task.model.is_some() && task.reasoning.is_none() {
+        return Err(NO_REASONING.to_owned());
+    }
     let changed = |saved: &SessionSettings, providers: &Providers| {
-        if task.model.is_none() && task.reasoning.is_none() {
+        let Some(choice) = task.reasoning else {
             return Ok(None);
-        }
+        };
         let selector = match &task.model {
             Some(model) => model.clone(),
             None => format!("{}/{}", saved.model.provider, saved.model.model),
@@ -176,7 +189,7 @@ async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<S
             provider: entry.provider.id.to_string(),
             model: entry.model.id.to_string(),
         };
-        settings.settings.reasoning = reasoning(&entry, task.reasoning).map_err(AppError::Invalid)?;
+        settings.settings.reasoning = reasoning(&entry, choice).map_err(AppError::Invalid)?;
         Ok(Some(settings))
     };
     match app.open(id, changed).await {
@@ -186,9 +199,9 @@ async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<S
     }
 }
 
-/// The reasoning settings of `level` on the model of `entry`. No level leaves the default of the endpoint.
-fn reasoning(entry: &Entry<'_>, level: Option<ReasoningLevel>) -> Result<yuke_ai::ReasoningSettings, String> {
-    let Some(level) = level else {
+/// The reasoning settings of `choice` on the model of `entry`.
+fn reasoning(entry: &Entry<'_>, choice: ReasoningChoice) -> Result<yuke_ai::ReasoningSettings, String> {
+    let ReasoningChoice::Level(level) = choice else {
         return Ok(yuke_ai::ReasoningSettings::default());
     };
     entry

@@ -10,10 +10,7 @@ use tokio::sync::mpsc;
 
 use crate::error::caught;
 use crate::strip::OXC_VERSION;
-use crate::{Error, Fault, Limits, Options, Processes, Runtime, ScriptError};
-
-/// The slice limit of the tests that end a loop.
-const SLICE: Duration = Duration::from_millis(200);
+use crate::{Error, Options, Processes, Runtime, ScriptError};
 
 /// A new empty folder for the test `name`.
 fn folder(name: &str) -> PathBuf {
@@ -45,20 +42,8 @@ fn write(folder: &Path, files: &[(&str, &str)]) {
     }
 }
 
-/// The limits of most tests.
-const LIMITS: Limits = Limits {
-    memory: 64 << 20,
-    stack: 4 << 20,
-    slice: SLICE,
-};
-
-async fn start(folder: &Path) -> (Runtime, mpsc::UnboundedReceiver<Fault>) {
-    start_with(folder, LIMITS).await
-}
-
-async fn start_with(folder: &Path, limits: Limits) -> (Runtime, mpsc::UnboundedReceiver<Fault>) {
+async fn start(folder: &Path) -> (Runtime, mpsc::UnboundedReceiver<ScriptError>) {
     Runtime::start(Options {
-        limits,
         cache: folder.join("cache"),
         processes: Arc::new(Processes::new(folder.join("processes"))),
     })
@@ -81,7 +66,7 @@ where
 }
 
 /// The next fault. A missing fault fails the test after five seconds.
-async fn next_fault(faults: &mut mpsc::UnboundedReceiver<Fault>) -> Fault {
+async fn next_fault(faults: &mut mpsc::UnboundedReceiver<ScriptError>) -> ScriptError {
     tokio::time::timeout(Duration::from_secs(5), faults.recv())
         .await
         .unwrap()
@@ -141,83 +126,69 @@ async fn a_dropped_call_stops_its_future_on_the_javascript_thread() {
 }
 
 #[tokio::test]
-async fn the_slice_limit_ends_a_loop_and_the_runtime_works_after() {
-    let folder = folder("the_slice_limit_ends_a_loop_and_the_runtime_works_after");
+async fn javascript_runs_without_a_time_limit() {
+    let folder = folder("javascript_runs_without_a_time_limit");
     let (runtime, mut faults) = start(&folder).await;
 
-    let begin = Instant::now();
-    let result = tokio::time::timeout(Duration::from_secs(5), evaluate::<()>(&runtime, "for (;;) {}")).await;
-    assert!(matches!(result, Ok(Err(Error::Interrupted))), "{result:?}");
-    assert!(begin.elapsed() >= SLICE);
-    assert_eq!(next_fault(&mut faults).await, Fault::Interrupted);
+    // This stretch runs for more than one second without an await.
+    let spun = evaluate::<bool>(
+        &runtime,
+        "const end = Date.now() + 1200; while (Date.now() < end) {} return true;",
+    )
+    .await;
 
-    assert_eq!(evaluate::<i32>(&runtime, "return 2 + 2;").await.unwrap(), 4);
+    assert!(matches!(spun, Ok(true)), "{spun:?}");
+    assert!(faults.try_recv().is_err());
 }
 
 #[tokio::test]
-async fn the_slice_limit_ends_a_chain_of_promise_jobs() {
-    let folder = folder("the_slice_limit_ends_a_chain_of_promise_jobs");
+async fn a_shutdown_stops_a_loop_without_an_await() {
+    let folder = folder("a_shutdown_stops_a_loop_without_an_await");
     let (runtime, _faults) = start(&folder).await;
+    let runtime = Arc::new(runtime);
+    let looping = tokio::spawn({
+        let runtime = Arc::clone(&runtime);
+        async move { evaluate::<()>(&runtime, "for (;;) {}").await }
+    });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    looping.abort();
+    assert!(looping.await.unwrap_err().is_cancelled());
 
-    // Each await is a short job, and the interrupt stops the async function without a settle of its promise.
-    let result = tokio::time::timeout(Duration::from_secs(5), evaluate::<()>(&runtime, "for (;;) await null;")).await;
-    assert!(matches!(result, Ok(Err(Error::Interrupted))), "{result:?}");
-}
-
-#[tokio::test]
-async fn an_import_after_an_interrupted_promise_job_loads_its_module() {
-    let folder = folder("an_import_after_an_interrupted_promise_job_loads_its_module");
-    write(&folder, &[("main.js", "globalThis.loaded = true;\n")]);
-    let (runtime, _faults) = start(&folder).await;
-    let result = tokio::time::timeout(Duration::from_secs(5), evaluate::<()>(&runtime, "for (;;) await null;")).await;
-    assert!(matches!(result, Ok(Err(Error::Interrupted))), "{result:?}");
-
-    runtime.import(&module(&folder, "main.js")).await.unwrap();
-
-    assert!(evaluate::<bool>(&runtime, "return globalThis.loaded;").await.unwrap());
-}
-
-#[tokio::test]
-async fn an_interrupt_ends_each_call_in_flight() {
-    let folder = folder("an_interrupt_ends_each_call_in_flight");
-    let (runtime, _faults) = start(&folder).await;
-
-    let waiting = evaluate::<()>(&runtime, "await new Promise(resolve => setTimeout(resolve, 10000));");
-    let looping = evaluate::<()>(&runtime, "await null; for (;;) {}");
-    let (waiting, looping) = tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(waiting, looping) })
+    tokio::time::timeout(Duration::from_secs(5), Arc::into_inner(runtime).unwrap().shutdown())
         .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_shutdown_ends_a_call_in_flight_as_stopped() {
+    let folder = folder("a_shutdown_ends_a_call_in_flight_as_stopped");
+    let (runtime, _faults) = start(&folder).await;
+    // A tool keeps a clone of the caller, so its call can outlive the runtime.
+    let caller = runtime.caller.clone();
+    let looping = tokio::spawn(async move {
+        caller
+            .run(async |ctx: Ctx<'_>, _registry| caught(&ctx, ctx.eval::<(), _>("for (;;) {}")))
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    tokio::time::timeout(Duration::from_secs(5), runtime.shutdown())
+        .await
+        .unwrap()
         .unwrap();
 
-    assert!(matches!(waiting, Err(Error::Interrupted)), "{waiting:?}");
-    assert!(matches!(looping, Err(Error::Interrupted)), "{looping:?}");
-}
-
-#[tokio::test]
-async fn the_memory_limit_throws_a_catchable_error() {
-    let folder = folder("the_memory_limit_throws_a_catchable_error");
-    let (runtime, _faults) = start(&folder).await;
-
-    let message = evaluate::<String>(
-        &runtime,
-        "const parts = []; try { for (;;) parts.push(new Array(100000).fill(1)); } catch (error) { parts.length = 0; return error.message; }",
-    )
-    .await
-    .unwrap();
-    assert_eq!(message, "out of memory");
+    let ended = tokio::time::timeout(Duration::from_secs(5), looping)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(ended, Err(Error::Stopped)), "{ended:?}");
 }
 
 #[tokio::test]
 async fn a_deep_recursion_throws_a_catchable_range_error() {
     let folder = folder("a_deep_recursion_throws_a_catchable_range_error");
-    // A stack limit above 8 MiB needs a thread stack that grows with the limit.
-    let (runtime, _faults) = start_with(
-        &folder,
-        Limits {
-            stack: 12 << 20,
-            ..LIMITS
-        },
-    )
-    .await;
+    let (runtime, _faults) = start(&folder).await;
 
     let name = evaluate::<String>(
         &runtime,
@@ -259,12 +230,12 @@ async fn a_drop_does_not_wait_for_the_javascript() {
     });
     tokio::time::sleep(Duration::from_millis(20)).await;
 
-    // The loop holds the thread for one slice, and the drop of the last handle must not wait for it.
+    // The loop holds the thread until the drop stops it, and the drop of the last handle must not wait for it.
     looping.abort();
     assert!(looping.await.unwrap_err().is_cancelled());
     let begin = Instant::now();
     drop(Arc::into_inner(runtime).unwrap());
-    assert!(begin.elapsed() < SLICE / 4, "{:?}", begin.elapsed());
+    assert!(begin.elapsed() < Duration::from_millis(50), "{:?}", begin.elapsed());
 }
 
 #[tokio::test]
@@ -384,13 +355,9 @@ async fn a_throw_in_a_timer_callback_is_a_fault() {
         .await
         .unwrap();
 
-    match next_fault(&mut faults).await {
-        Fault::Script(error) => {
-            assert_eq!(error.name.as_deref(), Some("TypeError"));
-            assert_eq!(error.message, "late");
-        }
-        other @ Fault::Interrupted => panic!("expected a script fault, got {other:?}"),
-    }
+    let error = next_fault(&mut faults).await;
+    assert_eq!(error.name.as_deref(), Some("TypeError"));
+    assert_eq!(error.message, "late");
 }
 
 #[tokio::test]
@@ -402,10 +369,7 @@ async fn a_rejection_without_a_handler_is_a_fault() {
         .await
         .unwrap();
 
-    match next_fault(&mut faults).await {
-        Fault::Script(error) => assert_eq!(error.message, "lost"),
-        other @ Fault::Interrupted => panic!("expected a script fault, got {other:?}"),
-    }
+    assert_eq!(next_fault(&mut faults).await.message, "lost");
 }
 
 // The report of a rejection reads the message of its error, and that read runs script that can reject again.
@@ -431,18 +395,15 @@ async fn a_rejection_during_the_report_of_a_rejection_is_a_fault_too() {
 
     let mut messages = Vec::new();
     for _ in 0..2 {
-        match next_fault(&mut faults).await {
-            Fault::Script(error) => messages.push(error.message),
-            other @ Fault::Interrupted => panic!("expected a script fault, got {other:?}"),
-        }
+        messages.push(next_fault(&mut faults).await.message);
     }
     messages.sort();
     assert_eq!(messages, ["inner", "outer"]);
 }
 
 #[tokio::test]
-async fn a_rejection_that_gets_a_handler_in_its_slice_is_no_fault() {
-    let folder = folder("a_rejection_that_gets_a_handler_in_its_slice_is_no_fault");
+async fn a_rejection_that_gets_a_handler_in_its_drive_is_no_fault() {
+    let folder = folder("a_rejection_that_gets_a_handler_in_its_drive_is_no_fault");
     let (runtime, mut faults) = start(&folder).await;
 
     evaluate::<()>(
@@ -455,11 +416,10 @@ async fn a_rejection_that_gets_a_handler_in_its_slice_is_no_fault() {
     .await
     .unwrap();
 
-    // The marker fault comes after the end of the slice of the rejection, so no fault of the rejection came first.
-    match next_fault(&mut faults).await {
-        Fault::Script(error) => assert_eq!(error.message, "marker"),
-        other @ Fault::Interrupted => panic!("expected the marker fault, got {other:?}"),
-    }
+    // The marker fault comes after the drive of the rejection, so a fault of the rejection would come first.
+    assert_eq!(next_fault(&mut faults).await.message, "marker");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(faults.try_recv().is_err());
 }
 
 #[tokio::test]

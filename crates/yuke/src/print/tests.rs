@@ -45,8 +45,9 @@ async fn run_in(
 fn task(prompt: &str, session: SessionChoice) -> Task {
     Task {
         prompt: prompt.to_owned(),
-        model: Some(MODEL.to_owned()),
-        reasoning: None,
+        // Only a new session gets a model and a reasoning choice here; a continued session keeps its saved ones.
+        model: (session == SessionChoice::New).then(|| MODEL.to_owned()),
+        reasoning: (session == SessionChoice::New).then_some(ReasoningChoice::Endpoint),
         session,
     }
 }
@@ -82,37 +83,6 @@ async fn a_new_run_saves_a_session_in_the_current_folder_and_answers_the_last_te
     );
     assert_eq!(requests.len(), 1);
     assert!(requests[0].contains("You are yuke"), "{}", requests[0]);
-}
-
-#[tokio::test]
-async fn the_model_of_a_new_session_comes_from_the_config_when_the_command_line_names_none() {
-    let place = Place::new("print", "config_model");
-    std::fs::create_dir_all(&place.paths.config).unwrap();
-    std::fs::write(
-        place.paths.config.join("config.json"),
-        "{\n  // The default.\n  \"model\": \"minimax/MiniMax-M2.7\"\n}\n",
-    )
-    .unwrap();
-    let task = Task {
-        model: None,
-        ..task("Hi.", SessionChoice::New)
-    };
-
-    let (finished, _) = run_with(&place, &task, &[text_reply("Hi.")]).await;
-
-    let opened = place
-        .store()
-        .await
-        .open(finished.unwrap().session, Access::Read)
-        .await
-        .unwrap();
-    assert_eq!(
-        opened.settings.model,
-        ModelReference {
-            provider: "minimax".to_owned(),
-            model: "MiniMax-M2.7".to_owned()
-        }
-    );
 }
 
 /// Run `task` in `place` with `providers` as the text of `providers.json`. Answer the run and the transport.
@@ -206,23 +176,36 @@ async fn a_bad_providers_json_stops_the_run_before_a_request() {
 }
 
 #[tokio::test]
-async fn no_model_is_an_error_that_names_the_config_file() {
+async fn a_run_without_a_model_or_a_reasoning_choice_is_an_error_and_sends_nothing() {
     let place = Place::new("print", "no_model");
-    let task = Task {
+    run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])
+        .await
+        .0
+        .unwrap();
+    let no_model = Task {
         model: None,
         ..task("Hi.", SessionChoice::New)
     };
+    let no_reasoning = Task {
+        reasoning: None,
+        ..task("Hi.", SessionChoice::New)
+    };
+    // The level of the session may not fit a new model.
+    let new_model_only = Task {
+        model: Some("minimax/MiniMax-M2.7".to_owned()),
+        ..task("Hi.", SessionChoice::Newest)
+    };
+    let no_level = "no reasoning choice: pass --reasoning <choice>, or --reasoning default to let the endpoint choose";
 
-    let (finished, requests) = run_with(&place, &task, &[]).await;
-
-    assert_eq!(
-        finished,
-        Err(format!(
-            "no model: pass --model <provider/model>, or set \"model\" in {}",
-            place.paths.config.join("config.json").display()
-        ))
-    );
-    assert_eq!(requests, Vec::<String>::new());
+    for (task, expected) in [
+        (no_model, "no model: pass --model <provider/model>"),
+        (no_reasoning, no_level),
+        (new_model_only, no_level),
+    ] {
+        let (finished, requests) = run_with(&place, &task, &[]).await;
+        assert_eq!(finished, Err(expected.to_owned()), "{task:?}");
+        assert_eq!(requests, Vec::<String>::new());
+    }
 }
 
 #[tokio::test]
@@ -252,7 +235,7 @@ async fn a_missing_or_empty_api_key_is_an_error_and_saves_no_session() {
 async fn a_level_that_the_model_does_not_take_is_an_error() {
     let place = Place::new("print", "bad_level");
     let task = Task {
-        reasoning: Some(ReasoningLevel::Effort(Effort::Low)),
+        reasoning: Some(ReasoningChoice::Level(ReasoningLevel::Effort(Effort::Low))),
         ..task("Hi.", SessionChoice::New)
     };
 
@@ -283,26 +266,6 @@ async fn continue_takes_the_session_of_the_folder_with_the_newest_event() {
         requests[0].contains("Second.") && !requests[0].contains("First."),
         "{}",
         requests[0]
-    );
-}
-
-#[tokio::test]
-async fn a_broken_config_does_not_block_a_continued_session() {
-    let place = Place::new("print", "broken_config");
-    run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])
-        .await
-        .0
-        .unwrap();
-    std::fs::create_dir_all(&place.paths.config).unwrap();
-    std::fs::write(place.paths.config.join("config.json"), "{ broken").unwrap();
-
-    let (continued, _) = run_with(&place, &task("Second.", SessionChoice::Newest), &[text_reply("Two.")]).await;
-    let (new, _) = run_with(&place, &task("Third.", SessionChoice::New), &[]).await;
-
-    assert_eq!(continued.unwrap().text, "Two.");
-    assert!(
-        new.unwrap_err()
-            .starts_with(&place.paths.config.join("config.json").display().to_string())
     );
 }
 
@@ -354,11 +317,12 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
         .unwrap();
     let level = Task {
         model: None,
-        reasoning: Some(ReasoningLevel::Effort(Effort::High)),
+        reasoning: Some(ReasoningChoice::Level(ReasoningLevel::Effort(Effort::High))),
         ..task("Second.", SessionChoice::Newest)
     };
     let model = Task {
         model: Some("minimax/MiniMax-M2.7".to_owned()),
+        reasoning: Some(ReasoningChoice::Endpoint),
         ..task("Third.", SessionChoice::Newest)
     };
 
@@ -392,7 +356,7 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
             effort: None,
         }
     );
-    // A new model without a level takes the default level.
+    // `--reasoning default` lets the endpoint choose the level of the new model.
     assert_eq!(
         settings[2].model,
         ModelReference {
@@ -417,6 +381,7 @@ async fn a_new_model_on_a_continued_session_also_answers_the_input_that_waits() 
     place.store().await.accept_input(first.session, waiting).await.unwrap();
     let model = Task {
         model: Some("minimax/MiniMax-M2.7".to_owned()),
+        reasoning: Some(ReasoningChoice::Endpoint),
         ..task("Next.", SessionChoice::Newest)
     };
 

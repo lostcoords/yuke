@@ -1,5 +1,5 @@
 //! The file functions of the native module: reads and writes. A relative path starts in the folder that the caller gives. Each
-//! function runs off the JavaScript thread, because a blocking call would spend the slice of other JavaScript.
+//! function runs off the JavaScript thread, because a blocking call would hold up the other JavaScript.
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
