@@ -26,7 +26,7 @@ impl Config {
 }
 
 /// `text` with each comment outside a string made into spaces. A line end stays, so an error keeps its line and column.
-fn without_comments(text: &str) -> String {
+pub(crate) fn without_comments(text: &str) -> String {
     enum State {
         Code,
         Text { escaped: bool },

@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use yuke_agent::{Session, Store, StoreError};
 use yuke_ai::Block;
-use yuke_ai::catalog::{self, Auth};
+use yuke_ai::catalog::Auth;
 use yuke_ai::oauth::Flow;
 use yuke_ai::route::Credential;
 use yuke_ai::transport::{Exchange, Transport};
@@ -35,6 +35,7 @@ use self::live::LiveSession;
 use crate::auth::{LOCK_LIMIT, LoginSource};
 use crate::paths::Paths;
 use crate::prompt::{self, Environment};
+use crate::providers::Providers;
 
 /// The limits of the JavaScript: the heap, the stack, and the longest uninterrupted stretch.
 const LIMITS: Limits = Limits {
@@ -81,11 +82,13 @@ pub(crate) trait Observer: Send + Sync {
 /// The parts of the app that each open session uses.
 struct Shared {
     machine: Machine,
+    /// The providers of the profile, read once at the start.
+    providers: Providers,
     store: Arc<dyn Store>,
     processes: Arc<Processes>,
     observer: Arc<dyn Observer>,
     /// The credential of each provider with a login. One source serves each session, so one refresh serves all.
-    logins: Mutex<HashMap<&'static str, LoginSource>>,
+    logins: Mutex<HashMap<String, LoginSource>>,
 }
 
 /// The open sessions of one client, and the parts that they share.
@@ -110,6 +113,7 @@ impl App {
     ///
     /// Returns a text for the user when a part does not start.
     pub(crate) async fn start(machine: Machine, jobs: Jobs, observer: Arc<dyn Observer>) -> Result<App, String> {
+        let providers = Providers::load(&machine.paths.config)?;
         let store: Arc<dyn Store> = Arc::new(
             SqliteStore::open(&machine.paths.data)
                 .await
@@ -145,6 +149,7 @@ impl App {
         let app = App {
             shared: Arc::new(Shared {
                 machine,
+                providers,
                 store,
                 processes,
                 observer,
@@ -167,6 +172,11 @@ impl App {
     /// The store of the sessions.
     pub(crate) fn store(&self) -> &Arc<dyn Store> {
         &self.shared.store
+    }
+
+    /// The providers of the profile.
+    pub(crate) fn providers(&self) -> &Providers {
+        &self.shared.providers
     }
 
     /// Check that the model of `settings` can run: the catalog knows it, and its credential source exists. An API key
@@ -412,7 +422,9 @@ impl Error for AppError {
 /// The model of `settings`, with the credential source of its provider: an API key, or the login of `shared`.
 fn model_of(settings: &SessionSettings, shared: &Shared) -> Result<Model, AppError> {
     let selector = format!("{}/{}", settings.model.provider, settings.model.model);
-    let entry = catalog::lookup_in(catalog::PROVIDERS, &selector)
+    let entry = shared
+        .providers
+        .lookup(&selector)
         .map_err(|error| AppError::Invalid(format!("{selector}: {error}")))?;
     let provider = entry.provider;
     let source: Arc<dyn CredentialSource> = match &provider.auth {
@@ -427,19 +439,20 @@ fn model_of(settings: &SessionSettings, shared: &Shared) -> Result<Model, AppErr
         Auth::OAuth(flow_name) => {
             let flow = Flow::named(flow_name)
                 .ok_or_else(|| AppError::Invalid(format!("yuke has no login for {} yet", provider.id)))?;
-            let source = lock(&shared.logins)
-                .entry(&provider.id)
-                .or_insert_with(|| {
-                    LoginSource::new(
-                        &provider.id,
-                        flow,
-                        shared.machine.paths.data.clone(),
-                        Arc::clone(&shared.machine.exchange),
-                        LOCK_LIMIT,
-                    )
-                })
-                .clone();
-            Arc::new(source)
+            let mut logins = lock(&shared.logins);
+            if let Some(source) = logins.get(&*provider.id) {
+                Arc::new(source.clone())
+            } else {
+                let source = LoginSource::new(
+                    provider.id.to_string(),
+                    flow,
+                    shared.machine.paths.data.clone(),
+                    Arc::clone(&shared.machine.exchange),
+                    LOCK_LIMIT,
+                );
+                logins.insert(provider.id.to_string(), source.clone());
+                Arc::new(source)
+            }
         }
     };
     let target = entry

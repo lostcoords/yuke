@@ -887,7 +887,18 @@ fn url_parses_or_fails_as_bad_url() {
     let local = Target::parse("http://[::1]:8080/chat").unwrap();
     assert_eq!((local.host.as_str(), local.port), ("::1", 8080));
     assert_eq!(local.host_header, "[::1]:8080");
-    for url in ["ftp://host/x", "/relative", "http://", "not a url"] {
+    let named = Target::parse("http://user@host:9/x").unwrap();
+    assert_eq!((named.host.as_str(), named.port), ("host", 9));
+    assert_eq!(named.host_header, "host:9");
+    for url in [
+        "ftp://host/x",
+        "/relative",
+        "http://",
+        "not a url",
+        "http://host:bad/x",
+        "http://host:/x",
+        "http://host:70000/x",
+    ] {
         assert_eq!(Target::parse(url).map(|_| ()), Err(Fault::BadUrl), "{url}");
     }
 }

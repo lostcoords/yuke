@@ -3,10 +3,13 @@
 use std::borrow::Cow;
 use std::fmt;
 
+use serde::Deserialize;
+
 use crate::transport::Header;
 
 /// Select the HTTP header and value format. This type holds no credential bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CredentialHeader {
     /// `x-api-key: <key>`.
     XApiKey,
@@ -62,7 +65,7 @@ const TRANSPORT_HEADERS: [&str; 10] = [
 /// Return the name of the first header with invalid field syntax, that the transport writes itself, or that repeats a
 /// name in `written`. An empty name in `written` rejects nothing. The check allocates nothing. The caller owns the
 /// meaning of a duplicate field.
-pub(crate) fn invalid_header<'h>(headers: &'h [Header], written: &[&str]) -> Option<&'h str> {
+pub fn invalid_header<'h>(headers: &'h [Header], written: &[&str]) -> Option<&'h str> {
     let valid = |header: &Header| {
         valid_header_name(&header.name)
             && valid_header_value(&header.value)
@@ -75,7 +78,8 @@ pub(crate) fn invalid_header<'h>(headers: &'h [Header], written: &[&str]) -> Opt
 }
 
 /// Select the header that carries the session id. Each value names one header, so a second host can reuse it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SessionHeader {
     /// The route carries the session id in no header.
     #[default]
@@ -104,8 +108,8 @@ pub struct Route {
     pub base_url: Cow<'static, str>,
     /// The header that carries the credential. `None` means that the route takes no credential.
     pub credential_header: Option<CredentialHeader>,
-    /// The encoder rejects a header that repeats the credential header, the session header, or a transport header.
-    /// Do not repeat an identity header here.
+    /// The encoder rejects a header that repeats the credential header, the session header, an identity header of the
+    /// credential, or a transport header.
     pub headers: Cow<'static, [Header]>,
     /// The header that carries the session id.
     pub session_header: SessionHeader,

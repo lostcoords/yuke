@@ -38,8 +38,16 @@ impl HeadText {
             route.credential_header.map_or("", CredentialHeader::name),
             session.map_or("", |(name, _)| name),
         ];
+        let repeats_identity = || {
+            route
+                .headers
+                .iter()
+                .find(|header| identity.iter().any(|own| own.name.eq_ignore_ascii_case(&header.name)))
+                .map(|header| &*header.name)
+        };
         let invalid = route::invalid_header(identity, &written)
             .or_else(|| route::invalid_header(&route.headers, &written))
+            .or_else(repeats_identity)
             .or_else(|| (!route::valid_header_value(secret)).then_some(written[0]))
             .or_else(|| session.and_then(|(name, value)| (!route::valid_header_value(value)).then_some(name)));
         if let Some(name) = invalid {
@@ -401,6 +409,17 @@ mod tests {
         };
         let repeated = try_build(&bearer, Protocol::OpenaiChat, &grant, None);
         assert_same(repeated.err(), Some(invalid("authorization")));
+
+        let account = Credential::OAuth(OAuth {
+            access_token: "t".into(),
+            headers: [header("ChatGPT-Account-Id", "a")].to_vec().into(),
+        });
+        let pinned_account = Route {
+            headers: [header("chatgpt-account-id", "b")].to_vec().into(),
+            ..bearer.clone()
+        };
+        let repeated = try_build(&pinned_account, Protocol::OpenaiResponses, &account, None);
+        assert_same(repeated.err(), Some(invalid("chatgpt-account-id")));
 
         let repeat_session = [header("Session-Id", "s0")];
         let session = Route {

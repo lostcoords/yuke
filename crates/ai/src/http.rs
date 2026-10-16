@@ -426,12 +426,17 @@ impl Target {
         if host.is_empty() {
             return Err(Fault::BadUrl);
         }
-        let port = authority.port_u16().unwrap_or(if tls { 443 } else { 80 });
-        let host_header = match authority.port() {
-            Some(port) => format!("{host}:{port}"),
-            None => host.to_owned(),
+        let host_and_port = authority
+            .as_str()
+            .rsplit_once('@')
+            .map_or(authority.as_str(), |(_, rest)| rest);
+        // The parser keeps a port that is no number, and `Authority::port` then reports none.
+        let port = match host_and_port.get(host.len()..).and_then(|rest| rest.strip_prefix(':')) {
+            Some(port) => port.parse().map_err(|_| Fault::BadUrl)?,
+            None if tls => 443,
+            None => 80,
         };
-        let host_header = HeaderValue::try_from(host_header).map_err(|_| Fault::BadUrl)?;
+        let host_header = HeaderValue::try_from(host_and_port).map_err(|_| Fault::BadUrl)?;
         let path = uri.path_and_query().map_or("/", http::uri::PathAndQuery::as_str);
         Ok(Target {
             tls,

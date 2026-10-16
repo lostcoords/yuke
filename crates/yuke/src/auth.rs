@@ -282,7 +282,7 @@ impl fmt::Debug for LoginSource {
 }
 
 struct Login {
-    provider: &'static str,
+    provider: String,
     flow: Flow,
     files: Files,
     exchange: Arc<dyn Exchange>,
@@ -294,7 +294,7 @@ struct Login {
 impl LoginSource {
     /// The source of `provider` with `flow`, and with the files in `folder`.
     pub(crate) fn new(
-        provider: &'static str,
+        provider: String,
         flow: Flow,
         folder: PathBuf,
         exchange: Arc<dyn Exchange>,
@@ -315,10 +315,10 @@ impl Login {
     /// The login of the provider in `auth.json`.
     async fn stored(&self) -> Result<StoredLogin, AuthError> {
         let files = self.files.clone();
-        let provider = self.provider;
-        blocking(move || files.login(provider))
+        let provider = self.provider.clone();
+        blocking(move || files.login(&provider))
             .await?
-            .ok_or_else(|| AuthError::NoLogin(self.provider.to_owned()))
+            .ok_or_else(|| AuthError::NoLogin(self.provider.clone()))
     }
 
     /// The login of the next attempt.
@@ -367,7 +367,7 @@ impl Login {
             // The refresh can take long, so the token is checked again at its end.
             Err(OAuthError::Transient(_)) if stored.valid(SystemTime::now(), Duration::ZERO) => Ok(stored),
             Err(cause @ OAuthError::Transient(_)) => Err(AuthError::Unavailable {
-                provider: self.provider.to_owned(),
+                provider: self.provider.clone(),
                 cause,
             }),
             // The login is gone, or its token can be spent: only a new login recovers it.
@@ -382,12 +382,12 @@ impl Login {
 
     /// Set the login of the provider to `login`, or remove it. The lock ends after the write.
     async fn save(&self, locked: LockedFiles, login: Option<StoredLogin>) -> Result<(), AuthError> {
-        let provider = self.provider;
-        blocking(move || locked.set(provider, login)).await
+        let provider = self.provider.clone();
+        blocking(move || locked.set(&provider, login)).await
     }
 
     fn ended(&self) -> AuthError {
-        AuthError::Ended(self.provider.to_owned())
+        AuthError::Ended(self.provider.clone())
     }
 }
 

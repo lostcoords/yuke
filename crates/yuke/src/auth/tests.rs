@@ -57,7 +57,13 @@ fn saved(folder: &Path) -> Option<(String, String)> {
 }
 
 fn source(folder: &Path, exchange: impl Exchange + 'static, lock_limit: Duration) -> LoginSource {
-    LoginSource::new(PROVIDER, Flow::Xai, folder.to_owned(), Arc::new(exchange), lock_limit)
+    LoginSource::new(
+        PROVIDER.to_owned(),
+        Flow::Xai,
+        folder.to_owned(),
+        Arc::new(exchange),
+        lock_limit,
+    )
 }
 
 /// The access token of the next attempt, or the text of its error.
@@ -432,7 +438,7 @@ async fn a_refresh_keeps_the_account_and_each_credential_names_it() {
     let answers = Answers::default();
     answers.push(200, r#"{"access_token":"new","expires_in":3600}"#);
     let source = LoginSource::new(
-        "openai-codex",
+        "openai-codex".to_owned(),
         Flow::Codex,
         folder.clone(),
         Arc::new(answers.clone()),

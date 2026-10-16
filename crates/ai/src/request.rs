@@ -10,7 +10,8 @@ use crate::encoder::EncodeError;
 use crate::route::Route;
 
 /// The wire protocol of one endpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Protocol {
     /// Anthropic Messages.
     AnthropicMessages,
@@ -553,7 +554,8 @@ impl Effort {
 }
 
 /// Select the Responses endpoint shape. The Codex backend refuses the sampling members and the output limit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ResponsesDialect {
     /// The OpenAI API.
     #[default]
@@ -564,7 +566,8 @@ pub enum ResponsesDialect {
 
 /// Select the Chat Completions body shape a host accepts. Mistral refuses any member its schema does not name,
 /// `stream_options` among them, and reports the usage of a stream without a request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ChatDialect {
     /// The OpenAI shape.
     #[default]
@@ -574,7 +577,8 @@ pub enum ChatDialect {
 }
 
 /// Select the output-token member an OpenAI-chat host accepts. Only OpenAI itself renamed it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MaxTokensField {
     /// `max_tokens`.
     #[default]
@@ -584,7 +588,8 @@ pub enum MaxTokensField {
 }
 
 /// Select how a prior assistant turn returns its reasoning, which DeepSeek requires.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ReasoningReplayMode {
     /// Return no reasoning.
     #[default]
@@ -596,7 +601,8 @@ pub enum ReasoningReplayMode {
 }
 
 /// Select the reasoning control an OpenAI-chat host accepts. The dialects disagree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[expect(
     missing_docs,
     reason = "each variant names the host whose reasoning control it writes"

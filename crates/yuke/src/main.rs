@@ -8,6 +8,7 @@ mod config;
 mod paths;
 mod print;
 mod prompt;
+mod providers;
 mod rpc;
 #[cfg(test)]
 mod testing;
@@ -22,14 +23,15 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use tokio::signal::unix::{SignalKind, signal};
 use yuke_ai::Effort;
-use yuke_ai::catalog::{self, Auth, ReasoningLevel};
-use yuke_ai::oauth::{Flow, PendingLogin};
+use yuke_ai::catalog::ReasoningLevel;
+use yuke_ai::oauth::PendingLogin;
 use yuke_engine::{CancellationToken, Outcome, TurnEnd};
 use yuke_protocol::SessionId;
 
 use crate::app::{Machine, describe, warn};
 use crate::paths::Paths;
 use crate::print::{Finished, SessionChoice, Task};
+use crate::providers::Providers;
 
 /// The longest wait of `yuke --rpc` for the client to read the last messages after the end of its input.
 const DRAIN_LIMIT: Duration = Duration::from_secs(5);
@@ -223,21 +225,19 @@ async fn print_task(task: &Task, json: bool) -> ExitCode {
 
 /// Log in to the provider `id`.
 async fn login(id: &str) -> ExitCode {
-    let provider = catalog::PROVIDERS.iter().find(|provider| provider.id == id);
-    let flow = match provider.map(|provider| &provider.auth) {
-        Some(Auth::OAuth(flow_name)) => Flow::named(flow_name),
-        Some(Auth::ApiKey(Some(variable))) => {
-            warn(&format!("{id} takes an API key: set {variable}. {}", login_providers()));
+    let found = machine().and_then(|machine| {
+        let providers = Providers::load(&machine.paths.config)?;
+        Ok((machine, providers))
+    });
+    let (machine, providers) = match found {
+        Ok(found) => found,
+        Err(error) => {
+            warn(&error);
             return ExitCode::FAILURE;
         }
-        Some(Auth::ApiKey(None)) | None => None,
     };
-    let (Some(provider), Some(flow)) = (provider, flow) else {
-        warn(&format!("yuke has no login for {id}. {}", login_providers()));
-        return ExitCode::FAILURE;
-    };
-    let machine = match machine() {
-        Ok(machine) => machine,
+    let (provider, flow) = match providers.login(id) {
+        Ok(found) => found,
         Err(error) => {
             warn(&error);
             return ExitCode::FAILURE;
@@ -269,16 +269,6 @@ async fn login(id: &str) -> ExitCode {
         },
         () = cancellation_token.cancelled() => ExitCode::from(128 + signal_number.load(Ordering::SeqCst)),
     }
-}
-
-/// The sentence that names the providers with a login flow of yuke.
-fn login_providers() -> String {
-    let ids: Vec<_> = catalog::PROVIDERS
-        .iter()
-        .filter(|provider| matches!(&provider.auth, Auth::OAuth(flow_name) if Flow::named(flow_name).is_some()))
-        .map(|provider| &*provider.id)
-        .collect();
-    format!("The providers that support a login: {}.", ids.join(", "))
 }
 
 /// Serve the protocol on stdin and stdout until stdin ends.

@@ -159,8 +159,8 @@ fn calls_reply(calls: &[(&str, &str, &str)], stop_reason: &str) -> String {
     sse(&events)
 }
 
-/// Answers each open with the next scripted reply, and records each request body and its headers. A clone shares the
-/// script and the records.
+/// Answers each open with the next scripted reply, and records the URL, the body, and the headers of each request. A
+/// clone shares the script and the records.
 #[derive(Debug, Clone, Default)]
 pub struct ScriptedTransport {
     script: Arc<Mutex<Script>>,
@@ -169,6 +169,7 @@ pub struct ScriptedTransport {
 #[derive(Debug, Default)]
 struct Script {
     replies: VecDeque<Reply>,
+    urls: Vec<String>,
     requests: Vec<String>,
     headers: Vec<Vec<Header>>,
 }
@@ -209,6 +210,11 @@ impl ScriptedTransport {
         });
     }
 
+    /// The request URLs, in send order.
+    pub fn urls(&self) -> Vec<String> {
+        self.script.lock().unwrap().urls.clone()
+    }
+
     /// The request bodies, in send order.
     pub fn requests(&self) -> Vec<String> {
         self.script.lock().unwrap().requests.clone()
@@ -239,6 +245,7 @@ impl Transport for ScriptedTransport {
         _: Option<Instant>,
     ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
         let mut script = self.script.lock().unwrap();
+        script.urls.push(request.url().to_owned());
         script
             .requests
             .push(String::from_utf8(request.body().flatten().copied().collect()).unwrap());

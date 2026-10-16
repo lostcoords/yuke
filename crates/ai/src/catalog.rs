@@ -7,6 +7,8 @@ mod generated;
 use std::borrow::Cow;
 use std::fmt;
 
+use serde::Deserialize;
+
 use crate::request::{
     AnthropicWire, ChatDialect, ChatWire, Effort, MaxTokensField, Modality, Protocol, ReasoningReplayMode,
     ReasoningSettings, ResponsesDialect, ResponsesWire, Target, Thinking, ThinkingDisplay, ThinkingFormat, Wire,
@@ -87,7 +89,8 @@ impl Modalities<'_> {
 // What a source knows. `None` is unknown, and never zero, false, or an empty string.
 
 /// A limit the source does not publish stays `None`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Limits {
     /// The context window in tokens.
     pub context_window: Option<u64>,
@@ -96,7 +99,8 @@ pub struct Limits {
 }
 
 /// The prices of one band, in US dollars per million tokens. A `None` price is unknown, and never zero.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct PriceBand {
     /// The smallest prompt this band prices. The prompt counts every input token, the cached ones too.
     pub min_prompt_tokens: u64,

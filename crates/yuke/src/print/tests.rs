@@ -170,6 +170,96 @@ async fn the_model_of_a_new_session_comes_from_the_config_when_the_command_line_
     );
 }
 
+/// Run `task` in `place` with `providers` as the text of `providers.json`. Answer the run and the transport.
+async fn run_with_providers(
+    place: &Place,
+    task: &Task,
+    providers: &str,
+    variable: Box<Variable>,
+) -> (Result<Finished, String>, ScriptedTransport) {
+    std::fs::create_dir_all(&place.paths.config).unwrap();
+    std::fs::write(place.paths.config.join("providers.json"), providers).unwrap();
+    let transport = ScriptedTransport::new([text_reply("Hi.")]);
+    let finished = run(
+        task,
+        place.machine(variable, Box::new(transport.clone())),
+        &place.cwd,
+        CancellationToken::new(),
+    )
+    .await;
+    (finished, transport)
+}
+
+#[tokio::test]
+async fn a_provider_that_providers_json_adds_serves_a_run_without_a_credential() {
+    let place = Place::new("added_provider");
+    let task = Task {
+        model: Some("local/small".to_owned()),
+        ..task("Hi.", SessionChoice::New)
+    };
+    let providers = r#"{ "providers": [{
+        "id": "local", "base_url": "http://127.0.0.1:8080/v1",
+        "endpoints": [{ "protocol": "anthropic_messages" }],
+        "models": [{ "id": "small", "upstream_id": "vendor/small", "limits": { "max_output_tokens": 4096 } }]
+    }] }"#;
+
+    let (finished, transport) = run_with_providers(&place, &task, providers, Box::new(no_variable)).await;
+
+    assert_eq!(finished.unwrap().end, completed());
+    assert_eq!(transport.urls(), ["http://127.0.0.1:8080/v1/messages"]);
+    assert!(
+        transport.requests()[0].contains(r#""model":"vendor/small""#),
+        "{}",
+        transport.requests()[0]
+    );
+    assert_eq!(transport.header("Authorization"), [None]);
+    assert_eq!(transport.header("x-api-key"), [None]);
+    // A continued session finds the model in the file too.
+    let task = Task {
+        session: SessionChoice::Newest,
+        ..task
+    };
+    let (finished, _) = run_with_providers(&place, &task, providers, Box::new(no_variable)).await;
+    assert_eq!(finished.unwrap().end, completed());
+}
+
+#[tokio::test]
+async fn providers_json_changes_the_url_and_the_key_of_a_built_in_provider() {
+    let place = Place::new("changed_provider");
+    let providers = r#"{ "providers": [
+        { "id": "minimax", "base_url": "http://127.0.0.1:9/anthropic", "api_key_env": "PROXY_KEY" }
+    ] }"#;
+    let variable: Box<Variable> = Box::new(|name| (name == "PROXY_KEY").then(|| OsString::from("proxy-key")));
+
+    let (finished, transport) = run_with_providers(&place, &task("Hi.", SessionChoice::New), providers, variable).await;
+
+    assert_eq!(finished.unwrap().end, completed());
+    assert_eq!(transport.urls(), ["http://127.0.0.1:9/anthropic/messages"]);
+    assert_eq!(transport.header("Authorization"), [Some("Bearer proxy-key".to_owned())]);
+}
+
+#[tokio::test]
+async fn a_bad_providers_json_stops_the_run_before_a_request() {
+    let place = Place::new("bad_providers");
+
+    let (finished, transport) = run_with_providers(
+        &place,
+        &task("Hi.", SessionChoice::New),
+        r#"{ "providers": [{ "id": "minimax", "base_url": "ftp://h" }] }"#,
+        Box::new(with_key),
+    )
+    .await;
+
+    assert_eq!(
+        finished,
+        Err(format!(
+            "{}: provider minimax: base_url: the URL must start with http:// or https://",
+            place.paths.config.join("providers.json").display()
+        ))
+    );
+    assert_eq!(transport.urls(), Vec::<String>::new());
+}
+
 #[tokio::test]
 async fn no_model_is_an_error_that_names_the_config_file() {
     let place = Place::new("no_model");

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::Notify;
 use yuke_agent::{Session, StoreError};
-use yuke_ai::catalog::{self, Entry, ReasoningLevel};
+use yuke_ai::catalog::{Entry, ReasoningLevel};
 use yuke_ai::{Block, Role};
 use yuke_engine::{CancellationToken, Outcome, TurnEnd};
 use yuke_protocol::{
@@ -17,6 +17,7 @@ use yuke_protocol::{
 
 use crate::app::{App, Jobs, Machine, Observer, describe, lock, warn};
 use crate::config::Config;
+use crate::providers::Providers;
 
 /// What one run of `yuke -p` does.
 #[derive(Debug, PartialEq)]
@@ -90,7 +91,7 @@ async fn run_turn(
                     config_path.display()
                 )
             })?;
-            let settings = new_settings(task, selector, cwd)?;
+            let settings = new_settings(task, app.providers(), selector, cwd)?;
             app.create(settings).await.map_err(|error| describe(&error))?
         }
         SessionChoice::Id(id) => existing_session(task, id, app).await?,
@@ -138,9 +139,11 @@ async fn run_turn(
     })
 }
 
-/// The settings of a new session in `cwd` with the model `selector`. The app writes the system prompt.
-fn new_settings(task: &Task, selector: &str, cwd: &Path) -> Result<SessionSettings, String> {
-    let entry = catalog::lookup_in(catalog::PROVIDERS, selector).map_err(|error| format!("{selector}: {error}"))?;
+/// The settings of a new session in `cwd` with the model `selector` of `providers`. The app writes the system prompt.
+fn new_settings(task: &Task, providers: &Providers, selector: &str, cwd: &Path) -> Result<SessionSettings, String> {
+    let entry = providers
+        .lookup(selector)
+        .map_err(|error| format!("{selector}: {error}"))?;
     Ok(SessionSettings {
         model: ModelReference {
             provider: entry.provider.id.to_string(),
@@ -169,8 +172,10 @@ async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<S
             Some(model) => model.clone(),
             None => format!("{}/{}", settings.model.provider, settings.model.model),
         };
-        let entry =
-            catalog::lookup_in(catalog::PROVIDERS, &selector).map_err(|error| format!("{selector}: {error}"))?;
+        let entry = app
+            .providers()
+            .lookup(&selector)
+            .map_err(|error| format!("{selector}: {error}"))?;
         settings.model = ModelReference {
             provider: entry.provider.id.to_string(),
             model: entry.model.id.to_string(),
