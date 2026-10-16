@@ -176,7 +176,7 @@ async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<S
         };
         settings.settings.reasoning = reasoning(&entry, task.reasoning)?;
         // The credential comes first, so a model that cannot run saves no settings.
-        app.model(&settings).map_err(|error| describe(&error))?;
+        app.check_model(&settings).map_err(|error| describe(&error))?;
         session.set_settings(settings).await.map_err(|error| describe(&error))?;
     }
     app.open(session).await.map_err(|error| describe(&error))
@@ -258,7 +258,6 @@ impl Observer for Watcher {
                 self.ended.notify_one();
             }
             ServerNotification::Notice(notice) => warn(&notice.message),
-            _ => {}
         }
     }
 }

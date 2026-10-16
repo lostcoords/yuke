@@ -12,8 +12,8 @@ mod updates;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub use memory::MemoryStore;
-pub use session::{InputSender, Session, SessionError, SessionTurn};
-pub use store::{Access, Lease, Loaded, Opened, Store, StoreError, blob_of, check_consumed_blocks};
+pub use session::{InputSender, Session, SessionError, SessionTurn, system_notification};
+pub use store::{Access, Lease, Loaded, NewestTurn, Opened, Store, StoreError, blob_of, check_consumed_blocks};
 pub use updates::SessionObserver;
 
 // Each change of a guarded value is complete before the next statement, so a panic of another holder leaves a valid

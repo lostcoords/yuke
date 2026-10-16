@@ -15,7 +15,6 @@ pub enum InputSource {
     /// The user.
     User,
     /// A plugin. The host gives each plugin its name. The inputs of yuke itself use names that start with `host:`.
-    // @todo(xyaman): No caller sends a plugin input yet. The A6 host sends the job-ended input as `host:jobs`.
     Plugin {
         /// The name of the plugin.
         name: String,
@@ -60,7 +59,6 @@ impl Input {
     /// # Errors
     ///
     /// Returns [`InputError::EmptyModelContent`] when `model_content` has no block.
-    // @todo(xyaman): No caller sets model content yet. The job-ended input of the A6 host is its first caller.
     pub fn with_model_content(self, model_content: Vec<Block>) -> Result<Input, InputError> {
         if model_content.is_empty() {
             return Err(InputError::EmptyModelContent);

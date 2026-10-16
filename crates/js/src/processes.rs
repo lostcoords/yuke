@@ -877,7 +877,7 @@ async fn end_message(id: &str, label: &str, log: PathBuf) -> String {
         .and_then(Result::ok)
         .filter(|tail| !tail.is_empty())
         .unwrap_or_else(|| "[no output]".to_owned());
-    format!("[{id} {label}. This message is not from the user.]\nLog: {shown}\n{tail}")
+    format!("{id} {label}.\nLog: {shown}\n{tail}")
 }
 
 /// The last lines of the file at `path`, from its last 8 KiB.

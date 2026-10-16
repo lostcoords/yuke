@@ -59,24 +59,29 @@ fn commit(row: events::EventsAfter) -> rusqlite::Result<Commit<'static>> {
         }),
         None => None,
     };
-    let end = match row.end_kind.as_deref() {
-        None => None,
-        Some(COMPLETED) => Some(TurnEnd::Outcome(Outcome::Completed {
-            finish_reason: finish_reason(
-                &required(row.end_finish_reason, "end_finish_reason")?,
-                "end_finish_reason",
-            )?,
-        })),
-        Some(STOPPED) => Some(TurnEnd::Outcome(Outcome::Stopped)),
-        Some(CANCELLED) => Some(TurnEnd::Outcome(Outcome::Cancelled)),
-        Some(FAILED) => Some(TurnEnd::Failed(required(row.end_message, "end_message")?)),
-        Some(_) => return Err(invalid("end_kind")),
-    };
     Ok(Commit {
         replaced,
         blocks: Cow::Owned(required(row.blocks, "blocks")?.0),
         answer,
-        end,
+        end: turn_end(row.end_kind.as_deref(), row.end_finish_reason, row.end_message)?,
+    })
+}
+
+/// Decode the end columns of a commit row. `None` when the commit ends no turn.
+pub(crate) fn turn_end(
+    end_kind: Option<&str>,
+    end_finish_reason: Option<String>,
+    end_message: Option<String>,
+) -> rusqlite::Result<Option<TurnEnd>> {
+    Ok(match end_kind {
+        None => None,
+        Some(COMPLETED) => Some(TurnEnd::Outcome(Outcome::Completed {
+            finish_reason: finish_reason(&required(end_finish_reason, "end_finish_reason")?, "end_finish_reason")?,
+        })),
+        Some(STOPPED) => Some(TurnEnd::Outcome(Outcome::Stopped)),
+        Some(CANCELLED) => Some(TurnEnd::Outcome(Outcome::Cancelled)),
+        Some(FAILED) => Some(TurnEnd::Failed(required(end_message, "end_message")?)),
+        Some(_) => return Err(invalid("end_kind")),
     })
 }
 

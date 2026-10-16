@@ -425,7 +425,11 @@ async fn a_background_job_that_ends_sends_its_input_and_the_model_reads_it() {
     assert!(shown.starts_with("job-") && shown.ends_with(" ended"), "{shown}");
     let job = shown.trim_end_matches(" ended");
     let model_text = job_input["modelContent"][0]["user_text"].as_str().unwrap();
-    assert!(model_text.starts_with(&format!("[{job} exited 0.")), "{model_text}");
+    assert!(
+        model_text.starts_with(&format!("<system_notification>{job} exited 0.")),
+        "{model_text}"
+    );
+    assert!(model_text.ends_with("</system_notification>"), "{model_text}");
     // The model reads the whole end text, as JSON in the body of a request.
     let quoted = serde_json::to_string(model_text).unwrap();
     let text = &quoted[1..quoted.len() - 1];
@@ -835,8 +839,8 @@ async fn a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends
 }
 
 #[tokio::test]
-async fn a_panic_in_a_turn_ends_the_turn_and_a_load_runs_the_session_again() {
-    let place = Place::new("a_panic_in_a_turn_ends_the_turn_and_a_load_runs_the_session_again");
+async fn a_panic_in_a_turn_ends_the_turn_and_the_next_input_runs_with_a_note_about_it() {
+    let place = Place::new("a_panic_in_a_turn_ends_the_turn_and_the_next_input_runs_with_a_note_about_it");
     let transport = PanicsOnce::new([text_reply("back")]);
     let mut client = Client::initialized(&place, Box::new(transport)).await;
     let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
@@ -848,6 +852,10 @@ async fn a_panic_in_a_turn_ends_the_turn_and_a_load_runs_the_session_again() {
         .await;
 
     let failed = client.until(|message| message["method"] == "notice").await;
+    // The recovery ends the turn that the panic left open, and the client sees that end.
+    let repaired = client
+        .until(|message| message["params"]["update"]["sessionUpdate"] == "commit")
+        .await;
     client
         .call(
             "session/input",
@@ -855,23 +863,6 @@ async fn a_panic_in_a_turn_ends_the_turn_and_a_load_runs_the_session_again() {
         )
         .await
         .unwrap();
-    // A task that still ran would start a turn at once.
-    let started = tokio::time::timeout(
-        Duration::from_millis(300),
-        client.until(|message| message["params"]["update"]["state"] == "running"),
-    )
-    .await;
-    let id = client
-        .request("session/close", json!({ "sessionId": session, "stopJobs": false }))
-        .await;
-    let closed = client.until(|message| message["id"] == json!(id)).await;
-    let loaded = client.load(&session, json!({})).await;
-    client
-        .request(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "third" }] }),
-        )
-        .await;
     let again = client.until(is_idle).await;
 
     let labels: Vec<String> = failed.iter().filter_map(label).collect();
@@ -884,17 +875,17 @@ async fn a_panic_in_a_turn_ends_the_turn_and_a_load_runs_the_session_again() {
         "{notice}"
     );
     assert_eq!(notice["level"], "error");
-    // The task ended, so the second input waits and starts no turn.
-    assert!(started.is_err(), "a turn started after the panic");
-    assert_eq!(closed.iter().filter_map(label).collect::<Vec<_>>(), ["response"]);
-    assert_eq!(loaded.state, "idle");
-    // The turn saved the first input before its request, so only the second waits.
-    assert_eq!(loaded.pending.len(), 1);
-    assert_eq!(loaded.pending[0]["content"][0]["user_text"], "second");
+    let end = &repaired.last().unwrap()["params"]["update"]["commit"]["end"];
+    assert_eq!(end["failed"], "the turn stopped before it saved its end", "{end}");
     let saved: Vec<&Value> = again
         .iter()
         .filter(|message| message["params"]["update"]["sessionUpdate"] == "commit")
         .collect();
+    let first = saved.first().unwrap()["params"]["update"].to_string();
+    assert!(
+        first.contains("<system_notification>The previous turn ended with an error: the turn stopped before it saved its end</system_notification>"),
+        "{first}"
+    );
     assert!(
         saved.iter().any(|message| message.to_string().contains("back")),
         "{again:?}"

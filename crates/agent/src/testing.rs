@@ -16,7 +16,7 @@ use yuke_protocol::{
     SessionSettings, StoredEvent,
 };
 
-use crate::store::{Access, Store, StoreError, blob_of};
+use crate::store::{Access, NewestTurn, Store, StoreError, blob_of};
 
 /// Write one `#[tokio::test]` for each behavior of this module. `$make_store` is an async function that takes the
 /// name of the test and returns a new store, such as an `Arc<impl Store>`. The calling crate needs `tokio` with the
@@ -32,6 +32,7 @@ macro_rules! store_tests {
             a_replacement_that_keeps_nothing_leaves_its_head,
             a_second_replacement_keeps_blocks_from_before_the_first,
             a_turn_is_open_until_its_end_commit,
+            the_newest_turn_keeps_a_cancelled_or_failed_end,
             a_second_writer_gets_owned,
             a_dropped_lease_lets_a_new_writer_open,
             a_reader_opens_while_a_writer_holds_the_session,
@@ -141,7 +142,7 @@ pub async fn a_new_session_opens_with_its_settings_and_no_context(store: &dyn St
 
     assert_eq!(opened.settings, settings("one"));
     assert_eq!(opened.context, []);
-    assert!(!opened.turn_open);
+    assert!(!opened.newest_turn.is_open());
     assert_eq!(store.pending(id).await.unwrap(), []);
 }
 
@@ -282,12 +283,43 @@ pub async fn a_turn_is_open_until_its_end_commit(store: &dyn Store) {
         .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[])
         .await
         .unwrap();
-    let during = store.open(id, Access::Read).await.unwrap().turn_open;
+    let during = store.open(id, Access::Read).await.unwrap().newest_turn.is_open();
     store.commit(id, &end(&[]), &[]).await.unwrap();
-    let after = store.open(id, Access::Read).await.unwrap().turn_open;
+    let after = store.open(id, Access::Read).await.unwrap().newest_turn.is_open();
 
     assert!(during);
     assert!(!after);
+}
+
+/// An open gives the end of the newest turn, so a session can tell the model how its last turn ended.
+pub async fn the_newest_turn_keeps_a_cancelled_or_failed_end(store: &dyn Store) {
+    let id = store.create_session(&settings("one")).await.unwrap().id;
+    let newest = || async { store.open(id, Access::Read).await.unwrap().newest_turn };
+    let ending = |end: TurnEnd| Commit {
+        replaced: None,
+        blocks: Cow::Owned(vec![yuke_ai::Block::user_text("one")]),
+        answer: None,
+        end: Some(end),
+    };
+
+    let empty = newest().await;
+    store
+        .commit(id, &ending(TurnEnd::Outcome(Outcome::Cancelled)), &[])
+        .await
+        .unwrap();
+    let cancelled = newest().await;
+    store
+        .commit(id, &ending(TurnEnd::Failed("the disk is gone".to_owned())), &[])
+        .await
+        .unwrap();
+    let failed = newest().await;
+
+    assert_eq!(empty, NewestTurn::Empty);
+    assert_eq!(cancelled, NewestTurn::Ended(TurnEnd::Outcome(Outcome::Cancelled)));
+    assert_eq!(
+        failed,
+        NewestTurn::Ended(TurnEnd::Failed("the disk is gone".to_owned()))
+    );
 }
 
 /// A second writer of a session gets [`StoreError::Owned`] while the first writer holds its lease.
@@ -707,7 +739,7 @@ pub async fn a_fork_has_the_settings_and_the_context_of_its_source_and_no_pendin
     assert_ne!(fork.id, source);
     assert_eq!(fork.settings, settings("one"));
     assert_eq!(fork.context, blocks);
-    assert!(!fork.turn_open);
+    assert!(!fork.newest_turn.is_open());
     assert_eq!(store.pending(fork.id).await.unwrap(), []);
     assert_eq!(store.pending(source).await.unwrap().len(), 1);
     let saved = store.open(fork.id, Access::Read).await.unwrap();
@@ -797,7 +829,7 @@ pub async fn a_fork_of_a_source_in_a_running_turn_ends_at_its_newest_completed_t
 
     assert_eq!(fork.context, [yuke_ai::Block::assistant_text("a")]);
     assert_eq!(fork.settings, settings("one"));
-    assert!(!fork.turn_open);
+    assert!(!fork.newest_turn.is_open());
     assert_eq!(
         kinds(&store.load(fork.id, None).await.map(|loaded| loaded.events).unwrap()),
         [(1, "settings"), (2, "commit")]
@@ -871,7 +903,7 @@ pub async fn a_source_without_a_completed_turn_forks_to_its_settings_and_an_empt
 
     assert_eq!(fork.context, []);
     assert_eq!(fork.settings, settings("two"));
-    assert!(!fork.turn_open);
+    assert!(!fork.newest_turn.is_open());
 }
 
 /// The kind of each event, for a short comparison.

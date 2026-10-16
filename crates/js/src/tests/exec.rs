@@ -275,10 +275,7 @@ async fn a_background_job_starts_and_its_end_reaches_the_session() {
     );
     assert_eq!(
         ended_texts(&host, 1).await,
-        [format!(
-            "[{id} exited 4. This message is not from the user.]\nLog: {}\nhello",
-            log.display()
-        )]
+        [format!("{id} exited 4.\nLog: {}\nhello", log.display())]
     );
     // An ended job leaves the list: its end message has told the model already.
     assert_eq!(
@@ -397,7 +394,7 @@ async fn a_job_outlives_a_reload_of_the_runtime() {
     let texts = ended_texts(&host, 1).await;
     assert_eq!(texts.len(), 1, "{texts:?}");
     assert!(
-        texts[0].starts_with("[job-") && texts[0].contains(" exited 0."),
+        texts[0].starts_with("job-") && texts[0].contains(" exited 0."),
         "{}",
         texts[0]
     );

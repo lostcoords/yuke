@@ -8,10 +8,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    EventNumber, InputId, InteractionClosedParams, InteractionRequestedParams, InteractionRespondParams, SessionId,
-    SessionSettings, SessionUpdateParams,
-};
+use crate::{EventNumber, InputId, SessionId, SessionSettings, SessionUpdateParams};
 
 /// The protocol version that this crate speaks. A breaking change of the messages takes the next number.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -93,9 +90,6 @@ pub enum ClientRequest {
     /// stopped job sends no end input. Result: [`EmptyResult`].
     #[serde(rename = "job/stop")]
     StopJob(StopJobParams),
-    /// Answer a question of a plugin. Result: [`EmptyResult`].
-    #[serde(rename = "interaction/respond")]
-    InteractionRespond(InteractionRespondParams),
 }
 
 /// A notification: a message that a server or a client sends with no id. It gets no response.
@@ -131,15 +125,6 @@ pub enum ServerNotification {
     /// A message for the user. It is not part of session history.
     #[serde(rename = "notice")]
     Notice(NoticeParams),
-    /// An event of a plugin. It is not part of session history. A client ignores an extension that it does not know.
-    #[serde(rename = "extension/event")]
-    ExtensionEvent(ExtensionEventParams),
-    /// A plugin asks the user a question. The client answers with `interaction/respond`.
-    #[serde(rename = "interaction/requested")]
-    InteractionRequested(InteractionRequestedParams),
-    /// A question ended without an answer of this client. The client removes it.
-    #[serde(rename = "interaction/closed")]
-    InteractionClosed(InteractionClosedParams),
 }
 
 /// The params of `notice`.
@@ -171,23 +156,6 @@ pub enum NoticeLevel {
     Warn,
     /// A serious problem.
     Error,
-}
-
-/// The params of `extension/event`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct ExtensionEventParams {
-    /// The session of the event. The field is absent for an event of the whole process.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<SessionId>,
-    /// The name that the host gives the plugin. The events of yuke itself use names that start with `host:`.
-    pub extension: String,
-    /// The name of the event. The plugin chooses it.
-    pub event: String,
-    /// The data of the event. The plugin chooses its shape, and it puts a version in it when the shape changes.
-    #[cfg_attr(test, ts(type = "unknown"))]
-    pub data: serde_json::Value,
 }
 
 /// The answer to a request: its result or its error.

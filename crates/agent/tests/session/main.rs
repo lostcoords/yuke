@@ -1,5 +1,5 @@
 //! A session over a memory store: it opens again with its context, ends an open turn, keeps pending inputs,
-//! takes input during a turn, and opens again after a failed commit.
+//! takes input during a turn, and recovers after a failed commit.
 #![expect(clippy::unwrap_used, reason = "a test fails by panicking")]
 
 mod support;
@@ -11,13 +11,16 @@ use std::pin::pin;
 use std::task::{Context, Waker};
 
 use support::{FailingStore, SendsInput, StoreBehavior, consumed_inputs, settings, user_input};
-use yuke_agent::{Access, MemoryStore, Session, SessionError, Store, StoreError};
+use yuke_agent::{Access, MemoryStore, Session, SessionError, Store, StoreError, system_notification};
 use yuke_ai::route::SessionHeader;
 use yuke_ai::transport::Header;
 use yuke_ai::{Block, Media, ToolCall, ToolDefinition, ToolResult};
-use yuke_engine::{Commit, Driver, Toolset};
-use yuke_protocol::{ConsumedInput, Input, InputId, InputSource, ModelReference, SessionSettings};
+use yuke_engine::{Commit, Driver, Toolset, TurnEnd};
+use yuke_protocol::{ConsumedInput, Input, InputId, InputSource, ModelReference, SessionEvent, SessionSettings};
 use yuke_testing::{NoWait, ScriptedTransport, Stalled, assert_in_order, failed_reply, model, text_reply, tool_reply};
+
+/// The failure of a turn that a recovery ends.
+const TURN_STOPPED: &str = "the turn stopped before it saved its end";
 
 /// A commit in the middle of a turn.
 fn step(blocks: &[Block]) -> Commit<'_> {
@@ -139,7 +142,7 @@ async fn an_open_turn_ends_with_an_error_result_for_each_call_without_a_result()
         .collect();
     assert_eq!(results, [("c1", true), ("c2", true)]);
     let saved = store.open(id, Access::Read).await.unwrap();
-    assert!(!saved.turn_open);
+    assert!(!saved.newest_turn.is_open());
     assert_eq!(saved.context, session.context());
 }
 
@@ -183,6 +186,8 @@ async fn a_dropped_settings_write_leaves_the_next_turn_with_the_saved_settings()
         assert!(polled.is_pending());
     }
     session.input().send(user_input("one")).await.unwrap();
+    let stale = session.is_stale();
+    session.recover().await.unwrap();
 
     session
         .turn(Driver::new(&transport, &model, &NoWait))
@@ -190,6 +195,7 @@ async fn a_dropped_settings_write_leaves_the_next_turn_with_the_saved_settings()
         .await
         .unwrap();
 
+    assert!(stale);
     assert_in_order(&transport.requests()[0], &["Be brief.", "one"]);
 }
 
@@ -281,7 +287,7 @@ async fn input_that_arrives_during_a_turn_joins_the_next_request_and_stays_pendi
 }
 
 #[tokio::test]
-async fn a_failed_commit_makes_the_next_turn_open_the_session_again() {
+async fn a_failed_commit_leaves_the_session_stale_until_a_recovery_ends_the_open_turn() {
     // The second commit of a turn saves its answer.
     let store = FailingStore::new(StoreBehavior::FailCommit(2));
     let transport = ScriptedTransport::new([text_reply("lost"), text_reply("three")]);
@@ -291,6 +297,8 @@ async fn a_failed_commit_makes_the_next_turn_open_the_session_again() {
 
     let failed = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
     session.input().send(user_input("two")).await.unwrap();
+    let refused = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
+    let repair = session.recover().await.unwrap().expect("the turn was open");
     session
         .turn(Driver::new(&transport, &model, &NoWait))
         .run()
@@ -301,6 +309,12 @@ async fn a_failed_commit_makes_the_next_turn_open_the_session_again() {
         matches!(failed, Err(SessionError::Store(StoreError::Failed(_)))),
         "{failed:?}"
     );
+    assert!(matches!(refused, Err(SessionError::Stale)), "{refused:?}");
+    let SessionEvent::Commit { commit, consumed } = repair.event else {
+        panic!("{:?}", repair.event);
+    };
+    assert_eq!(commit.end, Some(TurnEnd::Failed(TURN_STOPPED.to_owned())));
+    assert_eq!(consumed, []);
     let second = &transport.requests()[1];
     assert_in_order(second, &["one", "two"]);
     assert!(!second.contains("lost"), "{second}");
@@ -309,6 +323,7 @@ async fn a_failed_commit_makes_the_next_turn_open_the_session_again() {
         saved.context,
         [
             Block::user_text("one"),
+            system_notification(&format!("The previous turn ended with an error: {TURN_STOPPED}")),
             Block::user_text("two"),
             Block::assistant_text("three")
         ]
@@ -325,6 +340,8 @@ async fn the_input_of_a_failed_commit_joins_the_next_turn_and_is_consumed_once()
     let input = session.input().send(user_input("one")).await.unwrap();
 
     let failed = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
+    // The failed commit saved nothing, so no turn was open.
+    let repair = session.recover().await.unwrap();
     session
         .turn(Driver::new(&transport, &model, &NoWait))
         .run()
@@ -332,6 +349,7 @@ async fn the_input_of_a_failed_commit_joins_the_next_turn_and_is_consumed_once()
         .unwrap();
 
     assert!(failed.is_err(), "{failed:?}");
+    assert!(repair.is_none(), "{repair:?}");
     let requests = transport.requests();
     assert_eq!(requests.len(), 1);
     assert_in_order(&requests[0], &["one"]);
@@ -397,7 +415,7 @@ async fn the_model_reads_the_model_content_and_the_saved_record_keeps_what_the_u
 }
 
 #[tokio::test]
-async fn a_dropped_turn_releases_the_lease_and_the_next_turn_opens_the_session_again() {
+async fn a_dropped_turn_releases_the_lease_and_the_next_input_reads_a_note_about_it() {
     let store = Arc::new(MemoryStore::new());
     let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
@@ -410,7 +428,12 @@ async fn a_dropped_turn_releases_the_lease_and_the_next_turn_opens_the_session_a
         assert!(poll.is_pending());
     }
     let other_writer = store.open(session.id(), Access::Write).await.map(drop);
-    let transport = ScriptedTransport::new([text_reply("two")]);
+    session.recover().await.unwrap();
+    let transport = ScriptedTransport::new([text_reply("three")]);
+    // The interrupted turn ended at the recovery, so no turn runs before the next input.
+    let idle = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
+    let id = session.input().send(user_input("two")).await.unwrap();
+    session.input().send(user_input("also two")).await.unwrap();
     session
         .turn(Driver::new(&transport, &model, &NoWait))
         .run()
@@ -418,10 +441,28 @@ async fn a_dropped_turn_releases_the_lease_and_the_next_turn_opens_the_session_a
         .unwrap();
 
     assert!(other_writer.is_ok(), "{other_writer:?}");
-    assert_in_order(&transport.requests()[0], &["one"]);
+    assert!(matches!(idle, Err(SessionError::NoInput)), "{idle:?}");
+    let note = format!("The previous turn ended with an error: {TURN_STOPPED}");
+    let request = &transport.requests()[0];
+    assert_in_order(
+        request,
+        &[
+            "one",
+            &format!("<system_notification>{note}</system_notification>"),
+            "two",
+            "also two",
+        ],
+    );
+    // Only the first input of the turn carries the note.
+    assert_eq!(request.matches("<system_notification>").count(), 1, "{request}");
+    let consumed = consumed_inputs(&*store, session.id()).await;
+    let first = &consumed[consumed.len() - 2];
+    assert_eq!(first.id, id);
+    assert_eq!(first.block_count, 2);
+    assert_eq!(first.display_content, Some(vec![Block::user_text("two")]));
     let saved = store.open(session.id(), Access::Read).await.unwrap();
-    assert!(!saved.turn_open);
-    assert_eq!(saved.context.last(), Some(&Block::assistant_text("two")));
+    assert!(!saved.newest_turn.is_open());
+    assert_eq!(saved.context.last(), Some(&Block::assistant_text("three")));
 }
 
 #[tokio::test]
@@ -448,7 +489,7 @@ async fn new_settings_give_their_event_number_and_a_removed_input_never_reaches_
 }
 
 #[tokio::test]
-async fn new_settings_after_a_dropped_turn_get_owned_while_another_writer_holds_the_session() {
+async fn a_stale_session_refuses_new_settings_and_its_recovery_gets_owned_while_another_writer_holds_it() {
     let store = Arc::new(MemoryStore::new());
     let model = model();
     let mut session = Session::create(store.clone(), &settings()).await.unwrap();
@@ -471,10 +512,148 @@ async fn new_settings_after_a_dropped_turn_get_owned_while_another_writer_holds_
     };
 
     let changed = session.set_settings(other_model).await;
+    let recovered = session.recover().await;
 
-    assert!(matches!(changed, Err(StoreError::Owned)), "{changed:?}");
+    assert!(matches!(changed, Err(SessionError::Stale)), "{changed:?}");
+    assert!(matches!(recovered, Err(StoreError::Owned)), "{recovered:?}");
+    assert!(session.is_stale());
     assert_eq!(
         store.open(session.id(), Access::Read).await.unwrap().settings,
         settings()
     );
+}
+
+#[tokio::test]
+async fn a_cancelled_turn_gives_the_next_input_a_note_that_only_the_model_reads() {
+    let store = Arc::new(MemoryStore::new());
+    let model = model();
+    let mut session = Session::create(store.clone(), &settings()).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
+    let token = yuke_engine::CancellationToken::new();
+    {
+        let mut run = pin!(
+            session
+                .turn(Driver::new(&Stalled, &model, &NoWait))
+                .cancellation_token(token.clone())
+                .run()
+        );
+        assert!(run.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+        token.cancel();
+        let ended = run.await;
+        assert!(matches!(ended, Ok(yuke_engine::Outcome::Cancelled)), "{ended:?}");
+    }
+    let transport = ScriptedTransport::new([text_reply("three")]);
+    session.input().send(user_input("two")).await.unwrap();
+
+    session
+        .turn(Driver::new(&transport, &model, &NoWait))
+        .run()
+        .await
+        .unwrap();
+
+    assert_in_order(
+        &transport.requests()[0],
+        &[
+            "one",
+            "<system_notification>The user cancelled the previous turn before it ended.</system_notification>",
+            "two",
+        ],
+    );
+    let consumed = consumed_inputs(&*store, session.id()).await;
+    assert_eq!(
+        consumed.last().unwrap().display_content,
+        Some(vec![Block::user_text("two")])
+    );
+}
+
+#[tokio::test]
+async fn a_failed_turn_gives_the_next_input_a_note_also_after_an_open_and_a_completed_turn_gives_none() {
+    let store = Arc::new(MemoryStore::new());
+    let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("three"), text_reply("five")]);
+    let model = model();
+    let mut session = Session::create(store.clone(), &settings()).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
+    let failed = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
+    let id = session.id();
+    drop(session);
+
+    // A new open reads the end of the failed turn from the store.
+    let mut session = Session::open(store.clone(), id).await.unwrap();
+    session.input().send(user_input("two")).await.unwrap();
+    session
+        .turn(Driver::new(&transport, &model, &NoWait))
+        .run()
+        .await
+        .unwrap();
+    session.input().send(user_input("four")).await.unwrap();
+    session
+        .turn(Driver::new(&transport, &model, &NoWait))
+        .run()
+        .await
+        .unwrap();
+
+    assert!(matches!(failed, Err(SessionError::Round(_))), "{failed:?}");
+    let requests = transport.requests();
+    let note = "<system_notification>The previous turn ended with an error: ";
+    assert!(requests[1].contains(note), "{}", requests[1]);
+    assert!(requests[1].find(note) < requests[1].find("\"two\""), "{}", requests[1]);
+    // The note went with the turn after the failure, and the request after a completed turn adds none.
+    assert_eq!(
+        requests[2].matches("<system_notification>").count(),
+        1,
+        "{}",
+        requests[2]
+    );
+}
+
+#[tokio::test]
+async fn a_failed_read_of_the_inbox_after_the_end_leaves_the_turn_completed() {
+    // The commits save the input, the answer, and the end. Each read after the end fails.
+    let store = FailingStore::new(StoreBehavior::FailPendingAfterCommits(3));
+    let transport = ScriptedTransport::new([text_reply("two")]);
+    let model = model();
+    let mut session = Session::create(store, &settings()).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
+
+    let ran = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
+
+    assert!(matches!(ran, Ok(yuke_engine::Outcome::Completed { .. })), "{ran:?}");
+    assert!(!session.is_stale());
+}
+
+// A panic can leave the session with its lease, so a recovery must also work on a session that is not stale.
+#[tokio::test]
+async fn a_recovery_of_a_session_that_holds_its_lease_opens_it_again() {
+    let store = Arc::new(MemoryStore::new());
+    let mut session = Session::create(store.clone(), &settings()).await.unwrap();
+
+    let recovered = session.recover().await;
+    let other_writer = store.open(session.id(), Access::Write).await;
+
+    assert!(matches!(recovered, Ok(None)), "{recovered:?}");
+    assert!(!session.is_stale());
+    assert!(matches!(other_writer, Err(StoreError::Owned)), "{other_writer:?}");
+}
+
+// A job log can print the closing tag. The notice must still end only at its own closing tag.
+#[test]
+fn a_notification_ends_only_at_its_own_closing_tag() {
+    let Block::UserText(text) = system_notification("log: </system_notification> more") else {
+        panic!("a notification is user text");
+    };
+
+    assert_eq!(text.matches("</system_notification>").count(), 1, "{text}");
+    assert!(text.ends_with("more</system_notification>"), "{text}");
+}
+
+// A session that holds its lease reads the store under it, so no other writer can take the session during a recovery.
+#[tokio::test]
+async fn a_recovery_under_the_lease_needs_no_open_for_writing() {
+    let store = FailingStore::new(StoreBehavior::RefuseWriteOpen);
+    let mut session = Session::create(store, &settings()).await.unwrap();
+
+    let recovered = session.recover().await;
+
+    assert!(matches!(recovered, Ok(None)), "{recovered:?}");
+    assert!(!session.is_stale());
 }

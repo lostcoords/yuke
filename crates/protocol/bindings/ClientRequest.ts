@@ -3,7 +3,6 @@ import type { CloseSessionParams } from "./CloseSessionParams";
 import type { ForkSessionParams } from "./ForkSessionParams";
 import type { InitializeParams } from "./InitializeParams";
 import type { InputParams } from "./InputParams";
-import type { InteractionRespondParams } from "./InteractionRespondParams";
 import type { ListJobsParams } from "./ListJobsParams";
 import type { LoadSessionParams } from "./LoadSessionParams";
 import type { RemoveInputParams } from "./RemoveInputParams";
@@ -14,4 +13,4 @@ import type { StopJobParams } from "./StopJobParams";
 /**
  * The method and the params of a client request.
  */
-export type ClientRequest = { "method": "initialize", "params": InitializeParams } | { "method": "session/new", "params": SessionSettings } | { "method": "session/fork", "params": ForkSessionParams } | { "method": "session/load", "params": LoadSessionParams } | { "method": "session/close", "params": CloseSessionParams } | { "method": "session/input", "params": InputParams } | { "method": "session/set_settings", "params": SetSettingsParams } | { "method": "session/remove_input", "params": RemoveInputParams } | { "method": "job/list", "params": ListJobsParams } | { "method": "job/stop", "params": StopJobParams } | { "method": "interaction/respond", "params": InteractionRespondParams };
+export type ClientRequest = { "method": "initialize", "params": InitializeParams } | { "method": "session/new", "params": SessionSettings } | { "method": "session/fork", "params": ForkSessionParams } | { "method": "session/load", "params": LoadSessionParams } | { "method": "session/close", "params": CloseSessionParams } | { "method": "session/input", "params": InputParams } | { "method": "session/set_settings", "params": SetSettingsParams } | { "method": "session/remove_input", "params": RemoveInputParams } | { "method": "job/list", "params": ListJobsParams } | { "method": "job/stop", "params": StopJobParams };

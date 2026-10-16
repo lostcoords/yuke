@@ -87,8 +87,8 @@ struct Shared {
 /// # Cancel safety
 ///
 /// The methods are not cancel safe. A caller awaits each call to its end, as the request loop of `yuke --rpc` does. A
-/// dropped close can leave the jobs of a session running, and a dropped settings change can leave the model of the
-/// session behind its saved settings.
+/// dropped close can leave the jobs of a session running, and a dropped settings change leaves the session stale until
+/// its next turn opens it again.
 pub(crate) struct App {
     shared: Arc<Shared>,
     runtime: Runtime,
@@ -162,13 +162,13 @@ impl App {
         &self.shared.store
     }
 
-    /// The model of `settings`, with its credential from the environment.
+    /// Check that the model of `settings` can run: the catalog knows it, and its credential exists.
     ///
     /// # Errors
     ///
     /// Returns [`AppError::Invalid`] for an unknown model or a missing credential.
-    pub(crate) fn model(&self, settings: &SessionSettings) -> Result<Model, AppError> {
-        model_of(settings, &*self.shared.machine.variable)
+    pub(crate) fn check_model(&self, settings: &SessionSettings) -> Result<(), AppError> {
+        model_of(settings, &*self.shared.machine.variable).map(drop)
     }
 
     /// Create a session with `settings`, and open it. The folder loses its links, and the app writes the system prompt
@@ -181,11 +181,11 @@ impl App {
     pub(crate) async fn create(&mut self, mut settings: SessionSettings) -> Result<SessionId, AppError> {
         settings.cwd = canonical(settings.cwd).await?;
         settings.settings.system = system_prompt(settings.cwd.clone(), self.shared.machine.home.clone()).await?;
-        let model = self.model(&settings)?;
+        self.check_model(&settings)?;
         let session = Session::create(Arc::clone(&self.shared.store), &settings)
             .await
             .map_err(AppError::Store)?;
-        self.start_new(session, Ok(model)).await
+        self.start_new(session).await
     }
 
     /// Fork session `id` through event `through`, and open the fork.
@@ -197,8 +197,7 @@ impl App {
         let session = Session::fork(Arc::clone(&self.shared.store), id, through)
             .await
             .map_err(AppError::Store)?;
-        let model = self.model(session.settings());
-        self.start_new(session, model).await
+        self.start_new(session).await
     }
 
     /// Open `session`, which the caller opened from the store. An open alone runs no turn.
@@ -207,8 +206,8 @@ impl App {
     ///
     /// Returns [`AppError::Invalid`] for a model that cannot run.
     pub(crate) async fn open(&mut self, session: Session) -> Result<SessionId, AppError> {
-        let model = self.model(session.settings())?;
-        self.start_session(session, model).await
+        self.check_model(session.settings())?;
+        self.start_session(session).await
     }
 
     /// Open session `id` when it is not open, and send it as updates: its saved events after `after`, its state, its
@@ -331,17 +330,12 @@ impl App {
         }
     }
 
-    /// Start the task of `session`, which this app saved just now, on `model`. A session that cannot start is deleted
-    /// again, so no session that cannot run stays in the store.
-    async fn start_new(&mut self, session: Session, model: Result<Model, AppError>) -> Result<SessionId, AppError> {
+    /// Open `session`, which this app saved just now. A session that cannot start is deleted again, so no session that
+    /// cannot run stays in the store.
+    async fn start_new(&mut self, session: Session) -> Result<SessionId, AppError> {
         let id = session.id();
-        let started = match model {
-            Ok(model) => self.start_session(session, model).await,
-            Err(error) => {
-                drop(session);
-                Err(error)
-            }
-        };
+        // A failed open drops the session, so its lease is free before the delete.
+        let started = self.open(session).await;
         if started.is_err() {
             self.shared.store.delete_session(id).await.map_err(AppError::Store)?;
         }
@@ -349,9 +343,9 @@ impl App {
     }
 
     /// Start the task of `session`, and answer its id.
-    async fn start_session(&mut self, session: Session, model: Model) -> Result<SessionId, AppError> {
+    async fn start_session(&mut self, session: Session) -> Result<SessionId, AppError> {
         let id = session.id();
-        let live = LiveSession::start(session, model, &self.runtime, Arc::clone(&self.shared)).await?;
+        let live = LiveSession::start(session, &self.runtime, Arc::clone(&self.shared)).await?;
         self.sessions.insert(id, live);
         Ok(id)
     }

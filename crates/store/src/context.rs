@@ -1,14 +1,15 @@
-//! The load of a session: its settings, its model context, and whether its turn is open.
+//! The load of a session: its settings, its model context, and its newest turn.
 
 use yuke_sql::rusqlite::{self, Connection};
 
+use crate::event;
 use crate::queries::events;
 
 /// A session as the database holds it.
 pub(crate) struct Loaded {
     pub(crate) settings: yuke_protocol::SessionSettings,
     pub(crate) context: Vec<yuke_ai::Block>,
-    pub(crate) turn_open: bool,
+    pub(crate) newest_turn: yuke_agent::NewestTurn,
 }
 
 impl Loaded {
@@ -22,7 +23,7 @@ impl Loaded {
             id,
             settings: self.settings,
             context: self.context,
-            turn_open: self.turn_open,
+            newest_turn: self.newest_turn,
             lease,
         }
     }
@@ -53,14 +54,20 @@ pub(crate) fn load(connection: &Connection, session: [u8; 16]) -> rusqlite::Resu
         },
     )
     .all()?;
-    let turn_open = rows.last().is_some_and(|row| row.end_kind.is_none());
+    let mut newest_end = None;
     for row in rows {
         context.extend(required(row.blocks, "blocks")?.0);
+        newest_end = Some((row.end_kind, row.end_finish_reason, row.end_message));
     }
+    let newest_turn = match newest_end {
+        None => yuke_agent::NewestTurn::Empty,
+        Some((kind, finish_reason, message)) => event::turn_end(kind.as_deref(), finish_reason, message)?
+            .map_or(yuke_agent::NewestTurn::Open, yuke_agent::NewestTurn::Ended),
+    };
     Ok(Some(Loaded {
         settings: required(settings.settings, "settings")?.0,
         context,
-        turn_open,
+        newest_turn,
     }))
 }
 

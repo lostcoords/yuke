@@ -76,6 +76,10 @@ pub(crate) enum StoreBehavior {
     StallSettings,
     /// Fail each read of the pending inputs.
     FailPending,
+    /// Fail each read of the pending inputs after this many commits.
+    FailPendingAfterCommits(usize),
+    /// Refuse each open for writing, as if another writer held the session.
+    RefuseWriteOpen,
 }
 
 /// A memory store with one selected failure mode.
@@ -127,6 +131,9 @@ impl Store for FailingStore {
     }
 
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {
+        if matches!(self.behavior, StoreBehavior::RefuseWriteOpen) && access == Access::Write {
+            return Err(StoreError::Owned);
+        }
         self.store.open(id, access).await
     }
 
@@ -157,7 +164,12 @@ impl Store for FailingStore {
     }
 
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError> {
-        if matches!(self.behavior, StoreBehavior::FailPending) {
+        let failing = match self.behavior {
+            StoreBehavior::FailPending => true,
+            StoreBehavior::FailPendingAfterCommits(after) => self.commits.load(Ordering::SeqCst) >= after,
+            _ => false,
+        };
+        if failing {
             return Err(StoreError::Failed("the disk is gone".into()));
         }
         self.store.pending(id).await

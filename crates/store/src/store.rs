@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
-use yuke_agent::{Access, Lease, Loaded, Opened, Store, StoreError, check_consumed_blocks};
+use yuke_agent::{Access, Lease, Loaded, NewestTurn, Opened, Store, StoreError, check_consumed_blocks};
 use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_protocol::{ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings};
 use yuke_sql::rusqlite::{self, Connection, TransactionBehavior};
@@ -163,7 +163,7 @@ impl Store for SqliteStore {
             id,
             settings: settings.clone(),
             context: Vec::new(),
-            turn_open: false,
+            newest_turn: NewestTurn::Empty,
             lease: Some(self.lease(id, lock)),
         })
     }

@@ -5,21 +5,15 @@ Agent Client Protocol (ACP): `"jsonrpc": "2.0"`, `noun/verb` methods, camelCase 
 is not ACP: for example, it has `session/input` in place of `session/prompt`, and a tool update uses a saved call position rather than a provider call id.
 
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
-  `session/remove_input`, `session/set_settings`, `job/list`, `job/stop`, `interaction/respond`.
+  `session/remove_input`, `session/set_settings`, `job/list`, `job/stop`.
 - A session is open after `session/new`, `session/fork`, or `session/load`, until `session/close` or the end of the
   connection. The other session requests need an open session. Many sessions can be open at once.
 - The background jobs of a session run while the session is open. `job/list` lists them. A `job` update holds the
   whole job at its start and at its end. `job/stop` waits for the end, and its `job` update comes first.
   `session/close` fails while jobs run, unless it has `stopJobs: true`. A job that ends by itself also sends an input
   from `host:jobs`, after its `job` update.
-- Notifications: `session/cancel` from a client. `session/update`, `notice`, `extension/event`,
-  `interaction/requested`, and `interaction/closed` from the server.
-- A plugin can ask the user a question: `confirm`, `select`, or `input`. yuke itself asks nothing. The client answers
-  with `interaction/respond`, or with `canceled`. `interaction/closed` removes a question that ended without this
-  client's answer. The types exist, but the server does not send or answer them yet.
-- `notice` is a message for the user, for the whole process or one session. `extension/event` is an event of a plugin.
-  The plugin chooses its kind and its data, and it puts a version in the data when the shape changes. A client ignores
-  an extension that it does not know. Neither is part of session history.
+- Notifications: `session/cancel` from a client. `session/update` and `notice` from the server.
+- `notice` is a message for the user, for the whole process or one session. It is not part of session history.
 - `session/update` carries a saved event with its event number (`seq`), or a live update of a running turn.
 - The queue: `input_accepted` and `input_removed` are live updates. A queued input leaves the queue when a saved
   commit names it in `consumed`, or when `input_removed` names it.
@@ -38,6 +32,7 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   Array index `i` maps to block index `i` in that commit. A client replaces the whole draft.
 - `draft_discarded` removes a draft without a confirmed replacement. It never removes saved history.
 - `turn_unconfirmed` discards provisional tool state when the turn has no confirmed terminal commit. Reload the journal.
+  Before the next turn, the server ends a turn that the store holds as open, and sends that commit as a saved event.
 - Tool updates use `{ eventNumber, blockIndex }` within the enclosing session. The position names the saved call block.
 - Saved commits still contain model context data. A visible-history projection is separate from that raw journal.
 - An input has a source: `user`, or a `plugin` with a name. The inputs of yuke itself use names that start with `host:`.

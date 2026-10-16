@@ -12,7 +12,7 @@ use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, StoredEvent,
 };
 
-use crate::store::{Access, Lease, Loaded, Opened, Store, StoreError, blob_of, check_consumed_blocks};
+use crate::store::{Access, Lease, Loaded, NewestTurn, Opened, Store, StoreError, blob_of, check_consumed_blocks};
 
 /// A [`Store`] that keeps its sessions in memory, for tests and for a caller that saves nothing. It refuses a second
 /// writer of a session, as a store with a file lock does.
@@ -74,13 +74,13 @@ impl Saved {
     fn to_opened(&self, id: SessionId, lease: Option<Lease>) -> Opened {
         let mut settings = None;
         let mut context = Vec::new();
-        let mut turn_open = false;
+        let mut newest_turn = NewestTurn::Empty;
         for stored in &self.events {
             match &stored.event {
                 SessionEvent::Settings(event_settings) => settings = Some(event_settings),
                 SessionEvent::Commit { commit, .. } => {
                     commit.apply(&mut context);
-                    turn_open = commit.end.is_none();
+                    newest_turn = commit.end.clone().map_or(NewestTurn::Open, NewestTurn::Ended);
                 }
             }
         }
@@ -88,7 +88,7 @@ impl Saved {
             id,
             settings: settings.expect("the session has a settings event").clone(),
             context,
-            turn_open,
+            newest_turn,
             lease,
         }
     }

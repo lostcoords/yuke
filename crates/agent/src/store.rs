@@ -4,7 +4,7 @@ use std::fmt;
 use std::path::Path;
 
 use async_trait::async_trait;
-use yuke_engine::Commit;
+use yuke_engine::{Commit, TurnEnd};
 use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings, StoredEvent,
 };
@@ -187,10 +187,28 @@ pub struct Opened {
     pub settings: SessionSettings,
     /// The model context: the head of the newest replacement, the blocks that it keeps, and the blocks after it.
     pub context: Vec<yuke_ai::Block>,
-    /// Whether the newest commit has no end. A process that stopped during a turn leaves the turn open.
-    pub turn_open: bool,
+    /// The newest turn of the session.
+    pub newest_turn: NewestTurn,
     /// The owner lock of an [`Access::Write`] open. A read holds no lock.
     pub lease: Option<Lease>,
+}
+
+/// The newest turn of a session, as its newest commit shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NewestTurn {
+    /// The session has no commit.
+    Empty,
+    /// The newest commit has no end. A failed write, a dropped turn, or a stopped process leaves the turn open.
+    Open,
+    /// The newest commit ends the turn.
+    Ended(TurnEnd),
+}
+
+impl NewestTurn {
+    /// Whether a turn is open.
+    pub fn is_open(&self) -> bool {
+        matches!(self, NewestTurn::Open)
+    }
 }
 
 /// Holds the owner lock of a session. The drop releases the lock.

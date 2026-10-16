@@ -154,6 +154,8 @@ pub(crate) mod events {
     pub(crate) struct CommitsFrom {
         pub(crate) blocks: Option<crate::Json<Vec<yuke_ai::Block>>>,
         pub(crate) end_kind: Option<String>,
+        pub(crate) end_finish_reason: Option<String>,
+        pub(crate) end_message: Option<String>,
     }
 
     impl FromRow for CommitsFrom {
@@ -161,6 +163,8 @@ pub(crate) mod events {
             Ok(Self {
                 blocks: row.get("blocks")?,
                 end_kind: row.get("end_kind")?,
+                end_finish_reason: row.get("end_finish_reason")?,
+                end_message: row.get("end_message")?,
             })
         }
     }
@@ -392,7 +396,7 @@ ORDER BY seq DESC LIMIT 1;",
     pub(crate) fn commits_from<'a>(connection: &'a Connection, params: &CommitsFromParams) -> Query<'a, CommitsFrom> {
         Query::new(
             connection,
-            r"SELECT blocks, end_kind FROM events
+            r"SELECT blocks, end_kind, end_finish_reason, end_message FROM events
 WHERE session_id = :session_id AND kind = 'commit' AND seq >= :first
 ORDER BY seq;",
             &[(":session_id", &params.session_id), (":first", &params.first)],

@@ -77,9 +77,9 @@ SELECT seq, head, keep, blocks FROM events
 WHERE session_id = :session_id AND kind = 'commit' AND seq < :before
 ORDER BY seq DESC LIMIT 1;
 
---! commits_from (session_id: [u8; 16], first: u64) : (blocks?: crate::Json<Vec<yuke_ai::Block>>, end_kind?)
+--! commits_from (session_id: [u8; 16], first: u64) : (blocks?: crate::Json<Vec<yuke_ai::Block>>, end_kind?, end_finish_reason?, end_message?)
 --- The commits of the session from event `first` on, oldest first.
-SELECT blocks, end_kind FROM events
+SELECT blocks, end_kind, end_finish_reason, end_message FROM events
 WHERE session_id = :session_id AND kind = 'commit' AND seq >= :first
 ORDER BY seq;
 

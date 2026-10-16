@@ -213,11 +213,6 @@ impl Server {
                 app.set_settings(params.session_id, params.settings).await?;
                 result(&EmptyResult {})
             }
-            // No plugin asks yet, so no question is open.
-            ClientRequest::InteractionRespond(params) => Err(AppError::Invalid(format!(
-                "no question has the id {}",
-                params.interaction_id.0
-            ))),
         }
     }
 }

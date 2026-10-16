@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tokio::sync::{Notify, OwnedMutexGuard};
 use tokio::task::JoinHandle;
-use yuke_agent::{InputSender, Loaded, Session, SessionError, SessionObserver, StoreError};
+use yuke_agent::{InputSender, Loaded, Session, SessionError, SessionObserver, StoreError, system_notification};
 use yuke_ai::Block;
 use yuke_engine::{CancellationToken, Driver, Model, Outcome, Toolset};
 use yuke_js::{JobEnded, Runtime, SessionHost};
@@ -24,8 +24,8 @@ const JOBS_SOURCE: &str = "host:jobs";
 /// An open session.
 pub(super) struct LiveSession {
     inbox: Inbox,
-    /// The session and its model. A turn holds the lock for its whole run, so new settings never meet a turn.
-    core: Arc<tokio::sync::Mutex<Core>>,
+    /// A turn holds the lock for its whole run, so new settings never meet a turn.
+    session: Arc<tokio::sync::Mutex<Session>>,
     /// The cancellation token of the running turn, or `None` while the session is idle.
     turn: Arc<Mutex<Option<CancellationToken>>>,
     /// Ends the task. The token of each turn is a child of it.
@@ -36,17 +36,10 @@ pub(super) struct LiveSession {
     task: JoinHandle<()>,
 }
 
-/// The parts of a session that only a turn or a change of the settings use.
-struct Core {
-    session: Session,
-    model: Model,
-}
-
 impl LiveSession {
-    /// Load the tools of `session`, and start its task, which runs its turns on `model`.
+    /// Load the tools of `session`, and start its task, which runs its turns.
     pub(super) async fn start(
         session: Session,
-        model: Model,
         runtime: &Runtime,
         shared: Arc<Shared>,
     ) -> Result<LiveSession, AppError> {
@@ -75,20 +68,20 @@ impl LiveSession {
                 .add(definition, tool)
                 .map_err(|error| AppError::Internal(describe(&error)))?;
         }
-        let core = Arc::new(tokio::sync::Mutex::new(Core { session, model }));
+        let session = Arc::new(tokio::sync::Mutex::new(session));
         let turn = Arc::default();
         let closed = CancellationToken::new();
         let task = SessionTask {
-            core: Arc::clone(&core),
+            session: Arc::clone(&session),
             toolset: Arc::new(toolset),
-            shared: Arc::clone(&shared),
+            host: Arc::clone(&host),
             inbox: inbox.clone(),
             turn: Arc::clone(&turn),
             closed: closed.clone(),
         };
         Ok(LiveSession {
             inbox,
-            core,
+            session,
             turn,
             closed,
             host,
@@ -140,7 +133,7 @@ impl LiveSession {
     /// Save `settings`. It fails while a turn runs or input waits, and it never waits for a turn. The session keeps its
     /// system prompt.
     pub(super) async fn set_settings(&self, mut settings: SessionSettings) -> Result<(), AppError> {
-        let Ok(mut core) = self.core.try_lock() else {
+        let Ok(mut session) = self.session.try_lock() else {
             return Err(AppError::Busy);
         };
         // A turn starts only under the lock, so an input that comes after this check runs with the new settings.
@@ -153,19 +146,20 @@ impl LiveSession {
         if !waiting.is_empty() {
             return Err(AppError::Busy);
         }
-        settings
-            .settings
-            .system
-            .clone_from(&core.session.settings().settings.system);
+        if session.is_stale() {
+            recover(&mut session, &self.inbox.output).await?;
+        }
+        settings.settings.system.clone_from(&session.settings().settings.system);
         settings.cwd = canonical(settings.cwd).await?;
-        let model = model_of(&settings, &*self.shared.machine.variable)?;
-        let event_number = core
-            .session
+        // The model comes first, so a model that cannot run saves no settings.
+        model_of(&settings, &*self.shared.machine.variable)?;
+        let event_number = session
             .set_settings(settings.clone())
             .await
-            .map_err(AppError::Store)?;
-        core.model = model;
-        lock(&self.host.folder).clone_from(&settings.cwd);
+            .map_err(|error| match error {
+                SessionError::Store(error) => AppError::Store(error),
+                error => AppError::Internal(describe(&error)),
+            })?;
         self.inbox.output.publish(SessionUpdate::Saved(StoredEvent {
             event_number,
             event: SessionEvent::Settings(settings),
@@ -363,9 +357,9 @@ impl Drop for Hold<'_> {
 
 /// The task of one session.
 struct SessionTask {
-    core: Arc<tokio::sync::Mutex<Core>>,
+    session: Arc<tokio::sync::Mutex<Session>>,
     toolset: Arc<Toolset>,
-    shared: Arc<Shared>,
+    host: Arc<Host>,
     inbox: Inbox,
     turn: Arc<Mutex<Option<CancellationToken>>>,
     closed: CancellationToken,
@@ -388,7 +382,7 @@ impl SessionTask {
         let output = &self.inbox.output;
         loop {
             // The check comes before the lock, so a wake with no input never makes new settings fail.
-            match self.shared.store.pending(output.session).await {
+            match self.host.shared.store.pending(output.session).await {
                 Ok(pending) if !pending.is_empty() => {}
                 Ok(_) => return,
                 Err(error) => {
@@ -396,7 +390,22 @@ impl SessionTask {
                     return;
                 }
             }
-            let core = Arc::clone(&self.core).lock_owned().await;
+            let mut session = Arc::clone(&self.session).lock_owned().await;
+            if session.is_stale()
+                && let Err(error) = recover(&mut session, output).await
+            {
+                output.notice(NoticeLevel::Error, &describe(&error));
+                return;
+            }
+            // The settings name the model and the folder, so each turn takes both from the settings of that moment.
+            let model = match model_of(session.settings(), &*self.host.shared.machine.variable) {
+                Ok(model) => model,
+                Err(error) => {
+                    output.notice(NoticeLevel::Error, &describe(&error));
+                    return;
+                }
+            };
+            lock(&self.host.folder).clone_from(&session.settings().cwd);
             let token = {
                 let mut turn = lock(&self.turn);
                 if self.closed.is_cancelled() {
@@ -411,8 +420,9 @@ impl SessionTask {
             }));
             // The turn runs in its own task, so a panic of the turn cannot leave the session running.
             let ended = tokio::spawn(run_turn(
-                core,
-                Arc::clone(&self.shared),
+                session,
+                model,
+                Arc::clone(&self.host.shared),
                 Arc::clone(&self.toolset),
                 Arc::clone(output),
                 token,
@@ -424,18 +434,19 @@ impl SessionTask {
             }));
             match ended {
                 Ok(Ok(_) | Err(SessionError::Round(_) | SessionError::NoInput)) => {}
-                // A store failure waits for the next wake, so it does not repeat at once.
-                Ok(Err(SessionError::Store(error))) => {
+                // A stale session recovers at the next wake, so a store failure does not repeat at once.
+                Ok(Err(error @ (SessionError::Store(_) | SessionError::Stale))) => {
                     output.notice(NoticeLevel::Error, &describe(&error));
                     return;
                 }
-                // The session in memory can be wrong after a panic, so the task ends. A load opens it again.
+                // The session in memory can be wrong after a panic, so it opens again from the store at once. The
+                // input that waits runs at the next wake, so a panic does not repeat at once.
                 Err(error) => {
-                    output.notice(
-                        NoticeLevel::Error,
-                        &format!("the turn failed: {error}. Close the session and load it again."),
-                    );
-                    self.closed.cancel();
+                    output.notice(NoticeLevel::Error, &format!("the turn failed: {error}"));
+                    let mut session = self.session.lock().await;
+                    if let Err(error) = recover(&mut session, output).await {
+                        output.notice(NoticeLevel::Error, &describe(&error));
+                    }
                     return;
                 }
             }
@@ -443,16 +454,25 @@ impl SessionTask {
     }
 }
 
-/// Run one turn of the session in `core`. A round failure is saved as the end of the turn.
+/// Open `session` again from the store after a failed write or a panic, and publish the end of a turn that the store
+/// held as open.
+async fn recover(session: &mut Session, output: &Output) -> Result<(), AppError> {
+    if let Some(event) = session.recover().await.map_err(AppError::Store)? {
+        output.publish(SessionUpdate::Saved(event));
+    }
+    Ok(())
+}
+
+/// Run one turn of `session` on `model`. A round failure is saved as the end of the turn.
 async fn run_turn(
-    mut core: OwnedMutexGuard<Core>,
+    mut session: OwnedMutexGuard<Session>,
+    model: Model,
     shared: Arc<Shared>,
     toolset: Arc<Toolset>,
     output: Arc<Output>,
     token: CancellationToken,
 ) -> Result<Outcome, SessionError> {
-    let Core { session, model } = &mut *core;
-    let driver = Driver::new(&*shared.machine.transport, model, &TokioTimer).toolset(&toolset);
+    let driver = Driver::new(&*shared.machine.transport, &model, &TokioTimer).toolset(&toolset);
     session
         .turn(driver)
         .observer(&*output)
@@ -463,7 +483,7 @@ async fn run_turn(
 
 /// The session of the tools: its folder, its blob store, and the input of its background jobs.
 struct Host {
-    /// The folder of the session. New settings change it between turns.
+    /// The folder of the session. Each turn sets it from the settings.
     folder: Mutex<PathBuf>,
     shared: Arc<Shared>,
     inbox: Inbox,
@@ -487,14 +507,14 @@ impl SessionHost for Host {
         self.inbox.output.publish(SessionUpdate::Live(LiveUpdate::Job { job }));
     }
 
-    // The end of a job is an input of `host:jobs`. The user sees a short line, and the model reads the whole text. The
-    // input starts a turn when the session is idle.
+    // The end of a job is an input of `host:jobs`. The user sees a short line, and the model reads the whole text as a
+    // notification of yuke. The input starts a turn when the session is idle.
     async fn job_ended(&self, ended: JobEnded) {
         let source = InputSource::Plugin {
             name: JOBS_SOURCE.to_owned(),
         };
         let job_input = Input::new(source, vec![Block::user_text(format!("{} ended", ended.id))])
-            .and_then(|job_input| job_input.with_model_content(vec![Block::user_text(ended.text)]));
+            .and_then(|job_input| job_input.with_model_content(vec![system_notification(&ended.text)]));
         let accepted = match job_input {
             Ok(job_input) => self.inbox.accept(job_input).await.map_err(|error| describe(&error)),
             Err(error) => Err(describe(&error)),

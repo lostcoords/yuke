@@ -50,7 +50,7 @@ async fn a_session_survives_a_close_and_an_open_of_the_file() {
 
     assert_eq!(opened.settings, settings("two"));
     assert_eq!(opened.context, [yuke_ai::Block::user_text("a")]);
-    assert!(opened.turn_open);
+    assert!(opened.newest_turn.is_open());
     let pending = second.pending(id).await.unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].id, input);

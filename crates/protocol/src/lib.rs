@@ -6,7 +6,6 @@ mod bindings;
 mod event;
 mod id;
 mod input;
-mod interaction;
 mod message;
 mod session;
 mod update;
@@ -14,16 +13,12 @@ mod update;
 pub use event::{SessionEvent, StoredEvent};
 pub use id::{DraftId, EventNumber, InputId, SessionId};
 pub use input::{ConsumedInput, Input, InputError, InputSource, PendingInput};
-pub use interaction::{
-    InteractionClosedParams, InteractionId, InteractionRequest, InteractionRequestedParams, InteractionRespondParams,
-    InteractionResponse,
-};
 pub use message::{
-    CancelParams, ClientNotification, ClientRequest, CloseSessionParams, EmptyResult, ExtensionEventParams,
-    ForkSessionParams, ForkSessionResult, Implementation, InitializeParams, InitializeResult, InputParams, InputResult,
-    Job, JobState, JsonRpc, ListJobsParams, ListJobsResult, LoadSessionParams, NewSessionResult, NoticeLevel,
-    NoticeParams, Notification, PROTOCOL_VERSION, RemoveInputParams, Request, RequestId, Response, ResponseError,
-    ResponseOutcome, ServerNotification, SetSettingsParams, StopJobParams,
+    CancelParams, ClientNotification, ClientRequest, CloseSessionParams, EmptyResult, ForkSessionParams,
+    ForkSessionResult, Implementation, InitializeParams, InitializeResult, InputParams, InputResult, Job, JobState,
+    JsonRpc, ListJobsParams, ListJobsResult, LoadSessionParams, NewSessionResult, NoticeLevel, NoticeParams,
+    Notification, PROTOCOL_VERSION, RemoveInputParams, Request, RequestId, Response, ResponseError, ResponseOutcome,
+    ServerNotification, SetSettingsParams, StopJobParams,
 };
 pub use session::{ModelReference, SessionSettings};
 pub use update::{

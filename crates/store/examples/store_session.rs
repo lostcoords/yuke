@@ -49,6 +49,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let read = store.open(id, Access::Read).await?;
     println!("model: {}/{}", read.settings.model.provider, read.settings.model.model);
     println!("context: {:?}", read.context);
-    println!("turn open: {}", read.turn_open);
+    println!("turn open: {}", read.newest_turn.is_open());
     Ok(())
 }

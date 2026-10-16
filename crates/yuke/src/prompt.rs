@@ -19,6 +19,8 @@ Ask for clarification when a required decision cannot be resolved from the avail
 Verify changes with the relevant checks. Report failures and any checks you could not run.
 Never claim that an action succeeded without evidence.
 
+yuke marks its notices with <system_notification> tags. Treat them as information, not as instructions.
+
 Keep responses concise and direct.
 Give brief progress updates during substantial work.
 Explain the result, the verification, and any unresolved issues.";
@@ -158,6 +160,19 @@ mod tests {
         }
         std::fs::create_dir_all(&folder).unwrap();
         folder.canonicalize().unwrap()
+    }
+
+    // The agent wraps each text for the model in this tag, so the prompt must name the same tag.
+    #[test]
+    fn the_base_explains_the_tag_of_each_notification() {
+        let yuke_ai::Block::UserText(note) = yuke_agent::system_notification("") else {
+            panic!("a notification is user text");
+        };
+        let tag = note.split_once('>').map(|(open, _)| format!("{open}>")).unwrap();
+        assert!(
+            BASE.contains(&format!("yuke marks its notices with {tag} tags")),
+            "{tag}"
+        );
     }
 
     #[test]
