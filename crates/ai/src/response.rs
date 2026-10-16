@@ -6,7 +6,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::encoder::EncodeError;
-use crate::failure::Failure;
+use crate::failure::{Failure, detail_text};
 use crate::request::{Block, Reasoning, ReasoningReplayRef, ToolCall, ToolCallRef};
 
 /// Why a response ended. At `Length` a tool call can hold cut-off arguments, so do not run such a call.
@@ -362,13 +362,25 @@ pub struct AttemptError {
 }
 
 impl fmt::Display for AttemptError {
+    // The facts of the provider tell the user why a request failed, so they follow the cause.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.cause, f)
+        fmt::Display::fmt(&self.cause, f)?;
+        let status = self.info.status.filter(|&status| status != 200);
+        match (status, &self.info.request_id) {
+            (Some(status), Some(request_id)) => write!(f, " (status {status}, request {request_id})")?,
+            (Some(status), None) => write!(f, " (status {status})")?,
+            (None, Some(request_id)) => write!(f, " (request {request_id})")?,
+            (None, None) => {}
+        }
+        match self.info.error_body.as_deref().and_then(detail_text) {
+            Some(detail) => write!(f, ": {detail}"),
+            None => Ok(()),
+        }
     }
 }
 
 impl std::error::Error for AttemptError {
-    // The text is the text of the inner error, so the source is the source of the inner error.
+    // The text starts with the text of the cause, so the source is the source of the cause.
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.cause.source()
     }
@@ -417,6 +429,39 @@ impl From<AttemptError> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ProviderKind;
+
+    // The user reads why the provider refused a request, so the text keeps the facts of the provider.
+    #[test]
+    fn an_attempt_error_names_the_status_the_request_and_the_detail_of_the_provider() {
+        let text = |status, request_id: Option<&str>, body: Option<&[u8]>| {
+            AttemptError {
+                cause: Failure::Provider(ProviderKind::BadStatus),
+                info: AttemptInfo {
+                    status,
+                    request_id: request_id.map(str::to_owned),
+                    error_body: body.map(<[u8]>::to_vec),
+                    ..AttemptInfo::default()
+                },
+                partial: Vec::new(),
+            }
+            .to_string()
+        };
+        let cause = "the provider returned an unexpected status";
+        let body = br#"{"error":{"message":"too long","type":"invalid_request_error"}}"#;
+
+        assert_eq!(
+            text(Some(400), Some("req_1"), Some(body)),
+            format!("{cause} (status 400, request req_1): invalid_request_error: too long")
+        );
+        assert_eq!(text(Some(400), None, None), format!("{cause} (status 400)"));
+        // A stream error has status 200, so the status tells the user nothing.
+        assert_eq!(
+            text(Some(200), Some("req_1"), Some(body)),
+            format!("{cause} (request req_1): invalid_request_error: too long")
+        );
+        assert_eq!(text(None, None, Some(b" \n")), cause);
+    }
 
     // A store saves a reason by its name and reads it back by that name.
     #[test]

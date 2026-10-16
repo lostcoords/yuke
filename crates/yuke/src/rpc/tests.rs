@@ -349,6 +349,29 @@ async fn the_server_writes_the_system_prompt_of_a_new_session() {
 }
 
 #[tokio::test]
+async fn a_regular_file_is_no_folder_for_a_new_session_or_new_settings() {
+    let place = Place::new("a_regular_file_is_no_folder_for_a_new_session_or_new_settings");
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
+    let file = place.work.join("notes.txt");
+    std::fs::write(&file, "notes").unwrap();
+    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    let mut new = place.settings();
+    new["cwd"] = json!(file);
+    let mut changed = place.settings();
+    changed["sessionId"] = session;
+    changed["cwd"] = json!(file);
+
+    let created = client.call("session/new", new).await;
+    let refused = client.call("session/set_settings", changed).await;
+
+    for error in [created.unwrap_err(), refused.unwrap_err()] {
+        assert_eq!(error["code"], json!(ResponseError::INVALID_PARAMS), "{error}");
+        assert!(error["message"].as_str().unwrap().ends_with("not a folder"), "{error}");
+    }
+    client.end().await;
+}
+
+#[tokio::test]
 async fn a_request_before_initialize_an_unknown_method_and_no_json_get_errors() {
     let place = Place::new("a_request_before_initialize_an_unknown_method_and_no_json_get_errors");
     let mut client = Client::start(&place, Box::new(ScriptedTransport::default()));

@@ -21,7 +21,7 @@ mod wyhash;
 mod testing;
 
 pub use encoder::{EncodeError, Encoded, Encoder, Unsupported};
-pub use failure::{Failure, ProviderKind, detail_text};
+pub use failure::{Failure, ProviderKind};
 #[cfg(feature = "http-tokio")]
 pub use http::{HttpOptions, HttpTransport, InvalidUserAgent};
 pub use reply::Reply;

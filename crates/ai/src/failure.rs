@@ -125,7 +125,7 @@ pub(crate) fn event_kind(root: &Value<'_>) -> ProviderKind {
 
 /// Build a sanitized line from error answer bytes: `type: message (code)` when the JSON names them, else
 /// the raw text. `None` when nothing printable remains.
-pub fn detail_text(bytes: &[u8]) -> Option<String> {
+pub(crate) fn detail_text(bytes: &[u8]) -> Option<String> {
     let trimmed = trim(bytes);
     if trimmed.is_empty() {
         return None;

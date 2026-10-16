@@ -431,12 +431,16 @@ fn model_of(settings: &SessionSettings, variable: &Variable) -> Result<Model, Ap
     })
 }
 
-/// `folder` without links. It must exist.
+/// `folder` without links. It must be a folder.
 async fn canonical(folder: PathBuf) -> Result<PathBuf, AppError> {
     blocking(move || {
-        folder
+        let canonical = folder
             .canonicalize()
-            .map_err(|error| AppError::Invalid(format!("{}: {error}", folder.display())))
+            .map_err(|error| AppError::Invalid(format!("{}: {error}", folder.display())))?;
+        if !canonical.is_dir() {
+            return Err(AppError::Invalid(format!("{}: not a folder", folder.display())));
+        }
+        Ok(canonical)
     })
     .await
 }

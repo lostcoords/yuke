@@ -483,18 +483,24 @@ async fn a_rejected_credential_ends_the_turn_with_its_text_once() {
 
     assert_eq!(
         finished.unwrap().end,
-        TurnEnd::Failed("the provider rejected the credential".to_owned())
+        TurnEnd::Failed("the provider rejected the credential (status 401): {}".to_owned())
     );
 }
 
 #[test]
-fn the_answer_text_is_the_text_after_the_last_block_of_the_user() {
+fn the_answer_text_is_the_text_of_the_last_run_of_assistant_blocks() {
     let context = [
         Block::user_text("Go."),
         Block::assistant_text("Early."),
         Block::ToolResult(yuke_ai::ToolResult::error("call-1", "failed")),
         Block::assistant_text("One."),
         Block::assistant_text("Two."),
+        Block::ToolCall(yuke_ai::ToolCall {
+            call_id: "call-2".to_owned(),
+            name: "exec".to_owned(),
+            arguments: "{}".to_owned(),
+        }),
+        Block::ToolResult(yuke_ai::ToolResult::error("call-2", "not run")),
     ];
 
     assert_eq!(answer_text(&context), "One.\nTwo.");

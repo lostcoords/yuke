@@ -656,6 +656,37 @@ async fn an_image_read_answers_media_through_the_host() {
     assert_eq!(*host.media.lock().unwrap(), [png]);
 }
 
+/// A tool that answers the media files that its arguments name.
+const ATTACH_TOOL: &str = "import { define } from 'yuke:tools';\n\
+    const files = { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } } } } as const;\n\
+    define({ name: 'attach', description: 'd', concurrency: 'serial', parameters: files, execute(args) {\n\
+      return { output: 'attached', media: (args.paths ?? []).map((path) => ({ path, mime: 'image/png' })) };\n\
+    } });\n";
+
+// A provider refuses a large image in each later request, so the session must never store one.
+#[tokio::test]
+async fn media_over_the_limit_fails_the_call_and_stores_no_file_of_it() {
+    let folder = folder("media_over_the_limit_fails_the_call_and_stores_no_file_of_it");
+    write(&folder, &[("tools.ts", ATTACH_TOOL)]);
+    let limit = 5 * 1024 * 1024 / 4 * 3;
+    let mut png = vec![0; limit];
+    std::fs::write(folder.join("fits.png"), &png).unwrap();
+    png.push(0);
+    std::fs::write(folder.join("large.png"), &png).unwrap();
+    let (_runtime, host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
+
+    let large = error_of(&tools["attach"], r#"{"paths": ["fits.png", "large.png"]}"#).await;
+    let stored_after_large = host.media.lock().unwrap().len();
+    let fits = call(&tools["attach"], r#"{"paths": ["fits.png"]}"#).await.0;
+
+    assert_eq!(
+        large,
+        format!("large.png: the file is larger than the media limit of {limit} bytes")
+    );
+    assert_eq!(stored_after_large, 0);
+    assert_eq!(fits.unwrap().media[0].blob.len, limit);
+}
+
 #[tokio::test]
 async fn write_makes_the_missing_folders_in_the_workspace() {
     let folder = folder("write_makes_the_missing_folders_in_the_workspace");

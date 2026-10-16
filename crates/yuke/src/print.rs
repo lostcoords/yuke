@@ -193,13 +193,18 @@ fn reasoning(entry: &Entry<'_>, level: Option<ReasoningLevel>) -> Result<yuke_ai
         .map_err(|error| format!("{}/{}: {error}", entry.provider.id, entry.model.id))
 }
 
-/// The text of the last answer: the text blocks after the last block of the user.
+/// The text of the last answer: the text blocks of the last run of assistant blocks.
 fn answer_text(context: &[Block]) -> String {
-    let start = context
+    // A cancel after a tool call saves error results after the answer. A tool result has the user role.
+    let end = context
+        .iter()
+        .rposition(|block| block.role() == Role::Assistant)
+        .map_or(0, |last| last + 1);
+    let start = context[..end]
         .iter()
         .rposition(|block| block.role() != Role::Assistant)
         .map_or(0, |last| last + 1);
-    let texts: Vec<&str> = context[start..]
+    let texts: Vec<&str> = context[start..end]
         .iter()
         .filter_map(|block| match block {
             Block::AssistantText(text) => Some(text.as_str()),

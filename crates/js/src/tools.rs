@@ -2,6 +2,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::fmt;
+use std::io::Read as _;
 use std::path::PathBuf;
 use std::pin::pin;
 use std::rc::Rc;
@@ -261,14 +262,19 @@ impl ScriptTool {
 
     /// The engine content of `answer`: its text, and each media file stored through the host.
     async fn content(&self, answer: Answer) -> Result<ToolContent, String> {
-        let mut media = Vec::with_capacity(answer.media.len());
+        // Each read comes before the first store, so a failed read leaves no blob without a reference.
+        let mut files = Vec::with_capacity(answer.media.len());
         for file in answer.media {
             let path = self.host.folder().join(&file.path);
             let bytes = read_file(path)
                 .await
                 .map_err(|error| format!("{}: {error}", file.path))?;
+            files.push((bytes, file.mime));
+        }
+        let mut media = Vec::with_capacity(files.len());
+        for (bytes, mime) in files {
             let blob = self.host.put_media(bytes).await?;
-            media.push(yuke_ai::Media::new(blob, file.mime));
+            media.push(yuke_ai::Media::new(blob, mime));
         }
         Ok(ToolContent {
             text: answer.output,
@@ -277,11 +283,29 @@ impl ScriptTool {
     }
 }
 
-/// The bytes of the file at `path`. A blocking thread of tokio reads them, so the task of the caller does not wait.
+/// The largest media file of each provider: 5 MiB as base64. Anthropic on Bedrock and Google Cloud, which OpenRouter
+/// can use, has this limit per image.
+const MAX_MEDIA_BYTES: u64 = 5 * 1024 * 1024 / 4 * 3;
+
+/// The bytes of the file at `path`, at most [`MAX_MEDIA_BYTES`]. A blocking thread of tokio reads them, so the task of
+/// the caller does not wait.
 async fn read_file(path: PathBuf) -> std::io::Result<Vec<u8>> {
-    tokio::task::spawn_blocking(move || std::fs::read(path))
-        .await
-        .map_err(std::io::Error::other)?
+    tokio::task::spawn_blocking(move || {
+        let mut bytes = Vec::new();
+        // A provider refuses a larger file in each later request, so the session could not go on.
+        std::fs::File::open(path)?
+            .take(MAX_MEDIA_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > MAX_MEDIA_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::FileTooLarge,
+                format!("the file is larger than the media limit of {MAX_MEDIA_BYTES} bytes"),
+            ));
+        }
+        Ok(bytes)
+    })
+    .await
+    .map_err(std::io::Error::other)?
 }
 
 /// The reason of a cancel: a `DOMException` named `AbortError`, as the web gives.
