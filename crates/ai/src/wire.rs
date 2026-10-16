@@ -15,16 +15,16 @@ use json::JsonWriter;
 
 /// Write the request up to its open context array. Return whether that array already holds an element, as the
 /// Chat system message is one.
-pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, request: &Request<'_>) -> Result<bool, EncodeError> {
+pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, request: &Request<'_>) -> bool {
     match &target.wire {
         Wire::AnthropicMessages(wire) => {
             anthropic::write_head(out, target, *wire, request);
-            Ok(false)
+            false
         }
         Wire::OpenaiChat(wire) => openai_chat::write_head(out, target, *wire, request),
         Wire::OpenaiResponses(wire) => {
             openai_responses::write_head(out, target, *wire, request);
-            Ok(false)
+            false
         }
     }
 }

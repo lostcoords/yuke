@@ -46,10 +46,10 @@ impl fmt::Debug for Model {
 }
 
 /// Why a round failed after its retries.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum RoundError {
     /// The credential source gave no credential. The driver sent nothing for that attempt.
-    Credential(Arc<dyn Error + Send + Sync>),
+    Credential(Box<dyn Error + Send + Sync>),
     /// The request could not be encoded, or its last attempt failed.
     Model(yuke_ai::Error),
 }

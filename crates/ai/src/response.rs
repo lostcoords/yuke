@@ -387,7 +387,7 @@ impl std::error::Error for AttemptError {
 }
 
 /// The errors of [`crate::generate`]: a request that cannot be encoded, or an attempt that failed.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Error {
     /// The request cannot be encoded. Nothing was sent.
     Encode(EncodeError),

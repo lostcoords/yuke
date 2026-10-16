@@ -158,8 +158,6 @@ pub struct Caps {
     pub tools: Option<bool>,
     /// Deferred tools and tool references need explicit support for the resolved model and endpoint.
     pub tool_search: Option<bool>,
-    /// The source claim that this endpoint and model accept privileged instructions inside conversation history.
-    pub system_updates: Option<bool>,
     /// Whether the model can stop reasoning. `None` is unknown, so a caller may still ask.
     pub disable_reasoning: Option<bool>,
     /// Whether the model accepts an explicit marker. MiniMax M3 caches and refuses one.
@@ -357,12 +355,8 @@ pub struct Entry<'a> {
 }
 
 impl Entry<'_> {
-    /// The endpoint that serves the model's protocol.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::MissingEndpoint`] if the provider declares none.
-    pub fn endpoint(&self) -> Result<Endpoint, Error> {
+    /// The endpoint that serves the model's protocol, or [`Error::MissingEndpoint`] if the provider declares none.
+    fn endpoint(&self) -> Result<Endpoint, Error> {
         self.provider
             .endpoints
             .iter()

@@ -26,7 +26,7 @@ pub(crate) fn emit(migrations: &[String], modules: &[Module]) -> Result<String, 
 fn emit_module(code: &mut String, module: &Module) -> fmt::Result {
     writeln!(code, "pub(crate) mod {} {{", module.name)?;
     // The module imports each name that it uses, so no path in it can be shorter, whatever the parent imports.
-    let rows = !module.rows.is_empty();
+    let rows = module.queries.iter().any(|query| query.row.is_some());
     let executes = module.queries.iter().any(|query| query.row.is_none());
     let mut runtime = Vec::new();
     let mut sqlite = Vec::new();
@@ -49,7 +49,7 @@ fn emit_module(code: &mut String, module: &Module) -> fmt::Result {
         }
     }
     code.push('\n');
-    for row in &module.rows {
+    for row in module.queries.iter().filter_map(|query| query.row.as_ref()) {
         emit_row(code, row)?;
     }
     for query in &module.queries {
@@ -109,8 +109,8 @@ fn emit_query(code: &mut String, query: &Query) -> fmt::Result {
             .iter()
             .any(|parameter| parameter.rust_type.contains('&'));
     let (lifetime, connection, output) = match &query.row {
-        Some(row) if other_references => ("<'a>", "&'a", format!("Query<'a, {row}>")),
-        Some(row) => ("", "&", format!("Query<'_, {row}>")),
+        Some(row) if other_references => ("<'a>", "&'a", format!("Query<'a, {}>", row.name)),
+        Some(row) => ("", "&", format!("Query<'_, {}>", row.name)),
         None => ("", "&", "Result<usize>".to_owned()),
     };
     write!(

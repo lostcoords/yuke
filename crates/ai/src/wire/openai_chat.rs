@@ -9,15 +9,7 @@ use crate::request::{
 use super::json::{JsonWriter, call_arguments};
 
 /// Write the request up to the open `messages` array. Return whether it wrote the system message into it.
-pub(crate) fn write_head(
-    out: &mut Vec<u8>,
-    target: &Target,
-    wire: ChatWire,
-    request: &Request<'_>,
-) -> Result<bool, EncodeError> {
-    if super::defers_tools(request.tools) {
-        return Err(EncodeError::Unsupported(Unsupported::DeferredTool));
-    }
+pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ChatWire, request: &Request<'_>) -> bool {
     let mut jw = JsonWriter::new(out);
     jw.begin_object();
     jw.field_str("model", &target.model);
@@ -79,13 +71,13 @@ pub(crate) fn write_head(
     jw.key("messages");
     jw.begin_array();
     if request.settings.system.is_empty() {
-        return Ok(false);
+        return false;
     }
     jw.begin_object();
     jw.field_str("role", "system");
     jw.field_str("content", &request.settings.system);
     jw.end_object();
-    Ok(true)
+    true
 }
 
 /// The end of the run of user text and media from `start`.

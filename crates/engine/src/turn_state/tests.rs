@@ -327,7 +327,7 @@ fn cancelled_request_keeps_its_text_and_gives_each_call_an_error_result() {
 fn a_failed_turn_saves_the_causes_of_its_error() {
     let error = RoundError::Model(yuke_ai::Error::Encode(yuke_ai::EncodeError::BlobRead {
         digest: [0; 32],
-        source: std::sync::Arc::new(std::io::Error::other("the disk is gone")),
+        source: Box::new(std::io::Error::other("the disk is gone")),
     }));
 
     let commit = Commit::end(&[], Err(&error));

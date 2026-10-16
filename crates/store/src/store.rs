@@ -177,7 +177,7 @@ impl Store for SqliteStore {
         let sessions_folder = self.sessions.clone();
 
         // The copy of the blobs runs on the thread of the connection, as a put does. Forks are rare.
-        let (loaded, lock) = self
+        let (opened, lock) = self
             .call(move |connection| {
                 let rows = events::CopyEventsParams {
                     source: source_bytes,
@@ -191,8 +191,8 @@ impl Store for SqliteStore {
                     files::sync_folder(&sessions_folder).map_err(failed)?;
                     files::copy_blobs(&source_folder, &folder).map_err(failed)?;
                     copy_rows(connection, &rows)?;
-                    let loaded = read(connection, |connection| context::load(connection, fork))?;
-                    Ok((loaded.ok_or(StoreError::NotFound)?, lock))
+                    let opened = read(connection, |connection| context::load(connection, id))?;
+                    Ok((opened.ok_or(StoreError::NotFound)?, lock))
                 });
                 // The caller never learns the id of a failed fork, so nothing else can open or delete it.
                 forked.or_else(|error| {
@@ -202,7 +202,10 @@ impl Store for SqliteStore {
             })
             .await?;
 
-        Ok(loaded.into_opened(id, Some(self.lease(id, lock))))
+        Ok(Opened {
+            lease: Some(self.lease(id, lock)),
+            ..opened
+        })
     }
 
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<EventNumber, StoreError> {
@@ -281,7 +284,7 @@ impl Store for SqliteStore {
         };
         let session = *id.as_bytes();
 
-        let (loaded, lock) = self
+        let (opened, lock) = self
             .call(move |connection| {
                 // The lock comes before the load, so no other writer commits between the lock and the load.
                 let lock = match folder {
@@ -289,12 +292,15 @@ impl Store for SqliteStore {
                     None => None,
                 };
 
-                let loaded = read(connection, |connection| context::load(connection, session))?;
-                Ok((loaded.ok_or(StoreError::NotFound)?, lock))
+                let opened = read(connection, |connection| context::load(connection, id))?;
+                Ok((opened.ok_or(StoreError::NotFound)?, lock))
             })
             .await?;
 
-        Ok(loaded.into_opened(id, lock.map(|lock| self.lease(id, lock))))
+        Ok(Opened {
+            lease: lock.map(|lock| self.lease(id, lock)),
+            ..opened
+        })
     }
 
     async fn commit(

@@ -3,7 +3,6 @@
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
 
 use crate::request::{Block, Modality, OriginRef, Protocol, Request, Target, Wire};
 use crate::route::Credential;
@@ -48,7 +47,7 @@ impl fmt::Display for Unsupported {
 }
 
 /// A request that cannot be encoded. The encoder sends nothing then.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum EncodeError {
     /// The protocol or the target cannot carry a part of the request.
     Unsupported(Unsupported),
@@ -62,7 +61,7 @@ pub enum EncodeError {
         /// The digest of the blob.
         digest: crate::Digest,
         /// The store error.
-        source: Arc<dyn std::error::Error + Send + Sync>,
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
     /// The credential does not match the credential header of the route.
     CredentialMismatch,
@@ -110,11 +109,11 @@ impl std::error::Error for EncodeError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Encoded<'a> {
     /// The URL, headers, and body parts to send.
-    pub http: Outgoing<'a>,
+    pub(crate) http: Outgoing<'a>,
     /// Selects the response decoder.
-    pub protocol: Protocol,
+    pub(crate) protocol: Protocol,
     /// The model and host that answer, which the reasoning state of the response names.
-    pub origin: OriginRef<'a>,
+    pub(crate) origin: OriginRef<'a>,
 }
 
 /// The encoder of one context. See the module documentation. `Debug` writes no request bytes.
@@ -178,7 +177,9 @@ impl Encoder {
         {
             return Err(EncodeError::InvalidSampling);
         }
-        if !target.tool_search && request.tools.iter().any(|tool| tool.defer_loading) {
+        // Chat Completions has no search of deferred tools, so its target flag does not count.
+        let searches = target.tool_search && target.wire.protocol() != Protocol::OpenaiChat;
+        if !searches && wire::defers_tools(request.tools) {
             return Err(EncodeError::Unsupported(Unsupported::DeferredTool));
         }
 
@@ -276,7 +277,7 @@ impl Encoder {
 
         // The next request truncates to a kept element, which drops this head too.
         let elements_end = self.items.len();
-        let head_element = wire::write_head(&mut self.items, target, request)?;
+        let head_element = wire::write_head(&mut self.items, target, request);
         self.elements_end = Some(elements_end);
         if head_element && elements_end != 0 {
             self.items.push(b',');

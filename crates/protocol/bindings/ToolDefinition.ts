@@ -18,6 +18,7 @@ description: string,
 inputSchema: string, 
 /**
  * Exclude the definition from the prompt until a tool search names it. A request with a deferred tool asks for
- * the native tool search, so the encoder refuses it for a target without [`Target::tool_search`].
+ * the native tool search. The encoder refuses it for Chat Completions and for a target without
+ * [`Target::tool_search`].
  */
 deferLoading: boolean, };

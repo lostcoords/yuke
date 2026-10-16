@@ -1,6 +1,8 @@
-//! Test transports that only the yuke tests use. The shared fixtures live in `yuke-testing`.
+//! Test transports and folders that only the yuke tests use. The shared fixtures live in `yuke-testing`.
 
 use std::collections::VecDeque;
+use std::ffi::OsString;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -9,7 +11,11 @@ use bytes::Bytes;
 use yuke_ai::transport::{
     Answer, Body, BoxBody, BoxFuture, Exchange, ExchangeRequest, Fault, Head, Outgoing, Transport,
 };
+use yuke_store::SqliteStore;
 use yuke_testing::ScriptedTransport;
+
+use crate::app::{Machine, Variable};
+use crate::paths::Paths;
 
 /// Answers each request with a 401: the provider rejects the credential.
 pub(crate) struct Rejecting;
@@ -104,4 +110,54 @@ impl Exchange for Answers {
         let answer = script.answers.pop_front().expect("the script has no answer left");
         Box::pin(std::future::ready(answer))
     }
+}
+
+/// The folders of one test: the profile, the work folder of its sessions, and an empty home folder.
+pub(crate) struct Place {
+    pub(crate) paths: Paths,
+    pub(crate) work: PathBuf,
+    pub(crate) home: PathBuf,
+}
+
+impl Place {
+    /// New empty folders for the test `name` of the suite `suite`.
+    pub(crate) fn new(suite: &str, name: &str) -> Place {
+        let root = std::env::temp_dir().join(format!("yuke-{suite}-tests-{}/{name}", std::process::id()));
+        if root.exists() {
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+        std::fs::create_dir_all(root.join("work")).unwrap();
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        let root = root.canonicalize().unwrap();
+        Place {
+            paths: Paths {
+                config: root.join("config"),
+                data: root.join("data"),
+                cache: root.join("cache"),
+            },
+            work: root.join("work"),
+            home: root.join("home"),
+        }
+    }
+
+    /// The machine of a run in the place. `variable` reads the environment variables.
+    pub(crate) fn machine(&self, variable: Box<Variable>, transport: Box<dyn Transport>) -> Machine {
+        Machine {
+            paths: self.paths.clone(),
+            home: Some(self.home.clone()),
+            variable,
+            transport: transport.into(),
+            exchange: Arc::new(Answers::default()),
+        }
+    }
+
+    /// The store of the place, opened again.
+    pub(crate) async fn store(&self) -> SqliteStore {
+        SqliteStore::open(&self.paths.data).await.unwrap()
+    }
+}
+
+/// The MiniMax key that every test environment holds.
+pub(crate) fn with_key(name: &str) -> Option<OsString> {
+    (name == "MINIMAX_API_KEY").then(|| OsString::from("test-key"))
 }

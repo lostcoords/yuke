@@ -356,7 +356,7 @@ mod tests {
             None,
         )
         .err();
-        assert!(!error.clone().unwrap().to_string().contains("sk-secret"));
+        assert!(!error.as_ref().unwrap().to_string().contains("sk-secret"));
         assert_same(error, Some(invalid("x-api-key")));
         assert_eq!(
             invalid("a\r\nb").to_string(),

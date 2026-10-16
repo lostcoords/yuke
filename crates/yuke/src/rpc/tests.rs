@@ -1,6 +1,5 @@
 //! The protocol server against a scripted provider, through a pair of pipes.
 
-use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -9,61 +8,23 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, Lines};
 use yuke_agent::{Session, Store};
 use yuke_ai::transport::Transport;
 use yuke_protocol::{Input, InputSource, ModelReference, SessionId, SessionSettings};
-use yuke_store::SqliteStore;
 
 use super::*;
-use crate::paths::Paths;
 use yuke_testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
 
-use crate::testing::{Answers, PanicsOnce};
+use crate::testing::{PanicsOnce, Place, with_key};
 
-/// The folders of one test: the profile and the folder of its sessions.
-struct Place {
-    paths: Paths,
-    work: PathBuf,
-}
-
-impl Place {
-    fn new(name: &str) -> Place {
-        let root = std::env::temp_dir().join(format!("yuke-rpc-tests-{}/{name}", std::process::id()));
-        if root.exists() {
-            std::fs::remove_dir_all(&root).unwrap();
-        }
-        std::fs::create_dir_all(root.join("work")).unwrap();
-        let root = root.canonicalize().unwrap();
-        Place {
-            paths: Paths {
-                config: root.join("config"),
-                data: root.join("data"),
-                cache: root.join("cache"),
-            },
-            work: root.join("work"),
-        }
-    }
-
-    /// The machine of a server in the place, with the key of MiniMax.
-    fn machine(&self, transport: Box<dyn Transport>) -> Machine {
-        Machine {
-            paths: self.paths.clone(),
-            home: None,
-            variable: Box::new(|name| (name == "MINIMAX_API_KEY").then(|| OsString::from("test-key"))),
-            transport: transport.into(),
-            exchange: Arc::new(Answers::default()),
-        }
-    }
-
-    /// Settings of a session in the folder of the place.
-    fn settings(&self) -> Value {
-        serde_json::to_value(SessionSettings {
-            model: ModelReference {
-                provider: "minimax".to_owned(),
-                model: "MiniMax-M3".to_owned(),
-            },
-            settings: yuke_ai::Settings::new(),
-            cwd: self.work.clone(),
-        })
-        .unwrap()
-    }
+/// Settings of a session in the work folder of `place`.
+fn settings(place: &Place) -> Value {
+    serde_json::to_value(SessionSettings {
+        model: ModelReference {
+            provider: "minimax".to_owned(),
+            model: "MiniMax-M3".to_owned(),
+        },
+        settings: yuke_ai::Settings::new(),
+        cwd: place.work.clone(),
+    })
+    .unwrap()
 }
 
 /// The client side of a server that runs in this test.
@@ -79,7 +40,7 @@ impl Client {
         let (input, server_input) = tokio::io::duplex(1 << 16);
         let (server_output, output) = tokio::io::duplex(1 << 16);
         let server = tokio::spawn(serve(
-            place.machine(transport),
+            place.machine(Box::new(with_key), transport),
             Duration::from_secs(10),
             server_input,
             server_output,
@@ -236,10 +197,10 @@ fn is_idle(message: &Value) -> bool {
 
 #[tokio::test]
 async fn an_input_starts_a_turn_and_the_client_sees_its_updates_in_order() {
-    let place = Place::new("an_input_starts_a_turn_and_the_client_sees_its_updates_in_order");
+    let place = Place::new("rpc", "an_input_starts_a_turn_and_the_client_sees_its_updates_in_order");
     let transport = ScriptedTransport::new([text_reply("hello")]);
     let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
-    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
 
     client
         .request(
@@ -275,9 +236,12 @@ async fn an_input_starts_a_turn_and_the_client_sees_its_updates_in_order() {
 
 #[tokio::test]
 async fn a_load_sends_the_saved_events_then_the_state_then_an_empty_answer() {
-    let place = Place::new("a_load_sends_the_saved_events_then_the_state_then_an_empty_answer");
+    let place = Place::new(
+        "rpc",
+        "a_load_sends_the_saved_events_then_the_state_then_an_empty_answer",
+    );
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new([text_reply("hello")]))).await;
-    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
     client
         .request(
             "session/input",
@@ -302,9 +266,12 @@ async fn a_load_sends_the_saved_events_then_the_state_then_an_empty_answer() {
 
 #[tokio::test]
 async fn a_running_session_refuses_new_settings_and_a_cancel_ends_its_turn() {
-    let place = Place::new("a_running_session_refuses_new_settings_and_a_cancel_ends_its_turn");
+    let place = Place::new(
+        "rpc",
+        "a_running_session_refuses_new_settings_and_a_cancel_ends_its_turn",
+    );
     let mut client = Client::initialized(&place, Box::new(Stalled)).await;
-    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
     client
         .request(
             "session/input",
@@ -315,7 +282,7 @@ async fn a_running_session_refuses_new_settings_and_a_cancel_ends_its_turn() {
         .until(|message| message["params"]["update"]["state"] == "running")
         .await;
 
-    let mut settings = place.settings();
+    let mut settings = settings(&place);
     settings["sessionId"] = session.clone();
     let refused = client.call("session/set_settings", settings).await;
     client.notify("session/cancel", json!({ "sessionId": session })).await;
@@ -334,9 +301,9 @@ async fn a_running_session_refuses_new_settings_and_a_cancel_ends_its_turn() {
 
 #[tokio::test]
 async fn the_server_writes_the_system_prompt_of_a_new_session() {
-    let place = Place::new("the_server_writes_the_system_prompt_of_a_new_session");
+    let place = Place::new("rpc", "the_server_writes_the_system_prompt_of_a_new_session");
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
-    let mut settings = place.settings();
+    let mut settings = settings(&place);
     settings["settings"]["system"] = json!("the prompt of the client");
 
     let session = client.call("session/new", settings).await.unwrap()["sessionId"].clone();
@@ -351,14 +318,14 @@ async fn the_server_writes_the_system_prompt_of_a_new_session() {
 
 #[tokio::test]
 async fn a_regular_file_is_no_folder_for_a_new_session_or_new_settings() {
-    let place = Place::new("a_regular_file_is_no_folder_for_a_new_session_or_new_settings");
+    let place = Place::new("rpc", "a_regular_file_is_no_folder_for_a_new_session_or_new_settings");
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
     let file = place.work.join("notes.txt");
     std::fs::write(&file, "notes").unwrap();
-    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
-    let mut new = place.settings();
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+    let mut new = settings(&place);
     new["cwd"] = json!(file);
-    let mut changed = place.settings();
+    let mut changed = settings(&place);
     changed["sessionId"] = session;
     changed["cwd"] = json!(file);
 
@@ -374,10 +341,13 @@ async fn a_regular_file_is_no_folder_for_a_new_session_or_new_settings() {
 
 #[tokio::test]
 async fn a_request_before_initialize_an_unknown_method_and_no_json_get_errors() {
-    let place = Place::new("a_request_before_initialize_an_unknown_method_and_no_json_get_errors");
+    let place = Place::new(
+        "rpc",
+        "a_request_before_initialize_an_unknown_method_and_no_json_get_errors",
+    );
     let mut client = Client::start(&place, Box::new(ScriptedTransport::default()));
 
-    let early = client.call("session/new", place.settings()).await;
+    let early = client.call("session/new", settings(&place)).await;
     client
         .call(
             "initialize",
@@ -386,7 +356,7 @@ async fn a_request_before_initialize_an_unknown_method_and_no_json_get_errors() 
         .await
         .unwrap();
     let unknown = client.call("session/delete", json!({})).await;
-    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
     let bad_block = client
         .call(
             "session/input",
@@ -406,14 +376,17 @@ async fn a_request_before_initialize_an_unknown_method_and_no_json_get_errors() 
 
 #[tokio::test]
 async fn a_background_job_that_ends_sends_its_input_and_the_model_reads_it() {
-    let place = Place::new("a_background_job_that_ends_sends_its_input_and_the_model_reads_it");
+    let place = Place::new(
+        "rpc",
+        "a_background_job_that_ends_sends_its_input_and_the_model_reads_it",
+    );
     let transport = ScriptedTransport::new([
         tool_reply(&[("c1", "exec", r#"{"command":"echo done","background":true}"#)]),
         text_reply("started"),
         text_reply("noted"),
     ]);
     let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
-    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
     client
         .request(
             "session/input",
@@ -466,7 +439,7 @@ async fn a_background_job_that_ends_sends_its_input_and_the_model_reads_it() {
 
 /// Save a session of `model` with one waiting input in the store of `place`, before a server runs.
 async fn saved_session(place: &Place, provider: &str, model: &str) -> SessionId {
-    let store: Arc<dyn Store> = Arc::new(SqliteStore::open(&place.paths.data).await.unwrap());
+    let store: Arc<dyn Store> = Arc::new(place.store().await);
     let settings = SessionSettings {
         model: ModelReference {
             provider: provider.to_owned(),
@@ -483,12 +456,12 @@ async fn saved_session(place: &Place, provider: &str, model: &str) -> SessionId 
 
 #[tokio::test]
 async fn a_load_only_reads_and_waiting_input_blocks_new_settings() {
-    let place = Place::new("a_load_only_reads_and_waiting_input_blocks_new_settings");
+    let place = Place::new("rpc", "a_load_only_reads_and_waiting_input_blocks_new_settings");
     let session = saved_session(&place, "minimax", "MiniMax-M3").await;
     let mut client = Client::initialized(&place, Box::new(Stalled)).await;
 
     let loaded = client.load(&json!(session), json!({})).await;
-    let mut settings = place.settings();
+    let mut settings = settings(&place);
     settings["sessionId"] = json!(session);
     let id = client.request("session/set_settings", settings).await;
     let refused = client.until(|message| message["id"] == json!(id)).await;
@@ -526,7 +499,7 @@ async fn a_load_only_reads_and_waiting_input_blocks_new_settings() {
 
 #[tokio::test]
 async fn a_fork_that_has_no_credential_fails_and_leaves_no_session() {
-    let place = Place::new("a_fork_that_has_no_credential_fails_and_leaves_no_session");
+    let place = Place::new("rpc", "a_fork_that_has_no_credential_fails_and_leaves_no_session");
     let source = saved_session(&place, "anthropic", "claude-sonnet-4-5").await;
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
 
@@ -534,15 +507,18 @@ async fn a_fork_that_has_no_credential_fails_and_leaves_no_session() {
     client.end().await;
 
     assert_eq!(forked.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
-    let store = SqliteStore::open(&place.paths.data).await.unwrap();
+    let store = place.store().await;
     assert_eq!(store.newest_session(&place.work).await.unwrap(), Some(source));
 }
 
 #[tokio::test]
 async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_again() {
-    let place = Place::new("a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_again");
+    let place = Place::new(
+        "rpc",
+        "a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_again",
+    );
     let mut client = Client::initialized(&place, Box::new(Stalled)).await;
-    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
     client
         .request(
             "session/input",
@@ -607,7 +583,7 @@ async fn session_with_a_job(place: &Place) -> (Client, Value, ScriptedTransport)
     let arguments = json!({ "command": command, "background": true }).to_string();
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "exec", &arguments)]), text_reply("started")]);
     let mut client = Client::initialized(place, Box::new(transport.clone())).await;
-    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    let session = client.call("session/new", settings(place)).await.unwrap()["sessionId"].clone();
     client
         .request(
             "session/input",
@@ -656,12 +632,15 @@ async fn the_job(client: &mut Client, session: &Value) -> Value {
 
 #[tokio::test]
 async fn after_a_folder_change_the_tools_work_in_the_new_folder_and_stop_the_old_jobs() {
-    let place = Place::new("after_a_folder_change_the_tools_work_in_the_new_folder_and_stop_the_old_jobs");
+    let place = Place::new(
+        "rpc",
+        "after_a_folder_change_the_tools_work_in_the_new_folder_and_stop_the_old_jobs",
+    );
     let (mut client, session, transport) = session_with_a_job(&place).await;
     let job = the_job(&mut client, &session).await;
     let other = place.work.join("other");
     std::fs::create_dir(&other).unwrap();
-    let mut settings = place.settings();
+    let mut settings = settings(&place);
     settings["sessionId"] = session.clone();
     settings["cwd"] = json!(other);
     client.call("session/set_settings", settings).await.unwrap();
@@ -690,7 +669,7 @@ async fn after_a_folder_change_the_tools_work_in_the_new_folder_and_stop_the_old
 
 #[tokio::test]
 async fn a_close_needs_stop_jobs_while_jobs_run_and_then_ends_them() {
-    let place = Place::new("a_close_needs_stop_jobs_while_jobs_run_and_then_ends_them");
+    let place = Place::new("rpc", "a_close_needs_stop_jobs_while_jobs_run_and_then_ends_them");
     let (mut client, session, _transport) = session_with_a_job(&place).await;
     let job = the_job(&mut client, &session).await;
 
@@ -727,7 +706,7 @@ async fn a_close_needs_stop_jobs_while_jobs_run_and_then_ends_them() {
 
 #[tokio::test]
 async fn job_stop_waits_for_the_end_and_its_job_update_comes_first() {
-    let place = Place::new("job_stop_waits_for_the_end_and_its_job_update_comes_first");
+    let place = Place::new("rpc", "job_stop_waits_for_the_end_and_its_job_update_comes_first");
     let (mut client, session, _transport) = session_with_a_job(&place).await;
     let job = the_job(&mut client, &session).await;
 
@@ -779,7 +758,7 @@ async fn job_stop_waits_for_the_end_and_its_job_update_comes_first() {
 
 #[tokio::test]
 async fn job_updates_tell_the_start_and_the_end_before_the_end_input() {
-    let place = Place::new("job_updates_tell_the_start_and_the_end_before_the_end_input");
+    let place = Place::new("rpc", "job_updates_tell_the_start_and_the_end_before_the_end_input");
     let arguments = json!({ "command": "exit 3", "background": true }).to_string();
     let transport = ScriptedTransport::new([
         tool_reply(&[("c1", "exec", &arguments)]),
@@ -787,7 +766,7 @@ async fn job_updates_tell_the_start_and_the_end_before_the_end_input() {
         text_reply("noted"),
     ]);
     let mut client = Client::initialized(&place, Box::new(transport)).await;
-    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
 
     client
         .request(
@@ -824,10 +803,10 @@ async fn job_updates_tell_the_start_and_the_end_before_the_end_input() {
 
 #[tokio::test]
 async fn a_session_cannot_stop_the_job_of_another_session() {
-    let place = Place::new("a_session_cannot_stop_the_job_of_another_session");
+    let place = Place::new("rpc", "a_session_cannot_stop_the_job_of_another_session");
     let (mut client, owner, _transport) = session_with_a_job(&place).await;
     let job = the_job(&mut client, &owner).await;
-    let other = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    let other = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
 
     let refused = client
         .call("job/stop", json!({ "sessionId": other, "jobId": job }))
@@ -843,11 +822,14 @@ async fn a_session_cannot_stop_the_job_of_another_session() {
 
 #[tokio::test]
 async fn a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends() {
-    let place = Place::new("a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends");
+    let place = Place::new(
+        "rpc",
+        "a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends",
+    );
     let (mut input, server_input) = tokio::io::duplex(1 << 16);
     // The client keeps its end of the output and never reads it, so the small pipe fills.
     let (server_output, _unread) = tokio::io::duplex(1 << 10);
-    let machine = place.machine(Box::new(ScriptedTransport::default()));
+    let machine = place.machine(Box::new(with_key), Box::new(ScriptedTransport::default()));
     let server = tokio::spawn(serve(machine, Duration::from_millis(100), server_input, server_output));
     let request = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
         "protocolVersion": 1, "clientInfo": { "name": "test", "version": "1" }
@@ -864,10 +846,13 @@ async fn a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends
 
 #[tokio::test]
 async fn a_panic_in_a_turn_ends_the_turn_and_the_next_input_runs_with_a_note_about_it() {
-    let place = Place::new("a_panic_in_a_turn_ends_the_turn_and_the_next_input_runs_with_a_note_about_it");
+    let place = Place::new(
+        "rpc",
+        "a_panic_in_a_turn_ends_the_turn_and_the_next_input_runs_with_a_note_about_it",
+    );
     let transport = PanicsOnce::new([text_reply("back")]);
     let mut client = Client::initialized(&place, Box::new(transport)).await;
-    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
     client
         .request(
             "session/input",
@@ -919,9 +904,9 @@ async fn a_panic_in_a_turn_ends_the_turn_and_the_next_input_runs_with_a_note_abo
 
 #[tokio::test]
 async fn a_server_that_ends_without_its_shutdown_still_stops_its_turns() {
-    let place = Place::new("a_server_that_ends_without_its_shutdown_still_stops_its_turns");
+    let place = Place::new("rpc", "a_server_that_ends_without_its_shutdown_still_stops_its_turns");
     let mut client = Client::initialized(&place, Box::new(Stalled)).await;
-    let session = client.call("session/new", place.settings()).await.unwrap()["sessionId"].clone();
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
     client
         .request(
             "session/input",
@@ -944,7 +929,7 @@ async fn a_server_that_ends_without_its_shutdown_still_stops_its_turns() {
 
 /// A place where `xai-grok/test` speaks Anthropic Messages, as the scripted replies do.
 fn place_with_login_model(name: &str) -> Place {
-    let place = Place::new(name);
+    let place = Place::new("rpc", name);
     std::fs::create_dir_all(&place.paths.config).unwrap();
     let providers = json!({ "providers": [{
         "id": "xai-grok",
@@ -971,7 +956,7 @@ async fn push(client: &mut Client, token: &str) -> Result<Value, Value> {
 
 /// A new session of `xai-grok/test`, and the params of an input to it.
 async fn login_session(client: &mut Client, place: &Place) -> Value {
-    let mut settings = place.settings();
+    let mut settings = settings(place);
     settings["model"] = json!({ "provider": "xai-grok", "model": "test" });
     let session = client.call("session/new", settings).await.unwrap()["sessionId"].clone();
     json!({ "sessionId": session, "content": [{ "user_text": "hi" }] })

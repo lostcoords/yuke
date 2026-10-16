@@ -91,7 +91,6 @@ def model:
   + "cost: " + (.cost | map(band) | cow_list) + ",\n"
   + "caps: Caps { tools: " + (.flags.supports_tools | option(bool))
       + ", tool_search: " + (.flags.supports_tool_search | option(bool))
-      + ", system_updates: " + (.flags.supports_system_updates | option(bool))
       + ", disable_reasoning: " + (.flags.can_disable_reasoning | option(bool))
       + ", cache_breakpoint: " + (.flags.supports_cache_breakpoint | option(bool)) + " },\n"
   + "reasoning_levels: " + (.reasoning_levels | map(reasoning_level) | cow_list) + ",\n"

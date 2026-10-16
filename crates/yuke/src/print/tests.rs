@@ -1,74 +1,19 @@
 //! Whole runs of `yuke -p` against a scripted provider.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
 use std::time::Instant;
 
 use yuke_agent::{Access, Store};
 use yuke_ai::Effort;
 use yuke_ai::transport::{BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
-use yuke_store::SqliteStore;
 
 use super::*;
 use crate::app::Variable;
-use crate::paths::Paths;
 use yuke_testing::{ScriptedTransport, Stalled, assert_in_order, text_reply, tool_reply};
 
-use crate::testing::{Answers, Rejecting};
+use crate::testing::{Place, Rejecting, with_key};
 
 const MODEL: &str = "minimax/MiniMax-M3";
-
-/// The folders of one test: the profile, the current folder, and the home folder.
-struct Place {
-    paths: Paths,
-    cwd: PathBuf,
-    home: PathBuf,
-}
-
-impl Place {
-    /// New empty folders for the test `name`.
-    fn new(name: &str) -> Place {
-        let root = std::env::temp_dir().join(format!("yuke-print-tests-{}/{name}", std::process::id()));
-        if root.exists() {
-            std::fs::remove_dir_all(&root).unwrap();
-        }
-        let cwd = root.join("work");
-        let home = root.join("home");
-        std::fs::create_dir_all(&cwd).unwrap();
-        std::fs::create_dir_all(&home).unwrap();
-        let root = root.canonicalize().unwrap();
-        Place {
-            paths: Paths {
-                config: root.join("config"),
-                data: root.join("data"),
-                cache: root.join("cache"),
-            },
-            cwd: root.join("work"),
-            home: root.join("home"),
-        }
-    }
-
-    /// The machine of a run in the place.
-    fn machine(&self, variable: Box<Variable>, transport: Box<dyn Transport>) -> Machine {
-        Machine {
-            paths: self.paths.clone(),
-            home: Some(self.home.clone()),
-            variable,
-            transport: transport.into(),
-            exchange: Arc::new(Answers::default()),
-        }
-    }
-
-    /// The store of the place, opened again.
-    async fn store(&self) -> SqliteStore {
-        SqliteStore::open(&self.paths.data).await.unwrap()
-    }
-}
-
-/// The MiniMax key that every test environment holds.
-fn with_key(name: &str) -> Option<OsString> {
-    (name == "MINIMAX_API_KEY").then(|| OsString::from("test-key"))
-}
 
 fn no_variable(_: &str) -> Option<OsString> {
     None
@@ -90,7 +35,7 @@ async fn run_in(
     let finished = run(
         task,
         place.machine(variable, Box::new(transport.clone())),
-        &place.cwd,
+        &place.work,
         cancellation_token,
     )
     .await;
@@ -114,7 +59,7 @@ fn completed() -> TurnEnd {
 
 #[tokio::test]
 async fn a_new_run_saves_a_session_in_the_current_folder_and_answers_the_last_text() {
-    let place = Place::new("new_run");
+    let place = Place::new("print", "new_run");
 
     let (finished, requests) = run_with(&place, &task("Say hello.", SessionChoice::New), &[text_reply("Hello.")]).await;
 
@@ -122,7 +67,7 @@ async fn a_new_run_saves_a_session_in_the_current_folder_and_answers_the_last_te
     assert_eq!(finished.end, completed());
     assert_eq!(finished.text, "Hello.");
     let opened = place.store().await.open(finished.session, Access::Read).await.unwrap();
-    assert_eq!(opened.settings.cwd, place.cwd);
+    assert_eq!(opened.settings.cwd, place.work);
     assert_eq!(
         opened.settings.model,
         ModelReference {
@@ -141,7 +86,7 @@ async fn a_new_run_saves_a_session_in_the_current_folder_and_answers_the_last_te
 
 #[tokio::test]
 async fn the_model_of_a_new_session_comes_from_the_config_when_the_command_line_names_none() {
-    let place = Place::new("config_model");
+    let place = Place::new("print", "config_model");
     std::fs::create_dir_all(&place.paths.config).unwrap();
     std::fs::write(
         place.paths.config.join("config.json"),
@@ -183,7 +128,7 @@ async fn run_with_providers(
     let finished = run(
         task,
         place.machine(variable, Box::new(transport.clone())),
-        &place.cwd,
+        &place.work,
         CancellationToken::new(),
     )
     .await;
@@ -192,7 +137,7 @@ async fn run_with_providers(
 
 #[tokio::test]
 async fn a_provider_that_providers_json_adds_serves_a_run_without_a_credential() {
-    let place = Place::new("added_provider");
+    let place = Place::new("print", "added_provider");
     let task = Task {
         model: Some("local/small".to_owned()),
         ..task("Hi.", SessionChoice::New)
@@ -225,7 +170,7 @@ async fn a_provider_that_providers_json_adds_serves_a_run_without_a_credential()
 
 #[tokio::test]
 async fn providers_json_changes_the_url_and_the_key_of_a_built_in_provider() {
-    let place = Place::new("changed_provider");
+    let place = Place::new("print", "changed_provider");
     let providers = r#"{ "providers": [
         { "id": "minimax", "base_url": "http://127.0.0.1:9/anthropic", "api_key_env": "PROXY_KEY" }
     ] }"#;
@@ -240,7 +185,7 @@ async fn providers_json_changes_the_url_and_the_key_of_a_built_in_provider() {
 
 #[tokio::test]
 async fn a_bad_providers_json_stops_the_run_before_a_request() {
-    let place = Place::new("bad_providers");
+    let place = Place::new("print", "bad_providers");
 
     let (finished, transport) = run_with_providers(
         &place,
@@ -262,7 +207,7 @@ async fn a_bad_providers_json_stops_the_run_before_a_request() {
 
 #[tokio::test]
 async fn no_model_is_an_error_that_names_the_config_file() {
-    let place = Place::new("no_model");
+    let place = Place::new("print", "no_model");
     let task = Task {
         model: None,
         ..task("Hi.", SessionChoice::New)
@@ -282,7 +227,7 @@ async fn no_model_is_an_error_that_names_the_config_file() {
 
 #[tokio::test]
 async fn a_missing_or_empty_api_key_is_an_error_and_saves_no_session() {
-    let place = Place::new("no_key");
+    let place = Place::new("print", "no_key");
     let empty: Box<Variable> = Box::new(|_| Some(OsString::new()));
 
     for variable in [Box::new(no_variable) as Box<Variable>, empty] {
@@ -300,12 +245,12 @@ async fn a_missing_or_empty_api_key_is_an_error_and_saves_no_session() {
             Err("no API key: set MINIMAX_API_KEY for MiniMax (minimax.io)".to_owned())
         );
     }
-    assert_eq!(place.store().await.newest_session(&place.cwd).await.unwrap(), None);
+    assert_eq!(place.store().await.newest_session(&place.work).await.unwrap(), None);
 }
 
 #[tokio::test]
 async fn a_level_that_the_model_does_not_take_is_an_error() {
-    let place = Place::new("bad_level");
+    let place = Place::new("print", "bad_level");
     let task = Task {
         reasoning: Some(ReasoningLevel::Effort(Effort::Low)),
         ..task("Hi.", SessionChoice::New)
@@ -321,7 +266,7 @@ async fn a_level_that_the_model_does_not_take_is_an_error() {
 
 #[tokio::test]
 async fn continue_takes_the_session_of_the_folder_with_the_newest_event() {
-    let place = Place::new("continue");
+    let place = Place::new("print", "continue");
     run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])
         .await
         .0
@@ -343,7 +288,7 @@ async fn continue_takes_the_session_of_the_folder_with_the_newest_event() {
 
 #[tokio::test]
 async fn a_broken_config_does_not_block_a_continued_session() {
-    let place = Place::new("broken_config");
+    let place = Place::new("print", "broken_config");
     run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])
         .await
         .0
@@ -363,16 +308,16 @@ async fn a_broken_config_does_not_block_a_continued_session() {
 
 #[tokio::test]
 async fn continue_in_a_folder_without_a_session_is_an_error() {
-    let place = Place::new("continue_none");
+    let place = Place::new("print", "continue_none");
 
     let (finished, _) = run_with(&place, &task("Hi.", SessionChoice::Newest), &[]).await;
 
-    assert_eq!(finished, Err(format!("no session works in {}", place.cwd.display())));
+    assert_eq!(finished, Err(format!("no session works in {}", place.work.display())));
 }
 
 #[tokio::test]
 async fn a_session_id_continues_that_session_and_an_unknown_id_is_an_error() {
-    let place = Place::new("session_id");
+    let place = Place::new("print", "session_id");
     let first = run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])
         .await
         .0
@@ -402,7 +347,7 @@ async fn a_session_id_continues_that_session_and_an_unknown_id_is_an_error() {
 
 #[tokio::test]
 async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
-    let place = Place::new("new_settings");
+    let place = Place::new("print", "new_settings");
     let first = run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])
         .await
         .0
@@ -461,7 +406,7 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
 
 #[tokio::test]
 async fn a_new_model_on_a_continued_session_also_answers_the_input_that_waits() {
-    let place = Place::new("waiting_input");
+    let place = Place::new("print", "waiting_input");
     let first = run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])
         .await
         .0
@@ -485,7 +430,7 @@ async fn a_new_model_on_a_continued_session_also_answers_the_input_that_waits() 
 
 #[tokio::test]
 async fn the_model_runs_the_built_in_tools_in_the_folder_of_the_session() {
-    let place = Place::new("tools");
+    let place = Place::new("print", "tools");
 
     let (finished, requests) = run_with(
         &place,
@@ -499,7 +444,7 @@ async fn the_model_runs_the_built_in_tools_in_the_folder_of_the_session() {
 
     assert_eq!(finished.unwrap().text, "Done.");
     assert!(
-        requests[1].contains(&format!("{}\\n[exit code: 0]", place.cwd.display())),
+        requests[1].contains(&format!("{}\\n[exit code: 0]", place.work.display())),
         "{}",
         requests[1]
     );
@@ -507,7 +452,7 @@ async fn the_model_runs_the_built_in_tools_in_the_folder_of_the_session() {
 
 #[tokio::test]
 async fn a_background_command_fails_because_the_run_ends_with_its_turn() {
-    let place = Place::new("background");
+    let place = Place::new("print", "background");
 
     let (_, requests) = run_with(
         &place,
@@ -524,12 +469,12 @@ async fn a_background_command_fails_because_the_run_ends_with_its_turn() {
         "{}",
         requests[1]
     );
-    assert!(!place.cwd.join("started").exists());
+    assert!(!place.work.join("started").exists());
 }
 
 #[tokio::test]
 async fn a_run_cancelled_before_its_turn_ends_as_cancelled_and_leaves_no_input() {
-    let place = Place::new("cancelled");
+    let place = Place::new("print", "cancelled");
     let cancellation_token = CancellationToken::new();
     cancellation_token.cancel();
 
@@ -565,14 +510,14 @@ impl Transport for CancelsAtRequest {
 
 #[tokio::test]
 async fn a_run_cancelled_during_its_turn_saves_the_turn_as_cancelled() {
-    let place = Place::new("cancelled_turn");
+    let place = Place::new("print", "cancelled_turn");
     let cancellation_token = CancellationToken::new();
     let transport = CancelsAtRequest(cancellation_token.clone());
 
     let finished = run(
         &task("Hi.", SessionChoice::New),
         place.machine(Box::new(with_key), Box::new(transport)),
-        &place.cwd,
+        &place.work,
         cancellation_token,
     )
     .await;
@@ -585,13 +530,13 @@ async fn a_run_cancelled_during_its_turn_saves_the_turn_as_cancelled() {
 
 #[tokio::test]
 async fn a_rejected_credential_ends_the_turn_with_its_text_once() {
-    let place = Place::new("rejected");
+    let place = Place::new("print", "rejected");
     let machine = place.machine(Box::new(with_key), Box::new(Rejecting));
 
     let finished = run(
         &task("Hi.", SessionChoice::New),
         machine,
-        &place.cwd,
+        &place.work,
         CancellationToken::new(),
     )
     .await;

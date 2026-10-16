@@ -132,7 +132,7 @@ mod tests {
         let store_error: Box<dyn std::error::Error + Send + Sync> = "the store is locked".into();
         let blob_read = Error::from(EncodeError::BlobRead {
             digest: [0; 32],
-            source: store_error.into(),
+            source: store_error,
         });
 
         assert_eq!(

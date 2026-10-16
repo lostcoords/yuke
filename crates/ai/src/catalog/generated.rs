@@ -51,7 +51,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -95,7 +94,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -139,7 +137,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -180,7 +177,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -231,7 +227,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -275,7 +270,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -313,7 +307,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -351,7 +344,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -394,7 +386,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -438,7 +429,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -482,7 +472,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -526,7 +515,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: Some(true),
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -570,7 +558,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -611,7 +598,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -652,7 +638,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -695,7 +680,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: Some(false),
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -739,7 +723,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: Some(true),
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -800,7 +783,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -838,7 +820,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -876,7 +857,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -914,7 +894,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -952,7 +931,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -990,7 +968,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -1028,7 +1005,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -1066,7 +1042,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -1109,7 +1084,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -1152,7 +1126,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -1195,7 +1168,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -1233,7 +1205,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -1271,7 +1242,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -1314,7 +1284,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -1352,7 +1321,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -1395,7 +1363,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -1448,7 +1415,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -1491,7 +1457,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -1534,7 +1499,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(false),
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -1587,7 +1551,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -1635,7 +1598,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -1688,7 +1650,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(false),
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -1736,7 +1697,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -1790,7 +1750,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -1844,7 +1803,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -1898,7 +1856,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -1952,7 +1909,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -2006,7 +1962,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -2060,7 +2015,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -2114,7 +2068,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: Some(true),
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -2168,7 +2121,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -2212,7 +2164,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -2256,7 +2207,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -2294,7 +2244,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -2332,7 +2281,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -2376,7 +2324,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -2414,7 +2361,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -2452,7 +2398,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -2490,7 +2435,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -2528,7 +2472,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -2593,7 +2536,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -2646,7 +2588,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -2700,7 +2641,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -2754,7 +2694,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -2808,7 +2747,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: Some(true),
-                    system_updates: Some(true),
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -2862,7 +2800,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -2916,7 +2853,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: Some(true),
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -2970,7 +2906,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: Some(true),
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -3031,7 +2966,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -3069,7 +3003,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -3107,7 +3040,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -3145,7 +3077,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -3183,7 +3114,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -3221,7 +3151,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -3259,7 +3188,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -3297,7 +3225,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -3335,7 +3262,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -3373,7 +3299,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -3411,7 +3336,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -3449,7 +3373,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -3487,7 +3410,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -3531,7 +3453,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -3575,7 +3496,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -3623,7 +3543,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -3667,7 +3586,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -3705,7 +3623,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -3753,7 +3670,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -3806,7 +3722,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -3850,7 +3765,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -3894,7 +3808,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -3938,7 +3851,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -3992,7 +3904,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -4040,7 +3951,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -4083,7 +3993,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -4127,7 +4036,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -4171,7 +4079,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -4219,7 +4126,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -4267,7 +4173,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -4305,7 +4210,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -4353,7 +4257,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -4401,7 +4304,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -4454,7 +4356,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -4497,7 +4398,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -4535,7 +4435,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -4573,7 +4472,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -4611,7 +4509,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -4649,7 +4546,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -4687,7 +4583,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -4725,7 +4620,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -4763,7 +4657,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -4801,7 +4694,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -4839,7 +4731,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -4877,7 +4768,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -4915,7 +4805,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -4953,7 +4842,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -4991,7 +4879,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5029,7 +4916,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5067,7 +4953,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5105,7 +4990,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5143,7 +5027,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5181,7 +5064,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5219,7 +5101,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5257,7 +5138,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5295,7 +5175,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5333,7 +5212,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5371,7 +5249,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5409,7 +5286,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -5453,7 +5329,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: Some(true),
                 },
@@ -5491,7 +5366,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -5545,7 +5419,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: Some(true),
                 },
@@ -5599,7 +5472,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: Some(true),
                 },
@@ -5637,7 +5509,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -5686,7 +5557,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: Some(true),
                 },
@@ -5724,7 +5594,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: Some(true),
                 },
@@ -5762,7 +5631,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5800,7 +5668,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5838,7 +5705,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -5887,7 +5753,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -5925,7 +5790,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -5984,7 +5848,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -6038,7 +5901,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -6082,7 +5944,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -6131,7 +5992,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -6180,7 +6040,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -6229,7 +6088,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -6273,7 +6131,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -6317,7 +6174,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -6361,7 +6217,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -6399,7 +6254,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -6437,7 +6291,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -6475,7 +6328,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -6513,7 +6365,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -6551,7 +6402,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -6589,7 +6439,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -6627,7 +6476,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -6665,7 +6513,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -6703,7 +6550,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -6741,7 +6587,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -6779,7 +6624,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -6817,7 +6661,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -6855,7 +6698,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -6893,7 +6735,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -6931,7 +6772,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -6969,7 +6809,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -7007,7 +6846,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -7045,7 +6883,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -7083,7 +6920,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -7121,7 +6957,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -7159,7 +6994,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -7197,7 +7031,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -7235,7 +7068,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -7273,7 +7105,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -7311,7 +7142,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -7349,7 +7179,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -7387,7 +7216,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -7425,7 +7253,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -7463,7 +7290,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -7501,7 +7327,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -7539,7 +7364,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -7577,7 +7401,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -7615,7 +7438,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -7658,7 +7480,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -7702,7 +7523,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -7746,7 +7566,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -7790,7 +7609,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -7835,7 +7653,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -7880,7 +7697,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -7929,7 +7745,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -7980,7 +7795,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8018,7 +7832,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8056,7 +7869,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8094,7 +7906,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -8132,7 +7943,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8170,7 +7980,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8208,7 +8017,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8246,7 +8054,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8284,7 +8091,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8322,7 +8128,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -8360,7 +8165,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8398,7 +8202,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8436,7 +8239,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8474,7 +8276,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8512,7 +8313,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8550,7 +8350,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8588,7 +8387,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8626,7 +8424,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8664,7 +8461,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -8702,7 +8498,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8740,7 +8535,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -8778,7 +8572,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8816,7 +8609,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8854,7 +8646,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8892,7 +8683,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -8930,7 +8720,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -8968,7 +8757,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -9006,7 +8794,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -9044,7 +8831,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -9082,7 +8868,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -9120,7 +8905,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9158,7 +8942,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9196,7 +8979,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -9234,7 +9016,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -9272,7 +9053,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -9310,7 +9090,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9348,7 +9127,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9386,7 +9164,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -9424,7 +9201,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9462,7 +9238,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -9500,7 +9275,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -9538,7 +9312,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9576,7 +9349,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9614,7 +9386,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -9652,7 +9423,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -9690,7 +9460,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9728,7 +9497,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9766,7 +9534,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9804,7 +9571,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9842,7 +9608,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9880,7 +9645,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9918,7 +9682,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9956,7 +9719,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -9994,7 +9756,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -10032,7 +9793,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -10070,7 +9830,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -10108,7 +9867,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -10146,7 +9904,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -10184,7 +9941,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10222,7 +9978,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10260,7 +10015,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10298,7 +10052,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10336,7 +10089,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10374,7 +10126,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10412,7 +10163,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10450,7 +10200,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10488,7 +10237,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10526,7 +10274,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10564,7 +10311,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10602,7 +10348,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10640,7 +10385,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10678,7 +10422,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10716,7 +10459,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10754,7 +10496,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -10797,7 +10538,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10835,7 +10575,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -10873,7 +10612,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -10916,7 +10654,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -10959,7 +10696,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -10997,7 +10733,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -11035,7 +10770,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -11073,7 +10807,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -11116,7 +10849,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -11154,7 +10886,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -11197,7 +10928,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -11235,7 +10965,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -11278,7 +11007,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -11316,7 +11044,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -11369,7 +11096,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -11412,7 +11138,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -11455,7 +11180,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -11498,7 +11222,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -11551,7 +11274,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -11599,7 +11321,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -11652,7 +11373,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -11700,7 +11420,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -11754,7 +11473,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -11808,7 +11526,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -11862,7 +11579,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -11916,7 +11632,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -11970,7 +11685,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -12024,7 +11738,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -12078,7 +11791,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -12132,7 +11844,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -12186,7 +11897,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -12240,7 +11950,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -12294,7 +12003,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -12348,7 +12056,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -12402,7 +12109,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -12446,7 +12152,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -12484,7 +12189,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -12522,7 +12226,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -12560,7 +12263,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -12598,7 +12300,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -12636,7 +12337,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -12674,7 +12374,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -12712,7 +12411,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -12750,7 +12448,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -12788,7 +12485,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -12826,7 +12522,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -12864,7 +12559,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -12902,7 +12596,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -12940,7 +12633,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -12978,7 +12670,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13022,7 +12713,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13060,7 +12750,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13098,7 +12787,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13136,7 +12824,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13174,7 +12861,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -13212,7 +12898,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -13255,7 +12940,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13293,7 +12977,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -13331,7 +13014,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13369,7 +13051,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13407,7 +13088,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -13445,7 +13125,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -13483,7 +13162,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -13521,7 +13199,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -13559,7 +13236,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -13597,7 +13273,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -13635,7 +13310,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13673,7 +13347,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13711,7 +13384,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13759,7 +13431,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: Some(true),
                 },
@@ -13797,7 +13468,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13835,7 +13505,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -13873,7 +13542,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13911,7 +13579,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -13949,7 +13616,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -13987,7 +13653,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -14025,7 +13690,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -14063,7 +13727,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -14101,7 +13764,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -14157,7 +13819,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: Some(true),
                 },
@@ -14195,7 +13856,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -14233,7 +13893,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -14271,7 +13930,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -14309,7 +13967,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -14347,7 +14004,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -14385,7 +14041,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -14423,7 +14078,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -14461,7 +14115,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -14499,7 +14152,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -14537,7 +14189,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -14575,7 +14226,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -14613,7 +14263,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -14651,7 +14300,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -14699,7 +14347,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -14747,7 +14394,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -14785,7 +14431,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -14823,7 +14468,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -14871,7 +14515,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -14919,7 +14562,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -14975,7 +14617,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -15013,7 +14654,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -15061,7 +14701,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -15099,7 +14738,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -15137,7 +14775,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -15175,7 +14812,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -15213,7 +14849,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -15257,7 +14892,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -15301,7 +14935,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -15339,7 +14972,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -15377,7 +15009,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -15415,7 +15046,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -15453,7 +15083,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -15491,7 +15120,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -15539,7 +15167,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -15587,7 +15214,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -15625,7 +15251,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -15663,7 +15288,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -15701,7 +15325,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -15739,7 +15362,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -15777,7 +15399,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -15815,7 +15436,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -15853,7 +15473,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -15891,7 +15510,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -15929,7 +15547,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -15967,7 +15584,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -16005,7 +15621,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -16043,7 +15658,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -16081,7 +15695,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -16119,7 +15732,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -16157,7 +15769,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -16195,7 +15806,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -16233,7 +15843,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -16271,7 +15880,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -16309,7 +15917,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -16347,7 +15954,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -16391,7 +15997,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -16435,7 +16040,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -16479,7 +16083,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -16523,7 +16126,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -16561,7 +16163,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -16599,7 +16200,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -16644,7 +16244,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -16687,7 +16286,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -16732,7 +16330,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -16780,7 +16377,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -16828,7 +16424,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -16881,7 +16476,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -16929,7 +16523,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -16977,7 +16570,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -17030,7 +16622,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -17083,7 +16674,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -17121,7 +16711,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17159,7 +16748,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17197,7 +16785,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17235,7 +16822,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17273,7 +16859,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17311,7 +16896,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17349,7 +16933,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17387,7 +16970,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17425,7 +17007,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17463,7 +17044,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17501,7 +17081,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17539,7 +17118,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17577,7 +17155,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17615,7 +17192,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17653,7 +17229,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17691,7 +17266,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17729,7 +17303,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -17767,7 +17340,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -17805,7 +17377,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -17843,7 +17414,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -17881,7 +17451,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -17919,7 +17488,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -17973,7 +17541,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -18017,7 +17584,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -18061,7 +17627,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -18105,7 +17670,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -18143,7 +17707,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -18181,7 +17744,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -18219,7 +17781,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -18273,7 +17834,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -18317,7 +17877,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -18365,7 +17924,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -18419,7 +17977,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -18463,7 +18020,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -18516,7 +18072,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -18570,7 +18125,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -18614,7 +18168,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -18662,7 +18215,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -18705,7 +18257,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -18743,7 +18294,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -18798,7 +18348,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -18836,7 +18385,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -18891,7 +18439,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -18929,7 +18476,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -18967,7 +18513,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -19005,7 +18550,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -19043,7 +18587,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -19081,7 +18624,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -19119,7 +18661,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -19157,7 +18698,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -19195,7 +18735,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -19233,7 +18772,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -19271,7 +18809,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -19309,7 +18846,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -19347,7 +18883,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -19385,7 +18920,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -19450,7 +18984,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -19498,7 +19031,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -19546,7 +19078,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -19599,7 +19130,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -19647,7 +19177,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -19695,7 +19224,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -19748,7 +19276,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -19801,7 +19328,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -19866,7 +19392,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -19914,7 +19439,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -19962,7 +19486,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -20015,7 +19538,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -20063,7 +19585,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -20111,7 +19632,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -20164,7 +19684,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -20217,7 +19736,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20272,7 +19790,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20310,7 +19827,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20348,7 +19864,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20386,7 +19901,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20424,7 +19938,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20462,7 +19975,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20500,7 +20012,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20538,7 +20049,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20576,7 +20086,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20614,7 +20123,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -20652,7 +20160,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20690,7 +20197,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -20728,7 +20234,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -20766,7 +20271,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -20804,7 +20308,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -20842,7 +20345,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20880,7 +20382,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20918,7 +20419,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -20956,7 +20456,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -21011,7 +20510,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(false),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -21049,7 +20547,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -21087,7 +20584,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -21125,7 +20621,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -21163,7 +20658,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21201,7 +20695,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21239,7 +20732,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -21277,7 +20769,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21315,7 +20806,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21353,7 +20843,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21391,7 +20880,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -21429,7 +20917,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21467,7 +20954,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21505,7 +20991,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -21543,7 +21028,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21587,7 +21071,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21625,7 +21108,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21663,7 +21145,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21718,7 +21199,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -21756,7 +21236,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21811,7 +21290,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21849,7 +21327,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21892,7 +21369,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21930,7 +21406,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -21968,7 +21443,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -22006,7 +21480,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -22044,7 +21517,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22087,7 +21559,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22125,7 +21596,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -22168,7 +21638,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22206,7 +21675,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22244,7 +21712,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22282,7 +21749,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22320,7 +21786,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22358,7 +21823,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22396,7 +21860,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22434,7 +21897,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22472,7 +21934,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22510,7 +21971,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22553,7 +22013,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22596,7 +22055,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22639,7 +22097,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22677,7 +22134,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -22732,7 +22188,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -22770,7 +22225,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: Some(true),
                 },
@@ -22808,7 +22262,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: Some(true),
                 },
@@ -22846,7 +22299,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: Some(true),
                 },
@@ -22884,7 +22336,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: Some(true),
                 },
@@ -22922,7 +22373,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: Some(true),
                 },
@@ -22970,7 +22420,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -23041,7 +22490,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: Some(true),
                 },
@@ -23079,7 +22527,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -23123,7 +22570,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -23167,7 +22613,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -23211,7 +22656,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -23262,7 +22706,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -23306,7 +22749,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -23344,7 +22786,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -23387,7 +22828,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -23431,7 +22871,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -23475,7 +22914,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -23519,7 +22957,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -23573,7 +23010,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -23624,7 +23060,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -23665,7 +23100,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -23708,7 +23142,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -23752,7 +23185,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -23796,7 +23228,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -23834,7 +23265,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -23872,7 +23302,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -23910,7 +23339,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -23948,7 +23376,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -23986,7 +23413,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -24024,7 +23450,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -24062,7 +23487,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -24100,7 +23524,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -24138,7 +23561,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -24176,7 +23598,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -24219,7 +23640,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -24257,7 +23677,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -24300,7 +23719,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -24338,7 +23756,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -24376,7 +23793,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -24419,7 +23835,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -24457,7 +23872,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -24500,7 +23914,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -24543,7 +23956,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -24586,7 +23998,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -24639,7 +24050,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -24682,7 +24092,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -24725,7 +24134,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -24768,7 +24176,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -24816,7 +24223,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -24859,7 +24265,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -24907,7 +24312,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -24961,7 +24365,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -25015,7 +24418,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -25069,7 +24471,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -25123,7 +24524,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -25177,7 +24577,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -25231,7 +24630,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: Some(true),
                 },
@@ -25285,7 +24683,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -25333,7 +24730,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -25386,7 +24782,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -25429,7 +24824,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -25467,7 +24861,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -25505,7 +24898,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -25543,7 +24935,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -25581,7 +24972,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -25619,7 +25009,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -25657,7 +25046,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -25695,7 +25083,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -25733,7 +25120,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -25771,7 +25157,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -25809,7 +25194,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -25859,7 +25243,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -25909,7 +25292,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -25959,7 +25341,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -25997,7 +25378,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -26035,7 +25415,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -26079,7 +25458,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -26117,7 +25495,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -26155,7 +25532,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -26193,7 +25569,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -26231,7 +25606,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -26308,7 +25682,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -26362,7 +25735,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -26406,7 +25778,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -26444,7 +25815,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -26482,7 +25852,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -26520,7 +25889,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -26558,7 +25926,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -26606,7 +25973,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -26660,7 +26026,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -26714,7 +26079,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -26757,7 +26121,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -26795,7 +26158,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -26833,7 +26195,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -26871,7 +26232,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -26909,7 +26269,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -26947,7 +26306,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -26985,7 +26343,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -27023,7 +26380,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -27061,7 +26417,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -27099,7 +26454,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: None,
                     cache_breakpoint: None,
                 },
@@ -27147,7 +26501,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },
@@ -27185,7 +26538,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -27235,7 +26587,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(false),
                     cache_breakpoint: None,
                 },
@@ -27295,7 +26646,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -27333,7 +26683,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -27371,7 +26720,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -27409,7 +26757,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: Some(true),
                 },
@@ -27453,7 +26800,6 @@ pub static PROVIDERS: &[Provider] = &[
                 caps: Caps {
                     tools: Some(true),
                     tool_search: None,
-                    system_updates: None,
                     disable_reasoning: Some(true),
                     cache_breakpoint: None,
                 },

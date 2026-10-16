@@ -9,7 +9,6 @@ use crate::parse::{self, Field, QueryDeclaration};
 #[derive(Debug)]
 pub(crate) struct Module {
     pub(crate) name: String,
-    pub(crate) rows: Vec<RowType>,
     pub(crate) queries: Vec<Query>,
 }
 
@@ -36,8 +35,8 @@ pub(crate) struct Query {
     pub(crate) sql: String,
     /// The parameters, in the order of the annotation.
     pub(crate) parameters: Vec<Parameter>,
-    /// The name of the row struct, or `None` for a query without columns.
-    pub(crate) row: Option<String>,
+    /// The row struct, or `None` for a query without columns.
+    pub(crate) row: Option<RowType>,
 }
 
 /// A parameter of a query.
@@ -60,7 +59,6 @@ pub(crate) fn resolve(connection: &rusqlite::Connection, file: &Path, parsed: &p
             message: "the file name is not a module name in snake_case".to_owned(),
         })?
         .to_owned();
-    let mut rows = Vec::new();
     let mut queries = Vec::new();
     for declaration in &parsed.queries {
         let fail = |message: String| Error::Query {
@@ -80,12 +78,10 @@ pub(crate) fn resolve(connection: &rusqlite::Connection, file: &Path, parsed: &p
             }
             None
         } else {
-            let name = pascal_case(&declaration.name);
-            rows.push(RowType {
-                name: name.clone(),
+            Some(RowType {
+                name: pascal_case(&declaration.name),
                 fields: columns(&statement, &declaration.columns).map_err(fail)?,
-            });
-            Some(name)
+            })
         };
         queries.push(Query {
             name: declaration.name.clone(),
@@ -95,7 +91,7 @@ pub(crate) fn resolve(connection: &rusqlite::Connection, file: &Path, parsed: &p
             row,
         });
     }
-    Ok(Module { name, rows, queries })
+    Ok(Module { name, queries })
 }
 
 /// The parameters of `statement`, in the order of their annotations. Each parameter of the SQL has a `:name` and an

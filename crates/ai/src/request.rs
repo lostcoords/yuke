@@ -175,10 +175,9 @@ pub trait BlobStore: Sync {
 pub(crate) fn read_blob<'s>(store: Option<&'s dyn BlobStore>, blob: &Blob) -> Result<Cow<'s, [u8]>, EncodeError> {
     let digest = blob.digest;
     let bytes = match store {
-        Some(store) => store.read(&digest).map_err(|source| EncodeError::BlobRead {
-            digest,
-            source: source.into(),
-        })?,
+        Some(store) => store
+            .read(&digest)
+            .map_err(|source| EncodeError::BlobRead { digest, source })?,
         None => None,
     };
     bytes
@@ -485,7 +484,8 @@ pub struct ToolDefinition {
     /// A JSON Schema object text, written verbatim. The caller checks it.
     pub input_schema: String,
     /// Exclude the definition from the prompt until a tool search names it. A request with a deferred tool asks for
-    /// the native tool search, so the encoder refuses it for a target without [`Target::tool_search`].
+    /// the native tool search. The encoder refuses it for Chat Completions and for a target without
+    /// [`Target::tool_search`].
     pub defer_loading: bool,
 }
 

@@ -500,7 +500,7 @@ impl<'a> Driver<'a> {
         loop {
             let credential = match race(model.source.credential(), cancelled.as_mut()).await {
                 Raced::Done(Ok(credential)) => credential,
-                Raced::Done(Err(error)) => return Sent::Finished(Err(RoundError::Credential(error.into()))),
+                Raced::Done(Err(error)) => return Sent::Finished(Err(RoundError::Credential(error))),
                 Raced::Cancelled => return Sent::Cancelled(Vec::new()),
             };
             // A retry encodes again with its own credential. The context is unchanged, so no element encodes again.

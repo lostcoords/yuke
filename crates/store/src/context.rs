@@ -2,36 +2,16 @@
 
 use yuke_sql::rusqlite::{self, Connection};
 
+use yuke_agent::Opened;
+use yuke_protocol::SessionId;
+
 use crate::event;
 use crate::queries::events;
 
-/// A session as the database holds it.
-pub(crate) struct Loaded {
-    pub(crate) settings: yuke_protocol::SessionSettings,
-    pub(crate) context: Vec<yuke_ai::Block>,
-    pub(crate) newest_turn: yuke_agent::NewestTurn,
-}
-
-impl Loaded {
-    /// The session `id` with this state and `lease`.
-    pub(crate) fn into_opened(
-        self,
-        id: yuke_protocol::SessionId,
-        lease: Option<yuke_agent::Lease>,
-    ) -> yuke_agent::Opened {
-        yuke_agent::Opened {
-            id,
-            settings: self.settings,
-            context: self.context,
-            newest_turn: self.newest_turn,
-            lease,
-        }
-    }
-}
-
-/// Load session `session`, or `None` when the database has no such session. Run it in a transaction, so each query
-/// reads the same state.
-pub(crate) fn load(connection: &Connection, session: [u8; 16]) -> rusqlite::Result<Option<Loaded>> {
+/// Load session `id` with no lease, or `None` when the database has no such session. The caller runs the load in a
+/// transaction, so each query reads the same state.
+pub(crate) fn load(connection: &Connection, id: SessionId) -> rusqlite::Result<Option<Opened>> {
+    let session = *id.as_bytes();
     // Each session has a settings event, so no row means no session.
     let Some(settings) = events::newest_settings(connection, session).opt()? else {
         return Ok(None);
@@ -64,10 +44,12 @@ pub(crate) fn load(connection: &Connection, session: [u8; 16]) -> rusqlite::Resu
         Some((kind, finish_reason, message)) => event::turn_end(kind.as_deref(), finish_reason, message)?
             .map_or(yuke_agent::NewestTurn::Open, yuke_agent::NewestTurn::Ended),
     };
-    Ok(Some(Loaded {
+    Ok(Some(Opened {
+        id,
         settings: required(settings.settings, "settings")?.0,
         context,
         newest_turn,
+        lease: None,
     }))
 }
 
