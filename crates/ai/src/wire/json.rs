@@ -157,7 +157,7 @@ impl<'b> JsonWriter<'b> {
             escape_into(self.out, mime.as_bytes());
             self.out.extend_from_slice(b";base64,");
         }
-        base64_into(self.out, data);
+        crate::base64::encode_into(self.out, data);
         self.out.push(b'"');
         self.value_done();
     }
@@ -248,42 +248,6 @@ pub(crate) fn escape_into(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(&bytes[start..]);
 }
 
-/// The two base64 characters of each 12-bit value. Two lookups encode a group of 3 bytes.
-static BASE64_PAIRS: [[u8; 2]; 4096] = {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut pairs = [[0; 2]; 4096];
-    let mut index = 0;
-    while index < 4096 {
-        pairs[index] = [ALPHABET[index >> 6], ALPHABET[index & 63]];
-        index += 1;
-    }
-    pairs
-};
-
-/// Append the standard padded base64 of `data`.
-fn base64_into(out: &mut Vec<u8>, data: &[u8]) {
-    let start = out.len();
-    // The output grows once, so the loop writes each group of 4 characters in place.
-    out.resize(start + data.len().div_ceil(3) * 4, 0);
-    let (groups, rest) = data.as_chunks::<3>();
-    let (cells, _) = out[start..].as_chunks_mut::<4>();
-    let (cells, last) = cells.split_at_mut(groups.len());
-    for (group, cell) in groups.iter().zip(cells) {
-        let n = usize::from(group[0]) << 16 | usize::from(group[1]) << 8 | usize::from(group[2]);
-        let [c0, c1] = BASE64_PAIRS[n >> 12];
-        let [c2, c3] = BASE64_PAIRS[n & 0xfff];
-        *cell = [c0, c1, c2, c3];
-    }
-    let n = match *rest {
-        [a] => usize::from(a) << 16,
-        [a, b] => usize::from(a) << 16 | usize::from(b) << 8,
-        _ => return,
-    };
-    let [c0, c1] = BASE64_PAIRS[n >> 12];
-    let [c2, _] = BASE64_PAIRS[n & 0xfff];
-    last[0] = [c0, c1, if rest.len() == 2 { c2 } else { b'=' }, b'='];
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,41 +259,15 @@ mod tests {
     }
 
     #[test]
-    fn base64_data_url_across_chunks() {
-        let data: Vec<u8> = (0..3 * 1024 + 7).map(|i: u32| u8::try_from(i % 256).unwrap()).collect();
-        let mime = format!("x/{}", "y".repeat(300));
+    fn base64_writes_a_data_url_with_an_escaped_media_type() {
         let text = written(|jw| {
             jw.begin_object();
             jw.key("d");
-            jw.base64(Some(&mime), &data);
+            jw.base64(Some("x/\"y\""), b"foob");
             jw.end_object();
         });
-        let prefix = format!("{{\"d\":\"data:{mime};base64,");
-        let encoded = text.strip_prefix(&prefix).unwrap().strip_suffix("\"}").unwrap();
-        assert_eq!(encoded.len(), data.len().div_ceil(3) * 4);
-        let alphabet = encoded.strip_suffix("==").unwrap();
-        assert!(
-            alphabet
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/'))
-        );
-        assert_eq!(decode_base64(alphabet), data);
-    }
 
-    #[test]
-    fn base64_padding() {
-        // RFC 4648 section 10 gives these vectors.
-        for (data, want) in [
-            (&b""[..], ""),
-            (b"f", "Zg=="),
-            (b"fo", "Zm8="),
-            (b"foo", "Zm9v"),
-            (b"foob", "Zm9vYg=="),
-            (b"fooba", "Zm9vYmE="),
-            (b"foobar", "Zm9vYmFy"),
-        ] {
-            assert_eq!(written(|jw| jw.base64(None, data)), format!("\"{want}\""));
-        }
+        assert_eq!(text, r#"{"d":"data:x/\"y\";base64,Zm9vYg=="}"#);
     }
 
     #[test]
@@ -382,27 +320,5 @@ mod tests {
             jw.end_object();
         });
         assert_eq!(text, r#"{"a":"x","b":[1,{},{}],"c":true}"#);
-    }
-
-    fn decode_base64(alphabet: &str) -> Vec<u8> {
-        let value = |c: u8| match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            _ => panic!("invalid base64 byte: {c}"),
-        };
-        // The fixture has two pads, so the final sextet has four unused bits.
-        assert_eq!(value(alphabet.as_bytes()[alphabet.len() - 1]) & 15, 0);
-        let mut out = Vec::new();
-        for digits in alphabet.as_bytes().chunks(4) {
-            let n = digits
-                .iter()
-                .enumerate()
-                .fold(0u32, |n, (i, &c)| n | u32::from(value(c)) << (18 - 6 * i));
-            out.extend_from_slice(&n.to_be_bytes()[1..digits.len()]);
-        }
-        out
     }
 }

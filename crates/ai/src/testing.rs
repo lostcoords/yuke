@@ -229,7 +229,7 @@ pub(crate) struct ScriptedExchanges {
 }
 
 impl ScriptedExchanges {
-    pub(crate) fn new(answers: impl IntoIterator<Item = Result<(u16, &'static str), Fault>>) -> Self {
+    pub(crate) fn new<'a>(answers: impl IntoIterator<Item = Result<(u16, &'a str), Fault>>) -> Self {
         let answers = answers
             .into_iter()
             .map(|answer| {

@@ -52,6 +52,9 @@ struct StoredLogin {
     refresh_token: String,
     /// The end of the access token, in milliseconds since the Unix epoch.
     expires_at: u64,
+    /// The account that each model request names, for a flow that has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account_id: Option<String>,
 }
 
 impl fmt::Debug for StoredLogin {
@@ -60,17 +63,20 @@ impl fmt::Debug for StoredLogin {
             .field("access_token", &"<redacted>")
             .field("refresh_token", &"<redacted>")
             .field("expires_at", &self.expires_at)
+            .field("account_id", &self.account_id)
             .finish()
     }
 }
 
 impl StoredLogin {
-    /// The login of `grant`. A grant without a refresh token keeps `refresh_token`.
-    fn from_grant(grant: Grant, refresh_token: String) -> StoredLogin {
+    /// The login of `grant`. A grant without a refresh token keeps `refresh_token`. A grant without an account keeps
+    /// `account_id`.
+    fn from_grant(grant: Grant, refresh_token: String, account_id: Option<String>) -> StoredLogin {
         StoredLogin {
             access_token: grant.access_token,
             refresh_token: grant.refresh_token.unwrap_or(refresh_token),
             expires_at: millis(grant.expires_at),
+            account_id: grant.account_id.or(account_id),
         }
     }
 
@@ -315,11 +321,11 @@ impl Login {
             .ok_or_else(|| AuthError::NoLogin(self.provider.to_owned()))
     }
 
-    /// The access token of the next attempt.
-    async fn access_token(&self) -> Result<String, AuthError> {
+    /// The login of the next attempt.
+    async fn current(&self) -> Result<StoredLogin, AuthError> {
         let stored = self.stored().await?;
         if stored.valid(SystemTime::now(), MARGIN) {
-            return Ok(stored.access_token);
+            return Ok(stored);
         }
         let files = self.files.clone();
         let limit = self.lock_limit;
@@ -327,7 +333,7 @@ impl Login {
             // A refresh without the lock can send a token that the holder spends too, so only a valid token serves.
             let stored = self.stored().await?;
             if stored.valid(SystemTime::now(), Duration::ZERO) {
-                return Ok(stored.access_token);
+                return Ok(stored);
             }
             return Err(AuthError::Locked(self.files.path(LOCK)));
         };
@@ -335,31 +341,31 @@ impl Login {
     }
 
     /// Refresh the login while `locked` holds the lock.
-    async fn refresh(&self, locked: LockedFiles) -> Result<String, AuthError> {
+    async fn refresh(&self, locked: LockedFiles) -> Result<StoredLogin, AuthError> {
         // Another process can have refreshed during the wait for the lock, so the file holds the truth.
         let stored = self.stored().await?;
         let now = SystemTime::now();
         if stored.valid(now, MARGIN) {
-            return Ok(stored.access_token);
+            return Ok(stored);
         }
         if lock(&self.spent).contains(&stored.refresh_token) {
             return if stored.valid(now, Duration::ZERO) {
-                Ok(stored.access_token)
+                Ok(stored)
             } else {
                 Err(self.ended())
             };
         }
         match self.flow.refresh(&*self.exchange, &stored.refresh_token, now).await {
             Ok(grant) => {
-                let new = StoredLogin::from_grant(grant, stored.refresh_token.clone());
+                let new = StoredLogin::from_grant(grant, stored.refresh_token.clone(), stored.account_id);
                 if self.save(locked, Some(new.clone())).await.is_err() {
                     // The provider can have spent the old token, and the file still holds it.
                     lock(&self.spent).insert(stored.refresh_token);
                 }
-                Ok(new.access_token)
+                Ok(new)
             }
             // The refresh can take long, so the token is checked again at its end.
-            Err(OAuthError::Transient(_)) if stored.valid(SystemTime::now(), Duration::ZERO) => Ok(stored.access_token),
+            Err(OAuthError::Transient(_)) if stored.valid(SystemTime::now(), Duration::ZERO) => Ok(stored),
             Err(cause @ OAuthError::Transient(_)) => Err(AuthError::Unavailable {
                 provider: self.provider.to_owned(),
                 cause,
@@ -391,8 +397,8 @@ impl CredentialSource for LoginSource {
         let login = Arc::clone(&self.0);
         // The read and the refresh run in their own task, so a cancel cannot cut a refresh between its send and its
         // write.
-        let access_token = tokio::spawn(async move { login.access_token().await }).await??;
-        Ok(self.0.flow.credential(access_token))
+        let current = tokio::spawn(async move { login.current().await }).await??;
+        Ok(self.0.flow.credential(current.access_token, current.account_id))
     }
 }
 
@@ -445,7 +451,7 @@ pub(crate) async fn login(
 /// Save the grant of a new login of `provider` under the lock.
 async fn save_login(provider: &str, mut grant: Grant, folder: PathBuf) -> Result<(), AuthError> {
     let refresh_token = grant.refresh_token.take().ok_or(AuthError::NoRefreshToken)?;
-    let login = StoredLogin::from_grant(grant, refresh_token);
+    let login = StoredLogin::from_grant(grant, refresh_token, None);
     let files = Files { folder };
     let provider = provider.to_owned();
     blocking(move || {

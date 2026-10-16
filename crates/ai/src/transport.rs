@@ -1,5 +1,6 @@
 //! A transport sends one request and returns the response head and body, as Go's `http.RoundTripper` does. A status
-//! other than 200 is a response, not an error. One transport serves many sessions, and a body owns its connection.
+//! other than 200 is a response, not an error. A redirect is the one exception: it is [`Fault::RedirectRefused`].
+//! One transport serves many sessions, and a body owns its connection.
 //! An [`Exchange`] sends a small request and reads its whole answer, such as an OAuth token request.
 
 use std::borrow::Cow;
@@ -36,7 +37,7 @@ pub trait Transport: Send + Sync {
     ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>>;
 }
 
-/// Send one small request and read its whole answer.
+/// Post one small request and read its whole JSON answer.
 pub trait Exchange: Send + Sync {
     /// Send `request`, and read its whole answer. `deadline` bounds the exchange up to the end of the answer.
     ///

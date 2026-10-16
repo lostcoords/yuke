@@ -1,6 +1,7 @@
 //! Model calls over Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses. [`generate`] returns one owned
 //! [`Response`]. [`Encoder`] and [`Reply`] split the same call into steps that lend until the next call.
 
+mod base64;
 pub mod catalog;
 mod encoder;
 mod failure;

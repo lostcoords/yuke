@@ -419,3 +419,35 @@ async fn a_cancelled_attempt_still_saves_the_login_of_its_refresh() {
     assert_eq!(saved(&folder), Some(("new".to_owned(), "rt2".to_owned())));
     assert_eq!(gated.script.bodies().len(), 1);
 }
+
+// A refresh answer can omit the ID token. The account must stay, or each later request loses its account header.
+#[tokio::test]
+async fn a_refresh_keeps_the_account_and_each_credential_names_it() {
+    let folder = folder("a_refresh_keeps_the_account_and_each_credential_names_it");
+    let expires_at = millis(SystemTime::now() + Duration::from_secs(60));
+    let content = json!({"openai-codex": {
+        "access_token": "at", "refresh_token": "rt", "expires_at": expires_at, "account_id": "account-1"
+    }});
+    fs::write(folder.join(FILE), content.to_string()).unwrap();
+    let answers = Answers::default();
+    answers.push(200, r#"{"access_token":"new","expires_in":3600}"#);
+    let source = LoginSource::new(
+        "openai-codex",
+        Flow::Codex,
+        folder.clone(),
+        Arc::new(answers.clone()),
+        LOCK_LIMIT,
+    );
+
+    let credential = source.credential().await.unwrap();
+
+    let Credential::OAuth(oauth) = credential else {
+        panic!("{credential:?}");
+    };
+    assert_eq!(oauth.access_token, "new");
+    assert_eq!(
+        *oauth.headers,
+        [yuke_ai::transport::Header::new("ChatGPT-Account-Id", "account-1")]
+    );
+    assert_eq!(file(&folder)["openai-codex"]["account_id"], "account-1");
+}

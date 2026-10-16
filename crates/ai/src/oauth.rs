@@ -1,17 +1,18 @@
-//! The stateless OAuth flows of the catalog providers: a device login (RFC 8628) and a refresh. The caller keeps the
-//! grant, its lock, and the poll loop.
+//! The stateless OAuth flows of the catalog providers: a device login and a refresh. The caller keeps the grant, its
+//! lock, and the poll loop.
 
+mod codex;
 mod xai;
 
 use std::borrow::Cow;
 use std::fmt;
 use std::time::{Duration, Instant, SystemTime};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::route::{Credential, OAuth};
-use crate::transport::{Answer, Exchange, ExchangeRequest, Fault};
+use crate::transport::{Answer, Exchange, ExchangeRequest, Fault, Header};
 
 /// The interval of a device login whose start names none. RFC 8628 section 3.2 gives this default.
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(5);
@@ -28,14 +29,17 @@ const MAX_ANSWER: usize = 256 * 1024;
 /// The time limit of one exchange.
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The media type of each OAuth request body.
+/// The media types of the OAuth request bodies.
 const FORM: &str = "application/x-www-form-urlencoded";
+const JSON: &str = "application/json";
 
 /// An OAuth flow of the catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Flow {
     /// The xAI device login.
     Xai,
+    /// The OpenAI Codex device login of a ChatGPT account.
+    Codex,
 }
 
 impl Flow {
@@ -43,6 +47,7 @@ impl Flow {
     pub fn named(name: &str) -> Option<Flow> {
         match name {
             "xai" => Some(Flow::Xai),
+            "codex" => Some(Flow::Codex),
             _ => None,
         }
     }
@@ -56,10 +61,12 @@ impl Flow {
     pub async fn start(self, exchange: &dyn Exchange) -> Result<PendingLogin, OAuthError> {
         match self {
             Flow::Xai => xai::start(exchange).await,
+            Flow::Codex => codex::start(exchange).await,
         }
     }
 
-    /// Change `refresh_token` for a new grant. A grant without a new refresh token keeps the old one.
+    /// Change `refresh_token` for a new grant. A grant without a new refresh token has none, and the caller keeps the
+    /// old one.
     ///
     /// # Errors
     ///
@@ -73,17 +80,21 @@ impl Flow {
     ) -> Result<Grant, OAuthError> {
         match self {
             Flow::Xai => xai::refresh(exchange, refresh_token, now).await,
+            Flow::Codex => codex::refresh(exchange, refresh_token, now).await,
         }
     }
 
-    /// The credential of a model request with `access_token`. A flow adds the identity headers of its grant here.
-    pub fn credential(self, access_token: String) -> Credential {
-        match self {
-            Flow::Xai => Credential::OAuth(OAuth {
-                access_token: access_token.into(),
-                headers: Cow::Borrowed(&[]),
-            }),
-        }
+    /// The credential of a model request with `access_token` of the account `account_id` ([`Grant::account_id`]).
+    /// A flow adds the identity headers of its grant here.
+    pub fn credential(self, access_token: String, account_id: Option<String>) -> Credential {
+        let headers = match (self, account_id) {
+            (Flow::Codex, Some(account_id)) => Cow::Owned(vec![Header::new(codex::ACCOUNT_HEADER, account_id)]),
+            (Flow::Xai | Flow::Codex, _) => Cow::Borrowed(&[][..]),
+        };
+        Credential::OAuth(OAuth {
+            access_token: access_token.into(),
+            headers,
+        })
     }
 }
 
@@ -105,6 +116,8 @@ pub struct PendingLogin {
 enum FlowLogin {
     /// After the approval, the device code gets the grant, so it is secret (RFC 8628, section 5.1).
     Xai { device_code: String },
+    /// The id of the device login. Each poll sends it with the user code.
+    Codex { device_auth_id: String },
 }
 
 impl PendingLogin {
@@ -117,6 +130,7 @@ impl PendingLogin {
     pub async fn poll(&self, exchange: &dyn Exchange, now: SystemTime) -> Result<Poll, OAuthError> {
         match &self.flow {
             FlowLogin::Xai { device_code } => xai::poll(exchange, device_code, now).await,
+            FlowLogin::Codex { device_auth_id } => codex::poll(exchange, device_auth_id, &self.user_code, now).await,
         }
     }
 }
@@ -147,10 +161,12 @@ pub enum Poll {
 pub struct Grant {
     /// The token of each model request.
     pub access_token: String,
-    /// The token of the next refresh. A refresh answer without one keeps the old one.
+    /// The token of the next refresh. After a refresh answer without one, the caller keeps the old one.
     pub refresh_token: Option<String>,
     /// The end of the access token.
     pub expires_at: SystemTime,
+    /// The account of a flow that names one in each model request. It is a label, not a secret.
+    pub account_id: Option<String>,
 }
 
 impl fmt::Debug for Grant {
@@ -159,6 +175,7 @@ impl fmt::Debug for Grant {
             .field("access_token", &"<redacted>")
             .field("refresh_token", &self.refresh_token.as_ref().map(|_| "<redacted>"))
             .field("expires_at", &self.expires_at)
+            .field("account_id", &self.account_id)
             .finish()
     }
 }
@@ -203,6 +220,21 @@ async fn post_form(exchange: &dyn Exchange, url: &str, fields: &[(&str, &str)]) 
         url,
         content_type: FORM,
         body: body.as_bytes(),
+        max_answer: MAX_ANSWER,
+    };
+    exchange
+        .exchange(&request, Some(Instant::now() + EXCHANGE_TIMEOUT))
+        .await
+}
+
+/// Post `body` as JSON to `url`, and return the whole answer.
+async fn post_json(exchange: &dyn Exchange, url: &str, body: &impl Serialize) -> Result<Answer, Fault> {
+    // A struct of texts always serializes, so an error is a bug of the flow.
+    let body = serde_json::to_vec(body).map_err(|_| Fault::InvalidRequest)?;
+    let request = ExchangeRequest {
+        url,
+        content_type: JSON,
+        body: &body,
         max_answer: MAX_ANSWER,
     };
     exchange
@@ -266,6 +298,8 @@ struct TokenAnswer {
     access_token: Option<String>,
     refresh_token: Option<String>,
     expires_in: Option<Value>,
+    /// The ID token of the account.
+    id_token: Option<String>,
 }
 
 impl TokenAnswer {
@@ -278,6 +312,7 @@ impl TokenAnswer {
             refresh_token: nonblank(self.refresh_token),
             // A lifetime past the clock range ends at the default instead.
             expires_at: now.checked_add(lifetime).unwrap_or_else(|| now + DEFAULT_LIFETIME),
+            account_id: None,
         })
     }
 }
@@ -334,8 +369,14 @@ fn grant(body: &[u8], now: SystemTime) -> Result<Grant, OAuthError> {
         .grant(now)
 }
 
-/// The outcome of a refresh answer. `permanent` lists the codes that end the grant in this flow.
-fn refreshed(answer: &Answer, permanent: &[&str], now: SystemTime) -> Result<Grant, OAuthError> {
+/// The outcome of a refresh answer. `permanent` lists the codes that end the grant in this flow, and `grant` reads
+/// the token answer of the flow.
+fn refreshed(
+    answer: &Answer,
+    permanent: &[&str],
+    now: SystemTime,
+    grant: fn(&[u8], SystemTime) -> Result<Grant, OAuthError>,
+) -> Result<Grant, OAuthError> {
     if succeeded(answer.head.status) {
         // A success spent the token that the request sent, so an unreadable answer lost the new one.
         return grant(&answer.body, now).map_err(|_| OAuthError::Ambiguous(None));

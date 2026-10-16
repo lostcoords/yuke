@@ -22,8 +22,8 @@ const PERMANENT_REFRESH: &[&str] = &["invalid_grant", "invalid_client", "unautho
 #[derive(Deserialize)]
 struct StartAnswer {
     device_code: Option<String>,
+    #[serde(alias = "usercode")]
     user_code: Option<String>,
-    usercode: Option<String>,
     verification_uri: Option<String>,
     verification_uri_complete: Option<String>,
     interval: Option<Value>,
@@ -40,9 +40,7 @@ pub(super) async fn start(exchange: &dyn Exchange) -> Result<PendingLogin, OAuth
     let start: StartAnswer = serde_json::from_slice(&answer.body).map_err(|_| OAuthError::BadResponse)?;
     let device_code = super::nonblank(start.device_code).ok_or(OAuthError::BadResponse)?;
     Ok(PendingLogin {
-        user_code: super::nonblank(start.user_code)
-            .or_else(|| super::nonblank(start.usercode))
-            .ok_or(OAuthError::BadResponse)?,
+        user_code: super::nonblank(start.user_code).ok_or(OAuthError::BadResponse)?,
         // The complete page holds the code, so the user types it only on the plain page.
         verification_url: super::nonblank(start.verification_uri_complete)
             .or_else(|| super::nonblank(start.verification_uri))
@@ -93,5 +91,5 @@ pub(super) async fn refresh(
     let answer = super::post_form(exchange, TOKEN_URL, &fields)
         .await
         .map_err(super::refresh_fault)?;
-    super::refreshed(&answer, PERMANENT_REFRESH, now)
+    super::refreshed(&answer, PERMANENT_REFRESH, now, super::grant)
 }
