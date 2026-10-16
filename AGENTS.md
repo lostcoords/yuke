@@ -37,7 +37,8 @@ Ask the user before you add a dependency.
 - Do not discard a fallible result with `let _ =`. Propagate with `?` or handle it.
 - Give each error one of two shapes. Never mix them, or a printer of the chain shows a text twice.
   - A context error writes its own text and returns the cause from `source`.
-  - A transparent error writes the text of its inner error and returns the `source` of that inner error.
+  - A transparent error writes the text of its inner error and returns the `source` of that inner error. It can add
+    facts after that text.
 
 ## Tests
 
