@@ -189,7 +189,7 @@ async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<S
 }
 
 /// The reasoning settings of `level` on the model of `entry`. No level leaves the default of the endpoint.
-fn reasoning(entry: &Entry<'_, '_>, level: Option<ReasoningLevel>) -> Result<yuke_ai::ReasoningSettings, String> {
+fn reasoning(entry: &Entry<'_>, level: Option<ReasoningLevel>) -> Result<yuke_ai::ReasoningSettings, String> {
     let Some(level) = level else {
         return Ok(yuke_ai::ReasoningSettings::default());
     };

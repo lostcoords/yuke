@@ -24,7 +24,7 @@ def variant:
 
 def list: "&[" + join(", ") + "]";
 
-# A static row borrows its text and its lists, so it needs no allocation. A row from configuration can own them.
+# A static row borrows its text and its lists, so it needs no allocation. A row from configuration owns them.
 def cow_string: "Cow::Borrowed(" + rust_string + ")";
 
 def cow_list: "Cow::Borrowed(" + list + ")";
@@ -122,4 +122,4 @@ def provider:
 + "/// The identifier of this catalog snapshot.\n"
 + "pub const REVISION: &str = " + (.catalog_rev | rust_string) + ";\n\n"
 + "/// The provider table. Each row borrows static storage.\n"
-+ "pub static PROVIDERS: &[Provider<'static>] = &[\n" + (.providers | map(provider) | join(",\n")) + "\n];\n"
++ "pub static PROVIDERS: &[Provider] = &[\n" + (.providers | map(provider) | join(",\n")) + "\n];\n"

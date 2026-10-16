@@ -15,7 +15,7 @@ use crate::transport::Header;
 pub const REVISION: &str = "6619b3d14912c0d840bd9abe9f893b41f58508c503111246c044a381d2a9692a3300864ebf6c68b8caff4a2e7b48a5208b4eecd65592548d2271a7da9ae12ea3";
 
 /// The provider table. Each row borrows static storage.
-pub static PROVIDERS: &[Provider<'static>] = &[
+pub static PROVIDERS: &[Provider] = &[
     Provider {
         id: Cow::Borrowed("anthropic"),
         name: Cow::Borrowed("Anthropic"),

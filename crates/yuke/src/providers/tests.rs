@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use super::*;
 
-fn built_in(id: &str) -> Provider<'static> {
+fn built_in(id: &str) -> Provider {
     catalog::PROVIDERS
         .iter()
         .find(|provider| provider.id == id)
@@ -10,7 +10,7 @@ fn built_in(id: &str) -> Provider<'static> {
         .clone()
 }
 
-fn provider<'p>(providers: &'p Providers, id: &str) -> &'p Provider<'static> {
+fn provider<'p>(providers: &'p Providers, id: &str) -> &'p Provider {
     providers.0.iter().find(|provider| provider.id == id).unwrap()
 }
 

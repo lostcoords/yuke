@@ -1,5 +1,5 @@
-//! The baked provider table, the model facts it states, and the selector lookup. The baked rows borrow static storage,
-//! and a caller can build its own rows from configuration with the same types. Such a row can own its data.
+//! The baked provider table, the model facts it states, and the selector lookup. The baked rows borrow static storage.
+//! A caller can build rows from configuration with the same types, and such a row owns its data.
 
 #[expect(clippy::unreadable_literal, reason = "generated data keeps the digits of its source")]
 mod generated;
@@ -18,25 +18,25 @@ use crate::transport::Header;
 
 pub use generated::{PROVIDERS, REVISION};
 
-/// One host and the models it serves. A baked row borrows its data, and a row from configuration can own it.
+/// One host and the models it serves. A baked row borrows static data, and a row from configuration owns its data.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Provider<'a> {
+pub struct Provider {
     /// The provider half of a selector.
-    pub id: Cow<'a, str>,
+    pub id: Cow<'static, str>,
     /// The display name.
-    pub name: Cow<'a, str>,
+    pub name: Cow<'static, str>,
     /// The authentication scheme. It never carries a secret.
-    pub auth: Auth<'a>,
+    pub auth: Auth,
     /// The base URL of every endpoint.
-    pub base_url: Cow<'a, str>,
+    pub base_url: Cow<'static, str>,
     /// Pinned non-secret headers. A live grant adds identity headers at run time.
-    pub headers: Cow<'a, [Header]>,
+    pub headers: Cow<'static, [Header]>,
     /// The header that carries the session id.
     pub session_header: SessionHeader,
     /// One entry per served protocol. Every model names one of these endpoints.
-    pub endpoints: Cow<'a, [Endpoint]>,
+    pub endpoints: Cow<'static, [Endpoint]>,
     /// The models of the host.
-    pub models: Cow<'a, [Model<'a>]>,
+    pub models: Cow<'static, [Model]>,
 }
 
 /// One protocol a host serves. The credential header can differ for each path.
@@ -57,25 +57,25 @@ pub struct Endpoint {
 
 /// The authentication scheme of a provider.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Auth<'a> {
+pub enum Auth {
     /// The environment variable name of the key, or `None` when none is known.
-    ApiKey(Option<Cow<'a, str>>),
+    ApiKey(Option<Cow<'static, str>>),
     /// The login flow name. [`crate::oauth::Flow::named`] gives the flow, or `None` for a name that yuke does not know.
     /// The caller keeps the grant.
-    OAuth(Cow<'a, str>),
+    OAuth(Cow<'static, str>),
 }
 
 /// The kinds a model reads and writes. The generator keeps only the names of [`Modality`] that a model can list, so
 /// `Other` never appears.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-pub struct Modalities<'a> {
+pub struct Modalities {
     /// The kinds the model reads.
-    pub input: Cow<'a, [Modality]>,
+    pub input: Cow<'static, [Modality]>,
     /// The kinds the model writes.
-    pub output: Cow<'a, [Modality]>,
+    pub output: Cow<'static, [Modality]>,
 }
 
-impl Modalities<'_> {
+impl Modalities {
     /// Report whether the model takes this kind, or `None` when the source lists none.
     pub fn takes_input(&self, kind: Modality) -> Option<bool> {
         if self.input.is_empty() {
@@ -208,28 +208,28 @@ pub struct ChatFlags {
 
 /// One model in the shape every source shares. It holds no URL and no secret.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Model<'a> {
+pub struct Model {
     /// The model half of a selector.
-    pub id: Cow<'a, str>,
+    pub id: Cow<'static, str>,
     /// The model ID the host takes.
-    pub upstream_id: Cow<'a, str>,
+    pub upstream_id: Cow<'static, str>,
     /// The display name.
-    pub name: Cow<'a, str>,
+    pub name: Cow<'static, str>,
     /// Name the endpoint that serves this model. A host can serve several endpoints.
     pub protocol: Protocol,
     /// The token limits.
     pub limits: Limits,
     /// The price bands in threshold order. The last band that the prompt reaches prices the whole request.
-    pub cost: Cow<'a, [PriceBand]>,
+    pub cost: Cow<'static, [PriceBand]>,
     /// What the model can do.
     pub caps: Caps,
     /// The efforts a user can pick. A `None` level means "no effort at all".
-    pub reasoning_levels: Cow<'a, [Option<Effort>]>,
+    pub reasoning_levels: Cow<'static, [Option<Effort>]>,
     /// How a request asks the model to reason.
     pub dialect: Dialect,
     /// The kinds the model reads and writes.
     // @todo(xyaman): No request reads this yet. Replace the media that a model cannot read with a note.
-    pub modalities: Modalities<'a>,
+    pub modalities: Modalities,
 }
 
 /// A reasoning level that a user picks for a model: no reasoning, or an effort.
@@ -248,7 +248,7 @@ const SMALLEST_THINKING_BUDGET: u64 = 1024;
 /// processing.
 const THINKING_BUDGET: u64 = 16_000;
 
-impl Model<'_> {
+impl Model {
     /// The reasoning settings that ask this model for `level`. A thinking budget stays below the output limit of the
     /// model, and a budget that does not fit falls back to the effort.
     ///
@@ -347,18 +347,16 @@ fn split(selector: &str) -> Result<(&str, &str), Error> {
     }
 }
 
-/// One catalog model and its provider, borrowed from a provider table. The table and the row data can have different
-/// lifetimes.
-// `Cow` holds an associated owned type, so a row is invariant in `'a`. A table of owned rows then needs its own `'t`.
+/// One catalog model and its provider, borrowed from a provider table.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Entry<'t, 'a> {
+pub struct Entry<'a> {
     /// The provider of the model.
-    pub provider: &'t Provider<'a>,
+    pub provider: &'a Provider,
     /// The model.
-    pub model: &'t Model<'a>,
+    pub model: &'a Model,
 }
 
-impl Entry<'_, '_> {
+impl Entry<'_> {
     /// The endpoint that serves the model's protocol.
     ///
     /// # Errors
@@ -402,8 +400,8 @@ impl Entry<'_, '_> {
         })
     }
 
-    /// Bind this model to a target. The target owns its configuration and can outlive this entry. The caller may
-    /// change any of the wire settings before a call.
+    /// Bind this model to a target. The target holds no borrow of this entry, so it can outlive the entry. The caller
+    /// may change any of the wire settings before a call.
     ///
     /// # Errors
     ///
@@ -412,12 +410,12 @@ impl Entry<'_, '_> {
     pub fn bind(&self) -> Result<Target, Error> {
         let served = self.endpoint()?;
         Ok(Target {
-            model: Cow::Owned(self.model.upstream_id.clone().into_owned()),
-            // The route copies the strings once. A `'static` header keeps its borrowed text.
+            model: self.model.upstream_id.clone(),
+            // A baked row lends its text, and a configured row copies it.
             route: Route {
-                base_url: Cow::Owned(self.provider.base_url.clone().into_owned()),
+                base_url: self.provider.base_url.clone(),
                 credential_header: served.credential_header,
-                headers: Cow::Owned(self.provider.headers.to_vec()),
+                headers: self.provider.headers.clone(),
                 session_header: self.provider.session_header,
             },
             wire: self.wire(served)?,
@@ -433,7 +431,7 @@ impl Entry<'_, '_> {
 ///
 /// Returns [`Error::MalformedSelector`], [`Error::UnknownProvider`], or [`Error::UnknownModel`] if the selector names
 /// no model of `providers`.
-pub fn lookup_in<'t, 'a>(providers: &'t [Provider<'a>], selector: &str) -> Result<Entry<'t, 'a>, Error> {
+pub fn lookup_in<'a>(providers: &'a [Provider], selector: &str) -> Result<Entry<'a>, Error> {
     let (provider_id, model_id) = split(selector)?;
     let provider = providers
         .iter()
@@ -460,7 +458,7 @@ pub fn resolve(selector: &str) -> Result<Target, Error> {
 mod tests {
     use super::*;
 
-    fn model(id: &'static str, protocol: Protocol) -> Model<'static> {
+    fn model(id: &'static str, protocol: Protocol) -> Model {
         Model {
             id: id.into(),
             upstream_id: id.into(),
@@ -485,7 +483,7 @@ mod tests {
         }
     }
 
-    fn provider<'a>(endpoints: &'a [Endpoint], models: &'a [Model<'a>]) -> Provider<'a> {
+    fn provider(endpoints: Vec<Endpoint>, models: Vec<Model>) -> Provider {
         Provider {
             id: "host".into(),
             name: "Host".into(),
@@ -508,7 +506,7 @@ mod tests {
     // A row from configuration owns its data, so the table outlives the text that it came from.
     #[test]
     fn a_lookup_searches_only_its_own_table_with_owned_rows() {
-        let table: Vec<Provider<'static>> = {
+        let table: Vec<Provider> = {
             let id = String::from("local");
             let models = vec![Model {
                 id: Cow::Owned(id.clone()),
@@ -532,7 +530,7 @@ mod tests {
                     false,
                 )]),
                 models: Cow::Owned(models),
-                ..provider(&[], &[])
+                ..provider(Vec::new(), Vec::new())
             }]
         };
 
@@ -599,7 +597,7 @@ mod tests {
                 ..model("chat", Protocol::OpenaiChat)
             },
         ];
-        let host = provider(&endpoints, &models);
+        let host = provider(endpoints.to_vec(), models.to_vec());
         let tool_search = |index: usize| {
             Entry {
                 provider: &host,
@@ -658,9 +656,9 @@ mod tests {
             endpoints[1].chat_dialect = dialect;
             let gateway = Provider {
                 base_url: "https://gateway.test/v1".into(),
-                headers: Cow::Borrowed(&headers),
+                headers: headers.to_vec().into(),
                 session_header: SessionHeader::XOpencodeSession,
-                ..provider(&endpoints, &models)
+                ..provider(endpoints.to_vec(), models.to_vec())
             };
             let bind = |model: usize| {
                 Entry {
@@ -695,31 +693,6 @@ mod tests {
         }
     }
 
-    // Configuration can build a provider at run time. Its target owns the strings, so it outlives the provider.
-    #[test]
-    fn runtime_provider_binds_to_an_owned_target() {
-        let target = {
-            let base_url = String::from("https://runtime.test/v1");
-            let endpoints = [endpoint(
-                Protocol::OpenaiChat,
-                CredentialHeader::AuthorizationBearer,
-                false,
-            )];
-            let models = [model("m", Protocol::OpenaiChat)];
-            let provider = Provider {
-                base_url: Cow::Borrowed(&base_url),
-                ..provider(&endpoints, &models)
-            };
-            let entry = Entry {
-                provider: &provider,
-                model: &provider.models[0],
-            };
-            entry.bind().unwrap()
-        };
-        assert_eq!(target.model, "m");
-        assert_eq!(target.route.base_url, "https://runtime.test/v1");
-    }
-
     #[test]
     fn binding_checks_endpoint_and_anthropic_output_limit() {
         let endpoints = [endpoint(Protocol::AnthropicMessages, CredentialHeader::XApiKey, false)];
@@ -734,7 +707,7 @@ mod tests {
                 ..model("big", Protocol::AnthropicMessages)
             },
         ];
-        let host = provider(&endpoints, &models);
+        let host = provider(endpoints.to_vec(), models.to_vec());
         let chat = Entry {
             provider: &host,
             model: &host.models[0],
@@ -824,7 +797,7 @@ mod tests {
 
     /// An Anthropic model with the thinking shape `anthropic_thinking`, the effort `high`, and an output limit of
     /// 32,000 tokens.
-    fn thinking_model(anthropic_thinking: AnthropicThinking) -> Model<'static> {
+    fn thinking_model(anthropic_thinking: AnthropicThinking) -> Model {
         Model {
             limits: Limits {
                 context_window: None,

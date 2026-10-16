@@ -22,7 +22,7 @@ const FILE: &str = "providers.json";
 
 /// The built-in providers with the changes and the additions of `providers.json`.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Providers(Vec<Provider<'static>>);
+pub(crate) struct Providers(Vec<Provider>);
 
 impl Providers {
     /// The providers with the file in the config folder `folder`. A missing file gives the built-in providers.
@@ -62,7 +62,7 @@ impl Providers {
     /// # Errors
     ///
     /// Returns the errors of [`catalog::lookup_in`].
-    pub(crate) fn lookup(&self, selector: &str) -> Result<Entry<'_, 'static>, catalog::Error> {
+    pub(crate) fn lookup(&self, selector: &str) -> Result<Entry<'_>, catalog::Error> {
         catalog::lookup_in(&self.0, selector)
     }
 
@@ -71,7 +71,7 @@ impl Providers {
     /// # Errors
     ///
     /// Returns a text for the user when the provider has no login flow of yuke.
-    pub(crate) fn login(&self, id: &str) -> Result<(&Provider<'static>, Flow), String> {
+    pub(crate) fn login(&self, id: &str) -> Result<(&Provider, Flow), String> {
         let provider = self.0.iter().find(|provider| provider.id == id);
         match provider.map(|provider| (provider, &provider.auth)) {
             Some((provider, Auth::OAuth(flow_name))) => {
@@ -195,7 +195,7 @@ enum ThinkingShape {
 
 impl ProviderPatch {
     /// Change the provider with this id in `providers`, or add it.
-    fn apply(self, providers: &mut Vec<Provider<'static>>) -> Result<(), String> {
+    fn apply(self, providers: &mut Vec<Provider>) -> Result<(), String> {
         valid_id(&self.id, "/")?;
         let position = providers.iter().position(|provider| provider.id == self.id);
         let index = if let Some(index) = position {
@@ -208,7 +208,7 @@ impl ProviderPatch {
     }
 
     /// An empty provider of a new id. The change gives it the fields that it needs.
-    fn new_provider(&self) -> Result<Provider<'static>, String> {
+    fn new_provider(&self) -> Result<Provider, String> {
         let missing = [
             ("base_url", self.base_url.is_none()),
             ("endpoints", self.endpoints.is_none()),
@@ -230,7 +230,7 @@ impl ProviderPatch {
     }
 
     /// Write each field of the entry into `provider`, and check the result.
-    fn change(self, provider: &mut Provider<'static>) -> Result<(), String> {
+    fn change(self, provider: &mut Provider) -> Result<(), String> {
         if let Some(name) = self.name {
             provider.name = name.into();
         }
@@ -326,7 +326,7 @@ fn endpoints(entries: Vec<EndpointEntry>) -> Result<Vec<Endpoint>, String> {
 
 impl ModelEntry {
     /// The model of the entry on a provider with `endpoints`.
-    fn model(self, endpoints: &[Endpoint]) -> Result<Model<'static>, String> {
+    fn model(self, endpoints: &[Endpoint]) -> Result<Model, String> {
         valid_id(&self.id, "")?;
         let protocol = match (self.protocol, endpoints) {
             (Some(protocol), _) => protocol,
@@ -399,7 +399,7 @@ impl ModelEntry {
 
 /// Check a changed provider as a whole: the credential headers match the auth, the headers are valid, and each model
 /// binds.
-fn check(provider: &Provider<'static>) -> Result<(), String> {
+fn check(provider: &Provider) -> Result<(), String> {
     let sends_credential = !matches!(provider.auth, Auth::ApiKey(None));
     for (index, endpoint) in provider.endpoints.iter().enumerate() {
         match (sends_credential, endpoint.credential_header) {
