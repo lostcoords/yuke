@@ -1,8 +1,7 @@
-/**
- * The cancel signal of one tool call. It aborts when the turn cancels the call, and when the call ends. Work that
- * listens to it, such as a native command, stops with the call.
- */
-export class CallSignal {
+import type { Signal } from "yuke:tools";
+
+/** The `Signal` of a tool call or of a plugin load, with the `abort` that only yuke calls. */
+export class CallSignal implements Signal {
   #aborted = false;
   #reason: unknown = undefined;
   readonly #listeners = new Set<() => void>();

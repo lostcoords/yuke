@@ -17,5 +17,8 @@ pub use drive::{Driver, Inbox, Journal, Observer, Timer, Turn, TurnError, TurnEv
 pub use hooks::{Hooks, RoundDecision, RoundPlan, ToolDecision};
 pub use model::{CredentialSource, Model, RoundError};
 pub use tokio_util::sync::CancellationToken;
-pub use tool::{Concurrency, TOOL_CALL_NAME, Tool, ToolContent, ToolContext, ToolNameError, Toolset, parse_arguments};
+pub use tool::{
+    Concurrency, TOOL_CALL_NAME, Tool, ToolContent, ToolContext, ToolNameError, Toolset, is_reserved_tool_name,
+    parse_arguments,
+};
 pub use turn_state::{Answer, Commit, Outcome, Replace, Replaced, TurnEnd};

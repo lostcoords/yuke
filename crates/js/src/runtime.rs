@@ -4,18 +4,17 @@
 use std::cell::RefCell;
 use std::future::Future;
 use std::path::PathBuf;
-use std::pin::Pin;
+use std::pin::pin;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::task::{Context, Poll};
+use std::task::Poll;
 use std::thread::JoinHandle;
 
-use rquickjs::runtime::DriveFuture;
 use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Module, Persistent, Value};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::error::{Error, ScriptError, caught};
+use crate::error::{Error, Report, ScriptError, caught};
 use crate::loader::{ModuleLoader, NameResolver};
 use crate::native;
 use crate::processes::Processes;
@@ -76,14 +75,14 @@ pub(crate) struct Caller {
 }
 
 impl Runtime {
-    /// Start the JavaScript thread. The receiver gets each script failure that belongs to no call: a timer callback
-    /// that threw, or a promise rejection that got no handler in the drive that settled it.
+    /// Start the JavaScript thread. The receiver gets each [`Report`]: a script failure that belongs to no call, or a
+    /// notice of a plugin.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Thread`] when the thread or its tokio runtime does not start. Returns [`Error::Script`] when the
     /// engine does not start, and [`Error::Stopped`] when the thread ends before it is ready.
-    pub async fn start(options: Options) -> Result<(Self, mpsc::UnboundedReceiver<ScriptError>), Error> {
+    pub async fn start(options: Options) -> Result<(Self, mpsc::UnboundedReceiver<Report>), Error> {
         let (calls, call_receiver) = mpsc::unbounded_channel();
         let (faults, fault_receiver) = mpsc::unbounded_channel();
         let (ready, started) = oneshot::channel();
@@ -109,7 +108,7 @@ impl Runtime {
         Ok((runtime, fault_receiver))
     }
 
-    /// Import the module `name`: a built-in module such as `yuke:builtins`, or the absolute path of a file. Wait for its
+    /// Import the module `name`: a built-in module such as `yuke:tools`, or the absolute path of a file. Wait for its
     /// evaluation, top-level `await` included.
     ///
     /// # Errors
@@ -118,12 +117,13 @@ impl Runtime {
     /// Returns [`Error::Stopped`] when the thread has ended or ends during the import.
     pub async fn import(&self, name: &str) -> Result<(), Error> {
         let name = name.to_owned();
-        self.run(async move |ctx: Ctx<'_>, _registry: Rc<Registry>| {
-            let promise = caught(&ctx, Module::import(&ctx, name))?;
-            caught(&ctx, promise.into_future::<Value<'_>>().await)?;
-            Ok(())
-        })
-        .await
+        self.caller
+            .run(async move |ctx: Ctx<'_>, _registry: Rc<Registry>| {
+                let promise = caught(&ctx, Module::import(&ctx, name))?;
+                caught(&ctx, promise.into_future::<Value<'_>>().await)?;
+                Ok(())
+            })
+            .await
     }
 
     /// The tools that the JavaScript has defined so far, each with its definition, for the session of `host`. The
@@ -134,15 +134,6 @@ impl Runtime {
     /// Returns [`Error::Stopped`] when the thread has ended.
     pub async fn tools(&self, host: Arc<dyn SessionHost>) -> Result<Vec<(yuke_ai::ToolDefinition, ScriptTool)>, Error> {
         tools::tools(&self.caller, &self.processes, host).await
-    }
-
-    /// Run `f` on the JavaScript thread, and return its answer.
-    pub(crate) async fn run<F, R>(&self, f: F) -> Result<R, Error>
-    where
-        F: for<'js> AsyncFnOnce(Ctx<'js>, Rc<Registry>) -> Result<R, Error> + Send + 'static,
-        R: Send + 'static,
-    {
-        self.caller.run(f).await
     }
 
     /// Stop the JavaScript and wait for the end of the thread. The JavaScript that runs stops, also inside a loop.
@@ -213,7 +204,7 @@ fn serve(
     stopping: Arc<AtomicBool>,
     calls: mpsc::UnboundedReceiver<Call>,
     stopped: oneshot::Receiver<()>,
-    faults: mpsc::UnboundedSender<ScriptError>,
+    faults: mpsc::UnboundedSender<Report>,
     ready: oneshot::Sender<Result<(), Error>>,
 ) {
     let tokio_runtime = match tokio::runtime::Builder::new_current_thread().enable_time().build() {
@@ -233,7 +224,7 @@ async fn serve_calls(
     stopping: Arc<AtomicBool>,
     mut calls: mpsc::UnboundedReceiver<Call>,
     mut stopped: oneshot::Receiver<()>,
-    faults: mpsc::UnboundedSender<ScriptError>,
+    faults: mpsc::UnboundedSender<Report>,
     ready: oneshot::Sender<Result<(), Error>>,
 ) {
     let engine = match Engine::new(options, stopping, faults.clone()).await {
@@ -250,11 +241,8 @@ async fn serve_calls(
         return;
     }
 
-    let mut driver = Driver {
-        drive: Box::pin(engine.runtime.drive()),
-        rejections: Rc::clone(&engine.rejections),
-        faults,
-    };
+    // The drive runs the promise jobs and the spawned futures. It holds the runtime, so it drops before the engine.
+    let mut drive = pin!(engine.runtime.drive());
     loop {
         tokio::select! {
             _ = &mut stopped => break,
@@ -262,12 +250,20 @@ async fn serve_calls(
                 Some(call) => engine.context.with(|ctx| call(ctx, &engine.registry)).await,
                 None => break,
             },
-            () = std::future::poll_fn(|context| driver.poll_drive(context)) => {}
+            () = std::future::poll_fn(|context| {
+                // The drive ends only with the runtime, and the runtime outlives it.
+                let polled = drive.as_mut().poll(context);
+                debug_assert!(polled.is_pending());
+                // A rejection that got no handler in this poll is a fault. A later handler comes too late.
+                for (_, error) in engine.rejections.pending.take() {
+                    if faults.send(Report::Fault(error)).is_err() {
+                        // The owner dropped the receiver, so it ignores faults.
+                    }
+                }
+                Poll::Pending
+            }) => {}
         }
     }
-
-    // The drive holds the runtime, so it goes before the engine.
-    drop(driver);
 }
 
 /// The engine of the thread, and the state that its callbacks share.
@@ -283,7 +279,7 @@ impl Engine {
     async fn new(
         options: Options,
         stopping: Arc<AtomicBool>,
-        faults: mpsc::UnboundedSender<ScriptError>,
+        faults: mpsc::UnboundedSender<Report>,
     ) -> Result<Self, Error> {
         let engine_error = |error: rquickjs::Error| Error::Script(ScriptError::from_engine(&error));
         let runtime = AsyncRuntime::new().map_err(engine_error)?;
@@ -310,8 +306,8 @@ impl Engine {
         context
             .with(|ctx| {
                 timers::install(&ctx, &timers, faults.clone())?;
-                crate::error::install_report_error(&ctx, faults)?;
-                native::install(&ctx, &registry)
+                crate::error::install_report_error(&ctx, faults.clone())?;
+                native::install(&ctx, &registry, faults)
             })
             .await
             .map_err(engine_error)?;
@@ -353,28 +349,5 @@ impl Rejections {
             let error = ScriptError::from_value(ctx, reason);
             self.pending.borrow_mut().push((promise, error));
         }
-    }
-}
-
-/// The drive of the engine: it runs the promise jobs and the spawned futures.
-struct Driver {
-    drive: Pin<Box<DriveFuture>>,
-    rejections: Rc<Rejections>,
-    faults: mpsc::UnboundedSender<ScriptError>,
-}
-
-impl Driver {
-    /// Drive the engine. It never ends: the drive ends only with the runtime, and the runtime outlives the driver.
-    fn poll_drive(&mut self, context: &mut Context<'_>) -> Poll<()> {
-        let drive = self.drive.as_mut().poll(context);
-        debug_assert!(drive.is_pending());
-
-        // A rejection that got no handler in this poll is a fault. A later handler comes too late.
-        for (_, error) in self.rejections.pending.take() {
-            if self.faults.send(error).is_err() {
-                // The owner dropped the receiver, so it ignores faults.
-            }
-        }
-        Poll::Pending
     }
 }

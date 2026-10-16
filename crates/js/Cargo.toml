@@ -8,7 +8,7 @@ license.workspace = true
 
 [dependencies]
 async-trait = "0.1.92"
-# oxc makes a breaking release each week, so each crate pins one exact version. The cache key holds it too.
+# oxc makes a breaking release each week, so each crate pins one exact version. The cache key holds this file too.
 oxc_allocator = "=0.153.0"
 oxc_codegen = { version = "=0.153.0", default-features = false }
 oxc_parser = "=0.153.0"

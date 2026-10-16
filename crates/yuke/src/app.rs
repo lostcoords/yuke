@@ -24,7 +24,7 @@ use yuke_ai::oauth::Flow;
 use yuke_ai::route::Credential;
 use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CredentialSource, Model, Timer};
-use yuke_js::{Options, Processes, Runtime, ScriptError};
+use yuke_js::{Options, Processes, Report, Runtime};
 use yuke_protocol::{
     EventNumber, Input, InputId, InputSource, Job, NoticeLevel, NoticeParams, ServerNotification, SessionEvent,
     SessionId, SessionSettings, StoredEvent, UpdateCredentialParams,
@@ -33,12 +33,14 @@ use yuke_store::SqliteStore;
 
 use self::live::LiveSession;
 use crate::auth::{LOCK_LIMIT, LoginSource, Pushed};
+use crate::config::Config;
 use crate::paths::Paths;
+use crate::plugins;
 use crate::prompt::{self, Environment};
 use crate::providers::Providers;
 
-/// The source of the notices of yuke.
-const SOURCE: &str = "host:yuke";
+/// The source of the notices of yuke. A plugin name has no `:`, so no plugin notice has this source.
+pub(crate) const SOURCE: &str = "host:yuke";
 
 /// A function that reads one environment variable.
 pub(crate) type Variable = dyn Fn(&str) -> Option<OsString> + Send + Sync;
@@ -100,13 +102,16 @@ pub(crate) struct App {
 }
 
 impl App {
-    /// Open the store, and start the JavaScript runtime with the built-in tools. The app tells `observer` what happens.
+    /// Open the store, start the JavaScript runtime with the built-in tools, and load the plugins of `config.json`. The
+    /// app tells `observer` what happens.
     ///
     /// # Errors
     ///
     /// Returns a text for the user when a part does not start.
     pub(crate) async fn start(machine: Machine, jobs: Jobs, observer: Arc<dyn Observer>) -> Result<App, String> {
         let providers = Providers::load(&machine.paths.config)?;
+        let config = Config::load(&machine.paths.config.join("config.json"))?;
+        let plugins = plugins::plugins(&machine.paths.config, &config.plugins, &machine.paths.data)?;
         let store: Arc<dyn Store> = Arc::new(
             SqliteStore::open(&machine.paths.data)
                 .await
@@ -123,7 +128,7 @@ impl App {
             Jobs::Allowed => Processes::new(processes_folder.clone()),
             Jobs::Refused => Processes::without_jobs(processes_folder.clone()),
         });
-        let (runtime, faults) = match Runtime::start(Options {
+        let (runtime, reports) = match Runtime::start(Options {
             cache: machine.paths.cache.join("js"),
             processes: Arc::clone(&processes),
         })
@@ -137,7 +142,7 @@ impl App {
                 return Err(describe(&error));
             }
         };
-        let reporter = tokio::spawn(report(faults, Arc::clone(&observer)));
+        let reporter = tokio::spawn(report(reports, Arc::clone(&observer)));
         let app = App {
             shared: Arc::new(Shared {
                 machine,
@@ -152,13 +157,20 @@ impl App {
             processes_folder,
             sessions: HashMap::new(),
         };
-        match app.runtime.import("yuke:builtins").await {
-            Ok(()) => Ok(app),
-            Err(error) => {
-                app.shutdown().await;
-                Err(describe(&error))
-            }
+        if let Err(error) = app.runtime.import("yuke:internal/builtins").await {
+            app.shutdown().await;
+            return Err(describe(&error));
         }
+        // A plugin that does not load is left out; the other plugins load.
+        for failure in app.runtime.load_plugins(&plugins).await {
+            app.shared.observer.notify(ServerNotification::Notice(NoticeParams {
+                session_id: None,
+                level: NoticeLevel::Error,
+                source: SOURCE.to_owned(),
+                message: describe(&failure),
+            }));
+        }
+        Ok(app)
     }
 
     /// The store of the sessions.
@@ -363,9 +375,11 @@ impl App {
         if let Err(error) = runtime.shutdown().await {
             warn(&describe(&error));
         }
-        // The shutdown of the runtime closes the channel of the faults, so the reporter ends.
+        // The shutdown of the runtime closes the channel of the reports, so the reporter ends.
         if let Err(error) = reporter.await {
-            warn(&format!("yuke could not report the script faults: {error}"));
+            warn(&format!(
+                "yuke could not report the faults and notices of the JavaScript: {error}"
+            ));
         }
         if let Err(error) = shared.processes.shutdown().await {
             warn(&format!("{}: {error}", processes_folder.display()));
@@ -556,15 +570,20 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, AppError> + S
         .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
-/// Send each script fault to `observer` as a notice.
-async fn report(mut faults: mpsc::UnboundedReceiver<ScriptError>, observer: Arc<dyn Observer>) {
-    while let Some(fault) = faults.recv().await {
-        observer.notify(ServerNotification::Notice(NoticeParams {
-            session_id: None,
-            level: NoticeLevel::Warn,
-            source: SOURCE.to_owned(),
-            message: format!("a script failed: {fault}"),
-        }));
+/// Send each report of the JavaScript to `observer` as a notice: a script fault as a warning of yuke, and a plugin notice
+/// as it is.
+async fn report(mut reports: mpsc::UnboundedReceiver<Report>, observer: Arc<dyn Observer>) {
+    while let Some(report) = reports.recv().await {
+        let notice = match report {
+            Report::Fault(fault) => NoticeParams {
+                session_id: None,
+                level: NoticeLevel::Warn,
+                source: SOURCE.to_owned(),
+                message: format!("a script failed: {fault}"),
+            },
+            Report::Notice(notice) => notice,
+        };
+        observer.notify(ServerNotification::Notice(notice));
     }
 }
 

@@ -12,7 +12,7 @@ use yuke_protocol::JobState;
 use super::folder;
 use super::tools::{TestHost, call, call_with, error_of, text_of, tools_in, tools_of};
 use crate::native;
-use crate::processes::{recovered_home, whole_characters};
+use crate::processes::{Request, recovered_home, whole_characters};
 use crate::{Options, Processes, Runtime, SessionHost};
 
 /// The id of the job that the start text `started` names, for example `job-a1b2`.
@@ -74,7 +74,7 @@ fn json_string(text: &str) -> String {
 #[tokio::test]
 async fn exec_answers_the_output_in_write_order_and_the_exit_code() {
     let folder = folder("exec_answers_the_output_in_write_order_and_the_exit_code");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let text = run(&tools, "printf 'a\\n'; printf 'b\\n' >&2; printf 'c\\n'; pwd; exit 3").await;
 
@@ -84,7 +84,7 @@ async fn exec_answers_the_output_in_write_order_and_the_exit_code() {
 #[tokio::test]
 async fn a_command_leads_its_own_session_without_the_terminal_of_yuke() {
     let folder = folder("a_command_leads_its_own_session_without_the_terminal_of_yuke");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     // The `ps` of Linux and of macOS both mark a session leader with `s` in the process state.
     let text = run(&tools, "ps -o stat= -p $$").await;
@@ -96,7 +96,7 @@ async fn a_command_leads_its_own_session_without_the_terminal_of_yuke() {
 #[tokio::test]
 async fn exec_without_output_says_so() {
     let folder = folder("exec_without_output_says_so");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     assert_eq!(run(&tools, "true").await, "[no output]\n[exit code: 0]");
 }
@@ -104,7 +104,7 @@ async fn exec_without_output_says_so() {
 #[tokio::test]
 async fn exec_gives_its_output_as_live_texts() {
     let folder = folder("exec_gives_its_output_as_live_texts");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let (answer, texts) = call(&tools["exec"], r#"{"command": "echo one; sleep 0.1; echo two"}"#).await;
 
@@ -115,7 +115,7 @@ async fn exec_gives_its_output_as_live_texts() {
 #[tokio::test]
 async fn exec_at_its_deadline_stops_the_process_group() {
     let folder = folder("exec_at_its_deadline_stops_the_process_group");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
     let started = Instant::now();
 
     let text = text_of(
@@ -135,7 +135,7 @@ async fn exec_at_its_deadline_stops_the_process_group() {
 #[tokio::test]
 async fn each_process_of_a_stopped_group_gets_the_grace() {
     let folder = folder("each_process_of_a_stopped_group_gets_the_grace");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
     let command = "sh -c 'trap \"sleep 0.3; echo done > cleaned; exit 0\" TERM; while :; do sleep 0.05; done' & wait";
 
     text_of(
@@ -150,7 +150,7 @@ async fn each_process_of_a_stopped_group_gets_the_grace() {
 #[tokio::test]
 async fn a_cancel_stops_the_command_and_the_tool_still_answers() {
     let folder = folder("a_cancel_stops_the_command_and_the_tool_still_answers");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
     let token = CancellationToken::new();
     let cancel = token.clone();
     tokio::spawn(async move {
@@ -169,7 +169,7 @@ async fn a_cancel_stops_the_command_and_the_tool_still_answers() {
 #[tokio::test]
 async fn exec_ends_every_process_that_it_starts() {
     let folder = folder("exec_ends_every_process_that_it_starts");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
     let started = Instant::now();
 
     // The background sleep holds the output pipe. Only its end lets the read finish before the grace.
@@ -186,7 +186,7 @@ async fn exec_ends_every_process_that_it_starts() {
 #[tokio::test]
 async fn a_character_across_the_end_of_the_head_stays_whole() {
     let folder = folder("a_character_across_the_end_of_the_head_stays_whole");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     // The head holds 25600 bytes, so the four bytes of the emoji start one byte before its end.
     let text = run(
@@ -206,7 +206,7 @@ async fn a_character_across_the_end_of_the_head_stays_whole() {
 #[tokio::test]
 async fn exec_output_over_the_cap_keeps_a_head_a_tail_and_the_full_file() {
     let folder = folder("exec_output_over_the_cap_keeps_a_head_a_tail_and_the_full_file");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let text = run(&tools, "seq 1 30000").await;
 
@@ -236,7 +236,7 @@ async fn exec_output_over_the_cap_keeps_a_head_a_tail_and_the_full_file() {
 #[tokio::test]
 async fn a_dropped_exec_call_stops_its_command() {
     let folder = folder("a_dropped_exec_call_stops_its_command");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
     let pid_file = folder.join("pid");
     let command = format!(r#"{{"command": "echo $$ > {}; exec sleep 30"}}"#, pid_file.display());
 
@@ -255,7 +255,7 @@ async fn a_dropped_exec_call_stops_its_command() {
 #[tokio::test]
 async fn a_background_job_starts_and_its_end_reaches_the_session() {
     let folder = folder("a_background_job_starts_and_its_end_reaches_the_session");
-    let (_runtime, host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let text = text_of(
         &tools["exec"],
@@ -293,7 +293,8 @@ async fn a_background_start_fails_when_the_processes_start_no_jobs() {
     })
     .await
     .unwrap();
-    let (_runtime, host, tools) = tools_in(runtime, &folder, &["yuke:builtins"]).await;
+    let (_runtime, host, tools) =
+        tools_in(runtime, Arc::new(TestHost::new(&folder)), &["yuke:internal/builtins"]).await;
 
     let error = error_of(&tools["exec"], r#"{"command": "touch started", "background": true}"#).await;
 
@@ -310,7 +311,7 @@ async fn a_background_start_fails_when_the_processes_start_no_jobs() {
 #[tokio::test]
 async fn stop_ends_a_job_and_no_end_message_follows() {
     let folder = folder("stop_ends_a_job_and_no_end_message_follows");
-    let (_runtime, host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
     let id = job_id(&text_of(&tools["exec"], r#"{"command": "sleep 30", "background": true}"#).await);
 
     let text = text_of(&tools["stop"], &format!(r#"{{"id": "{id}"}}"#)).await;
@@ -328,7 +329,7 @@ async fn stop_ends_a_job_and_no_end_message_follows() {
 #[tokio::test]
 async fn stop_of_an_unknown_id_names_the_running_jobs() {
     let folder = folder("stop_of_an_unknown_id_names_the_running_jobs");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let before = error_of(&tools["stop"], r#"{"id": "job-zz"}"#).await;
     let id = job_id(&text_of(&tools["exec"], r#"{"command": "sleep 30", "background": true}"#).await);
@@ -342,7 +343,7 @@ async fn stop_of_an_unknown_id_names_the_running_jobs() {
 #[tokio::test]
 async fn a_background_command_takes_no_timeout() {
     let folder = folder("a_background_command_takes_no_timeout");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let error = error_of(
         &tools["exec"],
@@ -360,29 +361,15 @@ async fn runtime_with(folder: &Path, processes: &Arc<Processes>, host: &Arc<Test
         processes: Arc::clone(processes),
     });
     let (runtime, _faults) = tokio::time::timeout(WAIT, started).await.unwrap().unwrap();
-    tokio::time::timeout(WAIT, runtime.import("yuke:builtins"))
-        .await
-        .unwrap()
-        .unwrap();
-    let exec = runtime
-        .tools(Arc::clone(host) as Arc<dyn SessionHost>)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|(definition, _)| definition.name == "exec")
-        .unwrap()
-        .1;
-    (runtime, exec)
+    let (runtime, _host, mut tools) = tools_in(runtime, Arc::clone(host), &["yuke:internal/builtins"]).await;
+    (runtime, tools.remove("exec").unwrap())
 }
 
 #[tokio::test]
 async fn a_job_outlives_a_reload_of_the_runtime() {
     let folder = folder("a_job_outlives_a_reload_of_the_runtime");
     let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost {
-        folder: folder.clone(),
-        ..TestHost::default()
-    });
+    let host = Arc::new(TestHost::new(&folder));
     let (runtime, exec) = runtime_with(&folder, &processes, &host).await;
     text_of(&exec, r#"{"command": "sleep 0.5; echo done", "background": true}"#).await;
 
@@ -403,10 +390,7 @@ async fn a_job_outlives_a_reload_of_the_runtime() {
 async fn a_shutdown_of_the_processes_removes_their_folder() {
     let folder = folder("a_shutdown_of_the_processes_removes_their_folder");
     let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost {
-        folder: folder.clone(),
-        ..TestHost::default()
-    });
+    let host = Arc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     text_of(&exec, r#"{"command": "sleep 30", "background": true}"#).await;
     let had_log = folder.join("processes").exists();
@@ -422,10 +406,7 @@ async fn a_shutdown_of_the_processes_removes_their_folder() {
 async fn a_job_start_after_the_shutdown_fails_and_leaves_no_job() {
     let folder = folder("a_job_start_after_the_shutdown_fails_and_leaves_no_job");
     let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost {
-        folder: folder.clone(),
-        ..TestHost::default()
-    });
+    let host = Arc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     processes.shutdown().await.unwrap();
 
@@ -441,16 +422,7 @@ async fn a_job_start_after_the_shutdown_fails_and_leaves_no_job() {
 async fn close_owner_stops_only_the_jobs_of_its_owner_and_refuses_its_later_jobs() {
     let folder = folder("close_owner_stops_only_the_jobs_of_its_owner_and_refuses_its_later_jobs");
     let processes = Arc::new(Processes::new(folder.join("processes")));
-    let (first, second) = (
-        Arc::new(TestHost {
-            folder: folder.clone(),
-            ..TestHost::default()
-        }),
-        Arc::new(TestHost {
-            folder: folder.clone(),
-            ..TestHost::default()
-        }),
-    );
+    let (first, second) = (Arc::new(TestHost::new(&folder)), Arc::new(TestHost::new(&folder)));
     let (_first_runtime, first_exec) = runtime_with(&folder, &processes, &first).await;
     let (_second_runtime, second_exec) = runtime_with(&folder, &processes, &second).await;
     text_of(&first_exec, r#"{"command": "sleep 30", "background": true}"#).await;
@@ -511,10 +483,7 @@ async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
 async fn a_shutdown_of_the_processes_stops_each_job_without_an_end_message() {
     let folder = folder("a_shutdown_of_the_processes_stops_each_job_without_an_end_message");
     let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost {
-        folder: folder.clone(),
-        ..TestHost::default()
-    });
+    let host = Arc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     text_of(&exec, r#"{"command": "sleep 30", "background": true}"#).await;
 
@@ -530,10 +499,7 @@ async fn a_shutdown_of_the_processes_stops_each_job_without_an_end_message() {
 async fn a_dropped_processes_kills_its_jobs_without_an_end_message() {
     let folder = folder("a_dropped_processes_kills_its_jobs_without_an_end_message");
     let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost {
-        folder: folder.clone(),
-        ..TestHost::default()
-    });
+    let host = Arc::new(TestHost::new(&folder));
     let (runtime, exec) = runtime_with(&folder, &processes, &host).await;
     let pid_file = folder.join("pid");
     // The rename writes the whole process id at once, so the read never sees a part of it.
@@ -565,7 +531,7 @@ async fn a_dropped_processes_kills_its_jobs_without_an_end_message() {
 #[tokio::test]
 async fn each_job_of_a_process_gets_a_new_id() {
     let folder = folder("each_job_of_a_process_gets_a_new_id");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let mut ids = Vec::new();
     for _ in 0..3 {
@@ -632,10 +598,7 @@ fn the_native_module_declares_the_names_that_it_exports() {
 async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     let folder = folder("the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers");
     let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost {
-        folder: folder.clone(),
-        ..TestHost::default()
-    });
+    let host = Arc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     let owner: Arc<dyn SessionHost> = Arc::clone(&host) as Arc<dyn SessionHost>;
     let start = |command: &'static str| {
@@ -696,4 +659,22 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     assert_eq!(closed, expected);
     // A stopped job sends no end message.
     assert_eq!(host.ended.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_dropped_command_stops_its_process() {
+    let folder = folder("a_dropped_command_stops_its_process");
+    let processes = Processes::new(folder.join("processes"));
+    let running = processes.run(Request {
+        command: "sleep 0.3; touch late".to_owned(),
+        folder: folder.clone(),
+        timeout: Duration::from_secs(10),
+        max_bytes: 1024,
+        stop: CancellationToken::new(),
+    });
+
+    drop(running);
+    tokio::time::sleep(Duration::from_millis(800)).await;
+
+    assert!(!folder.join("late").exists());
 }

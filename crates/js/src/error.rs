@@ -21,6 +21,15 @@ pub enum Error {
     Panicked(String),
 }
 
+/// What the runtime reports outside of a call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Report {
+    /// A timer callback threw, or a promise rejection got no handler in the drive that settled it.
+    Fault(ScriptError),
+    /// A plugin sent a notice with `ctx.notify`.
+    Notice(yuke_protocol::NoticeParams),
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -133,12 +142,12 @@ pub(crate) fn caught<T>(ctx: &Ctx<'_>, result: rquickjs::Result<T>) -> Result<T,
 }
 
 /// Add the global `reportError(error)` of the web: it reports `error` as a fault without a throw.
-pub(crate) fn install_report_error<'js>(
-    ctx: &Ctx<'js>,
-    faults: mpsc::UnboundedSender<ScriptError>,
-) -> rquickjs::Result<()> {
+pub(crate) fn install_report_error<'js>(ctx: &Ctx<'js>, faults: mpsc::UnboundedSender<Report>) -> rquickjs::Result<()> {
     let report = Function::new(ctx.clone(), move |ctx: Ctx<'js>, error: Value<'js>| {
-        if faults.send(ScriptError::from_value(&ctx, &error)).is_err() {
+        if faults
+            .send(Report::Fault(ScriptError::from_value(&ctx, &error)))
+            .is_err()
+        {
             // The owner dropped the receiver, so it ignores faults.
         }
     })?;

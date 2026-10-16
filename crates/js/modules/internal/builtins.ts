@@ -1,6 +1,7 @@
+import { defineTool } from "yuke:internal/define";
 import { readLines, readText, writeText } from "yuke:internal/native";
 import { sessionOf } from "yuke:internal/session";
-import { define, OUTPUT_BYTES } from "yuke:tools";
+import { OUTPUT_BYTES } from "yuke:tools";
 
 /** The largest line number. */
 const LAST_LINE = 4_294_967_295;
@@ -12,7 +13,7 @@ const LONGEST_TIMEOUT = 600_000;
 /** The description of the `path` argument of each tool. */
 const PATH = "A relative path resolves against the workspace root.";
 
-define({
+defineTool({
   name: "read",
   description:
     "Read a file with 1-indexed line numbers. Pass offset and limit for a line range. One read returns at most " +
@@ -45,7 +46,7 @@ define({
   },
 });
 
-define({
+defineTool({
   name: "write",
   description: "Create a file or replace its content. Pass the complete content. Missing parent folders are created.",
   parameters: {
@@ -63,7 +64,7 @@ define({
   },
 });
 
-define({
+defineTool({
   name: "edit",
   description: "Replace an exact string in a file. old_string must appear exactly once unless replace_all is true.",
   parameters: {
@@ -96,7 +97,7 @@ define({
   },
 });
 
-define({
+defineTool({
   name: "exec",
   description:
     "Run a shell command in the working directory. Return stdout and stderr in write order, and the exit status. " +
@@ -143,7 +144,7 @@ define({
   },
 });
 
-define({
+defineTool({
   name: "stop",
   description:
     "Stop background work by the id that its start result names. A job ends in the result, and no end message follows.",

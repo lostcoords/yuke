@@ -187,17 +187,13 @@ pub(crate) struct RunningCommand {
     pub(crate) output: mpsc::UnboundedReceiver<String>,
     /// The end of the command, or the text of a failure.
     pub(crate) end: oneshot::Receiver<Result<CommandEnd, String>>,
-    /// Stops the command when it drops, so a dropped call ends its command.
-    #[expect(dead_code, reason = "only the drop of the guard matters: it stops the command")]
-    pub(crate) stop: StopOnDrop,
+    /// Cancelled at the drop, so a dropped call ends its command.
+    stop: CancellationToken,
 }
 
-/// Cancels its token when it drops.
-pub(crate) struct StopOnDrop(pub(crate) CancellationToken);
-
-impl Drop for StopOnDrop {
+impl Drop for RunningCommand {
     fn drop(&mut self) {
-        self.0.cancel();
+        self.stop.cancel();
     }
 }
 
@@ -289,11 +285,7 @@ impl Processes {
                 // The call has left.
             }
         });
-        RunningCommand {
-            output,
-            end,
-            stop: StopOnDrop(stop),
-        }
+        RunningCommand { output, end, stop }
     }
 
     /// Start `command` in the folder of `owner` as a job, and answer its id and log file. A job that ends by itself
@@ -670,9 +662,11 @@ async fn run(request: Request, file: PathBuf, chunks: mpsc::UnboundedSender<Stri
     .map_err(|error| error.to_string())?;
     // A process that the shell left in the group ends with the call.
     kill_rest_of_group(group);
-    // A process that left the group can hold the pipe open, so the read gets one grace and no more.
-    if tokio::time::timeout(GRACE, reading).await.is_err() {
-        // The output so far stays in the capture.
+    // A process that left the group can hold the pipe open, so the read gets one grace and no more. After the grace,
+    // the output so far stays in the capture.
+    if let Ok(read) = tokio::time::timeout(GRACE, reading).await {
+        read.map_err(|error| error.to_string())?
+            .map_err(|error| format!("the output of the command did not read: {error}"))?;
     }
 
     end.code = status.code();
@@ -690,7 +684,11 @@ async fn run(request: Request, file: PathBuf, chunks: mpsc::UnboundedSender<Stri
 }
 
 /// Read the output until its end: give each chunk to `chunks` and keep it in `capture`.
-fn read_output(mut reader: io::PipeReader, capture: &Mutex<Capture>, chunks: &mpsc::UnboundedSender<String>) {
+fn read_output(
+    mut reader: io::PipeReader,
+    capture: &Mutex<Capture>,
+    chunks: &mpsc::UnboundedSender<String>,
+) -> io::Result<()> {
     let mut buffer = vec![0; CHUNK];
     let mut partial = Vec::new();
     loop {
@@ -699,7 +697,7 @@ fn read_output(mut reader: io::PipeReader, capture: &Mutex<Capture>, chunks: &mp
             Ok(count) => count,
             // A signal stopped the read before any byte came, so the read goes on.
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
+            Err(error) => return Err(error),
         };
         let bytes = &buffer[..count];
         capture
@@ -715,6 +713,7 @@ fn read_output(mut reader: io::PipeReader, capture: &Mutex<Capture>, chunks: &mp
     if !partial.is_empty() && chunks.send(String::from_utf8_lossy(&partial).into_owned()).is_err() {
         // The call has left.
     }
+    Ok(())
 }
 
 /// The text of the whole UTF-8 characters at the start of `bytes`. The bytes of a character that a read cut stay in

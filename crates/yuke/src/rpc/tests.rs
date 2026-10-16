@@ -340,6 +340,64 @@ async fn a_regular_file_is_no_folder_for_a_new_session_or_new_settings() {
 }
 
 #[tokio::test]
+async fn a_plugin_notice_reaches_the_client_and_a_plugin_that_does_not_load_sends_an_error_notice() {
+    let place = Place::new(
+        "rpc",
+        "a_plugin_notice_reaches_the_client_and_a_plugin_that_does_not_load_sends_an_error_notice",
+    );
+    place.plugin(
+        "broken",
+        "export default function apply() { throw new Error('no luck'); }",
+    );
+    place.plugin(
+        "loud",
+        "export default function apply(ctx) { ctx.notify('info', 'hello', '01890000-0000-7000-8000-000000000001'); }",
+    );
+    std::fs::write(
+        place.paths.config.join("config.json"),
+        r#"{ "plugins": ["loud", "broken"] }"#,
+    )
+    .unwrap();
+    let mut client = Client::start(&place, Box::new(ScriptedTransport::default()));
+
+    let hello = client
+        .until(|message| message["method"] == "notice")
+        .await
+        .pop()
+        .unwrap();
+    let notice = client
+        .until(|message| message["method"] == "notice")
+        .await
+        .pop()
+        .unwrap();
+    let initialized = client
+        .call(
+            "initialize",
+            json!({ "protocolVersion": 1, "clientInfo": { "name": "test", "version": "1" } }),
+        )
+        .await;
+
+    assert_eq!(
+        hello["params"],
+        json!({
+            "sessionId": "01890000-0000-7000-8000-000000000001",
+            "level": "info",
+            "source": "loud",
+            "message": "hello",
+        })
+    );
+    assert_eq!(notice["params"]["level"], "error");
+    assert_eq!(notice["params"]["source"], "host:yuke");
+    let message = notice["params"]["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("plugin broken did not load: Error: no luck"),
+        "{message}"
+    );
+    assert!(initialized.is_ok(), "{initialized:?}");
+    client.end().await;
+}
+
+#[tokio::test]
 async fn a_request_before_initialize_an_unknown_method_and_no_json_get_errors() {
     let place = Place::new(
         "rpc",

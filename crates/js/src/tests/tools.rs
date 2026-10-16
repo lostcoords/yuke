@@ -12,7 +12,7 @@ use rquickjs::Ctx;
 use tokio::sync::mpsc;
 use yuke_engine::{CancellationToken, Concurrency, Tool, ToolContent};
 
-use super::{evaluate, folder, module, next_fault, script_error, start, write};
+use super::{evaluate, folder, load_tools, module, next_fault, script_error, start, write};
 use crate::tools::forward;
 use crate::{JobEnded, Runtime, ScriptTool, SessionHost, baked};
 
@@ -26,6 +26,16 @@ pub(super) struct TestHost {
     pub(super) changed: Mutex<Vec<yuke_protocol::Job>>,
     /// Holds each job end until a notify, when it is set.
     pub(super) end_gate: Option<Arc<tokio::sync::Notify>>,
+}
+
+impl TestHost {
+    /// A host for a session in `folder`.
+    pub(super) fn new(folder: &Path) -> Self {
+        TestHost {
+            folder: folder.to_owned(),
+            ..TestHost::default()
+        }
+    }
 }
 
 #[async_trait]
@@ -58,25 +68,25 @@ impl SessionHost for TestHost {
 /// A runtime with the tools of `modules` (module names), for a session in `folder`.
 pub(super) async fn tools_of(folder: &Path, modules: &[&str]) -> (Runtime, Arc<TestHost>, HashMap<String, ScriptTool>) {
     let (runtime, _faults) = start(folder).await;
-    tools_in(runtime, folder, modules).await
+    tools_in(runtime, Arc::new(TestHost::new(folder)), modules).await
 }
 
-/// The tools of `modules` (module names) in `runtime`, for a session in `folder`.
+/// The tools of `modules` (module names) in `runtime`, for the session of `host`.
 pub(super) async fn tools_in(
     runtime: Runtime,
-    folder: &Path,
+    host: Arc<TestHost>,
     modules: &[&str],
 ) -> (Runtime, Arc<TestHost>, HashMap<String, ScriptTool>) {
     for name in modules {
-        tokio::time::timeout(Duration::from_secs(5), runtime.import(name))
-            .await
-            .unwrap()
-            .unwrap();
+        let loaded = tokio::time::timeout(Duration::from_secs(5), async {
+            if name.starts_with("yuke:") {
+                runtime.import(name).await
+            } else {
+                load_tools(&runtime, Path::new(name)).await
+            }
+        });
+        loaded.await.unwrap().unwrap();
     }
-    let host = Arc::new(TestHost {
-        folder: folder.to_owned(),
-        ..TestHost::default()
-    });
     let tools = runtime
         .tools(Arc::clone(&host) as Arc<dyn SessionHost>)
         .await
@@ -122,6 +132,7 @@ async fn every_built_in_module_loads_from_its_bytecode() {
     let (runtime, _faults) = start(&folder).await;
 
     let loaded = runtime
+        .caller
         .run(async |ctx: Ctx<'_>, _registry| {
             let mut loaded = Vec::new();
             for name in baked::names() {
@@ -135,7 +146,7 @@ async fn every_built_in_module_loads_from_its_bytecode() {
         .unwrap();
 
     assert_eq!(loaded, baked::names().collect::<Vec<_>>());
-    assert!(loaded.contains(&"yuke:builtins".to_owned()), "{loaded:?}");
+    assert!(loaded.contains(&"yuke:internal/builtins".to_owned()), "{loaded:?}");
 }
 
 #[tokio::test]
@@ -145,7 +156,7 @@ async fn a_user_module_imports_a_public_built_in_module() {
         &folder,
         &[(
             "main.ts",
-            "import { define } from 'yuke:tools';\nglobalThis.defineType = typeof define;\n",
+            "import { OUTPUT_BYTES } from 'yuke:tools';\nglobalThis.bytes = OUTPUT_BYTES;\n",
         )],
     );
     let (runtime, _faults) = start(&folder).await;
@@ -153,10 +164,8 @@ async fn a_user_module_imports_a_public_built_in_module() {
     runtime.import(&module(&folder, "main.ts")).await.unwrap();
 
     assert_eq!(
-        evaluate::<String>(&runtime, "return globalThis.defineType;")
-            .await
-            .unwrap(),
-        "function"
+        evaluate::<u32>(&runtime, "return globalThis.bytes;").await.unwrap(),
+        50 * 1024
     );
 }
 
@@ -183,8 +192,8 @@ async fn a_user_module_cannot_import_an_internal_module() {
 }
 
 #[tokio::test]
-async fn an_unknown_built_in_name_does_not_resolve() {
-    let folder = folder("an_unknown_built_in_name_does_not_resolve");
+async fn an_unknown_built_in_name_does_not_load() {
+    let folder = folder("an_unknown_built_in_name_does_not_load");
     let (runtime, _faults) = start(&folder).await;
 
     let error = script_error(runtime.import("yuke:nothing").await);
@@ -220,11 +229,8 @@ async fn a_long_syntax_error_keeps_every_byte_of_its_message() {
 async fn the_built_in_tools_come_with_their_definitions() {
     let folder = folder("the_built_in_tools_come_with_their_definitions");
     let (runtime, _faults) = start(&folder).await;
-    runtime.import("yuke:builtins").await.unwrap();
-    let host: Arc<dyn SessionHost> = Arc::new(TestHost {
-        folder: folder.clone(),
-        ..TestHost::default()
-    });
+    runtime.import("yuke:internal/builtins").await.unwrap();
+    let host: Arc<dyn SessionHost> = Arc::new(TestHost::new(&folder));
 
     let tools = runtime.tools(host).await.unwrap();
 
@@ -237,6 +243,29 @@ async fn the_built_in_tools_come_with_their_definitions() {
 }
 
 #[tokio::test]
+async fn a_change_of_a_tool_after_its_definition_changes_neither_its_schema_nor_its_execute() {
+    let folder = folder("a_change_of_a_tool_after_its_definition_changes_neither_its_schema_nor_its_execute");
+    write(
+        &folder,
+        &[(
+            "tools.ts",
+            "export default function apply({ tools: { define } }) {\n\
+               const tool = { name: 'fixed', description: 'd', concurrency: 'serial',\n\
+                 parameters: { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] },\n\
+                 execute: (args) => `n=${args.n}` };\n\
+               define(tool);\n\
+               tool.parameters.required = [];\n\
+               tool.execute = () => 'changed';\n\
+             }\n",
+        )],
+    );
+    let (_runtime, _host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
+
+    assert_eq!(text_of(&tools["fixed"], r#"{"n": 2}"#).await, "n=2");
+    assert!(error_of(&tools["fixed"], "{}").await.starts_with("Set n to "));
+}
+
+#[tokio::test]
 async fn a_deferred_tool_is_defined_for_the_tool_search_and_others_are_not() {
     let folder = folder("a_deferred_tool_is_defined_for_the_tool_search_and_others_are_not");
     let empty = "parameters: { type: 'object', properties: {} }, execute: () => 'x'";
@@ -245,18 +274,16 @@ async fn a_deferred_tool_is_defined_for_the_tool_search_and_others_are_not() {
         &[(
             "main.ts",
             &format!(
-                "import {{ define }} from 'yuke:tools';\n\
+                "export default function apply({{ tools: {{ define }} }}) {{\n\
                  define({{ name: 'rare', description: 'd', concurrency: 'serial', defer: true, {empty} }});\n\
-                 define({{ name: 'common', description: 'd', concurrency: 'serial', {empty} }});\n"
+                 define({{ name: 'common', description: 'd', concurrency: 'serial', {empty} }});\n\
+                 }}\n"
             ),
         )],
     );
     let (runtime, _faults) = start(&folder).await;
-    runtime.import(&module(&folder, "main.ts")).await.unwrap();
-    let host: Arc<dyn SessionHost> = Arc::new(TestHost {
-        folder: folder.clone(),
-        ..TestHost::default()
-    });
+    load_tools(&runtime, &folder.join("main.ts")).await.unwrap();
+    let host: Arc<dyn SessionHost> = Arc::new(TestHost::new(&folder));
 
     let tools = runtime.tools(host).await.unwrap();
 
@@ -268,110 +295,67 @@ async fn a_deferred_tool_is_defined_for_the_tool_search_and_others_are_not() {
 }
 
 #[tokio::test]
-async fn a_second_tool_with_one_name_throws() {
-    let folder = folder("a_second_tool_with_one_name_throws");
-    let tool = "{ name: 'twice', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} }, execute: () => 'x' }";
-    write(
-        &folder,
-        &[(
-            "main.ts",
-            &format!("import {{ define }} from 'yuke:tools';\ndefine({tool});\ndefine({tool});\n"),
-        )],
-    );
-    let (runtime, _faults) = start(&folder).await;
+async fn a_bad_tool_definition_throws_a_type_error_that_names_its_problem() {
+    let base = "name: 'bad', description: 'd', execute: () => 'x'";
+    let empty = "parameters: { type: 'object', properties: {} }";
+    let cases = [
+        (
+            format!("{base}, {empty}"),
+            "the concurrency 'undefined' is not 'serial' or 'parallel'",
+        ),
+        (
+            format!(
+                "{base}, concurrency: 'serial', parameters: {{ type: 'object', properties: {{ mode: {{ type: 'string', enum: ['a'] }} }} }}"
+            ),
+            "parameters.properties.mode: yuke does not check the keyword 'enum'",
+        ),
+        (
+            format!(
+                "{base}, concurrency: 'serial', parameters: {{ type: 'object', properties: {{ n: {{ type: 'integer', minimum: null }} }} }}"
+            ),
+            "parameters.properties.n.minimum is not a finite number",
+        ),
+        (
+            format!("name: 'tool_search', description: 'd', execute: () => 'x', concurrency: 'serial', {empty}"),
+            "the engine reserves the tool name \"tool_search\"",
+        ),
+        (
+            format!("{base}, concurrency: 'serial', parameters: {{ type: 'string' }}"),
+            "parameters.type is not object",
+        ),
+        (
+            format!("name: 'bad', description: 'd', execute: 'x', concurrency: 'serial', {empty}"),
+            "execute is not a function",
+        ),
+        // The check reads the copy that the model gets, so a `toJSON` cannot hide a keyword from it.
+        (
+            format!(
+                "{base}, concurrency: 'serial', parameters: {{ type: 'object', properties: {{}}, \
+                 toJSON: () => ({{ type: 'object', properties: {{ m: {{ type: 'string', enum: ['a'] }} }} }}) }}"
+            ),
+            "parameters.properties.m: yuke does not check the keyword 'enum'",
+        ),
+    ];
 
-    let error = script_error(runtime.import(&module(&folder, "main.ts")).await);
+    for (index, (tool, expected)) in cases.iter().enumerate() {
+        let folder = folder(&format!(
+            "a_bad_tool_definition_throws_a_type_error_that_names_its_problem/{index}"
+        ));
+        let source = format!("export default function apply({{ tools: {{ define }} }}) {{ define({{ {tool} }}); }}\n");
+        write(&folder, &[("main.ts", &source)]);
+        let (runtime, _faults) = start(&folder).await;
 
-    assert_eq!(error.name.as_deref(), Some("TypeError"));
-    assert!(
-        error.message.contains("'twice' is already defined"),
-        "{}",
-        error.message
-    );
-}
+        let error = script_error(load_tools(&runtime, &folder.join("main.ts")).await);
 
-#[tokio::test]
-async fn a_tool_without_a_concurrency_throws_at_its_definition() {
-    let folder = folder("a_tool_without_a_concurrency_throws_at_its_definition");
-    write(
-        &folder,
-        &[(
-            "main.ts",
-            "import { define } from 'yuke:tools';\n\
-             define({ name: 'loose', description: 'd', execute: () => 'x',\n\
-               parameters: { type: 'object', properties: {} } } as never);\n",
-        )],
-    );
-    let (runtime, _faults) = start(&folder).await;
-
-    let error = script_error(runtime.import(&module(&folder, "main.ts")).await);
-
-    assert_eq!(error.name.as_deref(), Some("TypeError"));
-    assert!(
-        error
-            .message
-            .contains("the concurrency 'undefined' is not 'serial' or 'parallel'"),
-        "{}",
-        error.message
-    );
-}
-
-#[tokio::test]
-async fn a_schema_keyword_without_a_check_throws_at_its_definition() {
-    let folder = folder("a_schema_keyword_without_a_check_throws_at_its_definition");
-    write(
-        &folder,
-        &[(
-            "main.ts",
-            "import { define } from 'yuke:tools';\n\
-             define({ name: 'pick', description: 'd', concurrency: 'serial', execute: () => 'x',\n\
-               parameters: { type: 'object', properties: { mode: { type: 'string', enum: ['a'] } } } } as never);\n",
-        )],
-    );
-    let (runtime, _faults) = start(&folder).await;
-
-    let error = script_error(runtime.import(&module(&folder, "main.ts")).await);
-
-    assert_eq!(error.name.as_deref(), Some("TypeError"));
-    assert!(
-        error
-            .message
-            .contains("parameters.properties.mode: yuke does not check the keyword 'enum'"),
-        "{}",
-        error.message
-    );
-}
-
-#[tokio::test]
-async fn a_schema_bound_that_is_no_number_throws_at_its_definition() {
-    let folder = folder("a_schema_bound_that_is_no_number_throws_at_its_definition");
-    write(
-        &folder,
-        &[(
-            "main.ts",
-            "import { define } from 'yuke:tools';\n\
-             define({ name: 'count', description: 'd', concurrency: 'serial', execute: () => 'x',\n\
-               parameters: { type: 'object', properties: { n: { type: 'integer', minimum: null } } } } as never);\n",
-        )],
-    );
-    let (runtime, _faults) = start(&folder).await;
-
-    let error = script_error(runtime.import(&module(&folder, "main.ts")).await);
-
-    assert_eq!(error.name.as_deref(), Some("TypeError"));
-    assert!(
-        error
-            .message
-            .contains("parameters.properties.n.minimum is not a finite number"),
-        "{}",
-        error.message
-    );
+        assert_eq!(error.name.as_deref(), Some("TypeError"), "{tool}");
+        assert!(error.message.contains(expected), "{tool}: {}", error.message);
+    }
 }
 
 #[tokio::test]
 async fn a_shutdown_ends_the_thread_while_a_tool_lives() {
     let folder = folder("a_shutdown_ends_the_thread_while_a_tool_lives");
-    let (runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     tokio::time::timeout(Duration::from_secs(5), runtime.shutdown())
         .await
@@ -387,7 +371,7 @@ async fn a_shutdown_ends_the_thread_while_a_tool_lives() {
 #[tokio::test]
 async fn arguments_that_do_not_fit_the_schema_fail_before_the_tool_runs() {
     let folder = folder("arguments_that_do_not_fit_the_schema_fail_before_the_tool_runs");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
     let write_tool = &tools["write"];
 
     assert_eq!(error_of(write_tool, "[]").await, "Pass the arguments as a JSON object.");
@@ -415,10 +399,29 @@ async fn arguments_that_do_not_fit_the_schema_fail_before_the_tool_runs() {
 }
 
 #[tokio::test]
+async fn an_argument_named_proto_is_an_own_field() {
+    let folder = folder("an_argument_named_proto_is_an_own_field");
+    write(
+        &folder,
+        &[(
+            "tools.ts",
+            "export default function apply({ tools: { define } }) {\n\
+               define({ name: 'proto', description: 'd', concurrency: 'serial',\n\
+                 parameters: { type: 'object', properties: { ['__proto__']: { type: 'string' } }, required: ['__proto__'] },\n\
+                 execute: (args) => String(Object.hasOwn(args, '__proto__') && args['__proto__']) });\n\
+             }\n",
+        )],
+    );
+    let (_runtime, _host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
+
+    assert_eq!(text_of(&tools["proto"], r#"{"__proto__": "x"}"#).await, "x");
+}
+
+#[tokio::test]
 async fn a_null_optional_field_counts_as_absent() {
     let folder = folder("a_null_optional_field_counts_as_absent");
     write(&folder, &[("notes.txt", "one\ntwo\n")]);
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let text = text_of(
         &tools["read"],
@@ -430,7 +433,7 @@ async fn a_null_optional_field_counts_as_absent() {
 }
 
 /// A module that defines the tools of the bridge tests.
-const BRIDGE_TOOLS: &str = "import { define } from 'yuke:tools';\n\
+const BRIDGE_TOOLS: &str = "export default function apply({ tools: { define } }) {\n\
     const empty = { type: 'object', properties: {} } as const;\n\
     define({ name: 'fail', description: 'd', concurrency: 'serial', parameters: empty, execute() { throw new Error('the disk is full'); } });\n\
     define({ name: 'talk', description: 'd', concurrency: 'serial', parameters: empty, execute(_args, context) {\n\
@@ -442,7 +445,8 @@ const BRIDGE_TOOLS: &str = "import { define } from 'yuke:tools';\n\
     } });\n\
     define({ name: 'keep', description: 'd', concurrency: 'serial', parameters: empty, execute(_args, context) {\n\
       (globalThis as Record<string, unknown>).kept = context.signal; return context.folder;\n\
-    } });\n";
+    } });\n\
+    }\n";
 
 #[tokio::test]
 async fn a_throw_of_a_tool_is_an_error_with_its_message() {
@@ -504,21 +508,19 @@ async fn a_throw_of_an_abort_listener_is_a_fault_and_the_next_listener_runs() {
         &folder,
         &[(
             "tools.ts",
-            "import { define } from 'yuke:tools';\n\
+            "export default function apply({ tools: { define } }) {\n\
              define({ name: 'listen', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} },\n\
                execute(_args, context) {\n\
                  context.signal.onAbort(() => { throw new Error('the listener broke'); });\n\
                  context.signal.onAbort(() => { (globalThis as Record<string, unknown>).second = true; });\n\
                  return 'x';\n\
-               } });\n",
+               } });\n\
+             }\n",
         )],
     );
     let (runtime, mut faults) = start(&folder).await;
-    runtime.import(&module(&folder, "tools.ts")).await.unwrap();
-    let host: Arc<dyn SessionHost> = Arc::new(TestHost {
-        folder: folder.clone(),
-        ..TestHost::default()
-    });
+    load_tools(&runtime, &folder.join("tools.ts")).await.unwrap();
+    let host: Arc<dyn SessionHost> = Arc::new(TestHost::new(&folder));
     let tools = runtime.tools(host).await.unwrap();
 
     let text = call(&tools[0].1, "{}").await.0.unwrap().text;
@@ -535,25 +537,28 @@ async fn a_throw_of_a_listener_added_after_the_abort_is_a_fault() {
         &folder,
         &[(
             "tools.ts",
-            "import { define } from 'yuke:tools';\n\
+            "export default function apply({ tools: { define } }) {\n\
              define({ name: 'late', description: 'd', concurrency: 'serial',\n\
                parameters: { type: 'object', properties: {} },\n\
                execute(_args, context) {\n\
-                 context.signal.abort(new Error('stopped'));\n\
-                 context.signal.onAbort(() => { throw new Error('the late listener broke'); });\n\
+                 (globalThis as Record<string, unknown>).kept = context.signal;\n\
                  return 'x';\n\
-               } });\n",
+               } });\n\
+             }\n",
         )],
     );
     let (runtime, mut faults) = start(&folder).await;
-    runtime.import(&module(&folder, "tools.ts")).await.unwrap();
-    let host: Arc<dyn SessionHost> = Arc::new(TestHost {
-        folder: folder.clone(),
-        ..TestHost::default()
-    });
+    load_tools(&runtime, &folder.join("tools.ts")).await.unwrap();
+    let host: Arc<dyn SessionHost> = Arc::new(TestHost::new(&folder));
     let tools = runtime.tools(host).await.unwrap();
 
     let text = call(&tools[0].1, "{}").await.0.unwrap().text;
+    evaluate::<()>(
+        &runtime,
+        "globalThis.kept.onAbort(() => { throw new Error('the late listener broke'); });",
+    )
+    .await
+    .unwrap();
 
     assert_eq!(text, "x");
     assert_eq!(next_fault(&mut faults).await.message, "the late listener broke");
@@ -563,7 +568,7 @@ async fn a_throw_of_a_listener_added_after_the_abort_is_a_fault() {
 async fn read_numbers_the_lines_and_names_the_next_offset() {
     let folder = folder("read_numbers_the_lines_and_names_the_next_offset");
     write(&folder, &[("notes.txt", "alpha\nbeta\ngamma\ndelta\n")]);
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let text = text_of(&tools["read"], r#"{"path": "notes.txt", "offset": 2, "limit": 2}"#).await;
 
@@ -578,7 +583,7 @@ async fn read_stops_at_the_output_cap_after_a_whole_line() {
         writeln!(lines, "line {number:>40}").unwrap();
     }
     write(&folder, &[("long.txt", &lines)]);
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let text = text_of(&tools["read"], r#"{"path": "long.txt"}"#).await;
 
@@ -602,7 +607,7 @@ async fn a_line_longer_than_the_cap_is_cut() {
     let folder = folder("a_line_longer_than_the_cap_is_cut");
     let long = "é".repeat(40 * 1024);
     write(&folder, &[("one.txt", &format!("{long}\nshort\n"))]);
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let text = text_of(&tools["read"], r#"{"path": "one.txt"}"#).await;
 
@@ -622,7 +627,7 @@ async fn a_line_longer_than_the_cap_is_cut() {
 async fn read_of_a_missing_file_or_of_bytes_that_are_no_text_fails() {
     let folder = folder("read_of_a_missing_file_or_of_bytes_that_are_no_text_fails");
     std::fs::write(folder.join("binary.dat"), [0x61, 0xff, 0xfe, 0x0a]).unwrap();
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     assert_eq!(
         error_of(&tools["read"], r#"{"path": "gone.txt"}"#).await,
@@ -639,7 +644,7 @@ async fn an_image_read_answers_media_through_the_host() {
     let folder = folder("an_image_read_answers_media_through_the_host");
     let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
     std::fs::write(folder.join("dot.png"), &png).unwrap();
-    let (_runtime, host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let content = call(&tools["read"], r#"{"path": "dot.png"}"#).await.0.unwrap();
 
@@ -651,11 +656,12 @@ async fn an_image_read_answers_media_through_the_host() {
 }
 
 /// A tool that answers the media files that its arguments name.
-const ATTACH_TOOL: &str = "import { define } from 'yuke:tools';\n\
+const ATTACH_TOOL: &str = "export default function apply({ tools: { define } }) {\n\
     const files = { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } } } } as const;\n\
     define({ name: 'attach', description: 'd', concurrency: 'serial', parameters: files, execute(args) {\n\
       return { output: 'attached', media: (args.paths ?? []).map((path) => ({ path, mime: 'image/png' })) };\n\
-    } });\n";
+    } });\n\
+    }\n";
 
 // A provider refuses a large image in each later request, so the session must never store one.
 #[tokio::test]
@@ -684,7 +690,7 @@ async fn media_over_the_limit_fails_the_call_and_stores_no_file_of_it() {
 #[tokio::test]
 async fn write_makes_the_missing_folders_in_the_workspace() {
     let folder = folder("write_makes_the_missing_folders_in_the_workspace");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let text = text_of(&tools["write"], r#"{"path": "src/deep/new.txt", "content": "héllo"}"#).await;
 
@@ -699,7 +705,7 @@ async fn write_makes_the_missing_folders_in_the_workspace() {
 async fn edit_replaces_one_exact_match() {
     let folder = folder("edit_replaces_one_exact_match");
     write(&folder, &[("main.rs", "fn main() {\n    old();\n}\n")]);
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let text = text_of(
         &tools["edit"],
@@ -718,7 +724,7 @@ async fn edit_replaces_one_exact_match() {
 async fn edit_of_two_matches_needs_replace_all() {
     let folder = folder("edit_of_two_matches_needs_replace_all");
     write(&folder, &[("list.txt", "a, b, a\n")]);
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
     let edit = &tools["edit"];
 
     let error = error_of(edit, r#"{"path": "list.txt", "old_string": "a", "new_string": "c"}"#).await;
@@ -742,7 +748,7 @@ async fn edit_of_two_matches_needs_replace_all() {
 async fn edit_without_a_match_fails() {
     let folder = folder("edit_without_a_match_fails");
     write(&folder, &[("list.txt", "a, b\n")]);
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:builtins"]).await;
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     let error = error_of(
         &tools["edit"],

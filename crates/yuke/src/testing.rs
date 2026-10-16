@@ -151,6 +151,15 @@ impl Place {
         }
     }
 
+    /// Write the plugin `name` in the profile folder: its manifest, and `source` as its entry `index.ts`.
+    pub(crate) fn plugin(&self, name: &str, source: &str) {
+        let folder = self.paths.config.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        let manifest = format!(r#"{{ "name": "{name}", "extensions": {{ "sh.yuke": {{ "entry": "index.ts" }} }} }}"#);
+        std::fs::write(folder.join("plugin.json"), manifest).unwrap();
+        std::fs::write(folder.join("index.ts"), source).unwrap();
+    }
+
     /// The store of the place, opened again.
     pub(crate) async fn store(&self) -> SqliteStore {
         SqliteStore::open(&self.paths.data).await.unwrap()

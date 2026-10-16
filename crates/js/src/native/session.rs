@@ -1,8 +1,7 @@
 //! The session object of a call: the native functions that need the session or the life of the call, such as the
-//! commands and the jobs. The bridge builds one for each call and gives it to `yuke:tools`, which keeps it from the
-//! tools of plugins.
+//! commands and the jobs. The bridge builds one for each call. `yuke:internal/session` keeps it from the tools of
+//! plugins.
 
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -62,7 +61,10 @@ pub(crate) fn object<'js>(
                 async move {
                     let started = processes.start_job(command, host).await;
                     let (id, log) = started.map_err(|message| throw(&ctx, "Error", &message))?;
-                    job_object(&ctx, id, &log)
+                    let job = Object::new(ctx.clone())?;
+                    job.set("id", id)?;
+                    job.set("log", log.to_string_lossy().into_owned())?;
+                    Ok::<_, rquickjs::Error>(job)
                 }
             }),
         )?,
@@ -99,13 +101,5 @@ pub(crate) fn object<'js>(
                 .collect::<Vec<_>>()
         })?,
     )?;
-    Ok(object)
-}
-
-/// `{ id, log }` of a started job.
-fn job_object<'js>(ctx: &Ctx<'js>, id: String, log: &Path) -> rquickjs::Result<Object<'js>> {
-    let object = Object::new(ctx.clone())?;
-    object.set("id", id)?;
-    object.set("log", log.to_string_lossy().into_owned())?;
     Ok(object)
 }

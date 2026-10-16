@@ -1,13 +1,15 @@
 /** A JSON schema of a value, in the subset that yuke checks. */
 export type Schema = ScalarSchema | ArraySchema | ObjectSchema;
 
-/** A string, a number, or a boolean. `minimum` and `maximum` apply to a number. */
-export interface ScalarSchema {
-  readonly type: "string" | "integer" | "number" | "boolean";
-  readonly description?: string;
-  readonly minimum?: number;
-  readonly maximum?: number;
-}
+/** A string, a boolean, or a number. Only a number has `minimum` and `maximum`. */
+export type ScalarSchema =
+  | { readonly type: "string" | "boolean"; readonly description?: string }
+  | {
+      readonly type: "integer" | "number";
+      readonly description?: string;
+      readonly minimum?: number;
+      readonly maximum?: number;
+    };
 
 /** An array of `items`. */
 export interface ArraySchema {
@@ -35,8 +37,13 @@ const KEYWORDS: Readonly<Record<Schema["type"], readonly string[]>> = {
   object: ["type", "description", "properties", "required", "additionalProperties"],
 };
 
-/** Throw a `TypeError` when `schema` uses a part of JSON schema that `checkArguments` does not check. */
-export function checkSchema(schema: unknown, place = "parameters"): void {
+/** Throw a `TypeError` when `schema` is not an object schema, or uses a part of JSON schema that `checkArguments` does not check. */
+export function checkParameters(schema: unknown): asserts schema is ObjectSchema {
+  checkSchema(schema, "parameters");
+  if ((schema as Schema).type !== "object") throw new TypeError("parameters.type is not object");
+}
+
+function checkSchema(schema: unknown, place: string): void {
   if (!isRecord(schema)) throw new TypeError(`${place} is not a schema object`);
   const type = schema.type;
   if (typeof type !== "string" || !Object.hasOwn(KEYWORDS, type)) {
@@ -93,7 +100,13 @@ function checkObject(schema: ObjectSchema, value: Record<string, unknown>, prefi
       throw new Error(`Remove ${prefix}${name}. The arguments are: ${names.join(", ")}.`);
     }
     if (field === null && !required.includes(name)) continue;
-    checked[name] = checkValue(property, field, `${prefix}${name}`);
+    // An assignment to `__proto__` would set the prototype, so each field becomes an own property.
+    Object.defineProperty(checked, name, {
+      value: checkValue(property, field, `${prefix}${name}`),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
   }
   for (const name of required) {
     if (!Object.hasOwn(checked, name)) throw new Error(`Set ${prefix}${name} to ${expected(schema.properties[name])}.`);

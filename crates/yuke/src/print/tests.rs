@@ -416,6 +416,33 @@ async fn the_model_runs_the_built_in_tools_in_the_folder_of_the_session() {
 }
 
 #[tokio::test]
+async fn the_model_calls_a_tool_of_a_plugin_from_the_config() {
+    let place = Place::new("print", "plugin_tool");
+    place.plugin(
+        "greeter",
+        "export default function apply(ctx) {
+           ctx.tools.define({
+             name: 'greet', description: 'Greet.', concurrency: 'serial',
+             parameters: { type: 'object', properties: {} },
+             execute: () => `hello from ${ctx.name}`,
+           });
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["greeter"] }"#).unwrap();
+
+    let (finished, requests) = run_with(
+        &place,
+        &task("Greet.", SessionChoice::New),
+        &[tool_reply(&[("call-1", "greet", "{}")]), text_reply("Done.")],
+    )
+    .await;
+
+    assert_eq!(finished.unwrap().text, "Done.");
+    assert!(requests[0].contains(r#""name":"greet""#), "{}", requests[0]);
+    assert!(requests[1].contains("hello from greeter"), "{}", requests[1]);
+}
+
+#[tokio::test]
 async fn a_background_command_fails_because_the_run_ends_with_its_turn() {
     let place = Place::new("print", "background");
 
@@ -530,4 +557,25 @@ fn the_answer_text_is_the_text_of_the_last_run_of_assistant_blocks() {
 
     assert_eq!(answer_text(&context), "One.\nTwo.");
     assert_eq!(answer_text(&context[..1]), "");
+}
+
+#[test]
+fn only_an_error_notice_of_yuke_fails_the_run() {
+    let watcher = Watcher::default();
+    let session_id = Some(SessionId::generate());
+    let notice = |source: &str| {
+        ServerNotification::Notice(yuke_protocol::NoticeParams {
+            session_id,
+            level: NoticeLevel::Error,
+            source: source.to_owned(),
+            message: format!("from {source}"),
+        })
+    };
+
+    watcher.notify(notice("loud"));
+    let after_plugin = lock(&watcher.watched).failure.clone();
+    watcher.notify(notice(SOURCE));
+
+    assert_eq!(after_plugin, None);
+    assert_eq!(lock(&watcher.watched).failure.as_deref(), Some("from host:yuke"));
 }

@@ -52,13 +52,20 @@ declare module "yuke:internal/native" {
     readonly runningJobs: () => string[];
   }
 
-  /** Add a tool to the registry of the runtime. A second tool with the same name throws a `TypeError`. */
+  /**
+   * Add a tool to the registry of the runtime, for the plugin `owner` or for yuke itself. A second tool with the same
+   * name throws a `TypeError`.
+   */
   export function register(
-    name: string,
-    description: string,
-    parameters: string,
-    concurrency: "serial" | "parallel",
-    defer: boolean,
+    tool: {
+      readonly name: string;
+      readonly description: string;
+      /** The JSON text of the schema of the arguments. */
+      readonly parameters: string;
+      readonly concurrency: "serial" | "parallel";
+      readonly defer: boolean;
+      readonly owner: string | undefined;
+    },
     start: (
       argumentsText: string,
       callId: string,
@@ -67,6 +74,12 @@ declare module "yuke:internal/native" {
       session: Session,
     ) => Started,
   ): void;
+
+  /** Remove each tool of the plugin `owner`. */
+  export function removeTools(owner: string): void;
+
+  /** Send a notice of the plugin `source`. A `sessionId` that is not a session id throws a `TypeError`. */
+  export function notify(source: string, level: string, message: string, sessionId: string | undefined): void;
 
   /** Numbered lines, or an image. */
   export type Lines =

@@ -11,8 +11,9 @@ use sha2::{Digest, Sha256};
 
 use crate::typescript::strip;
 
-/// The oxc version of `Cargo.toml`. Another version can print other JavaScript, so the cache key holds it.
-pub(crate) const OXC_VERSION: &str = "0.153.0";
+/// The sources that decide the JavaScript of a TypeScript file: the oxc versions of `Cargo.toml` and the transform.
+/// The cache key holds them, so a change of either one makes new cache entries.
+const TRANSFORM: [&str; 2] = [include_str!("../Cargo.toml"), include_str!("typescript.rs")];
 
 /// The start of the name of each temporary file. No cache file name starts with a dot.
 const TEMPORARY_PREFIX: &str = ".tmp-";
@@ -82,12 +83,14 @@ impl Cache {
     }
 }
 
-/// The cache key of `source`: the lowercase hex SHA-256 of the oxc version, a zero byte, and the source.
+/// The cache key of `source`: the lowercase hex SHA-256 of each text of [`TRANSFORM`] and of the source, each one
+/// after a zero byte.
 fn key(source: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(OXC_VERSION.as_bytes());
-    hasher.update([0]);
-    hasher.update(source.as_bytes());
+    for text in TRANSFORM.iter().chain([&source]) {
+        hasher.update([0]);
+        hasher.update(text.as_bytes());
+    }
     let digest = hasher.finalize();
 
     let mut text = String::with_capacity(digest.len() * 2);

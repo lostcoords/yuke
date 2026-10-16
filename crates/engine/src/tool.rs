@@ -121,6 +121,11 @@ impl From<&str> for ToolContent {
     }
 }
 
+/// Whether the engine owns `name`: [`yuke_ai::SEARCH_TOOL_NAME`] or [`TOOL_CALL_NAME`]. No other tool can have it.
+pub fn is_reserved_tool_name(name: &str) -> bool {
+    [yuke_ai::SEARCH_TOOL_NAME, TOOL_CALL_NAME].contains(&name)
+}
+
 /// The error of [`Toolset::add`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolNameError {
@@ -177,7 +182,7 @@ impl Toolset {
     /// Returns [`ToolNameError`] if the toolset already holds a tool of that name, or if the engine reserves the
     /// name. The toolset stays unchanged.
     pub fn add(&mut self, definition: yuke_ai::ToolDefinition, tool: impl Tool + 'static) -> Result<(), ToolNameError> {
-        if [yuke_ai::SEARCH_TOOL_NAME, TOOL_CALL_NAME].contains(&definition.name.as_str()) {
+        if is_reserved_tool_name(&definition.name) {
             return Err(ToolNameError::Reserved(definition.name));
         }
         if self.definitions.iter().any(|held| held.name == definition.name) {

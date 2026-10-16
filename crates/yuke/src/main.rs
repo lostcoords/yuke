@@ -6,6 +6,7 @@ mod app;
 mod auth;
 mod config;
 mod paths;
+mod plugins;
 mod print;
 mod prompt;
 mod providers;

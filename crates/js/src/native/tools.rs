@@ -1,4 +1,5 @@
-//! The `register` function of the native module: the registry of the tools that `yuke:tools` defines.
+//! The tool functions of the native module: `register` and `removeTools` change the registry of the tools, and `notify`
+//! sends a notice of a plugin.
 
 use std::rc::Rc;
 
@@ -6,24 +7,73 @@ use rquickjs::convert::Coerced;
 use rquickjs::{Ctx, Function, Object};
 use yuke_engine::Concurrency;
 
-use crate::error::throw;
+use tokio::sync::mpsc;
+use yuke_protocol::{NoticeLevel, NoticeParams, SessionId};
+
+use crate::error::{Report, throw};
 use crate::tools::Registry;
 
-/// Add `register` to `object`, the export object of the native module.
-pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, registry: &Rc<Registry>) -> rquickjs::Result<()> {
+/// Add `register`, `removeTools`, and `notify` to `object`, the export object of the native module.
+pub(super) fn add<'js>(
+    ctx: &Ctx<'js>,
+    object: &Object<'js>,
+    registry: &Rc<Registry>,
+    reports: mpsc::UnboundedSender<Report>,
+) -> rquickjs::Result<()> {
+    let removing = Rc::clone(registry);
+    object.set(
+        "removeTools",
+        Function::new(ctx.clone(), move |owner: String| removing.remove_owner(&owner))?,
+    )?;
+    object.set(
+        "notify",
+        Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>,
+                  source: String,
+                  level: String,
+                  message: String,
+                  session_id: Option<String>|
+                  -> rquickjs::Result<()> {
+                let level = match level.as_str() {
+                    "debug" => NoticeLevel::Debug,
+                    "info" => NoticeLevel::Info,
+                    "warn" => NoticeLevel::Warn,
+                    "error" => NoticeLevel::Error,
+                    other => {
+                        return Err(throw(
+                            &ctx,
+                            "TypeError",
+                            &format!("notify: '{other}' is not debug, info, warn, or error"),
+                        ));
+                    }
+                };
+                let session_id = session_id
+                    .map(|text| {
+                        text.parse::<SessionId>()
+                            .map_err(|_| throw(&ctx, "TypeError", &format!("notify: '{text}' is not a session id")))
+                    })
+                    .transpose()?;
+                let notice = NoticeParams {
+                    session_id,
+                    level,
+                    source,
+                    message,
+                };
+                if reports.send(Report::Notice(notice)).is_err() {
+                    // The owner dropped the receiver, so it ignores notices.
+                }
+                Ok(())
+            },
+        )?,
+    )?;
     let registry = Rc::clone(registry);
     object.set(
         "register",
         Function::new(
             ctx.clone(),
-            move |ctx: Ctx<'js>,
-                  name: String,
-                  description: String,
-                  parameters: String,
-                  Coerced(concurrency): Coerced<String>,
-                  defer: bool,
-                  start: Function<'js>|
-                  -> rquickjs::Result<()> {
+            move |ctx: Ctx<'js>, tool: Object<'js>, start: Function<'js>| -> rquickjs::Result<()> {
+                let Coerced(concurrency) = tool.get::<_, Coerced<String>>("concurrency")?;
                 let concurrency = match concurrency.as_str() {
                     "serial" => Concurrency::Serial,
                     "parallel" => Concurrency::Parallel,
@@ -36,13 +86,13 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, registry: &Rc<Regis
                     }
                 };
                 let definition = yuke_ai::ToolDefinition {
-                    name,
-                    description,
-                    input_schema: parameters,
-                    defer_loading: defer,
+                    name: tool.get("name")?,
+                    description: tool.get("description")?,
+                    input_schema: tool.get("parameters")?,
+                    defer_loading: tool.get("defer")?,
                 };
                 registry
-                    .add(&ctx, definition, concurrency, start)
+                    .add(&ctx, definition, concurrency, start, tool.get("owner")?)
                     .map_err(|message| throw(&ctx, "TypeError", &message))
             },
         )?,

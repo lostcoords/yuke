@@ -29,21 +29,16 @@ impl Resolver for NameResolver {
         _attributes: Option<ImportAttributes<'js>>,
     ) -> rquickjs::Result<String> {
         if name.starts_with("yuke:") {
-            if name.starts_with(INTERNAL) && !base.starts_with("yuke:") {
+            // An empty base is an import of the host itself, such as the plugin loader.
+            if name.starts_with(INTERNAL) && !base.starts_with("yuke:") && !base.is_empty() {
                 return Err(throw(
                     ctx,
                     "TypeError",
                     &format!("'{base}' cannot import '{name}': only a built-in module imports a yuke:internal module"),
                 ));
             }
-            if native::is_native(name) || baked::bytecode(name).is_some() {
-                return Ok(name.to_owned());
-            }
-            return Err(throw(
-                ctx,
-                "TypeError",
-                &format!("no built-in module has the name '{name}'"),
-            ));
+            // The loader refuses a `yuke:` name that no built-in module has.
+            return Ok(name.to_owned());
         }
 
         let path = if Path::new(name).is_absolute() {
@@ -118,6 +113,13 @@ impl Loader for ModuleLoader {
         }
         if let Some(bytes) = baked::bytecode(name) {
             return baked::load(ctx, bytes);
+        }
+        if name.starts_with("yuke:") {
+            return Err(throw(
+                ctx,
+                "TypeError",
+                &format!("no built-in module has the name '{name}'"),
+            ));
         }
 
         let path = Path::new(name);

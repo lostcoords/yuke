@@ -15,7 +15,7 @@ use yuke_protocol::{
     SessionState, SessionUpdate, StoredEvent,
 };
 
-use crate::app::{App, AppError, Jobs, Machine, Observer, describe, lock, warn};
+use crate::app::{App, AppError, Jobs, Machine, Observer, SOURCE, describe, lock, warn};
 use crate::providers::Providers;
 
 /// What one run of `yuke -p` does.
@@ -232,7 +232,7 @@ fn answer_text(context: &[Block]) -> String {
 }
 
 /// Keeps what a run needs from the notifications of its session: the saved blocks of the turn, its end, and a
-/// failure. Other notices go to stderr.
+/// failure: an error notice of yuke for the session. Other notices, also those of plugins, go to stderr.
 #[derive(Default)]
 struct Watcher {
     watched: Mutex<Watched>,
@@ -275,7 +275,9 @@ impl Observer for Watcher {
                 }) => self.ended.notify_one(),
                 _ => {}
             },
-            ServerNotification::Notice(notice) if notice.session_id.is_some() && notice.level == NoticeLevel::Error => {
+            ServerNotification::Notice(notice)
+                if notice.source == SOURCE && notice.session_id.is_some() && notice.level == NoticeLevel::Error =>
+            {
                 lock(&self.watched).failure = Some(notice.message);
                 self.ended.notify_one();
             }

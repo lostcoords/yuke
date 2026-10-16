@@ -1,4 +1,5 @@
 mod exec;
+mod plugins;
 mod tools;
 
 use std::path::{Path, PathBuf};
@@ -9,8 +10,7 @@ use rquickjs::{Ctx, FromJs, Promise};
 use tokio::sync::mpsc;
 
 use crate::error::caught;
-use crate::strip::OXC_VERSION;
-use crate::{Error, Options, Processes, Runtime, ScriptError};
+use crate::{Error, Options, Plugin, PluginError, Processes, Report, Runtime, ScriptError};
 
 /// A new empty folder for the test `name`.
 fn folder(name: &str) -> PathBuf {
@@ -42,13 +42,36 @@ fn write(folder: &Path, files: &[(&str, &str)]) {
     }
 }
 
-async fn start(folder: &Path) -> (Runtime, mpsc::UnboundedReceiver<ScriptError>) {
+async fn start(folder: &Path) -> (Runtime, mpsc::UnboundedReceiver<Report>) {
     Runtime::start(Options {
         cache: folder.join("cache"),
         processes: Arc::new(Processes::new(folder.join("processes"))),
     })
     .await
     .unwrap()
+}
+
+/// Load the module `path` as the entry of the plugin `test`. The module exports `apply(ctx)`.
+async fn load_tools(runtime: &Runtime, path: &Path) -> Result<(), Error> {
+    let root = path.parent().unwrap().to_owned();
+    let plugin = Plugin {
+        name: "test".to_owned(),
+        data_dir: root.join("data"),
+        root,
+        entry: Some(path.to_owned()),
+        uses: Vec::new(),
+        provides: Vec::new(),
+    };
+    match runtime
+        .load_plugins(&[plugin])
+        .await
+        .pop()
+        .map(|failure| failure.reason)
+    {
+        None => Ok(()),
+        Some(PluginError::Load(error)) => Err(error),
+        Some(other) => panic!("{other:?}"),
+    }
 }
 
 /// Run the body of an async function, and return the value of its promise.
@@ -58,6 +81,7 @@ where
 {
     let source = format!("(async () => {{ {body} }})()");
     runtime
+        .caller
         .run(async move |ctx: Ctx<'_>, _registry| {
             let promise: Promise<'_> = caught(&ctx, ctx.eval(source))?;
             caught(&ctx, promise.into_future::<T>().await)
@@ -66,11 +90,15 @@ where
 }
 
 /// The next fault. A missing fault fails the test after five seconds.
-async fn next_fault(faults: &mut mpsc::UnboundedReceiver<ScriptError>) -> ScriptError {
-    tokio::time::timeout(Duration::from_secs(5), faults.recv())
+async fn next_fault(faults: &mut mpsc::UnboundedReceiver<Report>) -> ScriptError {
+    let report = tokio::time::timeout(Duration::from_secs(5), faults.recv())
         .await
         .unwrap()
-        .unwrap()
+        .unwrap();
+    match report {
+        Report::Fault(error) => error,
+        Report::Notice(notice) => panic!("expected a fault, got the notice {notice:?}"),
+    }
 }
 
 fn script_error(result: Result<impl std::fmt::Debug, Error>) -> ScriptError {
@@ -109,7 +137,7 @@ async fn a_dropped_call_stops_its_future_on_the_javascript_thread() {
     let folder = folder("a_dropped_call_stops_its_future_on_the_javascript_thread");
     let (runtime, _faults) = start(&folder).await;
 
-    let call = runtime.run(async |ctx: Ctx<'_>, _registry| {
+    let call = runtime.caller.run(async |ctx: Ctx<'_>, _registry| {
         let promise: Promise<'_> = caught(&ctx, ctx.eval("new Promise(resolve => setTimeout(resolve, 100))"))?;
         caught(&ctx, promise.into_future::<()>().await)?;
         caught(&ctx, ctx.globals().set("finished", true))
@@ -569,12 +597,4 @@ async fn a_changed_typescript_file_gets_a_new_cache_file() {
 
     assert_eq!(std::fs::read_dir(folder.join("cache")).unwrap().count(), 2);
     assert_eq!(evaluate::<i32>(&runtime, "return globalThis.value;").await.unwrap(), 2);
-}
-
-#[test]
-fn the_cache_key_holds_the_pinned_oxc_version() {
-    let manifest = include_str!("../Cargo.toml");
-    for line in manifest.lines().filter(|line| line.starts_with("oxc_")) {
-        assert!(line.contains(&format!("\"={OXC_VERSION}\"")), "{line}");
-    }
 }

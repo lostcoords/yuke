@@ -1,10 +1,18 @@
-import { checkArguments, checkSchema, type ObjectSchema } from "yuke:internal/arguments";
-import { register } from "yuke:internal/native";
-import { bindSession } from "yuke:internal/session";
-import { CallSignal } from "yuke:internal/signal";
+import type { ObjectSchema } from "yuke:internal/arguments";
 
 export type { ArraySchema, ObjectSchema, ScalarSchema, Schema } from "yuke:internal/arguments";
-export type { CallSignal } from "yuke:internal/signal";
+
+/** A signal that aborts when yuke cancels the work of its owner. Only yuke aborts it. */
+export interface Signal {
+  /** Whether the signal has aborted. */
+  readonly aborted: boolean;
+  /** The reason of the abort, a `DOMException` named `AbortError`. */
+  readonly reason: unknown;
+  /** Throw the reason when the signal has aborted. */
+  readonly throwIfAborted: () => void;
+  /** Call `listener` once at the abort, or at once after it. Returns the function that removes the listener. */
+  readonly onAbort: (listener: () => void) => () => void;
+}
 
 /** The most bytes of the content of one tool output. A cut adds one line that tells the model what the cut left out. */
 export const OUTPUT_BYTES = 50 * 1024;
@@ -16,7 +24,7 @@ export interface ToolContext {
   /** The workspace folder of the session. Relative paths and commands start here. */
   readonly folder: string;
   /** The signal that aborts when the turn cancels the call, and when the call ends. */
-  readonly signal: CallSignal;
+  readonly signal: Signal;
   /** Show `text` to the user while the call runs. The model does not receive it. */
   readonly output: (text: string) => void;
 }
@@ -46,31 +54,4 @@ export interface Tool {
    */
   readonly defer?: boolean;
   readonly execute: (args: Record<string, unknown>, context: ToolContext) => ToolAnswer | Promise<ToolAnswer>;
-}
-
-/** Define `tool`. A second tool with the same name throws a `TypeError`. */
-export function define(tool: Tool): void {
-  checkSchema(tool.parameters);
-  register(
-    tool.name,
-    tool.description,
-    JSON.stringify(tool.parameters),
-    tool.concurrency,
-    tool.defer === true,
-    (text, callId, folder, output, session) => {
-      const signal = new CallSignal();
-      const context: ToolContext = { callId, folder, signal, output };
-      bindSession(context, session);
-      const answer = run(tool, text, context);
-      return { answer, abort: (reason: unknown) => signal.abort(reason) };
-    },
-  );
-}
-
-async function run(tool: Tool, text: string, context: ToolContext): Promise<ToolAnswer> {
-  try {
-    return await tool.execute(checkArguments(tool.parameters, JSON.parse(text)), context);
-  } finally {
-    context.signal.abort(new DOMException("The tool call has ended", "AbortError"));
-  }
 }

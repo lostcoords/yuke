@@ -3,7 +3,7 @@
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rquickjs::function::Async;
 use rquickjs::{Ctx, Function, Object};
@@ -142,7 +142,11 @@ fn lines(full: &Path, offset: u32, limit: u32, max_bytes: usize) -> Result<Lines
     let start = reader.fill_buf().map_err(|error| describe(&error))?;
     if let Some(mime) = image_type(start) {
         return Ok(Lines::Image {
-            path: absolute(full).to_string_lossy().into_owned(),
+            // A path from the root, so a later read finds the same file.
+            path: std::path::absolute(full)
+                .unwrap_or_else(|_| full.to_owned())
+                .to_string_lossy()
+                .into_owned(),
             mime,
         });
     }
@@ -236,9 +240,4 @@ fn read_line(reader: &mut impl BufRead, max_bytes: usize, line: &mut Vec<u8>) ->
             }
         }
     }
-}
-
-/// `path` from the root, so a later read finds the same file.
-fn absolute(path: &Path) -> PathBuf {
-    std::path::absolute(path).unwrap_or_else(|_| path.to_owned())
 }

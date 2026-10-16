@@ -11,11 +11,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rquickjs::{Constructor, Ctx, FromJs, Function, Object, Persistent, Promise, Value};
 use tokio::sync::mpsc;
-use yuke_engine::{CancellationToken, Concurrency, Tool, ToolContent, ToolContext};
+use yuke_engine::{
+    CancellationToken, Concurrency, Tool, ToolContent, ToolContext, ToolNameError, is_reserved_tool_name,
+};
 
 use crate::error::{Error, caught};
 use crate::native::session;
-use crate::processes::{JobEnded, Processes, StopOnDrop};
+use crate::processes::{JobEnded, Processes};
 use crate::runtime::Caller;
 
 /// What the tools of one session need from the consumer. One process can serve sessions of several workspaces at
@@ -56,20 +58,34 @@ struct Registered {
     concurrency: Concurrency,
     /// The JavaScript function that starts a call.
     start: Persistent<Function<'static>>,
+    /// The plugin that defined the tool, or `None` for yuke itself.
+    owner: Option<String>,
 }
 
 impl Registry {
-    /// Add a tool. A second tool with the same name fails with the text of the failure.
+    /// Add a tool of `owner`, a plugin, or of yuke itself. A name that the engine reserves, or a second tool with the
+    /// same name, fails with the text of the failure.
     pub(crate) fn add<'js>(
         &self,
         ctx: &Ctx<'js>,
         definition: yuke_ai::ToolDefinition,
         concurrency: Concurrency,
         start: Function<'js>,
+        owner: Option<String>,
     ) -> Result<(), String> {
+        if is_reserved_tool_name(&definition.name) {
+            return Err(ToolNameError::Reserved(definition.name).to_string());
+        }
         let mut tools = self.tools.borrow_mut();
-        if tools.iter().any(|tool| tool.definition.name == definition.name) {
-            return Err(format!("a tool with the name '{}' is already defined", definition.name));
+        if let Some(other) = tools.iter().find(|tool| tool.definition.name == definition.name) {
+            let by = other
+                .owner
+                .as_ref()
+                .map_or_else(|| "yuke".to_owned(), |owner| format!("plugin {owner}"));
+            return Err(format!(
+                "{by} already defines a tool with the name '{}'",
+                definition.name
+            ));
         }
         let id = self.last_id.get() + 1;
         self.last_id.set(id);
@@ -78,8 +94,16 @@ impl Registry {
             definition,
             concurrency,
             start: Persistent::save(ctx, start),
+            owner,
         });
         Ok(())
+    }
+
+    /// Remove each tool of the plugin `owner`.
+    pub(crate) fn remove_owner(&self, owner: &str) {
+        self.tools
+            .borrow_mut()
+            .retain(|tool| tool.owner.as_deref() != Some(owner));
     }
 
     /// The id, the definition, and the concurrency of each tool, in the order of their definition.
@@ -234,11 +258,7 @@ impl ScriptTool {
                 )?;
                 // A cancel of the call stops its commands. The guard also stops them when the call ends or drops.
                 let stop = token.child_token();
-                #[expect(
-                    unused_variables,
-                    reason = "only the drop of the guard matters: it stops the commands"
-                )]
-                let guard = StopOnDrop(stop.clone());
+                let _guard = stop.clone().drop_guard();
                 let session = caught(&ctx, session::object(&ctx, &processes, &host, &stop))?;
                 let started: Object<'_> = caught(&ctx, start.call((arguments, call_id, folder, output, session)))?;
                 let promise: Promise<'_> = caught(&ctx, started.get("answer"))?;
