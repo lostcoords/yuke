@@ -171,7 +171,7 @@ install_yuke() {
   extract_archive "${archive}"
 
   local package="${staging}/package" file
-  for file in bin/yuke lib/yuke/modules/tools.ts lib/yuke/modules/builtins.ts \
+  for file in bin/yuke lib/yuke/modules/tools.ts lib/yuke/modules/plugins.ts \
     lib/yuke/types/native.d.ts lib/yuke/types/globals.d.ts lib/yuke/tsconfig.json \
     lib/yuke/protocol/bindings/ClientRequest.ts lib/yuke/protocol/README.md \
     lib/yuke/LICENSE.md lib/yuke/build.json; do
