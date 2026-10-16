@@ -26,7 +26,8 @@ Catalog generation script:
 | `http-tokio` | Enabled | `HttpTransport` and `HttpOptions`. HTTP/1.1 with Tokio, hyper, and rustls. |
 | `ts` | Disabled | TypeScript declarations of the serde types through ts-rs. |
 
-All protocols work without default features. Supply a custom [`Transport`](src/transport.rs).
+All protocols work without default features. Supply a custom [`Transport`](src/transport.rs). The OAuth flows of
+[`oauth`](src/oauth.rs) need an [`Exchange`](src/transport.rs).
 
 ## Defaults
 

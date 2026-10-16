@@ -1,5 +1,5 @@
-//! Stream one SSE response over HTTP/1.1 with hyper on tokio, and rustls for `https`. Each open uses its own
-//! connection, so a fault before the request left proves that nothing was sent.
+//! Stream one SSE response, or read one whole small answer, over HTTP/1.1 with hyper on tokio, and rustls for
+//! `https`. Each request uses its own connection, so a fault before the request left proves that nothing was sent.
 
 use std::future::Future;
 use std::io;
@@ -22,7 +22,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::time::{Instant, Sleep};
 
-use crate::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
+use crate::transport::{
+    Answer, Body, BoxBody, BoxFuture, Exchange, ExchangeRequest, Fault, Head, Header, Outgoing, Transport, next_chunk,
+};
 
 /// How an [`HttpTransport`] waits for the peer and names itself.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -103,24 +105,29 @@ impl HttpTransport {
         Ok(Arc::clone(self.tls.get_or_init(|| built)))
     }
 
-    async fn exchange(&self, request: &Outgoing<'_>, deadline: Option<Instant>) -> Result<(Head, BoxBody), Fault> {
+    /// Send `request`, and read the head. The body streams.
+    async fn round_trip(&self, request: Plan<'_>, deadline: Option<Instant>) -> Result<(Head, BoxBody), Fault> {
         // `HeaderMap::with_capacity` panics above its size limit, so too many headers fail the request before it leaves.
-        if request.headers().len() > MAX_HEADERS {
+        if request.headers.len() > MAX_HEADERS {
             return Err(Fault::InvalidRequest);
         }
-        let target = Target::parse(request.url())?;
+        let target = Target::parse(request.url)?;
         let http_request = self.build(&target, request)?;
 
         // Connect, send, and the head wait share the idle deadline, so a silent peer never holds the call.
         let bound = earlier(self.idle_timeout.map(|idle| Instant::now() + idle), deadline);
         let head = match bound {
-            None => self.connect_and_send(&target, http_request).await,
+            None => send(self.connect(&target).await?, http_request).await,
             Some((at, timed_out)) => {
                 // A deadline that already passed starts no leg, so an expired request is never sent.
                 if at <= Instant::now() {
                     return Err(timed_out);
                 }
-                let outcome = tokio::time::timeout_at(at, self.connect_and_send(&target, http_request)).await;
+                // A timeout before the connection opens proves that the request did not leave.
+                let socket = tokio::time::timeout_at(at, self.connect(&target))
+                    .await
+                    .map_err(|_| Fault::ConnectTimeout)??;
+                let outcome = tokio::time::timeout_at(at, send(socket, http_request)).await;
                 outcome.unwrap_or(Err(timed_out))
             }
         };
@@ -140,42 +147,33 @@ impl HttpTransport {
 
     /// Build the request head: host, user agent, connection, length, type, accept, then the caller headers. hyper
     /// decides the wire order and the case of the fields.
-    fn build(&self, target: &Target, request: &Outgoing<'_>) -> Result<Request<Full<Bytes>>, Fault> {
-        let length = request.body_len();
-        // hyper sends a body that owns its bytes, so the parts join here once.
-        let mut body = Vec::with_capacity(length);
-        for part in request.body() {
-            body.extend_from_slice(part);
-        }
-        let mut headers = HeaderMap::with_capacity(7 + request.headers().len());
+    fn build(&self, target: &Target, request: Plan<'_>) -> Result<Request<Full<Bytes>>, Fault> {
+        let mut headers = HeaderMap::with_capacity(7 + request.headers.len());
         headers.insert(HOST, target.host_header.clone());
         headers.insert(USER_AGENT, self.user_agent.clone());
         headers.insert(CONNECTION, HeaderValue::from_static("close"));
-        headers.insert(CONTENT_LENGTH, HeaderValue::from(length));
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        // The provider sends SSE, so request it.
-        headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+        headers.insert(CONTENT_LENGTH, HeaderValue::from(request.body.len()));
+        // A caller gives the type of an exchange, so a bad value fails the request instead of a panic.
+        let content_type = HeaderValue::from_str(request.content_type).map_err(|_| Fault::InvalidRequest)?;
+        headers.insert(CONTENT_TYPE, content_type);
+        headers.insert(ACCEPT, HeaderValue::from_static(request.accept));
         // Without this field, RFC 9110 lets the server choose any compression. The decoder reads plain bytes only.
         headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
-        for header in request.headers() {
+        for header in request.headers {
             let name = HeaderName::from_bytes(header.name.as_bytes()).map_err(|_| Fault::InvalidRequest)?;
             // Any byte but a control byte is valid, as `route::valid_header_value` checks.
             let value = HeaderValue::from_bytes(header.value.as_bytes()).map_err(|_| Fault::InvalidRequest)?;
             headers.append(name, value);
         }
-        let mut http_request = Request::new(Full::new(Bytes::from(body)));
+        let mut http_request = Request::new(Full::new(Bytes::from(request.body)));
         *http_request.method_mut() = Method::POST;
         *http_request.uri_mut() = target.path.clone();
         *http_request.headers_mut() = headers;
         Ok(http_request)
     }
 
-    /// Open the connection, send the request, and read the head.
-    async fn connect_and_send(
-        &self,
-        target: &Target,
-        request: Request<Full<Bytes>>,
-    ) -> Result<(http::Response<Incoming>, Connection), Fault> {
+    /// Open the connection: TCP, and TLS for `https`.
+    async fn connect(&self, target: &Target) -> Result<Box<dyn Socket>, Fault> {
         // A TLS configuration that fails to build fails the open before it connects.
         let tls = if target.tls { Some(self.tls()?) } else { None };
         let mut addresses = tokio::net::lookup_host((target.host.as_str(), target.port))
@@ -205,7 +203,7 @@ impl HttpTransport {
         } else {
             Box::new(tcp)
         };
-        send(socket, request).await
+        Ok(socket)
     }
 }
 
@@ -215,9 +213,60 @@ impl Transport for HttpTransport {
         request: &'a Outgoing<'_>,
         deadline: Option<std::time::Instant>,
     ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
+        // hyper sends a body that owns its bytes, so the parts join here once.
+        let mut body = Vec::with_capacity(request.body_len());
+        for part in request.body() {
+            body.extend_from_slice(part);
+        }
+        let plan = Plan {
+            url: request.url(),
+            headers: request.headers(),
+            content_type: "application/json",
+            // The provider sends SSE, so request it.
+            accept: "text/event-stream",
+            body,
+        };
         // The request deadline counts from here, before any preparation.
-        Box::pin(self.exchange(request, deadline.map(Instant::from_std)))
+        Box::pin(self.round_trip(plan, deadline.map(Instant::from_std)))
     }
+}
+
+impl Exchange for HttpTransport {
+    fn exchange<'a>(
+        &'a self,
+        request: &'a ExchangeRequest<'_>,
+        deadline: Option<std::time::Instant>,
+    ) -> BoxFuture<'a, Result<Answer, Fault>> {
+        let plan = Plan {
+            url: request.url,
+            headers: &[],
+            content_type: request.content_type,
+            accept: "application/json",
+            body: request.body.to_vec(),
+        };
+        let deadline = deadline.map(Instant::from_std);
+        Box::pin(async move {
+            let (head, mut body) = self.round_trip(plan, deadline).await?;
+            let mut bytes = Vec::new();
+            while let Some(chunk) = next_chunk(&mut body).await {
+                let chunk = chunk?;
+                if bytes.len() + chunk.len() > request.max_answer {
+                    return Err(Fault::AnswerTooLarge);
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(Answer { head, body: bytes })
+        })
+    }
+}
+
+/// One request before its head: the caller parts and the media types of the body and of the answer.
+struct Plan<'a> {
+    url: &'a str,
+    headers: &'a [Header],
+    content_type: &'static str,
+    accept: &'static str,
+    body: Vec<u8>,
 }
 
 /// Give `builder` the `webpki` verifier with the system roots. Return `None` when no root loads.

@@ -152,7 +152,7 @@ impl LiveSession {
         settings.settings.system.clone_from(&session.settings().settings.system);
         settings.cwd = canonical(settings.cwd).await?;
         // The model comes first, so a model that cannot run saves no settings.
-        model_of(&settings, &*self.shared.machine.variable)?;
+        model_of(&settings, &self.shared)?;
         let event_number = session
             .set_settings(settings.clone())
             .await
@@ -398,7 +398,7 @@ impl SessionTask {
                 return;
             }
             // The settings name the model and the folder, so each turn takes both from the settings of that moment.
-            let model = match model_of(session.settings(), &*self.host.shared.machine.variable) {
+            let model = match model_of(session.settings(), &self.host.shared) {
                 Ok(model) => model,
                 Err(error) => {
                     output.notice(NoticeLevel::Error, &describe(&error));

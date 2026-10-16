@@ -58,7 +58,7 @@ pub struct Endpoint {
 pub enum Auth<'a> {
     /// The environment variable name of the key, or `None` when none is known.
     ApiKey(Option<&'a str>),
-    /// The login flow name. The caller runs the flow.
+    /// The login flow name. [`crate::oauth::Flow::named`] gives the flow, and the caller keeps its grant.
     OAuth(&'a str),
 }
 

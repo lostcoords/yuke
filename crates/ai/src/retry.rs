@@ -39,12 +39,14 @@ fn classify(cause: Failure) -> Class {
             Fault::IdleTimeout
             | Fault::RequestTimeout
             | Fault::ConnectFailed
+            | Fault::ConnectTimeout
             | Fault::ConnectionLost
             | Fault::DnsFailed => Class::Transient,
             Fault::InvalidRequest
             | Fault::RedirectRefused
             | Fault::BadUrl
             | Fault::MalformedResponse
+            | Fault::AnswerTooLarge
             | Fault::TlsSetupFailed
             // The same certificate fails the check again.
             | Fault::CertificateRejected => Class::NonRetryable,

@@ -1,8 +1,9 @@
 //! The `yuke` program. It has three modes: the terminal interface (no mode flag), the protocol server (`--rpc`), and
 //! one task with no view (`-p`). The terminal interface does not exist yet. `--rpc` serves stdin and stdout. `-p` writes
-//! the answer to stdout, and the end of the turn picks the exit status.
+//! the answer to stdout, and the end of the turn picks the exit status. `yuke login` logs in to a provider.
 
 mod app;
+mod auth;
 mod config;
 mod paths;
 mod print;
@@ -17,11 +18,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use tokio::signal::unix::{SignalKind, signal};
 use yuke_ai::Effort;
-use yuke_ai::catalog::ReasoningLevel;
+use yuke_ai::catalog::{self, Auth, ReasoningLevel};
+use yuke_ai::oauth::{Flow, PendingLogin};
 use yuke_engine::{CancellationToken, Outcome, TurnEnd};
 use yuke_protocol::SessionId;
 
@@ -37,9 +39,13 @@ const DRAIN_LIMIT: Duration = Duration::from_secs(5);
 #[command(
     name = "yuke",
     version,
-    about = "A coding agent. Without -p or --rpc, yuke starts the terminal interface."
+    about = "A coding agent. Without -p or --rpc, yuke starts the terminal interface.",
+    args_conflicts_with_subcommands = true
 )]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Run one task with PROMPT. Print the last answer, then exit.
     #[arg(short = 'p', long = "print", value_name = "PROMPT", value_parser = clap::builder::NonEmptyStringValueParser::new())]
     prompt: Option<String>,
@@ -70,6 +76,16 @@ struct Cli {
     continue_newest: bool,
 }
 
+/// A command of `yuke`.
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Log in to PROVIDER, and save the grant.
+    Login {
+        /// The provider id, the first part of --model, such as xai-grok.
+        provider: String,
+    },
+}
+
 /// What the program runs.
 #[derive(Debug, PartialEq)]
 enum Mode {
@@ -79,11 +95,16 @@ enum Mode {
     Rpc,
     /// One task with no view. `json` prints the `--json` report.
     Print { task: Task, json: bool },
+    /// A login to a provider.
+    Login(String),
 }
 
 impl Cli {
     /// The mode that the flags name.
     fn into_mode(self) -> Mode {
+        if let Some(Command::Login { provider }) = self.command {
+            return Mode::Login(provider);
+        }
         if self.rpc {
             return Mode::Rpc;
         }
@@ -155,6 +176,7 @@ fn main() -> ExitCode {
             Mode::Tui => not_implemented("the terminal interface"),
             Mode::Rpc => serve_rpc().await,
             Mode::Print { task, json } => print_task(&task, json).await,
+            Mode::Login(provider) => login(&provider).await,
         }
     });
     // A read of stdin blocks a thread that nothing can stop, and a normal shutdown waits for that thread.
@@ -199,6 +221,66 @@ async fn print_task(task: &Task, json: bool) -> ExitCode {
     }
 }
 
+/// Log in to the provider `id`.
+async fn login(id: &str) -> ExitCode {
+    let provider = catalog::PROVIDERS.iter().find(|provider| provider.id == id);
+    let flow = match provider.map(|provider| provider.auth) {
+        Some(Auth::OAuth(flow_name)) => Flow::named(flow_name),
+        Some(Auth::ApiKey(Some(variable))) => {
+            warn(&format!("{id} takes an API key: set {variable}. {}", login_providers()));
+            return ExitCode::FAILURE;
+        }
+        Some(Auth::ApiKey(None)) | None => None,
+    };
+    let (Some(provider), Some(flow)) = (provider, flow) else {
+        warn(&format!("yuke has no login for {id}. {}", login_providers()));
+        return ExitCode::FAILURE;
+    };
+    let machine = match machine() {
+        Ok(machine) => machine,
+        Err(error) => {
+            warn(&error);
+            return ExitCode::FAILURE;
+        }
+    };
+    let cancellation_token = CancellationToken::new();
+    let signal_number = Arc::new(AtomicU8::new(0));
+    if let Err(error) = watch_signals(cancellation_token.clone(), Arc::clone(&signal_number)) {
+        warn(&format!("the signal handlers did not start: {}", describe(&error)));
+        return ExitCode::FAILURE;
+    }
+    let show = |pending: &PendingLogin| {
+        warn(&format!(
+            "open {} and confirm the code {} (enter it if the page asks)",
+            pending.verification_url, pending.user_code
+        ));
+    };
+    let logged_in = auth::login(id, flow, machine.paths.data.clone(), &*machine.exchange, show);
+    tokio::select! {
+        result = logged_in => match result {
+            Ok(()) => {
+                warn(&format!("logged in to {}", provider.name));
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                warn(&describe(&error));
+                ExitCode::FAILURE
+            }
+        },
+        () = cancellation_token.cancelled() => ExitCode::from(128 + signal_number.load(Ordering::SeqCst)),
+    }
+}
+
+/// The sentence that names the providers with a login flow of yuke.
+fn login_providers() -> String {
+    let ids: Vec<_> = catalog::PROVIDERS
+        .iter()
+        .filter(|provider| matches!(provider.auth, Auth::OAuth(flow_name) if Flow::named(flow_name).is_some()))
+        .map(|provider| provider.id)
+        .collect();
+    format!("The providers that support a login: {}.", ids.join(", "))
+}
+
 /// Serve the protocol on stdin and stdout until stdin ends.
 async fn serve_rpc() -> ExitCode {
     let served = match machine() {
@@ -227,13 +309,15 @@ async fn run_here(task: &Task, cancellation_token: CancellationToken) -> Result<
 fn machine() -> Result<Machine, String> {
     let home = std::env::home_dir().filter(|home| home.is_absolute());
     let paths = Paths::of(&|name| std::env::var_os(name), home.as_deref())?;
-    let transport = yuke_ai::HttpTransport::new(yuke_ai::HttpOptions::new(concat!("yuke/", env!("CARGO_PKG_VERSION"))))
+    let http = yuke_ai::HttpTransport::new(yuke_ai::HttpOptions::new(concat!("yuke/", env!("CARGO_PKG_VERSION"))))
         .map_err(|error| describe(&error))?;
+    let http = Arc::new(http);
     Ok(Machine {
         paths,
         home,
         variable: Box::new(|name| std::env::var_os(name)),
-        transport: Box::new(transport),
+        transport: Arc::clone(&http) as Arc<dyn yuke_ai::transport::Transport>,
+        exchange: http,
     })
 }
 
@@ -315,6 +399,17 @@ mod tests {
                 },
                 json: true,
             })
+        );
+    }
+
+    #[test]
+    fn login_takes_one_provider_and_no_mode_flag() {
+        assert_eq!(mode(&["login", "xai-grok"]), Ok(Mode::Login("xai-grok".to_owned())));
+        assert_eq!(mode(&["login"]), Err(ErrorKind::MissingRequiredArgument));
+        assert_eq!(mode(&["--rpc", "login", "xai-grok"]), Err(ErrorKind::ArgumentConflict));
+        assert_eq!(
+            mode(&["-p", "Hi.", "login", "xai-grok"]),
+            Err(ErrorKind::ArgumentConflict)
         );
     }
 

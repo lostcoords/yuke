@@ -15,7 +15,7 @@ use super::*;
 use crate::paths::Paths;
 use yuke_testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
 
-use crate::testing::PanicsOnce;
+use crate::testing::{Answers, PanicsOnce};
 
 /// The folders of one test: the profile and the folder of its sessions.
 struct Place {
@@ -47,7 +47,8 @@ impl Place {
             paths: self.paths.clone(),
             home: None,
             variable: Box::new(|name| (name == "MINIMAX_API_KEY").then(|| OsString::from("test-key"))),
-            transport,
+            transport: transport.into(),
+            exchange: Arc::new(Answers::default()),
         }
     }
 

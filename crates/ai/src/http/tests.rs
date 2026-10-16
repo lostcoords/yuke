@@ -45,6 +45,9 @@ struct Seen {
     languages: Vec<String>,
     notes: Vec<String>,
     encodings: Vec<String>,
+    content_types: Vec<String>,
+    accepts: Vec<String>,
+    body: Vec<u8>,
 }
 
 /// Read one request head and its body.
@@ -73,6 +76,10 @@ async fn read_request(stream: &mut TcpStream) -> Seen {
             seen.encodings.push(value);
         } else if name.eq_ignore_ascii_case("x-note") {
             seen.notes.push(value);
+        } else if name.eq_ignore_ascii_case("content-type") {
+            seen.content_types.push(value);
+        } else if name.eq_ignore_ascii_case("accept") {
+            seen.accepts.push(value);
         } else if name.eq_ignore_ascii_case("content-length") {
             length = value.parse().unwrap();
         }
@@ -81,6 +88,7 @@ async fn read_request(stream: &mut TcpStream) -> Seen {
         let n = stream.read(&mut buf).await.unwrap();
         bytes.extend_from_slice(&buf[..n]);
     }
+    seen.body = bytes[head_end..].to_vec();
     seen
 }
 
@@ -256,7 +264,61 @@ async fn streams_sse_body() {
         assert_eq!(seen.user_agents, [TEST_USER_AGENT]);
         assert_eq!(seen.languages, ["en", "es"]);
         assert_eq!(seen.notes, ["café"]);
+        assert_eq!(seen.content_types, ["application/json"]);
+        assert_eq!(seen.accepts, ["text/event-stream"]);
     }
+}
+
+/// Run one server and one exchange of a form `body` with an answer limit of `max_answer` bytes.
+async fn exchange_once(server: Server, body: &[u8], max_answer: usize) -> (Seen, Result<Answer, Fault>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(serve_once(listener, server));
+    let url = format!("http://127.0.0.1:{port}/oauth2/token");
+    let request = ExchangeRequest {
+        url: &url,
+        content_type: "application/x-www-form-urlencoded",
+        body,
+        max_answer,
+    };
+    let answer = transport(None).exchange(&request, None).await;
+    (server.await.unwrap(), answer)
+}
+
+#[tokio::test]
+async fn an_exchange_sends_its_type_and_body_and_reads_the_whole_answer() {
+    let server = Server {
+        status: 400,
+        body: br#"{"error":"authorization_pending"}"#.to_vec(),
+        headers: vec![("request-id", "req_1")],
+        trickle: true,
+        ..Server::default()
+    };
+
+    let (seen, answer) = exchange_once(server, b"grant_type=refresh_token", 1024).await;
+
+    let answer = answer.unwrap();
+    assert_eq!(answer.head.status, 400);
+    assert_eq!(answer.head.request_id.as_deref(), Some("req_1"));
+    assert_eq!(answer.body, br#"{"error":"authorization_pending"}"#);
+    assert_eq!(seen.content_types, ["application/x-www-form-urlencoded"]);
+    assert_eq!(seen.accepts, ["application/json"]);
+    assert_eq!(seen.body, b"grant_type=refresh_token");
+}
+
+#[tokio::test]
+async fn an_exchange_answer_over_its_limit_fails() {
+    let server = || Server {
+        status: 200,
+        body: b"0123456789".to_vec(),
+        ..Server::default()
+    };
+
+    let (_, fits) = exchange_once(server(), b"", 10).await;
+    let (_, large) = exchange_once(server(), b"", 9).await;
+
+    assert_eq!(fits.unwrap().body, b"0123456789");
+    assert_eq!(large, Err(Fault::AnswerTooLarge));
 }
 
 #[tokio::test]
@@ -481,7 +543,7 @@ async fn expired_deadline_fails_before_send() {
 
 // The handshake never ends, so the idle deadline passes before the request leaves.
 #[tokio::test]
-async fn stalled_handshake_hits_the_idle_timeout() {
+async fn stalled_handshake_is_a_connect_timeout() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let peer = tokio::spawn(async move {
@@ -495,7 +557,8 @@ async fn stalled_handshake_hits_the_idle_timeout() {
         .open(&request, None)
         .await
         .err();
-    assert_eq!(fault, Some(Fault::IdleTimeout));
+    // The handshake never ended, so no request left.
+    assert_eq!(fault, Some(Fault::ConnectTimeout));
     peer.abort();
 }
 

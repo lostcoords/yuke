@@ -20,9 +20,10 @@ use tokio::task::JoinHandle;
 use yuke_agent::{Session, Store, StoreError};
 use yuke_ai::Block;
 use yuke_ai::catalog::{self, Auth};
+use yuke_ai::oauth::Flow;
 use yuke_ai::route::Credential;
-use yuke_ai::transport::Transport;
-use yuke_engine::{Model, Timer};
+use yuke_ai::transport::{Exchange, Transport};
+use yuke_engine::{CredentialSource, Model, Timer};
 use yuke_js::{Fault, Limits, Options, Processes, Runtime};
 use yuke_protocol::{
     EventNumber, Input, InputId, InputSource, Job, NoticeLevel, NoticeParams, ServerNotification, SessionId,
@@ -31,6 +32,7 @@ use yuke_protocol::{
 use yuke_store::SqliteStore;
 
 use self::live::LiveSession;
+use crate::auth::{LOCK_LIMIT, LoginSource};
 use crate::paths::Paths;
 use crate::prompt::{self, Environment};
 
@@ -56,7 +58,9 @@ pub(crate) struct Machine {
     /// Reads one environment variable, for the API key of a provider.
     pub(crate) variable: Box<Variable>,
     /// Sends the requests of the model.
-    pub(crate) transport: Box<dyn Transport>,
+    pub(crate) transport: Arc<dyn Transport>,
+    /// Sends the requests of the logins.
+    pub(crate) exchange: Arc<dyn Exchange>,
 }
 
 /// Whether the sessions can start background jobs.
@@ -80,6 +84,8 @@ struct Shared {
     store: Arc<dyn Store>,
     processes: Arc<Processes>,
     observer: Arc<dyn Observer>,
+    /// The credential of each provider with a login. One source serves each session, so one refresh serves all.
+    logins: Mutex<HashMap<&'static str, LoginSource>>,
 }
 
 /// The open sessions of one client, and the parts that they share.
@@ -142,6 +148,7 @@ impl App {
                 store,
                 processes,
                 observer,
+                logins: Mutex::default(),
             }),
             runtime,
             reporter,
@@ -162,17 +169,18 @@ impl App {
         &self.shared.store
     }
 
-    /// Check that the model of `settings` can run: the catalog knows it, and its credential exists.
+    /// Check that the model of `settings` can run: the catalog knows it, and its credential source exists. An API key
+    /// must be set. A login is read at each attempt.
     ///
     /// # Errors
     ///
-    /// Returns [`AppError::Invalid`] for an unknown model or a missing credential.
+    /// Returns [`AppError::Invalid`] for an unknown model, a missing API key, or a provider with no login flow.
     pub(crate) fn check_model(&self, settings: &SessionSettings) -> Result<(), AppError> {
-        model_of(settings, &*self.shared.machine.variable).map(drop)
+        model_of(settings, &self.shared).map(drop)
     }
 
     /// Create a session with `settings`, and open it. The folder loses its links, and the app writes the system prompt
-    /// of that folder. A missing credential stops the create before the session exists.
+    /// of that folder. A missing API key stops the create before the session exists.
     ///
     /// # Errors
     ///
@@ -401,34 +409,42 @@ impl Error for AppError {
     }
 }
 
-/// The model of `settings`, with its credential from `variable`.
-fn model_of(settings: &SessionSettings, variable: &Variable) -> Result<Model, AppError> {
+/// The model of `settings`, with the credential source of its provider: an API key, or the login of `shared`.
+fn model_of(settings: &SessionSettings, shared: &Shared) -> Result<Model, AppError> {
     let selector = format!("{}/{}", settings.model.provider, settings.model.model);
     let entry = catalog::lookup(&selector).map_err(|error| AppError::Invalid(format!("{selector}: {error}")))?;
     let provider = entry.provider;
-    let credential = match provider.auth {
+    let source: Arc<dyn CredentialSource> = match provider.auth {
         Auth::ApiKey(Some(name)) => {
-            let key = variable(name)
+            let key = (shared.machine.variable)(name)
                 .and_then(|key| key.into_string().ok())
                 .filter(|key| !key.is_empty())
                 .ok_or_else(|| AppError::Invalid(format!("no API key: set {name} for {}", provider.name)))?;
-            Credential::ApiKey(key.into())
+            Arc::new(Credential::ApiKey(key.into()))
         }
-        Auth::ApiKey(None) => Credential::None,
-        Auth::OAuth(_) => {
-            return Err(AppError::Invalid(format!(
-                "{} needs a login, and yuke has no login yet",
-                provider.name
-            )));
+        Auth::ApiKey(None) => Arc::new(Credential::None),
+        Auth::OAuth(flow_name) => {
+            let flow = Flow::named(flow_name)
+                .ok_or_else(|| AppError::Invalid(format!("yuke has no login for {} yet", provider.id)))?;
+            let source = lock(&shared.logins)
+                .entry(provider.id)
+                .or_insert_with(|| {
+                    LoginSource::new(
+                        provider.id,
+                        flow,
+                        shared.machine.paths.data.clone(),
+                        Arc::clone(&shared.machine.exchange),
+                        LOCK_LIMIT,
+                    )
+                })
+                .clone();
+            Arc::new(source)
         }
     };
     let target = entry
         .bind()
         .map_err(|error| AppError::Invalid(format!("{}/{}: {error}", provider.id, entry.model.id)))?;
-    Ok(Model {
-        target,
-        source: Arc::new(credential),
-    })
+    Ok(Model { target, source })
 }
 
 /// `folder` without links. It must be a folder.

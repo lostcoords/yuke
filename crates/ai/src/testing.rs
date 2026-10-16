@@ -1,9 +1,10 @@
 //! Canned transports and SSE fixtures for the tests of this crate.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
@@ -13,7 +14,7 @@ use crate::request::{AnthropicWire, ChatWire, Protocol, ResponsesWire, Target, W
 use crate::response::{AttemptError, Completion, Error, Response};
 use crate::route::{Credential, Route};
 use crate::stream::Options;
-use crate::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
+use crate::transport::{Answer, Body, BoxBody, BoxFuture, Exchange, ExchangeRequest, Fault, Head, Outgoing, Transport};
 use crate::{Block, Request, generate};
 
 /// Assert that two values print the same `Debug` text. An error with a boxed source has no `PartialEq`. Use it only
@@ -207,6 +208,67 @@ impl Transport for CannedTransport {
             Ok((head, body))
         };
         Box::pin(std::future::ready(result))
+    }
+}
+
+/// One exchange that a [`ScriptedExchanges`] saw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Sent {
+    pub(crate) url: String,
+    pub(crate) content_type: &'static str,
+    pub(crate) body: String,
+    /// Whether the request has a deadline, so a silent server cannot hold the flow.
+    pub(crate) has_deadline: bool,
+}
+
+/// Answer each exchange with the next scripted result, and record each request.
+#[derive(Debug, Default)]
+pub(crate) struct ScriptedExchanges {
+    answers: Mutex<VecDeque<Result<Answer, Fault>>>,
+    sent: Mutex<Vec<Sent>>,
+}
+
+impl ScriptedExchanges {
+    pub(crate) fn new(answers: impl IntoIterator<Item = Result<(u16, &'static str), Fault>>) -> Self {
+        let answers = answers
+            .into_iter()
+            .map(|answer| {
+                answer.map(|(status, body)| Answer {
+                    head: Head::new(status),
+                    body: body.as_bytes().to_vec(),
+                })
+            })
+            .collect();
+        ScriptedExchanges {
+            answers: Mutex::new(answers),
+            sent: Mutex::default(),
+        }
+    }
+
+    pub(crate) fn sent(&self) -> Vec<Sent> {
+        self.sent.lock().unwrap().clone()
+    }
+}
+
+impl Exchange for ScriptedExchanges {
+    fn exchange<'a>(
+        &'a self,
+        request: &'a ExchangeRequest<'_>,
+        deadline: Option<Instant>,
+    ) -> BoxFuture<'a, Result<Answer, Fault>> {
+        self.sent.lock().unwrap().push(Sent {
+            url: request.url.to_owned(),
+            content_type: request.content_type,
+            body: String::from_utf8(request.body.to_vec()).unwrap(),
+            has_deadline: deadline.is_some(),
+        });
+        let answer = self
+            .answers
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("the script has no answer left");
+        Box::pin(std::future::ready(answer))
     }
 }
 

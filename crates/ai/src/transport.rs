@@ -1,5 +1,6 @@
 //! A transport sends one request and returns the response head and body, as Go's `http.RoundTripper` does. A status
 //! other than 200 is a response, not an error. One transport serves many sessions, and a body owns its connection.
+//! An [`Exchange`] sends a small request and reads its whole answer, such as an OAuth token request.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -35,6 +36,21 @@ pub trait Transport: Send + Sync {
     ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>>;
 }
 
+/// Send one small request and read its whole answer.
+pub trait Exchange: Send + Sync {
+    /// Send `request`, and read its whole answer. `deadline` bounds the exchange up to the end of the answer.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Fault`] if no whole answer arrives, and [`Fault::AnswerTooLarge`] for an answer above
+    /// [`ExchangeRequest::max_answer`].
+    fn exchange<'a>(
+        &'a self,
+        request: &'a ExchangeRequest<'_>,
+        deadline: Option<Instant>,
+    ) -> BoxFuture<'a, Result<Answer, Fault>>;
+}
+
 /// The bytes of one response body, in chunks.
 pub trait Body: Send {
     /// Poll for the next chunk. `None` ends the body.
@@ -61,6 +77,8 @@ pub enum Fault {
     DnsFailed,
     /// The socket or the TLS handshake never carried a request.
     ConnectFailed,
+    /// The socket or the TLS handshake did not open before the deadline. No request left.
+    ConnectTimeout,
     /// The TLS handshake rejected the certificate of the provider, for example an expired one or one of an unknown
     /// issuer.
     CertificateRejected,
@@ -76,6 +94,8 @@ pub enum Fault {
     ConnectionLost,
     /// The peer sent a head, a chunk, or an encoding the client refuses.
     MalformedResponse,
+    /// The answer of an exchange exceeds its limit.
+    AnswerTooLarge,
 }
 
 /// One sentence for the caller. It names no internal error and no credential.
@@ -85,6 +105,7 @@ impl fmt::Display for Fault {
             Self::IdleTimeout => "the provider exchange exceeded the idle timeout",
             Self::RequestTimeout => "the provider exchange exceeded the request timeout",
             Self::ConnectFailed => "the provider connection failed",
+            Self::ConnectTimeout => "the provider connection did not open in time",
             Self::CertificateRejected => "the client rejected the TLS certificate of the provider",
             Self::DnsFailed => "the provider host did not resolve",
             Self::ConnectionLost => "the provider connection ended",
@@ -93,6 +114,7 @@ impl fmt::Display for Fault {
             Self::MalformedResponse => "the provider sent a malformed response",
             Self::InvalidRequest => "the request holds an invalid header or too many headers",
             Self::TlsSetupFailed => "the client could not build its TLS configuration",
+            Self::AnswerTooLarge => "the provider answer exceeds the size limit",
         })
     }
 }
@@ -204,5 +226,48 @@ impl Head {
             retry_after_ms: None,
             should_retry: None,
         }
+    }
+}
+
+/// A small request whose whole JSON answer the caller reads. `Debug` writes no body, because a body can carry a
+/// credential.
+#[derive(Clone, Copy)]
+pub struct ExchangeRequest<'a> {
+    /// The endpoint URL.
+    pub url: &'a str,
+    /// The media type of the body.
+    pub content_type: &'static str,
+    /// The body.
+    pub body: &'a [u8],
+    /// The most answer bytes that the caller takes.
+    pub max_answer: usize,
+}
+
+impl fmt::Debug for ExchangeRequest<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExchangeRequest")
+            .field("url", &self.url)
+            .field("content_type", &self.content_type)
+            .field("body", &"<redacted>")
+            .field("max_answer", &self.max_answer)
+            .finish()
+    }
+}
+
+/// The whole answer of an [`ExchangeRequest`]. `Debug` writes no body, because a body can carry a credential.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Answer {
+    /// The response head.
+    pub head: Head,
+    /// The body.
+    pub body: Vec<u8>,
+}
+
+impl fmt::Debug for Answer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Answer")
+            .field("head", &self.head)
+            .field("body", &"<redacted>")
+            .finish()
     }
 }

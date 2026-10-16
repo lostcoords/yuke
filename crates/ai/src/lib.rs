@@ -7,6 +7,7 @@ mod failure;
 #[cfg(feature = "http-tokio")]
 mod http;
 mod json;
+pub mod oauth;
 mod reply;
 mod request;
 mod response;

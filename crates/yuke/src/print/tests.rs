@@ -14,7 +14,7 @@ use crate::app::Variable;
 use crate::paths::Paths;
 use yuke_testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
 
-use crate::testing::Rejecting;
+use crate::testing::{Answers, Rejecting};
 
 const MODEL: &str = "minimax/MiniMax-M3";
 
@@ -54,7 +54,8 @@ impl Place {
             paths: self.paths.clone(),
             home: Some(self.home.clone()),
             variable,
-            transport,
+            transport: transport.into(),
+            exchange: Arc::new(Answers::default()),
         }
     }
 

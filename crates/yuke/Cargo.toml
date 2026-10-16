@@ -21,6 +21,8 @@ yuke-store = { path = "../store" }
 
 [dev-dependencies]
 bytes = "1.12"
+# The login tests pause the clock of tokio.
+tokio = { version = "1.53", features = ["test-util"] }
 yuke-testing = { path = "../testing" }
 
 [lints]
