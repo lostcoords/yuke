@@ -1,31 +1,4 @@
-/** A JSON schema of a value, in the subset that yuke checks. */
-export type Schema = ScalarSchema | ArraySchema | ObjectSchema;
-
-/** A string, a boolean, or a number. Only a number has `minimum` and `maximum`. */
-export type ScalarSchema =
-  | { readonly type: "string" | "boolean"; readonly description?: string }
-  | {
-      readonly type: "integer" | "number";
-      readonly description?: string;
-      readonly minimum?: number;
-      readonly maximum?: number;
-    };
-
-/** An array of `items`. */
-export interface ArraySchema {
-  readonly type: "array";
-  readonly items: Schema;
-  readonly description?: string;
-}
-
-/** An object. A field outside `properties` is an error, with or without `additionalProperties: false`. */
-export interface ObjectSchema {
-  readonly type: "object";
-  readonly properties: Readonly<Record<string, Schema>>;
-  readonly required?: readonly string[];
-  readonly additionalProperties?: false;
-  readonly description?: string;
-}
+import type { ObjectSchema, Schema } from "yuke:tools";
 
 /** The keywords of each type. A schema with another keyword has a part that no check covers, so it fails. */
 const KEYWORDS: Readonly<Record<Schema["type"], readonly string[]>> = {

@@ -97,20 +97,22 @@ impl<'a> ToolContext<'a> {
     }
 }
 
-/// The answer of a call that succeeds. The model sees its text and its media.
+/// The content of a call. The model sees its text and its media. An `Err` of [`Tool::call`] is a failure with text only.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ToolContent {
     /// The result text.
     pub text: String,
     /// Attachments beside the text, for example an image that the tool read.
     pub media: Vec<Media>,
+    /// The call failed. The model still sees the text and the media.
+    pub is_error: bool,
 }
 
 impl From<String> for ToolContent {
     fn from(text: String) -> Self {
         ToolContent {
             text,
-            media: Vec::new(),
+            ..ToolContent::default()
         }
     }
 }
@@ -219,6 +221,7 @@ impl Toolset {
         };
 
         match self.handlers[index].call(&call.arguments, context).await {
+            Ok(content) if content.is_error => ToolResult::error(&call.call_id, content.text).with_media(content.media),
             Ok(content) => ToolResult::success(&call.call_id, content.text).with_media(content.media),
             Err(content) => ToolResult::error(&call.call_id, content),
         }

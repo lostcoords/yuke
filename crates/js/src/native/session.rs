@@ -2,6 +2,7 @@
 //! commands and the jobs. The bridge builds one for each call. `yuke:internal/session` keeps it from the tools of
 //! plugins.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,17 +16,19 @@ use crate::processes::Processes;
 use crate::processes::Request;
 use crate::tools::SessionHost;
 
-/// The session object for one call. `host` is the session of the call. `stop` is the cancellation token of the call: it
-/// cancels when the call ends or drops, and it stops the commands of the call.
+/// The session object for one call. `host` gives the data of the session, and `folder` is the session folder at the
+/// start of the call. `stop` is the cancellation token of the call. It cancels when the call ends or drops, and it
+/// stops the commands of the call.
 pub(crate) fn object<'js>(
     ctx: &Ctx<'js>,
     processes: &Arc<Processes>,
     host: &Arc<dyn SessionHost>,
+    folder: PathBuf,
     stop: &CancellationToken,
 ) -> rquickjs::Result<Object<'js>> {
     let object = Object::new(ctx.clone())?;
 
-    let (exec_processes, folder, exec_stop) = (Arc::clone(processes), host.folder(), stop.clone());
+    let (exec_processes, exec_stop) = (Arc::clone(processes), stop.clone());
     object.set(
         "exec",
         Function::new(

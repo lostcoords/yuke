@@ -1,7 +1,9 @@
 import { defineTool } from "yuke:internal/define";
 import { readLines, readText, writeText } from "yuke:internal/native";
 import { sessionOf } from "yuke:internal/session";
-import { OUTPUT_BYTES } from "yuke:tools";
+
+/** The most bytes of the output of `read` and `exec`. A cut adds one line that tells the model what the cut left out. */
+const OUTPUT_BYTES = 50 * 1024;
 
 /** The largest line number. */
 const LAST_LINE = 4_294_967_295;
@@ -29,14 +31,8 @@ defineTool({
   },
   concurrency: "parallel",
   async execute(args, context) {
-    const read = await readLines(
-      args.path as string,
-      context.folder,
-      (args.offset as number | undefined) ?? 1,
-      (args.limit as number | undefined) ?? LAST_LINE,
-      OUTPUT_BYTES,
-    );
-    if ("image" in read) return { output: "Image read successfully", media: [read.image] };
+    const read = await readLines(args.path, context.folder, args.offset ?? 1, args.limit ?? LAST_LINE, OUTPUT_BYTES);
+    if ("image" in read) return { text: "Image read successfully", media: [read.image] };
 
     // The native read ends each line with a line feed. The result drops the last one.
     let text = read.text.endsWith("\n") ? read.text.slice(0, -1) : read.text;
@@ -59,7 +55,7 @@ defineTool({
   },
   concurrency: "serial",
   async execute(args, context) {
-    const bytes = await writeText(args.path as string, context.folder, args.content as string);
+    const bytes = await writeText(args.path, context.folder, args.content);
     return `The tool wrote ${bytes} bytes.`;
   },
 });
@@ -79,10 +75,7 @@ defineTool({
   },
   concurrency: "serial",
   async execute(args, context) {
-    const path = args.path as string;
-    const oldString = args.old_string as string;
-    const newString = args.new_string as string;
-    const replaceAll = (args.replace_all as boolean | undefined) ?? false;
+    const { path, old_string: oldString, new_string: newString, replace_all: replaceAll = false } = args;
     if (oldString.length === 0) throw new Error("Set old_string to a nonempty string.");
     if (oldString === newString) throw new Error("Set new_string to a value that differs from old_string.");
 
@@ -119,7 +112,7 @@ defineTool({
   },
   concurrency: "serial",
   async execute(args, context) {
-    const command = args.command as string;
+    const command = args.command;
     if (command.trim().length === 0) throw new Error("Set command to a nonempty string.");
     if (args.background === true) {
       if (args.timeout_ms !== undefined) throw new Error("Remove timeout_ms, or set background to false.");
@@ -130,17 +123,22 @@ defineTool({
       );
     }
 
-    const timeout = (args.timeout_ms as number | undefined) ?? DEFAULT_TIMEOUT;
+    const timeout = args.timeout_ms ?? DEFAULT_TIMEOUT;
     const end = await sessionOf(context).exec(command, { timeoutMs: timeout, maxBytes: OUTPUT_BYTES }, context.output);
-    let text = end.output.length === 0 ? "[no output]\n" : endLine(end.output);
-    if (end.stopped) text += "[stopped: the tool call was cancelled.]";
-    else if (end.timedOut) {
-      text +=
-        `[timeout: ${timeout} ms. yuke stopped the process group. Run a smaller command. Raise timeout_ms up to ` +
-        `${LONGEST_TIMEOUT}. Set background to true for a server or watcher.]`;
-    } else if (end.signal !== undefined) text += `[signal: ${end.signal}]`;
-    else text += `[exit code: ${end.code}]`;
-    return text;
+    const text = end.output.length === 0 ? "[no output]\n" : endLine(end.output);
+    switch (end.cause) {
+      case "cancelled":
+        return `${text}[stopped: the tool call was cancelled.]`;
+      case "timeout":
+        return (
+          `${text}[timeout: ${timeout} ms. yuke stopped the process group. Run a smaller command. Raise timeout_ms ` +
+          `up to ${LONGEST_TIMEOUT}. Set background to true for a server or watcher.]`
+        );
+      case "signal":
+        return `${text}[signal: ${end.signal}]`;
+      case "exit":
+        return `${text}[exit code: ${end.code}]`;
+    }
   },
 });
 
@@ -157,7 +155,7 @@ defineTool({
   },
   concurrency: "serial",
   async execute(args, context) {
-    const id = args.id as string;
+    const id = args.id;
     const session = sessionOf(context);
     const stopped = await session.stopJob(id);
     if (stopped === undefined) {

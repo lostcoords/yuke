@@ -167,18 +167,25 @@ pub struct JobEnded {
 }
 
 /// How a command ended.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct CommandEnd {
     /// The output: stdout and stderr in the order of their writes. A cut keeps a head and a tail around a marker.
     pub(crate) output: String,
-    /// The exit code, when the command exited.
-    pub(crate) code: Option<i32>,
-    /// The signal that ended the command, when a signal ended it.
-    pub(crate) signal: Option<i32>,
+    /// Why the command ended.
+    pub(crate) cause: EndCause,
+}
+
+/// Why a command ended. A stop by yuke wins over the exit status that the stop caused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EndCause {
+    /// The command exited with this code.
+    Exit(i32),
+    /// This signal ended the command.
+    Signal(i32),
     /// The deadline stopped the command.
-    pub(crate) timed_out: bool,
+    Timeout,
     /// The cancel of the call stopped the command.
-    pub(crate) stopped: bool,
+    Cancelled,
 }
 
 /// A command in flight. A drop stops its process group.
@@ -647,19 +654,12 @@ async fn run(request: Request, file: PathBuf, chunks: mpsc::UnboundedSender<Stri
         tokio::task::spawn_blocking(move || read_output(reader, &capture, &chunks))
     };
 
-    let mut end = CommandEnd::default();
-    let status = tokio::select! {
-        status = child.wait() => status,
-        () = tokio::time::sleep(timeout) => {
-            end.timed_out = true;
-            stop_group(group, &mut child).await
-        }
-        () = stop.cancelled() => {
-            end.stopped = true;
-            stop_group(group, &mut child).await
-        }
-    }
-    .map_err(|error| error.to_string())?;
+    let (status, stopped) = tokio::select! {
+        status = child.wait() => (status, None),
+        () = tokio::time::sleep(timeout) => (stop_group(group, &mut child).await, Some(EndCause::Timeout)),
+        () = stop.cancelled() => (stop_group(group, &mut child).await, Some(EndCause::Cancelled)),
+    };
+    let status = status.map_err(|error| error.to_string())?;
     // A process that the shell left in the group ends with the call.
     kill_rest_of_group(group);
     // A process that left the group can hold the pipe open, so the read gets one grace and no more. After the grace,
@@ -669,10 +669,18 @@ async fn run(request: Request, file: PathBuf, chunks: mpsc::UnboundedSender<Stri
             .map_err(|error| format!("the output of the command did not read: {error}"))?;
     }
 
-    end.code = status.code();
-    end.signal = std::os::unix::process::ExitStatusExt::signal(&status);
+    let cause = match (
+        stopped,
+        status.code(),
+        std::os::unix::process::ExitStatusExt::signal(&status),
+    ) {
+        (Some(cause), _, _) => cause,
+        (None, Some(code), _) => EndCause::Exit(code),
+        (None, None, Some(signal)) => EndCause::Signal(signal),
+        (None, None, None) => return Err("the command ended without an exit code or a signal".to_owned()),
+    };
     // The removal of an unneeded file is blocking work.
-    end.output = tokio::task::spawn_blocking(move || {
+    let output = tokio::task::spawn_blocking(move || {
         capture
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -680,7 +688,7 @@ async fn run(request: Request, file: PathBuf, chunks: mpsc::UnboundedSender<Stri
     })
     .await
     .map_err(|error| error.to_string())?;
-    Ok(end)
+    Ok(CommandEnd { output, cause })
 }
 
 /// Read the output until its end: give each chunk to `chunks` and keep it in `capture`.

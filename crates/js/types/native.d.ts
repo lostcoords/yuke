@@ -1,9 +1,27 @@
 // The native module: Rust functions for the built-in modules (crates/js/src/native).
 
 declare module "yuke:internal/native" {
-  /** The start of a call: the promise of its answer, and the function that aborts its signal at a cancel. */
+  import type { NoticeLevel } from "yuke:plugins";
+  import type { ToolMedia } from "yuke:tools";
+
+  /** The facts of one call. */
+  export interface CallMetadata {
+    readonly sessionId: string;
+    readonly callId: string;
+    /** The workspace folder of the session at the start of the call. */
+    readonly folder: string;
+  }
+
+  /** The checked result of a call. */
+  export interface Answer {
+    readonly text: string;
+    readonly isError: boolean;
+    readonly media: readonly ToolMedia[];
+  }
+
+  /** The start of a call: the promise of its result, and the function that aborts its signal at a cancellation. */
   export interface Started {
-    readonly answer: Promise<unknown>;
+    readonly answer: Promise<Answer>;
     readonly abort: () => void;
   }
 
@@ -19,19 +37,18 @@ declare module "yuke:internal/native" {
     readonly log: string;
   }
 
-  /** How a command ended. */
-  export interface CommandEnd {
+  /** The output and the cause of the end of a command: `exit`, `signal`, `timeout`, or `cancelled`. */
+  export type CommandEnd = {
     /** stdout and stderr in the order of their writes. A cut keeps a head and a tail around a marker. */
     readonly output: string;
-    /** The exit code, when the command exited. */
-    readonly code: number | undefined;
-    /** The signal that ended the command. */
-    readonly signal: number | undefined;
+  } & (
+    | { readonly cause: "exit"; readonly code: number }
+    | { readonly cause: "signal"; readonly signal: number }
     /** The deadline stopped the command. */
-    readonly timedOut: boolean;
-    /** The abort of the signal, or the end of the call, stopped the command. */
-    readonly stopped: boolean;
-  }
+    | { readonly cause: "timeout" }
+    /** A cancel of the call, or its end, stopped the command. */
+    | { readonly cause: "cancelled" }
+  );
 
   /** The native functions that need the session or the life of a call. */
   export interface Session {
@@ -63,23 +80,17 @@ declare module "yuke:internal/native" {
       /** The JSON text of the schema of the arguments. */
       readonly parameters: string;
       readonly concurrency: "serial" | "parallel";
-      readonly defer: boolean;
+      readonly deferLoading: boolean;
       readonly owner: string | undefined;
     },
-    start: (
-      argumentsText: string,
-      callId: string,
-      folder: string,
-      output: (text: string) => void,
-      session: Session,
-    ) => Started,
+    start: (argumentsText: string, metadata: CallMetadata, output: (text: string) => void, session: Session) => Started,
   ): void;
 
   /** Remove each tool of the plugin `owner`. */
   export function removeTools(owner: string): void;
 
   /** Send a notice of the plugin `source`. A `sessionId` that is not a session id throws a `TypeError`. */
-  export function notify(source: string, level: string, message: string, sessionId: string | undefined): void;
+  export function notify(source: string, level: NoticeLevel, message: string, sessionId: string | undefined): void;
 
   /** Numbered lines, or an image. */
   export type Lines =
@@ -91,7 +102,7 @@ declare module "yuke:internal/native" {
         /** A line that the read cut, because it alone is longer than the limit. */
         readonly cut: number | undefined;
       }
-    | { readonly image: { readonly path: string; readonly mime: string } };
+    | { readonly image: { readonly path: string; readonly mimeType: string } };
 
   /** At most `limit` lines from line `offset`, while they fit in `maxBytes`. */
   export function readLines(

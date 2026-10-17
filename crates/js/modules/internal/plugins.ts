@@ -2,7 +2,7 @@ import { defineTool } from "yuke:internal/define";
 import { hostSignal } from "yuke:internal/events";
 import { notify, removeTools } from "yuke:internal/native";
 import type { NoticeLevel, PluginApply, PluginContext, Services } from "yuke:plugins";
-import type { Tool } from "yuke:tools";
+import type { ObjectSchema, Tool } from "yuke:tools";
 
 /** One plugin as the host gives it. The host checked the manifest, the order, and the providers before any plugin code. */
 export interface PluginSpec {
@@ -33,7 +33,7 @@ export async function load(spec: PluginSpec): Promise<void> {
     dataDir: spec.dataDir,
     signal,
     tools: Object.freeze({
-      define(tool: Tool): void {
+      define<const S extends ObjectSchema>(tool: Tool<S>): void {
         if (failed) throw new TypeError(`plugin ${spec.name} did not load`);
         defineTool(tool, spec.name);
       },
@@ -47,10 +47,10 @@ export async function load(spec: PluginSpec): Promise<void> {
         throw new TypeError(`provide: plugin ${spec.name} cannot provide '${name}' as null or undefined`);
       pending.set(name, value);
     },
-    get<K extends string>(name: K): Services[K] {
+    get<K extends keyof Services & string>(name: K): NonNullable<Services[K]> {
       if (!spec.uses.includes(name)) throw new TypeError(`get: plugin ${spec.name} has no '${name}' in uses`);
       if (!services.has(name)) throw new Error(`get: no loaded plugin provides '${name}'`);
-      return services.get(name) as Services[K];
+      return services.get(name) as NonNullable<Services[K]>;
     },
     notify(level: NoticeLevel, message: string, sessionId?: string): void {
       notify(spec.name, level, String(message), sessionId);

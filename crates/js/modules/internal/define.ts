@@ -1,14 +1,14 @@
 import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { hostSignal } from "yuke:internal/events";
-import { register } from "yuke:internal/native";
+import { type Answer, register } from "yuke:internal/native";
 import { bindSession } from "yuke:internal/session";
-import type { Tool, ToolAnswer, ToolContext } from "yuke:tools";
+import type { Infer, ObjectSchema, Tool, ToolContext, ToolMedia } from "yuke:tools";
 
 /**
  * Define `tool` for `owner`, the plugin that defines it, or for yuke itself without an owner. A second tool with the
  * same name throws a `TypeError`. A plugin defines its tools with `ctx.tools.define`.
  */
-export function defineTool(tool: Tool, owner?: string): void {
+export function defineTool<const S extends ObjectSchema>(tool: Tool<S>, owner?: string): void {
   const execute = tool.execute;
   if (typeof execute !== "function") throw new TypeError("execute is not a function");
   // The model and the argument check use this one checked copy, so a later change of `tool` changes neither.
@@ -20,25 +20,85 @@ export function defineTool(tool: Tool, owner?: string): void {
     description: tool.description,
     parameters: JSON.stringify(parameters),
     concurrency: tool.concurrency,
-    defer: tool.defer === true,
+    deferLoading: tool.deferLoading === true,
     owner,
   };
-  register(description, (text, callId, folder, output, session) => {
+  register(description, (text, metadata, output, session) => {
     const { signal, abort } = hostSignal();
-    const context: ToolContext = { callId, folder, signal, output };
+    const { sessionId, callId, folder } = metadata;
+    const context: ToolContext = { sessionId, callId, folder, signal, output };
     bindSession(context, session);
-    const answer = run(() => execute(checkArguments(parameters, JSON.parse(text)), context), abort);
+    const answer = run(
+      async () => answerOf(await execute(checkArguments(parameters, JSON.parse(text)) as Infer<S>, context)),
+      abort,
+    );
     return { answer, abort: () => abort("The tool call was cancelled") };
   });
 }
 
-async function run(
-  call: () => ToolAnswer | Promise<ToolAnswer>,
-  abort: (message: string) => void,
-): Promise<ToolAnswer> {
+async function run(call: () => Promise<Answer>, abort: (message: string) => void): Promise<Answer> {
   try {
     return await call();
   } finally {
     abort("The tool call has ended");
   }
+}
+
+/** The fields of a result object and of one media item. */
+const RESULT_FIELDS = ["text", "media", "isError"];
+const MEDIA_FIELDS = ["mimeType", "path", "bytes"];
+
+// The class and its brand check at the start of the runtime, so a plugin that patches them cannot skip the copy.
+const ByteArray = Uint8Array;
+const typedArrayName = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag)
+  ?.get as (this: unknown) => string | undefined;
+
+/** The checked result of `execute`. A value of another shape throws a `TypeError`. */
+function answerOf(result: unknown): Answer {
+  if (typeof result === "string") return { text: result, isError: false, media: [] };
+  const fields = fieldsOf(result, "the result", RESULT_FIELDS);
+  if (typeof fields.text !== "string") throw new TypeError("the result text is not a string");
+  if (fields.isError !== undefined && typeof fields.isError !== "boolean") {
+    throw new TypeError("the result isError is not a boolean");
+  }
+  const list = fields.media === undefined ? [] : fields.media;
+  if (!Array.isArray(list)) throw new TypeError("the result media is not an array");
+  // An index loop, so a hole of a sparse array fails as a value that is not an object.
+  const media: ToolMedia[] = [];
+  for (let index = 0; index < list.length; index += 1) media.push(mediaOf(list[index], index));
+  return { text: fields.text, isError: fields.isError === true, media };
+}
+
+function mediaOf(value: unknown, index: number): ToolMedia {
+  const place = `the result media[${index}]`;
+  const fields = fieldsOf(value, place, MEDIA_FIELDS);
+  const mimeType = fields.mimeType;
+  if (typeof mimeType !== "string") throw new TypeError(`${place}.mimeType is not a string`);
+  if (Object.hasOwn(fields, "path") === Object.hasOwn(fields, "bytes")) {
+    throw new TypeError(`${place} needs exactly one of path and bytes`);
+  }
+  if (Object.hasOwn(fields, "path")) {
+    if (typeof fields.path !== "string") throw new TypeError(`${place}.path is not a string`);
+    return { mimeType, path: fields.path };
+  }
+  if (typedArrayName.call(fields.bytes) !== "Uint8Array") throw new TypeError(`${place}.bytes is not a Uint8Array`);
+  // A copy through the constructor, so a later change of the bytes by the tool does not change the result.
+  return { mimeType, bytes: new ByteArray(fields.bytes as Uint8Array) };
+}
+
+/**
+ * A copy of the own fields of the object `value`. A value that is not an object, a symbol key, or a field outside
+ * `names` throws. An inherited field does not count.
+ */
+function fieldsOf(value: unknown, place: string, names: readonly string[]): Readonly<Record<string, unknown>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${place} is not an object`);
+  }
+  const fields: Record<string, unknown> = {};
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") throw new TypeError(`${place} has a symbol key`);
+    if (!names.includes(key)) throw new TypeError(`${place} has the unknown field '${key}'`);
+    fields[key] = (value as Record<string, unknown>)[key];
+  }
+  return fields;
 }

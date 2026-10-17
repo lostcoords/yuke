@@ -27,9 +27,9 @@ def output(*command):
     return subprocess.check_output(command, cwd=ROOT, text=True).strip()
 
 
-def copy_typescript(source, destination):
+def copy_typescript(source, destination, pattern="**/*.ts"):
     """Copy TS source without local editor files or other development state."""
-    for path in sorted(source.rglob("*.ts")):
+    for path in sorted(source.glob(pattern)):
         if path.is_symlink():
             raise RuntimeError("package source must be a regular file: " + str(path))
         target = destination / path.relative_to(source)
@@ -111,14 +111,15 @@ def main():
         shutil.copy2(binary, staging / "bin/yuke")
         library = staging / "lib/yuke"
         library.mkdir(parents=True)
-        copy_typescript(ROOT / "crates/js/modules", library / "modules")
-        copy_typescript(ROOT / "crates/js/types", library / "types")
+        # Authors get only the public modules and the globals, so an internal import fails their type check too.
+        copy_typescript(ROOT / "crates/js/modules", library / "modules", "*.ts")
+        copy_typescript(ROOT / "crates/js/types", library / "types", "globals.d.ts")
         copy_typescript(ROOT / "crates/protocol/bindings", library / "protocol/bindings")
         shutil.copy2(ROOT / "crates/protocol/README.md", library / "protocol/README.md")
         shutil.copy2(ROOT / "LICENSE.md", library / "LICENSE.md")
         configuration = json.loads((ROOT / "crates/js/tsconfig.json").read_text())
-        configuration["include"] = ["./modules/**/*.ts", "./protocol/bindings/**/*.ts"]
-        configuration["files"] = ["./types/native.d.ts", "./types/globals.d.ts"]
+        configuration["include"] = ["./modules/*.ts", "./protocol/bindings/**/*.ts"]
+        configuration["files"] = ["./types/globals.d.ts"]
         configuration["compilerOptions"]["paths"]["yuke:protocol/*"] = ["./protocol/bindings/*.ts"]
         (library / "tsconfig.json").write_text(json.dumps(configuration, indent=2) + "\n")
         identity = {"format": 1, "version": version, "commit": commit, "target": target, "dirty": dirty}

@@ -3,13 +3,13 @@
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::io::Read as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::pin;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rquickjs::{Ctx, FromJs, Function, Object, Persistent, Promise, Value};
+use rquickjs::{Ctx, FromJs, Function, Object, Persistent, Promise, TypedArray, Value};
 use tokio::sync::mpsc;
 use yuke_engine::{
     CancellationToken, Concurrency, Tool, ToolContent, ToolContext, ToolNameError, is_reserved_tool_name,
@@ -25,6 +25,9 @@ use crate::runtime::Caller;
 /// call of a session, also after a reload or a change of its folder: the jobs of a session belong to its host.
 #[async_trait]
 pub trait SessionHost: Send + Sync {
+    /// The id of the session. A tool gets it as `sessionId`.
+    fn session_id(&self) -> yuke_protocol::SessionId;
+
     /// The workspace folder of the session now. Relative paths and commands of the tools start here.
     fn folder(&self) -> PathBuf;
 
@@ -228,15 +231,18 @@ impl ScriptTool {
         token: CancellationToken,
         output: mpsc::UnboundedSender<String>,
     ) -> Result<ToolContent, String> {
+        // One folder for the whole call: the context, the commands, and the media paths of the answer.
         let folder = self.host.folder();
-        let Some(folder) = folder.to_str().map(str::to_owned) else {
+        let Some(folder_text) = folder.to_str().map(str::to_owned) else {
             return Err(format!("the workspace folder {} is not UTF-8", folder.display()));
         };
         let id = self.id;
         let processes = Arc::clone(&self.processes);
         let host = Arc::clone(&self.host);
+        let session_folder = folder.clone();
         let arguments = arguments.to_owned();
         let call_id = call_id.to_owned();
+        let session_id = self.host.session_id().to_string();
         let answer = self
             .caller
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
@@ -259,8 +265,12 @@ impl ScriptTool {
                 // A cancel of the call stops its commands. The guard also stops them when the call ends or drops.
                 let stop = token.child_token();
                 let _guard = stop.clone().drop_guard();
-                let session = caught(&ctx, session::object(&ctx, &processes, &host, &stop))?;
-                let started: Object<'_> = caught(&ctx, start.call((arguments, call_id, folder, output, session)))?;
+                let session = caught(&ctx, session::object(&ctx, &processes, &host, session_folder, &stop))?;
+                let metadata = caught(&ctx, Object::new(ctx.clone()))?;
+                caught(&ctx, metadata.set("sessionId", session_id))?;
+                caught(&ctx, metadata.set("callId", call_id))?;
+                caught(&ctx, metadata.set("folder", folder_text))?;
+                let started: Object<'_> = caught(&ctx, start.call((arguments, metadata, output, session)))?;
                 let promise: Promise<'_> = caught(&ctx, started.get("answer"))?;
                 let abort: Function<'_> = caught(&ctx, started.get("abort"))?;
 
@@ -276,34 +286,39 @@ impl ScriptTool {
             })
             .await
             .map_err(|error| error_text(&error))?;
-        self.content(answer).await
+        self.content(answer, &folder).await
     }
 
-    /// The engine content of `answer`: its text, and each media file stored through the host.
-    async fn content(&self, answer: Answer) -> Result<ToolContent, String> {
+    /// The engine content of the result `answer`: its text, its error flag, and each media item stored through the
+    /// host. A relative media path starts in `folder`.
+    async fn content(&self, answer: Answer, folder: &Path) -> Result<ToolContent, String> {
         // Each read comes before the first store, so a failed read leaves no blob without a reference.
         let mut files = Vec::with_capacity(answer.media.len());
         for file in answer.media {
-            let path = self.host.folder().join(&file.path);
-            let bytes = read_file(path)
-                .await
-                .map_err(|error| format!("{}: {error}", file.path))?;
-            files.push((bytes, file.mime));
+            let bytes = match file.source {
+                Source::Path(path) => read_file(folder.join(&path))
+                    .await
+                    .map_err(|error| format!("{path}: {error}"))?,
+                Source::Bytes(bytes) if bytes.len() as u64 > MAX_MEDIA_BYTES => return Err(too_large()),
+                Source::Bytes(bytes) => bytes,
+            };
+            files.push((bytes, file.mime_type));
         }
         let mut media = Vec::with_capacity(files.len());
-        for (bytes, mime) in files {
+        for (bytes, mime_type) in files {
             let blob = self.host.put_media(bytes).await?;
-            media.push(yuke_ai::Media::new(blob, mime));
+            media.push(yuke_ai::Media::new(blob, mime_type));
         }
         Ok(ToolContent {
-            text: answer.output,
+            text: answer.text,
             media,
+            is_error: answer.is_error,
         })
     }
 }
 
-/// The largest media file of each provider: 5 MiB as base64. Anthropic on Bedrock and Google Cloud, which OpenRouter
-/// can use, has this limit per image.
+/// The largest media item of each provider, from a file or from bytes: 5 MiB as base64. Anthropic on Bedrock and
+/// Google Cloud, which OpenRouter can use, has this limit per image.
 const MAX_MEDIA_BYTES: u64 = 5 * 1024 * 1024 / 4 * 3;
 
 /// The bytes of the file at `path`, at most [`MAX_MEDIA_BYTES`]. A blocking thread of tokio reads them, so the task of
@@ -316,10 +331,7 @@ async fn read_file(path: PathBuf) -> std::io::Result<Vec<u8>> {
             .take(MAX_MEDIA_BYTES + 1)
             .read_to_end(&mut bytes)?;
         if bytes.len() as u64 > MAX_MEDIA_BYTES {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::FileTooLarge,
-                format!("the file is larger than the media limit of {MAX_MEDIA_BYTES} bytes"),
-            ));
+            return Err(std::io::Error::new(std::io::ErrorKind::FileTooLarge, too_large()));
         }
         Ok(bytes)
     })
@@ -336,37 +348,42 @@ fn error_text(error: &Error) -> String {
     }
 }
 
-/// The answer of a tool: a string, or `{ output, media }`.
+/// The error text of a media item over [`MAX_MEDIA_BYTES`].
+fn too_large() -> String {
+    format!("the media is larger than the limit of {MAX_MEDIA_BYTES} bytes")
+}
+
+/// The checked result of a call: `{ text, isError, media }`.
 #[derive(Debug)]
 struct Answer {
-    output: String,
+    text: String,
+    is_error: bool,
     media: Vec<MediaFile>,
 }
 
-/// A file that an answer attaches.
+/// A media item of a result.
 #[derive(Debug)]
 struct MediaFile {
-    path: String,
-    mime: String,
+    mime_type: String,
+    source: Source,
+}
+
+/// Where the bytes of a media file come from.
+#[derive(Debug)]
+enum Source {
+    /// A file. A relative path starts in the folder of the call.
+    Path(String),
+    /// The bytes that the tool gave.
+    Bytes(Vec<u8>),
 }
 
 impl<'js> FromJs<'js> for Answer {
     fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-        if let Some(text) = value.as_string() {
-            return Ok(Self {
-                output: text.to_string()?,
-                media: Vec::new(),
-            });
-        }
-        let Some(object) = value.as_object() else {
-            return Err(rquickjs::Error::new_from_js(
-                value.type_name(),
-                "a string or { output, media }",
-            ));
-        };
+        let object = Object::from_value(value)?;
         Ok(Self {
-            output: object.get("output")?,
-            media: object.get::<_, Option<Vec<MediaFile>>>("media")?.unwrap_or_default(),
+            text: object.get("text")?,
+            is_error: object.get("isError")?,
+            media: object.get("media")?,
         })
     }
 }
@@ -374,9 +391,25 @@ impl<'js> FromJs<'js> for Answer {
 impl<'js> FromJs<'js> for MediaFile {
     fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
         let object = Object::from_value(value)?;
+        let source = match object.get::<_, Option<String>>("path")? {
+            Some(path) => Source::Path(path),
+            None => Source::Bytes(copy(&object.get("bytes")?)?),
+        };
         Ok(Self {
-            path: object.get("path")?,
-            mime: object.get("mime")?,
+            mime_type: object.get("mimeType")?,
+            source,
         })
     }
+}
+
+/// A copy of the bytes of `array`. A detached buffer fails.
+fn copy(array: &TypedArray<'_, u8>) -> rquickjs::Result<Vec<u8>> {
+    #[expect(
+        unsafe_code,
+        reason = "rquickjs reads the bytes of a typed array only through an unsafe borrow"
+    )]
+    // SAFETY: the borrow ends inside this statement, and no JavaScript runs while it lives, so the engine cannot
+    // detach or resize the buffer under it.
+    let bytes = unsafe { array.as_bytes() }.map(<[u8]>::to_vec);
+    bytes.ok_or_else(|| rquickjs::Error::new_from_js("detached Uint8Array", "bytes"))
 }

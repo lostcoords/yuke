@@ -58,7 +58,7 @@ async fn read_lines(
         Lines::Image { path, mime } => {
             let image = Object::new(ctx.clone())?;
             image.set("path", path)?;
-            image.set("mime", mime)?;
+            image.set("mimeType", mime)?;
             object.set("image", image)?;
         }
     }

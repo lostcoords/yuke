@@ -89,7 +89,7 @@ pub(super) fn add<'js>(
                     name: tool.get("name")?,
                     description: tool.get("description")?,
                     input_schema: tool.get("parameters")?,
-                    defer_loading: tool.get("defer")?,
+                    defer_loading: tool.get("deferLoading")?,
                 };
                 registry
                     .add(&ctx, definition, concurrency, start, tool.get("owner")?)

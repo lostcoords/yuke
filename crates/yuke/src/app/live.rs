@@ -478,6 +478,10 @@ struct Host {
 
 #[async_trait]
 impl SessionHost for Host {
+    fn session_id(&self) -> SessionId {
+        self.inbox.output.session
+    }
+
     fn folder(&self) -> PathBuf {
         lock(&self.folder).clone()
     }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
   "files": {
-    "includes": ["crates/js/modules/**/*.ts", "crates/js/types/**/*.ts"]
+    "includes": ["crates/js/modules/**/*.ts", "crates/js/types/**/*.ts", "crates/js/type-tests/**/*.ts"]
   },
   "formatter": {
     "indentStyle": "space",

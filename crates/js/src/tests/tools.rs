@@ -11,15 +11,18 @@ use async_trait::async_trait;
 use rquickjs::Ctx;
 use tokio::sync::mpsc;
 use yuke_engine::{CancellationToken, Concurrency, Tool, ToolContent};
+use yuke_protocol::SessionId;
 
 use super::{evaluate, folder, load_tools, module, next_fault, script_error, start, write};
 use crate::tools::forward;
 use crate::{JobEnded, Runtime, ScriptTool, SessionHost, baked};
 
 /// A session host that keeps the bytes of each stored attachment and each job end.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct TestHost {
-    pub(super) folder: PathBuf,
+    pub(super) session: SessionId,
+    /// The folder of the session. A test can change it while a call runs.
+    pub(super) folder: Mutex<PathBuf>,
     pub(super) media: Mutex<Vec<Vec<u8>>>,
     pub(super) ended: Mutex<Vec<JobEnded>>,
     /// Each start and end of a job, in order.
@@ -32,16 +35,24 @@ impl TestHost {
     /// A host for a session in `folder`.
     pub(super) fn new(folder: &Path) -> Self {
         TestHost {
-            folder: folder.to_owned(),
-            ..TestHost::default()
+            session: SessionId::generate(),
+            folder: Mutex::new(folder.to_owned()),
+            media: Mutex::default(),
+            ended: Mutex::default(),
+            changed: Mutex::default(),
+            end_gate: None,
         }
     }
 }
 
 #[async_trait]
 impl SessionHost for TestHost {
+    fn session_id(&self) -> SessionId {
+        self.session
+    }
+
     fn folder(&self) -> PathBuf {
-        self.folder.clone()
+        self.folder.lock().unwrap().clone()
     }
 
     async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String> {
@@ -156,7 +167,7 @@ async fn a_user_module_imports_a_public_built_in_module() {
         &folder,
         &[(
             "main.ts",
-            "import { OUTPUT_BYTES } from 'yuke:tools';\nglobalThis.bytes = OUTPUT_BYTES;\n",
+            "import * as plugins from 'yuke:plugins';\nglobalThis.loaded = typeof plugins;\n",
         )],
     );
     let (runtime, _faults) = start(&folder).await;
@@ -164,8 +175,8 @@ async fn a_user_module_imports_a_public_built_in_module() {
     runtime.import(&module(&folder, "main.ts")).await.unwrap();
 
     assert_eq!(
-        evaluate::<u32>(&runtime, "return globalThis.bytes;").await.unwrap(),
-        50 * 1024
+        evaluate::<String>(&runtime, "return globalThis.loaded;").await.unwrap(),
+        "object"
     );
 }
 
@@ -275,7 +286,7 @@ async fn a_deferred_tool_is_defined_for_the_tool_search_and_others_are_not() {
             "main.ts",
             &format!(
                 "export default function apply({{ tools: {{ define }} }}) {{\n\
-                 define({{ name: 'rare', description: 'd', concurrency: 'serial', defer: true, {empty} }});\n\
+                 define({{ name: 'rare', description: 'd', concurrency: 'serial', deferLoading: true, {empty} }});\n\
                  define({{ name: 'common', description: 'd', concurrency: 'serial', {empty} }});\n\
                  }}\n"
             ),
@@ -662,7 +673,7 @@ async fn an_image_read_answers_media_through_the_host() {
 const ATTACH_TOOL: &str = "export default function apply({ tools: { define } }) {\n\
     const files = { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } } } } as const;\n\
     define({ name: 'attach', description: 'd', concurrency: 'serial', parameters: files, execute(args) {\n\
-      return { output: 'attached', media: (args.paths ?? []).map((path) => ({ path, mime: 'image/png' })) };\n\
+      return { text: 'attached', media: (args.paths ?? []).map((path) => ({ path, mimeType: 'image/png' })) };\n\
     } });\n\
     }\n";
 
@@ -684,7 +695,7 @@ async fn media_over_the_limit_fails_the_call_and_stores_no_file_of_it() {
 
     assert_eq!(
         large,
-        format!("large.png: the file is larger than the media limit of {limit} bytes")
+        format!("large.png: the media is larger than the limit of {limit} bytes")
     );
     assert_eq!(stored_after_large, 0);
     assert_eq!(fits.unwrap().media[0].blob.len, limit);
@@ -763,4 +774,190 @@ async fn edit_without_a_match_fails() {
         error,
         "The file has no match for old_string. Read the file and copy the exact text."
     );
+}
+
+/// A module that defines the tools of the result tests.
+const RESULT_TOOLS: &str = "export default function apply({ tools: { define } }) {\n\
+    const empty = { type: 'object', properties: {} } as const;\n\
+    const define0 = (name, execute) => define({ name, description: 'd', concurrency: 'serial', parameters: empty, execute });\n\
+    define0('facts', (_args, context) => JSON.stringify([context.sessionId, context.callId, context.folder]));\n\
+    define0('failed', () => ({ text: 'the render failed', media: [{ path: 'dot.png', mimeType: 'image/png' }], isError: true }));\n\
+    define0('drawn', (_args, context) => {\n\
+      const view = new Uint8Array([9, 1, 2, 9]).subarray(1, 3);\n\
+      context.signal.addEventListener('abort', () => view.fill(7));\n\
+      return { text: 'drawn', media: [{ bytes: view, mimeType: 'image/png' }] };\n\
+    });\n\
+    define0('own', (_args, context) => {\n\
+      class Own extends Uint8Array { slice() { return this; } }\n\
+      const bytes = new Own([1, 2]);\n\
+      context.signal.addEventListener('abort', () => bytes.fill(7));\n\
+      return { text: 'own', media: [{ bytes, mimeType: 'image/png' }] };\n\
+    });\n\
+    define0('large', () => ({ text: 'large', media: [{ bytes: new Uint8Array(5 * 1024 * 1024 / 4 * 3 + 1), mimeType: 'image/png' }] }));\n\
+    const shapes = [5, { output: 'x' }, { text: 1 }, { text: 'x', isError: 'yes' }, { text: 'x', media: {} },\n\
+      { text: 'x', media: [{ mimeType: 'image/png' }] },\n\
+      { text: 'x', media: [{ mimeType: 'image/png', path: 'a', bytes: new Uint8Array(1) }] },\n\
+      { text: 'x', media: [{ mimeType: 'image/png', bytes: [1] }] }, { text: 'x', media: [{ mimeType: 'image/png', path: 5 }] },\n\
+      { text: 'x', media: [{ mimeType: 5, path: 'a' }] }, Object.defineProperty({ text: 'x' }, 'hidden', { value: 1 }),\n\
+      { text: 'x', [Symbol('tag')]: 1 }, Object.create({ text: 'x' }), { text: 'x', media: null },\n\
+      { text: 'x', media: [{ mimeType: 'image/png', path: 'a', bytes: undefined }] },\n\
+      { text: 'x', media: [, { mimeType: 'image/png', path: 'a' }] }];\n\
+    define({ name: 'shape', description: 'd', concurrency: 'serial',\n\
+      parameters: { type: 'object', properties: { index: { type: 'integer' } }, required: ['index'] },\n\
+      execute: (args) => shapes[args.index] });\n\
+    }\n";
+
+#[tokio::test]
+async fn a_call_gets_the_id_of_its_session_its_call_id_and_its_folder() {
+    let folder = folder("a_call_gets_the_id_of_its_session_its_call_id_and_its_folder");
+    write(&folder, &[("tools.ts", RESULT_TOOLS)]);
+    let (runtime, host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
+    let other = Arc::new(TestHost::new(&folder.join("other")));
+    let other_tools = runtime.tools(Arc::clone(&other) as Arc<dyn SessionHost>).await.unwrap();
+    let other_facts = other_tools
+        .iter()
+        .find(|(definition, _)| definition.name == "facts")
+        .unwrap();
+
+    let content = call(&tools["facts"], "{}").await.0.unwrap();
+    let other_text = text_of(&other_facts.1, "{}").await;
+
+    assert!(!content.is_error);
+    let text = content.text;
+
+    assert_eq!(text, format!(r#"["{}","call-1","{}"]"#, host.session, folder.display()));
+    assert_eq!(
+        other_text,
+        format!(r#"["{}","call-1","{}"]"#, other.session, folder.join("other").display())
+    );
+}
+
+#[tokio::test]
+async fn an_error_result_keeps_its_text_and_its_media() {
+    let folder = folder("an_error_result_keeps_its_text_and_its_media");
+    write(&folder, &[("tools.ts", RESULT_TOOLS), ("dot.png", "png")]);
+    let (_runtime, host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
+
+    let content = call(&tools["failed"], "{}").await.0.unwrap();
+
+    assert!(content.is_error);
+    assert_eq!(content.text, "the render failed");
+    assert_eq!(content.media.len(), 1);
+    assert_eq!(*host.media.lock().unwrap(), [b"png".to_vec()]);
+}
+
+#[tokio::test]
+async fn media_bytes_reach_the_store_as_the_view_held_them_at_the_return() {
+    let folder = folder("media_bytes_reach_the_store_as_the_view_held_them_at_the_return");
+    write(&folder, &[("tools.ts", RESULT_TOOLS)]);
+    let (_runtime, host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
+
+    let content = call(&tools["drawn"], "{}").await.0.unwrap();
+
+    assert!(!content.is_error);
+    assert_eq!(content.media[0].mime, "image/png");
+    assert_eq!(*host.media.lock().unwrap(), [vec![1, 2]]);
+}
+
+#[tokio::test]
+async fn media_bytes_of_a_subclass_with_its_own_slice_are_copied_too() {
+    let folder = folder("media_bytes_of_a_subclass_with_its_own_slice_are_copied_too");
+    write(&folder, &[("tools.ts", RESULT_TOOLS)]);
+    let (_runtime, host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
+
+    let content = call(&tools["own"], "{}").await.0.unwrap();
+
+    assert_eq!(content.media.len(), 1);
+    assert_eq!(*host.media.lock().unwrap(), [vec![1, 2]]);
+}
+
+#[tokio::test]
+async fn media_bytes_over_the_limit_fail_the_call_and_store_nothing() {
+    let folder = folder("media_bytes_over_the_limit_fail_the_call_and_store_nothing");
+    write(&folder, &[("tools.ts", RESULT_TOOLS)]);
+    let (_runtime, host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
+
+    let error = error_of(&tools["large"], "{}").await;
+
+    assert_eq!(
+        error,
+        format!(
+            "the media is larger than the limit of {} bytes",
+            5 * 1024 * 1024 / 4 * 3
+        )
+    );
+    assert!(host.media.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_result_of_another_shape_is_an_error_that_names_the_problem() {
+    let folder = folder("a_result_of_another_shape_is_an_error_that_names_the_problem");
+    write(&folder, &[("tools.ts", RESULT_TOOLS)]);
+    let (_runtime, _host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
+
+    let mut errors = Vec::new();
+    for index in 0..16 {
+        errors.push(error_of(&tools["shape"], &format!(r#"{{"index": {index}}}"#)).await);
+    }
+
+    assert_eq!(
+        errors,
+        [
+            "the result is not an object",
+            "the result has the unknown field 'output'",
+            "the result text is not a string",
+            "the result isError is not a boolean",
+            "the result media is not an array",
+            "the result media[0] needs exactly one of path and bytes",
+            "the result media[0] needs exactly one of path and bytes",
+            "the result media[0].bytes is not a Uint8Array",
+            "the result media[0].path is not a string",
+            "the result media[0].mimeType is not a string",
+            "the result has the unknown field 'hidden'",
+            "the result has a symbol key",
+            "the result text is not a string",
+            "the result media is not an array",
+            "the result media[0] needs exactly one of path and bytes",
+            "the result media[0] is not an object",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_media_path_starts_in_the_folder_of_the_start_of_the_call() {
+    let folder = folder("a_media_path_starts_in_the_folder_of_the_start_of_the_call");
+    write(
+        &folder,
+        &[
+            ("first/dot.png", "first"),
+            ("second/dot.png", "second"),
+            (
+                "tools.ts",
+                "export default function apply({ tools: { define } }) {\n\
+                 define({ name: 'later', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} },\n\
+                   execute: () => new Promise((resolve) => {\n\
+                     globalThis.release = () => resolve({ text: 'x', media: [{ path: 'dot.png', mimeType: 'image/png' }] });\n\
+                   }) });\n\
+                 }\n",
+            ),
+        ],
+    );
+    let (runtime, _faults) = start(&folder).await;
+    let host = Arc::new(TestHost::new(&folder.join("first")));
+    let (runtime, host, tools) = tools_in(runtime, host, &[&module(&folder, "tools.ts")]).await;
+
+    let release = async {
+        while !evaluate::<bool>(&runtime, "return typeof globalThis.release === 'function';")
+            .await
+            .unwrap()
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        *host.folder.lock().unwrap() = folder.join("second");
+        evaluate::<()>(&runtime, "globalThis.release();").await.unwrap();
+    };
+    let ((answer, _texts), ()) = tokio::join!(call(&tools["later"], "{}"), release);
+
+    assert_eq!(answer.unwrap().media.len(), 1);
+    assert_eq!(*host.media.lock().unwrap(), [b"first".to_vec()]);
 }

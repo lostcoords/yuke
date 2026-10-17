@@ -3,10 +3,10 @@
 use rquickjs::{Ctx, Function, Object};
 
 use crate::error::throw;
-use crate::processes::{Processes, Request};
+use crate::processes::{EndCause, Processes, Request};
 
 /// Run the command of `request`. Each chunk of output goes to `on_output`. The stop of the call stops the command. It
-/// answers `{ output, code, signal, timedOut, stopped }`.
+/// answers `{ output, cause }`. The cause is `exit` with `code`, `signal` with `signal`, `timeout`, or `cancelled`.
 pub(crate) async fn exec<'js>(
     ctx: Ctx<'js>,
     processes: &Processes,
@@ -38,9 +38,17 @@ pub(crate) async fn exec<'js>(
     };
     let object = Object::new(ctx.clone())?;
     object.set("output", end.output)?;
-    object.set("code", end.code)?;
-    object.set("signal", end.signal)?;
-    object.set("timedOut", end.timed_out)?;
-    object.set("stopped", end.stopped)?;
+    match end.cause {
+        EndCause::Exit(code) => {
+            object.set("cause", "exit")?;
+            object.set("code", code)?;
+        }
+        EndCause::Signal(signal) => {
+            object.set("cause", "signal")?;
+            object.set("signal", signal)?;
+        }
+        EndCause::Timeout => object.set("cause", "timeout")?,
+        EndCause::Cancelled => object.set("cause", "cancelled")?,
+    }
     Ok(object)
 }

@@ -147,11 +147,11 @@ else:
 
     def test_package_source_and_protocol_bindings_match_the_checkout(self):
         self.assertEqual(self.identity["commit"], self.expected_commit)
-        for source, installed in [(ROOT / "crates/js/modules", "modules"),
-                                  (ROOT / "crates/js/types", "types"),
-                                  (ROOT / "crates/protocol/bindings", "protocol/bindings")]:
+        for source, installed, pattern in [(ROOT / "crates/js/modules", "modules", "*.ts"),
+                                           (ROOT / "crates/js/types", "types", "globals.d.ts"),
+                                           (ROOT / "crates/protocol/bindings", "protocol/bindings", "**/*.ts")]:
             expected = {path.relative_to(source).as_posix(): path.read_bytes()
-                        for path in source.rglob("*.ts") if path.is_file()}
+                        for path in source.glob(pattern) if path.is_file()}
             folder = self.extracted / "lib/yuke" / installed
             actual = {path.relative_to(folder).as_posix(): path.read_bytes()
                       for path in folder.rglob("*") if path.is_file()}
@@ -165,7 +165,7 @@ else:
         result = subprocess.run([self.compiler, "-p", str(configuration), "--pretty", "false"],
                                 text=True, capture_output=True, cwd=self.scratch, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        for folder in ("modules/internal", "protocol/bindings"):
+        for folder in ("modules", "protocol/bindings"):
             with self.subTest(folder=folder):
                 invalid = self.library / folder / "package-type-error.ts"
                 invalid.write_text('export const value: string = 1;\n')
@@ -174,6 +174,22 @@ else:
                 self.assertNotEqual(rejected.returncode, 0)
                 self.assertIn("TS2322", rejected.stdout + rejected.stderr)
                 invalid.unlink()
+
+    def test_an_author_import_of_an_internal_module_fails_the_type_check(self):
+        self.install()
+        plugin = self.profile / "plugins/internal-import"
+        plugin.mkdir(parents=True)
+        (plugin / "index.ts").write_text('import { defineTool } from "yuke:internal/define";\nexport { defineTool };\n')
+        configuration = self.profile / "tsconfig.json"
+        result = subprocess.run([self.compiler, "-p", str(configuration), "--pretty", "false"],
+                                text=True, capture_output=True, cwd=self.scratch, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("TS2307", result.stdout + result.stderr)
+        (plugin / "index.ts").write_text('import type { PluginApply } from "yuke:plugins";\n'
+                                         'const apply: PluginApply = () => {};\nexport default apply;\n')
+        accepted = subprocess.run([self.compiler, "-p", str(configuration), "--pretty", "false"],
+                                  text=True, capture_output=True, cwd=self.scratch, timeout=30)
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
 
     def test_installed_rpc_initializes_without_provider_credentials(self):
         self.install()
@@ -250,10 +266,10 @@ if ("result" in response) {
 
     def test_same_version_reinstallation_repairs_missing_library_files(self):
         self.install()
-        original = (self.library / "modules/internal/arguments.ts").read_bytes()
-        (self.library / "modules/internal/arguments.ts").unlink()
+        original = (self.library / "modules/plugins.ts").read_bytes()
+        (self.library / "modules/plugins.ts").unlink()
         self.install()
-        self.assertEqual((self.library / "modules/internal/arguments.ts").read_bytes(), original)
+        self.assertEqual((self.library / "modules/plugins.ts").read_bytes(), original)
         self.assertEqual(json.loads((self.library / "build.json").read_text()), self.identity)
 
     def test_archive_symlinks_are_rejected_before_extraction(self):

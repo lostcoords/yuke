@@ -94,6 +94,14 @@ async fn a_command_leads_its_own_session_without_the_terminal_of_yuke() {
 }
 
 #[tokio::test]
+async fn exec_names_the_signal_that_ended_the_shell() {
+    let folder = folder("exec_names_the_signal_that_ended_the_shell");
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
+
+    assert_eq!(run(&tools, "kill -9 $$").await, "[no output]\n[signal: 9]");
+}
+
+#[tokio::test]
 async fn exec_without_output_says_so() {
     let folder = folder("exec_without_output_says_so");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
@@ -110,6 +118,20 @@ async fn exec_gives_its_output_as_live_texts() {
 
     assert_eq!(answer.unwrap().text, "one\ntwo\n[exit code: 0]");
     assert_eq!(texts.concat(), "one\ntwo\n");
+}
+
+#[tokio::test]
+async fn exec_reports_its_deadline_also_when_the_shell_exits_0_at_the_stop() {
+    let folder = folder("exec_reports_its_deadline_also_when_the_shell_exits_0_at_the_stop");
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
+
+    let text = text_of(
+        &tools["exec"],
+        r#"{"command": "trap 'exit 0' TERM; sleep 30 & wait", "timeout_ms": 200}"#,
+    )
+    .await;
+
+    assert!(text.starts_with("[no output]\n[timeout: 200 ms."), "{text}");
 }
 
 #[tokio::test]
@@ -454,9 +476,8 @@ async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
     let processes = Arc::new(Processes::new(folder.join("processes")));
     let gate = Arc::new(tokio::sync::Notify::new());
     let host = Arc::new(TestHost {
-        folder: folder.clone(),
         end_gate: Some(Arc::clone(&gate)),
-        ..TestHost::default()
+        ..TestHost::new(&folder)
     });
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     text_of(&exec, r#"{"command": "echo hello", "background": true}"#).await;

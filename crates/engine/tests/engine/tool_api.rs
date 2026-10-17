@@ -180,8 +180,41 @@ impl Tool for ReadsImage {
         Ok(ToolContent {
             text: "a picture".to_owned(),
             media: vec![image()],
+            is_error: false,
         })
     }
+}
+
+/// A tool that fails with an image beside its text, for example a screenshot of a failed render.
+struct FailsWithImage;
+
+#[async_trait]
+impl Tool for FailsWithImage {
+    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
+        Ok(ToolContent {
+            text: "the render failed".to_owned(),
+            media: vec![image()],
+            is_error: true,
+        })
+    }
+}
+
+#[test]
+fn an_error_result_of_a_tool_keeps_its_media() {
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", "render", "{}")]), text_reply("done")]);
+    let model = model();
+    let mut toolset = Toolset::new();
+    toolset.add(definition("render"), FailsWithImage).unwrap();
+    let driver = Driver::new(&transport, &model, &NoWait)
+        .toolset(&toolset)
+        .blobs(&TwoBytes);
+
+    let results = results_in_context(driver);
+
+    assert_eq!(
+        results,
+        [ToolResult::error("c1", "the render failed").with_media(vec![image()])]
+    );
 }
 
 #[test]

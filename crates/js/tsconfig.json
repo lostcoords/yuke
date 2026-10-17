@@ -33,5 +33,5 @@
     "noUncheckedSideEffectImports": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["modules/**/*.ts", "types/**/*.d.ts"]
+  "include": ["modules/**/*.ts", "types/**/*.d.ts", "type-tests/**/*.ts"]
 }
