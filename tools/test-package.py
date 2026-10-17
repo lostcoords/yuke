@@ -250,10 +250,10 @@ if ("result" in response) {
 
     def test_same_version_reinstallation_repairs_missing_library_files(self):
         self.install()
-        original = (self.library / "modules/internal/signal.ts").read_bytes()
-        (self.library / "modules/internal/signal.ts").unlink()
+        original = (self.library / "modules/internal/arguments.ts").read_bytes()
+        (self.library / "modules/internal/arguments.ts").unlink()
         self.install()
-        self.assertEqual((self.library / "modules/internal/signal.ts").read_bytes(), original)
+        self.assertEqual((self.library / "modules/internal/arguments.ts").read_bytes(), original)
         self.assertEqual(json.loads((self.library / "build.json").read_text()), self.identity)
 
     def test_archive_symlinks_are_rejected_before_extraction(self):

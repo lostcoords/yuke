@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rquickjs::{Constructor, Ctx, FromJs, Function, Object, Persistent, Promise, Value};
+use rquickjs::{Ctx, FromJs, Function, Object, Persistent, Promise, Value};
 use tokio::sync::mpsc;
 use yuke_engine::{
     CancellationToken, Concurrency, Tool, ToolContent, ToolContext, ToolNameError, is_reserved_tool_name,
@@ -268,8 +268,7 @@ impl ScriptTool {
                 tokio::select! {
                     answer = &mut settled => caught(&ctx, answer),
                     () = token.cancelled() => {
-                        let reason = caught(&ctx, abort_reason(&ctx))?;
-                        caught(&ctx, abort.call::<_, ()>((reason,)))?;
+                        caught(&ctx, abort.call::<_, ()>(()))?;
                         // The tool answers what the stopped work did.
                         caught(&ctx, settled.await)
                     }
@@ -326,12 +325,6 @@ async fn read_file(path: PathBuf) -> std::io::Result<Vec<u8>> {
     })
     .await
     .map_err(std::io::Error::other)?
-}
-
-/// The reason of a cancel: a `DOMException` named `AbortError`, as the web gives.
-fn abort_reason<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let constructor: Constructor<'js> = ctx.globals().get("DOMException")?;
-    constructor.construct(("The tool call was cancelled", "AbortError"))
 }
 
 /// The text of a failed call for the model: the message of a thrown error.

@@ -152,6 +152,68 @@ async fn a_failed_plugin_drops_its_tools_and_aborts_its_signal() {
 }
 
 #[tokio::test]
+async fn a_failed_plugin_that_replaces_the_web_globals_still_drops_its_tools_and_aborts_its_signal() {
+    let folder = folder("a_failed_plugin_that_replaces_the_web_globals_still_drops_its_tools_and_aborts_its_signal");
+    let (runtime, _reports) = start(&folder).await;
+    let bad = plugin(
+        &folder,
+        "bad",
+        Some(&format!(
+            "export default function apply(ctx) {{
+               globalThis.badSignal = ctx.signal;
+               ctx.tools.define({});
+               globalThis.DOMException = undefined;
+               globalThis.AbortController = undefined;
+               throw new Error('broken');
+             }}",
+            tool("dropped")
+        )),
+        &[],
+        &[],
+    );
+
+    let failures = runtime.load_plugins(&[bad]).await;
+
+    assert_eq!(
+        texts(&failures),
+        [("bad".to_owned(), "plugin bad did not load: Error: broken".to_owned())]
+    );
+    assert_eq!(tool_names(&runtime, &folder).await, Vec::<String>::new());
+    assert_eq!(
+        evaluate::<String>(&runtime, "return globalThis.badSignal.reason.name;")
+            .await
+            .unwrap(),
+        "AbortError"
+    );
+}
+
+#[tokio::test]
+async fn a_plugin_cannot_abort_the_signal_of_its_context() {
+    let folder = folder("a_plugin_cannot_abort_the_signal_of_its_context");
+    let (runtime, _reports) = start(&folder).await;
+    let one = plugin(
+        &folder,
+        "one",
+        Some(
+            "export default function apply(ctx) {
+               const signal = ctx.signal;
+               globalThis.seen = ['abort' in signal, signal.dispatchEvent(new Event('abort')), signal.aborted].join(' ');
+             }",
+        ),
+        &[],
+        &[],
+    );
+
+    let failures = runtime.load_plugins(&[one]).await;
+
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(
+        evaluate::<String>(&runtime, "return globalThis.seen;").await.unwrap(),
+        "false true false"
+    );
+}
+
+#[tokio::test]
 async fn a_service_passes_to_a_later_plugin_and_a_failed_provider_fails_its_users_unrun() {
     let folder = folder("a_service_passes_to_a_later_plugin_and_a_failed_provider_fails_its_users_unrun");
     let (runtime, _reports) = start(&folder).await;

@@ -1,7 +1,7 @@
 import { checkArguments, checkParameters } from "yuke:internal/arguments";
+import { hostSignal } from "yuke:internal/events";
 import { register } from "yuke:internal/native";
 import { bindSession } from "yuke:internal/session";
-import { CallSignal } from "yuke:internal/signal";
 import type { Tool, ToolAnswer, ToolContext } from "yuke:tools";
 
 /**
@@ -24,18 +24,21 @@ export function defineTool(tool: Tool, owner?: string): void {
     owner,
   };
   register(description, (text, callId, folder, output, session) => {
-    const signal = new CallSignal();
+    const { signal, abort } = hostSignal();
     const context: ToolContext = { callId, folder, signal, output };
     bindSession(context, session);
-    const answer = run(() => execute(checkArguments(parameters, JSON.parse(text)), context), signal);
-    return { answer, abort: (reason: unknown) => signal.abort(reason) };
+    const answer = run(() => execute(checkArguments(parameters, JSON.parse(text)), context), abort);
+    return { answer, abort: () => abort("The tool call was cancelled") };
   });
 }
 
-async function run(call: () => ToolAnswer | Promise<ToolAnswer>, signal: CallSignal): Promise<ToolAnswer> {
+async function run(
+  call: () => ToolAnswer | Promise<ToolAnswer>,
+  abort: (message: string) => void,
+): Promise<ToolAnswer> {
   try {
     return await call();
   } finally {
-    signal.abort(new DOMException("The tool call has ended", "AbortError"));
+    abort("The tool call has ended");
   }
 }

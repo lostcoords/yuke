@@ -1,4 +1,4 @@
-import type { Signal, Tool } from "yuke:tools";
+import type { Tool } from "yuke:tools";
 
 /** The severity of a notice. */
 export type NoticeLevel = "debug" | "info" | "warn" | "error";
@@ -23,7 +23,7 @@ export interface PluginContext {
    * Aborts when the plugin fails to load. Then clear your timers: a failed plugin keeps them. A shutdown stops the
    * JavaScript without an abort.
    */
-  readonly signal: Signal;
+  readonly signal: AbortSignal;
   /** The tools of the plugin. */
   readonly tools: {
     /** Define `tool` for this plugin. A second tool with the same name throws a `TypeError`. */

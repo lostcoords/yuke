@@ -1,6 +1,6 @@
 import { defineTool } from "yuke:internal/define";
+import { hostSignal } from "yuke:internal/events";
 import { notify, removeTools } from "yuke:internal/native";
-import { CallSignal } from "yuke:internal/signal";
 import type { NoticeLevel, PluginApply, PluginContext, Services } from "yuke:plugins";
 import type { Tool } from "yuke:tools";
 
@@ -23,7 +23,8 @@ const services = new Map<string, unknown>();
  * its tools, and throws.
  */
 export async function load(spec: PluginSpec): Promise<void> {
-  const signal = new CallSignal();
+  const { signal, abort } = hostSignal();
+  let failed = false;
   const pending = new Map<string, unknown>();
   let applying = true;
   const ctx: PluginContext = Object.freeze({
@@ -33,7 +34,7 @@ export async function load(spec: PluginSpec): Promise<void> {
     signal,
     tools: Object.freeze({
       define(tool: Tool): void {
-        if (signal.aborted) throw new TypeError(`plugin ${spec.name} did not load`);
+        if (failed) throw new TypeError(`plugin ${spec.name} did not load`);
         defineTool(tool, spec.name);
       },
     }),
@@ -75,8 +76,9 @@ export async function load(spec: PluginSpec): Promise<void> {
     for (const [name, value] of pending) services.set(name, value);
   } catch (error) {
     applying = false;
-    signal.abort(new DOMException(`plugin ${spec.name} did not load`, "AbortError"));
+    failed = true;
     removeTools(spec.name);
+    abort(`plugin ${spec.name} did not load`);
     throw error;
   }
 }

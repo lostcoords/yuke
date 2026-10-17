@@ -2,18 +2,6 @@ import type { ObjectSchema } from "yuke:internal/arguments";
 
 export type { ArraySchema, ObjectSchema, ScalarSchema, Schema } from "yuke:internal/arguments";
 
-/** A signal that aborts when yuke cancels the work of its owner. Only yuke aborts it. */
-export interface Signal {
-  /** Whether the signal has aborted. */
-  readonly aborted: boolean;
-  /** The reason of the abort, a `DOMException` named `AbortError`. */
-  readonly reason: unknown;
-  /** Throw the reason when the signal has aborted. */
-  readonly throwIfAborted: () => void;
-  /** Call `listener` once at the abort, or at once after it. Returns the function that removes the listener. */
-  readonly onAbort: (listener: () => void) => () => void;
-}
-
 /** The most bytes of the content of one tool output. A cut adds one line that tells the model what the cut left out. */
 export const OUTPUT_BYTES = 50 * 1024;
 
@@ -23,8 +11,8 @@ export interface ToolContext {
   readonly callId: string;
   /** The workspace folder of the session. Relative paths and commands start here. */
   readonly folder: string;
-  /** The signal that aborts when the turn cancels the call, and when the call ends. */
-  readonly signal: Signal;
+  /** Aborts when the turn cancels the call, and when the call ends. The reason is a `DOMException` named `AbortError`. */
+  readonly signal: AbortSignal;
   /** Show `text` to the user while the call runs. The model does not receive it. */
   readonly output: (text: string) => void;
 }

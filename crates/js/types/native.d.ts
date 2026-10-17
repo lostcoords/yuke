@@ -1,10 +1,10 @@
 // The native module: Rust functions for the built-in modules (crates/js/src/native).
 
 declare module "yuke:internal/native" {
-  /** The start of a call: the promise of its answer, and the function that aborts its signal. */
+  /** The start of a call: the promise of its answer, and the function that aborts its signal at a cancel. */
   export interface Started {
     readonly answer: Promise<unknown>;
-    readonly abort: (reason: unknown) => void;
+    readonly abort: () => void;
   }
 
   /** A started job: its id and its log file. */

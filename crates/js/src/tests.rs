@@ -1,6 +1,7 @@
 mod exec;
 mod plugins;
 mod tools;
+mod web;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

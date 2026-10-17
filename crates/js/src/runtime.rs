@@ -30,6 +30,9 @@ const STACK: usize = 8 << 20;
 /// for the Rust frames too.
 const THREAD_HEADROOM: usize = 2 << 20;
 
+/// The built-in module that adds the web globals, such as `AbortController`. It runs before any other module.
+const WEB: &str = "yuke:internal/web";
+
 /// The settings of a runtime.
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -311,6 +314,12 @@ impl Engine {
             })
             .await
             .map_err(engine_error)?;
+        context
+            .with(|ctx| {
+                let promise = caught(&ctx, Module::import(&ctx, WEB))?;
+                caught(&ctx, promise.finish::<Value<'_>>()).map(drop)
+            })
+            .await?;
 
         Ok(Self {
             context,

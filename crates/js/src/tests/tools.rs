@@ -176,7 +176,7 @@ async fn a_user_module_cannot_import_an_internal_module() {
         &folder,
         &[(
             "main.ts",
-            "import { CallSignal } from 'yuke:internal/signal';\nglobalThis.signal = CallSignal;\n",
+            "import { checkParameters } from 'yuke:internal/arguments';\nglobalThis.check = checkParameters;\n",
         )],
     );
     let (runtime, _faults) = start(&folder).await;
@@ -440,8 +440,8 @@ const BRIDGE_TOOLS: &str = "export default function apply({ tools: { define } })
       context.output('one'); context.output('two'); return 'done';\n\
     } });\n\
     define({ name: 'wait', description: 'd', concurrency: 'serial', parameters: empty, execute(_args, context) {\n\
-      return new Promise((resolve) => context.signal.onAbort(() =>\n\
-        resolve(`stopped: ${(context.signal.reason as DOMException).name}`)));\n\
+      return new Promise((resolve) => context.signal.addEventListener('abort', () =>\n\
+        resolve(`stopped: ${context.signal.reason instanceof DOMException} ${String(context.signal.reason)}`)));\n\
     } });\n\
     define({ name: 'keep', description: 'd', concurrency: 'serial', parameters: empty, execute(_args, context) {\n\
       (globalThis as Record<string, unknown>).kept = context.signal; return context.folder;\n\
@@ -483,7 +483,44 @@ async fn a_cancel_aborts_the_signal_and_the_tool_still_answers() {
 
     let (answer, _texts) = call_with(&tools["wait"], "{}", token).await;
 
-    assert_eq!(answer.unwrap().text, "stopped: AbortError");
+    assert_eq!(
+        answer.unwrap().text,
+        "stopped: true AbortError: The tool call was cancelled"
+    );
+}
+
+#[tokio::test]
+async fn a_cancel_reaches_the_signal_after_a_plugin_replaces_the_web_globals() {
+    let folder = folder("a_cancel_reaches_the_signal_after_a_plugin_replaces_the_web_globals");
+    write(
+        &folder,
+        &[(
+            "tools.ts",
+            "export default function apply({ tools: { define } }) {\n\
+             const global = globalThis as Record<string, unknown>;\n\
+             const signals = AbortController.prototype as unknown as Record<string, unknown>;\n\
+             signals.abort = () => {};\n\
+             global.AbortController = undefined; global.AbortSignal = undefined; global.Event = undefined;\n\
+             global.DOMException = undefined;\n\
+             define({ name: 'wait', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} },\n\
+               execute(_args, context) {\n\
+                 return new Promise((resolve) => context.signal.addEventListener('abort', () =>\n\
+                   resolve(`stopped ${'abort' in context.signal} ${(context.signal.reason as Error).name}`)));\n\
+               } });\n\
+             }\n",
+        )],
+    );
+    let (_runtime, _host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
+    let token = CancellationToken::new();
+    let cancel = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancel.cancel();
+    });
+
+    let (answer, _texts) = call_with(&tools["wait"], "{}", token).await;
+
+    assert_eq!(answer.unwrap().text, "stopped false AbortError");
 }
 
 #[tokio::test]
@@ -511,8 +548,8 @@ async fn a_throw_of_an_abort_listener_is_a_fault_and_the_next_listener_runs() {
             "export default function apply({ tools: { define } }) {\n\
              define({ name: 'listen', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} },\n\
                execute(_args, context) {\n\
-                 context.signal.onAbort(() => { throw new Error('the listener broke'); });\n\
-                 context.signal.onAbort(() => { (globalThis as Record<string, unknown>).second = true; });\n\
+                 context.signal.addEventListener('abort', () => { throw new Error('the listener broke'); });\n\
+                 context.signal.addEventListener('abort', () => { (globalThis as Record<string, unknown>).second = true; });\n\
                  return 'x';\n\
                } });\n\
              }\n",
@@ -528,40 +565,6 @@ async fn a_throw_of_an_abort_listener_is_a_fault_and_the_next_listener_runs() {
     assert_eq!(text, "x");
     assert_eq!(next_fault(&mut faults).await.message, "the listener broke");
     assert!(evaluate::<bool>(&runtime, "return globalThis.second;").await.unwrap());
-}
-
-#[tokio::test]
-async fn a_throw_of_a_listener_added_after_the_abort_is_a_fault() {
-    let folder = folder("a_throw_of_a_listener_added_after_the_abort_is_a_fault");
-    write(
-        &folder,
-        &[(
-            "tools.ts",
-            "export default function apply({ tools: { define } }) {\n\
-             define({ name: 'late', description: 'd', concurrency: 'serial',\n\
-               parameters: { type: 'object', properties: {} },\n\
-               execute(_args, context) {\n\
-                 (globalThis as Record<string, unknown>).kept = context.signal;\n\
-                 return 'x';\n\
-               } });\n\
-             }\n",
-        )],
-    );
-    let (runtime, mut faults) = start(&folder).await;
-    load_tools(&runtime, &folder.join("tools.ts")).await.unwrap();
-    let host: Arc<dyn SessionHost> = Arc::new(TestHost::new(&folder));
-    let tools = runtime.tools(host).await.unwrap();
-
-    let text = call(&tools[0].1, "{}").await.0.unwrap().text;
-    evaluate::<()>(
-        &runtime,
-        "globalThis.kept.onAbort(() => { throw new Error('the late listener broke'); });",
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(text, "x");
-    assert_eq!(next_fault(&mut faults).await.message, "the late listener broke");
 }
 
 #[tokio::test]
