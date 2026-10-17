@@ -1,5 +1,7 @@
+import { mkdir, readTextFile, writeTextFile } from "yuke:fs";
 import { defineTool } from "yuke:internal/define";
-import { readLines, readText, writeText } from "yuke:internal/native";
+import { TextEncoder } from "yuke:internal/encoding";
+import { readLines } from "yuke:internal/native";
 import { sessionOf } from "yuke:internal/session";
 
 /** The most bytes of the output of `read` and `exec`. A cut adds one line that tells the model what the cut left out. */
@@ -55,8 +57,12 @@ defineTool({
   },
   concurrency: "serial",
   async execute(args, context) {
-    const bytes = await writeText(args.path, context.folder, args.content);
-    return `The tool wrote ${bytes} bytes.`;
+    const options = { baseDir: context.folder, signal: context.signal };
+    // The tool makes the missing parent folders, so the model can write a new file in a new folder.
+    const slash = args.path.lastIndexOf("/");
+    if (slash > 0) await mkdir(args.path.slice(0, slash), { ...options, recursive: true });
+    await writeTextFile(args.path, args.content, options);
+    return `The tool wrote ${new TextEncoder().encode(args.content).length} bytes.`;
   },
 });
 
@@ -79,13 +85,14 @@ defineTool({
     if (oldString.length === 0) throw new Error("Set old_string to a nonempty string.");
     if (oldString === newString) throw new Error("Set new_string to a value that differs from old_string.");
 
-    const parts = (await readText(path, context.folder)).split(oldString);
+    const options = { baseDir: context.folder, signal: context.signal };
+    const parts = (await readTextFile(path, options)).split(oldString);
     const count = parts.length - 1;
     if (count === 0) throw new Error("The file has no match for old_string. Read the file and copy the exact text.");
     if (count > 1 && !replaceAll) {
       throw new Error("old_string matches more than one place. Add context to old_string, or set replace_all to true.");
     }
-    await writeText(path, context.folder, parts.join(newString));
+    await writeTextFile(path, parts.join(newString), options);
     return `The tool replaced ${count} match(es).`;
   },
 });

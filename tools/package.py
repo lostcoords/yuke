@@ -111,15 +111,17 @@ def main():
         shutil.copy2(binary, staging / "bin/yuke")
         library = staging / "lib/yuke"
         library.mkdir(parents=True)
-        # Authors get only the public modules and the globals, so an internal import fails their type check too.
+        # Authors get only the public modules and their declarations, so an internal import fails their type check too.
         copy_typescript(ROOT / "crates/js/modules", library / "modules", "*.ts")
-        copy_typescript(ROOT / "crates/js/types", library / "types", "globals.d.ts")
+        declarations = sorted(path.name for path in (ROOT / "crates/js/types").glob("*.d.ts") if path.name != "native.d.ts")
+        for name in declarations:
+            copy_typescript(ROOT / "crates/js/types", library / "types", name)
         copy_typescript(ROOT / "crates/protocol/bindings", library / "protocol/bindings")
         shutil.copy2(ROOT / "crates/protocol/README.md", library / "protocol/README.md")
         shutil.copy2(ROOT / "LICENSE.md", library / "LICENSE.md")
         configuration = json.loads((ROOT / "crates/js/tsconfig.json").read_text())
         configuration["include"] = ["./modules/*.ts", "./protocol/bindings/**/*.ts"]
-        configuration["files"] = ["./types/globals.d.ts"]
+        configuration["files"] = ["./types/" + name for name in declarations]
         configuration["compilerOptions"]["paths"]["yuke:protocol/*"] = ["./protocol/bindings/*.ts"]
         (library / "tsconfig.json").write_text(json.dumps(configuration, indent=2) + "\n")
         identity = {"format": 1, "version": version, "commit": commit, "target": target, "dirty": dirty}

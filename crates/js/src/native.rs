@@ -5,6 +5,7 @@ mod console;
 mod encoding;
 mod exec;
 mod fs;
+mod lines;
 pub(crate) mod session;
 mod tools;
 
@@ -73,6 +74,7 @@ pub(crate) fn install(
 ) -> rquickjs::Result<()> {
     let object = internal_record(ctx)?;
     fs::add(ctx, &object)?;
+    lines::add(ctx, &object)?;
     encoding::add(ctx, &object)?;
     console::add(ctx, &object, reports.clone())?;
     tools::add(ctx, &object, registry, reports)?;

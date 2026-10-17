@@ -120,6 +120,60 @@ declare module "yuke:internal/native" {
       }
     | { readonly image: { readonly path: string; readonly mimeType: string } };
 
+  /** One file operation in flight: its promise, and the function that asks it to stop at its next check. */
+  export interface Operation<T> {
+    readonly promise: Promise<T>;
+    readonly cancel: () => void;
+  }
+
+  /** The kind of a path, without a follow of a symbolic link for `isSymlink`. */
+  export interface Kind {
+    readonly isFile: boolean;
+    readonly isDirectory: boolean;
+    readonly isSymlink: boolean;
+  }
+
+  /**
+   * The file operations of `yuke:fs`. A relative path needs the absolute `baseDir`; a bad path throws a `TypeError`. A
+   * failure rejects with `{ code, message, path, destination }`, and a stop with `{ cancelled: true }`.
+   */
+  export function fsReadFile(
+    path: string,
+    baseDir: string | undefined,
+    position: number,
+    length: number | undefined,
+  ): Operation<Uint8Array>;
+  export function fsReadTextFile(path: string, baseDir: string | undefined): Operation<string>;
+  export function fsWriteFile(
+    path: string,
+    baseDir: string | undefined,
+    data: Uint8Array | string,
+    atomic: boolean,
+    mode: number | undefined,
+  ): Operation<undefined>;
+  export function fsReadDir(
+    path: string,
+    baseDir: string | undefined,
+  ): Operation<readonly (Kind & { readonly name: string })[]>;
+  export function fsStat(
+    path: string,
+    baseDir: string | undefined,
+    follow: boolean,
+  ): Operation<Kind & { readonly size: number; readonly mtime: number | undefined }>;
+  export function fsMkdir(
+    path: string,
+    baseDir: string | undefined,
+    recursive: boolean,
+    mode: number | undefined,
+  ): Operation<undefined>;
+  export function fsRemove(
+    path: string,
+    baseDir: string | undefined,
+    recursive: boolean,
+    force: boolean,
+  ): Operation<undefined>;
+  export function fsRename(source: string, destination: string, baseDir: string | undefined): Operation<undefined>;
+
   /** At most `limit` lines from line `offset`, while they fit in `maxBytes`. */
   export function readLines(
     path: string,
@@ -128,8 +182,4 @@ declare module "yuke:internal/native" {
     limit: number,
     maxBytes: number,
   ): Promise<Lines>;
-  /** The whole file as text. */
-  export function readText(path: string, folder: string): Promise<string>;
-  /** Write the file and make its missing parent folders. Answers the byte count. */
-  export function writeText(path: string, folder: string, text: string): Promise<number>;
 }

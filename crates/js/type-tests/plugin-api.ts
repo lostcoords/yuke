@@ -98,4 +98,20 @@ ctx.get("test.unknown.v1");
 // @ts-expect-error: a service value is not null.
 ctx.provide("test.notes.v1", null);
 
+// `yuke:fs` takes a base folder and a signal, and its failure has a code.
+async function files(): Promise<void> {
+  const fs = await import("yuke:fs");
+  const text: string = await fs.readTextFile("state.json", { baseDir: ctx.dataDir, signal: ctx.signal });
+  const bytes: Uint8Array = await fs.readFile("data.bin", { baseDir: ctx.dataDir, position: 0, length: 4 });
+  const info: Date | null = (await fs.stat(ctx.root)).mtime;
+  await fs.writeTextFile("state.json", text, { baseDir: ctx.dataDir, atomic: true, mode: 0o600 });
+  // @ts-expect-error: the data of `writeFile` is bytes.
+  await fs.writeFile("data.bin", "text", { baseDir: ctx.dataDir });
+  const failure = new fs.FileSystemError("x", { code: "ENOENT", path: "/x" });
+  assert<Equal<typeof failure.code, string>>();
+  void bytes;
+  void info;
+}
+void files;
+
 export { results };

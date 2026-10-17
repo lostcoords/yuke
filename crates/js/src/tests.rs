@@ -1,4 +1,5 @@
 mod exec;
+mod fs;
 mod globals;
 mod plugins;
 mod tools;

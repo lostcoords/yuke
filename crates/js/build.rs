@@ -1,5 +1,7 @@
 //! Compile the built-in TypeScript modules of `modules/` to QuickJS bytecode. The name of a module is `yuke:` and its
-//! path below `modules/` without `.ts`. The crate embeds the bytes through `OUT_DIR/baked.rs`.
+//! path below `modules/` without `.ts`. A module below `modules/runtime/` is the code of a public module that
+//! `types/` declares, so its name drops `runtime/`: `modules/runtime/fs.ts` is `yuke:fs`. The crate embeds the bytes
+//! through `OUT_DIR/baked.rs`.
 
 #[path = "src/typescript.rs"]
 mod typescript;
@@ -14,6 +16,7 @@ use rquickjs::{CatchResultExt, Context, Ctx, Module, Runtime, WriteOptions};
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo::rerun-if-changed=modules");
+    println!("cargo::rerun-if-changed=types");
     println!("cargo::rerun-if-changed=src/typescript.rs");
 
     // The bytecode holds numbers in the byte order of the build host, and the engine reads it without a check.
@@ -31,6 +34,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut sources = Vec::new();
     collect(&root, &root, &mut sources)?;
     sources.sort();
+    check_declarations(
+        &root,
+        &PathBuf::from(std::env::var("CARGO_MANIFEST_DIR")?).join("types"),
+    )?;
 
     let runtime = Runtime::new()?;
     runtime.set_loader(KeepName, EmptyModule);
@@ -57,11 +64,51 @@ fn collect(root: &Path, folder: &Path, sources: &mut Vec<(String, PathBuf)>) -> 
             collect(root, &path, sources)?;
         } else if path.extension().is_some_and(|extension| extension == "ts") {
             let relative = path.strip_prefix(root)?.with_extension("");
-            let relative = relative.to_str().ok_or("a module path is not UTF-8")?;
-            sources.push((format!("yuke:{}", relative.replace('\\', "/")), path));
+            let relative = relative
+                .to_str()
+                .ok_or("a module path is not UTF-8")?
+                .replace('\\', "/");
+            let name = format!("yuke:{}", relative.strip_prefix("runtime/").unwrap_or(&relative));
+            if sources.iter().any(|(known, _)| *known == name) {
+                return Err(format!("two files give the module {name}").into());
+            }
+            sources.push((name, path));
         }
     }
     Ok(())
+}
+
+/// Check that each module of `modules/runtime/` has a declaration in `types/`, and each declaration of a public module
+/// there has its code. Authors type-check against the declaration, so a module without one, or a declaration without
+/// code, would let the type check and the runtime disagree.
+fn check_declarations(modules: &Path, types: &Path) -> Result<(), Box<dyn Error>> {
+    let names = |folder: &Path, suffix: &str| -> Result<Vec<String>, Box<dyn Error>> {
+        let mut names = Vec::new();
+        if folder.is_dir() {
+            for entry in std::fs::read_dir(folder)? {
+                let name = entry?
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| "a file name is not UTF-8")?;
+                if let Some(stem) = name.strip_suffix(suffix) {
+                    names.push(stem.to_owned());
+                }
+            }
+        }
+        names.sort();
+        Ok(names)
+    };
+    let runtime = names(&modules.join("runtime"), ".ts")?;
+    // `globals.d.ts` declares the globals, and `native.d.ts` the internal native module.
+    let declared: Vec<String> = names(types, ".d.ts")?
+        .into_iter()
+        .filter(|name| name != "globals" && name != "native")
+        .collect();
+    if runtime == declared {
+        Ok(())
+    } else {
+        Err(format!("modules/runtime has {runtime:?}, and types declares {declared:?}: each needs the other").into())
+    }
 }
 
 /// The bytecode of the module `name`. Each module gets its own context, so the empty modules of the imports of one

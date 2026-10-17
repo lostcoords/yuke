@@ -57,6 +57,13 @@ export function domString(value: unknown): string {
   return `${value as string}`;
 }
 
+const toWellFormed = uncurryThis(String.prototype.toWellFormed);
+
+/** Convert `value` as a Web IDL `USVString`: a symbol throws, and a lone surrogate becomes U+FFFD. */
+export function usvString(value: unknown): string {
+  return toWellFormed(domString(value));
+}
+
 /** Convert `value` as a Web IDL dictionary: `undefined` and `null` are empty, another value that is not an object throws. */
 export function dictionary(value: unknown, name: string): Readonly<Record<string, unknown>> {
   if (value === undefined || value === null) return {};

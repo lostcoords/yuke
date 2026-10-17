@@ -477,6 +477,26 @@ export class AbortController {
   }
 }
 
+/** Whether `signal` has aborted, and its reason, from its private state. A value that is no signal throws a `TypeError`. */
+export function abortState(signal: unknown): { readonly aborted: boolean; readonly reason: unknown } {
+  const state = signalState(signal);
+  return { aborted: state.aborted, reason: state.reason };
+}
+
+/**
+ * Add `step` to the internal abort steps of `signal`, which run before the `abort` event. Gives the function that removes
+ * the step, for the end of the work that it stops.
+ */
+export function addAbortStep(signal: AbortSignal, step: () => void): () => void {
+  const state = signalState(signal);
+  state.steps.add(step);
+  retain(signal);
+  return () => {
+    state.steps.delete(step);
+    retain(signal);
+  };
+}
+
 function abortError(message = "the signal is aborted without reason"): DOMException {
   return new DOMException(message, "AbortError");
 }

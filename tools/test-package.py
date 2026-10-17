@@ -148,10 +148,10 @@ else:
     def test_package_source_and_protocol_bindings_match_the_checkout(self):
         self.assertEqual(self.identity["commit"], self.expected_commit)
         for source, installed, pattern in [(ROOT / "crates/js/modules", "modules", "*.ts"),
-                                           (ROOT / "crates/js/types", "types", "globals.d.ts"),
+                                           (ROOT / "crates/js/types", "types", "*.d.ts"),
                                            (ROOT / "crates/protocol/bindings", "protocol/bindings", "**/*.ts")]:
             expected = {path.relative_to(source).as_posix(): path.read_bytes()
-                        for path in source.glob(pattern) if path.is_file()}
+                        for path in source.glob(pattern) if path.is_file() and path.name != "native.d.ts"}
             folder = self.extracted / "lib/yuke" / installed
             actual = {path.relative_to(folder).as_posix(): path.read_bytes()
                       for path in folder.rglob("*") if path.is_file()}
@@ -186,7 +186,10 @@ else:
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("TS2307", result.stdout + result.stderr)
         (plugin / "index.ts").write_text('import type { PluginApply } from "yuke:plugins";\n'
-                                         'const apply: PluginApply = () => {};\nexport default apply;\n')
+                                         'import { readTextFile } from "yuke:fs";\n'
+                                         'const apply: PluginApply = async (ctx) => {\n'
+                                         '  await readTextFile("state.json", { baseDir: ctx.dataDir, signal: ctx.signal });\n'
+                                         '};\nexport default apply;\n')
         accepted = subprocess.run([self.compiler, "-p", str(configuration), "--pretty", "false"],
                                   text=True, capture_output=True, cwd=self.scratch, timeout=30)
         self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
