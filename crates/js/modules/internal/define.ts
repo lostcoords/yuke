@@ -1,7 +1,7 @@
 import { checkArguments, checkParameters } from "yuke:internal/arguments";
+import { bindCall } from "yuke:internal/call";
 import { hostSignal } from "yuke:internal/events";
 import { type Answer, register } from "yuke:internal/native";
-import { bindSession } from "yuke:internal/session";
 import { ByteArray, isUint8Array } from "yuke:internal/webidl";
 import type { Infer, ObjectSchema, Tool, ToolContext, ToolMedia } from "yuke:tools";
 
@@ -24,11 +24,11 @@ export function defineTool<const S extends ObjectSchema>(tool: Tool<S>, owner?: 
     deferLoading: tool.deferLoading === true,
     owner,
   };
-  register(description, (text, metadata, output, session) => {
+  register(description, (text, metadata, output, call) => {
     const { signal, abort } = hostSignal();
     const { sessionId, callId, folder } = metadata;
     const context: ToolContext = { sessionId, callId, folder, signal, output };
-    bindSession(context, session);
+    bindCall(context, call);
     const answer = run(
       async () => answerOf(await execute(checkArguments(parameters, JSON.parse(text)) as Infer<S>, context)),
       abort,

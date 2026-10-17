@@ -776,6 +776,20 @@ async fn edit_without_a_match_fails() {
     );
 }
 
+#[tokio::test]
+async fn edit_of_a_missing_file_names_its_path() {
+    let folder = folder("edit_of_a_missing_file_names_its_path");
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
+
+    let error = error_of(
+        &tools["edit"],
+        r#"{"path": "gone.txt", "old_string": "a", "new_string": "b"}"#,
+    )
+    .await;
+
+    assert_eq!(error, format!("the path does not exist: {}/gone.txt", folder.display()));
+}
+
 /// A module that defines the tools of the result tests.
 const RESULT_TOOLS: &str = "export default function apply({ tools: { define } }) {\n\
     const empty = { type: 'object', properties: {} } as const;\n\

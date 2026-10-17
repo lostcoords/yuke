@@ -1,6 +1,5 @@
-//! The session object of a call: the native functions that need the session or the life of the call, such as the
-//! commands and the jobs. The bridge builds one for each call. `yuke:internal/session` keeps it from the tools of
-//! plugins.
+//! The host of a call: the native functions that need the session or the life of the call, such as the commands and
+//! the jobs. The bridge builds one for each call. `yuke:internal/call` keeps it from the tools of plugins.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,7 +15,7 @@ use crate::processes::Processes;
 use crate::processes::Request;
 use crate::tools::SessionHost;
 
-/// The session object for one call. `host` gives the data of the session, and `folder` is the session folder at the
+/// The host of one call. `host` gives the data of the session, and `folder` is the session folder at the
 /// start of the call. `stop` is the cancellation token of the call. It cancels when the call ends or drops, and it
 /// stops the commands of the call.
 pub(crate) fn object<'js>(

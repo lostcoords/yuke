@@ -1,12 +1,12 @@
 //! The native module `yuke:internal/native`: Rust functions for the built-in modules. The engine builds its export
 //! object at its start, so a function can hold Rust state.
 
+pub(crate) mod call;
 mod console;
 mod encoding;
 mod exec;
 mod fs;
 mod lines;
-pub(crate) mod session;
 mod tools;
 
 use std::rc::Rc;

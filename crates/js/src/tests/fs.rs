@@ -284,35 +284,6 @@ async fn an_abort_during_a_large_read_stops_it_with_the_reason_and_a_fake_abort_
 }
 
 #[tokio::test]
-async fn the_write_tool_makes_the_parents_and_the_edit_tool_reads_and_writes_through_the_module() {
-    let folder = folder("the_write_tool_makes_the_parents_and_the_edit_tool_reads_and_writes_through_the_module");
-    let (_runtime, _host, tools) = super::tools::tools_of(&folder, &["yuke:internal/builtins"]).await;
-
-    let written = super::tools::text_of(&tools["write"], r#"{"path": "new/deep/note.txt", "content": "héllo"}"#).await;
-    let edited = super::tools::text_of(
-        &tools["edit"],
-        r#"{"path": "new/deep/note.txt", "old_string": "héllo", "new_string": "bye"}"#,
-    )
-    .await;
-    let missing = super::tools::error_of(
-        &tools["edit"],
-        r#"{"path": "gone.txt", "old_string": "a", "new_string": "b"}"#,
-    )
-    .await;
-
-    assert_eq!(written, "The tool wrote 6 bytes.");
-    assert_eq!(edited, "The tool replaced 1 match(es).");
-    assert_eq!(
-        std::fs::read_to_string(folder.join("new/deep/note.txt")).unwrap(),
-        "bye"
-    );
-    assert_eq!(
-        missing,
-        format!("the path does not exist: {}/gone.txt", folder.display())
-    );
-}
-
-#[tokio::test]
 async fn an_atomic_write_keeps_a_mode_that_the_umask_would_cut() {
     let (_text, folder) = run_fs(
         "an_atomic_write_keeps_a_mode_that_the_umask_would_cut",

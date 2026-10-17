@@ -51,7 +51,7 @@ declare module "yuke:internal/native" {
   );
 
   /** The native functions that need the session or the life of a call. */
-  export interface Session {
+  export interface CallHost {
     /**
      * Run `command` in the workspace folder with a shell. Each chunk of output goes to `onOutput`. A cancel of the call
      * and the end of the call stop the command.
@@ -83,7 +83,7 @@ declare module "yuke:internal/native" {
       readonly deferLoading: boolean;
       readonly owner: string | undefined;
     },
-    start: (argumentsText: string, metadata: CallMetadata, output: (text: string) => void, session: Session) => Started,
+    start: (argumentsText: string, metadata: CallMetadata, output: (text: string) => void, call: CallHost) => Started,
   ): void;
 
   /** Remove each tool of the plugin `owner`. */

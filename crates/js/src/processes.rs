@@ -331,7 +331,7 @@ impl Processes {
         }
         let job = JobTask {
             id: id.clone(),
-            command: command.clone(),
+            command,
             log: log.clone(),
             jobs: Arc::clone(&self.jobs),
             stop,
@@ -340,7 +340,7 @@ impl Processes {
         let (started_sender, started) = oneshot::channel();
         // One task on the runtime of the consumer owns the job from its spawn to the delivery of its end, so a dropped
         // call loses no child.
-        self.handle.spawn(job.run(command, owner, started_sender));
+        self.handle.spawn(job.run(owner, started_sender));
         started
             .await
             .map_err(|_| "the job did not start: the runtime of yuke ended".to_owned())??;
@@ -438,11 +438,11 @@ struct JobTask {
 }
 
 impl JobTask {
-    async fn run(self, command: String, owner: Arc<dyn SessionHost>, started: oneshot::Sender<Result<(), String>>) {
+    async fn run(self, owner: Arc<dyn SessionHost>, started: oneshot::Sender<Result<(), String>>) {
         let spawned = if self.stop.is_cancelled() {
             Err(STOPPED_BEFORE_START.to_owned())
         } else {
-            let (folder, log) = (owner.folder(), self.log.clone());
+            let (command, folder, log) = (self.command.clone(), owner.folder(), self.log.clone());
             // The log file is blocking work.
             tokio::task::spawn_blocking(move || spawn_logged(&command, &folder, &log))
                 .await

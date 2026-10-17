@@ -16,7 +16,7 @@ use yuke_engine::{
 };
 
 use crate::error::{Error, caught};
-use crate::native::session;
+use crate::native::call;
 use crate::processes::{JobEnded, Processes};
 use crate::runtime::Caller;
 
@@ -265,12 +265,12 @@ impl ScriptTool {
                 // A cancel of the call stops its commands. The guard also stops them when the call ends or drops.
                 let stop = token.child_token();
                 let _guard = stop.clone().drop_guard();
-                let session = caught(&ctx, session::object(&ctx, &processes, &host, session_folder, &stop))?;
+                let call = caught(&ctx, call::object(&ctx, &processes, &host, session_folder, &stop))?;
                 let metadata = caught(&ctx, crate::native::internal_record(&ctx))?;
                 caught(&ctx, metadata.set("sessionId", session_id))?;
                 caught(&ctx, metadata.set("callId", call_id))?;
                 caught(&ctx, metadata.set("folder", folder_text))?;
-                let started: Object<'_> = caught(&ctx, start.call((arguments, metadata, output, session)))?;
+                let started: Object<'_> = caught(&ctx, start.call((arguments, metadata, output, call)))?;
                 let promise: Promise<'_> = caught(&ctx, started.get("answer"))?;
                 let abort: Function<'_> = caught(&ctx, started.get("abort"))?;
 

@@ -1,8 +1,8 @@
 import { mkdir, readTextFile, writeTextFile } from "yuke:fs";
+import { callOf } from "yuke:internal/call";
 import { defineTool } from "yuke:internal/define";
 import { TextEncoder } from "yuke:internal/encoding";
 import { readLines } from "yuke:internal/native";
-import { sessionOf } from "yuke:internal/session";
 
 /** The most bytes of the output of `read` and `exec`. A cut adds one line that tells the model what the cut left out. */
 const OUTPUT_BYTES = 50 * 1024;
@@ -123,7 +123,7 @@ defineTool({
     if (command.trim().length === 0) throw new Error("Set command to a nonempty string.");
     if (args.background === true) {
       if (args.timeout_ms !== undefined) throw new Error("Remove timeout_ms, or set background to false.");
-      const job = await sessionOf(context).startJob(command);
+      const job = await callOf(context).startJob(command);
       return (
         `[${job.id} started: ${shortCommand(command)}. Log: ${job.log}. Its end arrives as a message, so never ` +
         `sleep or poll. Use stop with ${job.id} to end it.]`
@@ -131,7 +131,7 @@ defineTool({
     }
 
     const timeout = args.timeout_ms ?? DEFAULT_TIMEOUT;
-    const end = await sessionOf(context).exec(command, { timeoutMs: timeout, maxBytes: OUTPUT_BYTES }, context.output);
+    const end = await callOf(context).exec(command, { timeoutMs: timeout, maxBytes: OUTPUT_BYTES }, context.output);
     const text = end.output.length === 0 ? "[no output]\n" : endLine(end.output);
     switch (end.cause) {
       case "cancelled":
@@ -163,10 +163,10 @@ defineTool({
   concurrency: "serial",
   async execute(args, context) {
     const id = args.id;
-    const session = sessionOf(context);
-    const stopped = await session.stopJob(id);
+    const call = callOf(context);
+    const stopped = await call.stopJob(id);
     if (stopped === undefined) {
-      const ids = session.runningJobs();
+      const ids = call.runningJobs();
       throw new Error(
         `The id ${id} does not exist. ${ids.length === 0 ? "Nothing runs." : `The ids are: ${ids.join(", ")}.`}`,
       );

@@ -5,6 +5,7 @@
 mod live;
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
@@ -268,16 +269,16 @@ impl App {
     ///
     /// Returns [`AppError::NotOpen`], or [`AppError::JobsRun`] for running jobs without `stop_jobs`.
     pub(crate) async fn close(&mut self, id: SessionId, stop_jobs: bool) -> Result<(), AppError> {
-        let live = self.live(id)?;
+        let Entry::Occupied(live) = self.sessions.entry(id) else {
+            return Err(AppError::NotOpen(id));
+        };
         if !stop_jobs {
-            let jobs = live.jobs();
+            let jobs = live.get().jobs();
             if !jobs.is_empty() {
                 return Err(AppError::JobsRun(jobs.into_iter().map(|job| job.id).collect()));
             }
         }
-        if let Some(live) = self.sessions.remove(&id) {
-            live.close().await;
-        }
+        live.remove().close().await;
         Ok(())
     }
 
