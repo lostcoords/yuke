@@ -19,6 +19,9 @@ pub enum Error {
 
     /// The JavaScript thread panicked. The text is the message of the panic.
     Panicked(String),
+
+    /// The workspace folder of a session is not UTF-8, so the JavaScript cannot name it.
+    Folder(std::path::PathBuf),
 }
 
 /// What the runtime reports outside of a call.
@@ -26,7 +29,7 @@ pub enum Error {
 pub enum Report {
     /// A timer callback threw, or a promise rejection got no handler in the drive that settled it.
     Fault(ScriptError),
-    /// A plugin sent a notice with `ctx.notify`.
+    /// A plugin sent a notice, or the setup or the cleanup of the session of a plugin failed.
     Notice(yuke_protocol::NoticeParams),
     /// A script wrote an entry with `console`. It is a diagnostic for the operator, never a notice.
     Console {
@@ -45,6 +48,7 @@ impl fmt::Display for Error {
             // The text names no cause, because `source` returns it.
             Self::Thread(_) => f.write_str("the JavaScript thread did not start"),
             Self::Panicked(message) => write!(f, "the JavaScript thread panicked: {message}"),
+            Self::Folder(folder) => write!(f, "the workspace folder {} is not UTF-8", folder.display()),
         }
     }
 }
@@ -55,7 +59,7 @@ impl std::error::Error for Error {
             // The text is the text of the inner error, so the source is the source of the inner error.
             Self::Script(error) => error.source(),
             Self::Thread(error) => Some(error),
-            Self::Stopped | Self::Panicked(_) => None,
+            Self::Stopped | Self::Panicked(_) | Self::Folder(_) => None,
         }
     }
 }

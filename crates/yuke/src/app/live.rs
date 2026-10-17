@@ -8,9 +8,9 @@ use async_trait::async_trait;
 use tokio::sync::{Notify, OwnedMutexGuard};
 use tokio::task::JoinHandle;
 use yuke_agent::{InputSender, Loaded, Session, SessionError, SessionObserver, StoreError, system_notification};
-use yuke_ai::Block;
+use yuke_ai::{Block, ToolDefinition};
 use yuke_engine::{CancellationToken, Driver, Model, Outcome, Toolset};
-use yuke_js::{JobEnded, Runtime, SessionHost};
+use yuke_js::{JobEnded, Runtime, ScriptSession, ScriptTool, SessionHost};
 use yuke_protocol::{
     EventNumber, Input, InputId, InputSource, Job, LiveUpdate, NoticeLevel, NoticeParams, ServerNotification,
     SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
@@ -32,11 +32,14 @@ pub(super) struct LiveSession {
     closed: CancellationToken,
     /// The host of the tools. The jobs of the session belong to it.
     host: Arc<Host>,
+    /// The session of the plugins. Each turn takes its tools.
+    script: Arc<ScriptSession>,
     task: JoinHandle<()>,
 }
 
 impl LiveSession {
-    /// Load the tools of `session`, and start its task, which runs its turns.
+    /// Open the plugins of `session`, and start its task, which runs its turns. The open does not wait for the plugins;
+    /// the first turn does.
     pub(super) async fn start(
         session: Session,
         runtime: &Runtime,
@@ -56,23 +59,18 @@ impl LiveSession {
             shared,
             inbox: inbox.clone(),
         });
-        // The tools read the folder of the host at each call, so a change of the folder needs no new tools.
-        let mut toolset = Toolset::new();
-        let tools = runtime
-            .tools(Arc::clone(&host) as Arc<dyn SessionHost>)
-            .await
-            .map_err(|error| AppError::Internal(describe(&error)))?;
-        for (definition, tool) in tools {
-            toolset
-                .add(definition, tool)
-                .map_err(|error| AppError::Internal(describe(&error)))?;
-        }
+        let script = Arc::new(
+            runtime
+                .open_session(Arc::clone(&host) as Arc<dyn SessionHost>)
+                .await
+                .map_err(|error| AppError::Internal(describe(&error)))?,
+        );
         let session = Arc::new(tokio::sync::Mutex::new(session));
         let turn = Arc::default();
         let closed = CancellationToken::new();
         let task = SessionTask {
             session: Arc::clone(&session),
-            toolset: Arc::new(toolset),
+            script: Arc::clone(&script),
             host: Arc::clone(&host),
             inbox: inbox.clone(),
             turn: Arc::clone(&turn),
@@ -84,6 +82,7 @@ impl LiveSession {
             turn,
             closed,
             host,
+            script,
             task: tokio::spawn(task.run()),
         })
     }
@@ -178,6 +177,10 @@ impl LiveSession {
         self.stop();
         if let Err(error) = (&mut self.task).await {
             warn(&format!("a session task failed: {error}"));
+        }
+        // After the task, so no turn takes the tools of the closed plugins.
+        if let Err(error) = self.script.close().await {
+            warn(&format!("the plugins of a session did not close: {}", describe(&error)));
         }
         // After the task, so a job that the cancelled turn started also stops.
         self.host.shared.processes.close_owner(&self.owner()).await;
@@ -345,7 +348,7 @@ impl Drop for Hold<'_> {
 /// The task of one session.
 struct SessionTask {
     session: Arc<tokio::sync::Mutex<Session>>,
-    toolset: Arc<Toolset>,
+    script: Arc<ScriptSession>,
     host: Arc<Host>,
     inbox: Inbox,
     turn: Arc<Mutex<Option<CancellationToken>>>,
@@ -405,20 +408,38 @@ impl SessionTask {
             output.publish(SessionUpdate::Live(LiveUpdate::State {
                 state: SessionState::Running,
             }));
-            // The turn runs in its own task, so a panic of the turn cannot leave the session running.
-            let ended = tokio::spawn(run_turn(
-                session,
-                model,
-                Arc::clone(&self.host.shared),
-                Arc::clone(&self.toolset),
-                Arc::clone(output),
-                token,
-            ))
-            .await;
+            // The first turn waits for the plugins. A cancel or a close ends the wait, and the turn then ends as
+            // cancelled, so it needs no tool.
+            let toolset = tokio::select! {
+                tools = self.script.tools() => toolset_of(tools),
+                () = token.cancelled() => Ok(Toolset::new()),
+            };
+            let ended = match toolset {
+                // The turn runs in its own task, so a panic of the turn cannot leave the session running.
+                Ok(toolset) => Some(
+                    tokio::spawn(run_turn(
+                        session,
+                        model,
+                        Arc::clone(&self.host.shared),
+                        toolset,
+                        Arc::clone(output),
+                        token,
+                    ))
+                    .await,
+                ),
+                Err(error) => {
+                    output.notice(NoticeLevel::Error, &error);
+                    None
+                }
+            };
             *lock(&self.turn) = None;
             output.publish(SessionUpdate::Live(LiveUpdate::State {
                 state: SessionState::Idle,
             }));
+            // Without a turn, the input that waits runs at the next wake.
+            let Some(ended) = ended else {
+                return;
+            };
             match ended {
                 Ok(Ok(_) | Err(SessionError::Round(_) | SessionError::NoInput)) => {}
                 // A stale session recovers at the next wake, so a store failure does not repeat at once.
@@ -450,12 +471,21 @@ async fn recover(session: &mut Session, output: &Output) -> Result<(), AppError>
     Ok(())
 }
 
+/// The toolset of a turn from the tools of the plugins.
+fn toolset_of(tools: Result<Vec<(ToolDefinition, ScriptTool)>, yuke_js::Error>) -> Result<Toolset, String> {
+    let mut toolset = Toolset::new();
+    for (definition, tool) in tools.map_err(|error| describe(&error))? {
+        toolset.add(definition, tool).map_err(|error| describe(&error))?;
+    }
+    Ok(toolset)
+}
+
 /// Run one turn of `session` on `model`. A round failure is saved as the end of the turn.
 async fn run_turn(
     mut session: OwnedMutexGuard<Session>,
     model: Model,
     shared: Arc<Shared>,
-    toolset: Arc<Toolset>,
+    toolset: Toolset,
     output: Arc<Output>,
     token: CancellationToken,
 ) -> Result<Outcome, SessionError> {

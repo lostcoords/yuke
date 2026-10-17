@@ -1,4 +1,4 @@
-//! The plugin loader: the context of `apply`, the tools that a plugin owns, the services, and the failures.
+//! The plugin loader: the context of `apply`, the exports, the services, and the failures.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -6,12 +6,12 @@ use std::time::Duration;
 
 use yuke_protocol::{NoticeLevel, NoticeParams};
 
-use super::tools::TestHost;
+use super::tools::{TestHost, Tools};
 use super::{evaluate, folder, module, script_error, start, write};
 use crate::{Plugin, PluginError, PluginFailure, Report, Runtime};
 
 /// A plugin `name` in `folder` whose entry is `source`, or a plugin without code when `source` is `None`.
-fn plugin(folder: &Path, name: &str, source: Option<&str>, uses: &[&str], provides: &[&str]) -> Plugin {
+pub(super) fn plugin(folder: &Path, name: &str, source: Option<&str>, uses: &[&str], provides: &[&str]) -> Plugin {
     let root = folder.join(name);
     std::fs::create_dir_all(&root).unwrap();
     let data_dir = folder.join("data").join(name);
@@ -31,17 +31,16 @@ fn plugin(folder: &Path, name: &str, source: Option<&str>, uses: &[&str], provid
 }
 
 /// A tool definition with `name` for a plugin entry.
-fn tool(name: &str) -> String {
+pub(super) fn tool(name: &str) -> String {
     format!(
         "{{ name: '{name}', description: 'd', concurrency: 'serial', parameters: {{ type: 'object', properties: {{}} }}, execute: () => 'x' }}"
     )
 }
 
-/// The names of the tools of `runtime`, in their order.
+/// The names of the tools of a new session of `runtime`, in their order.
 async fn tool_names(runtime: &Runtime, folder: &Path) -> Vec<String> {
-    let host = Arc::new(TestHost::new(folder));
-    let tools = runtime.tools(host).await.unwrap();
-    tools.into_iter().map(|(definition, _)| definition.name).collect()
+    let tools = Tools::open(runtime, Arc::new(TestHost::new(folder))).await;
+    tools.names().into_iter().map(str::to_owned).collect()
 }
 
 /// The name and the first line of the text of each failure. The rest is the stack of a script error.
@@ -56,35 +55,36 @@ fn texts(failures: &[PluginFailure]) -> Vec<(String, String)> {
 }
 
 #[tokio::test]
-async fn a_plugin_gets_its_context_and_owns_the_tools_that_it_defines() {
-    let folder = folder("a_plugin_gets_its_context_and_owns_the_tools_that_it_defines");
+async fn apply_runs_once_with_its_context_and_session_runs_for_each_session() {
+    let folder = folder("apply_runs_once_with_its_context_and_session_runs_for_each_session");
     let (runtime, _reports) = start(&folder).await;
     let one = plugin(
         &folder,
         "one",
         Some(&format!(
-            "export default function apply(ctx) {{
-               globalThis.seen = [ctx.name, ctx.root, ctx.dataDir, ctx.signal.aborted];
-               ctx.tools.define({});
+            "globalThis.applied = 0;
+             globalThis.sessions = [];
+             export function apply(ctx) {{
+               globalThis.applied += 1;
+               globalThis.seen = [ctx.name, ctx.root, ctx.dataDir, ctx.signal.aborted, 'tools' in ctx];
+             }}
+             export function session(s) {{
+               globalThis.sessions.push(s.folder);
+               s.tools.define({});
              }}",
             tool("hello")
         )),
         &[],
         &[],
     );
-    let two = plugin(
-        &folder,
-        "two",
-        Some(&format!(
-            "export default function apply(ctx) {{ ctx.tools.define({}); }}",
-            tool("hello")
-        )),
-        &[],
-        &[],
-    );
 
-    let failures = runtime.load_plugins(&[one.clone(), two]).await;
+    let failures = runtime.load_plugins(std::slice::from_ref(&one)).await;
+    let first = tool_names(&runtime, &folder.join("a")).await;
+    let second = tool_names(&runtime, &folder.join("b")).await;
 
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(first, ["hello"]);
+    assert_eq!(second, ["hello"]);
     let seen = evaluate::<Vec<String>>(&runtime, "return globalThis.seen.map(String);")
         .await
         .unwrap();
@@ -95,32 +95,38 @@ async fn a_plugin_gets_its_context_and_owns_the_tools_that_it_defines() {
             one.root.to_string_lossy().into_owned(),
             one.data_dir.to_string_lossy().into_owned(),
             "false".to_owned(),
+            "false".to_owned(),
         ]
     );
-    assert_eq!(tool_names(&runtime, &folder).await, ["hello"]);
     assert_eq!(
-        texts(&failures),
-        [(
-            "two".to_owned(),
-            "plugin two did not load: TypeError: plugin one already defines a tool with the name 'hello'".to_owned()
-        )]
+        evaluate::<i32>(&runtime, "return globalThis.applied;").await.unwrap(),
+        1
+    );
+    assert_eq!(
+        evaluate::<Vec<String>>(&runtime, "return globalThis.sessions;")
+            .await
+            .unwrap(),
+        [
+            folder.join("a").to_string_lossy().into_owned(),
+            folder.join("b").to_string_lossy().into_owned()
+        ]
     );
 }
 
 #[tokio::test]
-async fn a_failed_plugin_drops_its_tools_and_aborts_its_signal() {
-    let folder = folder("a_failed_plugin_drops_its_tools_and_aborts_its_signal");
+async fn a_failed_apply_aborts_its_signal_and_its_session_never_runs() {
+    let folder = folder("a_failed_apply_aborts_its_signal_and_its_session_never_runs");
     let (runtime, _reports) = start(&folder).await;
     let bad = plugin(
         &folder,
         "bad",
         Some(&format!(
-            "export default async function apply(ctx) {{
+            "export async function apply(ctx) {{
                globalThis.badSignal = ctx.signal;
-               ctx.tools.define({});
                await null;
                throw new Error('broken');
-             }}",
+             }}
+             export function session(s) {{ s.tools.define({}); }}",
             tool("dropped")
         )),
         &[],
@@ -130,7 +136,7 @@ async fn a_failed_plugin_drops_its_tools_and_aborts_its_signal() {
         &folder,
         "good",
         Some(&format!(
-            "export default function apply(ctx) {{ ctx.tools.define({}); }}",
+            "export function session(s) {{ s.tools.define({}); }}",
             tool("kept")
         )),
         &[],
@@ -152,22 +158,20 @@ async fn a_failed_plugin_drops_its_tools_and_aborts_its_signal() {
 }
 
 #[tokio::test]
-async fn a_failed_plugin_that_replaces_the_web_globals_still_drops_its_tools_and_aborts_its_signal() {
-    let folder = folder("a_failed_plugin_that_replaces_the_web_globals_still_drops_its_tools_and_aborts_its_signal");
+async fn a_failed_apply_that_replaces_the_web_globals_still_aborts_its_signal() {
+    let folder = folder("a_failed_apply_that_replaces_the_web_globals_still_aborts_its_signal");
     let (runtime, _reports) = start(&folder).await;
     let bad = plugin(
         &folder,
         "bad",
-        Some(&format!(
-            "export default function apply(ctx) {{
+        Some(
+            "export function apply(ctx) {
                globalThis.badSignal = ctx.signal;
-               ctx.tools.define({});
                globalThis.DOMException = undefined;
                globalThis.AbortController = undefined;
                throw new Error('broken');
-             }}",
-            tool("dropped")
-        )),
+             }",
+        ),
         &[],
         &[],
     );
@@ -178,7 +182,6 @@ async fn a_failed_plugin_that_replaces_the_web_globals_still_drops_its_tools_and
         texts(&failures),
         [("bad".to_owned(), "plugin bad did not load: Error: broken".to_owned())]
     );
-    assert_eq!(tool_names(&runtime, &folder).await, Vec::<String>::new());
     assert_eq!(
         evaluate::<String>(&runtime, "return globalThis.badSignal.reason.name;")
             .await
@@ -195,7 +198,7 @@ async fn a_native_throws_the_error_class_of_the_start_after_a_plugin_replaces_th
         &folder,
         "one",
         Some(
-            "export default function apply(ctx) {
+            "export function apply(ctx) {
                const original = TypeError;
                globalThis.TypeError = class Fake extends Error {};
                try { ctx.notify('loud', 'x'); } catch (error) { globalThis.seen = error instanceof original; }
@@ -224,7 +227,7 @@ async fn a_plugin_cannot_abort_the_signal_of_its_context() {
         &folder,
         "one",
         Some(
-            "export default function apply(ctx) {
+            "export function apply(ctx) {
                const signal = ctx.signal;
                globalThis.seen = ['abort' in signal, signal.dispatchEvent(new Event('abort')), signal.aborted].join(' ');
              }",
@@ -249,35 +252,35 @@ async fn a_service_passes_to_a_later_plugin_and_a_failed_provider_fails_its_user
     let notes = plugin(
         &folder,
         "notes",
-        Some("export default function apply(ctx) { ctx.provide('notes', { count: 3 }); }"),
+        Some("export function apply(ctx) { ctx.provide('notes', { count: 3 }); }"),
         &[],
         &["notes"],
     );
     let reader = plugin(
         &folder,
         "reader",
-        Some("export default function apply(ctx) { globalThis.count = ctx.get('notes').count; }"),
+        Some("export function apply(ctx) { globalThis.count = ctx.get('notes').count; }"),
         &["notes"],
         &[],
     );
     let broken = plugin(
         &folder,
         "broken",
-        Some("export default function apply() { throw new Error('no store'); }"),
+        Some("export function apply() { throw new Error('no store'); }"),
         &[],
         &["store"],
     );
     let middle = plugin(
         &folder,
         "middle",
-        Some("export default function apply(ctx) { globalThis.ran = true; ctx.provide('index', {}); }"),
+        Some("export function apply(ctx) { globalThis.ran = true; ctx.provide('index', {}); }"),
         &["store"],
         &["index"],
     );
     let last = plugin(
         &folder,
         "last",
-        Some("export default function apply() { globalThis.ran = true; }"),
+        Some("export function apply() { globalThis.ran = true; }"),
         &["index"],
         &[],
     );
@@ -317,35 +320,30 @@ async fn the_context_refuses_undeclared_services_and_apply_must_provide_each_dec
     let folder = folder("the_context_refuses_undeclared_services_and_apply_must_provide_each_declared_one");
     let (runtime, _reports) = start(&folder).await;
     let cases = [
-        plugin(
-            &folder,
-            "silent",
-            Some("export default function apply() {}"),
-            &[],
-            &["a"],
-        ),
+        plugin(&folder, "silent", Some("export function apply() {}"), &[], &["a"]),
         plugin(
             &folder,
             "reach",
-            Some("export default function apply(ctx) { ctx.get('z'); }"),
+            Some("export function apply(ctx) { ctx.get('z'); }"),
             &[],
             &[],
         ),
         plugin(
             &folder,
             "other",
-            Some("export default function apply(ctx) { ctx.provide('c', 1); }"),
+            Some("export function apply(ctx) { ctx.provide('c', 1); }"),
             &[],
             &["b"],
         ),
         plugin(
             &folder,
             "value",
-            Some("export default function apply() { return 5; }"),
+            Some("export function apply() { return 5; }"),
             &[],
             &[],
         ),
-        plugin(&folder, "plain", Some("export const apply = () => {};"), &[], &[]),
+        plugin(&folder, "neither", Some("export default function apply() {}"), &[], &[]),
+        plugin(&folder, "number", Some("export const session = 5;"), &[], &[]),
     ];
 
     let failures = runtime.load_plugins(&cases).await;
@@ -379,11 +377,15 @@ async fn the_context_refuses_undeclared_services_and_apply_must_provide_each_dec
                 "plugin value did not load: TypeError: apply must return nothing or a promise of nothing".to_owned()
             ),
             (
-                "plain".to_owned(),
+                "neither".to_owned(),
                 format!(
-                    "plugin plain did not load: TypeError: {} has no default export function: a plugin entry exports apply(ctx) as default",
-                    entry("plain").display()
+                    "plugin neither did not load: TypeError: {} exports neither apply nor session: a plugin entry exports one or both",
+                    entry("neither").display()
                 )
+            ),
+            (
+                "number".to_owned(),
+                "plugin number did not load: TypeError: the session export is no function".to_owned()
             ),
         ]
     );
@@ -417,7 +419,7 @@ async fn notify_sends_a_notice_of_the_plugin_and_refuses_an_unknown_level() {
         &folder,
         "loud",
         Some(
-            "export default function apply(ctx) {
+            "export function apply(ctx) {
                ctx.notify('warn', 'careful');
                try { ctx.notify('loud', 'x'); } catch (error) { globalThis.refused = error.message; }
              }",

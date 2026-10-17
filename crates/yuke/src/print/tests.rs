@@ -420,11 +420,13 @@ async fn the_model_calls_a_tool_of_a_plugin_from_the_config() {
     let place = Place::new("print", "plugin_tool");
     place.plugin(
         "greeter",
-        "export default function apply(ctx) {
-           ctx.tools.define({
+        "let name;
+         export function apply(ctx) { name = ctx.name; }
+         export function session(s) {
+           s.tools.define({
              name: 'greet', description: 'Greet.', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
-             execute: () => `hello from ${ctx.name}`,
+             execute: () => `hello from ${name}`,
            });
          }",
     );

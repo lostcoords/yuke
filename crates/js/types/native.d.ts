@@ -70,8 +70,8 @@ declare module "yuke:internal/native" {
   }
 
   /**
-   * Add a tool to the registry of the runtime, for the plugin `owner` or for yuke itself. A second tool with the same
-   * name throws a `TypeError`.
+   * Add a tool to the registry of the runtime, for the open session `open`, or for every session without `open`, and
+   * return its id. A name that the session already has, or a session that is closed, throws a `TypeError`.
    */
   export function register(
     tool: {
@@ -81,13 +81,13 @@ declare module "yuke:internal/native" {
       readonly parameters: string;
       readonly concurrency: "serial" | "parallel";
       readonly deferLoading: boolean;
-      readonly owner: string | undefined;
+      readonly open: number | undefined;
     },
     start: (argumentsText: string, metadata: CallMetadata, output: (text: string) => void, call: CallHost) => Started,
-  ): void;
+  ): number;
 
-  /** Remove each tool of the plugin `owner`. */
-  export function removeTools(owner: string): void;
+  /** Remove the tools of `ids`. */
+  export function unregister(ids: readonly number[]): void;
 
   /** The UTF-8 bytes of `text`, a well-formed string. */
   export function encodeText(text: string): Uint8Array;

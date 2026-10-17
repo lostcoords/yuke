@@ -15,7 +15,7 @@ const LOADER: &str = "yuke:internal/plugins";
 /// One plugin of the list. The consumer checks the manifest, the names, and the order before the load.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plugin {
-    /// The name of the plugin. It owns the tools of the plugin, and it is the source of its notices.
+    /// The name of the plugin. It is the source of its notices.
     pub name: String,
     /// The folder of the plugin.
     pub root: PathBuf,
@@ -41,7 +41,7 @@ pub struct PluginFailure {
 /// Why a plugin did not load.
 #[derive(Debug)]
 pub enum PluginError {
-    /// The import of the entry or its `apply` failed.
+    /// The import of the entry, the check of its exports, or its `apply` failed.
     Load(Error),
     /// The plugin uses `service`, and its provider `provider` did not load. The plugin did not run.
     Provider {
@@ -76,8 +76,9 @@ impl std::error::Error for PluginFailure {
 }
 
 impl Runtime {
-    /// Load `plugins` in their order, and return each plugin that did not load. A failed plugin drops its tools. A
-    /// plugin whose provider did not load does not run, and its own services fail with it.
+    /// Load `plugins` in their order. Run each `apply`, and keep each `session` for the sessions that open later.
+    /// Return each plugin that did not load. A failed plugin runs no `session`. A plugin whose provider did not load does
+    /// not run, and its own services fail with it.
     pub async fn load_plugins(&self, plugins: &[Plugin]) -> Vec<PluginFailure> {
         let mut failed: HashMap<&str, &str> = HashMap::new();
         let mut failures = Vec::new();
@@ -112,9 +113,7 @@ impl Runtime {
         let plugin = plugin.clone();
         self.caller
             .run(async move |ctx: Ctx<'_>, _registry| {
-                let promise = caught(&ctx, Module::import(&ctx, LOADER))?;
-                let loader: Object<'_> = caught(&ctx, promise.into_future().await)?;
-                let load: Function<'_> = caught(&ctx, loader.get("load"))?;
+                let load: Function<'_> = caught(&ctx, loader(&ctx).await?.get("load"))?;
                 let spec = caught(&ctx, crate::native::internal_record(&ctx))?;
                 let path = |path: &PathBuf| path.to_string_lossy().into_owned();
                 caught(&ctx, spec.set("name", plugin.name))?;
@@ -128,4 +127,10 @@ impl Runtime {
             })
             .await
     }
+}
+
+/// The internal module that loads the plugins and opens their sessions.
+pub(crate) async fn loader<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
+    let promise = caught(ctx, Module::import(ctx, LOADER))?;
+    caught(ctx, promise.into_future().await)
 }

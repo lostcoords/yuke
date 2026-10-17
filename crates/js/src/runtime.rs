@@ -20,7 +20,7 @@ use crate::native;
 use crate::processes::Processes;
 use crate::strip::Cache;
 use crate::timers::{self, Timers};
-use crate::tools::{self, Registry, ScriptTool, SessionHost};
+use crate::tools::Registry;
 
 /// The stack that the engine gives the JavaScript. The engine checks it, so a deep recursion throws a catchable
 /// `RangeError` instead of an overflow of the thread, which would abort the process.
@@ -52,7 +52,7 @@ type Call = Box<dyn for<'js> FnOnce(Ctx<'js>, &Rc<Registry>) + Send>;
 #[derive(Debug)]
 pub struct Runtime {
     pub(crate) caller: Caller,
-    processes: Arc<Processes>,
+    pub(crate) processes: Arc<Processes>,
     /// The drop of this sender ends the thread. A tool keeps a clone of the caller, so the call channel can outlive the
     /// runtime.
     stop: oneshot::Sender<()>,
@@ -129,16 +129,6 @@ impl Runtime {
             .await
     }
 
-    /// The tools that the JavaScript has defined so far, each with its definition, for the session of `host`. The
-    /// consumer adds each pair to the toolset of that session.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Stopped`] when the thread has ended.
-    pub async fn tools(&self, host: Arc<dyn SessionHost>) -> Result<Vec<(yuke_ai::ToolDefinition, ScriptTool)>, Error> {
-        tools::tools(&self.caller, &self.processes, host).await
-    }
-
     /// Stop the JavaScript and wait for the end of the thread. The JavaScript that runs stops, also inside a loop.
     ///
     /// # Errors
@@ -173,6 +163,22 @@ impl Runtime {
 }
 
 impl Caller {
+    /// Post `f` to the JavaScript thread without an answer. It runs to its end, unless the runtime stops first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Stopped`] when the thread has ended.
+    pub(crate) fn post<F>(&self, f: F) -> Result<(), Error>
+    where
+        F: for<'js> AsyncFnOnce(Ctx<'js>, Rc<Registry>) + Send + 'static,
+    {
+        let call: Call = Box::new(move |ctx: Ctx<'_>, registry: &Rc<Registry>| {
+            let registry = Rc::clone(registry);
+            ctx.clone().spawn(async move { f(ctx, registry).await });
+        });
+        self.calls.send(call).map_err(|_| Error::Stopped)
+    }
+
     /// Run `f` on the JavaScript thread, and return its answer. A drop of the returned future drops the future of `f` at
     /// its next await. Only the end of the runtime stops a loop without an await.
     pub(crate) async fn run<F, R>(&self, f: F) -> Result<R, Error>

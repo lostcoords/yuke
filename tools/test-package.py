@@ -185,11 +185,12 @@ else:
                                 text=True, capture_output=True, cwd=self.scratch, timeout=30)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("TS2307", result.stdout + result.stderr)
-        (plugin / "index.ts").write_text('import type { PluginApply } from "yuke:plugins";\n'
+        (plugin / "index.ts").write_text('import type { PluginApply, PluginSession } from "yuke:plugins";\n'
                                          'import { readTextFile } from "yuke:fs";\n'
-                                         'const apply: PluginApply = async (ctx) => {\n'
+                                         'export const apply: PluginApply = async (ctx) => {\n'
                                          '  await readTextFile("state.json", { baseDir: ctx.dataDir, signal: ctx.signal });\n'
-                                         '};\nexport default apply;\n')
+                                         '};\n'
+                                         'export const session: PluginSession = (s) => () => s.notify("info", s.folder);\n')
         accepted = subprocess.run([self.compiler, "-p", str(configuration), "--pretty", "false"],
                                   text=True, capture_output=True, cwd=self.scratch, timeout=30)
         self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)

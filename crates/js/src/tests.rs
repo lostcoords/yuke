@@ -2,6 +2,7 @@ mod exec;
 mod fs;
 mod globals;
 mod plugins;
+mod sessions;
 mod tools;
 mod web;
 
@@ -54,8 +55,8 @@ async fn start(folder: &Path) -> (Runtime, mpsc::UnboundedReceiver<Report>) {
     .unwrap()
 }
 
-/// Load the module `path` as the entry of the plugin `test`. The module exports `apply(ctx)`.
-async fn load_tools(runtime: &Runtime, path: &Path) -> Result<(), Error> {
+/// Load the module `path` as the entry of the plugin `test`. The module exports `apply`, `session`, or both.
+async fn load_entry(runtime: &Runtime, path: &Path) -> Result<(), Error> {
     let root = path.parent().unwrap().to_owned();
     let plugin = Plugin {
         name: "test".to_owned(),
@@ -124,6 +125,18 @@ async fn next_fault(faults: &mut mpsc::UnboundedReceiver<Report>) -> ScriptError
     match report {
         Report::Fault(error) => error,
         other => panic!("expected a fault, got {other:?}"),
+    }
+}
+
+/// The next report of `reports`, which must be a notice.
+async fn next_notice(reports: &mut mpsc::UnboundedReceiver<Report>) -> yuke_protocol::NoticeParams {
+    let report = tokio::time::timeout(Duration::from_secs(5), reports.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    match report {
+        Report::Notice(notice) => notice,
+        other => panic!("expected a notice, got {other:?}"),
     }
 }
 

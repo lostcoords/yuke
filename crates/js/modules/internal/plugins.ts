@@ -1,7 +1,15 @@
 import { defineTool } from "yuke:internal/define";
 import { hostSignal } from "yuke:internal/events";
-import { notify, removeTools } from "yuke:internal/native";
-import type { NoticeLevel, PluginApply, PluginContext, Services } from "yuke:plugins";
+import { notify, unregister } from "yuke:internal/native";
+import type {
+  NoticeLevel,
+  PluginApply,
+  PluginContext,
+  PluginSession,
+  Services,
+  SessionCleanup,
+  SessionContext,
+} from "yuke:plugins";
 import type { ObjectSchema, Tool } from "yuke:tools";
 
 /** One plugin as the host gives it. The host checked the manifest, the order, and the providers before any plugin code. */
@@ -18,13 +26,33 @@ export interface PluginSpec {
 /** The services of the loaded plugins. A service enters only after its provider's `apply` succeeds. */
 const services = new Map<string, unknown>();
 
+/** The `session` export of each loaded plugin, in load order. */
+const sessionExports: { readonly plugin: string; readonly session: PluginSession }[] = [];
+
+/** The part of one plugin in one open session. */
+interface Scope {
+  /** Set before the abort, so neither an abort listener nor a cleanup can define a tool. */
+  closed: boolean;
+  readonly abort: (reason: string) => void;
+  /** The ids of the tools that the scope defined. */
+  readonly tools: number[];
+  /** The cleanup that `session` returned before the close. */
+  cleanup: SessionCleanup | undefined;
+  /** Settles when `session` settles. It never rejects. */
+  settled: Promise<void>;
+  /** Run `cleanup`. A failure is a notice. */
+  readonly clean: (cleanup: SessionCleanup) => Promise<void>;
+}
+
+/** The scopes of each open session, by the open number of the host. */
+const opens = new Map<number, { readonly scopes: readonly Scope[]; readonly ready: Promise<void> }>();
+
 /**
- * Load the plugin `spec`: import its entry, and await `apply(ctx)`. A failure aborts the signal of the plugin, removes
- * its tools, and throws.
+ * Load the plugin `spec`: import its entry, check its exports, and await `apply(ctx)`. A failure aborts the signal of
+ * the plugin and throws. Only a loaded plugin runs `session`.
  */
 export async function load(spec: PluginSpec): Promise<void> {
   const { signal, abort } = hostSignal();
-  let failed = false;
   const pending = new Map<string, unknown>();
   let applying = true;
   const ctx: PluginContext = Object.freeze({
@@ -32,12 +60,6 @@ export async function load(spec: PluginSpec): Promise<void> {
     root: spec.root,
     dataDir: spec.dataDir,
     signal,
-    tools: Object.freeze({
-      define<const S extends ObjectSchema>(tool: Tool<S>): void {
-        if (failed) throw new TypeError(`plugin ${spec.name} did not load`);
-        defineTool(tool, spec.name);
-      },
-    }),
     provide(name: string, value: unknown): void {
       if (!spec.provides.includes(name))
         throw new TypeError(`provide: plugin ${spec.name} has no '${name}' in provides`);
@@ -52,20 +74,27 @@ export async function load(spec: PluginSpec): Promise<void> {
       if (!services.has(name)) throw new Error(`get: no loaded plugin provides '${name}'`);
       return services.get(name) as NonNullable<Services[K]>;
     },
-    notify(level: NoticeLevel, message: string, sessionId?: string): void {
-      notify(spec.name, level, String(message), sessionId);
+    notify(level: NoticeLevel, message: string): void {
+      notify(spec.name, level, String(message), undefined);
     },
   });
 
   try {
+    let session: PluginSession | undefined;
     if (spec.entry !== undefined) {
-      const module = (await import(spec.entry)) as { readonly default?: unknown };
-      if (typeof module.default !== "function") {
-        throw new TypeError(
-          `${spec.entry} has no default export function: a plugin entry exports apply(ctx) as default`,
-        );
+      const { apply, session: exported } = (await import(spec.entry)) as {
+        readonly apply?: unknown;
+        readonly session?: unknown;
+      };
+      if (apply === undefined && exported === undefined) {
+        throw new TypeError(`${spec.entry} exports neither apply nor session: a plugin entry exports one or both`);
       }
-      const result: unknown = (module.default as PluginApply)(ctx);
+      if (apply !== undefined && typeof apply !== "function") throw new TypeError("the apply export is no function");
+      if (exported !== undefined && typeof exported !== "function") {
+        throw new TypeError("the session export is no function");
+      }
+      session = exported as PluginSession | undefined;
+      const result: unknown = apply === undefined ? undefined : (apply as PluginApply)(ctx);
       if (result !== undefined && (await result) !== undefined) {
         throw new TypeError("apply must return nothing or a promise of nothing");
       }
@@ -74,11 +103,96 @@ export async function load(spec: PluginSpec): Promise<void> {
     const missing = spec.provides.filter((name) => !pending.has(name));
     if (missing.length > 0) throw new TypeError(`apply did not provide ${missing.join(", ")} of provides`);
     for (const [name, value] of pending) services.set(name, value);
+    if (session !== undefined) sessionExports.push({ plugin: spec.name, session });
   } catch (error) {
     applying = false;
-    failed = true;
-    removeTools(spec.name);
     abort(`plugin ${spec.name} did not load`);
     throw error;
   }
+}
+
+/**
+ * Start `session(s)` of each loaded plugin for the session `sessionId`, under the open number `open`. Each call starts
+ * before any of them settles. The open does not wait for them; `ready(open)` does.
+ */
+export function openSession(open: number, sessionId: string, folder: string): void {
+  const scopes = sessionExports.map(({ plugin, session }) => start(open, sessionId, folder, plugin, session));
+  const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
+  opens.set(open, { scopes, ready });
+}
+
+/** Settles when `session` of each plugin of the open session `open` settles. It never rejects. */
+export function ready(open: number): Promise<void> {
+  return opens.get(open)?.ready ?? Promise.resolve();
+}
+
+/**
+ * Close the open session `open`: mark each scope closed, abort each signal, and await each cleanup. A cleanup that
+ * `session` returns after the close runs once too. A failed cleanup sends a notice.
+ */
+export async function closeSession(open: number): Promise<void> {
+  const state = opens.get(open);
+  if (state === undefined) return;
+  opens.delete(open);
+  for (const scope of state.scopes) scope.closed = true;
+  for (const scope of state.scopes) scope.abort("the session closed");
+  await Promise.all(
+    state.scopes.map(async (scope) => {
+      await scope.settled;
+      const cleanup = scope.cleanup;
+      scope.cleanup = undefined;
+      if (cleanup !== undefined) await scope.clean(cleanup);
+    }),
+  );
+}
+
+/** Run `session(s)` of `plugin` in its own scope. */
+function start(open: number, sessionId: string, folder: string, plugin: string, session: PluginSession): Scope {
+  const { signal, abort } = hostSignal();
+  const report = (message: string): void => notify(plugin, "error", message, sessionId);
+  const clean = async (cleanup: SessionCleanup): Promise<void> => {
+    try {
+      await cleanup();
+    } catch (error) {
+      report(`the cleanup of the session failed: ${String(error)}`);
+    }
+  };
+  const scope: Scope = { closed: false, abort, tools: [], cleanup: undefined, settled: Promise.resolve(), clean };
+  const s: SessionContext = Object.freeze({
+    sessionId,
+    folder,
+    signal,
+    tools: Object.freeze({
+      define<const S extends ObjectSchema>(tool: Tool<S>): void {
+        if (scope.closed) throw new TypeError(`plugin ${plugin} defines a tool after the end of its session`);
+        scope.tools.push(defineTool(tool, open));
+      },
+    }),
+    notify(level: NoticeLevel, message: string): void {
+      notify(plugin, level, String(message), sessionId);
+    },
+  });
+  scope.settled = (async () => {
+    try {
+      const result: unknown = await session(s);
+      if (result !== undefined && typeof result !== "function") {
+        throw new TypeError("session must return nothing or a cleanup function");
+      }
+      const cleanup = result as SessionCleanup | undefined;
+      // The close can end before the setup returns this cleanup, so the cleanup runs here.
+      if (scope.closed) {
+        if (cleanup !== undefined) await clean(cleanup);
+      } else {
+        scope.cleanup = cleanup;
+      }
+    } catch (error) {
+      // The close owns the scope, so a failure after the close needs no rollback.
+      if (scope.closed) return;
+      scope.closed = true;
+      unregister(scope.tools);
+      abort(`session of plugin ${plugin} failed`);
+      report(`the session setup failed, and its tools are gone: ${String(error)}`);
+    }
+  })();
+  return scope;
 }

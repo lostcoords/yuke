@@ -1,5 +1,5 @@
 // Type checks of the author API. `tsc -p crates/js/tsconfig.json` runs them; nothing executes this file.
-import type { PluginContext } from "yuke:plugins";
+import type { PluginApply, PluginContext, PluginSession, SessionContext } from "yuke:plugins";
 import type { Infer, ObjectSchema, ToolResult } from "yuke:tools";
 
 /** `true` only when `A` and `B` are the same type. */
@@ -9,6 +9,7 @@ type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ?
 declare function assert<T extends true>(): void;
 
 declare const ctx: PluginContext;
+declare const s: SessionContext;
 
 declare module "yuke:plugins" {
   interface Services {
@@ -17,7 +18,7 @@ declare module "yuke:plugins" {
 }
 
 // An inline schema needs no `as const`. A required field is required, another is optional, and nested types follow.
-ctx.tools.define({
+s.tools.define({
   name: "summarize",
   description: "d",
   concurrency: "parallel",
@@ -89,6 +90,33 @@ const results: ToolResult[] = [
   // @ts-expect-error: a media file has one source.
   { text: "x", media: [{ mimeType: "image/png", path: "a.png", bytes: new Uint8Array(1) }] },
 ];
+
+// Model tools belong to a session, and services to the process. A notice of the process names no session.
+// @ts-expect-error: the process context defines no tool.
+ctx.tools;
+// @ts-expect-error: a notice of the process takes no session id.
+ctx.notify("info", "x", "session");
+// @ts-expect-error: a session publishes no service.
+s.provide;
+s.notify("info", "x");
+
+// `session` returns nothing, a cleanup, or a promise of either. `apply` returns nothing.
+const session: PluginSession = async (scope) => {
+  void scope.sessionId;
+  return async () => {};
+};
+// @ts-expect-error: a cleanup is a function.
+const valued: PluginSession = () => 5;
+const plain: PluginSession = async (scope) => {
+  await Promise.resolve(scope.folder);
+};
+const quiet: PluginSession = (scope) => {
+  scope.notify("info", "x");
+};
+const apply: PluginApply = () => {};
+// @ts-expect-error: `apply` returns nothing.
+const valuedApply: PluginApply = () => 5;
+void [session, valued, plain, quiet, apply, valuedApply];
 
 // A service name must come from a declaration of `Services`, and its value must not be null.
 assert<Equal<ReturnType<typeof ctx.get<"test.notes.v1">>, { readonly count: () => number }>>();

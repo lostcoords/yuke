@@ -8,9 +8,10 @@
 //! sets no heap and no time limit. It checks the stack of the JavaScript, so a deep recursion throws and does not crash
 //! the thread. A shutdown stops running JavaScript.
 //!
-//! A tool that a plugin defines with `ctx.tools.define` is an engine tool: [`Runtime::tools`] gives each one as a
-//! [`ScriptTool`] for the session of a [`SessionHost`]. `yuke:internal/builtins` defines the tools `read`, `write`, `edit`,
-//! `exec`, and `stop`. [`Processes`] runs the commands and the background jobs on the tokio runtime of the consumer,
+//! A plugin runs `apply` once per runtime and `session` once per session. [`Runtime::open_session`] opens the session
+//! of a [`SessionHost`]. [`ScriptSession::tools`] gives each tool of that session as a [`ScriptTool`]: the tools of
+//! yuke and the tools that the `session` exports define. `yuke:internal/builtins` defines the tools `read`, `write`,
+//! `edit`, `exec`, and `stop`. [`Processes`] runs the commands and the background jobs on the tokio runtime of the consumer,
 //! so a job outlives a reload of the JavaScript.
 
 mod baked;
@@ -21,6 +22,7 @@ mod native;
 mod plugins;
 mod processes;
 mod runtime;
+mod session;
 mod strip;
 #[cfg(test)]
 mod tests;
@@ -32,4 +34,5 @@ pub use error::{Error, Report, ScriptError};
 pub use plugins::{Plugin, PluginError, PluginFailure};
 pub use processes::{JobEnded, Processes, shell};
 pub use runtime::{Options, Runtime};
+pub use session::ScriptSession;
 pub use tools::{ScriptTool, SessionHost};

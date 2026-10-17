@@ -1,7 +1,6 @@
 //! The built-in modules, the tool bridge, and the tools `read`, `write`, `edit`.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -13,9 +12,9 @@ use tokio::sync::mpsc;
 use yuke_engine::{CancellationToken, Concurrency, Tool, ToolContent};
 use yuke_protocol::SessionId;
 
-use super::{evaluate, folder, load_tools, module, next_fault, script_error, start, write};
+use super::{evaluate, folder, load_entry, module, next_fault, next_notice, script_error, start, write};
 use crate::tools::forward;
-use crate::{JobEnded, Runtime, ScriptTool, SessionHost, baked};
+use crate::{JobEnded, Runtime, ScriptSession, ScriptTool, SessionHost, baked};
 
 /// A session host that keeps the bytes of each stored attachment and each job end.
 #[derive(Debug)]
@@ -77,39 +76,65 @@ impl SessionHost for TestHost {
 }
 
 /// A runtime with the tools of `modules` (module names), for a session in `folder`.
-pub(super) async fn tools_of(folder: &Path, modules: &[&str]) -> (Runtime, Arc<TestHost>, HashMap<String, ScriptTool>) {
+/// The fixture keeps one session open, with its tools, until the fixture drops.
+pub(super) struct Tools {
+    pub(super) session: ScriptSession,
+    pub(super) list: Vec<(yuke_ai::ToolDefinition, ScriptTool)>,
+}
+
+impl Tools {
+    /// Open the session of `host` on `runtime`, and wait for its tools.
+    pub(super) async fn open(runtime: &Runtime, host: Arc<dyn SessionHost>) -> Tools {
+        let session = runtime.open_session(host).await.unwrap();
+        let list = tokio::time::timeout(Duration::from_secs(5), session.tools())
+            .await
+            .unwrap()
+            .unwrap();
+        Tools { session, list }
+    }
+
+    /// The names of the tools, in their order.
+    pub(super) fn names(&self) -> Vec<&str> {
+        self.list
+            .iter()
+            .map(|(definition, _)| definition.name.as_str())
+            .collect()
+    }
+}
+
+impl std::ops::Index<&str> for Tools {
+    type Output = ScriptTool;
+
+    fn index(&self, name: &str) -> &ScriptTool {
+        let found = self.list.iter().find(|(definition, _)| definition.name == name);
+        &found.unwrap_or_else(|| panic!("no tool {name}")).1
+    }
+}
+
+pub(super) async fn tools_of(folder: &Path, modules: &[&str]) -> (Runtime, Arc<TestHost>, Tools) {
     let (runtime, _faults) = start(folder).await;
     tools_in(runtime, Arc::new(TestHost::new(folder)), modules).await
 }
 
-/// The tools of `modules` (module names) in `runtime`, for the session of `host`.
 pub(super) async fn tools_in(
     runtime: Runtime,
     host: Arc<TestHost>,
     modules: &[&str],
-) -> (Runtime, Arc<TestHost>, HashMap<String, ScriptTool>) {
+) -> (Runtime, Arc<TestHost>, Tools) {
     for name in modules {
         let loaded = tokio::time::timeout(Duration::from_secs(5), async {
             if name.starts_with("yuke:") {
                 runtime.import(name).await
             } else {
-                load_tools(&runtime, Path::new(name)).await
+                load_entry(&runtime, Path::new(name)).await
             }
         });
         loaded.await.unwrap().unwrap();
     }
-    let tools = runtime
-        .tools(Arc::clone(&host) as Arc<dyn SessionHost>)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|(definition, tool)| (definition.name, tool))
-        .collect();
+    let tools = Tools::open(&runtime, Arc::clone(&host) as Arc<dyn SessionHost>).await;
     (runtime, host, tools)
 }
 
-/// Call `tool` with `arguments`, and return its answer and its live texts. A call that does not answer fails the test
-/// after five seconds.
 pub(super) async fn call(tool: &ScriptTool, arguments: &str) -> (Result<ToolContent, String>, Vec<String>) {
     call_with(tool, arguments, CancellationToken::new()).await
 }
@@ -243,14 +268,13 @@ async fn the_built_in_tools_come_with_their_definitions() {
     runtime.import("yuke:internal/builtins").await.unwrap();
     let host: Arc<dyn SessionHost> = Arc::new(TestHost::new(&folder));
 
-    let tools = runtime.tools(host).await.unwrap();
+    let tools = Tools::open(&runtime, host).await;
 
-    let names: Vec<&str> = tools.iter().map(|(definition, _)| definition.name.as_str()).collect();
-    assert_eq!(names, ["read", "write", "edit", "exec", "stop"]);
-    let (read, read_tool) = &tools[0];
+    assert_eq!(tools.names(), ["read", "write", "edit", "exec", "stop"]);
+    let (read, read_tool) = &tools.list[0];
     assert!(read.input_schema.contains("\"offset\""), "{}", read.input_schema);
     assert_eq!(read_tool.concurrency(), Concurrency::Parallel);
-    assert_eq!(tools[1].1.concurrency(), Concurrency::Serial);
+    assert_eq!(tools.list[1].1.concurrency(), Concurrency::Serial);
 }
 
 #[tokio::test]
@@ -260,7 +284,7 @@ async fn a_change_of_a_tool_after_its_definition_changes_neither_its_schema_nor_
         &folder,
         &[(
             "tools.ts",
-            "export default function apply({ tools: { define } }) {\n\
+            "export function session({ tools: { define } }) {\n\
                const tool = { name: 'fixed', description: 'd', concurrency: 'serial',\n\
                  parameters: { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] },\n\
                  execute: (args) => `n=${args.n}` };\n\
@@ -285,7 +309,7 @@ async fn a_deferred_tool_is_defined_for_the_tool_search_and_others_are_not() {
         &[(
             "main.ts",
             &format!(
-                "export default function apply({{ tools: {{ define }} }}) {{\n\
+                "export function session({{ tools: {{ define }} }}) {{\n\
                  define({{ name: 'rare', description: 'd', concurrency: 'serial', deferLoading: true, {empty} }});\n\
                  define({{ name: 'common', description: 'd', concurrency: 'serial', {empty} }});\n\
                  }}\n"
@@ -293,12 +317,13 @@ async fn a_deferred_tool_is_defined_for_the_tool_search_and_others_are_not() {
         )],
     );
     let (runtime, _faults) = start(&folder).await;
-    load_tools(&runtime, &folder.join("main.ts")).await.unwrap();
+    load_entry(&runtime, &folder.join("main.ts")).await.unwrap();
     let host: Arc<dyn SessionHost> = Arc::new(TestHost::new(&folder));
 
-    let tools = runtime.tools(host).await.unwrap();
+    let tools = Tools::open(&runtime, host).await;
 
     let deferred: Vec<(&str, bool)> = tools
+        .list
         .iter()
         .map(|(definition, _)| (definition.name.as_str(), definition.defer_loading))
         .collect();
@@ -306,7 +331,7 @@ async fn a_deferred_tool_is_defined_for_the_tool_search_and_others_are_not() {
 }
 
 #[tokio::test]
-async fn a_bad_tool_definition_throws_a_type_error_that_names_its_problem() {
+async fn a_bad_tool_definition_fails_the_session_with_a_notice_that_names_its_problem() {
     let base = "name: 'bad', description: 'd', execute: () => 'x'";
     let empty = "parameters: { type: 'object', properties: {} }";
     let cases = [
@@ -350,16 +375,22 @@ async fn a_bad_tool_definition_throws_a_type_error_that_names_its_problem() {
 
     for (index, (tool, expected)) in cases.iter().enumerate() {
         let folder = folder(&format!(
-            "a_bad_tool_definition_throws_a_type_error_that_names_its_problem/{index}"
+            "a_bad_tool_definition_fails_the_session_with_a_notice_that_names_its_problem/{index}"
         ));
-        let source = format!("export default function apply({{ tools: {{ define }} }}) {{ define({{ {tool} }}); }}\n");
+        let source = format!("export function session({{ tools: {{ define }} }}) {{ define({{ {tool} }}); }}\n");
         write(&folder, &[("main.ts", &source)]);
-        let (runtime, _faults) = start(&folder).await;
+        let (runtime, mut reports) = start(&folder).await;
+        load_entry(&runtime, &folder.join("main.ts")).await.unwrap();
 
-        let error = script_error(load_tools(&runtime, &folder.join("main.ts")).await);
+        let tools = Tools::open(&runtime, Arc::new(TestHost::new(&folder))).await;
+        let notice = next_notice(&mut reports).await;
 
-        assert_eq!(error.name.as_deref(), Some("TypeError"), "{tool}");
-        assert!(error.message.contains(expected), "{tool}: {}", error.message);
+        assert!(tools.names().is_empty(), "{tool}");
+        let failure = notice
+            .message
+            .strip_prefix("the session setup failed, and its tools are gone: TypeError: ")
+            .unwrap_or_else(|| panic!("{tool}: {}", notice.message));
+        assert!(failure.contains(expected), "{tool}: {failure}");
     }
 }
 
@@ -416,7 +447,7 @@ async fn an_argument_named_proto_is_an_own_field() {
         &folder,
         &[(
             "tools.ts",
-            "export default function apply({ tools: { define } }) {\n\
+            "export function session({ tools: { define } }) {\n\
                define({ name: 'proto', description: 'd', concurrency: 'serial',\n\
                  parameters: { type: 'object', properties: { ['__proto__']: { type: 'string' } }, required: ['__proto__'] },\n\
                  execute: (args) => String(Object.hasOwn(args, '__proto__') && args['__proto__']) });\n\
@@ -444,7 +475,7 @@ async fn a_null_optional_field_counts_as_absent() {
 }
 
 /// A module that defines the tools of the bridge tests.
-const BRIDGE_TOOLS: &str = "export default function apply({ tools: { define } }) {\n\
+const BRIDGE_TOOLS: &str = "export function session({ tools: { define } }) {\n\
     const empty = { type: 'object', properties: {} } as const;\n\
     define({ name: 'fail', description: 'd', concurrency: 'serial', parameters: empty, execute() { throw new Error('the disk is full'); } });\n\
     define({ name: 'talk', description: 'd', concurrency: 'serial', parameters: empty, execute(_args, context) {\n\
@@ -507,7 +538,7 @@ async fn a_cancel_reaches_the_signal_after_a_plugin_replaces_the_web_globals() {
         &folder,
         &[(
             "tools.ts",
-            "export default function apply({ tools: { define } }) {\n\
+            "export function session({ tools: { define } }) {\n\
              const global = globalThis as Record<string, unknown>;\n\
              const signals = AbortController.prototype as unknown as Record<string, unknown>;\n\
              signals.abort = () => {};\n\
@@ -556,7 +587,7 @@ async fn a_throw_of_an_abort_listener_is_a_fault_and_the_next_listener_runs() {
         &folder,
         &[(
             "tools.ts",
-            "export default function apply({ tools: { define } }) {\n\
+            "export function session({ tools: { define } }) {\n\
              define({ name: 'listen', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} },\n\
                execute(_args, context) {\n\
                  context.signal.addEventListener('abort', () => { throw new Error('the listener broke'); });\n\
@@ -567,11 +598,11 @@ async fn a_throw_of_an_abort_listener_is_a_fault_and_the_next_listener_runs() {
         )],
     );
     let (runtime, mut faults) = start(&folder).await;
-    load_tools(&runtime, &folder.join("tools.ts")).await.unwrap();
+    load_entry(&runtime, &folder.join("tools.ts")).await.unwrap();
     let host: Arc<dyn SessionHost> = Arc::new(TestHost::new(&folder));
-    let tools = runtime.tools(host).await.unwrap();
+    let tools = Tools::open(&runtime, host).await;
 
-    let text = call(&tools[0].1, "{}").await.0.unwrap().text;
+    let text = call(&tools.list[0].1, "{}").await.0.unwrap().text;
 
     assert_eq!(text, "x");
     assert_eq!(next_fault(&mut faults).await.message, "the listener broke");
@@ -670,7 +701,7 @@ async fn an_image_read_answers_media_through_the_host() {
 }
 
 /// A tool that answers the media files that its arguments name.
-const ATTACH_TOOL: &str = "export default function apply({ tools: { define } }) {\n\
+const ATTACH_TOOL: &str = "export function session({ tools: { define } }) {\n\
     const files = { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } } } } as const;\n\
     define({ name: 'attach', description: 'd', concurrency: 'serial', parameters: files, execute(args) {\n\
       return { text: 'attached', media: (args.paths ?? []).map((path) => ({ path, mimeType: 'image/png' })) };\n\
@@ -791,7 +822,7 @@ async fn edit_of_a_missing_file_names_its_path() {
 }
 
 /// A module that defines the tools of the result tests.
-const RESULT_TOOLS: &str = "export default function apply({ tools: { define } }) {\n\
+const RESULT_TOOLS: &str = "export function session({ tools: { define } }) {\n\
     const empty = { type: 'object', properties: {} } as const;\n\
     const define0 = (name, execute) => define({ name, description: 'd', concurrency: 'serial', parameters: empty, execute });\n\
     define0('facts', (_args, context) => JSON.stringify([context.sessionId, context.callId, context.folder]));\n\
@@ -827,14 +858,10 @@ async fn a_call_gets_the_id_of_its_session_its_call_id_and_its_folder() {
     write(&folder, &[("tools.ts", RESULT_TOOLS)]);
     let (runtime, host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
     let other = Arc::new(TestHost::new(&folder.join("other")));
-    let other_tools = runtime.tools(Arc::clone(&other) as Arc<dyn SessionHost>).await.unwrap();
-    let other_facts = other_tools
-        .iter()
-        .find(|(definition, _)| definition.name == "facts")
-        .unwrap();
+    let other_tools = Tools::open(&runtime, Arc::clone(&other) as Arc<dyn SessionHost>).await;
 
     let content = call(&tools["facts"], "{}").await.0.unwrap();
-    let other_text = text_of(&other_facts.1, "{}").await;
+    let other_text = text_of(&other_tools["facts"], "{}").await;
 
     assert!(!content.is_error);
     let text = content.text;
@@ -947,7 +974,7 @@ async fn a_media_path_starts_in_the_folder_of_the_start_of_the_call() {
             ("second/dot.png", "second"),
             (
                 "tools.ts",
-                "export default function apply({ tools: { define } }) {\n\
+                "export function session({ tools: { define } }) {\n\
                  define({ name: 'later', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} },\n\
                    execute: () => new Promise((resolve) => {\n\
                      globalThis.release = () => resolve({ text: 'x', media: [{ path: 'dot.png', mimeType: 'image/png' }] });\n\
@@ -983,7 +1010,7 @@ async fn a_plugin_that_patches_weak_map_never_gets_the_session_of_a_call() {
         &folder,
         &[(
             "tools.ts",
-            "export default function apply({ tools: { define } }) {\n\
+            "export function session({ tools: { define } }) {\n\
              const set = WeakMap.prototype.set;\n\
              WeakMap.prototype.set = function (key, value) {\n\
                if (value !== null && typeof value === 'object' && 'exec' in value) globalThis.leaked = true;\n\
@@ -1013,7 +1040,7 @@ async fn a_setter_on_the_object_prototype_never_gets_the_session_of_a_call() {
         &folder,
         &[(
             "tools.ts",
-            "export default function apply({ tools: { define } }) {\n\
+            "export function session({ tools: { define } }) {\n\
              Object.defineProperty(Object.prototype, 'exec', { set() { globalThis.leaked = true; }, configurable: true });\n\
              define({ name: 'plain', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} },\n\
                execute: () => 'x' });\n\

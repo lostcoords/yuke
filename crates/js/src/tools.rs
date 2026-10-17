@@ -1,6 +1,7 @@
-//! The tool bridge: a tool that JavaScript defines with `yuke:tools` is an engine [`Tool`].
+//! The tool bridge: a tool that JavaScript defines is an engine [`Tool`] of each session that has it.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::fmt;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -21,8 +22,9 @@ use crate::processes::{JobEnded, Processes};
 use crate::runtime::Caller;
 
 /// What the tools of one session need from the consumer. One process can serve sessions of several workspaces at
-/// once, so each session gives its own host. Give the same host to every [`Runtime::tools`](crate::Runtime::tools)
-/// call of a session, also after a reload or a change of its folder: the jobs of a session belong to its host.
+/// once, so each session gives its own host. Give the same host to every
+/// [`Runtime::open_session`](crate::Runtime::open_session) of a session, also after a reload or a change of its folder:
+/// the jobs of a session belong to its host.
 #[async_trait]
 pub trait SessionHost: Send + Sync {
     /// The id of the session. A tool gets it as `sessionId`.
@@ -46,47 +48,53 @@ pub trait SessionHost: Send + Sync {
     async fn job_ended(&self, ended: JobEnded);
 }
 
-/// The tools that the JavaScript defined, on the JavaScript thread.
+/// The tools that the JavaScript defined, and the open sessions, on the JavaScript thread.
 #[derive(Debug, Default)]
 pub(crate) struct Registry {
     tools: RefCell<Vec<Registered>>,
     last_id: Cell<u64>,
+    /// The open number of each open session.
+    opens: RefCell<HashSet<u64>>,
+    last_open: Cell<u64>,
 }
 
 /// One defined tool.
 #[derive(Debug)]
 struct Registered {
     id: u64,
+    /// The open session of the tool, or `None` for a tool of every session.
+    open: Option<u64>,
     definition: yuke_ai::ToolDefinition,
     concurrency: Concurrency,
     /// The JavaScript function that starts a call.
     start: Persistent<Function<'static>>,
-    /// The plugin that defined the tool, or `None` for yuke itself.
-    owner: Option<String>,
 }
 
 impl Registry {
-    /// Add a tool of `owner`, a plugin, or of yuke itself. A name that the engine reserves, or a second tool with the
-    /// same name, fails with the text of the failure.
+    /// Add a tool to the open session `open`, or to every session when `open` is `None`, and return its id. A reserved
+    /// name, a name that the session already has, or a closed session fails with the text of the failure.
     pub(crate) fn add<'js>(
         &self,
         ctx: &Ctx<'js>,
         definition: yuke_ai::ToolDefinition,
         concurrency: Concurrency,
         start: Function<'js>,
-        owner: Option<String>,
-    ) -> Result<(), String> {
+        open: Option<u64>,
+    ) -> Result<u64, String> {
         if is_reserved_tool_name(&definition.name) {
             return Err(ToolNameError::Reserved(definition.name).to_string());
         }
+        if open.is_some_and(|open| !self.opens.borrow().contains(&open)) {
+            return Err("the session is closed".to_owned());
+        }
         let mut tools = self.tools.borrow_mut();
-        if let Some(other) = tools.iter().find(|tool| tool.definition.name == definition.name) {
-            let by = other
-                .owner
-                .as_ref()
-                .map_or_else(|| "yuke".to_owned(), |owner| format!("plugin {owner}"));
+        // A tool of every session meets the tools of each session.
+        let clash = tools.iter().any(|tool| {
+            tool.definition.name == definition.name && (tool.open.is_none() || open.is_none() || tool.open == open)
+        });
+        if clash {
             return Err(format!(
-                "{by} already defines a tool with the name '{}'",
+                "the session already has a tool with the name '{}'",
                 definition.name
             ));
         }
@@ -94,39 +102,62 @@ impl Registry {
         self.last_id.set(id);
         tools.push(Registered {
             id,
+            open,
             definition,
             concurrency,
             start: Persistent::save(ctx, start),
-            owner,
         });
-        Ok(())
+        Ok(id)
     }
 
-    /// Remove each tool of the plugin `owner`.
-    pub(crate) fn remove_owner(&self, owner: &str) {
-        self.tools
-            .borrow_mut()
-            .retain(|tool| tool.owner.as_deref() != Some(owner));
+    /// Remove the tools of `ids`.
+    pub(crate) fn remove(&self, ids: &[u64]) {
+        self.tools.borrow_mut().retain(|tool| !ids.contains(&tool.id));
     }
 
-    /// The id, the definition, and the concurrency of each tool, in the order of their definition.
-    fn entries(&self) -> Vec<(u64, yuke_ai::ToolDefinition, Concurrency)> {
+    /// Open a session, and return its open number. Each open gets a new number, so an old handle never reaches a new
+    /// open of the same session.
+    pub(crate) fn open(&self) -> u64 {
+        let open = self.last_open.get() + 1;
+        self.last_open.set(open);
+        self.opens.borrow_mut().insert(open);
+        open
+    }
+
+    /// Close the open session `open`, and remove its tools.
+    pub(crate) fn close(&self, open: u64) {
+        self.opens.borrow_mut().remove(&open);
+        self.tools.borrow_mut().retain(|tool| tool.open != Some(open));
+    }
+
+    /// The id, the definition, and the concurrency of each tool of the open session `open`, in the order of their
+    /// definition. A closed session has no tools.
+    pub(crate) fn entries(&self, open: u64) -> Vec<(u64, yuke_ai::ToolDefinition, Concurrency)> {
+        if !self.opens.borrow().contains(&open) {
+            return Vec::new();
+        }
         self.tools
             .borrow()
             .iter()
+            .filter(|tool| tool.open.is_none_or(|own| own == open))
             .map(|tool| (tool.id, tool.definition.clone(), tool.concurrency))
             .collect()
     }
 
-    /// The start function of the tool `id`. The borrow ends before the caller runs JavaScript, which can define a tool.
-    fn start<'js>(&self, ctx: &Ctx<'js>, id: u64) -> Option<rquickjs::Result<Function<'js>>> {
+    /// The start function of the tool `id` of the open session `open`, or the text of the failure. The borrow ends
+    /// before the caller runs JavaScript, which can define a tool.
+    fn start<'js>(&self, ctx: &Ctx<'js>, open: u64, id: u64) -> Result<rquickjs::Result<Function<'js>>, &'static str> {
+        if !self.opens.borrow().contains(&open) {
+            return Err("the session is closed");
+        }
         let start = self
             .tools
             .borrow()
             .iter()
             .find(|tool| tool.id == id)
-            .map(|tool| tool.start.clone());
-        start.map(|start| start.restore(ctx))
+            .map(|tool| tool.start.clone())
+            .ok_or("the tool is no longer defined")?;
+        Ok(start.restore(ctx))
     }
 
     /// Drop each saved function. The thread calls this before it drops the runtime, because a saved value that
@@ -136,28 +167,28 @@ impl Registry {
     }
 }
 
-/// The definitions of the tools, each with its engine tool for the session of `host`.
-pub(crate) async fn tools(
+/// The definitions of `entries` of the open session `open`, each with its engine tool for the session of `host`.
+pub(crate) fn script_tools(
     caller: &Caller,
     processes: &Arc<Processes>,
-    host: Arc<dyn SessionHost>,
-) -> Result<Vec<(yuke_ai::ToolDefinition, ScriptTool)>, Error> {
-    let entries = caller
-        .run(async |_ctx: Ctx<'_>, registry: Rc<Registry>| Ok(registry.entries()))
-        .await?;
-    Ok(entries
+    host: &Arc<dyn SessionHost>,
+    open: u64,
+    entries: Vec<(u64, yuke_ai::ToolDefinition, Concurrency)>,
+) -> Vec<(yuke_ai::ToolDefinition, ScriptTool)> {
+    entries
         .into_iter()
         .map(|(id, definition, concurrency)| {
             let tool = ScriptTool {
                 caller: caller.clone(),
                 id,
+                open,
                 concurrency,
                 processes: Arc::clone(processes),
-                host: Arc::clone(&host),
+                host: Arc::clone(host),
             };
             (definition, tool)
         })
-        .collect())
+        .collect()
 }
 
 /// A tool that the JavaScript defined, for one session. Each call runs on the JavaScript thread.
@@ -165,6 +196,7 @@ pub(crate) async fn tools(
 pub struct ScriptTool {
     caller: Caller,
     id: u64,
+    open: u64,
     concurrency: Concurrency,
     processes: Arc<Processes>,
     host: Arc<dyn SessionHost>,
@@ -236,7 +268,7 @@ impl ScriptTool {
         let Some(folder_text) = folder.to_str().map(str::to_owned) else {
             return Err(format!("the workspace folder {} is not UTF-8", folder.display()));
         };
-        let id = self.id;
+        let (id, open) = (self.id, self.open);
         let processes = Arc::clone(&self.processes);
         let host = Arc::clone(&self.host);
         let session_folder = folder.clone();
@@ -246,13 +278,13 @@ impl ScriptTool {
         let answer = self
             .caller
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
-                let Some(start) = registry.start(&ctx, id) else {
-                    return Err(Error::Script(crate::ScriptError {
+                let start = registry.start(&ctx, open, id).map_err(|message| {
+                    Error::Script(crate::ScriptError {
                         name: None,
-                        message: "the tool is no longer defined".to_owned(),
+                        message: message.to_owned(),
                         stack: None,
-                    }));
-                };
+                    })
+                })?;
                 let start = caught(&ctx, start)?;
                 let output = caught(
                     &ctx,

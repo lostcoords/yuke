@@ -1,5 +1,5 @@
-//! The tool functions of the native module: `register` and `removeTools` change the registry of the tools, and `notify`
-//! sends a notice of a plugin.
+//! The tool functions of the native module: `register` and `unregister` change the registry of the tools, and `notify`
+//! sends a notice of a plugin for the process or for one session.
 
 use std::rc::Rc;
 
@@ -13,7 +13,7 @@ use yuke_protocol::{NoticeLevel, NoticeParams, SessionId};
 use crate::error::{ErrorClass, Report, throw};
 use crate::tools::Registry;
 
-/// Add `register`, `removeTools`, and `notify` to `object`, the export object of the native module.
+/// Add `register`, `unregister`, and `notify` to `object`, the export object of the native module.
 pub(super) fn add<'js>(
     ctx: &Ctx<'js>,
     object: &Object<'js>,
@@ -22,8 +22,8 @@ pub(super) fn add<'js>(
 ) -> rquickjs::Result<()> {
     let removing = Rc::clone(registry);
     object.set(
-        "removeTools",
-        Function::new(ctx.clone(), move |owner: String| removing.remove_owner(&owner))?,
+        "unregister",
+        Function::new(ctx.clone(), move |ids: Vec<u64>| removing.remove(&ids))?,
     )?;
     object.set(
         "notify",
@@ -77,7 +77,7 @@ pub(super) fn add<'js>(
         "register",
         Function::new(
             ctx.clone(),
-            move |ctx: Ctx<'js>, tool: Object<'js>, start: Function<'js>| -> rquickjs::Result<()> {
+            move |ctx: Ctx<'js>, tool: Object<'js>, start: Function<'js>| -> rquickjs::Result<u64> {
                 let Coerced(concurrency) = tool.get::<_, Coerced<String>>("concurrency")?;
                 let concurrency = match concurrency.as_str() {
                     "serial" => Concurrency::Serial,
@@ -97,7 +97,7 @@ pub(super) fn add<'js>(
                     defer_loading: tool.get("deferLoading")?,
                 };
                 registry
-                    .add(&ctx, definition, concurrency, start, tool.get("owner")?)
+                    .add(&ctx, definition, concurrency, start, tool.get("open")?)
                     .map_err(|message| throw(&ctx, ErrorClass::TypeError, &message))
             },
         )?,

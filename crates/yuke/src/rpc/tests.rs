@@ -406,18 +406,16 @@ async fn a_regular_file_is_no_folder_for_a_new_session_or_new_settings() {
 }
 
 #[tokio::test]
-async fn a_plugin_notice_reaches_the_client_and_a_plugin_that_does_not_load_sends_an_error_notice() {
+async fn process_and_session_notices_reach_the_client_and_a_failed_load_sends_a_notice() {
     let place = Place::new(
         "rpc",
-        "a_plugin_notice_reaches_the_client_and_a_plugin_that_does_not_load_sends_an_error_notice",
+        "process_and_session_notices_reach_the_client_and_a_failed_load_sends_a_notice",
     );
-    place.plugin(
-        "broken",
-        "export default function apply() { throw new Error('no luck'); }",
-    );
+    place.plugin("broken", "export function apply() { throw new Error('no luck'); }");
     place.plugin(
         "loud",
-        "export default function apply(ctx) { ctx.notify('info', 'hello', '01890000-0000-7000-8000-000000000001'); }",
+        "export function apply(ctx) { ctx.notify('info', 'hello'); }
+         export function session(s) { s.notify('info', `opened in ${s.folder}`); }",
     );
     std::fs::write(
         place.paths.config.join("config.json"),
@@ -437,14 +435,32 @@ async fn a_plugin_notice_reaches_the_client_and_a_plugin_that_does_not_load_send
         .pop()
         .unwrap();
     client.initialize().await;
+    // The notice of the new session can come before or after the response.
+    let id = client.request("session/new", settings(&place)).await;
+    let mut messages: Vec<Value> = Vec::new();
+    while !(messages.iter().any(|message| message["id"] == json!(id))
+        && messages.iter().any(|message| message["method"] == "notice"))
+    {
+        messages.push(client.next().await);
+    }
+    let session = &messages.iter().find(|message| message["id"] == json!(id)).unwrap()["result"]["sessionId"];
+    let opened = messages.iter().find(|message| message["method"] == "notice").unwrap();
 
     assert_eq!(
         hello["params"],
         json!({
-            "sessionId": "01890000-0000-7000-8000-000000000001",
             "level": "info",
             "source": "loud",
             "message": "hello",
+        })
+    );
+    assert_eq!(
+        opened["params"],
+        json!({
+            "sessionId": session,
+            "level": "info",
+            "source": "loud",
+            "message": format!("opened in {}", std::fs::canonicalize(&place.work).unwrap().display()),
         })
     );
     assert_eq!(notice["params"]["level"], "error");
@@ -639,6 +655,44 @@ async fn a_fork_that_has_no_credential_fails_and_leaves_no_session() {
 }
 
 #[tokio::test]
+async fn a_cancel_and_a_close_end_a_turn_that_waits_for_the_plugins_of_its_session() {
+    let place = Place::new(
+        "rpc",
+        "a_cancel_and_a_close_end_a_turn_that_waits_for_the_plugins_of_its_session",
+    );
+    place.plugin(
+        "slow",
+        "export function session(s) { return new Promise((resolve) => s.signal.addEventListener('abort', resolve)); }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["slow"] }"#).unwrap();
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+    client.request("session/input", input_params(&session, "hi")).await;
+    client
+        .until(|message| message["params"]["update"]["state"] == "running")
+        .await;
+
+    client.notify("session/cancel", json!({ "sessionId": session })).await;
+    let cancelled = client.until(is_idle).await;
+    client.request("session/input", input_params(&session, "again")).await;
+    client
+        .until(|message| message["params"]["update"]["state"] == "running")
+        .await;
+    let id = client
+        .request("session/close", json!({ "sessionId": session, "stopJobs": false }))
+        .await;
+    let closed = client.until(|message| message["id"] == json!(id)).await;
+
+    let end = cancelled
+        .iter()
+        .find_map(|message| message["params"]["update"]["commit"]["end"].as_object())
+        .unwrap();
+    assert_eq!(end["outcome"], "cancelled");
+    assert_eq!(closed.last().unwrap()["result"], json!({}));
+    client.end().await;
+}
+
+#[tokio::test]
 async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_again() {
     let place = Place::new(
         "rpc",
@@ -647,8 +701,9 @@ async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_
     let mut client = Client::initialized(&place, Box::new(Stalled)).await;
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
     client.request("session/input", input_params(&session, "first")).await;
+    // The turn takes the waiting input when it starts, so the second input comes after its request.
     client
-        .until(|message| message["params"]["update"]["state"] == "running")
+        .until(|message| message["params"]["update"]["sessionUpdate"] == "draft_started")
         .await;
     client
         .call("session/input", input_params(&session, "second"))

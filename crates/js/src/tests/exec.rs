@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use yuke_engine::CancellationToken;
 use yuke_protocol::JobState;
 
-use super::tools::{TestHost, call, call_with, error_of, text_of, tools_in, tools_of};
+use super::tools::{TestHost, Tools, call, call_with, error_of, text_of, tools_in, tools_of};
 use super::{folder, start};
 use crate::native;
 use crate::processes::{Request, recovered_home, whole_characters};
@@ -51,7 +51,7 @@ async fn ended_texts(host: &TestHost, count: usize) -> Vec<String> {
 }
 
 /// The text of a call that `exec` answers for `command`.
-async fn run(tools: &std::collections::HashMap<String, crate::ScriptTool>, command: &str) -> String {
+async fn run(tools: &Tools, command: &str) -> String {
     let arguments = json_string(command);
     text_of(&tools["exec"], &format!(r#"{{"command": {arguments}}}"#)).await
 }
@@ -377,14 +377,14 @@ async fn a_background_command_takes_no_timeout() {
 }
 
 /// A runtime with `processes` and the built-in tools, for the session of `host`.
-async fn runtime_with(folder: &Path, processes: &Arc<Processes>, host: &Arc<TestHost>) -> (Runtime, crate::ScriptTool) {
+async fn runtime_with(folder: &Path, processes: &Arc<Processes>, host: &Arc<TestHost>) -> (Runtime, Tools) {
     let started = Runtime::start(Options {
         cache: folder.join("cache"),
         processes: Arc::clone(processes),
     });
     let (runtime, _faults) = tokio::time::timeout(WAIT, started).await.unwrap().unwrap();
-    let (runtime, _host, mut tools) = tools_in(runtime, Arc::clone(host), &["yuke:internal/builtins"]).await;
-    (runtime, tools.remove("exec").unwrap())
+    let (runtime, _host, tools) = tools_in(runtime, Arc::clone(host), &["yuke:internal/builtins"]).await;
+    (runtime, tools)
 }
 
 #[tokio::test]
@@ -393,7 +393,11 @@ async fn a_job_outlives_a_reload_of_the_runtime() {
     let processes = Arc::new(Processes::new(folder.join("processes")));
     let host = Arc::new(TestHost::new(&folder));
     let (runtime, exec) = runtime_with(&folder, &processes, &host).await;
-    text_of(&exec, r#"{"command": "sleep 0.5; echo done", "background": true}"#).await;
+    text_of(
+        &exec["exec"],
+        r#"{"command": "sleep 0.5; echo done", "background": true}"#,
+    )
+    .await;
 
     tokio::time::timeout(WAIT, runtime.shutdown()).await.unwrap().unwrap();
     let (_runtime, _exec) = runtime_with(&folder, &processes, &host).await;
@@ -414,7 +418,7 @@ async fn a_shutdown_of_the_processes_removes_their_folder() {
     let processes = Arc::new(Processes::new(folder.join("processes")));
     let host = Arc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
-    text_of(&exec, r#"{"command": "sleep 30", "background": true}"#).await;
+    text_of(&exec["exec"], r#"{"command": "sleep 30", "background": true}"#).await;
     let had_log = folder.join("processes").exists();
 
     processes.shutdown().await.unwrap();
@@ -432,7 +436,7 @@ async fn a_job_start_after_the_shutdown_fails_and_leaves_no_job() {
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     processes.shutdown().await.unwrap();
 
-    let error = error_of(&exec, r#"{"command": "sleep 30", "background": true}"#).await;
+    let error = error_of(&exec["exec"], r#"{"command": "sleep 30", "background": true}"#).await;
 
     assert!(error.contains("yuke is shutting down"), "{error}");
     let owner: Arc<dyn SessionHost> = host;
@@ -447,14 +451,14 @@ async fn close_owner_stops_only_the_jobs_of_its_owner_and_refuses_its_later_jobs
     let (first, second) = (Arc::new(TestHost::new(&folder)), Arc::new(TestHost::new(&folder)));
     let (_first_runtime, first_exec) = runtime_with(&folder, &processes, &first).await;
     let (_second_runtime, second_exec) = runtime_with(&folder, &processes, &second).await;
-    text_of(&first_exec, r#"{"command": "sleep 30", "background": true}"#).await;
-    let kept = job_id(&text_of(&second_exec, r#"{"command": "sleep 31", "background": true}"#).await);
+    text_of(&first_exec["exec"], r#"{"command": "sleep 30", "background": true}"#).await;
+    let kept = job_id(&text_of(&second_exec["exec"], r#"{"command": "sleep 31", "background": true}"#).await);
     let (first_owner, second_owner): (Arc<dyn SessionHost>, Arc<dyn SessionHost>) = (first.clone(), second);
 
     tokio::time::timeout(WAIT, processes.close_owner(&first_owner))
         .await
         .unwrap();
-    let late = error_of(&first_exec, r#"{"command": "sleep 32", "background": true}"#).await;
+    let late = error_of(&first_exec["exec"], r#"{"command": "sleep 32", "background": true}"#).await;
 
     assert!(late.contains("its session is closed"), "{late}");
     assert_eq!(processes.running_jobs(&first_owner), []);
@@ -480,7 +484,7 @@ async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
         ..TestHost::new(&folder)
     });
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
-    text_of(&exec, r#"{"command": "echo hello", "background": true}"#).await;
+    text_of(&exec["exec"], r#"{"command": "echo hello", "background": true}"#).await;
     let owner: Arc<dyn SessionHost> = host.clone();
     // The process has ended when the job leaves the running list. The delivery of its end waits at the gate.
     let deadline = Instant::now() + WAIT;
@@ -506,7 +510,7 @@ async fn a_shutdown_of_the_processes_stops_each_job_without_an_end_message() {
     let processes = Arc::new(Processes::new(folder.join("processes")));
     let host = Arc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
-    text_of(&exec, r#"{"command": "sleep 30", "background": true}"#).await;
+    text_of(&exec["exec"], r#"{"command": "sleep 30", "background": true}"#).await;
 
     tokio::time::timeout(Duration::from_secs(5), processes.shutdown())
         .await
@@ -528,7 +532,7 @@ async fn a_dropped_processes_kills_its_jobs_without_an_end_message() {
         r#"{{"command": "echo $$ > {pid}.part && mv {pid}.part {pid} && exec sleep 3600", "background": true}}"#,
         pid = pid_file.display()
     );
-    text_of(&exec, &command).await;
+    text_of(&exec["exec"], &command).await;
     let deadline = Instant::now() + WAIT;
     while !pid_file.exists() {
         assert!(Instant::now() < deadline, "the job did not start");
@@ -631,7 +635,7 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     let owner: Arc<dyn SessionHost> = Arc::clone(&host) as Arc<dyn SessionHost>;
     let start = |command: &'static str| {
-        let exec = &exec;
+        let exec = &exec["exec"];
         async move {
             let arguments = format!(r#"{{"command": {}, "background": true}}"#, json_string(command));
             job_id(&text_of(exec, &arguments).await)

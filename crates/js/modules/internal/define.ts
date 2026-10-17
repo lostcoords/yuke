@@ -6,10 +6,10 @@ import { ByteArray, isUint8Array } from "yuke:internal/webidl";
 import type { Infer, ObjectSchema, Tool, ToolContext, ToolMedia } from "yuke:tools";
 
 /**
- * Define `tool` for `owner`, the plugin that defines it, or for yuke itself without an owner. A second tool with the
- * same name throws a `TypeError`. A plugin defines its tools with `ctx.tools.define`.
+ * Define `tool` for the open session `open`, or for every session without `open`, and return its id. A name that the
+ * session already has throws a `TypeError`. A plugin defines its tools with `s.tools.define` of its `session`.
  */
-export function defineTool<const S extends ObjectSchema>(tool: Tool<S>, owner?: string): void {
+export function defineTool<const S extends ObjectSchema>(tool: Tool<S>, open?: number): number {
   const execute = tool.execute;
   if (typeof execute !== "function") throw new TypeError("execute is not a function");
   // The model and the argument check use this one checked copy, so a later change of `tool` changes neither.
@@ -22,9 +22,9 @@ export function defineTool<const S extends ObjectSchema>(tool: Tool<S>, owner?: 
     parameters: JSON.stringify(parameters),
     concurrency: tool.concurrency,
     deferLoading: tool.deferLoading === true,
-    owner,
+    open,
   };
-  register(description, (text, metadata, output, call) => {
+  return register(description, (text, metadata, output, call) => {
     const { signal, abort } = hostSignal();
     const { sessionId, callId, folder } = metadata;
     const context: ToolContext = { sessionId, callId, folder, signal, output };
