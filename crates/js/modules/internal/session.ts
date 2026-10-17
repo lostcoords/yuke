@@ -1,8 +1,9 @@
 import type { Session } from "yuke:internal/native";
+import { PrivateMap } from "yuke:internal/webidl";
 import type { ToolContext } from "yuke:tools";
 
 /** The session object of each call, by its context. A tool of a plugin cannot import this module, so it cannot reach it. */
-const sessions = new WeakMap<ToolContext, Session>();
+const sessions = new PrivateMap<ToolContext, Session>();
 
 /** Keep `session` for the call of `context`. */
 export function bindSession(context: ToolContext, session: Session): void {

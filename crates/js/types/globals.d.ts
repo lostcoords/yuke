@@ -1,5 +1,5 @@
-// The globals of the runtime besides the language: the timers of crates/js/src/timers.rs, the classes of
-// modules/internal/events.ts, and what QuickJS-NG adds.
+// The globals of the runtime besides the language: the timers of crates/js/src/timers.rs, the classes and objects of
+// modules/internal/web.ts, and what QuickJS-NG adds.
 
 /** The id of a timer. `setTimeout` and `setInterval` share one id space. */
 type TimerId = number;
@@ -32,11 +32,62 @@ declare var DOMException: {
   new (message?: string, name?: string): DOMException;
 };
 
-/** The clock of `Event.timeStamp`. */
+/** Run `callback` as a microtask: after the current job, before the next timer. */
+declare function queueMicrotask(callback: () => void): void;
+/** The binary string of the base64 text `data`. A text that is not base64 throws a `DOMException`. */
+declare function atob(data: string): string;
+/** The base64 text of the binary string `data`. A character above U+00FF throws a `DOMException`. */
+declare function btoa(data: string): string;
+
+/** The clock of the runtime. */
 declare var performance: {
-  /** The milliseconds since the start of the runtime, with fractions. */
+  /** The epoch time of the start of the runtime, in milliseconds. */
+  readonly timeOrigin: number;
+  /** The milliseconds since `timeOrigin`, with fractions, on a clock that never goes back. */
   readonly now: () => number;
+  readonly toJSON: () => { readonly timeOrigin: number };
 };
+
+/**
+ * The entries of a script for the operator, on stderr in the app. An entry is never a notice: use `ctx.notify` for
+ * that. Each call formats `data` with `%s`, `%d`, `%i`, `%f`, `%o`, `%O`, `%c`, and `%%`, and it never throws.
+ */
+declare var console: {
+  /** A debug entry, as `debug`. */
+  log: (...data: unknown[]) => void;
+  debug: (...data: unknown[]) => void;
+  info: (...data: unknown[]) => void;
+  warn: (...data: unknown[]) => void;
+  error: (...data: unknown[]) => void;
+};
+
+/** An encoder of text to UTF-8. */
+declare class TextEncoder {
+  constructor();
+  readonly encoding: "utf-8";
+  /** The UTF-8 bytes of `input`. A lone surrogate becomes U+FFFD. */
+  encode(input?: string): Uint8Array;
+  /**
+   * Write as many whole UTF-8 characters of `source` as fit in `destination`. `read` counts the UTF-16 units of `source`
+   * that went into `destination`, and `written` counts the bytes. A resizable buffer throws a `TypeError`.
+   */
+  encodeInto(source: string, destination: Uint8Array): { read: number; written: number };
+}
+
+/** A decoder of UTF-8 bytes to text. yuke decodes UTF-8 only: another encoding label throws a `RangeError`. */
+declare class TextDecoder {
+  constructor(label?: string, options?: { fatal?: boolean | undefined; ignoreBOM?: boolean | undefined });
+  readonly encoding: "utf-8";
+  /** Whether an invalid sequence throws a `TypeError`. Otherwise it becomes U+FFFD. */
+  readonly fatal: boolean;
+  /** Keep a byte order mark at the start of the text. Otherwise the decode removes it. */
+  readonly ignoreBOM: boolean;
+  /**
+   * The text of `input`. With `stream: true`, an incomplete sequence at the end waits for the next call. A detached
+   * buffer has no bytes, and a resizable buffer throws a `TypeError`.
+   */
+  decode(input?: ArrayBuffer | SharedArrayBuffer | ArrayBufferView, options?: { stream?: boolean | undefined }): string;
+}
 
 /** The flags of a new event. Each flag is `false` when it is missing. */
 interface EventInit {

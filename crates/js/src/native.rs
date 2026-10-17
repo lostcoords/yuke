@@ -1,6 +1,8 @@
 //! The native module `yuke:internal/native`: Rust functions for the built-in modules. The engine builds its export
 //! object at its start, so a function can hold Rust state.
 
+mod console;
+mod encoding;
 mod exec;
 mod fs;
 pub(crate) mod session;
@@ -19,38 +21,37 @@ use crate::tools::Registry;
 /// The name of the native module.
 const NAME: &str = "yuke:internal/native";
 
-/// The names that the native module exports.
-pub(crate) const EXPORTS: &[&str] = &[
-    "readLines",
-    "readText",
-    "writeText",
-    "register",
-    "removeTools",
-    "notify",
-];
-
-/// The module definition of the native module. It copies the exports from the object that the engine built.
+/// The module definition of the native module. Its exports are the functions of the object that the engine built, so
+/// one place names each function.
 struct Native;
 
 impl ModuleDef for Native {
     fn declare(declarations: &Declarations<'_>) -> rquickjs::Result<()> {
-        for name in EXPORTS {
-            declarations.declare(*name)?;
+        for name in names(declarations.module().ctx())? {
+            declarations.declare(name)?;
         }
         Ok(())
     }
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
-        // The export object is the only `Object` that the context keeps as user data.
-        let object = ctx
-            .userdata::<Object<'js>>()
-            .map(|object| object.clone())
-            .ok_or_else(|| throw(ctx, "Error", "the native module has no exports"))?;
-        for name in EXPORTS {
-            exports.export(*name, object.get::<_, Function<'js>>(*name)?)?;
+        let object = exports_object(ctx)?;
+        for name in names(ctx)? {
+            exports.export(name.clone(), object.get::<_, Function<'js>>(name)?)?;
         }
         Ok(())
     }
+}
+
+/// The export object that [`install`] built. It is the only `Object` that the context keeps as user data.
+fn exports_object<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
+    ctx.userdata::<Object<'js>>()
+        .map(|object| object.clone())
+        .ok_or_else(|| throw(ctx, "Error", "the native module has no exports"))
+}
+
+/// The names of the functions of the native module.
+pub(crate) fn names(ctx: &Ctx<'_>) -> rquickjs::Result<Vec<String>> {
+    exports_object(ctx)?.keys::<String>().collect()
 }
 
 /// Declare the native module when `name` names it, or `None` otherwise.
@@ -66,6 +67,8 @@ pub(crate) fn install(
 ) -> rquickjs::Result<()> {
     let object = Object::new(ctx.clone())?;
     fs::add(ctx, &object)?;
+    encoding::add(ctx, &object)?;
+    console::add(ctx, &object, reports.clone())?;
     tools::add(ctx, &object, registry, reports)?;
     match ctx.store_userdata(object) {
         Ok(_) => Ok(()),

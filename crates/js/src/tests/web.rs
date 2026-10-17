@@ -1,26 +1,10 @@
 //! The web classes of `yuke:internal/events`: events, event targets, and abort signals. Many cases follow the web
 //! platform tests (WPT) of `dom/events` and `dom/abort`.
 
-use std::time::Duration;
+use rquickjs::Ctx;
 
-use rquickjs::{Ctx, FromJs};
-
-use super::{evaluate, folder, next_fault, start};
+use super::{NAMES, evaluate, folder, next_fault, run, start};
 use crate::Runtime;
-
-/// Run `body` in a new runtime as the body of an async function, and return the value of its promise. A promise that
-/// does not settle in five seconds fails the test.
-async fn run<T>(name: &str, body: &str) -> T
-where
-    T: for<'js> FromJs<'js> + Send + 'static,
-{
-    let folder = folder(name);
-    let (runtime, _faults) = start(&folder).await;
-    tokio::time::timeout(Duration::from_secs(5), evaluate::<T>(&runtime, body))
-        .await
-        .unwrap()
-        .unwrap()
-}
 
 /// Free each unreachable value, and run the finalization callbacks.
 async fn collect_garbage(runtime: &Runtime) {
@@ -36,11 +20,6 @@ async fn collect_garbage(runtime: &Runtime) {
         .await
         .unwrap();
 }
-
-/// The JavaScript of a function `names(calls)`. It gives the name of the error of each call, or `none`.
-const NAMES: &str = "const names = (calls) => calls.map((call) => {
-       try { call(); return 'none'; } catch (error) { return error.name; }
-     }).join(' ');";
 
 #[tokio::test]
 async fn the_web_classes_are_globals_that_a_script_can_replace() {
@@ -913,4 +892,67 @@ async fn a_dependent_signal_works_on_after_one_of_its_sources_is_collected() {
     .unwrap();
 
     assert_eq!(text, "true why why");
+}
+
+#[tokio::test]
+async fn any_takes_a_truthy_done_and_refuses_an_iterator_result_that_is_no_object() {
+    let text = run::<String>(
+        "any_takes_a_truthy_done_and_refuses_an_iterator_result_that_is_no_object",
+        &format!(
+            "{NAMES}
+             const iterable = (results) => ({{ [Symbol.iterator]: () => ({{ next: () => results.shift() }}) }});
+             const signal = AbortSignal.any(iterable([{{ done: 1 }}]));
+             return [signal.aborted, names([() => AbortSignal.any(iterable([5]))])].join(' ');"
+        ),
+    )
+    .await;
+
+    assert_eq!(text, "false TypeError");
+}
+
+#[tokio::test]
+async fn the_members_of_a_web_class_are_enumerable_on_its_prototype() {
+    let text = run::<String>(
+        "the_members_of_a_web_class_are_enumerable_on_its_prototype",
+        "const members = [];
+         for (const key in new AbortController().signal) members.push(key);
+         return ['aborted', 'reason', 'throwIfAborted', 'addEventListener'].every((key) => members.includes(key))
+           + ' ' + members.includes('constructor');",
+    )
+    .await;
+
+    assert_eq!(text, "true false");
+}
+
+#[tokio::test]
+async fn a_stack_trace_hook_gets_no_frames() {
+    let text = run::<String>(
+        "a_stack_trace_hook_gets_no_frames",
+        "let called = false;
+         Error.prepareStackTrace = () => { called = true; return 'hooked'; };
+         const stack = new Error('x').stack;
+         return [called, stack === 'hooked', typeof stack].join(' ');",
+    )
+    .await;
+
+    assert_eq!(text, "false false string");
+}
+
+#[tokio::test]
+async fn a_patched_weak_map_sees_no_private_state_and_cannot_stop_a_host_abort() {
+    let text = run::<String>(
+        "a_patched_weak_map_sees_no_private_state_and_cannot_stop_a_host_abort",
+        "const seen = [];
+         const { get, set } = WeakMap.prototype;
+         WeakMap.prototype.get = function (key) { seen.push('get'); return { aborted: false }; };
+         WeakMap.prototype.set = function (key, value) { seen.push('set'); return set.call(this, key, value); };
+         const controller = new AbortController();
+         controller.abort('why');
+         WeakMap.prototype.get = get;
+         WeakMap.prototype.set = set;
+         return `${seen.length} ${controller.signal.aborted} ${controller.signal.reason}`;",
+    )
+    .await;
+
+    assert_eq!(text, "0 true why");
 }

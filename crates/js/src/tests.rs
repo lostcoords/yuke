@@ -1,4 +1,5 @@
 mod exec;
+mod globals;
 mod plugins;
 mod tools;
 mod web;
@@ -90,6 +91,29 @@ where
         .await
 }
 
+/// Run `body` in a new runtime as the body of an async function, and return the value of its promise. A promise that
+/// does not settle in five seconds fails the test, and so does a report, such as a fault, that came before the end.
+async fn run<T>(name: &str, body: &str) -> T
+where
+    T: for<'js> FromJs<'js> + Send + 'static,
+{
+    let folder = folder(name);
+    let (runtime, mut reports) = start(&folder).await;
+    let value = tokio::time::timeout(Duration::from_secs(5), evaluate::<T>(&runtime, body))
+        .await
+        .unwrap()
+        .unwrap();
+    if let Ok(report) = reports.try_recv() {
+        panic!("unexpected report: {report:?}");
+    }
+    value
+}
+
+/// The JavaScript of a function `names(calls)`. It gives the name of the error of each call, or `none`.
+const NAMES: &str = "const names = (calls) => calls.map((call) => {
+       try { call(); return 'none'; } catch (error) { return error.name; }
+     }).join(' ');";
+
 /// The next fault. A missing fault fails the test after five seconds.
 async fn next_fault(faults: &mut mpsc::UnboundedReceiver<Report>) -> ScriptError {
     let report = tokio::time::timeout(Duration::from_secs(5), faults.recv())
@@ -98,7 +122,7 @@ async fn next_fault(faults: &mut mpsc::UnboundedReceiver<Report>) -> ScriptError
         .unwrap();
     match report {
         Report::Fault(error) => error,
-        Report::Notice(notice) => panic!("expected a fault, got the notice {notice:?}"),
+        other => panic!("expected a fault, got {other:?}"),
     }
 }
 

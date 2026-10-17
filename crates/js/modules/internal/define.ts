@@ -2,6 +2,7 @@ import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { hostSignal } from "yuke:internal/events";
 import { type Answer, register } from "yuke:internal/native";
 import { bindSession } from "yuke:internal/session";
+import { ByteArray, isUint8Array } from "yuke:internal/webidl";
 import type { Infer, ObjectSchema, Tool, ToolContext, ToolMedia } from "yuke:tools";
 
 /**
@@ -48,11 +49,6 @@ async function run(call: () => Promise<Answer>, abort: (message: string) => void
 const RESULT_FIELDS = ["text", "media", "isError"];
 const MEDIA_FIELDS = ["mimeType", "path", "bytes"];
 
-// The class and its brand check at the start of the runtime, so a plugin that patches them cannot skip the copy.
-const ByteArray = Uint8Array;
-const typedArrayName = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag)
-  ?.get as (this: unknown) => string | undefined;
-
 /** The checked result of `execute`. A value of another shape throws a `TypeError`. */
 function answerOf(result: unknown): Answer {
   if (typeof result === "string") return { text: result, isError: false, media: [] };
@@ -81,7 +77,7 @@ function mediaOf(value: unknown, index: number): ToolMedia {
     if (typeof fields.path !== "string") throw new TypeError(`${place}.path is not a string`);
     return { mimeType, path: fields.path };
   }
-  if (typedArrayName.call(fields.bytes) !== "Uint8Array") throw new TypeError(`${place}.bytes is not a Uint8Array`);
+  if (!isUint8Array(fields.bytes)) throw new TypeError(`${place}.bytes is not a Uint8Array`);
   // A copy through the constructor, so a later change of the bytes by the tool does not change the result.
   return { mimeType, bytes: new ByteArray(fields.bytes as Uint8Array) };
 }

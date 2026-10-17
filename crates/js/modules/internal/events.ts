@@ -2,6 +2,7 @@
  * The web classes `Event`, `CustomEvent`, `EventTarget`, `AbortSignal`, and `AbortController` for targets without a
  * tree. `yuke:internal/web` installs them as globals.
  */
+import { dictionary, domString, needs, PrivateMap, webClass } from "yuke:internal/webidl";
 
 // The classes keep the globals of the runtime start, so a plugin that replaces a global does not change them.
 const { DOMException, reportError, setTimeout } = globalThis;
@@ -61,9 +62,9 @@ interface Source {
   readonly ref: WeakRef<AbortSignal>;
 }
 
-const events = new WeakMap<Event, EventState>();
-const targets = new WeakMap<EventTarget, Listener[]>();
-const signals = new WeakMap<AbortSignal, SignalState>();
+const events = new PrivateMap<Event, EventState>();
+const targets = new PrivateMap<EventTarget, Listener[]>();
+const signals = new PrivateMap<AbortSignal, SignalState>();
 
 /** Remove the weak reference of a source to a dependent signal that the collector freed. */
 const collected = new FinalizationRegistry<{
@@ -92,23 +93,6 @@ function signalState(value: unknown): SignalState {
   return state;
 }
 
-/** Throw a `TypeError` when `args` has fewer than `count` values, as Web IDL does for a missing argument. */
-function needs(args: readonly unknown[], count: number, name: string): void {
-  if (args.length < count) throw new TypeError(`${name} needs ${count} argument${count === 1 ? "" : "s"}`);
-}
-
-/** Convert `value` as a Web IDL `DOMString`. A symbol throws a `TypeError`. */
-function text(value: unknown): string {
-  return `${value as string}`;
-}
-
-/** Convert `value` as a Web IDL dictionary: `undefined` and `null` are empty, another value that is not an object throws. */
-function dictionary(value: unknown, name: string): Readonly<Record<string, unknown>> {
-  if (value === undefined || value === null) return {};
-  if (typeof value !== "object" && typeof value !== "function") throw new TypeError(`${name} is not an object`);
-  return value as Record<string, unknown>;
-}
-
 /** Convert `value` as a Web IDL nullable `EventListener`. */
 function callbackOf(value: unknown): EventListenerOrEventListenerObject | null {
   if (value === undefined || value === null) return null;
@@ -126,7 +110,7 @@ function optionsOf(options: unknown): Readonly<Record<string, unknown>> {
 export class Event {
   constructor(...args: [type: string, eventInit?: EventInit]) {
     needs(args, 1, "Event");
-    const type = text(args[0]);
+    const type = domString(args[0]);
     const init = dictionary(args[1], "the event init");
     events.set(this, {
       type,
@@ -239,7 +223,7 @@ export class EventTarget {
   ): void {
     const listeners = listenersOf(this);
     needs(args, 2, "addEventListener");
-    const type = text(args[0]);
+    const type = domString(args[0]);
     const callback = callbackOf(args[1]);
     const fields = optionsOf(args[2]);
     const capture = Boolean(fields.capture);
@@ -272,7 +256,7 @@ export class EventTarget {
   ): void {
     const listeners = listenersOf(this);
     needs(args, 2, "removeEventListener");
-    const type = text(args[0]);
+    const type = domString(args[0]);
     const callback = callbackOf(args[1]);
     const capture = Boolean(optionsOf(args[2]).capture);
     if (callback === null) return;
@@ -383,25 +367,27 @@ export class AbortSignal extends EventTarget {
     }
     // Web IDL checks each value when the iterator gives it, before it asks for the next value.
     const iterator = (value as Iterable<unknown>)[Symbol.iterator]();
-    const sources: AbortSignal[] = [];
-    const states: SignalState[] = [];
-    for (let next = iterator.next(); next.done !== true; next = iterator.next()) {
-      states.push(signalState(next.value));
-      sources.push(next.value as AbortSignal);
+    const sources: { readonly signal: AbortSignal; readonly state: SignalState }[] = [];
+    for (;;) {
+      // A result that is not an object fails here or in `signalState`, each time with a `TypeError`.
+      const next = iterator.next() as IteratorResult<unknown>;
+      if (next.done) break;
+      const item = next.value;
+      sources.push({ signal: item as AbortSignal, state: signalState(item) });
     }
     const signal = new AbortSignal(CREATE);
     const state = signalState(signal);
-    const aborted = states.find((source) => source.aborted);
+    const aborted = sources.find((source) => source.state.aborted);
     if (aborted !== undefined) {
       state.aborted = true;
-      state.reason = aborted.reason;
+      state.reason = aborted.state.reason;
       return signal;
     }
     state.dependent = true;
-    for (const [index, source] of states.entries()) {
-      if (!source.dependent) link(signal, sources[index] as AbortSignal);
+    for (const source of sources) {
+      if (!source.state.dependent) link(signal, source.signal);
       else {
-        for (const root of source.sources) {
+        for (const root of source.state.sources) {
           const live = root.signal.deref();
           if (live !== undefined) link(signal, live);
         }
@@ -576,12 +562,8 @@ function wait(milliseconds: number, done: () => void): void {
   }, delay);
 }
 
-for (const [type, name] of [
-  [Event, "Event"],
-  [CustomEvent, "CustomEvent"],
-  [EventTarget, "EventTarget"],
-  [AbortSignal, "AbortSignal"],
-  [AbortController, "AbortController"],
-] as const) {
-  Object.defineProperty(type.prototype, Symbol.toStringTag, { value: name, configurable: true });
-}
+webClass(Event, "Event");
+webClass(CustomEvent, "CustomEvent");
+webClass(EventTarget, "EventTarget");
+webClass(AbortSignal, "AbortSignal");
+webClass(AbortController, "AbortController");

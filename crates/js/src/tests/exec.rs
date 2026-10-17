@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use yuke_engine::CancellationToken;
 use yuke_protocol::JobState;
 
-use super::folder;
 use super::tools::{TestHost, call, call_with, error_of, text_of, tools_in, tools_of};
+use super::{folder, start};
 use crate::native;
 use crate::processes::{Request, recovered_home, whole_characters};
 use crate::{Options, Processes, Runtime, SessionHost};
@@ -601,17 +601,25 @@ fn a_child_gets_the_home_folder_of_the_user_when_home_is_missing_or_empty() {
     assert_eq!(recovered_home(Some(OsStr::new("/home/someone"))), None);
 }
 
-#[test]
-fn the_native_module_declares_the_names_that_it_exports() {
+#[tokio::test]
+async fn the_native_module_declares_the_names_that_it_exports() {
+    let folder = folder("the_native_module_declares_the_names_that_it_exports");
+    let (runtime, _reports) = start(&folder).await;
     let declarations = include_str!("../../types/native.d.ts");
-    let mut declared: Vec<&str> = declarations
+    let mut declared: Vec<String> = declarations
         .lines()
         .filter_map(|line| line.trim().strip_prefix("export function "))
-        .map(|line| line.split('(').next().unwrap_or_default())
+        .map(|line| line.split('(').next().unwrap_or_default().to_owned())
         .collect();
     declared.sort_unstable();
-    let mut exported = native::EXPORTS.to_vec();
+
+    let mut exported = runtime
+        .caller
+        .run(async |ctx: rquickjs::Ctx<'_>, _registry| Ok(native::names(&ctx).unwrap()))
+        .await
+        .unwrap();
     exported.sort_unstable();
+
     assert_eq!(declared, exported);
 }
 

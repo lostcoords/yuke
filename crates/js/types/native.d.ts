@@ -89,6 +89,22 @@ declare module "yuke:internal/native" {
   /** Remove each tool of the plugin `owner`. */
   export function removeTools(owner: string): void;
 
+  /** The UTF-8 bytes of `text`, a well-formed string. */
+  export function encodeText(text: string): Uint8Array;
+  /** The UTF-8 bytes of the longest start of `text` that fits in `capacity` bytes, and its length in UTF-16 units. */
+  export function encodeTextInto(text: string, capacity: number): { readonly bytes: Uint8Array; readonly read: number };
+  /**
+   * The UTF-8 text of `bytes`. A fatal decode throws a `TypeError` at an invalid sequence. With `stream`, `rest`
+   * counts the bytes of an incomplete sequence at the end, which stay undecoded.
+   */
+  export function decodeText(
+    bytes: Uint8Array,
+    fatal: boolean,
+    stream: boolean,
+  ): { readonly text: string; readonly rest: number };
+  /** Write a line of `console` for the operator. */
+  export function writeConsole(level: NoticeLevel, text: string): void;
+
   /** Send a notice of the plugin `source`. A `sessionId` that is not a session id throws a `TypeError`. */
   export function notify(source: string, level: NoticeLevel, message: string, sessionId: string | undefined): void;
 

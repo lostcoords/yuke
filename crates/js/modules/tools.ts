@@ -51,17 +51,21 @@ type RequiredNames<S extends ObjectSchema> = S extends { readonly required: infe
 /** The value of a field with the schema `S`. */
 type Value<S extends Schema> = Schema extends S
   ? unknown
-  : S extends { readonly type: "string" }
-    ? string
-    : S extends { readonly type: "boolean" }
-      ? boolean
-      : S extends { readonly type: "integer" | "number" }
-        ? number
-        : S extends { readonly type: "array"; readonly items: infer T extends Schema }
-          ? Value<T>[]
-          : S extends ObjectSchema
-            ? Infer<S>
-            : never;
+  : S extends { readonly type: "array"; readonly items: infer T extends Schema }
+    ? Value<T>[]
+    : S extends ObjectSchema
+      ? Infer<S>
+      : S extends { readonly type: infer T extends keyof Scalars }
+        ? Scalars[T]
+        : never;
+
+/** The value of each scalar type. A union of types, such as `"string" | "boolean"`, gives the union of values. */
+interface Scalars {
+  string: string;
+  boolean: boolean;
+  integer: number;
+  number: number;
+}
 
 /** `T` as one object type, so an editor shows its fields. */
 type Flat<T> = { [K in keyof T]: T[K] };

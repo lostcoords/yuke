@@ -142,7 +142,7 @@ impl App {
                 return Err(describe(&error));
             }
         };
-        let reporter = tokio::spawn(report(reports, Arc::clone(&observer)));
+        let reporter = tokio::spawn(report(reports, Arc::clone(&observer), io::stderr()));
         let app = App {
             shared: Arc::new(Shared {
                 machine,
@@ -570,9 +570,13 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, AppError> + S
         .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
-/// Send each report of the JavaScript to `observer` as a notice: a script fault as a warning of yuke, and a plugin notice
-/// as it is.
-async fn report(mut reports: mpsc::UnboundedReceiver<Report>, observer: Arc<dyn Observer>) {
+/// Send a script fault to `observer` as a warning of yuke, and a plugin notice as it is. An entry of `console` goes to
+/// `console` (stderr in the app), because it is for the operator and stdout can carry the protocol.
+async fn report(
+    mut reports: mpsc::UnboundedReceiver<Report>,
+    observer: Arc<dyn Observer>,
+    mut console: impl Write + Send,
+) {
     while let Some(report) = reports.recv().await {
         let notice = match report {
             Report::Fault(fault) => NoticeParams {
@@ -582,6 +586,18 @@ async fn report(mut reports: mpsc::UnboundedReceiver<Report>, observer: Arc<dyn 
                 message: format!("a script failed: {fault}"),
             },
             Report::Notice(notice) => notice,
+            Report::Console { level, text } => {
+                let level = match level {
+                    NoticeLevel::Debug => "debug",
+                    NoticeLevel::Info => "info",
+                    NoticeLevel::Warn => "warn",
+                    NoticeLevel::Error => "error",
+                };
+                if writeln!(console, "console {level}: {text}").is_err() {
+                    // No one reads stderr, so the line has nowhere to go.
+                }
+                continue;
+            }
         };
         observer.notify(ServerNotification::Notice(notice));
     }
@@ -618,5 +634,68 @@ struct TokioTimer;
 impl Timer for TokioTimer {
     async fn sleep(&self, duration: Duration) {
         tokio::time::sleep(duration).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Keeps each notification that it receives.
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<ServerNotification>>);
+
+    impl Observer for Recorder {
+        fn notify(&self, notification: ServerNotification) {
+            lock(&self.0).push(notification);
+        }
+    }
+
+    /// A writer that keeps its bytes for the test.
+    #[derive(Clone, Default)]
+    struct Kept(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Kept {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            lock(&self.0).extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_console_entry_goes_to_its_writer_and_is_no_notice() {
+        let (reports, receiver) = mpsc::unbounded_channel();
+        let recorder = Arc::new(Recorder::default());
+        reports
+            .send(Report::Console {
+                level: NoticeLevel::Error,
+                text: "for the operator".to_owned(),
+            })
+            .unwrap();
+        reports
+            .send(Report::Fault(yuke_js::ScriptError {
+                name: None,
+                message: "lost".to_owned(),
+                stack: None,
+            }))
+            .unwrap();
+        drop(reports);
+
+        let console = Kept::default();
+        report(receiver, Arc::clone(&recorder) as Arc<dyn Observer>, console.clone()).await;
+
+        let messages: Vec<String> = lock(&recorder.0)
+            .iter()
+            .map(|notification| match notification {
+                ServerNotification::Notice(notice) => notice.message.clone(),
+                other @ ServerNotification::SessionUpdate(_) => panic!("expected a notice, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(messages, ["a script failed: lost"]);
+        assert_eq!(lock(&console.0).as_slice(), b"console error: for the operator\n");
     }
 }

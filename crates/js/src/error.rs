@@ -28,6 +28,13 @@ pub enum Report {
     Fault(ScriptError),
     /// A plugin sent a notice with `ctx.notify`.
     Notice(yuke_protocol::NoticeParams),
+    /// A script wrote an entry with `console`. It is a diagnostic for the operator, never a notice.
+    Console {
+        /// `debug` for `console.log` and `console.debug`. `info`, `warn`, and `error` for the methods of those names.
+        level: yuke_protocol::NoticeLevel,
+        /// The formatted entry. An error gives its stack frames on more lines.
+        text: String,
+    },
 }
 
 impl fmt::Display for Error {

@@ -71,6 +71,14 @@ const widened: { type: "object"; properties: { n: { type: "integer" } }; require
 };
 assert<Equal<Infer<typeof widened>, { n?: number }>>();
 
+// A scalar schema with a union of types gives the union of values.
+assert<
+  Equal<
+    Infer<{ type: "object"; properties: { flag: { type: "string" | "boolean" } }; required: ["flag"] }>,
+    { flag: string | boolean }
+  >
+>();
+
 // A result is a string, or text with media and an error flag. A media file has a path or bytes, never both.
 const results: ToolResult[] = [
   "done",
