@@ -14,7 +14,8 @@ use rquickjs::{Ctx, FromJs, Promise};
 use tokio::sync::mpsc;
 
 use crate::error::caught;
-use crate::{Error, Options, Plugin, PluginError, Processes, Report, Runtime, ScriptError};
+use crate::plugins::PluginError;
+use crate::{Error, Options, Plugin, Processes, Report, Runtime, ScriptError};
 
 /// A new empty folder for the test `name`.
 fn folder(name: &str) -> PathBuf {
@@ -55,17 +56,29 @@ async fn start(folder: &Path) -> (Runtime, mpsc::UnboundedReceiver<Report>) {
     .unwrap()
 }
 
+/// The plugin `name` with its folders, its entry, and its services.
+fn descriptor(
+    name: &str,
+    root: PathBuf,
+    data_dir: PathBuf,
+    entry: Option<PathBuf>,
+    uses: &[&str],
+    provides: &[&str],
+) -> Plugin {
+    Plugin {
+        name: name.to_owned(),
+        root,
+        data_dir,
+        entry,
+        uses: uses.iter().map(|&service| service.to_owned()).collect(),
+        provides: provides.iter().map(|&service| service.to_owned()).collect(),
+    }
+}
+
 /// Load the module `path` as the entry of the plugin `test`. The module exports `apply`, `session`, or both.
 async fn load_entry(runtime: &Runtime, path: &Path) -> Result<(), Error> {
     let root = path.parent().unwrap().to_owned();
-    let plugin = Plugin {
-        name: "test".to_owned(),
-        data_dir: root.join("data"),
-        root,
-        entry: Some(path.to_owned()),
-        uses: Vec::new(),
-        provides: Vec::new(),
-    };
+    let plugin = descriptor("test", root.clone(), root.join("data"), Some(path.to_owned()), &[], &[]);
     match runtime
         .load_plugins(&[plugin])
         .await

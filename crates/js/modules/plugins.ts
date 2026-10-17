@@ -66,6 +66,7 @@ export type SessionCleanup = () => void | Promise<void>;
 
 /**
  * The `session` export of the entry module. It runs once per session. The open of the session does not wait for it.
- * The first request for the tools of the session waits for it. A throw removes its tools and aborts its signal.
+ * The first request for the tools of the session waits for it. A throw removes its tools and aborts its signal. The
+ * close of the session waits for it to settle, so it must end when its signal aborts.
  */
 export type PluginSession = (s: SessionContext) => undefined | SessionCleanup | Promise<undefined | SessionCleanup>;

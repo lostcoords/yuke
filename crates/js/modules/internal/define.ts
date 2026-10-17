@@ -29,20 +29,15 @@ export function defineTool<const S extends ObjectSchema>(tool: Tool<S>, open?: n
     const { sessionId, callId, folder } = metadata;
     const context: ToolContext = { sessionId, callId, folder, signal, output };
     bindCall(context, call);
-    const answer = run(
-      async () => answerOf(await execute(checkArguments(parameters, JSON.parse(text)) as Infer<S>, context)),
-      abort,
-    );
+    const answer = (async () => {
+      try {
+        return answerOf(await execute(checkArguments(parameters, JSON.parse(text)) as Infer<S>, context));
+      } finally {
+        abort("The tool call has ended");
+      }
+    })();
     return { answer, abort: () => abort("The tool call was cancelled") };
   });
-}
-
-async function run(call: () => Promise<Answer>, abort: (message: string) => void): Promise<Answer> {
-  try {
-    return await call();
-  } finally {
-    abort("The tool call has ended");
-  }
 }
 
 /** The fields of a result object and of one media item. */

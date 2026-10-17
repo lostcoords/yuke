@@ -1,19 +1,11 @@
 import { defineTool } from "yuke:internal/define";
 import { hostSignal } from "yuke:internal/events";
 import { notify, unregister } from "yuke:internal/native";
-import type {
-  NoticeLevel,
-  PluginApply,
-  PluginContext,
-  PluginSession,
-  Services,
-  SessionCleanup,
-  SessionContext,
-} from "yuke:plugins";
+import type { NoticeLevel, PluginContext, PluginSession, Services, SessionCleanup, SessionContext } from "yuke:plugins";
 import type { ObjectSchema, Tool } from "yuke:tools";
 
 /** One plugin as the host gives it. The host checked the manifest, the order, and the providers before any plugin code. */
-export interface PluginSpec {
+interface PluginSpec {
   readonly name: string;
   readonly root: string;
   readonly dataDir: string;
@@ -36,10 +28,8 @@ interface Scope {
   readonly abort: (reason: string) => void;
   /** The ids of the tools that the scope defined. */
   readonly tools: number[];
-  /** The cleanup that `session` returned before the close. */
-  cleanup: SessionCleanup | undefined;
-  /** Settles when `session` settles. It never rejects. */
-  settled: Promise<void>;
+  /** Settles with the cleanup that `session` returns, or `undefined` after a failure. It never rejects. */
+  settled: Promise<SessionCleanup | undefined>;
   /** Run `cleanup`. A failure is a notice. */
   readonly clean: (cleanup: SessionCleanup) => Promise<void>;
 }
@@ -94,7 +84,7 @@ export async function load(spec: PluginSpec): Promise<void> {
         throw new TypeError("the session export is no function");
       }
       session = exported as PluginSession | undefined;
-      const result: unknown = apply === undefined ? undefined : (apply as PluginApply)(ctx);
+      const result: unknown = apply === undefined ? undefined : apply(ctx);
       if (result !== undefined && (await result) !== undefined) {
         throw new TypeError("apply must return nothing or a promise of nothing");
       }
@@ -127,8 +117,8 @@ export function ready(open: number): Promise<void> {
 }
 
 /**
- * Close the open session `open`: mark each scope closed, abort each signal, and await each cleanup. A cleanup that
- * `session` returns after the close runs once too. A failed cleanup sends a notice.
+ * Close the open session `open`: mark each scope closed, abort each signal, and await each cleanup. The close waits
+ * for each `session` to settle, also one that ignores the abort. A failed cleanup sends a notice.
  */
 export async function closeSession(open: number): Promise<void> {
   const state = opens.get(open);
@@ -138,9 +128,7 @@ export async function closeSession(open: number): Promise<void> {
   for (const scope of state.scopes) scope.abort("the session closed");
   await Promise.all(
     state.scopes.map(async (scope) => {
-      await scope.settled;
-      const cleanup = scope.cleanup;
-      scope.cleanup = undefined;
+      const cleanup = await scope.settled;
       if (cleanup !== undefined) await scope.clean(cleanup);
     }),
   );
@@ -157,7 +145,7 @@ function start(open: number, sessionId: string, folder: string, plugin: string, 
       report(`the cleanup of the session failed: ${String(error)}`);
     }
   };
-  const scope: Scope = { closed: false, abort, tools: [], cleanup: undefined, settled: Promise.resolve(), clean };
+  const scope: Scope = { closed: false, abort, tools: [], settled: Promise.resolve(undefined), clean };
   const s: SessionContext = Object.freeze({
     sessionId,
     folder,
@@ -178,20 +166,15 @@ function start(open: number, sessionId: string, folder: string, plugin: string, 
       if (result !== undefined && typeof result !== "function") {
         throw new TypeError("session must return nothing or a cleanup function");
       }
-      const cleanup = result as SessionCleanup | undefined;
-      // The close can end before the setup returns this cleanup, so the cleanup runs here.
-      if (scope.closed) {
-        if (cleanup !== undefined) await clean(cleanup);
-      } else {
-        scope.cleanup = cleanup;
-      }
+      return result as SessionCleanup | undefined;
     } catch (error) {
       // The close owns the scope, so a failure after the close needs no rollback.
-      if (scope.closed) return;
+      if (scope.closed) return undefined;
       scope.closed = true;
       unregister(scope.tools);
       abort(`session of plugin ${plugin} failed`);
       report(`the session setup failed, and its tools are gone: ${String(error)}`);
+      return undefined;
     }
   })();
   return scope;

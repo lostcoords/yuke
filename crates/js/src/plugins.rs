@@ -29,18 +29,18 @@ pub struct Plugin {
     pub provides: Vec<String>,
 }
 
-/// A plugin that did not load.
+/// A plugin that did not load. Its text names the plugin and the reason.
 #[derive(Debug)]
 pub struct PluginFailure {
     /// The name of the plugin.
-    pub name: String,
+    pub(crate) name: String,
     /// Why the plugin did not load.
-    pub reason: PluginError,
+    pub(crate) reason: PluginError,
 }
 
 /// Why a plugin did not load.
 #[derive(Debug)]
-pub enum PluginError {
+pub(crate) enum PluginError {
     /// The import of the entry, the check of its exports, or its `apply` failed.
     Load(Error),
     /// The plugin uses `service`, and its provider `provider` did not load. The plugin did not run.

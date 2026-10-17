@@ -654,6 +654,69 @@ async fn a_fork_that_has_no_credential_fails_and_leaves_no_session() {
     assert_eq!(store.newest_session(&place.work).await.unwrap(), Some(source));
 }
 
+/// Send the request `method`, keep each message up to its response in `messages`, and return the response. The
+/// request must succeed.
+async fn exchange(client: &mut Client, messages: &mut Vec<Value>, method: &str, params: Value) -> Value {
+    let id = client.request(method, params).await;
+    let received = client.until(|message| message["id"] == json!(id)).await;
+    messages.extend(received.iter().cloned());
+    let response = received.last().unwrap().clone();
+    assert!(response.get("error").is_none(), "{method}: {response}");
+    response
+}
+
+#[tokio::test]
+async fn a_create_a_reopen_and_a_fork_each_run_session_once_and_a_repeated_load_does_not() {
+    let place = Place::new(
+        "rpc",
+        "a_create_a_reopen_and_a_fork_each_run_session_once_and_a_repeated_load_does_not",
+    );
+    place.plugin(
+        "counter",
+        "let count = 0; export function session(s) { count += 1; s.notify('info', `open ${count}`); }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["counter"] }"#).unwrap();
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
+    let mut messages = Vec::new();
+
+    let created = exchange(&mut client, &mut messages, "session/new", settings(&place)).await;
+    let session = created["result"]["sessionId"].clone();
+    exchange(
+        &mut client,
+        &mut messages,
+        "session/load",
+        json!({ "sessionId": session }),
+    )
+    .await;
+    let close = json!({ "sessionId": session, "stopJobs": false });
+    exchange(&mut client, &mut messages, "session/close", close).await;
+    exchange(
+        &mut client,
+        &mut messages,
+        "session/load",
+        json!({ "sessionId": session }),
+    )
+    .await;
+    let forked = exchange(
+        &mut client,
+        &mut messages,
+        "session/fork",
+        json!({ "sessionId": session }),
+    )
+    .await;
+    // A last load of an open session runs no `session`, and its response comes after the notices before it.
+    let fork = forked["result"]["sessionId"].clone();
+    exchange(&mut client, &mut messages, "session/load", json!({ "sessionId": fork })).await;
+
+    let notices: Vec<&Value> = messages
+        .iter()
+        .filter(|message| message["method"] == "notice")
+        .map(|message| &message["params"]["message"])
+        .collect();
+    assert_eq!(notices, [&json!("open 1"), &json!("open 2"), &json!("open 3")]);
+    client.end().await;
+}
+
 #[tokio::test]
 async fn a_cancel_and_a_close_end_a_turn_that_waits_for_the_plugins_of_its_session() {
     let place = Place::new(

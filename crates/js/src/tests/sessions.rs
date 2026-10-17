@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use yuke_protocol::{NoticeLevel, NoticeParams};
 
 use super::plugins::{plugin, tool};
-use super::tools::{TestHost, Tools, call, error_of};
+use super::tools::{TestHost, Tools, call, error_of, text_of};
 use super::{evaluate, folder, load_entry, next_notice, start, write};
 use crate::{Report, Runtime, SessionHost};
 
@@ -59,6 +59,159 @@ async fn a_tool_of_a_session_reaches_only_that_session() {
 
     assert_eq!(first.names(), ["t1"]);
     assert_eq!(second.names(), ["t2"]);
+}
+
+#[tokio::test]
+async fn two_open_sessions_keep_their_own_tool_of_one_name() {
+    let (folder, runtime, _reports) = loaded(
+        "two_open_sessions_keep_their_own_tool_of_one_name",
+        "let count = 0;
+         export function session(s) {
+           count += 1;
+           const mine = `session ${count}`;
+           s.tools.define({
+             name: 'who', description: 'd', concurrency: 'serial',
+             parameters: { type: 'object', properties: {} }, execute: () => mine,
+           });
+         }",
+    )
+    .await;
+
+    let first = Tools::open(&runtime, host(&folder)).await;
+    let second = Tools::open(&runtime, host(&folder)).await;
+
+    assert_eq!(text_of(&first["who"], "{}").await, "session 1");
+    assert_eq!(text_of(&second["who"], "{}").await, "session 2");
+}
+
+#[tokio::test]
+async fn every_session_starts_before_any_of_them_settles() {
+    let folder = folder("every_session_starts_before_any_of_them_settles");
+    let (runtime, _reports) = start(&folder).await;
+    let waiting = plugin(
+        &folder,
+        "waiting",
+        Some(&format!(
+            "export async function session(s) {{
+               await new Promise((resolve) => {{ globalThis.release = resolve; }});
+               s.tools.define({});
+             }}",
+            tool("first")
+        )),
+        &[],
+        &[],
+    );
+    let releasing = plugin(
+        &folder,
+        "releasing",
+        Some(&format!(
+            "export function session(s) {{ globalThis.release(); s.tools.define({}); }}",
+            tool("second")
+        )),
+        &[],
+        &[],
+    );
+    assert!(runtime.load_plugins(&[waiting, releasing]).await.is_empty());
+
+    let tools = Tools::open(&runtime, host(&folder)).await;
+
+    assert_eq!(tools.names(), ["second", "first"]);
+}
+
+#[tokio::test]
+async fn a_name_that_an_earlier_plugin_holds_fails_only_the_later_plugin() {
+    let folder = folder("a_name_that_an_earlier_plugin_holds_fails_only_the_later_plugin");
+    let (runtime, mut reports) = start(&folder).await;
+    let first = plugin(
+        &folder,
+        "first",
+        Some(&format!(
+            "export function session(s) {{ s.tools.define({}); }}",
+            tool("shared")
+        )),
+        &[],
+        &[],
+    );
+    let second = plugin(
+        &folder,
+        "second",
+        Some(&format!(
+            "export function session(s) {{ s.tools.define({}); s.tools.define({}); }}",
+            tool("own"),
+            tool("shared")
+        )),
+        &[],
+        &[],
+    );
+    assert!(runtime.load_plugins(&[first, second]).await.is_empty());
+
+    let tools = Tools::open(&runtime, host(&folder)).await;
+    let notice = next_notice(&mut reports).await;
+
+    assert_eq!(tools.names(), ["shared"]);
+    assert_eq!(notice.source, "second");
+    assert_eq!(
+        notice.message,
+        "the session setup failed, and its tools are gone: TypeError: the session already has a tool with the name 'shared'"
+    );
+}
+
+#[tokio::test]
+async fn the_folder_of_a_session_stays_while_a_call_reads_the_folder_of_its_start() {
+    let (folder, runtime, _reports) = loaded(
+        "the_folder_of_a_session_stays_while_a_call_reads_the_folder_of_its_start",
+        "export function session(s) {
+           s.tools.define({
+             name: 'where', description: 'd', concurrency: 'serial',
+             parameters: { type: 'object', properties: {} },
+             execute: (_args, context) => `${s.folder} ${context.folder}`,
+           });
+         }",
+    )
+    .await;
+    let host = host(&folder);
+    let tools = Tools::open(&runtime, Arc::clone(&host) as Arc<dyn SessionHost>).await;
+
+    folder.join("moved").clone_into(&mut host.folder.lock().unwrap());
+    let text = text_of(&tools["where"], "{}").await;
+
+    assert_eq!(text, format!("{} {}", folder.display(), folder.join("moved").display()));
+}
+
+#[tokio::test]
+async fn define_fails_during_the_cleanup_and_after_the_close() {
+    let (folder, runtime, _reports) = loaded(
+        "define_fails_during_the_cleanup_and_after_the_close",
+        &format!(
+            "export function session(s) {{
+               globalThis.kept = s;
+               return () => {{
+                 try {{ s.tools.define({}); }} catch (error) {{ globalThis.during = error.message; }}
+               }};
+             }}",
+            tool("late")
+        ),
+    )
+    .await;
+    let tools = Tools::open(&runtime, host(&folder)).await;
+
+    tools.session.close().await.unwrap();
+    let after = evaluate::<String>(
+        &runtime,
+        &format!(
+            "try {{ globalThis.kept.tools.define({}); return 'defined'; }} catch (error) {{ return error.message; }}",
+            tool("later")
+        ),
+    )
+    .await
+    .unwrap();
+
+    let refused = "plugin test defines a tool after the end of its session";
+    assert_eq!(
+        evaluate::<String>(&runtime, "return globalThis.during;").await.unwrap(),
+        refused
+    );
+    assert_eq!(after, refused);
 }
 
 #[tokio::test]

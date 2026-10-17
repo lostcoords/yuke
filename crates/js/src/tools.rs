@@ -144,11 +144,18 @@ impl Registry {
             .collect()
     }
 
-    /// The start function of the tool `id` of the open session `open`, or the text of the failure. The borrow ends
-    /// before the caller runs JavaScript, which can define a tool.
-    fn start<'js>(&self, ctx: &Ctx<'js>, open: u64, id: u64) -> Result<rquickjs::Result<Function<'js>>, &'static str> {
+    /// The start function of the tool `id` of the open session `open`. The borrow ends before the caller runs
+    /// JavaScript, which can define a tool.
+    fn start<'js>(&self, ctx: &Ctx<'js>, open: u64, id: u64) -> Result<Function<'js>, Error> {
+        let failure = |message: &str| {
+            Error::Script(crate::ScriptError {
+                name: None,
+                message: message.to_owned(),
+                stack: None,
+            })
+        };
         if !self.opens.borrow().contains(&open) {
-            return Err("the session is closed");
+            return Err(failure("the session is closed"));
         }
         let start = self
             .tools
@@ -156,8 +163,8 @@ impl Registry {
             .iter()
             .find(|tool| tool.id == id)
             .map(|tool| tool.start.clone())
-            .ok_or("the tool is no longer defined")?;
-        Ok(start.restore(ctx))
+            .ok_or_else(|| failure("the tool is no longer defined"))?;
+        caught(ctx, start.restore(ctx))
     }
 
     /// Drop each saved function. The thread calls this before it drops the runtime, because a saved value that
@@ -278,14 +285,7 @@ impl ScriptTool {
         let answer = self
             .caller
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
-                let start = registry.start(&ctx, open, id).map_err(|message| {
-                    Error::Script(crate::ScriptError {
-                        name: None,
-                        message: message.to_owned(),
-                        stack: None,
-                    })
-                })?;
-                let start = caught(&ctx, start)?;
+                let start = registry.start(&ctx, open, id)?;
                 let output = caught(
                     &ctx,
                     Function::new(ctx.clone(), move |text: String| {

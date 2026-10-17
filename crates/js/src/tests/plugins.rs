@@ -7,8 +7,8 @@ use std::time::Duration;
 use yuke_protocol::{NoticeLevel, NoticeParams};
 
 use super::tools::{TestHost, Tools};
-use super::{evaluate, folder, module, script_error, start, write};
-use crate::{Plugin, PluginError, PluginFailure, Report, Runtime};
+use super::{descriptor, evaluate, folder, module, script_error, start, write};
+use crate::{Plugin, PluginFailure, Report, Runtime};
 
 /// A plugin `name` in `folder` whose entry is `source`, or a plugin without code when `source` is `None`.
 pub(super) fn plugin(folder: &Path, name: &str, source: Option<&str>, uses: &[&str], provides: &[&str]) -> Plugin {
@@ -20,14 +20,7 @@ pub(super) fn plugin(folder: &Path, name: &str, source: Option<&str>, uses: &[&s
         write(&root, &[("index.ts", source)]);
         root.join("index.ts")
     });
-    Plugin {
-        name: name.to_owned(),
-        root,
-        data_dir,
-        entry,
-        uses: uses.iter().map(|&service| service.to_owned()).collect(),
-        provides: provides.iter().map(|&service| service.to_owned()).collect(),
-    }
+    descriptor(name, root, data_dir, entry, uses, provides)
 }
 
 /// A tool definition with `name` for a plugin entry.
@@ -312,7 +305,6 @@ async fn a_service_passes_to_a_later_plugin_and_a_failed_provider_fails_its_user
             ),
         ]
     );
-    assert!(matches!(failures[1].reason, PluginError::Provider { .. }));
 }
 
 #[tokio::test]

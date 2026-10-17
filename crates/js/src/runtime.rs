@@ -186,23 +186,17 @@ impl Caller {
         F: for<'js> AsyncFnOnce(Ctx<'js>, Rc<Registry>) -> Result<R, Error> + Send + 'static,
         R: Send + 'static,
     {
-        let (reply, answer) = oneshot::channel();
-        let call: Call = Box::new(move |ctx: Ctx<'_>, registry: &Rc<Registry>| {
-            let registry = Rc::clone(registry);
-            ctx.clone().spawn(async move {
-                let mut reply = reply;
-                tokio::select! {
-                    result = f(ctx, registry) => {
-                        if reply.send(result).is_err() {
-                            // The caller has left.
-                        }
+        let (mut reply, answer) = oneshot::channel();
+        self.post(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
+            tokio::select! {
+                result = f(ctx, registry) => {
+                    if reply.send(result).is_err() {
+                        // The caller has left.
                     }
-                    () = reply.closed() => {}
                 }
-            });
-        });
-
-        self.calls.send(call).map_err(|_| Error::Stopped)?;
+                () = reply.closed() => {}
+            }
+        })?;
         answer.await.map_err(|_| Error::Stopped)?
     }
 }

@@ -135,8 +135,6 @@ async function files(): Promise<void> {
   await fs.writeTextFile("state.json", text, { baseDir: ctx.dataDir, atomic: true, mode: 0o600 });
   // @ts-expect-error: the data of `writeFile` is bytes.
   await fs.writeFile("data.bin", "text", { baseDir: ctx.dataDir });
-  const failure = new fs.FileSystemError("x", { code: "ENOENT", path: "/x" });
-  assert<Equal<typeof failure.code, string>>();
   void bytes;
   void info;
 }

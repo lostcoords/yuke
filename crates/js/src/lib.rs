@@ -31,7 +31,7 @@ mod tools;
 mod typescript;
 
 pub use error::{Error, Report, ScriptError};
-pub use plugins::{Plugin, PluginError, PluginFailure};
+pub use plugins::{Plugin, PluginFailure};
 pub use processes::{JobEnded, Processes, shell};
 pub use runtime::{Options, Runtime};
 pub use session::ScriptSession;
