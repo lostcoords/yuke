@@ -308,6 +308,8 @@ impl Engine {
         let registry = Rc::new(Registry::default());
         context
             .with(|ctx| {
+                // The error constructors come before the natives, so each native throws with the constructors of the start.
+                crate::error::install_error_classes(&ctx)?;
                 timers::install(&ctx, &timers, faults.clone())?;
                 crate::error::install_report_error(&ctx, faults.clone())?;
                 native::install(&ctx, &registry, faults)

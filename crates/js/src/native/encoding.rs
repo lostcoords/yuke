@@ -3,7 +3,7 @@
 
 use rquickjs::{Ctx, Function, Object, TypedArray};
 
-use crate::error::throw;
+use crate::error::{ErrorClass, throw};
 
 /// Add `encodeText`, `encodeTextInto`, and `decodeText` to `object`, the export object of the native module.
 pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result<()> {
@@ -17,7 +17,7 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
         "encodeTextInto",
         Function::new(ctx.clone(), |ctx: Ctx<'js>, text: String, capacity: usize| {
             let (bytes, read) = prefix(&text, capacity);
-            let result = Object::new(ctx.clone())?;
+            let result = super::internal_record(&ctx)?;
             result.set("bytes", TypedArray::<u8>::new(ctx, bytes.as_bytes())?)?;
             result.set("read", read)?;
             Ok::<_, rquickjs::Error>(result)
@@ -30,9 +30,9 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
             |ctx: Ctx<'js>, bytes: TypedArray<'js, u8>, fatal: bool, stream: bool| {
                 let bytes = crate::bytes::copy(&bytes)?;
                 let Some((text, rest)) = decode(&bytes, fatal, stream) else {
-                    return Err(throw(&ctx, "TypeError", "the bytes are not valid UTF-8"));
+                    return Err(throw(&ctx, ErrorClass::TypeError, "the bytes are not valid UTF-8"));
                 };
-                let result = Object::new(ctx.clone())?;
+                let result = super::internal_record(&ctx)?;
                 result.set("text", text)?;
                 result.set("rest", rest)?;
                 Ok(result)

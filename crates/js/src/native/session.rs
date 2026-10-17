@@ -11,7 +11,7 @@ use rquickjs::{Ctx, Function, Object};
 use yuke_engine::CancellationToken;
 
 use super::exec::exec;
-use crate::error::throw;
+use crate::error::{ErrorClass, throw};
 use crate::processes::Processes;
 use crate::processes::Request;
 use crate::tools::SessionHost;
@@ -26,7 +26,7 @@ pub(crate) fn object<'js>(
     folder: PathBuf,
     stop: &CancellationToken,
 ) -> rquickjs::Result<Object<'js>> {
-    let object = Object::new(ctx.clone())?;
+    let object = super::internal_record(ctx)?;
 
     let (exec_processes, exec_stop) = (Arc::clone(processes), stop.clone());
     object.set(
@@ -63,8 +63,8 @@ pub(crate) fn object<'js>(
                 let (processes, host) = (Arc::clone(&start_processes), Arc::clone(&start_host));
                 async move {
                     let started = processes.start_job(command, host).await;
-                    let (id, log) = started.map_err(|message| throw(&ctx, "Error", &message))?;
-                    let job = Object::new(ctx.clone())?;
+                    let (id, log) = started.map_err(|message| throw(&ctx, ErrorClass::Error, &message))?;
+                    let job = super::internal_record(&ctx)?;
                     job.set("id", id)?;
                     job.set("log", log.to_string_lossy().into_owned())?;
                     Ok::<_, rquickjs::Error>(job)
@@ -84,7 +84,7 @@ pub(crate) fn object<'js>(
                     let Some((label, log)) = processes.stop_job(&id, &host).await else {
                         return Ok(None);
                     };
-                    let object = Object::new(ctx.clone())?;
+                    let object = super::internal_record(&ctx)?;
                     object.set("label", label)?;
                     object.set("log", log.to_string_lossy().into_owned())?;
                     Ok::<_, rquickjs::Error>(Some(object))

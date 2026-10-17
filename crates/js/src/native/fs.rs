@@ -8,7 +8,7 @@ use std::path::Path;
 use rquickjs::function::Async;
 use rquickjs::{Ctx, Function, Object};
 
-use crate::error::throw;
+use crate::error::{ErrorClass, throw};
 
 /// Add the file functions to `object`, the export object of the native module.
 pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result<()> {
@@ -46,9 +46,9 @@ async fn read_lines(
     let full = Path::new(&folder).join(&path);
     let read = run_blocking(move || lines(&full, offset, limit, max_bytes as usize)).await;
     // A throw comes last: a pending exception across an await can reach other code.
-    let lines = read.map_err(|message| throw(&ctx, "Error", &message))?;
+    let lines = read.map_err(|message| throw(&ctx, ErrorClass::Error, &message))?;
 
-    let object = Object::new(ctx.clone())?;
+    let object = super::internal_record(&ctx)?;
     match lines {
         Lines::Text { text, next, cut } => {
             object.set("text", text)?;
@@ -56,7 +56,7 @@ async fn read_lines(
             object.set("cut", cut)?;
         }
         Lines::Image { path, mime } => {
-            let image = Object::new(ctx.clone())?;
+            let image = super::internal_record(&ctx)?;
             image.set("path", path)?;
             image.set("mimeType", mime)?;
             object.set("image", image)?;
@@ -73,7 +73,7 @@ async fn read_text(ctx: Ctx<'_>, path: String, folder: String) -> rquickjs::Resu
         String::from_utf8(bytes).map_err(|_| INVALID_UTF8.to_owned())
     })
     .await;
-    read.map_err(|message| throw(&ctx, "Error", &message))
+    read.map_err(|message| throw(&ctx, ErrorClass::Error, &message))
 }
 
 /// `writeText(path, folder, text)`: write the file, and make its missing parent folders. It answers the byte count.
@@ -87,7 +87,7 @@ async fn write_text(ctx: Ctx<'_>, path: String, folder: String, text: String) ->
         Ok(text.len())
     })
     .await;
-    written.map_err(|message| throw(&ctx, "Error", &message))
+    written.map_err(|message| throw(&ctx, ErrorClass::Error, &message))
 }
 
 /// Run `work` on the blocking threads of tokio.

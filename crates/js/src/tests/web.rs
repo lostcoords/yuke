@@ -956,3 +956,37 @@ async fn a_patched_weak_map_sees_no_private_state_and_cannot_stop_a_host_abort()
 
     assert_eq!(text, "0 true why");
 }
+
+#[tokio::test]
+async fn the_web_classes_work_while_call_deref_and_the_registry_are_patched() {
+    let text = run::<String>(
+        "the_web_classes_work_while_call_deref_and_the_registry_are_patched",
+        "const { call } = Function.prototype;
+         const { deref } = WeakRef.prototype;
+         const { register, unregister } = FinalizationRegistry.prototype;
+         const victim = new AbortController();
+         Function.prototype.call = () => { throw new Error('patched call'); };
+         WeakRef.prototype.deref = () => victim.signal;
+         FinalizationRegistry.prototype.register = () => { throw new Error('patched register'); };
+         FinalizationRegistry.prototype.unregister = () => { throw new Error('patched unregister'); };
+         let result;
+         try {
+           const source = new AbortController();
+           const dependent = AbortSignal.any([source.signal]);
+           source.abort('why');
+           const text = new TextDecoder().decode(new TextEncoder().encode('ok'));
+           const destination = new Uint8Array(2);
+           const written = new TextEncoder().encodeInto('ok', destination).written;
+           result = [dependent.reason, victim.signal.aborted, text, written, destination[1]];
+         } finally {
+           Function.prototype.call = call;
+           WeakRef.prototype.deref = deref;
+           FinalizationRegistry.prototype.register = register;
+           FinalizationRegistry.prototype.unregister = unregister;
+         }
+         return result.join(' ');",
+    )
+    .await;
+
+    assert_eq!(text, "why false ok 2 107");
+}

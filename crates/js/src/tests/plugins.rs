@@ -188,6 +188,35 @@ async fn a_failed_plugin_that_replaces_the_web_globals_still_drops_its_tools_and
 }
 
 #[tokio::test]
+async fn a_native_throws_the_error_class_of_the_start_after_a_plugin_replaces_the_global() {
+    let folder = folder("a_native_throws_the_error_class_of_the_start_after_a_plugin_replaces_the_global");
+    let (runtime, _reports) = start(&folder).await;
+    let one = plugin(
+        &folder,
+        "one",
+        Some(
+            "export default function apply(ctx) {
+               const original = TypeError;
+               globalThis.TypeError = class Fake extends Error {};
+               try { ctx.notify('loud', 'x'); } catch (error) { globalThis.seen = error instanceof original; }
+               globalThis.TypeError = original;
+             }",
+        ),
+        &[],
+        &[],
+    );
+
+    let failures = runtime.load_plugins(&[one]).await;
+
+    assert!(failures.is_empty(), "{failures:?}");
+    assert!(
+        evaluate::<bool>(&runtime, "return globalThis.seen === true;")
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
 async fn a_plugin_cannot_abort_the_signal_of_its_context() {
     let folder = folder("a_plugin_cannot_abort_the_signal_of_its_context");
     let (runtime, _reports) = start(&folder).await;

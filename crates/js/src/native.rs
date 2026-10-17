@@ -15,7 +15,7 @@ use rquickjs::{Ctx, Function, Module, Object};
 
 use tokio::sync::mpsc;
 
-use crate::error::{Report, throw};
+use crate::error::{ErrorClass, Report, throw};
 use crate::tools::Registry;
 
 /// The name of the native module.
@@ -46,7 +46,7 @@ impl ModuleDef for Native {
 fn exports_object<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
     ctx.userdata::<Object<'js>>()
         .map(|object| object.clone())
-        .ok_or_else(|| throw(ctx, "Error", "the native module has no exports"))
+        .ok_or_else(|| throw(ctx, ErrorClass::Error, "the native module has no exports"))
 }
 
 /// The names of the functions of the native module.
@@ -59,19 +59,25 @@ pub(crate) fn declare<'js>(ctx: &Ctx<'js>, name: &str) -> Option<rquickjs::Resul
     (name == NAME).then(|| Module::declare_def::<Native, _>(ctx.clone(), name))
 }
 
+/// A new object for the internal modules, without a prototype: a setter of `Object.prototype` then does not see a field
+/// that a native sets. A value for a plugin needs a normal object.
+pub(crate) fn internal_record<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
+    Object::new_proto(ctx.clone(), None)
+}
+
 /// Build the export object of the native module.
 pub(crate) fn install(
     ctx: &Ctx<'_>,
     registry: &Rc<Registry>,
     reports: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
-    let object = Object::new(ctx.clone())?;
+    let object = internal_record(ctx)?;
     fs::add(ctx, &object)?;
     encoding::add(ctx, &object)?;
     console::add(ctx, &object, reports.clone())?;
     tools::add(ctx, &object, registry, reports)?;
     match ctx.store_userdata(object) {
         Ok(_) => Ok(()),
-        Err(_) => Err(throw(ctx, "Error", "the native module cannot be stored")),
+        Err(_) => Err(throw(ctx, ErrorClass::Error, "the native module cannot be stored")),
     }
 }

@@ -161,15 +161,70 @@ pub(crate) fn install_report_error<'js>(ctx: &Ctx<'js>, faults: mpsc::UnboundedS
     ctx.globals().set("reportError", report)
 }
 
-/// Throw a new error of the global class `class`, for example `TypeError`, with `message`. The typed throws of the
-/// engine cut a message at 255 bytes. A constructed error keeps all of it.
-pub(crate) fn throw(ctx: &Ctx<'_>, class: &str, message: &str) -> rquickjs::Error {
-    let built = ctx
-        .globals()
-        .get::<_, Constructor<'_>>(class)
-        .and_then(|constructor| constructor.construct::<_, Value<'_>>((message,)));
+/// The class of an error that a native throws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ErrorClass {
+    Error,
+    TypeError,
+    SyntaxError,
+}
+
+impl ErrorClass {
+    /// Each class at the index of its discriminant. [`install_error_classes`] keeps the constructors in this order, and
+    /// [`throw`] reads them by `class as usize`.
+    const ALL: [Self; 3] = [Self::Error, Self::TypeError, Self::SyntaxError];
+
+    /// The name of the global constructor of the class.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Error => "Error",
+            Self::TypeError => "TypeError",
+            Self::SyntaxError => "SyntaxError",
+        }
+    }
+}
+
+/// Keep the error constructors of the runtime start, so a plugin that replaces a global does not change the errors of
+/// the natives. The context keeps two kinds of user data: this `Vec<Constructor>`, and the `Object` of the native module.
+pub(crate) fn install_error_classes(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
+    let constructors = ErrorClass::ALL
+        .iter()
+        .map(|class| ctx.globals().get::<_, Constructor<'_>>(class.name()))
+        .collect::<rquickjs::Result<Vec<_>>>()?;
+    match ctx.store_userdata(constructors) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(rquickjs::Error::new_from_js("error constructors", "user data")),
+    }
+}
+
+/// Throw a new error of `class` with `message`. A constructed error keeps the whole message, and a typed throw of the
+/// engine cuts it at 255 bytes.
+pub(crate) fn throw(ctx: &Ctx<'_>, class: ErrorClass, message: &str) -> rquickjs::Error {
+    let built = match ctx.userdata::<Vec<Constructor<'_>>>() {
+        Some(constructors) => match constructors.get(class as usize) {
+            Some(constructor) => constructor.construct::<_, Value<'_>>((message,)),
+            None => Err(rquickjs::Error::new_from_js(class.name(), "a kept error constructor")),
+        },
+        // A throw before the start of the runtime, for example in the build of the modules, has no kept constructors.
+        None => ctx
+            .globals()
+            .get::<_, Constructor<'_>>(class.name())
+            .and_then(|constructor| constructor.construct::<_, Value<'_>>((message,))),
+    };
     match built {
         Ok(error) => ctx.throw(error),
         Err(error) => error,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ErrorClass;
+
+    #[test]
+    fn each_error_class_sits_at_the_index_of_its_discriminant() {
+        for (index, class) in ErrorClass::ALL.iter().enumerate() {
+            assert_eq!(*class as usize, index, "{class:?}");
+        }
     }
 }

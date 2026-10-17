@@ -2,7 +2,7 @@
 
 use rquickjs::{Ctx, Function, Object};
 
-use crate::error::throw;
+use crate::error::{ErrorClass, throw};
 use crate::processes::{EndCause, Processes, Request};
 
 /// Run the command of `request`. Each chunk of output goes to `on_output`. The stop of the call stops the command. It
@@ -33,10 +33,10 @@ pub(crate) async fn exec<'js>(
 
     let end = match end {
         Ok(Ok(end)) => end,
-        Ok(Err(message)) => return Err(throw(&ctx, "Error", &message)),
-        Err(_) => return Err(throw(&ctx, "Error", "the command ended without an answer")),
+        Ok(Err(message)) => return Err(throw(&ctx, ErrorClass::Error, &message)),
+        Err(_) => return Err(throw(&ctx, ErrorClass::Error, "the command ended without an answer")),
     };
-    let object = Object::new(ctx.clone())?;
+    let object = super::internal_record(&ctx)?;
     object.set("output", end.output)?;
     match end.cause {
         EndCause::Exit(code) => {

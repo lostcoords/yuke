@@ -10,7 +10,7 @@ use yuke_engine::Concurrency;
 use tokio::sync::mpsc;
 use yuke_protocol::{NoticeLevel, NoticeParams, SessionId};
 
-use crate::error::{Report, throw};
+use crate::error::{ErrorClass, Report, throw};
 use crate::tools::Registry;
 
 /// Add `register`, `removeTools`, and `notify` to `object`, the export object of the native module.
@@ -43,15 +43,20 @@ pub(super) fn add<'js>(
                     other => {
                         return Err(throw(
                             &ctx,
-                            "TypeError",
+                            ErrorClass::TypeError,
                             &format!("notify: '{other}' is not debug, info, warn, or error"),
                         ));
                     }
                 };
                 let session_id = session_id
                     .map(|text| {
-                        text.parse::<SessionId>()
-                            .map_err(|_| throw(&ctx, "TypeError", &format!("notify: '{text}' is not a session id")))
+                        text.parse::<SessionId>().map_err(|_| {
+                            throw(
+                                &ctx,
+                                ErrorClass::TypeError,
+                                &format!("notify: '{text}' is not a session id"),
+                            )
+                        })
                     })
                     .transpose()?;
                 let notice = NoticeParams {
@@ -80,7 +85,7 @@ pub(super) fn add<'js>(
                     other => {
                         return Err(throw(
                             &ctx,
-                            "TypeError",
+                            ErrorClass::TypeError,
                             &format!("the concurrency '{other}' is not 'serial' or 'parallel'"),
                         ));
                     }
@@ -93,7 +98,7 @@ pub(super) fn add<'js>(
                 };
                 registry
                     .add(&ctx, definition, concurrency, start, tool.get("owner")?)
-                    .map_err(|message| throw(&ctx, "TypeError", &message))
+                    .map_err(|message| throw(&ctx, ErrorClass::TypeError, &message))
             },
         )?,
     )?;

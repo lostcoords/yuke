@@ -4,7 +4,7 @@ use rquickjs::{Ctx, Function, Object};
 use tokio::sync::mpsc;
 use yuke_protocol::NoticeLevel;
 
-use crate::error::{Report, throw};
+use crate::error::{ErrorClass, Report, throw};
 
 /// Add `writeConsole(level, text)` to `object`, the export object of the native module.
 pub(super) fn add<'js>(
@@ -20,7 +20,13 @@ pub(super) fn add<'js>(
                 "info" => NoticeLevel::Info,
                 "warn" => NoticeLevel::Warn,
                 "error" => NoticeLevel::Error,
-                other => return Err(throw(&ctx, "TypeError", &format!("'{other}' is not a console level"))),
+                other => {
+                    return Err(throw(
+                        &ctx,
+                        ErrorClass::TypeError,
+                        &format!("'{other}' is not a console level"),
+                    ));
+                }
             };
             if reports.send(Report::Console { level, text }).is_err() {
                 // The owner dropped the receiver, so it ignores the console.

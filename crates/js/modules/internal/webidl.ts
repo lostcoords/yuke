@@ -4,8 +4,19 @@
  */
 
 export const ByteArray = Uint8Array;
+
+const bindCall = Function.prototype.bind.bind(Function.prototype.call) as (fn: unknown) => unknown;
+
+/**
+ * `fn` as a function that takes its `this` as the first argument. Each call goes through the `call` of the runtime
+ * start, so a later patch of `Function.prototype.call` does not see the call.
+ */
+export function uncurryThis<T, A extends unknown[], R>(fn: (this: T, ...args: A) => R): (self: T, ...args: A) => R {
+  return bindCall(fn) as (self: T, ...args: A) => R;
+}
+
 const getter = (prototype: object, name: PropertyKey) =>
-  Object.getOwnPropertyDescriptor(prototype, name)?.get as (this: unknown) => unknown;
+  uncurryThis(Object.getOwnPropertyDescriptor(prototype, name)?.get as (this: unknown) => unknown);
 const typedArray: object = Object.getPrototypeOf(Uint8Array.prototype);
 const typedArrayTag = getter(typedArray, Symbol.toStringTag);
 const typedArrayBuffer = getter(typedArray, "buffer");
@@ -19,20 +30,20 @@ const bufferResizable = getter(ArrayBuffer.prototype, "resizable");
 const bufferDetached = getter(ArrayBuffer.prototype, "detached");
 const sharedGrowable =
   typeof SharedArrayBuffer === "function" ? getter(SharedArrayBuffer.prototype, "growable") : undefined;
-const setBytes = (typedArray as { readonly set: (this: Uint8Array, bytes: Uint8Array) => void }).set;
-const weakGet = WeakMap.prototype.get;
-const weakSet = WeakMap.prototype.set;
+const setBytes = uncurryThis((typedArray as { readonly set: (this: Uint8Array, bytes: Uint8Array) => void }).set);
+const weakGet = uncurryThis(WeakMap.prototype.get);
+const weakSet = uncurryThis(WeakMap.prototype.set);
 
 /** A map of private state by object. It calls the `WeakMap` methods of the runtime start, so a patch sees no state. */
 export class PrivateMap<K extends object, V> {
   readonly #map = new WeakMap<K, V>();
 
   get(key: unknown): V | undefined {
-    return weakGet.call(this.#map, key as K) as V | undefined;
+    return weakGet(this.#map, key as K) as V | undefined;
   }
 
   set(key: K, value: V): void {
-    weakSet.call(this.#map, key, value);
+    weakSet(this.#map, key, value);
   }
 }
 
@@ -63,24 +74,24 @@ export function webClass(type: { readonly prototype: object }, name: string): vo
 
 /** Whether `value` is a `Uint8Array`, by the brand of the engine. */
 export function isUint8Array(value: unknown): value is Uint8Array {
-  return typedArrayTag.call(value) === "Uint8Array";
+  return typedArrayTag(value) === "Uint8Array";
 }
 
 /** The element count of `view`, a typed array, from the engine and not from a property that a script can shadow. */
 export function lengthOf(view: Uint8Array): number {
-  return typedArrayLength.call(view) as number;
+  return typedArrayLength(view) as number;
 }
 
 /** Copy `bytes` into `target` from its start. */
 export function copyInto(target: Uint8Array, bytes: Uint8Array): void {
-  setBytes.call(target, bytes);
+  setBytes(target, bytes);
 }
 
 /** The result of `read` on `value`, or `undefined` when `read` throws because `value` lacks its brand. */
-function branded(read: ((this: unknown) => unknown) | undefined, value: unknown): unknown {
+function branded(read: ((self: unknown) => unknown) | undefined, value: unknown): unknown {
   if (read === undefined) return undefined;
   try {
-    return read.call(value);
+    return read(value);
   } catch {
     return undefined;
   }
@@ -105,15 +116,15 @@ function sourceOf(value: unknown, name: string): Source | undefined {
     // A detached view has no range, so its getters give 0.
     source = {
       buffer: typed as ArrayBufferLike,
-      offset: typedArrayOffset.call(value) as number,
-      length: typedArrayBytes.call(value) as number,
+      offset: typedArrayOffset(value) as number,
+      length: typedArrayBytes(value) as number,
     };
   } else if (data !== undefined) {
     const detached = branded(bufferDetached, data) === true;
     source = {
       buffer: data as ArrayBufferLike,
-      offset: detached ? 0 : (dataViewOffset.call(value) as number),
-      length: detached ? 0 : (dataViewBytes.call(value) as number),
+      offset: detached ? 0 : (dataViewOffset(value) as number),
+      length: detached ? 0 : (dataViewBytes(value) as number),
     };
   } else {
     source = { buffer: value as ArrayBufferLike, offset: 0, length: undefined };

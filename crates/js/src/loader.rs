@@ -7,7 +7,7 @@ use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::module::Declared;
 use rquickjs::{Ctx, Module};
 
-use crate::error::throw;
+use crate::error::{ErrorClass, throw};
 use crate::strip::{Cache, StripError};
 use crate::{baked, native};
 
@@ -33,7 +33,7 @@ impl Resolver for NameResolver {
             if name.starts_with(INTERNAL) && !base.starts_with("yuke:") && !base.is_empty() {
                 return Err(throw(
                     ctx,
-                    "TypeError",
+                    ErrorClass::TypeError,
                     &format!("'{base}' cannot import '{name}': only a built-in module imports a yuke:internal module"),
                 ));
             }
@@ -49,7 +49,7 @@ impl Resolver for NameResolver {
                 _ => {
                     return Err(throw(
                         ctx,
-                        "TypeError",
+                        ErrorClass::TypeError,
                         &format!("'{base}' cannot import '{name}' by a relative path"),
                     ));
                 }
@@ -57,7 +57,7 @@ impl Resolver for NameResolver {
         } else {
             return Err(throw(
                 ctx,
-                "TypeError",
+                ErrorClass::TypeError,
                 &format!("cannot resolve '{name}': a module name starts with 'yuke:', './', '../', or '/'"),
             ));
         };
@@ -66,7 +66,7 @@ impl Resolver for NameResolver {
             Ok(text) => Ok(text),
             Err(path) => Err(throw(
                 ctx,
-                "TypeError",
+                ErrorClass::TypeError,
                 &format!("the module path {} is not UTF-8", path.display()),
             )),
         }
@@ -117,26 +117,28 @@ impl Loader for ModuleLoader {
         if name.starts_with("yuke:") {
             return Err(throw(
                 ctx,
-                "TypeError",
+                ErrorClass::TypeError,
                 &format!("no built-in module has the name '{name}'"),
             ));
         }
 
         let path = Path::new(name);
         let source = std::fs::read_to_string(path)
-            .map_err(|error| throw(ctx, "Error", &format!("cannot read {name}: {error}")))?;
+            .map_err(|error| throw(ctx, ErrorClass::Error, &format!("cannot read {name}: {error}")))?;
 
         let code = match path.extension().and_then(|extension| extension.to_str()) {
             Some("ts") => match self.cache.javascript(path, &source) {
                 Ok(code) => code,
-                Err(error @ StripError::Syntax(_)) => return Err(throw(ctx, "SyntaxError", &error.to_string())),
-                Err(error @ StripError::Cache(..)) => return Err(throw(ctx, "Error", &error.to_string())),
+                Err(error @ StripError::Syntax(_)) => {
+                    return Err(throw(ctx, ErrorClass::SyntaxError, &error.to_string()));
+                }
+                Err(error @ StripError::Cache(..)) => return Err(throw(ctx, ErrorClass::Error, &error.to_string())),
             },
             Some("js") => source,
             _ => {
                 return Err(throw(
                     ctx,
-                    "TypeError",
+                    ErrorClass::TypeError,
                     &format!("cannot load {name}: a module is a .ts or .js file"),
                 ));
             }

@@ -115,7 +115,7 @@ impl Runtime {
                 let promise = caught(&ctx, Module::import(&ctx, LOADER))?;
                 let loader: Object<'_> = caught(&ctx, promise.into_future().await)?;
                 let load: Function<'_> = caught(&ctx, loader.get("load"))?;
-                let spec = caught(&ctx, Object::new(ctx.clone()))?;
+                let spec = caught(&ctx, crate::native::internal_record(&ctx))?;
                 let path = |path: &PathBuf| path.to_string_lossy().into_owned();
                 caught(&ctx, spec.set("name", plugin.name))?;
                 caught(&ctx, spec.set("root", path(&plugin.root)))?;

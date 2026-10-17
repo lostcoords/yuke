@@ -8,18 +8,19 @@ import {
   dictionary,
   domString,
   lengthOf,
+  uncurryThis,
   webClass,
 } from "yuke:internal/webidl";
 
 // The function of the runtime start, so a plugin that patches `String.prototype` does not change the encoder.
-const toWellFormed = String.prototype.toWellFormed;
+const toWellFormed = uncurryThis(String.prototype.toWellFormed);
 
 /** The labels of UTF-8 in the Encoding Standard. */
 const UTF8_LABELS = ["unicode-1-1-utf-8", "unicode11utf8", "unicode20utf8", "utf-8", "utf8", "x-unicode20utf8"];
 
 /** Convert `value` as a Web IDL `USVString`: a symbol throws, and a lone surrogate becomes U+FFFD. */
 function usvString(value: unknown): string {
-  return toWellFormed.call(domString(value));
+  return toWellFormed(domString(value));
 }
 
 export class TextEncoder {

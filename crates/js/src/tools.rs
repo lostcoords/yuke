@@ -266,7 +266,7 @@ impl ScriptTool {
                 let stop = token.child_token();
                 let _guard = stop.clone().drop_guard();
                 let session = caught(&ctx, session::object(&ctx, &processes, &host, session_folder, &stop))?;
-                let metadata = caught(&ctx, Object::new(ctx.clone()))?;
+                let metadata = caught(&ctx, crate::native::internal_record(&ctx))?;
                 caught(&ctx, metadata.set("sessionId", session_id))?;
                 caught(&ctx, metadata.set("callId", call_id))?;
                 caught(&ctx, metadata.set("folder", folder_text))?;
