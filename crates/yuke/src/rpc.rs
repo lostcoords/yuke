@@ -1,31 +1,145 @@
-//! `yuke --rpc`: the protocol server on stdin and stdout. Each line is one JSON-RPC message. One process serves many
-//! sessions.
+//! `yuke --rpc`: the protocol server. Each line is one JSON-RPC message. One process serves many sessions.
+//!
+//! Plain `--rpc` serves one client on stdin and stdout. The end of stdin ends the server. `--rpc --listen` serves the
+//! clients of a Unix socket, one at a time. The sessions, turns, and jobs outlive each client. `--rpc --connect` joins
+//! stdin and stdout to such a socket.
 
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
+use std::fs::{File, OpenOptions, TryLockError};
+use std::future::Future;
+use std::io;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, Lines};
+use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 use yuke_agent::StoreError;
-use yuke_engine::CancellationToken;
 use yuke_protocol::{
-    ClientNotification, ClientRequest, EmptyResult, ForkSessionResult, Implementation, InitializeResult, InputResult,
-    JsonRpc, ListJobsResult, NewSessionResult, Notification, PROTOCOL_VERSION, Request, RequestId, Response,
-    ResponseError, ResponseOutcome, ServerNotification,
+    ClientNotification, ClientRequest, EmptyResult, Implementation, InitializeResult, InputResult, InstanceId, JsonRpc,
+    ListJobsResult, Notification, PROTOCOL_VERSION, Request, RequestId, Response, ResponseError, ResponseOutcome,
+    ServerNotification, SessionResult,
 };
 
-use crate::app::{App, AppError, Jobs, Machine, Observer, describe, warn};
+use crate::app::{App, AppError, Jobs, Machine, Observer, describe, lock, warn};
 
-/// The most messages that wait for the client. A client that falls further behind loses its connection.
+/// The most messages that wait to reach the client. A client that falls further behind loses its connection.
 const OUTGOING_LIMIT: usize = 8192;
 
-/// Serve the client of `input` and `output` until `input` ends or the connection breaks. After the end of `input`, the
-/// client has `drain_limit` to read the last messages.
+/// The wait after a failed accept, so an error that repeats does not spin the server or fill stderr.
+const ACCEPT_RETRY: Duration = Duration::from_secs(1);
+
+/// The input and the output of one client.
+pub(crate) struct Stream {
+    input: Box<dyn AsyncRead + Unpin + Send>,
+    output: Box<dyn AsyncWrite + Unpin + Send>,
+}
+
+impl Stream {
+    pub(crate) fn new(
+        input: impl AsyncRead + Unpin + Send + 'static,
+        output: impl AsyncWrite + Unpin + Send + 'static,
+    ) -> Stream {
+        Stream {
+            input: Box::new(input),
+            output: Box::new(output),
+        }
+    }
+}
+
+/// Where the clients of a server come from.
+pub(crate) enum Clients {
+    /// One client, such as stdin and stdout. The end of this client ends the server.
+    One(Stream),
+    /// The clients of a Unix socket, one after another.
+    Socket(Socket),
+}
+
+/// A Unix socket that the server listens on. The server holds the lock file `PATH.lock` while it lives, so a second
+/// server on the path fails. The drop removes the socket file and keeps the lock file.
+pub(crate) struct Socket {
+    listener: UnixListener,
+    path: PathBuf,
+    lock: File,
+}
+
+impl Socket {
+    /// Take the lock file of `path`, and listen on `path` with mode 0600. A socket file without the lock is stale, so
+    /// the bind replaces it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a text for the user when another server holds the lock, when `path` is no socket, or when a file
+    /// operation fails.
+    pub(crate) fn bind(path: &Path) -> Result<Socket, String> {
+        let failure = |error: io::Error| format!("{}: {error}", path.display());
+        let lock = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path.with_added_extension("lock"))
+            .map_err(failure)?;
+        // A check by a connection would be a client, and that client would replace the active one.
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => {
+                return Err(format!("{}: another server listens on the socket", path.display()));
+            }
+            Err(TryLockError::Error(error)) => return Err(failure(error)),
+        }
+        match std::fs::symlink_metadata(path) {
+            Ok(file) if file.file_type().is_socket() => std::fs::remove_file(path).map_err(failure)?,
+            Ok(_) => return Err(format!("{}: the file is no socket", path.display())),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(failure(error)),
+        }
+        let socket = Socket {
+            listener: UnixListener::bind(path).map_err(failure)?,
+            path: path.to_path_buf(),
+            lock,
+        };
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(failure)?;
+        Ok(socket)
+    }
+
+    /// The next client. A failed accept waits and tries again.
+    async fn accept(&self) -> Stream {
+        loop {
+            match self.listener.accept().await {
+                Ok((stream, _)) => {
+                    let (input, output) = stream.into_split();
+                    return Stream::new(input, output);
+                }
+                Err(error) => {
+                    warn(&format!("{}: {error}", self.path.display()));
+                    tokio::time::sleep(ACCEPT_RETRY).await;
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Socket {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(&self.path) {
+            warn(&format!("{}: {error}", self.path.display()));
+        }
+        // A job process holds a copy of the file until its exec, and the copy keeps the lock. So the unlock is explicit.
+        if self.lock.unlock().is_err() {
+            // The close of the file releases the lock when no copy lives, so nothing is left to do.
+        }
+    }
+}
+
+/// Serve `clients` until `shutdown` comes, or until the one client ends. A new client of the socket replaces the
+/// active one. The connection that is open at the end gets the updates of the shutdown, and it has `drain_limit` to
+/// read the last messages.
 ///
 /// # Errors
 ///
@@ -33,73 +147,134 @@ const OUTGOING_LIMIT: usize = 8192;
 pub(crate) async fn serve(
     machine: Machine,
     drain_limit: Duration,
-    input: impl AsyncRead + Unpin,
-    output: impl AsyncWrite + Unpin + Send + 'static,
+    clients: Clients,
+    shutdown: impl Future<Output = ()>,
 ) -> Result<(), String> {
-    let (writer, written) = Writer::start(output);
-    let served = match App::start(machine, Jobs::Allowed, Arc::new(writer.clone())).await {
-        Ok(app) => {
-            let mut server = Server {
-                app,
-                writer: writer.clone(),
-                initialized: false,
-            };
-            server.serve(input).await;
-            server.app.shutdown().await;
-            Ok(())
+    let outbox = Arc::new(Outbox::default());
+    // The one client connects before the start, so it gets the notices of the start.
+    let (mut current, socket) = match clients {
+        Clients::One(stream) => (Some(Connection::open(stream, &outbox)), None),
+        Clients::Socket(socket) => (None, Some(socket)),
+    };
+    let app = match App::start(machine, Jobs::Allowed, Arc::clone(&outbox) as Arc<dyn Observer>).await {
+        Ok(app) => app,
+        Err(error) => {
+            outbox.detach();
+            if let Some(connection) = current {
+                connection.close(drain_limit).await;
+            }
+            return Err(error);
         }
-        Err(error) => Err(error),
     };
-
-    let closed = writer.closed.clone();
-    drop(writer);
-    let mut written = written;
-    // A client that stops reading can block the last write forever, so the wait has a limit.
-    let ended = if let Ok(ended) = tokio::time::timeout(drain_limit, &mut written).await {
-        ended
-    } else {
-        warn("the client did not read the last messages");
-        closed.cancel();
-        written.await
+    let mut server = Server {
+        app,
+        instance_id: InstanceId::generate(),
     };
-    if let Err(error) = ended {
-        warn(&format!("the output task failed: {error}"));
+    tokio::pin!(shutdown);
+    // Each request runs to its end before the next client or the shutdown, because the methods of the app are not cancel
+    // safe.
+    loop {
+        tokio::select! {
+            () = &mut shutdown => break,
+            stream = accept(socket.as_ref()) => {
+                if let Some(old) = current.take() {
+                    old.retire(&outbox, drain_limit);
+                }
+                current = Some(Connection::open(stream, &outbox));
+            }
+            line = next_line(&mut current) => match (line, current.as_mut()) {
+                (Some(line), Some(connection)) => server.handle(connection, &line).await,
+                _ if socket.is_none() => break,
+                _ => {
+                    if let Some(old) = current.take() {
+                        old.retire(&outbox, drain_limit);
+                    }
+                }
+            },
+        }
     }
-    served
+    // No client comes during the shutdown.
+    drop(socket);
+    server.app.shutdown().await;
+    outbox.detach();
+    if let Some(connection) = current {
+        connection.close(drain_limit).await;
+    }
+    Ok(())
 }
 
-/// The server of one client.
+/// The next client of `socket`. With no socket, it never comes.
+async fn accept(socket: Option<&Socket>) -> Stream {
+    match socket {
+        Some(socket) => socket.accept().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// The next line of the active client, or `None` when its connection ends. With no active client, it never comes.
+async fn next_line(current: &mut Option<Connection>) -> Option<String> {
+    let Some(connection) = current else {
+        return std::future::pending().await;
+    };
+    tokio::select! {
+        line = connection.lines.next_line() => match line {
+            Ok(line) => line,
+            Err(error) => {
+                warn(&format!("the input broke: {error}"));
+                None
+            }
+        },
+        () = connection.writer.sender.closed() => None,
+    }
+}
+
+/// Join `input` and `output` to the server of the socket at `path`, until the server closes the connection. The end of
+/// `input` ends the requests, and the server still sends its last messages.
+///
+/// # Errors
+///
+/// Returns a text for the user when the connection fails.
+pub(crate) async fn connect(
+    path: &Path,
+    mut input: impl AsyncRead + Unpin,
+    mut output: impl AsyncWrite + Unpin,
+) -> Result<(), String> {
+    let (mut from_server, mut to_server) = UnixStream::connect(path)
+        .await
+        .map_err(|error| format!("{}: {error}", path.display()))?
+        .into_split();
+    let failure = |error: io::Error| format!("the bridge to {}: {error}", path.display());
+    let requests = async {
+        tokio::io::copy(&mut input, &mut to_server).await?;
+        to_server.shutdown().await
+    };
+    let messages = async {
+        tokio::io::copy(&mut from_server, &mut output).await?;
+        output.flush().await
+    };
+    tokio::pin!(requests, messages);
+    tokio::select! {
+        sent = &mut requests => {
+            sent.map_err(failure)?;
+            messages.await.map_err(failure)
+        }
+        received = &mut messages => received.map_err(failure),
+    }
+}
+
+/// Answers the requests of the clients with the app.
 struct Server {
     app: App,
-    writer: Writer,
-    initialized: bool,
+    instance_id: InstanceId,
 }
 
 impl Server {
-    /// Answer each line of `input` until it ends or the connection breaks.
-    async fn serve(&mut self, input: impl AsyncRead + Unpin) {
-        let mut lines = BufReader::new(input).lines();
-        loop {
-            tokio::select! {
-                line = lines.next_line() => match line {
-                    Ok(Some(line)) => self.handle(&line).await,
-                    Ok(None) => return,
-                    Err(error) => {
-                        warn(&format!("the input broke: {error}"));
-                        return;
-                    }
-                },
-                () = self.writer.closed.cancelled() => return,
-            }
-        }
-    }
-
     /// Answer one line: a request gets a response, and a notification gets none.
-    async fn handle(&mut self, line: &str) {
+    async fn handle(&mut self, connection: &mut Connection, line: &str) {
         let value: serde_json::Value = match serde_json::from_str(line) {
             Ok(value) => value,
             Err(error) => {
-                return self.respond(
+                return connection.respond(
                     None,
                     Err(error_with(
                         ResponseError::PARSE_ERROR,
@@ -110,7 +285,10 @@ impl Server {
         };
         if value.get("id").is_none() {
             match serde_json::from_value::<Notification<ClientNotification>>(value) {
-                Ok(notification) => self.notification(notification.message),
+                Ok(Notification {
+                    message: ClientNotification::Cancel(params),
+                    ..
+                }) => self.app.cancel(params.session_id),
                 Err(error) => warn(&format!("a notification does not read: {error}")),
             }
             return;
@@ -119,50 +297,30 @@ impl Server {
             .get("id")
             .cloned()
             .and_then(|id| serde_json::from_value::<RequestId>(id).ok());
-        let method = value.get("method").cloned();
+        let unknown_method = value
+            .get("method")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|method| !ClientRequest::METHODS.contains(&method));
         let request = match serde_json::from_value::<Request>(value) {
             Ok(request) => request,
             Err(error) => {
-                // serde names an unknown method as an unknown variant. The method alone has no params, so in its read the
-                // method is the only variant that can be unknown.
-                let unknown_method = method.is_some_and(|method| {
-                    serde_json::from_value::<ClientRequest>(serde_json::json!({ "method": method }))
-                        .is_err_and(|probe| probe.to_string().starts_with("unknown variant"))
-                });
                 let code = if unknown_method {
                     ResponseError::METHOD_NOT_FOUND
                 } else {
                     ResponseError::INVALID_PARAMS
                 };
-                return self.respond(id, Err(error_with(code, &error.to_string())));
+                return connection.respond(id, Err(error_with(code, &error.to_string())));
             }
         };
-        let result = self.call(request.call).await;
-        self.respond(Some(request.id), result);
-    }
-
-    fn respond(&self, id: Option<RequestId>, result: Result<serde_json::Value, ResponseError>) {
-        self.writer.send(&Response {
-            jsonrpc: JsonRpc::V2,
-            id,
-            outcome: match result {
-                Ok(value) => ResponseOutcome::Result(value),
-                Err(error) => ResponseOutcome::Error(error),
-            },
-        });
-    }
-
-    fn notification(&self, notification: ClientNotification) {
-        match notification {
-            ClientNotification::Cancel(params) => self.app.cancel(params.session_id),
-        }
-    }
-
-    async fn call(&mut self, call: ClientRequest) -> Result<serde_json::Value, ResponseError> {
-        if !self.initialized && !matches!(call, ClientRequest::Initialize(_)) {
-            return Err(error_with(ResponseError::INVALID_REQUEST, "send initialize first"));
-        }
-        self.dispatch(call).await.map_err(|error| response_error(&error))
+        let result = if !connection.initialized && !matches!(request.call, ClientRequest::Initialize(_)) {
+            Err(error_with(ResponseError::INVALID_REQUEST, "send initialize first"))
+        } else {
+            connection.initialized = true;
+            self.dispatch(request.call)
+                .await
+                .map_err(|error| response_error(&error))
+        };
+        connection.respond(Some(request.id), result);
     }
 
     /// Do what `call` asks of the app, and answer its result.
@@ -170,7 +328,6 @@ impl Server {
         let app = &mut self.app;
         match call {
             ClientRequest::Initialize(_) => {
-                self.initialized = true;
                 // The server speaks one version, so it answers that one.
                 result(&InitializeResult {
                     protocol_version: PROTOCOL_VERSION,
@@ -179,12 +336,13 @@ impl Server {
                         title: None,
                         version: env!("YUKE_VERSION").to_owned(),
                     },
+                    instance_id: self.instance_id,
                 })
             }
-            ClientRequest::NewSession(settings) => result(&NewSessionResult {
+            ClientRequest::NewSession(settings) => result(&SessionResult {
                 session_id: app.create(settings).await?,
             }),
-            ClientRequest::ForkSession(params) => result(&ForkSessionResult {
+            ClientRequest::ForkSession(params) => result(&SessionResult {
                 session_id: app.fork(params.session_id, params.through).await?,
             }),
             ClientRequest::LoadSession(params) => {
@@ -221,30 +379,110 @@ impl Server {
     }
 }
 
-/// Writes the messages to the client, one per line, from a bounded queue.
+/// The connection of one client.
+struct Connection {
+    lines: Lines<BufReader<Box<dyn AsyncRead + Unpin + Send>>>,
+    writer: Writer,
+    written: JoinHandle<()>,
+    initialized: bool,
+}
+
+impl Connection {
+    /// Start writing to the output of `stream`, and make it the receiver of the notifications of `outbox`.
+    fn open(stream: Stream, outbox: &Outbox) -> Connection {
+        let (writer, written) = Writer::start(stream.output);
+        outbox.attach(writer.clone());
+        Connection {
+            lines: BufReader::new(stream.input).lines(),
+            writer,
+            written,
+            initialized: false,
+        }
+    }
+
+    fn respond(&self, id: Option<RequestId>, result: Result<serde_json::Value, ResponseError>) {
+        self.writer.send(&Response {
+            jsonrpc: JsonRpc::V2,
+            id,
+            outcome: match result {
+                Ok(value) => ResponseOutcome::Result(value),
+                Err(error) => ResponseOutcome::Error(error),
+            },
+        });
+    }
+
+    /// Stop the notifications of `outbox` to this connection, and close it in the background.
+    fn retire(self, outbox: &Outbox, drain_limit: Duration) {
+        outbox.detach();
+        tokio::spawn(self.close(drain_limit));
+    }
+
+    /// Write the messages that wait, and end the connection. The outbox must not hold its writer.
+    async fn close(self, drain_limit: Duration) {
+        let Connection {
+            writer, mut written, ..
+        } = self;
+        drop(writer);
+        // A client that stops reading can block the last write forever, so the wait has a limit.
+        let ended = if let Ok(ended) = tokio::time::timeout(drain_limit, &mut written).await {
+            ended
+        } else {
+            warn("the client did not read the last messages");
+            written.abort();
+            written.await
+        };
+        // A full queue and the drain limit abort the task, so only a panic is a failure.
+        if let Err(error) = ended
+            && !error.is_cancelled()
+        {
+            warn(&format!("the output task failed: {error}"));
+        }
+    }
+}
+
+/// Sends the notifications of the app to the active client. With no active client, a notice goes to stderr, and a
+/// session update is dropped. The store keeps the saved events, and `session/load` sends them again.
+#[derive(Default)]
+struct Outbox {
+    writer: Mutex<Option<Writer>>,
+}
+
+impl Outbox {
+    fn attach(&self, writer: Writer) {
+        *lock(&self.writer) = Some(writer);
+    }
+
+    fn detach(&self) {
+        *lock(&self.writer) = None;
+    }
+}
+
+impl Observer for Outbox {
+    fn notify(&self, notification: ServerNotification) {
+        let writer = lock(&self.writer).clone();
+        match (writer, notification) {
+            (Some(writer), notification) => writer.send(&Notification {
+                jsonrpc: JsonRpc::V2,
+                message: notification,
+            }),
+            (None, ServerNotification::Notice(notice)) => warn(&format!("{}: {}", notice.source, notice.message)),
+            (None, ServerNotification::SessionUpdate(_)) => {}
+        }
+    }
+}
+
+/// Writes the messages to the client, one per line, from a bounded queue. The connection ends when the task ends: the
+/// output broke, or an abort stopped it.
 #[derive(Clone)]
 struct Writer {
     sender: mpsc::Sender<String>,
-    /// Cancelled when the connection ends: the output broke, or the client fell behind.
-    closed: CancellationToken,
-}
-
-// The app sends its notifications straight to the client.
-impl Observer for Writer {
-    fn notify(&self, notification: ServerNotification) {
-        self.send(&Notification {
-            jsonrpc: JsonRpc::V2,
-            message: notification,
-        });
-    }
+    task: AbortHandle,
 }
 
 impl Writer {
     /// Start the task that writes to `output`.
     fn start(mut output: impl AsyncWrite + Unpin + Send + 'static) -> (Writer, JoinHandle<()>) {
         let (sender, mut receiver) = mpsc::channel::<String>(OUTGOING_LIMIT);
-        let closed = CancellationToken::new();
-        let task_closed = closed.clone();
         let task = tokio::spawn(async move {
             while let Some(line) = receiver.recv().await {
                 let written = async {
@@ -252,21 +490,21 @@ impl Writer {
                     output.write_all(b"\n").await?;
                     output.flush().await
                 };
-                // A closed connection stops the write, because a client that stopped reading can block it forever.
-                tokio::select! {
-                    written = written => if let Err(error) = written {
-                        warn(&format!("the output broke: {error}"));
-                        task_closed.cancel();
-                        return;
-                    },
-                    () = task_closed.cancelled() => return,
+                if let Err(error) = written.await {
+                    warn(&format!("the output broke: {error}"));
+                    return;
                 }
             }
         });
-        (Writer { sender, closed }, task)
+        let writer = Writer {
+            sender,
+            task: task.abort_handle(),
+        };
+        (writer, task)
     }
 
-    /// Queue `message` as one line. A full queue ends the connection, because the client fell behind.
+    /// Queue `message` as one line. A full queue ends the connection, because the client fell behind and a write can
+    /// block forever.
     fn send(&self, message: &impl Serialize) {
         let line = match serde_json::to_string(message) {
             Ok(line) => line,
@@ -276,7 +514,7 @@ impl Writer {
             }
         };
         if self.sender.try_send(line).is_err() {
-            self.closed.cancel();
+            self.task.abort();
         }
     }
 }

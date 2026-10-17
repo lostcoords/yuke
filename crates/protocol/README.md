@@ -4,14 +4,23 @@ The yuke protocol: JSON-RPC 2.0 messages between a yuke server and its clients. 
 Agent Client Protocol (ACP): `"jsonrpc": "2.0"`, `noun/verb` methods, camelCase fields, and snake_case kinds. The protocol
 is not ACP: for example, it has `session/input` in place of `session/prompt`, and a tool update uses a saved call position rather than a provider call id.
 
+- Transports: each message is one line. `yuke --rpc` serves one client on stdin and stdout. The end of stdin ends the
+  server. `yuke --rpc --listen unix://PATH` serves the clients of a Unix socket, one at a time. The sessions, turns,
+  and jobs outlive each client. `yuke --rpc --connect unix://PATH` joins stdin and stdout to such a socket.
+- A new client of the socket replaces the active client. The socket has mode 0600, so each process of the user can
+  connect. The server holds `PATH.lock`, so a second server on the path fails.
+- SIGINT, SIGTERM, and SIGHUP end the server. The active client gets the updates of the shutdown.
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
   `session/remove_input`, `session/set_settings`, `job/list`, `job/stop`, `credential/update`.
+- Each connection starts with `initialize`. Its `instanceId` is the id of the server process. A client that
+  reconnects and gets another id talks to a new process, so the turns and jobs of the old process are gone. The client
+  then loads each session again.
 - `credential/update` gives the server an `accessToken` for a provider with a login flow. An orchestrator can refresh
   one account and update many servers. The server keeps the token only in memory and never refreshes it. It uses the
   token from the next model request on, also in a running turn. After the first update, the server never uses the
   stored login of the provider.
-- A session is open after `session/new`, `session/fork`, or `session/load`, until `session/close` or the end of the
-  connection. The other session requests need an open session. Many sessions can be open at once.
+- A session is open after `session/new`, `session/fork`, or `session/load`, until `session/close` or the shutdown
+  of the server. The other session requests need an open session. Many sessions can be open at once.
 - The background jobs of a session run while the session is open. `job/list` lists them. A `job` update holds the
   whole job at its start and at its end. `job/stop` waits for the end, and its `job` update comes first.
   `session/close` fails while jobs run, unless it has `stopJobs: true`. A job that ends by itself also sends an input
@@ -29,8 +38,10 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - `session/load` sends the session as updates: the saved events, a `state` update, an `input_accepted` for each
   pending input, and a `job` update for each running job. Then come the live updates of the load time that these do
   not hold, and the empty answer. A client applies the updates in order. It drops a saved event that it has (by
-  `seq`) and an `input_accepted` that it has (by `inputId`). The server disconnects a client that falls behind. The
-  client then loads again.
+  `seq`) and an `input_accepted` that it has (by `inputId`). The server disconnects a client that falls behind. On
+  stdin and stdout, that ends the server. On a socket, the client connects and loads again.
+- A notice that comes while no client is connected goes to stderr. The server drops the session updates of that
+  interval. The store keeps the saved events, and `session/load` sends them again.
 - Live model updates belong to a draft and retain native block ids and boundaries. They exclude provider replay state.
 - `draft_committed` carries one `eventNumber` and an array of original draft block ids, in saved block order.
   Array index `i` maps to block index `i` in that commit. A client replaces the whole draft.

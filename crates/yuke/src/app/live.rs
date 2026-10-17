@@ -32,7 +32,6 @@ pub(super) struct LiveSession {
     closed: CancellationToken,
     /// The host of the tools. The jobs of the session belong to it.
     host: Arc<Host>,
-    shared: Arc<Shared>,
     task: JoinHandle<()>,
 }
 
@@ -54,7 +53,7 @@ impl LiveSession {
         };
         let host = Arc::new(Host {
             folder: Mutex::new(session.settings().cwd.clone()),
-            shared: Arc::clone(&shared),
+            shared,
             inbox: inbox.clone(),
         });
         // The tools read the folder of the host at each call, so a change of the folder needs no new tools.
@@ -85,7 +84,6 @@ impl LiveSession {
             turn,
             closed,
             host,
-            shared,
             task: tokio::spawn(task.run()),
         })
     }
@@ -121,6 +119,7 @@ impl LiveSession {
     pub(super) async fn load(&self, after: Option<EventNumber>) -> Result<(), AppError> {
         let hold = Hold::start(&self.inbox.output);
         let loaded = self
+            .host
             .shared
             .store
             .load(self.inbox.output.session, after)
@@ -138,6 +137,7 @@ impl LiveSession {
         };
         // A turn starts only under the lock, so an input that comes after this check runs with the new settings.
         let waiting = self
+            .host
             .shared
             .store
             .pending(self.inbox.output.session)
@@ -149,19 +149,19 @@ impl LiveSession {
         if session.is_stale() {
             recover(&mut session, &self.inbox.output).await?;
         }
-        let saved = save_settings(&mut session, settings, &self.shared).await?;
+        let saved = save_settings(&mut session, settings, &self.host.shared).await?;
         self.inbox.output.publish(SessionUpdate::Saved(saved));
         Ok(())
     }
 
     /// The running background jobs, oldest first.
     pub(super) fn jobs(&self) -> Vec<Job> {
-        self.shared.processes.running_jobs(&self.owner())
+        self.host.shared.processes.running_jobs(&self.owner())
     }
 
     /// Stop the running job `id`, and wait for its end. Answer `false` when no such job runs.
     pub(super) async fn stop_job(&self, id: &str) -> bool {
-        self.shared.processes.stop_job(id, &self.owner()).await.is_some()
+        self.host.shared.processes.stop_job(id, &self.owner()).await.is_some()
     }
 
     /// Stop the running turn, and start no other.
@@ -180,7 +180,7 @@ impl LiveSession {
             warn(&format!("a session task failed: {error}"));
         }
         // After the task, so a job that the cancelled turn started also stops.
-        self.shared.processes.close_owner(&self.owner()).await;
+        self.host.shared.processes.close_owner(&self.owner()).await;
     }
 
     /// The owner of the jobs of the session.

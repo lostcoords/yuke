@@ -1,12 +1,15 @@
 //! The protocol server against a scripted provider, through a pair of pipes.
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, Lines};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use yuke_agent::{Session, Store};
 use yuke_ai::transport::Transport;
+use yuke_engine::CancellationToken;
 use yuke_protocol::{Input, InputSource, ModelReference, SessionId, SessionSettings};
 
 use super::*;
@@ -27,43 +30,61 @@ fn settings(place: &Place) -> Value {
     .unwrap()
 }
 
+/// The params of an input of `text` to `session`.
+fn input_params(session: &Value, text: &str) -> Value {
+    json!({ "sessionId": session, "content": [{ "user_text": text }] })
+}
+
 /// The client side of a server that runs in this test.
 struct Client {
-    input: DuplexStream,
-    output: Lines<BufReader<DuplexStream>>,
+    input: Box<dyn AsyncWrite + Unpin + Send>,
+    output: Lines<BufReader<Box<dyn AsyncRead + Unpin + Send>>>,
     next_id: i64,
-    server: JoinHandle<Result<(), String>>,
+    /// The server task of a client on a pair of pipes. The clients of a socket share the task of `Listening`.
+    server: Option<JoinHandle<Result<(), String>>>,
 }
 
 impl Client {
+    fn new(input: impl AsyncWrite + Unpin + Send + 'static, output: impl AsyncRead + Unpin + Send + 'static) -> Client {
+        Client {
+            input: Box::new(input),
+            output: BufReader::new(Box::new(output) as Box<dyn AsyncRead + Unpin + Send>).lines(),
+            next_id: 0,
+            server: None,
+        }
+    }
+
+    /// The only client of a server, as on stdin and stdout.
     fn start(place: &Place, transport: Box<dyn Transport>) -> Client {
         let (input, server_input) = tokio::io::duplex(1 << 16);
         let (server_output, output) = tokio::io::duplex(1 << 16);
         let server = tokio::spawn(serve(
             place.machine(Box::new(with_key), transport),
             Duration::from_secs(10),
-            server_input,
-            server_output,
+            Clients::One(Stream::new(server_input, server_output)),
+            std::future::pending(),
         ));
         Client {
-            input,
-            output: BufReader::new(output).lines(),
-            next_id: 0,
-            server,
+            server: Some(server),
+            ..Client::new(input, output)
         }
     }
 
     /// A client after `initialize`.
     async fn initialized(place: &Place, transport: Box<dyn Transport>) -> Client {
         let mut client = Client::start(place, transport);
+        client.initialize().await;
         client
-            .call(
-                "initialize",
-                json!({ "protocolVersion": 1, "clientInfo": { "name": "test", "version": "1" } }),
-            )
-            .await
-            .unwrap();
-        client
+    }
+
+    /// Send `initialize`, and answer the result.
+    async fn initialize(&mut self) -> Value {
+        self.call(
+            "initialize",
+            json!({ "protocolVersion": 1, "clientInfo": { "name": "test", "version": "1" } }),
+        )
+        .await
+        .unwrap()
     }
 
     async fn write(&mut self, line: &str) {
@@ -117,9 +138,8 @@ impl Client {
         }
     }
 
-    /// End the input, and wait for the server to end.
-    /// End the input, and wait for the server to end. The rest of the output is read, so a full pipe cannot hold the
-    /// server.
+    /// End the input, and read the output to its end, so a full pipe cannot hold the server. Wait for the server task
+    /// when the client has one.
     async fn end(self) {
         let Client {
             input,
@@ -129,10 +149,71 @@ impl Client {
         } = self;
         drop(input);
         let drain = async { while output.next_line().await.is_ok_and(|line| line.is_some()) {} };
+        let server = async {
+            match server {
+                Some(server) => server.await.unwrap(),
+                None => Ok(()),
+            }
+        };
         let (ended, ()) = tokio::time::timeout(Duration::from_secs(10), async { tokio::join!(server, drain) })
             .await
             .expect("the server did not end within ten seconds");
-        ended.unwrap().unwrap();
+        ended.unwrap();
+    }
+
+    /// Skip the messages up to the end of the output. A test fails when the server keeps the connection for ten
+    /// seconds.
+    async fn expect_closed(&mut self) {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while self.output.next_line().await.is_ok_and(|line| line.is_some()) {}
+        })
+        .await
+        .expect("the server kept the connection for ten seconds");
+    }
+}
+
+/// A new short path for a socket. The path of a socket has a small length limit, so it is not in the place.
+fn socket_path() -> PathBuf {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let number = NEXT.fetch_add(1, Ordering::SeqCst);
+    std::env::temp_dir().join(format!("yuke-{}-{number}.sock", std::process::id()))
+}
+
+/// A server that runs in this test on a Unix socket.
+struct Listening {
+    path: PathBuf,
+    shutdown: CancellationToken,
+    server: JoinHandle<Result<(), String>>,
+}
+
+impl Listening {
+    fn start(place: &Place, transport: Box<dyn Transport>) -> Listening {
+        let path = socket_path();
+        let socket = Socket::bind(&path).unwrap();
+        let shutdown = CancellationToken::new();
+        let server = tokio::spawn(serve(
+            place.machine(Box::new(with_key), transport),
+            Duration::from_secs(10),
+            Clients::Socket(socket),
+            shutdown.clone().cancelled_owned(),
+        ));
+        Listening { path, shutdown, server }
+    }
+
+    /// A new client of the socket.
+    async fn client(&self) -> Client {
+        let (output, input) = UnixStream::connect(&self.path).await.unwrap().into_split();
+        Client::new(input, output)
+    }
+
+    /// Shut the server down, and wait for its end. A test fails when it takes ten seconds.
+    async fn stop(self) {
+        self.shutdown.cancel();
+        tokio::time::timeout(Duration::from_secs(10), self.server)
+            .await
+            .expect("the server did not end within ten seconds")
+            .unwrap()
+            .unwrap();
     }
 }
 
@@ -202,12 +283,7 @@ async fn an_input_starts_a_turn_and_the_client_sees_its_updates_in_order() {
     let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
 
-    client
-        .request(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "hi" }] }),
-        )
-        .await;
+    client.request("session/input", input_params(&session, "hi")).await;
     let messages = client.until(is_idle).await;
 
     let labels: Vec<String> = messages.iter().filter_map(label).collect();
@@ -242,12 +318,7 @@ async fn a_load_sends_the_saved_events_then_the_state_then_an_empty_answer() {
     );
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new([text_reply("hello")]))).await;
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
-    client
-        .request(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "hi" }] }),
-        )
-        .await;
+    client.request("session/input", input_params(&session, "hi")).await;
     client.until(is_idle).await;
 
     let loaded = client.load(&session, json!({})).await;
@@ -272,12 +343,7 @@ async fn a_running_session_refuses_new_settings_and_a_cancel_ends_its_turn() {
     );
     let mut client = Client::initialized(&place, Box::new(Stalled)).await;
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
-    client
-        .request(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "hi" }] }),
-        )
-        .await;
+    client.request("session/input", input_params(&session, "hi")).await;
     client
         .until(|message| message["params"]["update"]["state"] == "running")
         .await;
@@ -370,12 +436,7 @@ async fn a_plugin_notice_reaches_the_client_and_a_plugin_that_does_not_load_send
         .await
         .pop()
         .unwrap();
-    let initialized = client
-        .call(
-            "initialize",
-            json!({ "protocolVersion": 1, "clientInfo": { "name": "test", "version": "1" } }),
-        )
-        .await;
+    client.initialize().await;
 
     assert_eq!(
         hello["params"],
@@ -393,7 +454,6 @@ async fn a_plugin_notice_reaches_the_client_and_a_plugin_that_does_not_load_send
         message.starts_with("plugin broken did not load: Error: no luck"),
         "{message}"
     );
-    assert!(initialized.is_ok(), "{initialized:?}");
     client.end().await;
 }
 
@@ -406,13 +466,7 @@ async fn a_request_before_initialize_an_unknown_method_and_no_json_get_errors() 
     let mut client = Client::start(&place, Box::new(ScriptedTransport::default()));
 
     let early = client.call("session/new", settings(&place)).await;
-    client
-        .call(
-            "initialize",
-            json!({ "protocolVersion": 1, "clientInfo": { "name": "test", "version": "1" } }),
-        )
-        .await
-        .unwrap();
+    client.initialize().await;
     let unknown = client.call("session/delete", json!({})).await;
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
     let bad_block = client
@@ -433,35 +487,31 @@ async fn a_request_before_initialize_an_unknown_method_and_no_json_get_errors() 
 }
 
 #[tokio::test]
-async fn a_background_job_that_ends_sends_its_input_and_the_model_reads_it() {
-    let place = Place::new(
-        "rpc",
-        "a_background_job_that_ends_sends_its_input_and_the_model_reads_it",
-    );
+async fn a_background_job_tells_its_start_and_end_then_sends_an_input_that_the_model_reads() {
+    let place = Place::new("rpc", "background_job_end");
+    let arguments = json!({ "command": "exit 3", "background": true }).to_string();
     let transport = ScriptedTransport::new([
-        tool_reply(&[("c1", "exec", r#"{"command":"echo done","background":true}"#)]),
+        tool_reply(&[("c1", "exec", &arguments)]),
         text_reply("started"),
         text_reply("noted"),
     ]);
     let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
     client
-        .request(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "start a job" }] }),
-        )
+        .request("session/input", input_params(&session, "start a job"))
         .await;
 
     // The job can end during the first turn or after it. Its input then joins that turn, or it starts a new one. The
     // wait ends at the first idle state after a commit that consumed the input.
+    let mut messages = Vec::new();
     let mut job_input = None;
     let mut consumed = false;
     loop {
         let message = client.next().await;
         let update = &message["params"]["update"];
         if update["sessionUpdate"] == "input_accepted" && update["input"]["source"]["name"] == "host:jobs" {
-            job_input = Some((update["inputId"].clone(), update["input"].clone()));
-        } else if let Some((id, _)) = &job_input
+            job_input = Some((messages.len(), update["inputId"].clone(), update["input"].clone()));
+        } else if let Some((_, id, _)) = &job_input
             && update["sessionUpdate"] == "commit"
             && update["consumed"]
                 .as_array()
@@ -473,15 +523,34 @@ async fn a_background_job_that_ends_sends_its_input_and_the_model_reads_it() {
         } else if consumed && is_idle(&message) {
             break;
         }
+        messages.push(message);
     }
 
-    let (_, job_input) = job_input.unwrap();
+    let (input_index, _, job_input) = job_input.unwrap();
+    let jobs: Vec<&Value> = messages[..input_index]
+        .iter()
+        .filter(|message| message["params"]["update"]["sessionUpdate"] == "job")
+        .map(|message| &message["params"]["update"]["job"])
+        .collect();
+    // The start and the end update come before the end input.
+    assert_eq!(jobs.len(), 2, "{jobs:?}");
+    assert_eq!(jobs[0]["state"], "running");
+    assert_eq!(jobs[0]["command"], "exit 3");
+    // The end update holds the whole job.
+    assert_eq!(
+        (&jobs[1]["id"], &jobs[1]["command"], &jobs[1]["log"]),
+        (&jobs[0]["id"], &jobs[0]["command"], &jobs[0]["log"])
+    );
+    assert_eq!(
+        (&jobs[1]["state"], &jobs[1]["exitCode"], &jobs[1]["stopped"]),
+        (&json!("ended"), &json!(3), &json!(false))
+    );
     let shown = job_input["content"][0]["user_text"].as_str().unwrap();
     assert!(shown.starts_with("job-") && shown.ends_with(" ended"), "{shown}");
     let job = shown.trim_end_matches(" ended");
     let model_text = job_input["modelContent"][0]["user_text"].as_str().unwrap();
     assert!(
-        model_text.starts_with(&format!("<system_notification>{job} exited 0.")),
+        model_text.starts_with(&format!("<system_notification>{job} exited 3.")),
         "{model_text}"
     );
     assert!(model_text.ends_with("</system_notification>"), "{model_text}");
@@ -577,20 +646,12 @@ async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_
     );
     let mut client = Client::initialized(&place, Box::new(Stalled)).await;
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
-    client
-        .request(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "first" }] }),
-        )
-        .await;
+    client.request("session/input", input_params(&session, "first")).await;
     client
         .until(|message| message["params"]["update"]["state"] == "running")
         .await;
     client
-        .call(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "second" }] }),
-        )
+        .call("session/input", input_params(&session, "second"))
         .await
         .unwrap();
 
@@ -598,12 +659,7 @@ async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_
         .request("session/close", json!({ "sessionId": session, "stopJobs": false }))
         .await;
     let closed = client.until(|message| message["id"] == json!(id)).await;
-    let refused = client
-        .call(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "third" }] }),
-        )
-        .await;
+    let refused = client.call("session/input", input_params(&session, "third")).await;
     let closed_again = client
         .call("session/close", json!({ "sessionId": session, "stopJobs": false }))
         .await;
@@ -643,10 +699,7 @@ async fn session_with_a_job(place: &Place) -> (Client, Value, ScriptedTransport)
     let mut client = Client::initialized(place, Box::new(transport.clone())).await;
     let session = client.call("session/new", settings(place)).await.unwrap()["sessionId"].clone();
     client
-        .request(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "start a job" }] }),
-        )
+        .request("session/input", input_params(&session, "start a job"))
         .await;
     client.until(is_idle).await;
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -707,10 +760,7 @@ async fn after_a_folder_change_the_tools_work_in_the_new_folder_and_stop_the_old
     transport.push(text_reply("stopped"));
 
     client
-        .request(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "stop the job" }] }),
-        )
+        .request("session/input", input_params(&session, "stop the job"))
         .await;
     client.until(is_idle).await;
     let after = client.call("job/list", json!({ "sessionId": session })).await;
@@ -815,51 +865,6 @@ async fn job_stop_waits_for_the_end_and_its_job_update_comes_first() {
 }
 
 #[tokio::test]
-async fn job_updates_tell_the_start_and_the_end_before_the_end_input() {
-    let place = Place::new("rpc", "job_updates_tell_the_start_and_the_end_before_the_end_input");
-    let arguments = json!({ "command": "exit 3", "background": true }).to_string();
-    let transport = ScriptedTransport::new([
-        tool_reply(&[("c1", "exec", &arguments)]),
-        text_reply("started"),
-        text_reply("noted"),
-    ]);
-    let mut client = Client::initialized(&place, Box::new(transport)).await;
-    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
-
-    client
-        .request(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "start a job" }] }),
-        )
-        .await;
-    let messages = client
-        .until(|message| message["params"]["update"]["input"]["source"]["name"] == "host:jobs")
-        .await;
-
-    let jobs: Vec<&Value> = messages
-        .iter()
-        .filter(|message| message["params"]["update"]["sessionUpdate"] == "job")
-        .map(|message| &message["params"]["update"]["job"])
-        .collect();
-    assert_eq!(jobs.len(), 2, "{jobs:?}");
-    assert_eq!(jobs[0]["state"], "running");
-    assert_eq!(jobs[0]["command"], "exit 3");
-    // The end update holds the whole job.
-    assert_eq!(
-        (&jobs[1]["id"], &jobs[1]["command"], &jobs[1]["log"]),
-        (&jobs[0]["id"], &jobs[0]["command"], &jobs[0]["log"])
-    );
-    assert_eq!(
-        (&jobs[1]["state"], &jobs[1]["exitCode"], &jobs[1]["stopped"]),
-        (&json!("ended"), &json!(3), &json!(false))
-    );
-    // The end update comes before the end input, which is the last message.
-    assert_eq!(label(messages.last().unwrap()).unwrap(), "input_accepted");
-    client.until(is_idle).await;
-    client.end().await;
-}
-
-#[tokio::test]
 async fn a_session_cannot_stop_the_job_of_another_session() {
     let place = Place::new("rpc", "a_session_cannot_stop_the_job_of_another_session");
     let (mut client, owner, _transport) = session_with_a_job(&place).await;
@@ -888,7 +893,12 @@ async fn a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends
     // The client keeps its end of the output and never reads it, so the small pipe fills.
     let (server_output, _unread) = tokio::io::duplex(1 << 10);
     let machine = place.machine(Box::new(with_key), Box::new(ScriptedTransport::default()));
-    let server = tokio::spawn(serve(machine, Duration::from_millis(100), server_input, server_output));
+    let server = tokio::spawn(serve(
+        machine,
+        Duration::from_millis(100),
+        Clients::One(Stream::new(server_input, server_output)),
+        std::future::pending(),
+    ));
     let request = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
         "protocolVersion": 1, "clientInfo": { "name": "test", "version": "1" }
     } });
@@ -911,12 +921,7 @@ async fn a_panic_in_a_turn_ends_the_turn_and_the_next_input_runs_with_a_note_abo
     let transport = PanicsOnce::new([text_reply("back")]);
     let mut client = Client::initialized(&place, Box::new(transport)).await;
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
-    client
-        .request(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "first" }] }),
-        )
-        .await;
+    client.request("session/input", input_params(&session, "first")).await;
 
     let failed = client.until(|message| message["method"] == "notice").await;
     // The recovery ends the turn that the panic left open, and the client sees that end.
@@ -924,10 +929,7 @@ async fn a_panic_in_a_turn_ends_the_turn_and_the_next_input_runs_with_a_note_abo
         .until(|message| message["params"]["update"]["sessionUpdate"] == "commit")
         .await;
     client
-        .call(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "second" }] }),
-        )
+        .call("session/input", input_params(&session, "second"))
         .await
         .unwrap();
     let again = client.until(is_idle).await;
@@ -965,17 +967,12 @@ async fn a_server_that_ends_without_its_shutdown_still_stops_its_turns() {
     let place = Place::new("rpc", "a_server_that_ends_without_its_shutdown_still_stops_its_turns");
     let mut client = Client::initialized(&place, Box::new(Stalled)).await;
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
-    client
-        .request(
-            "session/input",
-            json!({ "sessionId": session, "content": [{ "user_text": "hi" }] }),
-        )
-        .await;
+    client.request("session/input", input_params(&session, "hi")).await;
     client
         .until(|message| message["params"]["update"]["state"] == "running")
         .await;
 
-    client.server.abort();
+    client.server.as_ref().unwrap().abort();
     // Each running task holds the output open, so its end shows that the stalled turn stopped.
     let drained = tokio::time::timeout(Duration::from_secs(5), async {
         while client.output.next_line().await.is_ok_and(|line| line.is_some()) {}
@@ -1017,7 +1014,7 @@ async fn login_session(client: &mut Client, place: &Place) -> Value {
     let mut settings = settings(place);
     settings["model"] = json!({ "provider": "xai-grok", "model": "test" });
     let session = client.call("session/new", settings).await.unwrap()["sessionId"].clone();
-    json!({ "sessionId": session, "content": [{ "user_text": "hi" }] })
+    input_params(&session, "hi")
 }
 
 #[tokio::test]
@@ -1096,4 +1093,169 @@ async fn a_credential_update_that_cannot_serve_is_refused_and_keeps_the_token_be
     client.until(is_idle).await;
     assert_eq!(transport.header("Authorization"), [Some("Bearer kept".to_owned())]);
     client.end().await;
+}
+
+#[tokio::test]
+async fn a_turn_outlives_its_socket_client_and_the_next_client_takes_it_over() {
+    let place = Place::new("rpc", "turn_outlives_client");
+    let listening = Listening::start(&place, Box::new(Stalled));
+    let mut first = listening.client().await;
+    let first_instance = first.initialize().await["instanceId"].clone();
+    let session = first.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+    first.request("session/input", input_params(&session, "hi")).await;
+    first
+        .until(|message| message["params"]["update"]["state"] == "running")
+        .await;
+
+    drop(first);
+    let mut second = listening.client().await;
+    let second_instance = second.initialize().await["instanceId"].clone();
+    let loaded = second.load(&session, json!({})).await;
+    second.notify("session/cancel", json!({ "sessionId": session })).await;
+    let ended = second.until(is_idle).await;
+
+    // A missing id would pass the equality as null.
+    assert!(first_instance.is_string(), "{first_instance}");
+    assert_eq!(second_instance, first_instance);
+    assert_eq!(loaded.state, "running");
+    assert!(
+        ended
+            .iter()
+            .any(|message| message["params"]["update"]["sessionUpdate"] == "commit"),
+        "{ended:?}"
+    );
+    listening.stop().await;
+}
+
+#[tokio::test]
+async fn a_new_socket_client_replaces_the_active_client() {
+    let place = Place::new("rpc", "new_client_replaces");
+    let listening = Listening::start(&place, Box::new(ScriptedTransport::default()));
+    let mut first = listening.client().await;
+    first.initialize().await;
+
+    let mut second = listening.client().await;
+    second.initialize().await;
+    let created = second.call("session/new", settings(&place)).await;
+
+    first.expect_closed().await;
+    assert!(created.is_ok(), "{created:?}");
+    listening.stop().await;
+}
+
+#[tokio::test]
+async fn a_socket_server_outlives_its_clients_and_its_shutdown_ends_the_turns_then_the_connection() {
+    let place = Place::new("rpc", "socket_shutdown");
+    let listening = Listening::start(&place, Box::new(Stalled));
+    let mut first = listening.client().await;
+    first.initialize().await;
+    first.end().await;
+    let mut second = listening.client().await;
+    second.initialize().await;
+    let session = second.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+    second.request("session/input", input_params(&session, "hi")).await;
+    second
+        .until(|message| message["params"]["update"]["state"] == "running")
+        .await;
+    let path = listening.path.clone();
+
+    listening.stop().await;
+    let ended = second.until(is_idle).await;
+
+    assert!(
+        ended
+            .iter()
+            .any(|message| message["params"]["update"]["sessionUpdate"] == "commit"),
+        "{ended:?}"
+    );
+    second.expect_closed().await;
+    assert!(!path.exists());
+}
+
+#[tokio::test]
+async fn a_bind_replaces_a_stale_socket_and_refuses_a_held_lock_and_a_file_that_is_no_socket() {
+    let stale = socket_path();
+    // The standard listener leaves its socket file when it drops, as a server that ends without its shutdown does.
+    drop(std::os::unix::net::UnixListener::bind(&stale).unwrap());
+    let regular = socket_path();
+    std::fs::write(&regular, "kept").unwrap();
+
+    let replaced = Socket::bind(&stale);
+    let held = Socket::bind(&stale);
+    let not_socket = Socket::bind(&regular);
+
+    assert!(replaced.is_ok(), "{:?}", replaced.as_ref().err());
+    let mode = std::fs::metadata(&stale).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    assert!(held.err().unwrap().ends_with("another server listens on the socket"));
+    assert!(not_socket.err().unwrap().ends_with("the file is no socket"));
+    assert_eq!(std::fs::read_to_string(&regular).unwrap(), "kept");
+    drop(replaced);
+    assert!(!stale.exists());
+    // The drop frees the lock, so the next server binds.
+    assert!(Socket::bind(&stale).is_ok());
+    for file in [
+        stale.with_added_extension("lock"),
+        regular.with_added_extension("lock"),
+        regular,
+    ] {
+        std::fs::remove_file(file).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_refused_bind_opens_no_connection_to_the_running_server() {
+    let path = socket_path();
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let lock = File::create(path.with_added_extension("lock")).unwrap();
+    lock.try_lock().unwrap();
+
+    let refused = Socket::bind(&path);
+
+    assert!(refused.is_err());
+    // A connection would replace the active client of the server.
+    assert_eq!(listener.accept().unwrap_err().kind(), io::ErrorKind::WouldBlock);
+    for file in [path.with_added_extension("lock"), path] {
+        std::fs::remove_file(file).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn connect_bridges_the_socket_until_the_end_of_its_input() {
+    let place = Place::new("rpc", "connect_bridges");
+    let listening = Listening::start(&place, Box::new(ScriptedTransport::default()));
+    let (input, bridge_input) = tokio::io::duplex(1 << 16);
+    let (bridge_output, output) = tokio::io::duplex(1 << 16);
+    let path = listening.path.clone();
+    let bridge = tokio::spawn(async move { connect(&path, bridge_input, bridge_output).await });
+    let mut client = Client::new(input, output);
+
+    let initialized = client.initialize().await;
+    // The end of the input ends the connection, and so the bridge.
+    client.end().await;
+    let bridged = tokio::time::timeout(Duration::from_secs(10), bridge).await;
+
+    assert_eq!(initialized["agentInfo"]["name"], "yuke");
+    bridged.expect("the bridge did not end").unwrap().unwrap();
+    listening.stop().await;
+}
+
+#[tokio::test]
+async fn a_shutdown_ends_a_stdio_server_while_its_input_stays_open() {
+    let place = Place::new("rpc", "stdio_shutdown");
+    let (_input, server_input) = tokio::io::duplex(1 << 16);
+    let (server_output, _output) = tokio::io::duplex(1 << 16);
+    let shutdown = CancellationToken::new();
+    let server = tokio::spawn(serve(
+        place.machine(Box::new(with_key), Box::new(ScriptedTransport::default())),
+        Duration::from_secs(10),
+        Clients::One(Stream::new(server_input, server_output)),
+        shutdown.clone().cancelled_owned(),
+    ));
+
+    shutdown.cancel();
+    let served = tokio::time::timeout(Duration::from_secs(10), server).await;
+
+    served.expect("the server did not end").unwrap().unwrap();
 }

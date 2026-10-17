@@ -2,9 +2,9 @@
 import type { SessionId } from "./SessionId";
 
 /**
- * The result of `session/new`.
+ * The result of `session/new` and `session/fork`.
  */
-export type NewSessionResult = { 
+export type SessionResult = { 
 /**
  * The id of the new session.
  */

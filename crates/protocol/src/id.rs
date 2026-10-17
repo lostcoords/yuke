@@ -1,4 +1,4 @@
-//! Session, input, and ephemeral draft identities, and session-local event numbers.
+//! Session, server process, input, and ephemeral draft identities, and session-local event numbers.
 
 use std::fmt;
 use std::str::FromStr;
@@ -41,6 +41,20 @@ impl FromStr for SessionId {
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         uuid::Uuid::parse_str(text).map(SessionId)
+    }
+}
+
+/// The id of one server process: a version 7 UUID that the server makes before its first client. A client that
+/// reconnects and gets another id talks to a new process, so the turns and jobs of the old process are gone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(transparent)]
+pub struct InstanceId(#[cfg_attr(test, ts(type = "string"))] uuid::Uuid);
+
+impl InstanceId {
+    /// A new id from the current time and random bits.
+    pub fn generate() -> Self {
+        InstanceId(uuid::Uuid::now_v7())
     }
 }
 

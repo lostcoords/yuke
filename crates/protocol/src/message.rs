@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{EventNumber, InputId, SessionId, SessionSettings, SessionUpdateParams};
+use crate::{EventNumber, InputId, InstanceId, SessionId, SessionSettings, SessionUpdateParams};
 
 /// The protocol version that this crate speaks. A breaking change of the messages takes the next number.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -56,10 +56,10 @@ pub enum ClientRequest {
     #[serde(rename = "initialize")]
     Initialize(InitializeParams),
     /// Create a session with these settings. Each field is required. The server replaces the system prompt of the client
-    /// with the prompt of the session folder. Result: [`NewSessionResult`].
+    /// with the prompt of the session folder. Result: [`SessionResult`].
     #[serde(rename = "session/new")]
     NewSession(SessionSettings),
-    /// Fork a session at the end of a completed turn. Result: [`ForkSessionResult`].
+    /// Fork a session at the end of a completed turn. Result: [`SessionResult`].
     #[serde(rename = "session/fork")]
     ForkSession(ForkSessionParams),
     /// Open a session, and send it as `session/update` notifications: the saved events, a `state` update, an
@@ -97,6 +97,23 @@ pub enum ClientRequest {
     /// [`EmptyResult`].
     #[serde(rename = "credential/update")]
     UpdateCredential(UpdateCredentialParams),
+}
+
+impl ClientRequest {
+    /// The method of each request. A server tells an unknown method from bad params with it.
+    pub const METHODS: [&str; 11] = [
+        "initialize",
+        "session/new",
+        "session/fork",
+        "session/load",
+        "session/close",
+        "session/input",
+        "session/set_settings",
+        "session/remove_input",
+        "job/list",
+        "job/stop",
+        "credential/update",
+    ];
 }
 
 /// A notification: a message that a server or a client sends with no id. It gets no response.
@@ -260,13 +277,15 @@ pub struct InitializeResult {
     pub protocol_version: u32,
     /// The server.
     pub agent_info: Implementation,
+    /// The id of the server process. Each connection of one `yuke --rpc --listen` gets the same id.
+    pub instance_id: InstanceId,
 }
 
-/// The result of `session/new`.
+/// The result of `session/new` and `session/fork`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
-pub struct NewSessionResult {
+pub struct SessionResult {
     /// The id of the new session.
     pub session_id: SessionId,
 }
@@ -282,15 +301,6 @@ pub struct ForkSessionParams {
     /// the first commit when no turn completed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<EventNumber>,
-}
-
-/// The result of `session/fork`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct ForkSessionResult {
-    /// The id of the new session.
-    pub session_id: SessionId,
 }
 
 /// The params of `session/load`.

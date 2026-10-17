@@ -268,9 +268,12 @@ impl App {
     ///
     /// Returns [`AppError::NotOpen`], or [`AppError::JobsRun`] for running jobs without `stop_jobs`.
     pub(crate) async fn close(&mut self, id: SessionId, stop_jobs: bool) -> Result<(), AppError> {
-        let jobs = self.live(id)?.jobs();
-        if !jobs.is_empty() && !stop_jobs {
-            return Err(AppError::JobsRun(jobs.into_iter().map(|job| job.id).collect()));
+        let live = self.live(id)?;
+        if !stop_jobs {
+            let jobs = live.jobs();
+            if !jobs.is_empty() {
+                return Err(AppError::JobsRun(jobs.into_iter().map(|job| job.id).collect()));
+            }
         }
         if let Some(live) = self.sessions.remove(&id) {
             live.close().await;

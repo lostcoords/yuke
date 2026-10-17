@@ -11,14 +11,14 @@ mod session;
 mod update;
 
 pub use event::{SessionEvent, StoredEvent};
-pub use id::{DraftId, EventNumber, InputId, SessionId};
+pub use id::{DraftId, EventNumber, InputId, InstanceId, SessionId};
 pub use input::{ConsumedInput, Input, InputError, InputSource, PendingInput};
 pub use message::{
     CancelParams, ClientNotification, ClientRequest, CloseSessionParams, EmptyResult, ForkSessionParams,
-    ForkSessionResult, Implementation, InitializeParams, InitializeResult, InputParams, InputResult, Job, JobState,
-    JsonRpc, ListJobsParams, ListJobsResult, LoadSessionParams, NewSessionResult, NoticeLevel, NoticeParams,
-    Notification, PROTOCOL_VERSION, RemoveInputParams, Request, RequestId, Response, ResponseError, ResponseOutcome,
-    ServerNotification, SetSettingsParams, StopJobParams, UpdateCredentialParams,
+    Implementation, InitializeParams, InitializeResult, InputParams, InputResult, Job, JobState, JsonRpc,
+    ListJobsParams, ListJobsResult, LoadSessionParams, NoticeLevel, NoticeParams, Notification, PROTOCOL_VERSION,
+    RemoveInputParams, Request, RequestId, Response, ResponseError, ResponseOutcome, ServerNotification, SessionResult,
+    SetSettingsParams, StopJobParams, UpdateCredentialParams,
 };
 pub use session::{ModelReference, SessionSettings};
 pub use update::{

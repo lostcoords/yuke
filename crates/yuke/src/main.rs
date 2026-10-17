@@ -1,6 +1,7 @@
 //! The `yuke` program. It has three modes: the terminal interface (no mode flag), the protocol server (`--rpc`), and
-//! one task with no view (`-p`). The terminal interface does not exist yet. `--rpc` serves stdin and stdout. `-p` writes
-//! the answer to stdout, and the end of the turn picks the exit status. `yuke login` logs in to a provider.
+//! one task with no view (`-p`). The terminal interface does not exist yet. `--rpc` serves stdin and stdout.
+//! `--rpc --listen` serves a Unix socket. `--rpc --connect` joins stdin and stdout to such a socket. `-p` writes the
+//! answer to stdout, and the end of the turn picks the exit status. `yuke login` logs in to a provider.
 
 mod app;
 mod auth;
@@ -15,9 +16,9 @@ mod rpc;
 mod testing;
 
 use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -58,6 +59,14 @@ struct Cli {
     #[arg(long, conflicts_with_all = ["prompt", "json", "model", "reasoning", "session", "continue_newest"])]
     rpc: bool,
 
+    /// Serve the clients of a Unix socket, one at a time. The sessions outlive each client.
+    #[arg(long, value_name = "unix://PATH", value_parser = socket_path, requires = "rpc", conflicts_with = "connect")]
+    listen: Option<PathBuf>,
+
+    /// Join stdin and stdout to the server of a Unix socket.
+    #[arg(long, value_name = "unix://PATH", value_parser = socket_path, requires = "rpc")]
+    connect: Option<PathBuf>,
+
     /// Print one JSON object: the session id, the end of the turn, and the text of the last answer.
     #[arg(long, requires = "prompt")]
     json: bool,
@@ -94,12 +103,22 @@ enum Command {
 enum Mode {
     /// The terminal interface.
     Tui,
-    /// The protocol server on stdin and stdout.
-    Rpc,
+    /// The protocol server on the Unix socket at `listen`, or else on stdin and stdout.
+    Rpc { listen: Option<PathBuf> },
+    /// The bridge from stdin and stdout to the server of the Unix socket at this path.
+    Connect(PathBuf),
     /// One task with no view. `json` prints the `--json` report.
     Print { task: Task, json: bool },
     /// A login to a provider.
     Login(String),
+}
+
+/// The path of a `unix://PATH` value.
+fn socket_path(value: &str) -> Result<PathBuf, String> {
+    match value.strip_prefix("unix://") {
+        Some(path) if !path.is_empty() => Ok(PathBuf::from(path)),
+        _ => Err("use unix://PATH".to_owned()),
+    }
 }
 
 impl Cli {
@@ -109,7 +128,10 @@ impl Cli {
             return Mode::Login(provider);
         }
         if self.rpc {
-            return Mode::Rpc;
+            return match self.connect {
+                Some(path) => Mode::Connect(path),
+                None => Mode::Rpc { listen: self.listen },
+            };
         }
 
         let Some(prompt) = self.prompt else {
@@ -181,7 +203,8 @@ fn main() -> ExitCode {
     let code = runtime.block_on(async {
         match Cli::parse().into_mode() {
             Mode::Tui => not_implemented("the terminal interface"),
-            Mode::Rpc => serve_rpc().await,
+            Mode::Rpc { listen } => serve_rpc(listen).await,
+            Mode::Connect(path) => connect(&path).await,
             Mode::Print { task, json } => print_task(&task, json).await,
             Mode::Login(provider) => login(&provider).await,
         }
@@ -202,14 +225,9 @@ fn not_implemented(mode: &str) -> ExitCode {
 /// Run `task`, write its answer or its `--json` report, and answer the exit status.
 async fn print_task(task: &Task, json: bool) -> ExitCode {
     let cancellation_token = CancellationToken::new();
-    let signal_number = Arc::new(AtomicU8::new(0));
-    if let Err(error) = watch_signals(cancellation_token.clone(), Arc::clone(&signal_number)) {
-        warn(&format!("the signal handlers did not start: {}", describe(&error)));
-        return ExitCode::FAILURE;
-    }
-
-    match run_here(task, cancellation_token).await {
-        Ok(finished) => {
+    let ran = run_until_signal(run_here(task, cancellation_token.clone()), &cancellation_token).await;
+    match ran {
+        Ok((Ok(finished), signal_number)) => {
             if let Err(error) = write_output(&finished, json) {
                 warn(&format!("the output did not write: {error}"));
                 return ExitCode::FAILURE;
@@ -219,9 +237,9 @@ async fn print_task(task: &Task, json: bool) -> ExitCode {
             {
                 warn(error);
             }
-            exit_code(&finished.end, signal_number.load(Ordering::SeqCst))
+            exit_code(&finished.end, signal_number)
         }
-        Err(error) => {
+        Ok((Err(error), _)) | Err(error) => {
             warn(&error);
             ExitCode::FAILURE
         }
@@ -248,12 +266,13 @@ async fn login(id: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let cancellation_token = CancellationToken::new();
-    let signal_number = Arc::new(AtomicU8::new(0));
-    if let Err(error) = watch_signals(cancellation_token.clone(), Arc::clone(&signal_number)) {
-        warn(&format!("the signal handlers did not start: {}", describe(&error)));
-        return ExitCode::FAILURE;
-    }
+    let signals = match termination_signal() {
+        Ok(signals) => signals,
+        Err(error) => {
+            warn(&error);
+            return ExitCode::FAILURE;
+        }
+    };
     let show = |pending: &PendingLogin| {
         warn(&format!(
             "open {} and confirm the code {} (enter it if the page asks)",
@@ -272,17 +291,35 @@ async fn login(id: &str) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        () = cancellation_token.cancelled() => ExitCode::from(128 + signal_number.load(Ordering::SeqCst)),
+        number = signals => ExitCode::from(128 + number),
     }
 }
 
-/// Serve the protocol on stdin and stdout until stdin ends.
-async fn serve_rpc() -> ExitCode {
-    let served = match machine() {
-        Ok(machine) => rpc::serve(machine, DRAIN_LIMIT, tokio::io::stdin(), tokio::io::stdout()).await,
-        Err(error) => Err(error),
+/// Serve the protocol on the Unix socket at `listen`, or else on stdin and stdout. A signal ends each server, and the
+/// end of stdin ends the server on stdin and stdout. A signal exits with 128 plus its number.
+async fn serve_rpc(listen: Option<PathBuf>) -> ExitCode {
+    let shutdown = CancellationToken::new();
+    let served = async {
+        let machine = machine()?;
+        let clients = match listen {
+            Some(path) => rpc::Clients::Socket(rpc::Socket::bind(&path)?),
+            None => rpc::Clients::One(rpc::Stream::new(tokio::io::stdin(), tokio::io::stdout())),
+        };
+        rpc::serve(machine, DRAIN_LIMIT, clients, shutdown.clone().cancelled_owned()).await
     };
-    match served {
+    match run_until_signal(served, &shutdown).await {
+        Ok((Ok(()), Some(number))) => ExitCode::from(128 + number),
+        Ok((Ok(()), None)) => ExitCode::SUCCESS,
+        Ok((Err(error), _)) | Err(error) => {
+            warn(&error);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Join stdin and stdout to the server of the Unix socket at `path`, until the server closes the connection.
+async fn connect(path: &Path) -> ExitCode {
+    match rpc::connect(path, tokio::io::stdin(), tokio::io::stdout()).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             warn(&error);
@@ -334,27 +371,48 @@ fn write_output(finished: &Finished, json: bool) -> io::Result<()> {
 }
 
 /// The exit status of a turn that ended with `end`. A cancel by a signal exits with 128 plus its number.
-fn exit_code(end: &TurnEnd, signal_number: u8) -> ExitCode {
-    match end {
-        TurnEnd::Outcome(Outcome::Completed { .. } | Outcome::Stopped) => ExitCode::SUCCESS,
-        TurnEnd::Outcome(Outcome::Cancelled) => ExitCode::from(128 + signal_number),
-        TurnEnd::Failed(_) => ExitCode::FAILURE,
+fn exit_code(end: &TurnEnd, signal_number: Option<u8>) -> ExitCode {
+    match (end, signal_number) {
+        (TurnEnd::Outcome(Outcome::Completed { .. } | Outcome::Stopped), _) => ExitCode::SUCCESS,
+        (TurnEnd::Outcome(Outcome::Cancelled), Some(number)) => ExitCode::from(128 + number),
+        (TurnEnd::Outcome(Outcome::Cancelled), None) | (TurnEnd::Failed(_), _) => ExitCode::FAILURE,
     }
 }
 
-/// Cancel the turn at the first SIGINT or SIGTERM, and keep its number in `signal_number`.
-fn watch_signals(cancellation_token: CancellationToken, signal_number: Arc<AtomicU8>) -> io::Result<()> {
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let mut terminate = signal(SignalKind::terminate())?;
-    tokio::spawn(async move {
-        let number = tokio::select! {
+/// Wait for the first SIGINT, SIGTERM, or SIGHUP, and answer its number. The handlers start at the call.
+fn termination_signal() -> Result<impl Future<Output = u8>, String> {
+    let failure = |error: io::Error| format!("the signal handlers did not start: {error}");
+    let mut interrupt = signal(SignalKind::interrupt()).map_err(failure)?;
+    let mut terminate = signal(SignalKind::terminate()).map_err(failure)?;
+    let mut hangup = signal(SignalKind::hangup()).map_err(failure)?;
+    Ok(async move {
+        tokio::select! {
             _ = interrupt.recv() => 2,
             _ = terminate.recv() => 15,
-        };
-        signal_number.store(number, Ordering::SeqCst);
-        cancellation_token.cancel();
-    });
-    Ok(())
+            _ = hangup.recv() => 1,
+        }
+    })
+}
+
+/// Run `operation` to its end. The first termination signal cancels `cancellation_token`, and `operation` still runs
+/// to its end. Answer its output and the number of the signal.
+///
+/// # Errors
+///
+/// Returns a text for the user when the signal handlers do not start.
+async fn run_until_signal<T>(
+    operation: impl Future<Output = T>,
+    cancellation_token: &CancellationToken,
+) -> Result<(T, Option<u8>), String> {
+    let signals = termination_signal()?;
+    tokio::pin!(operation, signals);
+    Ok(tokio::select! {
+        output = &mut operation => (output, None),
+        number = &mut signals => {
+            cancellation_token.cancel();
+            (operation.await, Some(number))
+        }
+    })
 }
 
 #[cfg(test)]
@@ -378,7 +436,39 @@ mod tests {
     #[test]
     fn no_mode_flag_starts_the_terminal_interface_and_rpc_starts_the_server() {
         assert_eq!(mode(&[]), Ok(Mode::Tui));
-        assert_eq!(mode(&["--rpc"]), Ok(Mode::Rpc));
+        assert_eq!(mode(&["--rpc"]), Ok(Mode::Rpc { listen: None }));
+    }
+
+    #[test]
+    fn listen_and_connect_take_a_unix_path_and_need_rpc() {
+        let path = PathBuf::from("/run/yuke.sock");
+        assert_eq!(
+            mode(&["--rpc", "--listen", "unix:///run/yuke.sock"]),
+            Ok(Mode::Rpc {
+                listen: Some(path.clone())
+            })
+        );
+        assert_eq!(
+            mode(&["--rpc", "--connect", "unix:///run/yuke.sock"]),
+            Ok(Mode::Connect(path))
+        );
+        for flag in ["--listen", "--connect"] {
+            assert_eq!(
+                mode(&[flag, "unix:///a"]),
+                Err(ErrorKind::MissingRequiredArgument),
+                "{flag}"
+            );
+            assert_eq!(mode(&["--rpc", flag, "/a"]), Err(ErrorKind::ValueValidation), "{flag}");
+            assert_eq!(
+                mode(&["--rpc", flag, "unix://"]),
+                Err(ErrorKind::ValueValidation),
+                "{flag}"
+            );
+        }
+        assert_eq!(
+            mode(&["--rpc", "--listen", "unix:///a", "--connect", "unix:///a"]),
+            Err(ErrorKind::ArgumentConflict)
+        );
     }
 
     #[test]

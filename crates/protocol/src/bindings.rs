@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use ts_rs::{Config, TS};
 
 use crate::{
-    ClientNotification, ClientRequest, EmptyResult, ForkSessionResult, InitializeResult, InputResult, ListJobsResult,
-    NewSessionResult, Notification, Request, Response, ServerNotification,
+    ClientNotification, ClientRequest, EmptyResult, InitializeResult, InputResult, ListJobsResult, Notification,
+    Request, Response, ServerNotification, SessionResult,
 };
 
 /// Export each message and each result, with the types that they use, to `folder`.
@@ -23,8 +23,7 @@ fn export(folder: &Path) {
     ClientNotification::export_all(&config).unwrap();
     ServerNotification::export_all(&config).unwrap();
     InitializeResult::export_all(&config).unwrap();
-    NewSessionResult::export_all(&config).unwrap();
-    ForkSessionResult::export_all(&config).unwrap();
+    SessionResult::export_all(&config).unwrap();
     InputResult::export_all(&config).unwrap();
     ListJobsResult::export_all(&config).unwrap();
     EmptyResult::export_all(&config).unwrap();
