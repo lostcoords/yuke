@@ -499,6 +499,19 @@ pub(crate) mod sessions {
     use yuke_sql::{FromRow, Query, execute};
 
     #[derive(Debug, Clone, PartialEq)]
+    pub(crate) struct SessionPrompt {
+        pub(crate) prompt: String,
+    }
+
+    impl FromRow for SessionPrompt {
+        fn from_row(row: &Row<'_>) -> Result<Self> {
+            Ok(Self {
+                prompt: row.get("prompt")?,
+            })
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
     pub(crate) struct SessionCount {
         pub(crate) count: i64,
     }
@@ -511,8 +524,42 @@ pub(crate) mod sessions {
         }
     }
 
-    pub(crate) fn insert_session(connection: &Connection, id: [u8; 16]) -> Result<usize> {
-        execute(connection, r"INSERT INTO sessions(id) VALUES (:id);", &[(":id", &id)])
+    #[derive(Debug)]
+    pub(crate) struct InsertSessionParams {
+        pub(crate) id: [u8; 16],
+        pub(crate) prompt: String,
+    }
+
+    pub(crate) fn insert_session(connection: &Connection, params: &InsertSessionParams) -> Result<usize> {
+        execute(
+            connection,
+            r"INSERT INTO sessions(id, prompt) VALUES (:id, :prompt);",
+            &[(":id", &params.id), (":prompt", &params.prompt)],
+        )
+    }
+
+    #[derive(Debug)]
+    pub(crate) struct CopySessionParams {
+        pub(crate) source: [u8; 16],
+        pub(crate) id: [u8; 16],
+    }
+
+    /// Add session `id` with the prompt of session `source`. It adds no row for an unknown source.
+    pub(crate) fn copy_session(connection: &Connection, params: &CopySessionParams) -> Result<usize> {
+        execute(
+            connection,
+            r"INSERT INTO sessions(id, prompt) SELECT :id, prompt FROM sessions WHERE id = :source;",
+            &[(":source", &params.source), (":id", &params.id)],
+        )
+    }
+
+    /// The system prompt of the session. It returns no row for an unknown session.
+    pub(crate) fn session_prompt(connection: &Connection, id: [u8; 16]) -> Query<'_, SessionPrompt> {
+        Query::new(
+            connection,
+            r"SELECT prompt FROM sessions WHERE id = :id;",
+            &[(":id", &id)],
+        )
     }
 
     /// The number of sessions with this id: 0 or 1.

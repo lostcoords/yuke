@@ -146,7 +146,7 @@ const NO_REASONING: &str =
     "no reasoning choice: pass --reasoning <choice>, or --reasoning default to let the endpoint choose";
 
 /// The settings of a new session in `cwd` with the model `selector` of `providers` and the reasoning `choice`. The app
-/// writes the system prompt.
+/// builds the system prompt.
 fn new_settings(
     providers: &Providers,
     selector: &str,

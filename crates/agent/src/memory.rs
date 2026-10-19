@@ -43,6 +43,8 @@ impl State {
 /// One session. Its settings, its context, and whether a turn is open follow from its events.
 #[derive(Debug)]
 struct Saved {
+    /// The system prompt of the session.
+    prompt: String,
     /// The events of the session. The event at index `i` has the number `i + 1`.
     events: Vec<StoredEvent>,
     pending: Vec<PendingInput>,
@@ -87,6 +89,7 @@ impl Saved {
         Opened {
             id,
             settings: settings.expect("the session has a settings event").clone(),
+            prompt: self.prompt.clone(),
             context,
             newest_turn,
             lease,
@@ -157,10 +160,11 @@ impl MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
-    async fn create_session(&self, settings: &SessionSettings) -> Result<Opened, StoreError> {
+    async fn create_session(&self, settings: &SessionSettings, prompt: &str) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
         let mut state = lock(&self.state);
         let mut saved = Saved {
+            prompt: prompt.to_owned(),
             events: Vec::new(),
             pending: Vec::new(),
             blobs: HashMap::new(),
@@ -178,6 +182,7 @@ impl Store for MemoryStore {
         let write = state.next_write();
         let saved = state.sessions.get(&source).ok_or(StoreError::NotFound)?;
         let fork = Saved {
+            prompt: saved.prompt.clone(),
             events: saved.events[..fork_cut(&saved.events, through)?].to_vec(),
             pending: Vec::new(),
             blobs: saved.blobs.clone(),

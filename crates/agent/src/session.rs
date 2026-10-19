@@ -43,6 +43,8 @@ fn interruption_note(newest_turn: &NewestTurn) -> Option<yuke_ai::Block> {
 /// the turn in its store before the turn goes on.
 pub struct Session {
     settings: SessionSettings,
+    /// The system prompt of each turn. It never changes.
+    prompt: String,
     context: Vec<yuke_ai::Block>,
     store: Arc<dyn Store>,
     id: SessionId,
@@ -132,13 +134,17 @@ impl yuke_ai::BlobStore for TurnJournal<'_> {
 }
 
 impl Session {
-    /// Create a session with `settings` in `store`, and own it.
+    /// Create a session with `settings` and the system prompt `prompt` in `store`, and own it.
     ///
     /// # Errors
     ///
     /// Returns the error of [`Store::create_session`].
-    pub async fn create(store: Arc<dyn Store>, settings: &SessionSettings) -> Result<Session, StoreError> {
-        let opened = store.create_session(settings).await?;
+    pub async fn create(
+        store: Arc<dyn Store>,
+        settings: &SessionSettings,
+        prompt: &str,
+    ) -> Result<Session, StoreError> {
+        let opened = store.create_session(settings, prompt).await?;
         Ok(Session::from_opened(store, opened))
     }
 
@@ -174,6 +180,7 @@ impl Session {
     fn from_opened(store: Arc<dyn Store>, opened: Opened) -> Session {
         Session {
             settings: opened.settings,
+            prompt: opened.prompt,
             context: opened.context,
             store,
             id: opened.id,
@@ -190,6 +197,11 @@ impl Session {
     /// The current settings.
     pub fn settings(&self) -> &SessionSettings {
         &self.settings
+    }
+
+    /// The system prompt of each turn.
+    pub fn prompt(&self) -> &str {
+        &self.prompt
     }
 
     /// The context. A stale session can hold blocks that the store lacks.
@@ -421,6 +433,7 @@ impl<'s> SessionTurn<'s> {
         let input = turn_journal.take();
         let session_id = session.id.to_string();
         let turn = driver
+            .system(&session.prompt)
             .settings(&session.settings.settings)
             .session_id(&session_id)
             .journal(&turn_journal)

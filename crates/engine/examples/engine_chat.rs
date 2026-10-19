@@ -50,8 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let http = HttpTransport::new(HttpOptions::new("engine-example"))?;
 
-    let settings = yuke_ai::Settings::new().system(SYSTEM);
-    let driver = Driver::new(&http, &model, &TokioTimer).settings(&settings);
+    let driver = Driver::new(&http, &model, &TokioTimer).system(SYSTEM);
     let mut context = Vec::new();
     let observer = PrintText;
 

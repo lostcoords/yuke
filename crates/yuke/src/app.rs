@@ -194,7 +194,7 @@ impl App {
         model_of(settings, &self.shared).map(drop)
     }
 
-    /// Create a session with `settings`, and open it. The folder loses its links, and the app writes the system prompt
+    /// Create a session with `settings`, and open it. The folder loses its links, and the app builds the system prompt
     /// of that folder. A missing API key stops the create before the session exists.
     ///
     /// # Errors
@@ -203,9 +203,9 @@ impl App {
     /// [`AppError::Store`] when the store fails.
     pub(crate) async fn create(&mut self, mut settings: SessionSettings) -> Result<SessionId, AppError> {
         settings.cwd = canonical(settings.cwd).await?;
-        settings.settings.system = system_prompt(settings.cwd.clone(), self.shared.machine.home.clone()).await?;
+        let prompt = system_prompt(settings.cwd.clone(), self.shared.machine.home.clone()).await?;
         self.check_model(&settings)?;
-        let session = Session::create(Arc::clone(&self.shared.store), &settings)
+        let session = Session::create(Arc::clone(&self.shared.store), &settings, &prompt)
             .await
             .map_err(AppError::Store)?;
         self.start_new(session).await
@@ -496,14 +496,13 @@ fn model_of(settings: &SessionSettings, shared: &Shared) -> Result<Model, AppErr
     Ok(Model { target, source })
 }
 
-/// Save `settings` in `session`, and return the saved event. The settings keep the system prompt of the session. A new
-/// folder is saved without links, and the saved folder stays as it is. A model that cannot run saves nothing.
+/// Save `settings` in `session`, and return the saved event. A new folder is saved without links, and the saved folder
+/// stays as it is. A model that cannot run saves nothing.
 async fn save_settings(
     session: &mut Session,
     mut settings: SessionSettings,
     shared: &Shared,
 ) -> Result<StoredEvent, AppError> {
-    settings.settings.system.clone_from(&session.settings().settings.system);
     if settings.cwd != session.settings().cwd {
         settings.cwd = canonical(settings.cwd).await?;
     }

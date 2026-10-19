@@ -76,7 +76,7 @@ async fn a_new_run_saves_a_session_in_the_current_folder_and_answers_the_last_te
             model: "MiniMax-M3".to_owned()
         }
     );
-    assert!(opened.settings.settings.system.starts_with("You are yuke"));
+    assert!(opened.prompt.starts_with("You are yuke"));
     assert_eq!(
         opened.context,
         [Block::user_text("Say hello."), Block::assistant_text("Hello.")]
@@ -365,7 +365,6 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
         }
     );
     assert_eq!(settings[2].settings.reasoning, yuke_ai::ReasoningSettings::default());
-    assert_eq!(settings[2].settings.system, settings[0].settings.system);
 }
 
 #[tokio::test]

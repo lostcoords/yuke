@@ -33,7 +33,7 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - Turns: `session/input` starts a turn when the session is idle. During a turn, an input joins the turn at its next
   round. A `state` update tells when a turn runs. `session/load` starts no turn.
 - During a turn, a client can add and remove inputs, cancel the turn, close the session, and list and stop jobs. The
-  settings (model, request settings, system prompt, folder) do not change: `session/set_settings` fails while a turn
+  settings (model, request settings, folder) do not change: `session/set_settings` fails while a turn
   runs or input waits.
 - `session/load` sends the session as updates: the saved events, a `state` update, an `input_accepted` for each
   pending input, and a `job` update for each running job. Then come the live updates of the load time that these do

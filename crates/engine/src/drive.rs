@@ -154,6 +154,7 @@ pub struct Driver<'a> {
     hooks: &'a dyn Hooks,
     inbox: &'a dyn Inbox,
     journal: Option<&'a dyn Journal>,
+    system: &'a str,
     settings: &'a Settings,
     session_id: Option<&'a str>,
     blob_store: Option<&'a dyn BlobStore>,
@@ -189,6 +190,7 @@ impl<'a> Driver<'a> {
             hooks: &NoHooks,
             inbox: &NoInput,
             journal: None,
+            system: "",
             settings: &NO_SETTINGS,
             session_id: None,
             blob_store: None,
@@ -222,6 +224,12 @@ impl<'a> Driver<'a> {
             journal: Some(journal),
             ..self
         }
+    }
+
+    /// Send each request with the system prompt `system`. With an empty prompt, a request carries no system prompt.
+    #[must_use]
+    pub fn system(self, system: &'a str) -> Self {
+        Driver { system, ..self }
     }
 
     /// Send each request with `settings`, unless a [`RoundPlan`](crate::RoundPlan) gives other settings for its round.
@@ -457,7 +465,10 @@ impl<'a> Driver<'a> {
             let model = plan.model.as_ref().unwrap_or(self.model);
             let settings = plan.settings.as_ref().unwrap_or(self.settings);
             let tools = declared.tools(SearchMode::for_target(&model.target));
-            let mut request = Request::new(turn_state.context()).tools(tools).settings(settings);
+            let mut request = Request::new(turn_state.context())
+                .system(self.system)
+                .tools(tools)
+                .settings(settings);
             if let Some(session_id) = self.session_id {
                 request = request.session_id(session_id);
             }
@@ -609,7 +620,8 @@ impl<'a> Turn<'a> {
     /// # Errors
     ///
     /// Returns [`TurnError::Round`] when a round fails and no hook sends it again, or when a round hook fails. The
-    /// context keeps each block from before the failure, such as the answer before a failed `after_round`. Returns [`TurnError::Commit`] when the journal fails to save a commit.
+    /// context keeps each block from before the failure, such as the answer before a failed `after_round`. Returns
+    /// [`TurnError::Commit`] when the journal fails to save a commit.
     pub async fn run(self) -> Result<Outcome, TurnError> {
         let Turn {
             driver,

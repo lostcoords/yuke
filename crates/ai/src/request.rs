@@ -722,14 +722,12 @@ pub struct Target {
     pub tool_search: bool,
 }
 
-/// The settings of a request apart from its context, its tools, and its blobs. A caller can store one for each
-/// session, and [`Request::settings`] applies it. It names no model and holds no secret.
+/// The settings of a request apart from its system prompt, its context, its tools, and its blobs. A caller can store
+/// one for each session, and [`Request::settings`] applies it. It names no model and holds no secret.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    /// The system prompt. An empty prompt writes none.
-    pub system: String,
     /// The output limit. `None` leaves the endpoint default.
     pub max_output_tokens: Option<u32>,
     /// The reasoning settings.
@@ -748,7 +746,6 @@ impl Settings {
     /// Settings that leave every value at its endpoint default.
     pub const fn new() -> Self {
         Settings {
-            system: String::new(),
             max_output_tokens: None,
             reasoning: ReasoningSettings {
                 thinking: None,
@@ -758,15 +755,6 @@ impl Settings {
             top_p: None,
             tool_choice: ToolChoice::Auto,
             output_schema: None,
-        }
-    }
-
-    /// The system prompt. An empty prompt writes none.
-    #[must_use]
-    pub fn system(self, system: impl Into<String>) -> Self {
-        Settings {
-            system: system.into(),
-            ..self
         }
     }
 
@@ -851,13 +839,15 @@ impl Default for Settings {
     }
 }
 
-/// One request: the context, its tools, its blob store, and its settings. [`crate::Encoder::encode`] borrows it
-/// only until it returns. [`Request::new`] takes the context, and each setter changes one part.
+/// One request: the system prompt, the context, its tools, its blob store, and its settings.
+/// [`crate::Encoder::encode`] borrows it only until it returns. [`Request::new`] takes the context, and each setter
+/// changes one part.
 #[derive(Clone, Copy)]
 pub struct Request<'a> {
     pub(crate) blocks: &'a [Block],
     pub(crate) tools: &'a [ToolDefinition],
     pub(crate) blobs: Option<&'a dyn BlobStore>,
+    pub(crate) system: &'a str,
     pub(crate) settings: &'a Settings,
     pub(crate) session_id: Option<&'a str>,
 }
@@ -873,9 +863,16 @@ impl<'a> Request<'a> {
             blocks,
             tools: &[],
             blobs: None,
+            system: "",
             settings: &DEFAULT_SETTINGS,
             session_id: None,
         }
+    }
+
+    /// The system prompt. With an empty prompt, the request carries no system prompt.
+    #[must_use]
+    pub fn system(self, system: &'a str) -> Self {
+        Request { system, ..self }
     }
 
     /// The settings of the request.
@@ -1050,7 +1047,6 @@ mod tests {
     #[test]
     fn settings_json_keeps_its_stored_shape() {
         let full = Settings::new()
-            .system("Be brief.")
             .max_output_tokens(1000)
             .thinking(Thinking::Adaptive(Some(ThinkingDisplay::Summarized)))
             .effort(Effort::Xhigh)
@@ -1061,15 +1057,15 @@ mod tests {
         let cases = [
             (
                 full,
-                r#"{"system":"Be brief.","maxOutputTokens":1000,"reasoning":{"thinking":{"adaptive":"summarized"},"effort":"xhigh"},"temperature":0.5,"topP":0.9,"toolChoice":"none","outputSchema":{"name":"response","schema":"{\"type\":\"object\"}","strict":true}}"#,
+                r#"{"maxOutputTokens":1000,"reasoning":{"thinking":{"adaptive":"summarized"},"effort":"xhigh"},"temperature":0.5,"topP":0.9,"toolChoice":"none","outputSchema":{"name":"response","schema":"{\"type\":\"object\"}","strict":true}}"#,
             ),
             (
                 Settings::new().thinking(Thinking::Budget(2048)),
-                r#"{"system":"","maxOutputTokens":null,"reasoning":{"thinking":{"budget":2048},"effort":null},"temperature":null,"topP":null,"toolChoice":"auto","outputSchema":null}"#,
+                r#"{"maxOutputTokens":null,"reasoning":{"thinking":{"budget":2048},"effort":null},"temperature":null,"topP":null,"toolChoice":"auto","outputSchema":null}"#,
             ),
             (
                 Settings::new().thinking(Thinking::Off),
-                r#"{"system":"","maxOutputTokens":null,"reasoning":{"thinking":"off","effort":null},"temperature":null,"topP":null,"toolChoice":"auto","outputSchema":null}"#,
+                r#"{"maxOutputTokens":null,"reasoning":{"thinking":"off","effort":null},"temperature":null,"topP":null,"toolChoice":"auto","outputSchema":null}"#,
             ),
         ];
         for (settings, json) in cases {

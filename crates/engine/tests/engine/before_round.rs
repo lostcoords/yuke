@@ -15,20 +15,21 @@ fn other_target(model: &'static str) -> Target {
     }
 }
 
-/// Settings with the system prompt `system`.
-fn system(system: &str) -> Settings {
-    Settings::new().system(system)
+/// Settings with the sampling temperature `value`.
+fn temperature(value: f64) -> Settings {
+    Settings::new().temperature(value)
 }
 
 #[test]
-fn the_driver_settings_reach_each_request() {
+fn the_driver_system_prompt_and_settings_reach_each_request() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
     let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
-    let settings = system("Be brief.");
+    let settings = temperature(0.25);
     let driver = Driver::new(&transport, &model, &NoWait)
         .toolset(&toolset)
+        .system("Be brief.")
         .settings(&settings);
 
     block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
@@ -37,6 +38,7 @@ fn the_driver_settings_reach_each_request() {
     assert_eq!(requests.len(), 2);
     for request in &requests {
         assert!(request.contains("Be brief."), "{request}");
+        assert!(request.contains(r#""temperature":0.25"#), "{request}");
     }
 }
 
@@ -49,7 +51,7 @@ fn a_plan_target_and_settings_apply_to_their_round_only() {
     let hooks = Script::default().plans([
         RoundPlan {
             model: Some(model_of(other_target("router-model"))),
-            settings: Some(system("First round.")),
+            settings: Some(temperature(0.25)),
             ..RoundPlan::default()
         },
         RoundPlan::default(),
@@ -60,9 +62,9 @@ fn a_plan_target_and_settings_apply_to_their_round_only() {
 
     let requests = transport.requests();
     assert!(requests[0].contains(r#""model":"router-model""#), "{}", requests[0]);
-    assert!(requests[0].contains("First round."), "{}", requests[0]);
+    assert!(requests[0].contains(r#""temperature":0.25"#), "{}", requests[0]);
     assert!(requests[1].contains(r#""model":"test-model""#), "{}", requests[1]);
-    assert!(!requests[1].contains("First round."), "{}", requests[1]);
+    assert!(!requests[1].contains("temperature"), "{}", requests[1]);
 }
 
 #[test]
@@ -146,7 +148,7 @@ fn a_retry_plan_without_a_model_runs_again_on_the_driver_model() {
     let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("done")]);
     let model = model();
     let hooks = Script::default().retries([Some(RoundPlan {
-        settings: Some(system("Try harder.")),
+        settings: Some(temperature(0.75)),
         ..RoundPlan::default()
     })]);
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
@@ -157,7 +159,7 @@ fn a_retry_plan_without_a_model_runs_again_on_the_driver_model() {
     let requests = transport.requests();
     assert_eq!(requests.len(), 2);
     assert!(requests[1].contains(r#""model":"test-model""#), "{}", requests[1]);
-    assert!(requests[1].contains("Try harder."), "{}", requests[1]);
+    assert!(requests[1].contains(r#""temperature":0.75"#), "{}", requests[1]);
 }
 
 #[test]

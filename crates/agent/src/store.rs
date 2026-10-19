@@ -18,17 +18,19 @@ use yuke_protocol::{
 /// with the commit that consumes it.
 #[async_trait]
 pub trait Store: Send + Sync {
-    /// Save a new session with `settings`, and open it for writing. Its first event holds the settings.
+    /// Save a new session with `settings` and the system prompt `prompt`, and open it for writing. Its first event
+    /// holds the settings. The prompt never changes.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError::Failed`] when the save fails.
-    async fn create_session(&self, settings: &SessionSettings) -> Result<Opened, StoreError>;
+    async fn create_session(&self, settings: &SessionSettings, prompt: &str) -> Result<Opened, StoreError>;
 
     /// Save a new session with the events of session `source` up to the end of a completed turn, and open it for
     /// writing. `through` is the event number of that end. `None` takes the newest completed turn, and a source with no
-    /// completed turn gives the settings before its first commit. The copy has the settings at that point, every blob of
-    /// the source, no pending input, and no open turn. A writer of `source` can keep its lease during the fork.
+    /// completed turn gives the settings before its first commit. The copy has the settings at that point and every
+    /// blob of the source, no pending input, and no open turn. It also has the prompt of the source. A writer of
+    /// `source` can keep its lease during the fork.
     ///
     /// # Errors
     ///
@@ -185,6 +187,8 @@ pub struct Opened {
     pub id: SessionId,
     /// The current settings.
     pub settings: SessionSettings,
+    /// The system prompt of the session.
+    pub prompt: String,
     /// The model context: the head of the newest replacement, the blocks that it keeps, and the blocks after it.
     pub context: Vec<yuke_ai::Block>,
     /// The newest turn of the session.

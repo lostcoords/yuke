@@ -4,14 +4,10 @@ import type { ReasoningSettings } from "./ReasoningSettings";
 import type { ToolChoice } from "./ToolChoice";
 
 /**
- * The settings of a request apart from its context, its tools, and its blobs. A caller can store one for each
- * session, and [`Request::settings`] applies it. It names no model and holds no secret.
+ * The settings of a request apart from its system prompt, its context, its tools, and its blobs. A caller can store
+ * one for each session, and [`Request::settings`] applies it. It names no model and holds no secret.
  */
 export type Settings = { 
-/**
- * The system prompt. An empty prompt writes none.
- */
-system: string, 
 /**
  * The output limit. `None` leaves the endpoint default.
  */

@@ -2,7 +2,8 @@
 -- that only yuke reads back is JSON. Facts that a query can ask about are columns.
 
 CREATE TABLE sessions (
-    id BLOB PRIMARY KEY NOT NULL           -- 16 bytes of a version 7 UUID, so new rows go near the end of the key
+    id BLOB PRIMARY KEY NOT NULL,          -- 16 bytes of a version 7 UUID, so new rows go near the end of the key
+    prompt TEXT NOT NULL                   -- the system prompt of the session. A create sets it, and a fork copies it.
 ) STRICT;
 
 CREATE TABLE events (                      -- the commits and the settings of each session, numbered 1, 2, 3, and so on

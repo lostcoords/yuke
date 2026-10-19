@@ -488,20 +488,14 @@ mod tests {
                 &mut encoder,
                 "m",
                 first,
-                Request::new(&blocks)
-                    .tools(&before)
-                    .blobs(&counter)
-                    .settings(&Settings::new().system("s")),
+                Request::new(&blocks).tools(&before).blobs(&counter).system("s"),
             )
             .unwrap();
             encode_checked(
                 &mut encoder,
                 "m",
                 second,
-                Request::new(&blocks)
-                    .tools(&after)
-                    .blobs(&counter)
-                    .settings(&Settings::new().system("t")),
+                Request::new(&blocks).tools(&after).blobs(&counter).system("t"),
             )
             .unwrap();
             // `encode_checked` reads the image once more for its fresh encoding of each request.
@@ -710,8 +704,8 @@ mod tests {
         for wire in ALL_WIRES {
             let mut encoder = Encoder::new();
             for blocks in rounds {
-                let settings = Settings::new().system("s").max_output_tokens(8);
-                let request = Request::new(blocks).blobs(&TestBlobs).settings(&settings);
+                let settings = Settings::new().max_output_tokens(8);
+                let request = Request::new(blocks).blobs(&TestBlobs).system("s").settings(&settings);
                 encode_checked(&mut encoder, "m", wire, request).unwrap();
             }
         }
@@ -974,7 +968,7 @@ mod tests {
                 .encode(
                     &target,
                     &Credential::ApiKey(secret.into()),
-                    Request::new(&blocks).settings(&Settings::new().system(&system)),
+                    Request::new(&blocks).system(&system),
                 )
                 .unwrap()
         };
@@ -1001,7 +995,7 @@ mod tests {
                 .encode(
                     &target_of("m", wire),
                     &Credential::None,
-                    Request::new(&[]).settings(&Settings::new().system("be brief")),
+                    Request::new(&[]).system("be brief"),
                 )
                 .unwrap();
             assert!(serde_json::from_slice::<serde_json::Value>(&body(&encoded)).is_ok());

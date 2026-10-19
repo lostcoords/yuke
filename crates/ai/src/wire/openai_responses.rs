@@ -46,8 +46,8 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire
         jw.end_object();
     }
 
-    if !request.settings.system.is_empty() {
-        jw.field_str("instructions", &request.settings.system);
+    if !request.system.is_empty() {
+        jw.field_str("instructions", request.system);
     }
 
     // A deferred tool needs the native search tool, so a request that defers declares the search tool natively.
@@ -392,7 +392,9 @@ mod tests {
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":1024,"instructions":"be brief","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}"#,
             "gpt-5",
             responses(),
-            Request::new(&blocks).settings(&Settings::new().system("be brief").max_output_tokens(1024)),
+            Request::new(&blocks)
+                .system("be brief")
+                .settings(&Settings::new().max_output_tokens(1024)),
         );
     }
 
@@ -669,7 +671,7 @@ mod tests {
             r#"{"model":"gpt-5","stream":true,"store":false,"instructions":"be brief","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}"#,
             "gpt-5",
             codex(),
-            Request::new(&blocks).settings(&settings.clone().system("be brief")),
+            request.system("be brief"),
         );
     }
 

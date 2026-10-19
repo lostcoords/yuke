@@ -134,18 +134,22 @@ impl SqliteStore {
 
 #[async_trait]
 impl Store for SqliteStore {
-    async fn create_session(&self, settings: &SessionSettings) -> Result<Opened, StoreError> {
+    async fn create_session(&self, settings: &SessionSettings, prompt: &str) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
         let folder = self.folder(id);
         let sessions_folder = self.sessions.clone();
         let session = *id.as_bytes();
         let settings_json = serde_json::to_string(settings).map_err(failed)?;
+        let params = sessions::InsertSessionParams {
+            id: session,
+            prompt: prompt.to_owned(),
+        };
 
         let lock = self
             .call(move |connection| {
                 // No other process knows the new id yet, so the rows can come first. Then each folder that the sweep
                 // finds for a live session has its row.
-                insert_session(connection, session, settings_json).map_err(failed)?;
+                insert_session(connection, &params, settings_json).map_err(failed)?;
                 let locked = files::take_lock(&folder).and_then(|lock| {
                     // A crash must not lose the entry of the new folder, so the call syncs the folder that holds it.
                     files::sync_folder(&sessions_folder).map_err(failed)?;
@@ -162,6 +166,7 @@ impl Store for SqliteStore {
         Ok(Opened {
             id,
             settings: settings.clone(),
+            prompt: prompt.to_owned(),
             context: Vec::new(),
             newest_turn: NewestTurn::Empty,
             lease: Some(self.lease(id, lock)),
@@ -429,11 +434,15 @@ fn read<T>(
 }
 
 /// Save a new session row and its first event, which holds its settings, in one transaction.
-fn insert_session(connection: &mut Connection, session: [u8; 16], settings: String) -> rusqlite::Result<()> {
+fn insert_session(
+    connection: &mut Connection,
+    session: &sessions::InsertSessionParams,
+    settings: String,
+) -> rusqlite::Result<()> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     sessions::insert_session(&transaction, session)?;
     let params = events::InsertSettingsParams {
-        session_id: session,
+        session_id: session.id,
         settings,
     };
     events::insert_settings(&transaction, &params).one()?;
@@ -531,7 +540,11 @@ fn copy_rows(connection: &mut Connection, rows: &events::CopyEventsParams) -> Re
         .map_err(failed)?;
     // Another writer can delete the source between the read of the cut and this write.
     ensure_session(&transaction, rows.source)?;
-    sessions::insert_session(&transaction, rows.session_id).map_err(failed)?;
+    let session = sessions::CopySessionParams {
+        source: rows.source,
+        id: rows.session_id,
+    };
+    sessions::copy_session(&transaction, &session).map_err(failed)?;
     events::copy_events(&transaction, rows).map_err(failed)?;
     transaction.commit().map_err(failed)
 }

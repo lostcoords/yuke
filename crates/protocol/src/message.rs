@@ -55,8 +55,8 @@ pub enum ClientRequest {
     /// Agree on the protocol version. The first request of a connection.
     #[serde(rename = "initialize")]
     Initialize(InitializeParams),
-    /// Create a session with these settings. Each field is required. The server replaces the system prompt of the client
-    /// with the prompt of the session folder. Result: [`SessionResult`].
+    /// Create a session with these settings. Each field is required. The server builds the system prompt of the session
+    /// from its folder. Result: [`SessionResult`].
     #[serde(rename = "session/new")]
     NewSession(SessionSettings),
     /// Fork a session at the end of a completed turn. Result: [`SessionResult`].

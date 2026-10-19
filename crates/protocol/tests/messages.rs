@@ -25,7 +25,7 @@ fn settings_json() -> Value {
     json!({
         "model": { "provider": "test", "model": "test-model" },
         "settings": {
-            "system": "", "maxOutputTokens": null, "reasoning": { "thinking": null, "effort": null },
+            "maxOutputTokens": null, "reasoning": { "thinking": null, "effort": null },
             "temperature": null, "topP": null, "toolChoice": "auto", "outputSchema": null
         },
         "cwd": "/work"

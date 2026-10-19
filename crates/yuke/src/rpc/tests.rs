@@ -366,19 +366,22 @@ async fn a_running_session_refuses_new_settings_and_a_cancel_ends_its_turn() {
 }
 
 #[tokio::test]
-async fn the_server_writes_the_system_prompt_of_a_new_session() {
-    let place = Place::new("rpc", "the_server_writes_the_system_prompt_of_a_new_session");
+async fn the_server_builds_the_prompt_of_a_new_session_from_its_folder() {
+    let place = Place::new("rpc", "the_server_builds_the_prompt_of_a_new_session_from_its_folder");
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
-    let mut settings = settings(&place);
-    settings["settings"]["system"] = json!("the prompt of the client");
 
-    let session = client.call("session/new", settings).await.unwrap()["sessionId"].clone();
-    let id = client.request("session/load", json!({ "sessionId": session })).await;
-    let messages = client.until(|message| message["id"] == json!(id)).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
 
-    let system = messages[0]["params"]["update"]["settings"]["system"].as_str().unwrap();
-    assert!(!system.contains("the prompt of the client"), "{system}");
-    assert!(system.contains(place.work.to_str().unwrap()), "{system}");
+    let id: SessionId = serde_json::from_value(session).unwrap();
+    let prompt = place
+        .store()
+        .await
+        .open(id, yuke_agent::Access::Read)
+        .await
+        .unwrap()
+        .prompt;
+    assert!(prompt.starts_with("You are yuke"), "{prompt}");
+    assert!(prompt.contains(place.work.to_str().unwrap()), "{prompt}");
     client.end().await;
 }
 
@@ -591,7 +594,7 @@ async fn saved_session(place: &Place, provider: &str, model: &str) -> SessionId 
         settings: yuke_ai::Settings::new(),
         cwd: place.work.clone(),
     };
-    let session = Session::create(store, &settings).await.unwrap();
+    let session = Session::create(store, &settings, "the prompt").await.unwrap();
     let input = Input::new(InputSource::User, vec![yuke_ai::Block::user_text("waiting")]).unwrap();
     session.input().send(input).await.unwrap();
     session.id()

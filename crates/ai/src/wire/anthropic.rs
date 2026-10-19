@@ -38,12 +38,12 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: AnthropicWire
         }
         jw.end_object();
     }
-    if !request.settings.system.is_empty() {
+    if !request.system.is_empty() {
         jw.key("system");
         jw.begin_array();
         jw.begin_object();
         jw.field_str("type", "text");
-        jw.field_str("text", &request.settings.system);
+        jw.field_str("text", request.system);
         write_cache_control(&mut jw, wire.cache);
         jw.end_object();
         jw.end_array();
@@ -335,7 +335,9 @@ mod tests {
             r#"{"model":"claude","max_tokens":1024,"stream":true,"system":[{"type":"text","text":"be brief"}],"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).settings(&Settings::new().system("be brief").max_output_tokens(1024)),
+            Request::new(&blocks)
+                .system("be brief")
+                .settings(&Settings::new().max_output_tokens(1024)),
         );
     }
 
@@ -516,7 +518,9 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"system":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"one"},{"type":"text","text":"two","cache_control":{"type":"ephemeral"}}]}]}"#,
             "claude",
             cached(8),
-            Request::new(&blocks).settings(&Settings::new().system("sys").max_output_tokens(8)),
+            Request::new(&blocks)
+                .system("sys")
+                .settings(&Settings::new().max_output_tokens(8)),
         );
     }
 

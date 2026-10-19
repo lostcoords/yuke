@@ -70,12 +70,12 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ChatWire, req
 
     jw.key("messages");
     jw.begin_array();
-    if request.settings.system.is_empty() {
+    if request.system.is_empty() {
         return false;
     }
     jw.begin_object();
     jw.field_str("role", "system");
-    jw.field_str("content", &request.settings.system);
+    jw.field_str("content", request.system);
     jw.end_object();
     true
 }
@@ -550,7 +550,9 @@ mod tests {
                 &expected,
                 "m",
                 replaying(ReasoningReplayMode::ReasoningContent),
-                Request::new(blocks).settings(&Settings::new().max_output_tokens(8).system(system)),
+                Request::new(blocks)
+                    .system(system)
+                    .settings(&Settings::new().max_output_tokens(8)),
             );
         }
     }
@@ -655,7 +657,9 @@ mod tests {
             r#"{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_tokens":1024,"messages":[{"role":"system","content":"be brief"},{"role":"user","content":[{"type":"text","text":"hello"}]}]}"#,
             "gpt",
             chat(),
-            Request::new(&blocks).settings(&Settings::new().system("be brief").max_output_tokens(1024)),
+            Request::new(&blocks)
+                .system("be brief")
+                .settings(&Settings::new().max_output_tokens(1024)),
         );
     }
 

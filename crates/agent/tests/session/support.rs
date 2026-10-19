@@ -102,8 +102,8 @@ impl FailingStore {
 
 #[async_trait]
 impl Store for FailingStore {
-    async fn create_session(&self, settings: &SessionSettings) -> Result<Opened, StoreError> {
-        self.store.create_session(settings).await
+    async fn create_session(&self, settings: &SessionSettings, prompt: &str) -> Result<Opened, StoreError> {
+        self.store.create_session(settings, prompt).await
     }
 
     async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError> {
