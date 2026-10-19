@@ -152,7 +152,7 @@ async fn a_name_that_an_earlier_plugin_holds_fails_only_the_later_plugin() {
     assert_eq!(notice.source, "second");
     assert_eq!(
         notice.message,
-        "the session setup failed, and its tools are gone: TypeError: the session already has a tool with the name 'shared'"
+        "the session setup failed, and its tools and hooks are gone: TypeError: the session already has a tool with the name 'shared'"
     );
 }
 
@@ -308,7 +308,7 @@ async fn a_failed_session_drops_only_its_tools_aborts_its_signal_and_sends_one_n
             session_id: Some(host.session),
             level: NoticeLevel::Error,
             source: "bad".to_owned(),
-            message: "the session setup failed, and its tools are gone: Error: broken".to_owned(),
+            message: "the session setup failed, and its tools and hooks are gone: Error: broken".to_owned(),
         }
     );
     assert!(reports.try_recv().is_err(), "a second report came");
@@ -342,7 +342,7 @@ async fn a_session_that_throws_at_once_drops_its_tools_and_sends_a_notice() {
     assert_eq!(tools.names(), Vec::<&str>::new());
     assert_eq!(
         notice.message,
-        "the session setup failed, and its tools are gone: Error: at once"
+        "the session setup failed, and its tools and hooks are gone: Error: at once"
     );
 }
 
@@ -375,7 +375,7 @@ async fn a_session_that_returns_a_value_that_is_no_cleanup_fails() {
     assert_eq!(tools.names(), Vec::<&str>::new());
     assert_eq!(
         notice.message,
-        "the session setup failed, and its tools are gone: TypeError: session must return nothing or a cleanup function"
+        "the session setup failed, and its tools and hooks are gone: TypeError: session must return nothing or a cleanup function"
     );
 }
 
@@ -394,7 +394,7 @@ async fn a_tool_of_a_session_with_the_name_of_a_tool_of_yuke_fails_its_session()
     assert_eq!(tools.names(), ["read", "write", "edit", "exec", "stop"]);
     assert_eq!(
         notice.message,
-        "the session setup failed, and its tools are gone: TypeError: the session already has a tool with the name 'read'"
+        "the session setup failed, and its tools and hooks are gone: TypeError: the session already has a tool with the name 'read'"
     );
 }
 

@@ -1,7 +1,7 @@
 /**
  * The plugin API. The entry module of a plugin exports `apply`, `session`, or both. `apply(ctx)` runs once per runtime,
- * for the parts that every session shares. `session(s)` runs once per session, for the tools of that session. The
- * declarations need TypeScript 5.4 or later.
+ * for the parts that every session shares. `session(s)` runs once per session, for the tools and hooks of that
+ * session. The declarations need TypeScript 5.4 or later.
  *
  * Errors: a misuse of the API throws a `TypeError`. A cancellation aborts a signal with a `DOMException` named
  * `AbortError`. A tool that throws, or a result with `isError: true`, gives the model an error result. A notice only
@@ -41,6 +41,30 @@ export interface PluginContext {
   readonly notify: (level: NoticeLevel, message: string) => void;
 }
 
+/** What a `prompt.build` handler gets. The handler edits `sections` and returns nothing. */
+export interface PromptBuild {
+  /**
+   * The system prompt sections of the turn, by key, in order. An assignment to a key replaces its text, or adds the
+   * section at the end. A `delete` removes the section. A new object sets a new order. Each key matches
+   * `^[a-z][a-z0-9_-]*$`, and each text is a string. The model reads each section between `<key>` and `</key>`, except
+   * `base`. An empty text adds nothing.
+   */
+  sections: Record<string, string>;
+  /** The host aborts this signal when the turn is cancelled. */
+  readonly signal: AbortSignal;
+}
+
+/** The hooks of a session, by point. The host awaits each handler. */
+export interface SessionHooks {
+  /**
+   * Edit the system prompt of a turn. The handlers run once before each turn, after `session` of each plugin settles.
+   * When a handler throws, the host sends a notice and starts no turn. The input stays pending until the next input.
+   * The edits are for that turn only. A text that changes at each turn makes each turn miss the prompt cache of the
+   * provider.
+   */
+  "prompt.build": (build: PromptBuild) => undefined | Promise<undefined>;
+}
+
 /** What `session` of a plugin gets for one session. */
 export interface SessionContext {
   /** The id of the session. */
@@ -54,6 +78,12 @@ export interface SessionContext {
     /** Define `tool` for this session. `execute` gets the arguments with the types of `parameters`. */
     readonly define: <const S extends ObjectSchema>(tool: Tool<S>) => void;
   };
+  /**
+   * Add `handler` to the hook `point` of this session. The handlers of a point run in plugin order, then in the order
+   * of their addition. The returned function removes the handler. An addition or a removal during a run of the point
+   * changes the next run.
+   */
+  readonly hook: <K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]) => () => void;
   /** Send a notice of this session with this plugin as its source. */
   readonly notify: (level: NoticeLevel, message: string) => void;
 }

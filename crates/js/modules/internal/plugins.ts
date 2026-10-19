@@ -1,7 +1,16 @@
 import { defineTool } from "yuke:internal/define";
 import { hostSignal } from "yuke:internal/events";
 import { notify, unregister } from "yuke:internal/native";
-import type { NoticeLevel, PluginContext, PluginSession, Services, SessionCleanup, SessionContext } from "yuke:plugins";
+import type {
+  NoticeLevel,
+  PluginContext,
+  PluginSession,
+  PromptBuild,
+  Services,
+  SessionCleanup,
+  SessionContext,
+  SessionHooks,
+} from "yuke:plugins";
 import type { ObjectSchema, Tool } from "yuke:tools";
 
 /** One plugin as the host gives it. The host checked the manifest, the order, and the providers before any plugin code. */
@@ -21,13 +30,23 @@ const services = new Map<string, unknown>();
 /** The `session` export of each loaded plugin, in load order. */
 const sessionExports: { readonly plugin: string; readonly session: PluginSession }[] = [];
 
+/** The form of a prompt section key. */
+const sectionKey = /^[a-z][a-z0-9_-]*$/;
+
+/** The handlers of each hook point, in the order of their addition. Each point of `SessionHooks` is a key. */
+type HookLists = { readonly [K in keyof SessionHooks]: SessionHooks[K][] };
+
 /** The part of one plugin in one open session. */
 interface Scope {
-  /** Set before the abort, so neither an abort listener nor a cleanup can define a tool. */
+  /** The name of the plugin. */
+  readonly plugin: string;
+  /** Set before the abort, so neither an abort listener nor a cleanup can define a tool or add a hook. */
   closed: boolean;
   readonly abort: (reason: string) => void;
   /** The ids of the tools that the scope defined. */
   readonly tools: number[];
+  /** The hook handlers of the scope. */
+  readonly hooks: HookLists;
   /** Settles with the cleanup that `session` returns, or `undefined` after a failure. It never rejects. */
   settled: Promise<SessionCleanup | undefined>;
   /** Run `cleanup`. A failure is a notice. */
@@ -117,6 +136,74 @@ export function ready(open: number): Promise<void> {
 }
 
 /**
+ * Start the `prompt.build` handlers of the open session `open` on `sections`, after `session` of each plugin settles.
+ * Each handler sees the edits of the handlers before it. The answer is the sections after the last handler, and
+ * `sections` for a closed session. `abort` aborts the signal of the build.
+ */
+export function startPromptBuild(
+  open: number,
+  sections: readonly (readonly [string, string])[],
+): { readonly answer: Promise<[string, string][]>; readonly abort: () => void } {
+  const { signal, abort } = hostSignal();
+  const answer = (async (): Promise<[string, string][]> => {
+    const state = opens.get(open);
+    if (state === undefined) return sections.map(([key, text]) => [key, text]);
+    await state.ready;
+    const build: PromptBuild = { sections: Object.fromEntries(sections), signal };
+    for (const scope of state.scopes) {
+      // An addition or a removal during a build changes the next build.
+      for (const handler of [...scope.hooks["prompt.build"]]) {
+        if (scope.closed) break;
+        let problem: string | undefined;
+        try {
+          const result: unknown = await handler(build);
+          // A getter in the sections is code of the plugin, so the check runs in the same `try`.
+          problem =
+            result === undefined ? sectionProblem(build.sections) : "returned a value: a handler returns nothing";
+        } catch (error) {
+          throw hookFailure(scope.plugin, error);
+        }
+        if (problem !== undefined) throw new TypeError(`prompt.build of plugin ${scope.plugin} ${problem}`);
+      }
+    }
+    return Object.entries(build.sections);
+  })();
+  const cancel = (): void => {
+    // The host stops its wait at a cancel, so a later failure of the build has no reader and is no fault.
+    answer.catch(() => undefined);
+    abort("the turn was cancelled");
+  };
+  return { answer, abort: cancel };
+}
+
+/** The error of a `prompt.build` handler of `plugin` that threw `error`. It keeps the stack of `error`. */
+function hookFailure(plugin: string, error: unknown): Error {
+  let text: string;
+  try {
+    text = String(error);
+  } catch {
+    text = "a value without a text form";
+  }
+  const failure = new Error(`prompt.build of plugin ${plugin} failed: ${text}`);
+  // The stack of the host code tells the author nothing.
+  if (error instanceof Error && error.stack !== undefined) failure.stack = error.stack;
+  else delete failure.stack;
+  return failure;
+}
+
+/** What is wrong with `sections` after a handler, or `undefined` for an object of valid keys and string texts. */
+function sectionProblem(sections: unknown): string | undefined {
+  if (typeof sections !== "object" || sections === null || Array.isArray(sections)) {
+    return "set build.sections to a value that is not an object";
+  }
+  for (const [key, text] of Object.entries(sections)) {
+    if (!sectionKey.test(key)) return `left the key '${key}', which does not match ${sectionKey}`;
+    if (typeof text !== "string") return `left the section '${key}' with a text that is not a string`;
+  }
+  return undefined;
+}
+
+/**
  * Close the open session `open`: mark each scope closed, abort each signal, and await each cleanup. The close waits
  * for each `session` to settle, also one that ignores the abort. A failed cleanup sends a notice.
  */
@@ -145,7 +232,15 @@ function start(open: number, sessionId: string, folder: string, plugin: string, 
       report(`the cleanup of the session failed: ${String(error)}`);
     }
   };
-  const scope: Scope = { closed: false, abort, tools: [], settled: Promise.resolve(undefined), clean };
+  const scope: Scope = {
+    plugin,
+    closed: false,
+    abort,
+    tools: [],
+    hooks: { "prompt.build": [] },
+    settled: Promise.resolve(undefined),
+    clean,
+  };
   const s: SessionContext = Object.freeze({
     sessionId,
     folder,
@@ -156,6 +251,20 @@ function start(open: number, sessionId: string, folder: string, plugin: string, 
         scope.tools.push(defineTool(tool, open));
       },
     }),
+    hook<K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]): () => void {
+      if (scope.closed) throw new TypeError(`plugin ${plugin} adds a hook after the end of its session`);
+      if (!Object.hasOwn(scope.hooks, point)) throw new TypeError(`hook: '${String(point)}' is no hook point`);
+      if (typeof handler !== "function") throw new TypeError("hook: the handler is no function");
+      const handlers: SessionHooks[K][] = scope.hooks[point];
+      handlers.push(handler);
+      let added = true;
+      // A handler can be in the list twice, so each remover removes one entry once.
+      return () => {
+        if (!added) return;
+        added = false;
+        handlers.splice(handlers.indexOf(handler), 1);
+      };
+    },
     notify(level: NoticeLevel, message: string): void {
       notify(plugin, level, String(message), sessionId);
     },
@@ -173,7 +282,7 @@ function start(open: number, sessionId: string, folder: string, plugin: string, 
       scope.closed = true;
       unregister(scope.tools);
       abort(`session of plugin ${plugin} failed`);
-      report(`the session setup failed, and its tools are gone: ${String(error)}`);
+      report(`the session setup failed, and its tools and hooks are gone: ${String(error)}`);
       return undefined;
     }
   })();

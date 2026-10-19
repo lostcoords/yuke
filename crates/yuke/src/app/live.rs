@@ -408,9 +408,18 @@ impl SessionTask {
                 tools = self.script.tools() => toolset_of(tools),
                 () = token.cancelled() => Ok(Toolset::new()),
             };
-            let ended = match toolset {
+            let prepared = match toolset {
+                Ok(toolset) => self
+                    .script
+                    .build_prompt(session.prompt(), &token)
+                    .await
+                    .map(|prompt| (toolset, prompt))
+                    .map_err(|error| chain_text(&error)),
+                Err(error) => Err(error),
+            };
+            let ended = match prepared {
                 // The turn runs in its own task, so a panic of the turn cannot leave the session running.
-                Ok(toolset) => {
+                Ok((toolset, prompt)) => {
                     let shared = Arc::clone(&self.host.shared);
                     let output = Arc::clone(output);
                     // The session saves a round failure as the end of the turn.
@@ -419,6 +428,7 @@ impl SessionTask {
                         let driver = Driver::new(&*shared.machine.transport, &model, &TokioTimer).toolset(&toolset);
                         session
                             .turn(driver)
+                            .prompt(prompt)
                             .observer(&*output)
                             .cancellation_token(token)
                             .run()

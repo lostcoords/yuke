@@ -20,6 +20,7 @@ sha2 = { version = "0.11.0", default-features = false }
 # rustix sends the signals to the process group of a command. It is a safe wrapper of the system call.
 rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
 tokio = { version = "1.53", features = ["macros", "process", "rt", "sync", "time"] }
+yuke-agent = { path = "../agent" }
 yuke-ai = { path = "../ai", default-features = false }
 yuke-engine = { path = "../engine" }
 yuke-protocol = { path = "../protocol" }

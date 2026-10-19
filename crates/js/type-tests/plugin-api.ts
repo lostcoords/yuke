@@ -1,5 +1,5 @@
 // Type checks of the author API. `tsc -p crates/js/tsconfig.json` runs them; nothing executes this file.
-import type { PluginApply, PluginContext, PluginSession, SessionContext } from "yuke:plugins";
+import type { PluginApply, PluginContext, PluginSession, PromptBuild, SessionContext } from "yuke:plugins";
 import type { Infer, ObjectSchema, ToolResult } from "yuke:tools";
 
 /** `true` only when `A` and `B` are the same type. */
@@ -141,3 +141,21 @@ async function files(): Promise<void> {
 void files;
 
 export { results };
+
+// A `prompt.build` handler gets the sections and the signal, edits the sections, and returns nothing.
+const remove: () => void = s.hook("prompt.build", (build) => {
+  assert<Equal<typeof build, PromptBuild>>();
+  assert<Equal<typeof build.sections, Record<string, string>>>();
+  build.sections.rules = "Be brief.";
+  // @ts-expect-error: the signal belongs to the host.
+  build.signal = new AbortController().signal;
+});
+remove();
+s.hook("prompt.build", async (build) => {
+  await Promise.resolve();
+  delete build.sections.environment;
+});
+// @ts-expect-error: a handler returns nothing.
+s.hook("prompt.build", () => "done");
+// @ts-expect-error: no hook has this point.
+s.hook("turn.start", () => undefined);

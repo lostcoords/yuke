@@ -388,7 +388,7 @@ async fn a_bad_tool_definition_fails_the_session_with_a_notice_that_names_its_pr
         assert!(tools.names().is_empty(), "{tool}");
         let failure = notice
             .message
-            .strip_prefix("the session setup failed, and its tools are gone: TypeError: ")
+            .strip_prefix("the session setup failed, and its tools and hooks are gone: TypeError: ")
             .unwrap_or_else(|| panic!("{tool}: {}", notice.message));
         assert!(failure.contains(expected), "{tool}: {failure}");
     }

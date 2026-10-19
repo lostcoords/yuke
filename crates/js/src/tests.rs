@@ -2,6 +2,7 @@ mod exec;
 mod fs;
 mod globals;
 mod plugins;
+mod prompt;
 mod sessions;
 mod tools;
 mod web;

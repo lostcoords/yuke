@@ -762,6 +762,84 @@ async fn a_cancel_and_a_close_end_a_turn_that_waits_for_the_plugins_of_its_sessi
 }
 
 #[tokio::test]
+async fn the_prompt_hook_edits_the_request_of_each_turn_and_the_session_keeps_its_saved_prompt() {
+    let place = Place::new(
+        "rpc",
+        "the_prompt_hook_edits_the_request_of_each_turn_and_the_session_keeps_its_saved_prompt",
+    );
+    place.plugin(
+        "counted",
+        "let count = 0;
+         export function session(s) {
+           s.hook('prompt.build', (build) => { count += 1; build.sections.turn = `number ${count}`; });
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["counted"] }"#).unwrap();
+    let transport = ScriptedTransport::new([text_reply("one"), text_reply("two")]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+    let id: SessionId = serde_json::from_value(session.clone()).unwrap();
+    let created = place
+        .store()
+        .await
+        .open(id, yuke_agent::Access::Read)
+        .await
+        .unwrap()
+        .prompt;
+
+    client.request("session/input", input_params(&session, "first")).await;
+    client.until(is_idle).await;
+    client.request("session/input", input_params(&session, "second")).await;
+    client.until(is_idle).await;
+
+    let requests = transport.requests();
+    assert!(requests[0].contains(r"<turn>\nnumber 1\n</turn>"), "{}", requests[0]);
+    assert!(requests[1].contains(r"<turn>\nnumber 2\n</turn>"), "{}", requests[1]);
+    assert!(!requests[1].contains("number 1"), "{}", requests[1]);
+    let saved = place
+        .store()
+        .await
+        .open(id, yuke_agent::Access::Read)
+        .await
+        .unwrap()
+        .prompt;
+    assert_eq!(saved, created);
+    client.end().await;
+}
+
+#[tokio::test]
+async fn a_failed_prompt_hook_sends_a_notice_starts_no_turn_and_leaves_the_input_pending() {
+    let place = Place::new(
+        "rpc",
+        "a_failed_prompt_hook_sends_a_notice_starts_no_turn_and_leaves_the_input_pending",
+    );
+    place.plugin(
+        "broken",
+        "export function session(s) { s.hook('prompt.build', () => { throw new Error('no prompt'); }); }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["broken"] }"#).unwrap();
+    let transport = ScriptedTransport::new([text_reply("unused")]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+
+    client.request("session/input", input_params(&session, "hi")).await;
+    let messages = client.until(is_idle).await;
+
+    let notice = messages.iter().find(|message| message["method"] == "notice").unwrap();
+    let text = notice["params"]["message"].as_str().unwrap();
+    assert!(
+        text.contains("prompt.build of plugin broken failed: Error: no prompt"),
+        "{text}"
+    );
+    // The notice keeps the stack of the throw, which names the entry of the plugin.
+    assert!(text.contains("broken/index.ts"), "{text}");
+    assert_eq!(transport.requests(), Vec::<String>::new());
+    let id: SessionId = serde_json::from_value(session).unwrap();
+    assert_eq!(place.store().await.pending(id).await.unwrap().len(), 1);
+    client.end().await;
+}
+
+#[tokio::test]
 async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_again() {
     let place = Place::new(
         "rpc",

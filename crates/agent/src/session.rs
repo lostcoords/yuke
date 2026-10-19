@@ -271,6 +271,7 @@ impl Session {
             driver,
             observer: None,
             cancellation_token: CancellationToken::new(),
+            prompt: None,
         }
     }
 }
@@ -368,6 +369,8 @@ pub struct SessionTurn<'s> {
     driver: Driver<'s>,
     observer: Option<&'s dyn SessionObserver>,
     cancellation_token: CancellationToken,
+    /// The prompt sections of this turn in place of the saved ones.
+    prompt: Option<Vec<PromptSection>>,
 }
 
 impl fmt::Debug for SessionTurn<'_> {
@@ -396,6 +399,15 @@ impl<'s> SessionTurn<'s> {
         }
     }
 
+    /// Use the system prompt sections `prompt` in this turn. The session does not save them, so the next turn uses the
+    /// saved sections again.
+    pub fn prompt(self, prompt: Vec<PromptSection>) -> Self {
+        SessionTurn {
+            prompt: Some(prompt),
+            ..self
+        }
+    }
+
     /// Run the turn until it ends. After a failed commit, or when the caller drops this future, the session is stale.
     ///
     /// # Errors
@@ -408,6 +420,7 @@ impl<'s> SessionTurn<'s> {
             driver,
             observer,
             cancellation_token,
+            prompt,
         } = self;
         if session.is_stale() {
             return Err(SessionError::Stale);
@@ -432,7 +445,7 @@ impl<'s> SessionTurn<'s> {
         };
         let input = turn_journal.take();
         let session_id = session.id.to_string();
-        let system = prompt_text(&session.prompt);
+        let system = prompt_text(prompt.as_deref().unwrap_or(&session.prompt));
         let turn = driver
             .system(&system)
             .settings(&session.settings.settings)

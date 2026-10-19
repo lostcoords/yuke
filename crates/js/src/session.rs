@@ -1,10 +1,13 @@
 //! These types open, use, and close one session of the plugins. Its tools are the tools of yuke and the tools that the
-//! `session` exports define.
+//! `session` exports define. Its hooks are the hooks that the `session` exports add.
 
 use std::rc::Rc;
 use std::sync::Arc;
 
-use rquickjs::{Ctx, Function, Promise};
+use rquickjs::convert::List;
+use rquickjs::{Ctx, Function, Object, Promise};
+use yuke_agent::PromptSection;
+use yuke_engine::CancellationToken;
 
 use crate::Runtime;
 use crate::error::{Error, caught};
@@ -91,6 +94,53 @@ impl ScriptSession {
             &self.host,
             open,
             entries,
+        ))
+    }
+
+    /// Run the `prompt.build` handlers of the plugins on `sections`, after `session(s)` of each plugin settles. Each
+    /// handler sees the edits of the handlers before it. When `token` is cancelled, the call aborts the signal of the
+    /// build and returns `sections` at once. A closed session also returns `sections`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Script`] when a handler throws, returns a value, or leaves a section that is not valid. Returns
+    /// [`Error::Stopped`] when the thread has ended.
+    pub async fn build_prompt(
+        &self,
+        sections: &[PromptSection],
+        token: &CancellationToken,
+    ) -> Result<Vec<PromptSection>, Error> {
+        let open = self.open;
+        // A `List` crosses as an array, so each section is a `[key, text]` pair.
+        let pairs: Vec<List<(String, String)>> = sections
+            .iter()
+            .map(|section| List((section.key.clone(), section.text.clone())))
+            .collect();
+        let token = token.clone();
+        let built = self
+            .caller
+            .run(async move |ctx: Ctx<'_>, _: Rc<Registry>| {
+                let start: Function<'_> = caught(&ctx, loader(&ctx).await?.get("startPromptBuild"))?;
+                let started: Object<'_> = caught(&ctx, start.call((open, pairs)))?;
+                let promise: Promise<'_> = caught(&ctx, started.get("answer"))?;
+                let abort: Function<'_> = caught(&ctx, started.get("abort"))?;
+                tokio::select! {
+                    answer = promise.into_future::<Vec<List<(String, String)>>>() => caught(&ctx, answer).map(Some),
+                    () = token.cancelled() => {
+                        caught(&ctx, abort.call::<_, ()>(()))?;
+                        Ok(None)
+                    }
+                }
+            })
+            .await?;
+        Ok(built.map_or_else(
+            || sections.to_vec(),
+            |pairs| {
+                pairs
+                    .into_iter()
+                    .map(|List((key, text))| PromptSection { key, text })
+                    .collect()
+            },
         ))
     }
 

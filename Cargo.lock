@@ -2313,6 +2313,7 @@ dependencies = [
  "rustix",
  "sha2",
  "tokio",
+ "yuke-agent",
  "yuke-ai",
  "yuke-engine",
  "yuke-protocol",
