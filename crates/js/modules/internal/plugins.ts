@@ -5,14 +5,13 @@ import type {
   NoticeLevel,
   PluginContext,
   PluginSession,
-  PromptBuild,
   ResultMedia,
   Services,
   SessionCleanup,
   SessionContext,
   SessionHooks,
-  ToolCallHook,
-  ToolResultHook,
+  ToolCall,
+  ToolCallResult,
 } from "yuke:plugins";
 import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
@@ -139,93 +138,66 @@ export function ready(open: number): Promise<void> {
 }
 
 /**
- * Start the `prompt.build` handlers of the open session `open` on `sections`, after `session` of each plugin settles.
- * Each handler sees the edits of the handlers before it. The answer is the sections after the last handler, and
- * `sections` for a closed session. `abort` aborts the signal of the build.
+ * Start the `prompt.build` handlers of the open session `open` on `sections`. Each handler gets the sections of the
+ * answer before it. The answer is the sections after the last handler, and `sections` for a closed session. `abort`
+ * aborts the signal of the build.
  */
 export function startPromptBuild(
   open: number,
   sections: readonly (readonly [string, string])[],
 ): Started<[string, string][]> {
   return started(async (signal) => {
-    const state = opens.get(open);
-    if (state === undefined) return sections.map(([key, text]) => [key, text]);
-    await state.ready;
-    const build: PromptBuild = { sections: Object.fromEntries(sections), signal };
-    for (const scope of state.scopes) {
-      // An addition or a removal during a build changes the next build.
-      for (const handler of [...scope.hooks["prompt.build"]]) {
-        if (scope.closed) break;
-        let problem: string | undefined;
-        try {
-          const result: unknown = await handler(build);
-          // A getter in the sections is code of the plugin, so the check runs in the same `try`.
-          problem =
-            result === undefined ? sectionProblem(build.sections) : "returned a value: a handler returns nothing";
-        } catch (error) {
-          throw hookFailure(scope.plugin, error);
-        }
-        if (problem !== undefined) throw new TypeError(`prompt.build of plugin ${scope.plugin} ${problem}`);
-      }
-    }
-    return Object.entries(build.sections);
+    let current: Readonly<Record<string, string>> = Object.freeze(Object.fromEntries(sections));
+    await runHandlers(
+      open,
+      "prompt.build",
+      (handler) => handler(Object.freeze({ sections: current, signal })),
+      (answer) => {
+        current = sectionsOf(answer);
+        return false;
+      },
+    );
+    return Object.entries(current);
   });
 }
 
 /**
  * Start the `tool.before` handlers of the open session `open` on one call. `id` is the id of the call, `name` is the
  * name of its tool, and `args` is its JSON text. The answer is the reason of the first block, or `undefined` when the
- * call runs. A closed session blocks nothing. `abort` aborts the signal of the call.
+ * call runs. A closed session blocks nothing. A failed handler throws. `abort` aborts the signal of the call.
  */
 export function startToolBefore(open: number, id: string, name: string, args: string): Started<string | undefined> {
   return started(async (signal) => {
-    const state = opens.get(open);
-    if (state === undefined) return undefined;
-    await state.ready;
-    const call: ToolCallHook = Object.freeze({ id, name, arguments: frozen(JSON.parse(args)), signal });
-    for (const scope of state.scopes) {
-      for (const handler of [...scope.hooks["tool.before"]]) {
-        if (scope.closed) break;
-        try {
-          const answer: unknown = await handler(call);
-          // A close during the wait ends the turn, so the answer of the closed scope no longer counts.
-          if (scope.closed) return undefined;
-          if (answer === undefined) continue;
-          if (
-            typeof answer === "object" &&
-            answer !== null &&
-            typeof (answer as { block?: unknown }).block === "string"
-          ) {
-            return (answer as { block: string }).block;
-          }
-          return `tool.before of plugin ${scope.plugin} gave an answer that is not undefined or { block: string }`;
-        } catch (error) {
-          return `tool.before of plugin ${scope.plugin} failed: ${textOf(error)}`;
-        }
-      }
-    }
-    return undefined;
+    const event = Object.freeze({ call: callOf(id, name, args), signal });
+    let reason: string | undefined;
+    await runHandlers(
+      open,
+      "tool.before",
+      (handler) => handler(event),
+      (answer) => {
+        reason = blockOf(answer);
+        return true;
+      },
+    );
+    return reason;
   });
 }
 
-/** A media item of a patched result as the host reads it: the index of an original item, or a new item. */
-type PatchedMedia = number | ToolMedia;
+/** A media item of a changed result as the host reads it: the index of an original item, or a new item. */
+type ChangedMedia = number | ToolMedia;
 
 /** The result after the `tool.after` handlers, as the host reads it. */
-interface Patched {
+interface ChangedResult {
   readonly text: string;
   readonly isError: boolean;
-  readonly media: readonly PatchedMedia[];
+  readonly media: readonly ChangedMedia[];
 }
-
-/** The fields of a `tool.after` patch. */
-const PATCH_FIELDS = ["text", "isError", "media"];
 
 /**
  * Start the `tool.after` handlers of the open session `open` on the result of one call. `id`, `name`, and `args` are
  * as for `startToolBefore`. `text`, `isError`, and `media` are the result, with each media item as its media type and
- * its size. The answer is the result after the last patch, or `undefined` when no handler patched it. A closed session
- * patches nothing. A failed handler throws. `abort` aborts the signal of the call.
+ * its size. The answer is the result after the last handler, or `undefined` when no handler answered. A closed session
+ * changes nothing. A failed handler throws. `abort` aborts the signal of the call.
  */
 export function startToolAfter(
   open: number,
@@ -235,32 +207,23 @@ export function startToolAfter(
   text: string,
   isError: boolean,
   media: readonly (readonly [string, number])[],
-): Started<Patched | undefined> {
+): Started<ChangedResult | undefined> {
   return started(async (signal) => {
-    const state = opens.get(open);
-    if (state === undefined) return undefined;
-    await state.ready;
-    const call: ToolCallHook = Object.freeze({ id, name, arguments: frozen(JSON.parse(args)), signal });
+    const call = callOf(id, name, args);
     const originals: readonly ResultMedia[] = media.map(([mimeType, size]) => Object.freeze({ mimeType, size }));
-    let result: ToolResultHook = Object.freeze({ text, isError, media: Object.freeze([...originals]) });
-    let patched = false;
-    for (const scope of state.scopes) {
-      for (const handler of [...scope.hooks["tool.after"]]) {
-        if (scope.closed) break;
-        try {
-          const answer: unknown = await handler(call, result);
-          // A close during the wait ends the turn, and a cancel keeps the original result.
-          if (scope.closed) return undefined;
-          if (answer === undefined) continue;
-          // A getter in the patch is code of the plugin, so the check runs in the same `try`.
-          result = applied(result, answer, originals);
-          patched = true;
-        } catch (error) {
-          throw new Error(`the tool.after hook of plugin ${scope.plugin} failed: ${textOf(error)}`);
-        }
-      }
-    }
-    if (!patched) return undefined;
+    let result: ToolCallResult = Object.freeze({ text, isError, media: Object.freeze([...originals]) });
+    let answered = false;
+    await runHandlers(
+      open,
+      "tool.after",
+      (handler) => handler(Object.freeze({ call, result, signal })),
+      (answer) => {
+        result = applied(result, answer, originals);
+        answered = true;
+        return false;
+      },
+    );
+    if (!answered) return undefined;
     return {
       text: result.text,
       isError: result.isError,
@@ -272,19 +235,82 @@ export function startToolAfter(
   });
 }
 
-/** `result` after the `tool.after` answer `patch`. An item of `originals` stays as it is. Another shape throws. */
-function applied(result: ToolResultHook, patch: unknown, originals: readonly ResultMedia[]): ToolResultHook {
-  const fields = fieldsOf(patch, "the patch", PATCH_FIELDS);
+/**
+ * Run the `point` handlers of the open session `open` in plugin order, then in the order of their addition, after
+ * `session` of each plugin settles. `call` runs one handler. `take` gets each answer that is not `undefined`, and a
+ * `true` from it ends the run. A throw of either names the point and the plugin. A closed session runs no handler, and
+ * a close during a handler ends the run without its answer.
+ */
+async function runHandlers<K extends keyof SessionHooks>(
+  open: number,
+  point: K,
+  call: (handler: SessionHooks[K]) => unknown,
+  take: (answer: unknown) => boolean,
+): Promise<void> {
+  const state = opens.get(open);
+  if (state === undefined) return;
+  await state.ready;
+  for (const scope of state.scopes) {
+    const handlers: SessionHooks[K][] = scope.hooks[point];
+    // An addition or a removal during a run changes the next run.
+    for (const handler of [...handlers]) {
+      if (scope.closed) break;
+      try {
+        const answer: unknown = await call(handler);
+        // A close during the wait ends the turn, so the answer of the closed scope no longer counts.
+        if (scope.closed) return;
+        // A getter in the answer is code of the plugin, so the check runs in the same `try`.
+        if (answer !== undefined && take(answer)) return;
+      } catch (error) {
+        throw hookFailure(point, scope.plugin, error);
+      }
+    }
+  }
+}
+
+/** The checked copy of the sections of a `prompt.build` answer. Another shape throws a `TypeError`. */
+function sectionsOf(answer: unknown): Readonly<Record<string, string>> {
+  const { sections } = fieldsOf(answer, "the answer", ["sections"]);
+  if (typeof sections !== "object" || sections === null || Array.isArray(sections)) {
+    throw new TypeError("the sections of the answer are not an object");
+  }
+  const copy: Record<string, string> = {};
+  for (const [key, text] of Object.entries(sections)) {
+    if (!sectionKey.test(key)) throw new TypeError(`the section key '${key}' does not match ${sectionKey}`);
+    if (typeof text !== "string") throw new TypeError(`the text of the section '${key}' is not a string`);
+    copy[key] = text;
+  }
+  return Object.freeze(copy);
+}
+
+/** The reason of a `tool.before` answer. Another shape throws a `TypeError`. */
+function blockOf(answer: unknown): string {
+  const { block } = fieldsOf(answer, "the answer", ["block"]);
+  if (typeof block !== "string") throw new TypeError("the block of the answer is not a string");
+  return block;
+}
+
+/** The call `id` of the tool `name` with the JSON arguments `args`, frozen at each depth. */
+function callOf(id: string, name: string, args: string): ToolCall {
+  return Object.freeze({ id, name, arguments: frozen(JSON.parse(args)) });
+}
+
+/** The fields of a `tool.after` answer. */
+const AFTER_FIELDS = ["text", "isError", "media"];
+
+/** `result` after the `tool.after` answer `answer`. An item of `originals` stays as it is. Another shape throws. */
+function applied(result: ToolCallResult, answer: unknown, originals: readonly ResultMedia[]): ToolCallResult {
+  const fields = fieldsOf(answer, "the answer", AFTER_FIELDS);
   if (fields.text !== undefined && typeof fields.text !== "string") {
-    throw new TypeError("the patch text is not a string");
+    throw new TypeError("the text of the answer is not a string");
   }
   if (fields.isError !== undefined && typeof fields.isError !== "boolean") {
-    throw new TypeError("the patch isError is not a boolean");
+    throw new TypeError("the isError of the answer is not a boolean");
   }
   let media = result.media;
   if (fields.media !== undefined) {
     const list = fields.media;
-    if (!Array.isArray(list)) throw new TypeError("the patch media is not an array");
+    if (!Array.isArray(list)) throw new TypeError("the media of the answer is not an array");
     const items: (ResultMedia | ToolMedia)[] = [];
     // An index loop, so a hole of a sparse array fails as a value that is not an object.
     for (let index = 0; index < list.length; index += 1) {
@@ -292,7 +318,7 @@ function applied(result: ToolResultHook, patch: unknown, originals: readonly Res
       items.push(
         originals.includes(item as ResultMedia)
           ? (item as ResultMedia)
-          : Object.freeze(mediaOf(item, `the patch media[${index}]`)),
+          : Object.freeze(mediaOf(item, `the answer media[${index}]`)),
       );
     }
     media = Object.freeze(items);
@@ -340,25 +366,13 @@ function textOf(error: unknown): string {
   }
 }
 
-/** The error of a `prompt.build` handler of `plugin` that threw `error`. It keeps the stack of `error`. */
-function hookFailure(plugin: string, error: unknown): Error {
-  const failure = new Error(`prompt.build of plugin ${plugin} failed: ${textOf(error)}`);
+/** The error of a `point` handler of `plugin` that failed with `error`. It keeps the stack of `error`. */
+function hookFailure(point: string, plugin: string, error: unknown): Error {
+  const failure = new Error(`${point} of plugin ${plugin} failed: ${textOf(error)}`);
   // The stack of the host code tells the author nothing.
   if (error instanceof Error && error.stack !== undefined) failure.stack = error.stack;
   else delete failure.stack;
   return failure;
-}
-
-/** What is wrong with `sections` after a handler, or `undefined` for an object of valid keys and string texts. */
-function sectionProblem(sections: unknown): string | undefined {
-  if (typeof sections !== "object" || sections === null || Array.isArray(sections)) {
-    return "set build.sections to a value that is not an object";
-  }
-  for (const [key, text] of Object.entries(sections)) {
-    if (!sectionKey.test(key)) return `left the key '${key}', which does not match ${sectionKey}`;
-    if (typeof text !== "string") return `left the section '${key}' with a text that is not a string`;
-  }
-  return undefined;
 }
 
 /**

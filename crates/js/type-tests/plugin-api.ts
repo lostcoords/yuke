@@ -3,12 +3,14 @@ import type {
   PluginApply,
   PluginContext,
   PluginSession,
-  PromptBuild,
+  PromptBuildAnswer,
+  PromptBuildEvent,
   SessionContext,
-  ToolBlock,
-  ToolCallHook,
-  ToolResultHook,
-  ToolResultPatch,
+  ToolAfterAnswer,
+  ToolBeforeAnswer,
+  ToolBeforeEvent,
+  ToolCall,
+  ToolCallResult,
 } from "yuke:plugins";
 import type { Infer, ObjectSchema, ToolResult } from "yuke:tools";
 
@@ -152,45 +154,46 @@ void files;
 
 export { results };
 
-// A `prompt.build` handler gets the sections and the signal, edits the sections, and returns nothing.
-const remove: () => void = s.hook("prompt.build", (build) => {
-  assert<Equal<typeof build, PromptBuild>>();
-  assert<Equal<typeof build.sections, Record<string, string>>>();
-  build.sections.rules = "Be brief.";
-  // @ts-expect-error: the signal belongs to the host.
-  build.signal = new AbortController().signal;
+// A `prompt.build` handler gets the sections, and answers new sections or nothing.
+const remove: () => void = s.hook("prompt.build", (event) => {
+  assert<Equal<typeof event, PromptBuildEvent>>();
+  assert<Equal<typeof event.sections, Readonly<Record<string, string>>>>();
+  // @ts-expect-error: a handler changes the sections through its answer.
+  event.sections.rules = "Be brief.";
+  return { sections: { ...event.sections, rules: "Be brief." } };
 });
 remove();
-s.hook("prompt.build", async (build) => {
+s.hook("prompt.build", async ({ sections }): Promise<PromptBuildAnswer> => {
   await Promise.resolve();
-  delete build.sections.environment;
+  const { environment: _, ...rest } = sections;
+  return { sections: rest };
 });
-// @ts-expect-error: a handler returns nothing.
+// @ts-expect-error: an answer is an object.
 s.hook("prompt.build", () => "done");
 // @ts-expect-error: no hook has this point.
 s.hook("turn.start", () => undefined);
 
 // A `tool.before` handler gets the call and blocks it with a reason, or returns nothing.
-s.hook("tool.before", (call) => {
-  assert<Equal<typeof call, ToolCallHook>>();
-  assert<Equal<typeof call.arguments, unknown>>();
+s.hook("tool.before", (event) => {
+  assert<Equal<typeof event, ToolBeforeEvent>>();
+  assert<Equal<typeof event.call, ToolCall>>();
+  assert<Equal<typeof event.call.arguments, unknown>>();
   // @ts-expect-error: the call belongs to the model.
-  call.name = "write";
-  if (call.name === "exec") return { block: "exec needs the user" };
+  event.call.name = "write";
+  if (event.call.name === "exec") return { block: "exec needs the user" };
   return undefined;
 });
-s.hook("tool.before", async (call): Promise<ToolBlock | undefined> => {
+s.hook("tool.before", async ({ call }): Promise<ToolBeforeAnswer | undefined> => {
   await Promise.resolve();
   return call.id === "" ? { block: "no id" } : undefined;
 });
 // @ts-expect-error: a block names its reason as a string.
 s.hook("tool.before", () => ({ block: true }));
 
-// A `tool.after` handler gets the call and the result, and returns a patch or nothing.
-s.hook("tool.after", (call, result) => {
-  assert<Equal<typeof call, ToolCallHook>>();
-  assert<Equal<typeof result, ToolResultHook>>();
-  // @ts-expect-error: a handler patches the result through its answer.
+// A `tool.after` handler gets the call and the result, and answers the changed fields or nothing.
+s.hook("tool.after", ({ call, result }) => {
+  assert<Equal<typeof result, ToolCallResult>>();
+  // @ts-expect-error: a handler changes the result through its answer.
   result.text = "";
   if (call.name !== "read") return undefined;
   return {
@@ -198,11 +201,11 @@ s.hook("tool.after", (call, result) => {
     media: [...result.media.slice(1), { mimeType: "image/png", path: "a.png" }],
   };
 });
-s.hook("tool.after", async (): Promise<ToolResultPatch | undefined> => {
+s.hook("tool.after", async (): Promise<ToolAfterAnswer | undefined> => {
   await Promise.resolve();
   return { isError: true };
 });
-// @ts-expect-error: a patch has no field outside text, isError, and media.
+// @ts-expect-error: an answer has no field outside text, isError, and media.
 s.hook("tool.after", () => ({ content: "x" }));
 // @ts-expect-error: a new media item needs a path or bytes.
 s.hook("tool.after", () => ({ media: [{ mimeType: "image/png" }] }));

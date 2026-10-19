@@ -771,7 +771,7 @@ async fn the_prompt_hook_edits_the_request_of_each_turn_and_the_session_keeps_it
         "counted",
         "let count = 0;
          export function session(s) {
-           s.hook('prompt.build', (build) => { count += 1; build.sections.turn = `number ${count}`; });
+           s.hook('prompt.build', ({ sections }) => { count += 1; return { sections: { ...sections, turn: `number ${count}` } }; });
          }",
     );
     std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["counted"] }"#).unwrap();
@@ -846,7 +846,7 @@ async fn a_plugin_blocks_one_call_and_the_other_call_of_the_answer_runs() {
     place.plugin(
         "guard",
         "export function session(s) {
-           s.hook('tool.before', (call) => {
+           s.hook('tool.before', ({ call }) => {
              if (call.name === 'read' && call.arguments.path === 'secret.txt') return { block: 'secret.txt is private' };
            });
          }",
@@ -889,7 +889,7 @@ async fn a_plugin_patches_a_tool_result_before_the_model_reads_it() {
     place.plugin(
         "redact",
         "export function session(s) {
-           s.hook('tool.after', (call, result) => ({ text: result.text.replaceAll('hunter2', '***') }));
+           s.hook('tool.after', ({ result }) => ({ text: result.text.replaceAll('hunter2', '***') }));
          }",
     );
     std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["redact"] }"#).unwrap();

@@ -1,4 +1,4 @@
-//! These tests cover the `tool.after` hook: its chain, its patches, its media, its failures, and its cancel.
+//! These tests cover the `tool.after` hook: its chain, its answers, its media, its failures, and its cancel.
 
 use std::time::Duration;
 
@@ -45,7 +45,7 @@ fn original() -> ToolResult {
 }
 
 /// The answer of the hooks of `session` for [`original`].
-async fn patch(session: &ScriptSession) -> Option<ToolResult> {
+async fn after(session: &ScriptSession) -> Option<ToolResult> {
     let hooks = session.hooks(CancellationToken::new());
     tokio::time::timeout(Duration::from_secs(5), hooks.after_tool(&call(), &original()))
         .await
@@ -63,9 +63,9 @@ fn failed(text: &str) -> ToolResult {
 }
 
 #[tokio::test]
-async fn the_result_stays_when_no_handler_patches_it() {
+async fn the_result_stays_when_no_handler_answers() {
     let (_runtime, session, _reports) = opened(
-        "the_result_stays_when_no_handler_patches_it",
+        "the_result_stays_when_no_handler_answers",
         &[(
             "quiet",
             "export function session(s) { s.hook('tool.after', () => undefined); }",
@@ -73,19 +73,19 @@ async fn the_result_stays_when_no_handler_patches_it() {
     )
     .await;
 
-    assert_eq!(patch(&session).await, None);
+    assert_eq!(after(&session).await, None);
 }
 
-// A patch replaces only its own fields, so the media and the loaded tools of the result stay.
+// An answer replaces only its own fields, so the media and the loaded tools of the result stay.
 #[tokio::test]
-async fn each_handler_gets_the_call_and_the_result_after_the_patches_before_it() {
+async fn each_handler_gets_the_call_and_the_result_after_the_answers_before_it() {
     let (_runtime, session, _reports) = opened(
-        "each_handler_gets_the_call_and_the_result_after_the_patches_before_it",
+        "each_handler_gets_the_call_and_the_result_after_the_answers_before_it",
         &[
             (
                 "redact",
                 "export function session(s) {
-                   s.hook('tool.after', (call, result) => ({
+                   s.hook('tool.after', ({ call, result }) => ({
                      text: `${call.id} ${call.name} ${call.arguments.path}: ${result.text.replace('hunter2', '***')}`,
                    }));
                  }",
@@ -93,7 +93,7 @@ async fn each_handler_gets_the_call_and_the_result_after_the_patches_before_it()
             (
                 "flag",
                 "export function session(s) {
-                   s.hook('tool.after', (call, result) => ({ text: `${result.text} (${result.isError})`, isError: true }));
+                   s.hook('tool.after', ({ call, result }) => ({ text: `${result.text} (${result.isError})`, isError: true }));
                  }",
             ),
         ],
@@ -105,14 +105,14 @@ async fn each_handler_gets_the_call_and_the_result_after_the_patches_before_it()
         is_error: true,
         ..original()
     };
-    assert_eq!(patch(&session).await, Some(expected));
+    assert_eq!(after(&session).await, Some(expected));
 }
 
 #[tokio::test]
-async fn a_patch_keeps_reorders_removes_and_adds_media() {
-    // The patch adds this source of the plugin as a file.
+async fn an_answer_keeps_reorders_removes_and_adds_media() {
+    // The answer adds this source of the plugin as a file.
     let source = "export function session(s) {
-               s.hook('tool.after', (call, result) => ({
+               s.hook('tool.after', ({ call, result }) => ({
                  text: result.media.map((item) => `${item.mimeType} ${item.size}`).join(', '),
                  media: [
                    result.media[1],
@@ -122,12 +122,12 @@ async fn a_patch_keeps_reorders_removes_and_adds_media() {
                }));
              }";
     let (_runtime, session, _reports) =
-        opened("a_patch_keeps_reorders_removes_and_adds_media", &[("pics", source)]).await;
+        opened("an_answer_keeps_reorders_removes_and_adds_media", &[("pics", source)]).await;
 
-    let patched = patch(&session).await.unwrap();
+    let changed = after(&session).await.unwrap();
 
-    assert_eq!(patched.content, "image/png 3, image/jpeg 5");
-    let shapes: Vec<_> = patched
+    assert_eq!(changed.content, "image/png 3, image/jpeg 5");
+    let shapes: Vec<_> = changed
         .media
         .iter()
         .map(|item| (item.mime.as_str(), item.blob.digest[0], item.blob.len))
@@ -160,9 +160,9 @@ async fn a_new_media_item_stays_new_when_a_plugin_adds_kept_to_the_object_protot
     )
     .await;
 
-    let patched = patch(&session).await.unwrap();
+    let changed = after(&session).await.unwrap();
 
-    let shapes: Vec<_> = patched
+    let shapes: Vec<_> = changed
         .media
         .iter()
         .map(|item| (item.mime.as_str(), item.blob.digest[0], item.blob.len))
@@ -172,13 +172,13 @@ async fn a_new_media_item_stays_new_when_a_plugin_adds_kept_to_the_object_protot
 
 // The engine asks for the calls of a parallel group together, so the runs of two calls overlap.
 #[tokio::test]
-async fn each_of_two_overlapping_calls_gets_its_own_patch() {
+async fn each_of_two_overlapping_calls_gets_its_own_answer() {
     let (_runtime, session, _reports) = opened(
-        "each_of_two_overlapping_calls_gets_its_own_patch",
+        "each_of_two_overlapping_calls_gets_its_own_answer",
         &[(
             "slow",
             "export function session(s) {
-               s.hook('tool.after', async (call, result) => {
+               s.hook('tool.after', async ({ call, result }) => {
                  await new Promise((resolve) => setTimeout(resolve, call.id === 'first' ? 30 : 0));
                  return { text: `${call.id}: ${result.text}` };
                });
@@ -214,20 +214,23 @@ async fn each_of_two_overlapping_calls_gets_its_own_patch() {
 async fn a_throw_or_an_answer_of_another_shape_gives_an_error_result_that_names_the_plugin() {
     let cases = [
         ("throw new Error('no redaction today');", "Error: no redaction today"),
-        ("return { text: 1 };", "TypeError: the patch text is not a string"),
+        (
+            "return { text: 1 };",
+            "TypeError: the text of the answer is not a string",
+        ),
         (
             "return { isError: 'yes' };",
-            "TypeError: the patch isError is not a boolean",
+            "TypeError: the isError of the answer is not a boolean",
         ),
         (
             "return { txt: 'x' };",
-            "TypeError: the patch has the unknown field 'txt'",
+            "TypeError: the answer has the unknown field 'txt'",
         ),
-        ("return 'x';", "TypeError: the patch is not an object"),
-        ("return null;", "TypeError: the patch is not an object"),
+        ("return 'x';", "TypeError: the answer is not an object"),
+        ("return null;", "TypeError: the answer is not an object"),
         (
             "return { media: [{ ...result.media[0] }] };",
-            "TypeError: the patch media[0] has the unknown field 'size'",
+            "TypeError: the answer media[0] has the unknown field 'size'",
         ),
     ];
     for (index, (body, error)) in cases.into_iter().enumerate() {
@@ -235,42 +238,51 @@ async fn a_throw_or_an_answer_of_another_shape_gives_an_error_result_that_names_
             &format!("a_throw_or_an_answer_of_another_shape_gives_an_error_result_that_names_the_plugin_{index}"),
             &[(
                 "check",
-                &format!("export function session(s) {{ s.hook('tool.after', (call, result) => {{ {body} }}); }}"),
+                &format!(
+                    "export function session(s) {{ s.hook('tool.after', ({{ call, result }}) => {{ {body} }}); }}"
+                ),
             )],
         )
         .await;
 
-        let expected = format!("the tool.after hook of plugin check failed: {error}");
-        assert_eq!(patch(&session).await, Some(failed(&expected)), "{body}");
+        let expected = format!("tool.after of plugin check failed: {error}");
+        assert_eq!(after(&session).await, Some(failed(&expected)), "{body}");
     }
 }
 
-// A handler that changes the result in place would skip the checks of a patch.
+// A handler that changes the event or the result in place would skip the checks of an answer.
 #[tokio::test]
-async fn a_change_of_the_result_or_its_media_throws_and_gives_an_error_result() {
-    for (index, body) in ["result.text = 'x';", "result.media.pop();", "result.media[0].size = 1;"]
-        .into_iter()
-        .enumerate()
+async fn a_change_of_the_event_the_result_or_its_media_throws_and_gives_an_error_result() {
+    for (index, body) in [
+        "result.text = 'x';",
+        "result.media.pop();",
+        "result.media[0].size = 1;",
+        "event.result = {};",
+    ]
+    .into_iter()
+    .enumerate()
     {
         let (_runtime, session, _reports) = opened(
-            &format!("a_change_of_the_result_or_its_media_throws_and_gives_an_error_result_{index}"),
+            &format!("a_change_of_the_event_the_result_or_its_media_throws_and_gives_an_error_result_{index}"),
             &[(
                 "editor",
-                &format!("export function session(s) {{ s.hook('tool.after', (call, result) => {{ {body} }}); }}"),
+                &format!(
+                    "export function session(s) {{ s.hook('tool.after', (event) => {{ const {{ result }} = event; {body} }}); }}"
+                ),
             )],
         )
         .await;
 
-        let patched = patch(&session).await.unwrap();
+        let changed = after(&session).await.unwrap();
 
         assert!(
-            patched
+            changed
                 .content
-                .starts_with("the tool.after hook of plugin editor failed: TypeError: "),
+                .starts_with("tool.after of plugin editor failed: TypeError: "),
             "{body}: {}",
-            patched.content
+            changed.content
         );
-        assert!(patched.is_error && patched.media.is_empty(), "{body}");
+        assert!(changed.is_error && changed.media.is_empty(), "{body}");
     }
 }
 
@@ -287,16 +299,16 @@ async fn a_new_media_item_that_cannot_be_read_gives_an_error_result() {
     )
     .await;
 
-    let patched = patch(&session).await.unwrap();
+    let changed = after(&session).await.unwrap();
 
     assert!(
-        patched
+        changed
             .content
             .starts_with("the tool.after hooks failed: missing.png: "),
         "{}",
-        patched.content
+        changed.content
     );
-    assert!(patched.is_error && patched.media.is_empty());
+    assert!(changed.is_error && changed.media.is_empty());
 }
 
 #[tokio::test]
@@ -306,9 +318,9 @@ async fn a_cancel_aborts_the_signal_and_keeps_the_original_result() {
         &[(
             "slow",
             "export function session(s) {
-               s.hook('tool.after', (call) => new Promise((resolve) => {
-                 call.signal.addEventListener('abort', () => {
-                   globalThis.aborted = call.signal.reason.name;
+               s.hook('tool.after', ({ signal }) => new Promise((resolve) => {
+                 signal.addEventListener('abort', () => {
+                   globalThis.aborted = signal.reason.name;
                    resolve({ text: 'too late' });
                  });
                  globalThis.started = true;
@@ -330,7 +342,7 @@ async fn a_cancel_aborts_the_signal_and_keeps_the_original_result() {
         token.cancel();
     };
 
-    let (patched, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+    let (changed, ()) = tokio::time::timeout(Duration::from_secs(5), async {
         tokio::join!(hooks.after_tool(&call, &result), cancel)
     })
     .await
@@ -339,15 +351,15 @@ async fn a_cancel_aborts_the_signal_and_keeps_the_original_result() {
         .await
         .unwrap();
 
-    assert_eq!(patched, None);
+    assert_eq!(changed, None);
     assert_eq!(aborted.as_deref(), Some("AbortError"));
 }
 
-// A close during a handler ends the turn, so a late patch of the closed session does not count.
+// A close during a handler ends the turn, so a late answer of the closed session does not count.
 #[tokio::test]
-async fn a_patch_that_comes_after_the_close_of_the_session_does_not_count() {
+async fn an_answer_that_comes_after_the_close_of_the_session_does_not_count() {
     let (runtime, session, _reports) = opened(
-        "a_patch_that_comes_after_the_close_of_the_session_does_not_count",
+        "an_answer_that_comes_after_the_close_of_the_session_does_not_count",
         &[(
             "late",
             "export function session(s) {
@@ -358,7 +370,7 @@ async fn a_patch_that_comes_after_the_close_of_the_session_does_not_count() {
         )],
     )
     .await;
-    let patched = patch(&session);
+    let changed = after(&session);
     let close = async {
         while !evaluate::<bool>(&runtime, "return typeof globalThis.release === 'function';")
             .await
@@ -370,9 +382,9 @@ async fn a_patch_that_comes_after_the_close_of_the_session_does_not_count() {
         evaluate::<()>(&runtime, "globalThis.release();").await.unwrap();
     };
 
-    let (patched, ()) = tokio::join!(patched, close);
+    let (changed, ()) = tokio::join!(changed, close);
 
-    assert_eq!(patched, None);
+    assert_eq!(changed, None);
 }
 
 // A handler of a failed session never runs.
@@ -398,12 +410,12 @@ async fn a_removed_handler_and_the_handler_of_a_failed_session_do_not_run() {
     )
     .await;
 
-    let patched = patch(&session).await;
+    let changed = after(&session).await;
     let ran = evaluate::<Vec<String>>(&runtime, "return globalThis.ran;")
         .await
         .unwrap();
 
-    assert_eq!(patched, None);
+    assert_eq!(changed, None);
     assert_eq!(ran, Vec::<String>::new());
 }
 

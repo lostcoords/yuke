@@ -1,4 +1,4 @@
-//! These tests cover the `prompt.build` hook: its order, its edits, its checks, its failures, and its cancel.
+//! These tests cover the `prompt.build` hook: its order, its answers, its checks, its failures, and its cancel.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -74,29 +74,29 @@ async fn a_session_without_a_hook_keeps_its_sections() {
     );
 }
 
-// A set replaces a text in its place or adds a section at the end, and a delete removes a section.
+// An answer replaces the sections, and `undefined` keeps them.
 #[tokio::test]
-async fn the_handlers_run_in_plugin_order_then_in_addition_order_and_each_sees_the_edits_before_it() {
+async fn the_handlers_run_in_plugin_order_then_in_addition_order_and_each_gets_the_answer_before_it() {
     let (_runtime, session, _reports) = opened(
-        "the_handlers_run_in_plugin_order_then_in_addition_order_and_each_sees_the_edits_before_it",
+        "the_handlers_run_in_plugin_order_then_in_addition_order_and_each_gets_the_answer_before_it",
         &[
             (
                 "first",
                 "export function session(s) {
-                   s.hook('prompt.build', (build) => { build.sections.rules = 'one'; });
-                   s.hook('prompt.build', async (build) => {
+                   s.hook('prompt.build', ({ sections }) => ({ sections: { ...sections, rules: 'one' } }));
+                   s.hook('prompt.build', async ({ sections }) => {
                      await null;
-                     build.sections.base = 'Be brief.';
-                     build.sections.rules += ' two';
+                     return { sections: { ...sections, base: 'Be brief.', rules: `${sections.rules} two` } };
                    });
+                   s.hook('prompt.build', () => undefined);
                  }",
             ),
             (
                 "second",
                 "export function session(s) {
-                   s.hook('prompt.build', (build) => {
-                     delete build.sections.environment;
-                     build.sections.seen = build.sections.rules;
+                   s.hook('prompt.build', ({ sections }) => {
+                     const { environment, ...rest } = sections;
+                     return { sections: { ...rest, seen: sections.rules } };
                    });
                  }",
             ),
@@ -111,15 +111,13 @@ async fn the_handlers_run_in_plugin_order_then_in_addition_order_and_each_sees_t
 }
 
 #[tokio::test]
-async fn a_new_object_sets_a_new_order() {
+async fn the_order_of_the_answer_is_the_order_of_the_prompt() {
     let (_runtime, session, _reports) = opened(
-        "a_new_object_sets_a_new_order",
+        "the_order_of_the_answer_is_the_order_of_the_prompt",
         &[(
             "order",
             "export function session(s) {
-               s.hook('prompt.build', (build) => {
-                 build.sections = { first: 'one', ...build.sections };
-               });
+               s.hook('prompt.build', ({ sections }) => ({ sections: { first: 'one', ...sections } }));
              }",
         )],
     )
@@ -135,7 +133,7 @@ async fn a_new_object_sets_a_new_order() {
     );
 }
 
-// The edits of a build stay in that build, so each build starts from the sections of the caller.
+// The answers of a build stay in that build, so each build starts from the sections of the caller.
 #[tokio::test]
 async fn each_build_starts_from_the_sections_of_the_caller() {
     let (_runtime, session, _reports) = opened(
@@ -144,9 +142,9 @@ async fn each_build_starts_from_the_sections_of_the_caller() {
             "count",
             "let count = 0;
              export function session(s) {
-               s.hook('prompt.build', (build) => {
+               s.hook('prompt.build', ({ sections }) => {
                  count += 1;
-                 build.sections.base += ` ${count}`;
+                 return { sections: { ...sections, base: `${sections.base} ${count}` } };
                });
              }",
         )],
@@ -167,7 +165,7 @@ async fn the_first_build_waits_for_the_setup_of_the_session() {
             "late",
             "export async function session(s) {
                await new Promise((resolve) => setTimeout(resolve, 20));
-               s.hook('prompt.build', (build) => { build.sections.late = 'here'; });
+               s.hook('prompt.build', ({ sections }) => ({ sections: { ...sections, late: 'here' } }));
              }",
         )],
     )
@@ -203,55 +201,94 @@ async fn a_handler_that_throws_fails_the_build_and_the_error_names_the_plugin() 
 }
 
 #[tokio::test]
-async fn a_handler_that_leaves_an_invalid_section_or_returns_a_value_fails_the_build() {
+async fn an_answer_of_another_shape_fails_the_build_and_the_error_names_the_plugin() {
+    let key = "does not match /^[a-z][a-z0-9_-]*$/";
     let cases = [
         (
-            "build.sections.Rules = 'x';",
-            "prompt.build of plugin check left the key 'Rules', which does not match /^[a-z][a-z0-9_-]*$/",
+            "return { sections: { Rules: 'x' } };",
+            format!("the section key 'Rules' {key}"),
         ),
         (
-            "build.sections['1st'] = 'x';",
-            "prompt.build of plugin check left the key '1st', which does not match /^[a-z][a-z0-9_-]*$/",
+            "return { sections: { '1st': 'x' } };",
+            format!("the section key '1st' {key}"),
         ),
         (
-            "build.sections.rules = 1;",
-            "prompt.build of plugin check left the section 'rules' with a text that is not a string",
+            "return { sections: { rules: 1 } };",
+            "the text of the section 'rules' is not a string".to_owned(),
         ),
         (
-            "build.sections = ['x'];",
-            "prompt.build of plugin check set build.sections to a value that is not an object",
+            "return { sections: ['x'] };",
+            "the sections of the answer are not an object".to_owned(),
         ),
+        ("return {};", "the sections of the answer are not an object".to_owned()),
         (
-            "return 'done';",
-            "prompt.build of plugin check returned a value: a handler returns nothing",
+            "return { section: {} };",
+            "the answer has the unknown field 'section'".to_owned(),
         ),
+        ("return 'done';", "the answer is not an object".to_owned()),
     ];
-    for (index, (body, expected)) in cases.into_iter().enumerate() {
+    for (index, (body, problem)) in cases.into_iter().enumerate() {
         let (_runtime, session, _reports) = opened(
-            &format!("a_handler_that_leaves_an_invalid_section_or_returns_a_value_fails_the_build_{index}"),
+            &format!("an_answer_of_another_shape_fails_the_build_and_the_error_names_the_plugin_{index}"),
             &[(
                 "check",
-                &format!("export function session(s) {{ s.hook('prompt.build', (build) => {{ {body} }}); }}"),
+                &format!("export function session(s) {{ s.hook('prompt.build', () => {{ {body} }}); }}"),
             )],
         )
         .await;
 
         let error = script_error(build(&session).await);
 
-        assert_eq!(error.name.as_deref(), Some("TypeError"), "{body}");
-        assert_eq!(error.message, expected, "{body}");
+        assert_eq!(
+            error.message,
+            format!("prompt.build of plugin check failed: TypeError: {problem}"),
+            "{body}"
+        );
+    }
+}
+
+// A handler that changes the event in place would skip the check of an answer. The second handler gets the sections
+// of the answer before it.
+#[tokio::test]
+async fn a_change_of_the_event_or_its_sections_throws_and_fails_the_build() {
+    let first = "s.hook('prompt.build', () => undefined);";
+    let answer = "s.hook('prompt.build', ({ sections }) => ({ sections: { ...sections } }));";
+    let cases = [
+        (first, "event.sections.rules = 'x';"),
+        (first, "event.sections = {};"),
+        (answer, "event.sections.rules = 'x';"),
+    ];
+    for (index, (before, body)) in cases.into_iter().enumerate() {
+        let (_runtime, session, _reports) = opened(
+            &format!("a_change_of_the_event_or_its_sections_throws_and_fails_the_build_{index}"),
+            &[(
+                "editor",
+                &format!("export function session(s) {{ {before} s.hook('prompt.build', (event) => {{ {body} }}); }}"),
+            )],
+        )
+        .await;
+
+        let error = script_error(build(&session).await);
+
+        assert!(
+            error
+                .message
+                .starts_with("prompt.build of plugin editor failed: TypeError: "),
+            "{before} {body}: {}",
+            error.message
+        );
     }
 }
 
 // A getter is code of the plugin, so its throw names the plugin as a handler throw does.
 #[tokio::test]
-async fn a_getter_that_throws_in_the_sections_fails_the_build_and_the_error_names_the_plugin() {
+async fn a_getter_that_throws_in_the_answer_fails_the_build_and_the_error_names_the_plugin() {
     let (_runtime, session, _reports) = opened(
-        "a_getter_that_throws_in_the_sections_fails_the_build_and_the_error_names_the_plugin",
+        "a_getter_that_throws_in_the_answer_fails_the_build_and_the_error_names_the_plugin",
         &[(
             "getter",
             "export function session(s) {
-               s.hook('prompt.build', (build) => { build.sections = { get bad() { throw new Error('late'); } }; });
+               s.hook('prompt.build', () => ({ sections: { get bad() { throw new Error('late'); } } }));
              }",
         )],
     )
@@ -270,13 +307,13 @@ async fn a_build_that_fails_after_a_cancel_sends_no_fault() {
         &[(
             "late",
             "export function session(s) {
-               s.hook('prompt.build', (build) => new Promise((resolve, reject) => {
+               s.hook('prompt.build', ({ signal }) => new Promise((resolve, reject) => {
                  const stop = () => setTimeout(() => {
                    globalThis.rejected = true;
                    reject(new Error('stopped'));
                  }, 0);
-                 if (build.signal.aborted) stop();
-                 else build.signal.addEventListener('abort', stop);
+                 if (signal.aborted) stop();
+                 else signal.addEventListener('abort', stop);
                }));
              }",
         )],
@@ -305,9 +342,8 @@ async fn a_cancel_aborts_the_signal_and_returns_the_sections_of_the_caller_at_on
         &[(
             "slow",
             "export function session(s) {
-               s.hook('prompt.build', (build) => {
-                 build.sections.base = 'changed';
-                 build.signal.addEventListener('abort', () => { globalThis.aborted = build.signal.reason.name; });
+               s.hook('prompt.build', ({ signal }) => {
+                 signal.addEventListener('abort', () => { globalThis.aborted = signal.reason.name; });
                  return new Promise(() => {});
                });
              }",
@@ -340,7 +376,7 @@ async fn a_remover_removes_one_entry_once_and_the_handler_of_a_failed_session_do
             (
                 "removed",
                 "export function session(s) {
-                   const count = (build) => { build.sections.count = `${Number(build.sections.count ?? 0) + 1}`; };
+                   const count = ({ sections }) => ({ sections: { ...sections, count: `${Number(sections.count ?? 0) + 1}` } });
                    s.hook('prompt.build', count);
                    const remove = s.hook('prompt.build', count);
                    remove();
@@ -350,7 +386,7 @@ async fn a_remover_removes_one_entry_once_and_the_handler_of_a_failed_session_do
             (
                 "failed",
                 "export async function session(s) {
-                   s.hook('prompt.build', (build) => { build.sections.failed = 'x'; });
+                   s.hook('prompt.build', ({ sections }) => ({ sections: { ...sections, failed: 'x' } }));
                    await null;
                    throw new Error('broken');
                  }",

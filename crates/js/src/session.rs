@@ -102,12 +102,12 @@ impl ScriptSession {
     }
 
     /// Run the `prompt.build` handlers of the plugins on `sections`, after `session(s)` of each plugin settles. Each
-    /// handler sees the edits of the handlers before it. When `token` is cancelled, the call aborts the signal of the
+    /// handler gets the sections of the answer before it. When `token` is cancelled, the call aborts the signal of the
     /// build and returns `sections` at once. A closed session also returns `sections`.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Script`] when a handler throws, returns a value, or leaves a section that is not valid. Returns
+    /// Returns [`Error::Script`] when a handler throws or gives an answer that is not valid. Returns
     /// [`Error::Stopped`] when the thread has ended.
     pub async fn build_prompt(
         &self,
@@ -205,7 +205,7 @@ impl Hooks for ScriptHooks {
             // A cancel stops the turn, so the driver does not start the call.
             Ok(Some(None) | None) => ToolDecision::Run,
             // A failed check never lets a call run.
-            Err(error) => ToolDecision::Block(format!("the tool.before hooks failed: {}", error_text(&error))),
+            Err(error) => ToolDecision::Block(failure_text("tool.before", &error)),
         }
     }
 
@@ -225,17 +225,15 @@ impl Hooks for ScriptHooks {
             result.is_error,
             media,
         );
-        let answer: Result<Option<Option<Patched>>, Error> =
+        let answer: Result<Option<Option<ChangedResult>>, Error> =
             run_hook(&self.caller, "startToolAfter", args, self.token.clone()).await;
-        let patched = match answer {
-            Ok(Some(Some(patched))) => self.patched(result, patched).await,
+        let changed = match answer {
+            Ok(Some(Some(changed))) => self.changed(result, changed).await,
             Ok(Some(None) | None) => return None,
-            // The message of a failed handler names its plugin.
-            Err(error @ Error::Script(_)) => Err(error_text(&error)),
-            Err(error) => Err(format!("the tool.after hooks failed: {error}")),
+            Err(error) => Err(failure_text("tool.after", &error)),
         };
         // A failed hook never shows the original result.
-        Some(patched.unwrap_or_else(|text| ToolResult {
+        Some(changed.unwrap_or_else(|text| ToolResult {
             call_id: result.call_id.clone(),
             content: text,
             is_error: true,
@@ -246,18 +244,18 @@ impl Hooks for ScriptHooks {
 }
 
 impl ScriptHooks {
-    /// `result` after the `tool.after` handlers. The text and `is_error` come from `patched`. Each media item is an
+    /// `result` after the `tool.after` handlers. The text and `is_error` come from `changed`. Each media item is an
     /// item of `result`, or a new item that the host stores. The `loaded` tools of `result` stay.
-    async fn patched(&self, result: &ToolResult, patched: Patched) -> Result<ToolResult, String> {
+    async fn changed(&self, result: &ToolResult, changed: ChangedResult) -> Result<ToolResult, String> {
         // Each item is a kept item, or `None` for the next new item.
-        let mut order = Vec::with_capacity(patched.media.len());
+        let mut order = Vec::with_capacity(changed.media.len());
         let mut files = Vec::new();
-        for item in patched.media {
+        for item in changed.media {
             match item {
-                PatchedMedia::Kept(index) => order.push(Some(result.media.get(index).cloned().ok_or_else(|| {
+                ChangedMedia::Kept(index) => order.push(Some(result.media.get(index).cloned().ok_or_else(|| {
                     format!("the tool.after hooks kept media item {index}, which the result does not have")
                 })?)),
-                PatchedMedia::New(file) => {
+                ChangedMedia::New(file) => {
                     files.push(file);
                     order.push(None);
                 }
@@ -269,8 +267,8 @@ impl ScriptHooks {
             .into_iter();
         Ok(ToolResult {
             call_id: result.call_id.clone(),
-            content: patched.text,
-            is_error: patched.is_error,
+            content: changed.text,
+            is_error: changed.is_error,
             media: order
                 .into_iter()
                 .filter_map(|kept| kept.or_else(|| stored.next()))
@@ -282,22 +280,22 @@ impl ScriptHooks {
 
 /// The result after the `tool.after` handlers: `{ text, isError, media }`.
 #[derive(Debug)]
-struct Patched {
+struct ChangedResult {
     text: String,
     is_error: bool,
-    media: Vec<PatchedMedia>,
+    media: Vec<ChangedMedia>,
 }
 
-/// A media item of a patched result.
+/// A media item of a changed result.
 #[derive(Debug)]
-enum PatchedMedia {
+enum ChangedMedia {
     /// The item of the original result at this index. It crosses as a number.
     Kept(usize),
-    /// A new item of a patch.
+    /// A new item of an answer.
     New(MediaFile),
 }
 
-impl<'js> FromJs<'js> for Patched {
+impl<'js> FromJs<'js> for ChangedResult {
     fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
         let object = Object::from_value(value)?;
         Ok(Self {
@@ -308,13 +306,21 @@ impl<'js> FromJs<'js> for Patched {
     }
 }
 
-impl<'js> FromJs<'js> for PatchedMedia {
+impl<'js> FromJs<'js> for ChangedMedia {
     fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
         if value.is_number() {
             usize::from_js(ctx, value).map(Self::Kept)
         } else {
             MediaFile::from_js(ctx, value).map(Self::New)
         }
+    }
+}
+
+/// The text of a failed run of the `point` hooks. The message of a failed handler names the point and its plugin.
+fn failure_text(point: &str, error: &Error) -> String {
+    match error {
+        Error::Script(_) => error_text(error),
+        other => format!("the {point} hooks failed: {other}"),
     }
 }
 

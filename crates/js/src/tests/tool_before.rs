@@ -80,7 +80,7 @@ async fn a_handler_gets_the_id_the_name_and_the_parsed_arguments_of_the_call() {
         &[(
             "reader",
             "export function session(s) {
-               s.hook('tool.before', (call) => ({ block: `${call.id} ${call.name} ${call.arguments.path.join('/')}` }));
+               s.hook('tool.before', ({ call }) => ({ block: `${call.id} ${call.name} ${call.arguments.path.join('/')}` }));
              }",
         )],
     )
@@ -91,43 +91,53 @@ async fn a_handler_gets_the_id_the_name_and_the_parsed_arguments_of_the_call() {
     assert_eq!(decision, block("c1 read src/main.rs"));
 }
 
-// The call runs with the arguments of the model, so a change of them fails at once and stops the call.
+// The call runs as the model gave it, so a change of the event or the call fails at once and stops the call.
 #[tokio::test]
-async fn a_change_of_the_arguments_at_any_depth_throws_and_stops_the_call() {
-    let (_runtime, session, _reports) = opened(
-        "a_change_of_the_arguments_at_any_depth_throws_and_stops_the_call",
-        &[(
-            "editor",
-            "export function session(s) { s.hook('tool.before', (call) => { call.arguments.options.force = true; }); }",
-        )],
-    )
-    .await;
+async fn a_change_of_the_event_or_the_call_at_any_depth_throws_and_stops_the_call() {
+    let cases = [
+        "event.call.arguments.options.force = true;",
+        "event.call.name = 'write';",
+        "event.call = {};",
+    ];
+    for (index, body) in cases.into_iter().enumerate() {
+        let (_runtime, session, _reports) = opened(
+            &format!("a_change_of_the_event_or_the_call_at_any_depth_throws_and_stops_the_call_{index}"),
+            &[(
+                "editor",
+                &format!("export function session(s) {{ s.hook('tool.before', (event) => {{ {body} }}); }}"),
+            )],
+        )
+        .await;
 
-    let decision = decide(&session, "write", r#"{"options": {"force": false}}"#).await;
+        let decision = decide(&session, "write", r#"{"options": {"force": false}}"#).await;
 
-    let ToolDecision::Block(reason) = decision else {
-        panic!("the call runs: {decision:?}");
-    };
-    assert!(
-        reason.starts_with("tool.before of plugin editor failed: TypeError: "),
-        "{reason}"
-    );
+        let ToolDecision::Block(reason) = decision else {
+            panic!("{body}: the call runs: {decision:?}");
+        };
+        assert!(
+            reason.starts_with("tool.before of plugin editor failed: TypeError: "),
+            "{body}: {reason}"
+        );
+    }
 }
 
 #[tokio::test]
 async fn a_throw_or_an_answer_of_another_shape_stops_the_call_and_names_the_plugin() {
-    let shape = "tool.before of plugin check gave an answer that is not undefined or { block: string }";
     let cases = [
+        ("throw new Error('no check today');", "Error: no check today"),
         (
-            "throw new Error('no check today');",
-            "tool.before of plugin check failed: Error: no check today",
+            "return { block: 1 };",
+            "TypeError: the block of the answer is not a string",
         ),
-        ("return { block: 1 };", shape),
-        ("return 'no';", shape),
-        ("return {};", shape),
-        ("return null;", shape),
+        (
+            "return { block: 'no', why: 'x' };",
+            "TypeError: the answer has the unknown field 'why'",
+        ),
+        ("return {};", "TypeError: the block of the answer is not a string"),
+        ("return 'no';", "TypeError: the answer is not an object"),
+        ("return null;", "TypeError: the answer is not an object"),
     ];
-    for (index, (body, expected)) in cases.into_iter().enumerate() {
+    for (index, (body, error)) in cases.into_iter().enumerate() {
         let (_runtime, session, _reports) = opened(
             &format!("a_throw_or_an_answer_of_another_shape_stops_the_call_and_names_the_plugin_{index}"),
             &[(
@@ -137,7 +147,8 @@ async fn a_throw_or_an_answer_of_another_shape_stops_the_call_and_names_the_plug
         )
         .await;
 
-        assert_eq!(decide(&session, "read", "{}").await, block(expected), "{body}");
+        let expected = format!("tool.before of plugin check failed: {error}");
+        assert_eq!(decide(&session, "read", "{}").await, block(&expected), "{body}");
     }
 }
 
@@ -149,9 +160,9 @@ async fn a_cancel_aborts_the_signal_also_when_the_driver_drops_the_hook_future()
         &[(
             "slow",
             "export function session(s) {
-               s.hook('tool.before', (call) => {
+               s.hook('tool.before', ({ signal }) => {
                  globalThis.started = true;
-                 call.signal.addEventListener('abort', () => { globalThis.aborted = call.signal.reason.name; });
+                 signal.addEventListener('abort', () => { globalThis.aborted = signal.reason.name; });
                  return new Promise(() => {});
                });
              }",

@@ -41,21 +41,26 @@ export interface PluginContext {
   readonly notify: (level: NoticeLevel, message: string) => void;
 }
 
-/** What a `prompt.build` handler gets. The handler edits `sections` and returns nothing. */
-export interface PromptBuild {
-  /**
-   * The system prompt sections of the turn, by key, in order. An assignment to a key replaces its text, or adds the
-   * section at the end. A `delete` removes the section. A new object sets a new order. Each key matches
-   * `^[a-z][a-z0-9_-]*$`, and each text is a string. The model reads each section between `<key>` and `</key>`, except
-   * `base`. An empty text adds nothing.
-   */
-  sections: Record<string, string>;
+/** What a `prompt.build` handler gets. */
+export interface PromptBuildEvent {
+  /** The system prompt sections of the turn, by key, in order, after the answers of the handlers before. */
+  readonly sections: Readonly<Record<string, string>>;
   /** The host aborts this signal when the turn is cancelled. */
   readonly signal: AbortSignal;
 }
 
-/** What a `tool.before` or a `tool.after` handler gets: one tool call of the model. */
-export interface ToolCallHook {
+/** The answer of a `prompt.build` handler that changes the system prompt. */
+export interface PromptBuildAnswer {
+  /**
+   * The new sections, by key. Their order is the order of the prompt. Each key matches `^[a-z][a-z0-9_-]*$`, and each
+   * text is a string. The model reads each section between `<key>` and `</key>`, except `base`. An empty text adds
+   * nothing.
+   */
+  readonly sections: Readonly<Record<string, string>>;
+}
+
+/** One tool call of the model. */
+export interface ToolCall {
   /** The id of the call, from the model. */
   readonly id: string;
   /** The name of the tool. A call of a deferred tool through `tool_call` has the name of the deferred tool. */
@@ -67,17 +72,9 @@ export interface ToolCallHook {
    * arguments of the model. A JSON number becomes a JavaScript number, so an integer above 2^53 loses precision.
    */
   readonly arguments: unknown;
-  /** The host aborts this signal when the turn is cancelled. */
-  readonly signal: AbortSignal;
 }
 
-/** The answer of a `tool.before` handler that stops the call. */
-export interface ToolBlock {
-  /** Why the call does not run. The model gets this text as the error result of the call. */
-  readonly block: string;
-}
-
-/** A media item that the result had before the `tool.after` handlers. A patch keeps it when its `media` holds it. */
+/** A media item that the result had before the `tool.after` handlers. An answer keeps it when its `media` holds it. */
 export interface ResultMedia {
   /** The media type, for example `image/png`. */
   readonly mimeType: string;
@@ -85,18 +82,40 @@ export interface ResultMedia {
   readonly size: number;
 }
 
-/** What a `tool.after` handler gets beside the call: the result after the patches of the handlers before it. */
-export interface ToolResultHook {
+/** The result of one tool call. */
+export interface ToolCallResult {
   /** The text for the model. */
   readonly text: string;
   /** `true` when the result is an error. */
   readonly isError: boolean;
-  /** The media items: the items of the tool, and the new items of the patches before. */
+  /** The media items: the items of the tool, and the new items of the answers before. */
   readonly media: readonly (ResultMedia | ToolMedia)[];
 }
 
+/** What a `tool.before` handler gets. */
+export interface ToolBeforeEvent {
+  readonly call: ToolCall;
+  /** The host aborts this signal when the turn is cancelled. */
+  readonly signal: AbortSignal;
+}
+
+/** The answer of a `tool.before` handler that stops the call. */
+export interface ToolBeforeAnswer {
+  /** Why the call does not run. The model gets this text as the error result of the call. */
+  readonly block: string;
+}
+
+/** What a `tool.after` handler gets. */
+export interface ToolAfterEvent {
+  readonly call: ToolCall;
+  /** The result after the answers of the handlers before. */
+  readonly result: ToolCallResult;
+  /** The host aborts this signal when the turn is cancelled. */
+  readonly signal: AbortSignal;
+}
+
 /** The answer of a `tool.after` handler that changes the result. A field that is not `undefined` replaces its value. */
-export interface ToolResultPatch {
+export interface ToolAfterAnswer {
   readonly text?: string;
   readonly isError?: boolean;
   /**
@@ -106,32 +125,33 @@ export interface ToolResultPatch {
   readonly media?: readonly (ResultMedia | ToolMedia)[];
 }
 
-/** The hooks of a session, by point. The host awaits each handler. */
+/**
+ * The hooks of a session, by point. Each handler gets one frozen event, and the host awaits it. The handler returns
+ * `undefined` for no change, or an answer. A throw, or an answer of another shape, is a failure of the handler. Its
+ * error names the point and the plugin.
+ */
 export interface SessionHooks {
   /**
-   * Edit the system prompt of a turn. The handlers run once before each turn, after `session` of each plugin settles.
-   * When a handler throws, the host sends a notice and starts no turn. The input stays pending until the next input.
-   * The edits are for that turn only. A text that changes at each turn makes each turn miss the prompt cache of the
-   * provider.
+   * Change the system prompt of a turn. The handlers run once before each turn, after `session` of each plugin
+   * settles. Each handler gets the sections after the answers of the handlers before it. When a handler fails, the host
+   * sends a notice and starts no turn. The input stays pending until the next input. The answers are for that turn
+   * only. A text that changes at each turn makes each turn miss the prompt cache of the provider.
    */
-  "prompt.build": (build: PromptBuild) => undefined | Promise<undefined>;
+  "prompt.build": (event: PromptBuildEvent) => undefined | PromptBuildAnswer | Promise<undefined | PromptBuildAnswer>;
   /**
    * Decide whether a tool call runs. The handlers run before each call, in call order. They run in order until one
-   * returns a `ToolBlock`. The call then does not run, and the turn goes on. `undefined` leaves the decision to the
-   * next handler. A throw, or an answer of another shape, also stops the call, so a failed check never lets a call run.
+   * answers. The call then does not run, and the turn goes on. A failed handler also stops the call, so a failed check
+   * never lets a call run.
    */
-  "tool.before": (call: ToolCallHook) => undefined | ToolBlock | Promise<undefined | ToolBlock>;
+  "tool.before": (event: ToolBeforeEvent) => undefined | ToolBeforeAnswer | Promise<undefined | ToolBeforeAnswer>;
   /**
    * Change the result of a tool call before the model reads it. The handlers run after each call that started, also
    * after a failed call and a call of an unknown tool. A call that `tool.before` stopped gets no `tool.after`. Each
-   * handler gets the result after the patches of the handlers before it. `undefined` keeps the result. A throw, or an
-   * answer of another shape, makes the result an error without media, so a failed handler never shows the original
-   * result. A cancel during the handlers keeps the original result. The handlers of two calls can run at the same time.
+   * handler gets the result after the answers of the handlers before it. A failed handler makes the result an error
+   * without media, so it never shows the original result. A cancel during the handlers keeps the original result. The
+   * handlers of two calls can run at the same time.
    */
-  "tool.after": (
-    call: ToolCallHook,
-    result: ToolResultHook,
-  ) => undefined | ToolResultPatch | Promise<undefined | ToolResultPatch>;
+  "tool.after": (event: ToolAfterEvent) => undefined | ToolAfterAnswer | Promise<undefined | ToolAfterAnswer>;
 }
 
 /** What `session` of a plugin gets for one session. */
