@@ -4,17 +4,21 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use rquickjs::convert::List;
-use rquickjs::{Ctx, Function, Object, Promise};
+use rquickjs::function::IntoArgs;
+use rquickjs::{Ctx, FromJs, Function, Object, Promise};
+use tokio::sync::oneshot;
 use yuke_agent::PromptSection;
-use yuke_engine::CancellationToken;
+use yuke_ai::ToolCall;
+use yuke_engine::{CancellationToken, Hooks, ToolDecision};
 
 use crate::Runtime;
 use crate::error::{Error, caught};
 use crate::plugins::loader;
 use crate::processes::Processes;
 use crate::runtime::Caller;
-use crate::tools::{self, Registry, ScriptTool, SessionHost};
+use crate::tools::{self, Registry, ScriptTool, SessionHost, error_text};
 
 /// An open session of the plugins. Call [`ScriptSession::close`] to await the cleanups. A drop posts the close and does
 /// not wait. The posted close runs only while the runtime thread runs, so close each session before a shutdown.
@@ -116,23 +120,8 @@ impl ScriptSession {
             .iter()
             .map(|section| List((section.key.clone(), section.text.clone())))
             .collect();
-        let token = token.clone();
-        let built = self
-            .caller
-            .run(async move |ctx: Ctx<'_>, _: Rc<Registry>| {
-                let start: Function<'_> = caught(&ctx, loader(&ctx).await?.get("startPromptBuild"))?;
-                let started: Object<'_> = caught(&ctx, start.call((open, pairs)))?;
-                let promise: Promise<'_> = caught(&ctx, started.get("answer"))?;
-                let abort: Function<'_> = caught(&ctx, started.get("abort"))?;
-                tokio::select! {
-                    answer = promise.into_future::<Vec<List<(String, String)>>>() => caught(&ctx, answer).map(Some),
-                    () = token.cancelled() => {
-                        caught(&ctx, abort.call::<_, ()>(()))?;
-                        Ok(None)
-                    }
-                }
-            })
-            .await?;
+        let built: Option<Vec<List<(String, String)>>> =
+            run_hook(&self.caller, "startPromptBuild", (open, pairs), token.clone()).await?;
         Ok(built.map_or_else(
             || sections.to_vec(),
             |pairs| {
@@ -142,6 +131,16 @@ impl ScriptSession {
                     .collect()
             },
         ))
+    }
+
+    /// The engine hooks of one turn of the session. The plugins answer them. When `token` is cancelled, each hook
+    /// aborts its signal.
+    pub fn hooks(&self, token: CancellationToken) -> ScriptHooks {
+        ScriptHooks {
+            caller: self.caller.clone(),
+            open: self.open,
+            token,
+        }
     }
 
     /// Close the session: its tools stop at once, each signal of its plugins aborts, and the close waits for each
@@ -168,6 +167,86 @@ impl Drop for ScriptSession {
         });
         if posted.is_err() {
             // The thread has ended, so no plugin of the session runs.
+        }
+    }
+}
+
+/// The engine hooks of one turn of a session. The `s.hook` handlers of the plugins answer them, and each hook that
+/// they do not handle keeps its default.
+pub struct ScriptHooks {
+    caller: Caller,
+    open: u64,
+    token: CancellationToken,
+}
+
+impl std::fmt::Debug for ScriptHooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScriptHooks")
+            .field("open", &self.open)
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+impl Hooks for ScriptHooks {
+    async fn before_tool(&self, call: &ToolCall) -> ToolDecision {
+        let args = (
+            self.open,
+            call.call_id.clone(),
+            call.name.clone(),
+            call.arguments.clone(),
+        );
+        let answer: Result<Option<Option<String>>, Error> =
+            run_hook(&self.caller, "startToolBefore", args, self.token.clone()).await;
+        match answer {
+            Ok(Some(Some(reason))) => ToolDecision::Block(reason),
+            // A cancel stops the turn, so the driver does not start the call.
+            Ok(Some(None) | None) => ToolDecision::Run,
+            // A failed check never lets a call run.
+            Err(error) => ToolDecision::Block(format!("the tool.before hooks failed: {}", error_text(&error))),
+        }
+    }
+}
+
+/// Call the loader function `start` with `args` on the JavaScript thread, and return the answer of the run that it
+/// starts. When `token` is cancelled, the run aborts its signal, and the call returns `None`.
+async fn run_hook<A, T>(
+    caller: &Caller,
+    start: &'static str,
+    args: A,
+    token: CancellationToken,
+) -> Result<Option<T>, Error>
+where
+    A: for<'js> IntoArgs<'js> + Send + 'static,
+    T: for<'js> FromJs<'js> + Send + 'static,
+{
+    // A driver drops a hook future at a cancel. A posted run goes on after that drop, so the cancel still reaches it.
+    let (reply, answer) = oneshot::channel();
+    caller.post(async move |ctx: Ctx<'_>, _: Rc<Registry>| {
+        if reply.send(start_and_settle(&ctx, start, args, &token).await).is_err() {
+            // The caller has left, and the run has ended.
+        }
+    })?;
+    answer.await.map_err(|_| Error::Stopped)?
+}
+
+/// Start the run of the loader function `start` with `args`, and await its answer. When `token` is cancelled, the run
+/// aborts its signal, and the call returns `None` at once.
+async fn start_and_settle<'js, A: IntoArgs<'js>, T: FromJs<'js>>(
+    ctx: &Ctx<'js>,
+    start: &str,
+    args: A,
+    token: &CancellationToken,
+) -> Result<Option<T>, Error> {
+    let function: Function<'js> = caught(ctx, loader(ctx).await?.get(start))?;
+    let started: Object<'js> = caught(ctx, function.call(args))?;
+    let promise: Promise<'js> = caught(ctx, started.get("answer"))?;
+    let abort: Function<'js> = caught(ctx, started.get("abort"))?;
+    tokio::select! {
+        answer = promise.into_future::<T>() => caught(ctx, answer).map(Some),
+        () = token.cancelled() => {
+            caught(ctx, abort.call::<_, ()>(()))?;
+            Ok(None)
         }
     }
 }

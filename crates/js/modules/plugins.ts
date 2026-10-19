@@ -54,6 +54,29 @@ export interface PromptBuild {
   readonly signal: AbortSignal;
 }
 
+/** What a `tool.before` handler gets: one tool call of the model before it runs. */
+export interface ToolCallHook {
+  /** The id of the call, from the model. */
+  readonly id: string;
+  /** The name of the tool. A call of a deferred tool through `tool_call` has the name of the deferred tool. */
+  readonly name: string;
+  /**
+   * The arguments of the call: the parsed JSON of the model, frozen at each depth. A call of a deferred tool through
+   * `tool_call` has the arguments of the deferred tool. The host checks them against the schema of the tool only after
+   * the hooks, so check their shape before a use. A change throws a `TypeError`, because the call runs with the
+   * arguments of the model. A JSON number becomes a JavaScript number, so an integer above 2^53 loses precision.
+   */
+  readonly arguments: unknown;
+  /** The host aborts this signal when the turn is cancelled. */
+  readonly signal: AbortSignal;
+}
+
+/** The answer of a `tool.before` handler that stops the call. */
+export interface ToolBlock {
+  /** Why the call does not run. The model gets this text as the error result of the call. */
+  readonly block: string;
+}
+
 /** The hooks of a session, by point. The host awaits each handler. */
 export interface SessionHooks {
   /**
@@ -63,6 +86,12 @@ export interface SessionHooks {
    * provider.
    */
   "prompt.build": (build: PromptBuild) => undefined | Promise<undefined>;
+  /**
+   * Decide whether a tool call runs. The handlers run before each call, in call order. They run in order until one
+   * returns a `ToolBlock`. The call then does not run, and the turn goes on. `undefined` leaves the decision to the
+   * next handler. A throw, or an answer of another shape, also stops the call, so a failed check never lets a call run.
+   */
+  "tool.before": (call: ToolCallHook) => undefined | ToolBlock | Promise<undefined | ToolBlock>;
 }
 
 /** What `session` of a plugin gets for one session. */

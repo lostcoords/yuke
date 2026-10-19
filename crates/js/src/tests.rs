@@ -4,6 +4,7 @@ mod globals;
 mod plugins;
 mod prompt;
 mod sessions;
+mod tool_before;
 mod tools;
 mod web;
 

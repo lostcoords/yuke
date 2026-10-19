@@ -23,7 +23,10 @@ fn saved() -> Vec<PromptSection> {
 
 /// A runtime in a new folder `name` with one plugin per `(name, entry)`, in that order, an open session, and the
 /// reports of the runtime.
-async fn opened(name: &str, plugins: &[(&str, &str)]) -> (Runtime, ScriptSession, mpsc::UnboundedReceiver<Report>) {
+pub(super) async fn opened(
+    name: &str,
+    plugins: &[(&str, &str)],
+) -> (Runtime, ScriptSession, mpsc::UnboundedReceiver<Report>) {
     let folder = folder(name);
     let (runtime, reports) = start(&folder).await;
     let specs: Vec<_> = plugins

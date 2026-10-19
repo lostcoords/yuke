@@ -1,5 +1,13 @@
 // Type checks of the author API. `tsc -p crates/js/tsconfig.json` runs them; nothing executes this file.
-import type { PluginApply, PluginContext, PluginSession, PromptBuild, SessionContext } from "yuke:plugins";
+import type {
+  PluginApply,
+  PluginContext,
+  PluginSession,
+  PromptBuild,
+  SessionContext,
+  ToolBlock,
+  ToolCallHook,
+} from "yuke:plugins";
 import type { Infer, ObjectSchema, ToolResult } from "yuke:tools";
 
 /** `true` only when `A` and `B` are the same type. */
@@ -159,3 +167,19 @@ s.hook("prompt.build", async (build) => {
 s.hook("prompt.build", () => "done");
 // @ts-expect-error: no hook has this point.
 s.hook("turn.start", () => undefined);
+
+// A `tool.before` handler gets the call and blocks it with a reason, or returns nothing.
+s.hook("tool.before", (call) => {
+  assert<Equal<typeof call, ToolCallHook>>();
+  assert<Equal<typeof call.arguments, unknown>>();
+  // @ts-expect-error: the call belongs to the model.
+  call.name = "write";
+  if (call.name === "exec") return { block: "exec needs the user" };
+  return undefined;
+});
+s.hook("tool.before", async (call): Promise<ToolBlock | undefined> => {
+  await Promise.resolve();
+  return call.id === "" ? { block: "no id" } : undefined;
+});
+// @ts-expect-error: a block names its reason as a string.
+s.hook("tool.before", () => ({ block: true }));

@@ -420,12 +420,15 @@ impl SessionTask {
             let ended = match prepared {
                 // The turn runs in its own task, so a panic of the turn cannot leave the session running.
                 Ok((toolset, prompt)) => {
+                    let hooks = self.script.hooks(token.clone());
                     let shared = Arc::clone(&self.host.shared);
                     let output = Arc::clone(output);
                     // The session saves a round failure as the end of the turn.
                     let turn = async move {
                         let mut session = session;
-                        let driver = Driver::new(&*shared.machine.transport, &model, &TokioTimer).toolset(&toolset);
+                        let driver = Driver::new(&*shared.machine.transport, &model, &TokioTimer)
+                            .toolset(&toolset)
+                            .hooks(&hooks);
                         session
                             .turn(driver)
                             .prompt(prompt)

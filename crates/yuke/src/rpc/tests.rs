@@ -839,6 +839,49 @@ async fn a_failed_prompt_hook_sends_a_notice_starts_no_turn_and_leaves_the_input
     client.end().await;
 }
 
+// The model gets the reason of a block as the error result of that call, and the turn goes on.
+#[tokio::test]
+async fn a_plugin_blocks_one_call_and_the_other_call_of_the_answer_runs() {
+    let place = Place::new("rpc", "a_plugin_blocks_one_call_and_the_other_call_of_the_answer_runs");
+    place.plugin(
+        "guard",
+        "export function session(s) {
+           s.hook('tool.before', (call) => {
+             if (call.name === 'read' && call.arguments.path === 'secret.txt') return { block: 'secret.txt is private' };
+           });
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["guard"] }"#).unwrap();
+    std::fs::write(place.work.join("notes.txt"), "the notes").unwrap();
+    std::fs::write(place.work.join("secret.txt"), "the secret").unwrap();
+    let transport = ScriptedTransport::new([
+        tool_reply(&[
+            ("c1", "read", r#"{"path":"notes.txt"}"#),
+            ("c2", "read", r#"{"path":"secret.txt"}"#),
+        ]),
+        text_reply("done"),
+    ]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+
+    client
+        .request("session/input", input_params(&session, "read both"))
+        .await;
+    let messages = client.until(is_idle).await;
+
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].contains("the notes"), "{}", requests[1]);
+    assert!(requests[1].contains("secret.txt is private"), "{}", requests[1]);
+    assert!(!requests[1].contains("the secret"), "{}", requests[1]);
+    let end = messages
+        .iter()
+        .find_map(|message| message["params"]["update"]["commit"]["end"].as_object())
+        .unwrap();
+    assert_eq!(end["outcome"], json!({ "completed": { "finishReason": "stop" } }));
+    client.end().await;
+}
+
 #[tokio::test]
 async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_again() {
     let place = Place::new(

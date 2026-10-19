@@ -10,6 +10,7 @@ import type {
   SessionCleanup,
   SessionContext,
   SessionHooks,
+  ToolCallHook,
 } from "yuke:plugins";
 import type { ObjectSchema, Tool } from "yuke:tools";
 
@@ -143,9 +144,8 @@ export function ready(open: number): Promise<void> {
 export function startPromptBuild(
   open: number,
   sections: readonly (readonly [string, string])[],
-): { readonly answer: Promise<[string, string][]>; readonly abort: () => void } {
-  const { signal, abort } = hostSignal();
-  const answer = (async (): Promise<[string, string][]> => {
+): Started<[string, string][]> {
+  return started(async (signal) => {
     const state = opens.get(open);
     if (state === undefined) return sections.map(([key, text]) => [key, text]);
     await state.ready;
@@ -167,24 +167,84 @@ export function startPromptBuild(
       }
     }
     return Object.entries(build.sections);
-  })();
+  });
+}
+
+/**
+ * Start the `tool.before` handlers of the open session `open` on one call. `id` is the id of the call, `name` is the
+ * name of its tool, and `args` is its JSON text. The answer is the reason of the first block, or `undefined` when the
+ * call runs. A closed session blocks nothing. `abort` aborts the signal of the call.
+ */
+export function startToolBefore(open: number, id: string, name: string, args: string): Started<string | undefined> {
+  return started(async (signal) => {
+    const state = opens.get(open);
+    if (state === undefined) return undefined;
+    await state.ready;
+    const call: ToolCallHook = Object.freeze({ id, name, arguments: frozen(JSON.parse(args)), signal });
+    for (const scope of state.scopes) {
+      for (const handler of [...scope.hooks["tool.before"]]) {
+        if (scope.closed) break;
+        try {
+          const answer: unknown = await handler(call);
+          // A close during the wait ends the turn, so the answer of the closed scope no longer counts.
+          if (scope.closed) return undefined;
+          if (answer === undefined) continue;
+          if (
+            typeof answer === "object" &&
+            answer !== null &&
+            typeof (answer as { block?: unknown }).block === "string"
+          ) {
+            return (answer as { block: string }).block;
+          }
+          return `tool.before of plugin ${scope.plugin} gave an answer that is not undefined or { block: string }`;
+        } catch (error) {
+          return `tool.before of plugin ${scope.plugin} failed: ${textOf(error)}`;
+        }
+      }
+    }
+    return undefined;
+  });
+}
+
+/** A run of the handlers of one point, and the abort of its signal. */
+interface Started<T> {
+  readonly answer: Promise<T>;
+  readonly abort: () => void;
+}
+
+/** Start `run` with a new signal. `abort` aborts the signal. */
+function started<T>(run: (signal: AbortSignal) => Promise<T>): Started<T> {
+  const { signal, abort } = hostSignal();
+  const answer = run(signal);
   const cancel = (): void => {
-    // The host stops its wait at a cancel, so a later failure of the build has no reader and is no fault.
+    // The host stops its wait at a cancel, so a later failure of the run has no reader and is no fault.
     answer.catch(() => undefined);
     abort("the turn was cancelled");
   };
   return { answer, abort: cancel };
 }
 
+/** `value` with each object in it frozen. A JSON value has no cycle. */
+function frozen(value: unknown): unknown {
+  if (typeof value === "object" && value !== null) {
+    for (const inner of Object.values(value)) frozen(inner);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+/** The text form of the thrown `error`. */
+function textOf(error: unknown): string {
+  try {
+    return String(error);
+  } catch {
+    return "a value without a text form";
+  }
+}
+
 /** The error of a `prompt.build` handler of `plugin` that threw `error`. It keeps the stack of `error`. */
 function hookFailure(plugin: string, error: unknown): Error {
-  let text: string;
-  try {
-    text = String(error);
-  } catch {
-    text = "a value without a text form";
-  }
-  const failure = new Error(`prompt.build of plugin ${plugin} failed: ${text}`);
+  const failure = new Error(`prompt.build of plugin ${plugin} failed: ${textOf(error)}`);
   // The stack of the host code tells the author nothing.
   if (error instanceof Error && error.stack !== undefined) failure.stack = error.stack;
   else delete failure.stack;
@@ -237,7 +297,7 @@ function start(open: number, sessionId: string, folder: string, plugin: string, 
     closed: false,
     abort,
     tools: [],
-    hooks: { "prompt.build": [] },
+    hooks: { "prompt.build": [], "tool.before": [] },
     settled: Promise.resolve(undefined),
     clean,
   };

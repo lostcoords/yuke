@@ -372,7 +372,7 @@ async fn read_file(path: PathBuf) -> std::io::Result<Vec<u8>> {
 }
 
 /// The text of a failed call for the model: the message of a thrown error.
-fn error_text(error: &Error) -> String {
+pub(crate) fn error_text(error: &Error) -> String {
     match error {
         Error::Script(error) if !error.message.is_empty() => error.message.clone(),
         Error::Script(error) => error.name.clone().unwrap_or_else(|| "the tool failed".to_owned()),
