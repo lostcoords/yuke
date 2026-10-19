@@ -39,6 +39,8 @@ Ask the user before you add a dependency.
   - A context error writes its own text and returns the cause from `source`.
   - A transparent error writes the text of its inner error and returns the `source` of that inner error. It can add
     facts after that text.
+- A trait error that the library only reports is `Box<dyn Error + Send + Sync>`.
+  Use a concrete type only when the library acts on its kind.
 
 ## Tests
 

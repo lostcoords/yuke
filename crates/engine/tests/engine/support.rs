@@ -1,6 +1,7 @@
 //! The fixtures that only the engine tests use. The shared ones live in `yuke-testing`.
 
 use std::collections::VecDeque;
+use std::error::Error;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -10,8 +11,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason};
 use yuke_engine::{
-    CancellationToken, Driver, Hooks, Inbox, RoundDecision, RoundError, RoundPlan, Timer, Tool, ToolContent,
-    ToolContext,
+    Answer, CancellationToken, Commit, Driver, Hooks, Inbox, Journal, Replaced, RoundDecision, RoundError, RoundPlan,
+    Timer, Tool, ToolContent, ToolContext, TurnEnd,
 };
 use yuke_testing::target;
 
@@ -126,16 +127,24 @@ fn next<T>(script: &Mutex<Option<VecDeque<T>>>, default: impl FnOnce() -> T) -> 
 
 #[async_trait]
 impl Hooks for Script {
-    async fn before_round(&self, _: &[Block]) -> RoundPlan {
-        next(&self.plans, RoundPlan::default)
+    async fn before_round(&self, _: &[Block]) -> Result<RoundPlan, Box<dyn Error + Send + Sync>> {
+        Ok(next(&self.plans, RoundPlan::default))
     }
 
-    async fn retry_round(&self, _: &[Block], failure: &RoundError) -> Option<RoundPlan> {
+    async fn retry_round(
+        &self,
+        _: &[Block],
+        failure: &RoundError,
+    ) -> Result<Option<RoundPlan>, Box<dyn Error + Send + Sync>> {
         self.calls.lock().unwrap().push(format!("retry {failure}"));
-        next(&self.retries, || None)
+        Ok(next(&self.retries, || None))
     }
 
-    async fn after_round(&self, context: &[Block], finish_reason: Option<FinishReason>) -> RoundDecision {
+    async fn after_round(
+        &self,
+        context: &[Block],
+        finish_reason: Option<FinishReason>,
+    ) -> Result<RoundDecision, Box<dyn Error + Send + Sync>> {
         let last = match context.last() {
             Some(Block::AssistantText(text)) => text.as_str(),
             Some(Block::ToolResult(result)) => result.content.as_str(),
@@ -143,7 +152,61 @@ impl Hooks for Script {
         };
         let finish_reason = finish_reason.map_or("none", FinishReason::as_str);
         self.calls.lock().unwrap().push(format!("{finish_reason} {last}"));
-        next(&self.decisions, || RoundDecision::Proceed)
+        Ok(next(&self.decisions, || RoundDecision::Proceed))
+    }
+}
+
+/// One saved commit.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Saved {
+    pub(crate) replaced: Option<(Vec<Block>, usize)>,
+    pub(crate) blocks: Vec<Block>,
+    pub(crate) answer: Option<Answer>,
+    pub(crate) end: Option<TurnEnd>,
+}
+
+/// A journal that replays each commit into one context and keeps each commit.
+#[derive(Debug, Default)]
+pub(crate) struct Replay {
+    context: Mutex<Vec<Block>>,
+    saved: Mutex<Vec<Saved>>,
+}
+
+impl Replay {
+    /// Return the context that the commits replay to.
+    pub(crate) fn context(&self) -> Vec<Block> {
+        self.context.lock().unwrap().clone()
+    }
+
+    /// Return each saved commit, in order.
+    pub(crate) fn saved(&self) -> Vec<Saved> {
+        self.saved.lock().unwrap().clone()
+    }
+
+    /// Return the blocks and the end of each commit, in order.
+    pub(crate) fn shapes(&self) -> Vec<(Vec<Block>, Option<TurnEnd>)> {
+        self.saved()
+            .into_iter()
+            .map(|saved| (saved.blocks, saved.end))
+            .collect()
+    }
+}
+
+#[async_trait]
+impl Journal for Replay {
+    async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let mut context = self.context.lock().unwrap();
+        commit.apply(&mut context);
+        self.saved.lock().unwrap().push(Saved {
+            replaced: commit
+                .replaced
+                .as_ref()
+                .map(|Replaced { head, keep }| (head.to_vec(), *keep)),
+            blocks: commit.blocks.to_vec(),
+            answer: commit.answer.clone(),
+            end: commit.end.clone(),
+        });
+        Ok(())
     }
 }
 

@@ -1,6 +1,8 @@
 //! Caller decisions during a turn. The driver awaits each hook, and the answer decides the next step. An observer
 //! only watches.
 
+use std::error::Error;
+
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason, Settings, ToolCall, ToolResult};
 
@@ -8,18 +10,31 @@ use crate::model::{Model, RoundError};
 use crate::turn_state::Replace;
 
 /// The decisions of a caller at the boundaries of a turn. Each method has a default that changes nothing, so a
-/// caller implements only the hooks that it needs.
+/// caller implements only the hooks that it needs. A round hook can fail, and its error ends the turn as
+/// [`RoundError::Hook`]. A tool hook cannot fail, so a caller answers a failed check with a block or an error result.
 #[async_trait]
 pub trait Hooks: Send + Sync {
     /// Prepare the request of a round. The driver asks before the first attempt of each round, not before a retry.
-    async fn before_round(&self, _context: &[Block]) -> RoundPlan {
-        RoundPlan::default()
+    ///
+    /// # Errors
+    ///
+    /// Returns why the hook failed. The turn then ends with no request.
+    async fn before_round(&self, _context: &[Block]) -> Result<RoundPlan, Box<dyn Error + Send + Sync>> {
+        Ok(RoundPlan::default())
     }
 
-    /// Decide whether a failed round runs again in the same turn. The driver asks after the retries of the round end.
-    /// A plan sends the round again. `None` ends the turn with the `failure`.
-    async fn retry_round(&self, _context: &[Block], _failure: &RoundError) -> Option<RoundPlan> {
-        None
+    /// Decide whether a failed round runs again in the same turn. The driver asks after the last attempt of the round
+    /// fails, but not after a failed hook. A plan sends the round again. `None` ends the turn with the `failure`.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the hook failed. The turn then ends with [`RoundError::Hook`], and its text ends with the `failure`.
+    async fn retry_round(
+        &self,
+        _context: &[Block],
+        _failure: &RoundError,
+    ) -> Result<Option<RoundPlan>, Box<dyn Error + Send + Sync>> {
+        Ok(None)
     }
 
     /// Decide whether `call` runs. The driver asks before each call, in call order. It skips a call with invalid JSON
@@ -40,8 +55,17 @@ pub trait Hooks: Send + Sync {
     /// in `context`, and before it takes the input of the inbox. `finish_reason` is the reason of an answer that needs
     /// no other request, and `None` after a round that asks for another request. The engine sets no limit on
     /// `Continue`, so a caller bounds its own loop.
-    async fn after_round(&self, _context: &[Block], _finish_reason: Option<FinishReason>) -> RoundDecision {
-        RoundDecision::Proceed
+    ///
+    /// # Errors
+    ///
+    /// Returns why the hook failed. The turn then ends, and the context keeps the round. The input of the inbox stays
+    /// for the next turn.
+    async fn after_round(
+        &self,
+        _context: &[Block],
+        _finish_reason: Option<FinishReason>,
+    ) -> Result<RoundDecision, Box<dyn Error + Send + Sync>> {
+        Ok(RoundDecision::Proceed)
     }
 }
 

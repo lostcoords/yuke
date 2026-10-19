@@ -195,11 +195,15 @@ struct Refreshed;
 
 #[async_trait]
 impl Hooks for Refreshed {
-    async fn retry_round(&self, _: &[Block], failure: &RoundError) -> Option<RoundPlan> {
-        matches!(failure, RoundError::Credential(_)).then(|| RoundPlan {
+    async fn retry_round(
+        &self,
+        _: &[Block],
+        failure: &RoundError,
+    ) -> Result<Option<RoundPlan>, Box<dyn Error + Send + Sync>> {
+        Ok(matches!(failure, RoundError::Credential(_)).then(|| RoundPlan {
             model: Some(keyed("test-model", Credential::ApiKey("fresh-key".into()))),
             ..RoundPlan::default()
-        })
+        }))
     }
 }
 
@@ -221,7 +225,11 @@ struct CancelOnRetry(CancellationToken);
 
 #[async_trait]
 impl Hooks for CancelOnRetry {
-    async fn retry_round(&self, _: &[Block], _: &RoundError) -> Option<RoundPlan> {
+    async fn retry_round(
+        &self,
+        _: &[Block],
+        _: &RoundError,
+    ) -> Result<Option<RoundPlan>, Box<dyn Error + Send + Sync>> {
         self.0.cancel();
         pending().await
     }

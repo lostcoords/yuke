@@ -685,7 +685,11 @@ struct CancelAfterRound(CancellationToken);
 
 #[async_trait]
 impl Hooks for CancelAfterRound {
-    async fn after_round(&self, _: &[Block], _: Option<FinishReason>) -> RoundDecision {
+    async fn after_round(
+        &self,
+        _: &[Block],
+        _: Option<FinishReason>,
+    ) -> Result<RoundDecision, Box<dyn std::error::Error + Send + Sync>> {
         self.0.cancel();
         std::future::pending().await
     }

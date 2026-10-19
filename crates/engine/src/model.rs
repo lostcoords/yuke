@@ -8,6 +8,8 @@ use async_trait::async_trait;
 use yuke_ai::Target;
 use yuke_ai::route::Credential;
 
+use crate::turn_state::chain_text;
+
 /// Gives the credential of each attempt. The caller supplies it, so a grant can change during a turn.
 #[async_trait]
 pub trait CredentialSource: Send + Sync {
@@ -52,6 +54,13 @@ pub enum RoundError {
     Credential(Box<dyn Error + Send + Sync>),
     /// The request could not be encoded, or its last attempt failed.
     Model(yuke_ai::Error),
+    /// A round hook of [`crate::Hooks`] failed.
+    Hook {
+        /// Why the hook failed.
+        error: Box<dyn Error + Send + Sync>,
+        /// The round failure that [`crate::Hooks::retry_round`] received. `None` for the other hooks.
+        after: Option<Box<RoundError>>,
+    },
 }
 
 impl fmt::Display for RoundError {
@@ -59,6 +68,14 @@ impl fmt::Display for RoundError {
         match self {
             Self::Credential(error) => fmt::Display::fmt(error, f),
             Self::Model(error) => fmt::Display::fmt(error, f),
+            Self::Hook { error, after } => {
+                fmt::Display::fmt(error, f)?;
+                // The source chain gives the causes of the hook error only, so the text keeps each cause of `after`.
+                match after {
+                    Some(after) => write!(f, " (after: {})", chain_text(after.as_ref())),
+                    None => Ok(()),
+                }
+            }
         }
     }
 }
@@ -67,7 +84,7 @@ impl Error for RoundError {
     // The text is the text of the inner error, so the source is the source of the inner error.
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Credential(error) => error.source(),
+            Self::Credential(error) | Self::Hook { error, .. } => error.source(),
             Self::Model(error) => error.source(),
         }
     }

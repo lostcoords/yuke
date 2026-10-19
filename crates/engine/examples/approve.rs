@@ -61,11 +61,15 @@ impl Hooks for Approve {
         }
     }
 
-    async fn after_round(&self, _: &[Block], _: Option<FinishReason>) -> RoundDecision {
+    async fn after_round(
+        &self,
+        _: &[Block],
+        _: Option<FinishReason>,
+    ) -> Result<RoundDecision, Box<dyn std::error::Error + Send + Sync>> {
         if self.rounds.fetch_add(1, Ordering::Relaxed) + 1 >= ROUND_LIMIT {
-            RoundDecision::Stop
+            Ok(RoundDecision::Stop)
         } else {
-            RoundDecision::Proceed
+            Ok(RoundDecision::Proceed)
         }
     }
 }

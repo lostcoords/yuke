@@ -182,7 +182,7 @@ struct CancelBeforeRound(CancellationToken);
 
 #[async_trait]
 impl Hooks for CancelBeforeRound {
-    async fn before_round(&self, _: &[Block]) -> RoundPlan {
+    async fn before_round(&self, _: &[Block]) -> Result<RoundPlan, Box<dyn std::error::Error + Send + Sync>> {
         self.0.cancel();
         std::future::pending().await
     }

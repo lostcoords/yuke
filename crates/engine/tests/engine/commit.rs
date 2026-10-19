@@ -7,64 +7,12 @@ use async_trait::async_trait;
 use yuke_ai::transport::{BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 use yuke_ai::{Block, FinishReason, Target, ToolCall, ToolResult, Usage};
 use yuke_engine::{
-    Answer, CancellationToken, Commit, Driver, Journal, Outcome, Replace, Replaced, RoundDecision, RoundPlan, Tool,
-    ToolContent, ToolContext, Toolset, TurnEnd, TurnError, TurnEvent,
+    Answer, CancellationToken, Commit, Driver, Journal, Outcome, Replace, RoundDecision, RoundPlan, Tool, ToolContent,
+    ToolContext, Toolset, TurnEnd, TurnError, TurnEvent,
 };
 use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, model_of, target, text_reply, tool_reply};
 
-use crate::support::{Batches, Recorder, Script, block_on, definition, origin, yield_once};
-
-/// One saved commit.
-#[derive(Debug, Clone, PartialEq)]
-struct Saved {
-    replaced: Option<(Vec<Block>, usize)>,
-    blocks: Vec<Block>,
-    answer: Option<Answer>,
-    end: Option<TurnEnd>,
-}
-
-/// A journal that replays each commit into one context and keeps each commit.
-#[derive(Debug, Default)]
-struct Replay {
-    context: Mutex<Vec<Block>>,
-    saved: Mutex<Vec<Saved>>,
-}
-
-impl Replay {
-    fn context(&self) -> Vec<Block> {
-        self.context.lock().unwrap().clone()
-    }
-
-    fn saved(&self) -> Vec<Saved> {
-        self.saved.lock().unwrap().clone()
-    }
-
-    /// The blocks and the end of each commit, in order.
-    fn shapes(&self) -> Vec<(Vec<Block>, Option<TurnEnd>)> {
-        self.saved()
-            .into_iter()
-            .map(|saved| (saved.blocks, saved.end))
-            .collect()
-    }
-}
-
-#[async_trait]
-impl Journal for Replay {
-    async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let mut context = self.context.lock().unwrap();
-        commit.apply(&mut context);
-        self.saved.lock().unwrap().push(Saved {
-            replaced: commit
-                .replaced
-                .as_ref()
-                .map(|Replaced { head, keep }| (head.to_vec(), *keep)),
-            blocks: commit.blocks.to_vec(),
-            answer: commit.answer.clone(),
-            end: commit.end.clone(),
-        });
-        Ok(())
-    }
-}
+use crate::support::{Batches, Recorder, Replay, Saved, Script, block_on, definition, origin, yield_once};
 
 /// Return the end of a turn that the model ended with `stop`.
 fn completed() -> TurnEnd {

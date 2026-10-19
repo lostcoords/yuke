@@ -439,13 +439,16 @@ impl<'a> Driver<'a> {
         cancellation_token: &CancellationToken,
     ) -> Result<Round, TurnError> {
         let cancelled = || Ok(Round::new(Sent::Cancelled(Vec::new()), &self.model.target));
-        let Raced::Done(mut plan) = race(
+        let failed = |error| Ok(Round::new(Sent::Finished(Err(error)), &self.model.target));
+        let mut plan = match race(
             self.hooks.before_round(turn_state.context()),
             cancellation_token.cancelled(),
         )
         .await
-        else {
-            return cancelled();
+        {
+            Raced::Done(Ok(plan)) => plan,
+            Raced::Done(Err(error)) => return failed(RoundError::Hook { error, after: None }),
+            Raced::Cancelled => return cancelled(),
         };
         loop {
             if let Some(replace) = plan.replace.take() {
@@ -469,8 +472,14 @@ impl<'a> Driver<'a> {
             )
             .await;
             plan = match retry {
-                Raced::Done(Some(plan)) => plan,
-                Raced::Done(None) => return Ok(Round::new(Sent::Finished(Err(error)), &model.target)),
+                Raced::Done(Ok(Some(plan))) => plan,
+                Raced::Done(Ok(None)) => return Ok(Round::new(Sent::Finished(Err(error)), &model.target)),
+                Raced::Done(Err(hook)) => {
+                    return failed(RoundError::Hook {
+                        error: hook,
+                        after: Some(Box::new(error)),
+                    });
+                }
                 Raced::Cancelled => return cancelled(),
             };
         }
@@ -599,8 +608,8 @@ impl<'a> Turn<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`TurnError::Round`] when a round fails and no hook sends it again. The context keeps the blocks from
-    /// before the failure. Returns [`TurnError::Commit`] when the journal fails to save a commit.
+    /// Returns [`TurnError::Round`] when a round fails and no hook sends it again, or when a round hook fails. The
+    /// context keeps each block from before the failure, such as the answer before a failed `after_round`. Returns [`TurnError::Commit`] when the journal fails to save a commit.
     pub async fn run(self) -> Result<Outcome, TurnError> {
         let Turn {
             driver,
@@ -687,13 +696,14 @@ impl<'a> Turn<'a> {
                     let decided = driver.hooks.after_round(context, finish_reason);
                     action = match race(decided, cancellation_token.cancelled()).await {
                         // The driver takes the input only when the turn goes on, so a stop or a cancel leaves it.
-                        Raced::Done(RoundDecision::Proceed) => turn_state.proceed(driver.inbox.take()),
-                        Raced::Done(RoundDecision::Continue(more)) => {
+                        Raced::Done(Ok(RoundDecision::Proceed)) => turn_state.proceed(driver.inbox.take()),
+                        Raced::Done(Ok(RoundDecision::Continue(more))) => {
                             // Input of the user comes first. The hook gets another call after the next round.
                             let input = driver.inbox.take();
                             turn_state.send(if input.is_empty() { more } else { input })
                         }
-                        Raced::Done(RoundDecision::Stop) => turn_state.stop(),
+                        Raced::Done(Ok(RoundDecision::Stop)) => turn_state.stop(),
+                        Raced::Done(Err(error)) => turn_state.fail(RoundError::Hook { error, after: None }),
                         Raced::Cancelled => turn_state.cancel(),
                     };
                 }
