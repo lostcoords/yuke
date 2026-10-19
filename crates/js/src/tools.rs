@@ -324,29 +324,38 @@ impl ScriptTool {
     /// The engine content of the result `answer`: its text, its error flag, and each media item stored through the
     /// host. A relative media path starts in `folder`.
     async fn content(&self, answer: Answer, folder: &Path) -> Result<ToolContent, String> {
-        // Each read comes before the first store, so a failed read leaves no blob without a reference.
-        let mut files = Vec::with_capacity(answer.media.len());
-        for file in answer.media {
-            let bytes = match file.source {
-                Source::Path(path) => read_file(folder.join(&path))
-                    .await
-                    .map_err(|error| format!("{path}: {error}"))?,
-                Source::Bytes(bytes) if bytes.len() as u64 > MAX_MEDIA_BYTES => return Err(too_large()),
-                Source::Bytes(bytes) => bytes,
-            };
-            files.push((bytes, file.mime_type));
-        }
-        let mut media = Vec::with_capacity(files.len());
-        for (bytes, mime_type) in files {
-            let blob = self.host.put_media(bytes).await?;
-            media.push(yuke_ai::Media::new(blob, mime_type));
-        }
         Ok(ToolContent {
             text: answer.text,
-            media,
+            media: store_media(&*self.host, answer.media, folder).await?,
             is_error: answer.is_error,
         })
     }
+}
+
+/// Store each media item of `files` through `host`, and return the items in order. A relative path starts in `folder`.
+pub(crate) async fn store_media(
+    host: &dyn SessionHost,
+    files: Vec<MediaFile>,
+    folder: &Path,
+) -> Result<Vec<yuke_ai::Media>, String> {
+    // Each read comes before the first store, so a failed read leaves no blob without a reference.
+    let mut read = Vec::with_capacity(files.len());
+    for file in files {
+        let bytes = match file.source {
+            Source::Path(path) => read_file(folder.join(&path))
+                .await
+                .map_err(|error| format!("{path}: {error}"))?,
+            Source::Bytes(bytes) if bytes.len() as u64 > MAX_MEDIA_BYTES => return Err(too_large()),
+            Source::Bytes(bytes) => bytes,
+        };
+        read.push((bytes, file.mime_type));
+    }
+    let mut media = Vec::with_capacity(read.len());
+    for (bytes, mime_type) in read {
+        let blob = host.put_media(bytes).await?;
+        media.push(yuke_ai::Media::new(blob, mime_type));
+    }
+    Ok(media)
 }
 
 /// The largest media item of each provider, from a file or from bytes: 5 MiB as base64. Anthropic on Bedrock and
@@ -395,7 +404,7 @@ struct Answer {
 
 /// A media item of a result.
 #[derive(Debug)]
-struct MediaFile {
+pub(crate) struct MediaFile {
     mime_type: String,
     source: Source,
 }

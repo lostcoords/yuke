@@ -882,6 +882,44 @@ async fn a_plugin_blocks_one_call_and_the_other_call_of_the_answer_runs() {
     client.end().await;
 }
 
+// The model and the saved session both get the patched result, so the original text never leaves the hook.
+#[tokio::test]
+async fn a_plugin_patches_a_tool_result_before_the_model_reads_it() {
+    let place = Place::new("rpc", "a_plugin_patches_a_tool_result_before_the_model_reads_it");
+    place.plugin(
+        "redact",
+        "export function session(s) {
+           s.hook('tool.after', (call, result) => ({ text: result.text.replaceAll('hunter2', '***') }));
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["redact"] }"#).unwrap();
+    std::fs::write(place.work.join("notes.txt"), "password: hunter2").unwrap();
+    let transport = ScriptedTransport::new([
+        tool_reply(&[("c1", "read", r#"{"path":"notes.txt"}"#)]),
+        text_reply("done"),
+    ]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+
+    client
+        .request("session/input", input_params(&session, "read the notes"))
+        .await;
+    let messages = client.until(is_idle).await;
+    let loaded = client.load(&session, json!({})).await;
+
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].contains("password: ***"), "{}", requests[1]);
+    assert!(!requests[1].contains("hunter2"), "{}", requests[1]);
+    let updates = serde_json::to_string(&messages).unwrap();
+    assert!(updates.contains("password: ***"), "{updates}");
+    assert!(!updates.contains("hunter2"), "{updates}");
+    let saved = serde_json::to_string(&loaded.messages).unwrap();
+    assert!(saved.contains("password: ***"), "{saved}");
+    assert!(!saved.contains("hunter2"), "{saved}");
+    client.end().await;
+}
+
 #[tokio::test]
 async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_again() {
     let place = Place::new(

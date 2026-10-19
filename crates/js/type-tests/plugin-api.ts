@@ -7,6 +7,8 @@ import type {
   SessionContext,
   ToolBlock,
   ToolCallHook,
+  ToolResultHook,
+  ToolResultPatch,
 } from "yuke:plugins";
 import type { Infer, ObjectSchema, ToolResult } from "yuke:tools";
 
@@ -183,3 +185,24 @@ s.hook("tool.before", async (call): Promise<ToolBlock | undefined> => {
 });
 // @ts-expect-error: a block names its reason as a string.
 s.hook("tool.before", () => ({ block: true }));
+
+// A `tool.after` handler gets the call and the result, and returns a patch or nothing.
+s.hook("tool.after", (call, result) => {
+  assert<Equal<typeof call, ToolCallHook>>();
+  assert<Equal<typeof result, ToolResultHook>>();
+  // @ts-expect-error: a handler patches the result through its answer.
+  result.text = "";
+  if (call.name !== "read") return undefined;
+  return {
+    text: result.text.slice(0, 100),
+    media: [...result.media.slice(1), { mimeType: "image/png", path: "a.png" }],
+  };
+});
+s.hook("tool.after", async (): Promise<ToolResultPatch | undefined> => {
+  await Promise.resolve();
+  return { isError: true };
+});
+// @ts-expect-error: a patch has no field outside text, isError, and media.
+s.hook("tool.after", () => ({ content: "x" }));
+// @ts-expect-error: a new media item needs a path or bytes.
+s.hook("tool.after", () => ({ media: [{ mimeType: "image/png" }] }));

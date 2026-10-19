@@ -7,10 +7,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rquickjs::convert::List;
 use rquickjs::function::IntoArgs;
-use rquickjs::{Ctx, FromJs, Function, Object, Promise};
+use rquickjs::{Ctx, FromJs, Function, Object, Promise, Value};
 use tokio::sync::oneshot;
 use yuke_agent::PromptSection;
-use yuke_ai::ToolCall;
+use yuke_ai::{ToolCall, ToolResult};
 use yuke_engine::{CancellationToken, Hooks, ToolDecision};
 
 use crate::Runtime;
@@ -18,7 +18,7 @@ use crate::error::{Error, caught};
 use crate::plugins::loader;
 use crate::processes::Processes;
 use crate::runtime::Caller;
-use crate::tools::{self, Registry, ScriptTool, SessionHost, error_text};
+use crate::tools::{self, MediaFile, Registry, ScriptTool, SessionHost, error_text, store_media};
 
 /// An open session of the plugins. Call [`ScriptSession::close`] to await the cleanups. A drop posts the close and does
 /// not wait. The posted close runs only while the runtime thread runs, so close each session before a shutdown.
@@ -138,6 +138,7 @@ impl ScriptSession {
     pub fn hooks(&self, token: CancellationToken) -> ScriptHooks {
         ScriptHooks {
             caller: self.caller.clone(),
+            host: Arc::clone(&self.host),
             open: self.open,
             token,
         }
@@ -175,6 +176,7 @@ impl Drop for ScriptSession {
 /// they do not handle keeps its default.
 pub struct ScriptHooks {
     caller: Caller,
+    host: Arc<dyn SessionHost>,
     open: u64,
     token: CancellationToken,
 }
@@ -204,6 +206,114 @@ impl Hooks for ScriptHooks {
             Ok(Some(None) | None) => ToolDecision::Run,
             // A failed check never lets a call run.
             Err(error) => ToolDecision::Block(format!("the tool.before hooks failed: {}", error_text(&error))),
+        }
+    }
+
+    async fn after_tool(&self, call: &ToolCall, result: &ToolResult) -> Option<ToolResult> {
+        // A `List` crosses as an array, so each media item is a `[mimeType, size]` pair.
+        let media: Vec<List<(String, usize)>> = result
+            .media
+            .iter()
+            .map(|item| List((item.mime.clone(), item.blob.len)))
+            .collect();
+        let args = (
+            self.open,
+            call.call_id.clone(),
+            call.name.clone(),
+            call.arguments.clone(),
+            result.content.clone(),
+            result.is_error,
+            media,
+        );
+        let answer: Result<Option<Option<Patched>>, Error> =
+            run_hook(&self.caller, "startToolAfter", args, self.token.clone()).await;
+        let patched = match answer {
+            Ok(Some(Some(patched))) => self.patched(result, patched).await,
+            Ok(Some(None) | None) => return None,
+            // The message of a failed handler names its plugin.
+            Err(error @ Error::Script(_)) => Err(error_text(&error)),
+            Err(error) => Err(format!("the tool.after hooks failed: {error}")),
+        };
+        // A failed hook never shows the original result.
+        Some(patched.unwrap_or_else(|text| ToolResult {
+            call_id: result.call_id.clone(),
+            content: text,
+            is_error: true,
+            media: Vec::new(),
+            loaded: result.loaded.clone(),
+        }))
+    }
+}
+
+impl ScriptHooks {
+    /// `result` after the `tool.after` handlers. The text and `is_error` come from `patched`. Each media item is an
+    /// item of `result`, or a new item that the host stores. The `loaded` tools of `result` stay.
+    async fn patched(&self, result: &ToolResult, patched: Patched) -> Result<ToolResult, String> {
+        // Each item is a kept item, or `None` for the next new item.
+        let mut order = Vec::with_capacity(patched.media.len());
+        let mut files = Vec::new();
+        for item in patched.media {
+            match item {
+                PatchedMedia::Kept(index) => order.push(Some(result.media.get(index).cloned().ok_or_else(|| {
+                    format!("the tool.after hooks kept media item {index}, which the result does not have")
+                })?)),
+                PatchedMedia::New(file) => {
+                    files.push(file);
+                    order.push(None);
+                }
+            }
+        }
+        let mut stored = store_media(&*self.host, files, &self.host.folder())
+            .await
+            .map_err(|error| format!("the tool.after hooks failed: {error}"))?
+            .into_iter();
+        Ok(ToolResult {
+            call_id: result.call_id.clone(),
+            content: patched.text,
+            is_error: patched.is_error,
+            media: order
+                .into_iter()
+                .filter_map(|kept| kept.or_else(|| stored.next()))
+                .collect(),
+            loaded: result.loaded.clone(),
+        })
+    }
+}
+
+/// The result after the `tool.after` handlers: `{ text, isError, media }`.
+#[derive(Debug)]
+struct Patched {
+    text: String,
+    is_error: bool,
+    media: Vec<PatchedMedia>,
+}
+
+/// A media item of a patched result.
+#[derive(Debug)]
+enum PatchedMedia {
+    /// The item of the original result at this index. It crosses as a number.
+    Kept(usize),
+    /// A new item of a patch.
+    New(MediaFile),
+}
+
+impl<'js> FromJs<'js> for Patched {
+    fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+        let object = Object::from_value(value)?;
+        Ok(Self {
+            text: object.get("text")?,
+            is_error: object.get("isError")?,
+            media: object.get("media")?,
+        })
+    }
+}
+
+impl<'js> FromJs<'js> for PatchedMedia {
+    fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+        if value.is_number() {
+            usize::from_js(ctx, value).map(Self::Kept)
+        } else {
+            MediaFile::from_js(ctx, value).map(Self::New)
         }
     }
 }

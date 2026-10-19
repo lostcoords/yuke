@@ -56,12 +56,12 @@ function answerOf(result: unknown): Answer {
   if (!Array.isArray(list)) throw new TypeError("the result media is not an array");
   // An index loop, so a hole of a sparse array fails as a value that is not an object.
   const media: ToolMedia[] = [];
-  for (let index = 0; index < list.length; index += 1) media.push(mediaOf(list[index], index));
+  for (let index = 0; index < list.length; index += 1) media.push(mediaOf(list[index], `the result media[${index}]`));
   return { text: fields.text, isError: fields.isError === true, media };
 }
 
-function mediaOf(value: unknown, index: number): ToolMedia {
-  const place = `the result media[${index}]`;
+/** The checked copy of the media item `value`. `place` names it in the error. A value of another shape throws. */
+export function mediaOf(value: unknown, place: string): ToolMedia {
   const fields = fieldsOf(value, place, MEDIA_FIELDS);
   const mimeType = fields.mimeType;
   if (typeof mimeType !== "string") throw new TypeError(`${place}.mimeType is not a string`);
@@ -73,7 +73,7 @@ function mediaOf(value: unknown, index: number): ToolMedia {
     return { mimeType, path: fields.path };
   }
   if (!isUint8Array(fields.bytes)) throw new TypeError(`${place}.bytes is not a Uint8Array`);
-  // A copy through the constructor, so a later change of the bytes by the tool does not change the result.
+  // A copy through the constructor, so a later change of the bytes by the plugin does not change the result.
   return { mimeType, bytes: new ByteArray(fields.bytes as Uint8Array) };
 }
 
@@ -81,7 +81,7 @@ function mediaOf(value: unknown, index: number): ToolMedia {
  * A copy of the own fields of the object `value`. A value that is not an object, a symbol key, or a field outside
  * `names` throws. An inherited field does not count.
  */
-function fieldsOf(value: unknown, place: string, names: readonly string[]): Readonly<Record<string, unknown>> {
+export function fieldsOf(value: unknown, place: string, names: readonly string[]): Readonly<Record<string, unknown>> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError(`${place} is not an object`);
   }

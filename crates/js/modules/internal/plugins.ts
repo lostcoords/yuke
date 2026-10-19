@@ -1,4 +1,4 @@
-import { defineTool } from "yuke:internal/define";
+import { defineTool, fieldsOf, mediaOf } from "yuke:internal/define";
 import { hostSignal } from "yuke:internal/events";
 import { notify, unregister } from "yuke:internal/native";
 import type {
@@ -6,13 +6,15 @@ import type {
   PluginContext,
   PluginSession,
   PromptBuild,
+  ResultMedia,
   Services,
   SessionCleanup,
   SessionContext,
   SessionHooks,
   ToolCallHook,
+  ToolResultHook,
 } from "yuke:plugins";
-import type { ObjectSchema, Tool } from "yuke:tools";
+import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
 /** One plugin as the host gives it. The host checked the manifest, the order, and the providers before any plugin code. */
 interface PluginSpec {
@@ -206,6 +208,102 @@ export function startToolBefore(open: number, id: string, name: string, args: st
   });
 }
 
+/** A media item of a patched result as the host reads it: the index of an original item, or a new item. */
+type PatchedMedia = number | ToolMedia;
+
+/** The result after the `tool.after` handlers, as the host reads it. */
+interface Patched {
+  readonly text: string;
+  readonly isError: boolean;
+  readonly media: readonly PatchedMedia[];
+}
+
+/** The fields of a `tool.after` patch. */
+const PATCH_FIELDS = ["text", "isError", "media"];
+
+/**
+ * Start the `tool.after` handlers of the open session `open` on the result of one call. `id`, `name`, and `args` are
+ * as for `startToolBefore`. `text`, `isError`, and `media` are the result, with each media item as its media type and
+ * its size. The answer is the result after the last patch, or `undefined` when no handler patched it. A closed session
+ * patches nothing. A failed handler throws. `abort` aborts the signal of the call.
+ */
+export function startToolAfter(
+  open: number,
+  id: string,
+  name: string,
+  args: string,
+  text: string,
+  isError: boolean,
+  media: readonly (readonly [string, number])[],
+): Started<Patched | undefined> {
+  return started(async (signal) => {
+    const state = opens.get(open);
+    if (state === undefined) return undefined;
+    await state.ready;
+    const call: ToolCallHook = Object.freeze({ id, name, arguments: frozen(JSON.parse(args)), signal });
+    const originals: readonly ResultMedia[] = media.map(([mimeType, size]) => Object.freeze({ mimeType, size }));
+    let result: ToolResultHook = Object.freeze({ text, isError, media: Object.freeze([...originals]) });
+    let patched = false;
+    for (const scope of state.scopes) {
+      for (const handler of [...scope.hooks["tool.after"]]) {
+        if (scope.closed) break;
+        try {
+          const answer: unknown = await handler(call, result);
+          // A close during the wait ends the turn, and a cancel keeps the original result.
+          if (scope.closed) return undefined;
+          if (answer === undefined) continue;
+          // A getter in the patch is code of the plugin, so the check runs in the same `try`.
+          result = applied(result, answer, originals);
+          patched = true;
+        } catch (error) {
+          throw new Error(`the tool.after hook of plugin ${scope.plugin} failed: ${textOf(error)}`);
+        }
+      }
+    }
+    if (!patched) return undefined;
+    return {
+      text: result.text,
+      isError: result.isError,
+      media: result.media.map((item) => {
+        const index = originals.indexOf(item as ResultMedia);
+        return index === -1 ? (item as ToolMedia) : index;
+      }),
+    };
+  });
+}
+
+/** `result` after the `tool.after` answer `patch`. An item of `originals` stays as it is. Another shape throws. */
+function applied(result: ToolResultHook, patch: unknown, originals: readonly ResultMedia[]): ToolResultHook {
+  const fields = fieldsOf(patch, "the patch", PATCH_FIELDS);
+  if (fields.text !== undefined && typeof fields.text !== "string") {
+    throw new TypeError("the patch text is not a string");
+  }
+  if (fields.isError !== undefined && typeof fields.isError !== "boolean") {
+    throw new TypeError("the patch isError is not a boolean");
+  }
+  let media = result.media;
+  if (fields.media !== undefined) {
+    const list = fields.media;
+    if (!Array.isArray(list)) throw new TypeError("the patch media is not an array");
+    const items: (ResultMedia | ToolMedia)[] = [];
+    // An index loop, so a hole of a sparse array fails as a value that is not an object.
+    for (let index = 0; index < list.length; index += 1) {
+      const item: unknown = list[index];
+      items.push(
+        originals.includes(item as ResultMedia)
+          ? (item as ResultMedia)
+          : Object.freeze(mediaOf(item, `the patch media[${index}]`)),
+      );
+    }
+    media = Object.freeze(items);
+  }
+  return Object.freeze({
+    text: (fields.text as string | undefined) ?? result.text,
+    isError: (fields.isError as boolean | undefined) ?? result.isError,
+    media,
+  });
+}
+
 /** A run of the handlers of one point, and the abort of its signal. */
 interface Started<T> {
   readonly answer: Promise<T>;
@@ -297,7 +395,7 @@ function start(open: number, sessionId: string, folder: string, plugin: string, 
     closed: false,
     abort,
     tools: [],
-    hooks: { "prompt.build": [], "tool.before": [] },
+    hooks: { "prompt.build": [], "tool.before": [], "tool.after": [] },
     settled: Promise.resolve(undefined),
     clean,
   };

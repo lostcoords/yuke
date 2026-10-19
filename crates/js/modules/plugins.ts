@@ -7,7 +7,7 @@
  * `AbortError`. A tool that throws, or a result with `isError: true`, gives the model an error result. A notice only
  * informs the user. It fails no tool and no turn.
  */
-import type { ObjectSchema, Tool } from "yuke:tools";
+import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
 /** The severity of a notice. */
 export type NoticeLevel = "debug" | "info" | "warn" | "error";
@@ -54,7 +54,7 @@ export interface PromptBuild {
   readonly signal: AbortSignal;
 }
 
-/** What a `tool.before` handler gets: one tool call of the model before it runs. */
+/** What a `tool.before` or a `tool.after` handler gets: one tool call of the model. */
 export interface ToolCallHook {
   /** The id of the call, from the model. */
   readonly id: string;
@@ -77,6 +77,35 @@ export interface ToolBlock {
   readonly block: string;
 }
 
+/** A media item that the result had before the `tool.after` handlers. A patch keeps it when its `media` holds it. */
+export interface ResultMedia {
+  /** The media type, for example `image/png`. */
+  readonly mimeType: string;
+  /** The size of the bytes. */
+  readonly size: number;
+}
+
+/** What a `tool.after` handler gets beside the call: the result after the patches of the handlers before it. */
+export interface ToolResultHook {
+  /** The text for the model. */
+  readonly text: string;
+  /** `true` when the result is an error. */
+  readonly isError: boolean;
+  /** The media items: the items of the tool, and the new items of the patches before. */
+  readonly media: readonly (ResultMedia | ToolMedia)[];
+}
+
+/** The answer of a `tool.after` handler that changes the result. A field that is not `undefined` replaces its value. */
+export interface ToolResultPatch {
+  readonly text?: string;
+  readonly isError?: boolean;
+  /**
+   * The new media list. It holds an item of `result.media` to keep it, and a `ToolMedia` to add a new item. A relative
+   * path starts in the workspace folder of the session.
+   */
+  readonly media?: readonly (ResultMedia | ToolMedia)[];
+}
+
 /** The hooks of a session, by point. The host awaits each handler. */
 export interface SessionHooks {
   /**
@@ -92,6 +121,17 @@ export interface SessionHooks {
    * next handler. A throw, or an answer of another shape, also stops the call, so a failed check never lets a call run.
    */
   "tool.before": (call: ToolCallHook) => undefined | ToolBlock | Promise<undefined | ToolBlock>;
+  /**
+   * Change the result of a tool call before the model reads it. The handlers run after each call that started, also
+   * after a failed call and a call of an unknown tool. A call that `tool.before` stopped gets no `tool.after`. Each
+   * handler gets the result after the patches of the handlers before it. `undefined` keeps the result. A throw, or an
+   * answer of another shape, makes the result an error without media, so a failed handler never shows the original
+   * result. A cancel during the handlers keeps the original result. The handlers of two calls can run at the same time.
+   */
+  "tool.after": (
+    call: ToolCallHook,
+    result: ToolResultHook,
+  ) => undefined | ToolResultPatch | Promise<undefined | ToolResultPatch>;
 }
 
 /** What `session` of a plugin gets for one session. */
