@@ -12,6 +12,9 @@ pub struct PromptSection {
 }
 
 impl PromptSection {
+    /// The key of a section that the model reads without a tag.
+    pub const BASE: &str = "base";
+
     /// A section `key` with the text `text`.
     pub fn new(key: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
@@ -21,12 +24,19 @@ impl PromptSection {
     }
 }
 
-/// The text of `sections` in order, with a blank line between two sections. A section with no text adds nothing.
+/// The text of `sections` in order, with a blank line between two sections. The text of a section goes between
+/// `<key>` and `</key>`, except for the key [`PromptSection::BASE`]. A section with no text adds nothing.
 pub fn prompt_text(sections: &[PromptSection]) -> String {
-    let texts: Vec<&str> = sections
+    let texts: Vec<String> = sections
         .iter()
-        .map(|section| section.text.as_str())
-        .filter(|text| !text.is_empty())
+        .filter(|section| !section.text.is_empty())
+        .map(|PromptSection { key, text }| {
+            if key == PromptSection::BASE {
+                text.clone()
+            } else {
+                format!("<{key}>\n{text}\n</{key}>")
+            }
+        })
         .collect();
     texts.join("\n\n")
 }
@@ -36,15 +46,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_text_joins_the_sections_in_order_and_leaves_out_empty_ones() {
+    fn the_base_is_plain_and_each_other_section_has_the_tag_of_its_key() {
         let sections = [
-            PromptSection::new("first", ""),
+            PromptSection::new("first", "one"),
             PromptSection::new("base", "base\n\ntext"),
             PromptSection::new("empty", ""),
             PromptSection::new("environment", "env"),
         ];
 
-        assert_eq!(prompt_text(&sections), "base\n\ntext\n\nenv");
-        assert_eq!(prompt_text(&sections[..1]), "");
+        assert_eq!(
+            prompt_text(&sections),
+            "<first>\none\n</first>\n\nbase\n\ntext\n\n<environment>\nenv\n</environment>"
+        );
+    }
+
+    #[test]
+    fn a_section_with_no_text_adds_nothing() {
+        assert_eq!(prompt_text(&[PromptSection::new("empty", "")]), "");
+        assert_eq!(
+            prompt_text(&[PromptSection::new("base", ""), PromptSection::new("environment", "env")]),
+            "<environment>\nenv\n</environment>"
+        );
     }
 }

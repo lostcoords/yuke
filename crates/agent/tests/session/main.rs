@@ -223,7 +223,10 @@ async fn a_turn_sends_the_prompt_the_settings_and_the_id_of_its_session() {
         .await
         .unwrap();
 
-    assert_in_order(&transport.requests()[0], &["Be brief.\n\nHere.", "one"]);
+    assert_in_order(
+        &transport.requests()[0],
+        &["Be brief.\n\n<environment>\nHere.\n</environment>", "one"],
+    );
     assert!(transport.requests()[0].contains(r#""temperature":0.25"#));
     let session_header = Header::new("x-opencode-session", session.id().to_string());
     assert!(

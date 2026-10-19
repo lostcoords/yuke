@@ -46,15 +46,15 @@ pub(crate) struct Environment<'a> {
 /// The sections of the system prompt for a session in `environment`: `base`, `instructions`, and `environment`. The
 /// `instructions` section exists only when at least one `AGENTS.md` file exists.
 pub(crate) fn system_prompt(environment: &Environment<'_>) -> Result<Vec<PromptSection>, String> {
-    let mut sections = vec![PromptSection::new("base", BASE)];
+    let mut sections = vec![PromptSection::new(PromptSection::BASE, BASE)];
     let instructions = instructions(environment.workspace, environment.home)?;
     if !instructions.is_empty() {
         let blocks: Vec<String> = instructions
             .iter()
             .map(|source| {
                 format!(
-                    "## AGENTS.md ({})\nScope: {}.\n\n{}",
-                    json_text(&source.path),
+                    "<agents_md path=\"{}\" scope=\"{}\">\n{}\n</agents_md>",
+                    source.path.display(),
                     source.scope,
                     source.text
                 )
@@ -66,7 +66,7 @@ pub(crate) fn system_prompt(environment: &Environment<'_>) -> Result<Vec<PromptS
         ));
     }
     let environment = format!(
-        "<environment>\nworkspace: {}\noperating_system: {}\nshell: {}\nsession_start_date_utc: {}\n</environment>",
+        "workspace: {}\noperating_system: {}\nshell: {}\nsession_start_date_utc: {}",
         escape(&environment.workspace.to_string_lossy()),
         std::env::consts::OS,
         escape(&environment.shell.to_string_lossy()),
@@ -107,12 +107,6 @@ fn instructions(workspace: &Path, home: Option<&Path>) -> Result<Vec<Instruction
         found.push((real, Instructions { path, scope, text }));
     }
     Ok(found.into_iter().map(|(_, instructions)| instructions).collect())
-}
-
-/// `path` as the inside of a JSON string, so a line break in a name cannot start a new line of the prompt.
-fn json_text(path: &Path) -> String {
-    let quoted = serde_json::Value::String(path.to_string_lossy().into_owned()).to_string();
-    quoted[1..quoted.len() - 1].to_owned()
 }
 
 /// `text` with the characters that could close the block or start a line made into entities.
@@ -215,11 +209,14 @@ mod tests {
 
         let keys: Vec<&str> = prompt.iter().map(|section| section.key.as_str()).collect();
         assert_eq!(keys, ["base", "instructions", "environment"]);
+        // The session saves the sections, so their text has no tag. The model reads the tags of `prompt_text`.
+        assert!(prompt.iter().all(|section| !section.text.starts_with('<')));
         assert_eq!(
             yuke_agent::prompt_text(&prompt),
             format!(
-                "{BASE}\n\n{INSTRUCTIONS_LEAD}\n\n## AGENTS.md ({})\nScope: global.\n\nGlobal rule.\n\n## AGENTS.md ({})\nScope: \
-                 workspace.\n\nWorkspace rule.\n\n<environment>\nworkspace: {}\noperating_system: {}\nshell: \
+                "{BASE}\n\n<instructions>\n{INSTRUCTIONS_LEAD}\n\n<agents_md path=\"{}\" scope=\"global\">\nGlobal \
+                 rule.\n</agents_md>\n\n<agents_md path=\"{}\" scope=\"workspace\">\nWorkspace rule.\n</agents_md>\n\
+                 </instructions>\n\n<environment>\nworkspace: {}\noperating_system: {}\nshell: \
                  /bin/bash\nsession_start_date_utc: 2026-10-12\n</environment>",
                 home.join(".agents/AGENTS.md").display(),
                 workspace.join("AGENTS.md").display(),
