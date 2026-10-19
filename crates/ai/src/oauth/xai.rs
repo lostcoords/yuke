@@ -80,9 +80,6 @@ pub(super) async fn refresh(
     refresh_token: &str,
     now: SystemTime,
 ) -> Result<Grant, OAuthError> {
-    if refresh_token.is_empty() {
-        return Err(OAuthError::Permanent);
-    }
     let fields = [
         ("grant_type", "refresh_token"),
         ("client_id", CLIENT_ID),

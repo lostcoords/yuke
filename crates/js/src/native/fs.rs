@@ -430,7 +430,7 @@ fn write(path: &Path, bytes: &[u8], atomic: bool, mode: Option<u32>, stop: &Stop
             options.mode(mode);
         }
         let mut file = options.open(path).map_err(fail)?;
-        return write_chunks(&mut file, bytes, stop).map_err(|failure| failure.at(path));
+        return write_chunks(&mut file, bytes, path, stop);
     }
 
     let name = path.file_name().ok_or_else(|| fail(io::Error::from(Errno::ISDIR)))?;
@@ -459,7 +459,7 @@ fn write(path: &Path, bytes: &[u8], atomic: bool, mode: Option<u32>, stop: &Stop
         }
     };
     let written = (|| {
-        write_chunks(&mut file, bytes, stop)?;
+        write_chunks(&mut file, bytes, path, stop)?;
         // The rename shows the new file, so its bytes must reach the disk first.
         file.sync_all().map_err(|error| Failure::new(error, path))?;
         if let Some(mode) = kept {
@@ -473,25 +473,14 @@ fn write(path: &Path, bytes: &[u8], atomic: bool, mode: Option<u32>, stop: &Stop
     if written.is_err() && fs::remove_file(&temporary).is_err() {
         // The temporary file stays. Its name says that it is one, and the failure still reaches the caller.
     }
-    written.map_err(|failure| failure.at(path))
+    written
 }
 
-impl Failure {
-    /// The same failure for `path`. A stop keeps no path.
-    fn at(mut self, path: &Path) -> Self {
-        if self.error.is_some() {
-            path.clone_into(&mut self.path);
-        }
-        self
-    }
-}
-
-/// Write `bytes` to `file` in chunks, with a stop check before each chunk.
-fn write_chunks(file: &mut File, bytes: &[u8], stop: &Stop) -> Result<(), Failure> {
+/// Write `bytes` to `file` in chunks, with a stop check before each chunk. An I/O failure names `path`.
+fn write_chunks(file: &mut File, bytes: &[u8], path: &Path, stop: &Stop) -> Result<(), Failure> {
     for chunk in bytes.chunks(CHUNK) {
         stop.check()?;
-        file.write_all(chunk)
-            .map_err(|error| Failure::new(error, Path::new("")))?;
+        file.write_all(chunk).map_err(|error| Failure::new(error, path))?;
     }
     Ok(())
 }
@@ -508,41 +497,19 @@ fn check_kind(kind: fs::FileType) -> io::Result<()> {
     }
 }
 
-/// What a path names, without a follow of a symbolic link for `Symlink`.
-#[derive(Debug, Clone, Copy)]
-enum Kind {
-    File,
-    Directory,
-    Symlink,
-    Other,
-}
-
-impl From<fs::FileType> for Kind {
-    fn from(kind: fs::FileType) -> Self {
-        if kind.is_symlink() {
-            Kind::Symlink
-        } else if kind.is_dir() {
-            Kind::Directory
-        } else if kind.is_file() {
-            Kind::File
-        } else {
-            Kind::Other
-        }
-    }
-}
-
-/// Set `isFile`, `isDirectory`, and `isSymlink` of `record` for `kind`.
-fn set_kind(record: &Object<'_>, kind: Kind) -> rquickjs::Result<()> {
-    record.set("isFile", matches!(kind, Kind::File))?;
-    record.set("isDirectory", matches!(kind, Kind::Directory))?;
-    record.set("isSymlink", matches!(kind, Kind::Symlink))
+/// Set `isFile`, `isDirectory`, and `isSymlink` of `record` for `kind`. The three checks are exclusive. A link that
+/// `stat` does not follow is only a link.
+fn set_kind(record: &Object<'_>, kind: fs::FileType) -> rquickjs::Result<()> {
+    record.set("isFile", kind.is_file())?;
+    record.set("isDirectory", kind.is_dir())?;
+    record.set("isSymlink", kind.is_symlink())
 }
 
 /// One entry of a directory.
 #[derive(Debug)]
 struct Entry {
     name: String,
-    kind: Kind,
+    kind: fs::FileType,
 }
 
 /// The entries of the directory at `path`, in the order of the file system. A name that is not UTF-8 fails.
@@ -557,7 +524,7 @@ fn read_dir(path: &Path, stop: &Stop) -> Result<Vec<Entry>, Failure> {
             .file_name()
             .into_string()
             .map_err(|_| Failure::new(io::Error::from(Errno::ILSEQ), &entry.path()))?;
-        let kind = entry.file_type().map_err(fail)?.into();
+        let kind = entry.file_type().map_err(fail)?;
         entries.push(Entry { name, kind });
     }
     Ok(entries)
@@ -566,7 +533,7 @@ fn read_dir(path: &Path, stop: &Stop) -> Result<Vec<Entry>, Failure> {
 /// The facts of a path.
 #[derive(Debug)]
 struct Info {
-    kind: Kind,
+    kind: fs::FileType,
     size: f64,
     /// The time of the last change, in milliseconds since the epoch, when the file system gives one.
     modified: Option<f64>,
@@ -592,7 +559,7 @@ fn stat(path: &Path, follow: bool, stop: &Stop) -> Result<Info, Failure> {
     #[expect(clippy::cast_precision_loss, reason = "a file of 2^53 bytes does not exist")]
     let size = metadata.len() as f64;
     Ok(Info {
-        kind: metadata.file_type().into(),
+        kind: metadata.file_type(),
         size,
         modified,
     })

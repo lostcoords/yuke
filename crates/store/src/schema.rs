@@ -1,7 +1,5 @@
 //! The pragmas of a connection and the migrations of the database.
 
-use std::fmt;
-
 use yuke_sql::rusqlite::{Connection, TransactionBehavior};
 
 use crate::queries::MIGRATIONS;
@@ -29,7 +27,12 @@ pub(crate) fn prepare(connection: &mut Connection) -> Result<(), Box<dyn std::er
         let user_version: usize = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
         let Some(migration) = MIGRATIONS.get(user_version) else {
             if user_version > MIGRATIONS.len() {
-                return Err(Box::new(NewerDatabase { user_version }));
+                // This yuke cannot read or write a newer schema safely.
+                return Err(format!(
+                    "the database has schema version {user_version}, and this yuke knows versions up to {}",
+                    MIGRATIONS.len()
+                )
+                .into());
             }
             return Ok(());
         };
@@ -39,31 +42,11 @@ pub(crate) fn prepare(connection: &mut Connection) -> Result<(), Box<dyn std::er
     }
 }
 
-/// A database with a schema version above the versions that this yuke knows. This yuke cannot read or write that
-/// schema safely.
-#[derive(Debug)]
-struct NewerDatabase {
-    user_version: usize,
-}
-
-impl fmt::Display for NewerDatabase {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "the database has schema version {}, and this yuke knows versions up to {}",
-            self.user_version,
-            MIGRATIONS.len()
-        )
-    }
-}
-
-impl std::error::Error for NewerDatabase {}
-
 #[cfg(test)]
 mod tests {
     use yuke_sql::rusqlite::Connection;
 
-    use super::{MIGRATIONS, NewerDatabase, prepare};
+    use super::{MIGRATIONS, prepare};
 
     #[test]
     fn a_database_of_a_newer_schema_does_not_open() {
@@ -74,7 +57,15 @@ mod tests {
 
         let error = prepare(&mut connection).unwrap_err();
 
-        assert!(error.downcast_ref::<NewerDatabase>().is_some(), "{error}");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "the database has schema version {}, and this yuke knows versions up to {}",
+                MIGRATIONS.len() + 1,
+                MIGRATIONS.len()
+            )
+        );
+        assert!(error.source().is_none());
     }
 
     #[test]

@@ -49,7 +49,11 @@ pub(crate) struct Parameter {
 }
 
 /// Check each query of `parsed`, the content of `file`, against the schema of `connection`.
-pub(crate) fn resolve(connection: &rusqlite::Connection, file: &Path, parsed: &parse::File) -> Result<Module, Error> {
+pub(crate) fn resolve(
+    connection: &rusqlite::Connection,
+    file: &Path,
+    parsed: &[QueryDeclaration],
+) -> Result<Module, Error> {
     let name = file
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -60,7 +64,7 @@ pub(crate) fn resolve(connection: &rusqlite::Connection, file: &Path, parsed: &p
         })?
         .to_owned();
     let mut queries = Vec::new();
-    for declaration in &parsed.queries {
+    for declaration in parsed {
         let fail = |message: String| Error::Query {
             file: file.to_owned(),
             query: declaration.name.clone(),

@@ -204,16 +204,13 @@ pub(crate) fn install_error_classes(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
 /// Throw a new error of `class` with `message`. A constructed error keeps the whole message, and a typed throw of the
 /// engine cuts it at 255 bytes.
 pub(crate) fn throw(ctx: &Ctx<'_>, class: ErrorClass, message: &str) -> rquickjs::Error {
-    let built = match ctx.userdata::<Vec<Constructor<'_>>>() {
-        Some(constructors) => match constructors.get(class as usize) {
-            Some(constructor) => constructor.construct::<_, Value<'_>>((message,)),
-            None => Err(rquickjs::Error::new_from_js(class.name(), "a kept error constructor")),
-        },
-        // A throw before the start of the runtime, for example in the build of the modules, has no kept constructors.
-        None => ctx
-            .globals()
-            .get::<_, Constructor<'_>>(class.name())
-            .and_then(|constructor| constructor.construct::<_, Value<'_>>((message,))),
+    let built = match ctx
+        .userdata::<Vec<Constructor<'_>>>()
+        .as_deref()
+        .and_then(|constructors| constructors.get(class as usize))
+    {
+        Some(constructor) => constructor.construct::<_, Value<'_>>((message,)),
+        None => Err(rquickjs::Error::new_from_js(class.name(), "a kept error constructor")),
     };
     match built {
         Ok(error) => ctx.throw(error),

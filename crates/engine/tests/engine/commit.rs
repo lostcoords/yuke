@@ -7,12 +7,12 @@ use async_trait::async_trait;
 use yuke_ai::transport::{BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 use yuke_ai::{Block, FinishReason, Target, ToolCall, ToolResult, Usage};
 use yuke_engine::{
-    Answer, CancellationToken, Commit, Driver, Journal, Outcome, Replace, RoundDecision, RoundPlan, Tool, ToolContent,
-    ToolContext, Toolset, TurnEnd, TurnError, TurnEvent,
+    Answer, CancellationToken, Commit, Driver, Journal, Outcome, Replace, Replaced, RoundDecision, RoundPlan, Tool,
+    ToolContent, ToolContext, Toolset, TurnEnd, TurnError, TurnEvent,
 };
 use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, model_of, target, text_reply, tool_reply};
 
-use crate::support::{Batches, Recorder, Replay, Saved, Script, block_on, definition, origin, yield_once};
+use crate::support::{Batches, Recorder, Replay, Script, block_on, definition, origin, yield_once};
 
 /// Return the end of a turn that the model ended with `stop`.
 fn completed() -> TurnEnd {
@@ -176,9 +176,9 @@ fn a_cancel_during_the_stream_commits_the_partial_output_with_the_end() {
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
     assert_eq!(
         journal.saved()[1],
-        Saved {
+        Commit {
             replaced: None,
-            blocks: vec![Block::assistant_text("cut")],
+            blocks: vec![Block::assistant_text("cut")].into(),
             answer: None,
             end: Some(cancelled()),
         }
@@ -435,10 +435,17 @@ fn a_replacement_commits_before_its_request_and_replays_to_the_new_context() {
         assert_eq!(journal.context(), context, "keep {keep}");
         // The journal receives the replacement after the input of the turn and before its answer.
         let saved = journal.saved();
-        assert_eq!(saved[3].blocks, [Block::user_text("two")], "keep {keep}");
+        assert_eq!(*saved[3].blocks, [Block::user_text("two")], "keep {keep}");
         let head: Vec<Block> = head.iter().map(|text| Block::user_text(*text)).collect();
-        assert_eq!(saved[4].replaced, Some((head, saved_keep)), "keep {keep}");
-        assert_eq!(saved[4].blocks, [], "keep {keep}");
+        assert_eq!(
+            saved[4].replaced,
+            Some(Replaced {
+                head: head.into(),
+                keep: saved_keep
+            }),
+            "keep {keep}"
+        );
+        assert!(saved[4].blocks.is_empty(), "keep {keep}");
     }
 }
 

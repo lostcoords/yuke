@@ -581,3 +581,19 @@ fn only_an_error_notice_of_yuke_fails_the_run() {
     assert_eq!(after_plugin, None);
     assert_eq!(lock(&watcher.watched).failure.as_deref(), Some("from host:yuke"));
 }
+
+#[test]
+fn the_json_report_names_the_session_the_end_and_the_text() {
+    let finished = Finished {
+        session: SessionId::from_bytes([1; 16]),
+        end: TurnEnd::Outcome(Outcome::Completed {
+            finish_reason: yuke_ai::FinishReason::Stop,
+        }),
+        text: "done".to_owned(),
+    };
+
+    assert_eq!(
+        serde_json::to_string(&finished).unwrap(),
+        r#"{"sessionId":"01010101-0101-0101-0101-010101010101","end":{"outcome":{"completed":{"finishReason":"stop"}}},"text":"done"}"#
+    );
+}

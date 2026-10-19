@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use serde::Serialize;
+
 use tokio::signal::unix::{SignalKind, signal};
 use yuke_ai::Effort;
 use yuke_ai::catalog::ReasoningLevel;
@@ -181,15 +181,6 @@ impl From<Reasoning> for ReasoningChoice {
             Reasoning::Max => effort(Effort::Max),
         }
     }
-}
-
-/// The `--json` output.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Report<'a> {
-    session_id: SessionId,
-    end: &'a TurnEnd,
-    text: &'a str,
 }
 
 fn main() -> ExitCode {
@@ -357,12 +348,7 @@ fn machine() -> Result<Machine, String> {
 fn write_output(finished: &Finished, json: bool) -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     if json {
-        let report = Report {
-            session_id: finished.session,
-            end: &finished.end,
-            text: &finished.text,
-        };
-        serde_json::to_writer(&mut stdout, &report)?;
+        serde_json::to_writer(&mut stdout, finished)?;
         writeln!(stdout)?;
     } else if !finished.text.is_empty() {
         writeln!(stdout, "{}", finished.text)?;

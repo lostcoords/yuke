@@ -81,11 +81,6 @@ class ReleaseTests(unittest.TestCase):
                         response = {"workflow_runs": fixture.ci}
                     else:
                         status = 400
-                elif self.command == "GET" and path.startswith("releases/tags/"):
-                    if fixture.release is None or fixture.release["draft"]:
-                        status = 404
-                    else:
-                        response = fixture.release
                 elif self.command == "GET" and path == "releases":
                     if fixture.fail_release_read:
                         status = 403

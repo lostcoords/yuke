@@ -78,6 +78,10 @@ impl Flow {
         refresh_token: &str,
         now: SystemTime,
     ) -> Result<Grant, OAuthError> {
+        // An empty token cannot refresh, so no request goes out.
+        if refresh_token.is_empty() {
+            return Err(OAuthError::Permanent);
+        }
         match self {
             Flow::Xai => xai::refresh(exchange, refresh_token, now).await,
             Flow::Codex => codex::refresh(exchange, refresh_token, now).await,

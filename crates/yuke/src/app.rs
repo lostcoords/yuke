@@ -297,7 +297,7 @@ impl App {
     pub(crate) async fn input(&self, id: SessionId, content: Vec<Block>) -> Result<InputId, AppError> {
         let live = self.live(id)?;
         let input = Input::new(InputSource::User, content).map_err(|error| AppError::Invalid(chain_text(&error)))?;
-        live.accept(input).await.map_err(AppError::Store)
+        live.inbox.accept(input).await.map_err(AppError::Store)
     }
 
     /// Remove the pending input `input_id` of session `id`.
@@ -306,7 +306,7 @@ impl App {
     ///
     /// Returns [`AppError::Store`] when the input is not pending or the store fails.
     pub(crate) async fn remove_input(&self, id: SessionId, input_id: InputId) -> Result<(), AppError> {
-        self.live(id)?.remove(input_id).await.map_err(AppError::Store)
+        self.live(id)?.inbox.remove(input_id).await.map_err(AppError::Store)
     }
 
     /// Save `settings` for session `id`. The session keeps its system prompt.

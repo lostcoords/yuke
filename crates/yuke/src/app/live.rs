@@ -5,11 +5,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use tokio::sync::{Notify, OwnedMutexGuard};
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use yuke_agent::{InputSender, Loaded, Session, SessionError, SessionObserver, StoreError, system_notification};
 use yuke_ai::{Block, ToolDefinition};
-use yuke_engine::{CancellationToken, Driver, Model, Outcome, Toolset, chain_text};
+use yuke_engine::{CancellationToken, Driver, Toolset, chain_text};
 use yuke_js::{JobEnded, Runtime, ScriptSession, ScriptTool, SessionHost};
 use yuke_protocol::{
     EventNumber, Input, InputId, InputSource, Job, LiveUpdate, NoticeLevel, NoticeParams, ServerNotification,
@@ -23,7 +23,8 @@ const JOBS_SOURCE: &str = "host:jobs";
 
 /// An open session.
 pub(super) struct LiveSession {
-    inbox: Inbox,
+    /// The inbox of the session. The app saves and removes input through the inbox.
+    pub(super) inbox: Inbox,
     /// A turn holds the lock for its whole run, so new settings never meet a turn.
     session: Arc<tokio::sync::Mutex<Session>>,
     /// The cancellation token of the running turn, or `None` while the session is idle.
@@ -101,16 +102,6 @@ impl LiveSession {
         if let Some(token) = lock(&self.turn).as_ref() {
             token.cancel();
         }
-    }
-
-    /// Save `input`, show it to the observer, and wake the task.
-    pub(super) async fn accept(&self, input: Input) -> Result<InputId, StoreError> {
-        self.inbox.accept(input).await
-    }
-
-    /// Remove the pending input `input_id`, and tell the observer.
-    pub(super) async fn remove(&self, input_id: InputId) -> Result<(), StoreError> {
-        self.inbox.remove(input_id).await
     }
 
     /// Send the session as updates: the saved events after `after`, the state, the pending inputs, and the running
@@ -204,7 +195,7 @@ impl Drop for LiveSession {
 
 /// The input of one session: the saved queue, the observer, and the wake of the task.
 #[derive(Clone)]
-struct Inbox {
+pub(super) struct Inbox {
     input: InputSender,
     /// Wakes the task to run the waiting input. Many wakes before the task runs count as one.
     wake: Arc<Notify>,
@@ -213,7 +204,7 @@ struct Inbox {
 
 impl Inbox {
     /// Save `input`, show it to the observer, and wake the task. The task runs a turn when the session is idle.
-    async fn accept(&self, input: Input) -> Result<InputId, StoreError> {
+    pub(super) async fn accept(&self, input: Input) -> Result<InputId, StoreError> {
         let input_id = self.input.send(input.clone()).await?;
         self.output
             .publish(SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, input }));
@@ -222,7 +213,7 @@ impl Inbox {
     }
 
     /// Remove the pending input `input_id`, and tell the observer.
-    async fn remove(&self, input_id: InputId) -> Result<(), StoreError> {
+    pub(super) async fn remove(&self, input_id: InputId) -> Result<(), StoreError> {
         self.input.remove(input_id).await?;
         self.output
             .publish(SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }));
@@ -419,17 +410,22 @@ impl SessionTask {
             };
             let ended = match toolset {
                 // The turn runs in its own task, so a panic of the turn cannot leave the session running.
-                Ok(toolset) => Some(
-                    tokio::spawn(run_turn(
-                        session,
-                        model,
-                        Arc::clone(&self.host.shared),
-                        toolset,
-                        Arc::clone(output),
-                        token,
-                    ))
-                    .await,
-                ),
+                Ok(toolset) => {
+                    let shared = Arc::clone(&self.host.shared);
+                    let output = Arc::clone(output);
+                    // The session saves a round failure as the end of the turn.
+                    let turn = async move {
+                        let mut session = session;
+                        let driver = Driver::new(&*shared.machine.transport, &model, &TokioTimer).toolset(&toolset);
+                        session
+                            .turn(driver)
+                            .observer(&*output)
+                            .cancellation_token(token)
+                            .run()
+                            .await
+                    };
+                    Some(tokio::spawn(turn).await)
+                }
                 Err(error) => {
                     output.notice(NoticeLevel::Error, &error);
                     None
@@ -481,24 +477,6 @@ fn toolset_of(tools: Result<Vec<(ToolDefinition, ScriptTool)>, yuke_js::Error>) 
         toolset.add(definition, tool).map_err(|error| chain_text(&error))?;
     }
     Ok(toolset)
-}
-
-/// Run one turn of `session` on `model`. A round failure is saved as the end of the turn.
-async fn run_turn(
-    mut session: OwnedMutexGuard<Session>,
-    model: Model,
-    shared: Arc<Shared>,
-    toolset: Toolset,
-    output: Arc<Output>,
-    token: CancellationToken,
-) -> Result<Outcome, SessionError> {
-    let driver = Driver::new(&*shared.machine.transport, &model, &TokioTimer).toolset(&toolset);
-    session
-        .turn(driver)
-        .observer(&*output)
-        .cancellation_token(token)
-        .run()
-        .await
 }
 
 /// The session of the tools: its folder, its blob store, and the input of its background jobs.

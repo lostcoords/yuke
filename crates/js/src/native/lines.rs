@@ -42,7 +42,9 @@ async fn read_lines(
     max_bytes: u32,
 ) -> rquickjs::Result<Object<'_>> {
     let full = Path::new(&folder).join(&path);
-    let read = run_blocking(move || lines(&full, offset, limit, max_bytes as usize)).await;
+    let read = tokio::task::spawn_blocking(move || lines(&full, offset, limit, max_bytes as usize))
+        .await
+        .unwrap_or_else(|error| Err(format!("the file work failed: {error}")));
     // A throw comes last: a pending exception across an await can reach other code.
     let lines = read.map_err(|message| throw(&ctx, ErrorClass::Error, &message))?;
 
@@ -61,15 +63,6 @@ async fn read_lines(
         }
     }
     Ok(object)
-}
-
-/// Run `work` on the blocking threads of tokio.
-async fn run_blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, String> + Send + 'static,
-) -> Result<T, String> {
-    tokio::task::spawn_blocking(work)
-        .await
-        .unwrap_or_else(|error| Err(format!("the file work failed: {error}")))
 }
 
 /// The text of a file that is not UTF-8.

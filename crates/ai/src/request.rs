@@ -283,27 +283,9 @@ impl Block {
     }
 }
 
-impl From<Media> for Block {
-    fn from(media: Media) -> Self {
-        Block::Media(media)
-    }
-}
-
 impl From<ToolResult> for Block {
     fn from(result: ToolResult) -> Self {
         Block::ToolResult(result)
-    }
-}
-
-impl From<Reasoning> for Block {
-    fn from(reasoning: Reasoning) -> Self {
-        Block::Reasoning(reasoning)
-    }
-}
-
-impl From<ToolCall> for Block {
-    fn from(call: ToolCall) -> Self {
-        Block::ToolCall(call)
     }
 }
 

@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use serde::Serialize;
 use tokio::sync::Notify;
 use yuke_agent::StoreError;
 use yuke_ai::catalog::{Entry, ReasoningLevel};
@@ -52,10 +53,11 @@ pub(crate) enum SessionChoice {
     Newest,
 }
 
-/// A run that reached its turn.
-#[derive(Debug, PartialEq)]
+/// A run that reached its turn. With `--json`, yuke writes this value.
+#[derive(Debug, PartialEq, Serialize)]
 pub(crate) struct Finished {
     /// The session of the turn.
+    #[serde(rename = "sessionId")]
     pub(crate) session: SessionId,
     /// How the turn ended.
     pub(crate) end: TurnEnd,

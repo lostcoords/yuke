@@ -1,11 +1,5 @@
 //! The grammar of a query file. The parser reads the annotations and collects the SQL text. SQLite checks the SQL.
 
-/// The declarations of one query file, in file order.
-#[derive(Debug, Default)]
-pub(crate) struct File {
-    pub(crate) queries: Vec<QueryDeclaration>,
-}
-
 /// A `--!` query with its SQL.
 #[derive(Debug)]
 pub(crate) struct QueryDeclaration {
@@ -25,16 +19,16 @@ pub(crate) struct Field {
     pub(crate) rust_type: Option<String>,
 }
 
-/// Parse `source`. An error of one line names the line.
-pub(crate) fn parse(source: &str) -> Result<File, String> {
-    let mut file = File::default();
+/// Parse `source` into its declarations, in file order. An error of one line names the line.
+pub(crate) fn parse(source: &str) -> Result<Vec<QueryDeclaration>, String> {
+    let mut queries = Vec::new();
     let mut open: Option<(QueryDeclaration, Vec<&str>)> = None;
     for (index, line) in source.lines().enumerate() {
         let number = index + 1;
         let at = |message: String| format!("line {number}: {message}");
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("--!") {
-            close(&mut file, open.take()).map_err(at)?;
+            close(&mut queries, open.take()).map_err(at)?;
             open = Some((query_declaration(rest).map_err(at)?, Vec::new()));
         } else if let Some((query, sql)) = &mut open {
             // Doc lines can follow blank lines, but not a line of SQL or an ordinary comment.
@@ -47,13 +41,13 @@ pub(crate) fn parse(source: &str) -> Result<File, String> {
             return Err(at("SQL text comes before the first `--!` query".to_owned()));
         }
     }
-    close(&mut file, open.take())?;
-    Ok(file)
+    close(&mut queries, open.take())?;
+    Ok(queries)
 }
 
-/// Add the open query to `file` with its SQL. Blank lines at the start and blank or comment lines at the end do not
+/// Add the open query to `queries` with its SQL. Blank lines at the start and blank or comment lines at the end do not
 /// belong to the SQL.
-fn close(file: &mut File, open: Option<(QueryDeclaration, Vec<&str>)>) -> Result<(), String> {
+fn close(queries: &mut Vec<QueryDeclaration>, open: Option<(QueryDeclaration, Vec<&str>)>) -> Result<(), String> {
     let Some((mut query, lines)) = open else {
         return Ok(());
     };
@@ -72,7 +66,7 @@ fn close(file: &mut File, open: Option<(QueryDeclaration, Vec<&str>)>) -> Result
         return Err(format!("query `{}` has no SQL", query.name));
     }
     query.sql = lines[start..end].join("\n");
-    file.queries.push(query);
+    queries.push(query);
     Ok(())
 }
 

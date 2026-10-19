@@ -267,16 +267,12 @@ async fn a_shutdown_ends_a_call_in_flight_as_stopped() {
 
 #[tokio::test]
 async fn a_deep_recursion_throws_a_catchable_range_error() {
-    let folder = folder("a_deep_recursion_throws_a_catchable_range_error");
-    let (runtime, _faults) = start(&folder).await;
-
-    let name = evaluate::<String>(
-        &runtime,
+    let name = run::<String>(
+        "a_deep_recursion_throws_a_catchable_range_error",
         "function deep(depth) { return deep(depth + 1) + 1; }
          try { deep(0); } catch (error) { return error.name; }",
     )
-    .await
-    .unwrap();
+    .await;
     assert_eq!(name, "RangeError");
 }
 
@@ -320,47 +316,36 @@ async fn a_drop_does_not_wait_for_the_javascript() {
 
 #[tokio::test]
 async fn timers_with_one_delay_fire_in_the_order_of_their_set() {
-    let folder = folder("timers_with_one_delay_fire_in_the_order_of_their_set");
-    let (runtime, _faults) = start(&folder).await;
-
-    let order = evaluate::<Vec<i32>>(
-        &runtime,
+    let order = run::<Vec<i32>>(
+        "timers_with_one_delay_fire_in_the_order_of_their_set",
         "const order = [];
          for (let index = 0; index < 20; index++) setTimeout(() => order.push(index), 5);
          await new Promise(resolve => setTimeout(resolve, 50));
          return order;",
     )
-    .await
-    .unwrap();
+    .await;
     assert_eq!(order, (0..20).collect::<Vec<_>>());
 }
 
 #[tokio::test]
 async fn a_promise_job_of_a_timer_callback_runs_before_the_next_callback() {
-    let folder = folder("a_promise_job_of_a_timer_callback_runs_before_the_next_callback");
-    let (runtime, _faults) = start(&folder).await;
-
-    let order = evaluate::<Vec<String>>(
-        &runtime,
+    let order = run::<Vec<String>>(
+        "a_promise_job_of_a_timer_callback_runs_before_the_next_callback",
         "const order = [];
          setTimeout(() => { order.push('first'); Promise.resolve().then(() => order.push('job')); }, 5);
          setTimeout(() => order.push('second'), 5);
          await new Promise(resolve => setTimeout(resolve, 50));
          return order;",
     )
-    .await
-    .unwrap();
+    .await;
     assert_eq!(order, ["first", "job", "second"]);
 }
 
 #[tokio::test]
 async fn a_cleared_timer_does_not_fire() {
-    let folder = folder("a_cleared_timer_does_not_fire");
-    let (runtime, _faults) = start(&folder).await;
-
     // The first callback clears a timer of the same round.
-    let fired = evaluate::<Vec<String>>(
-        &runtime,
+    let fired = run::<Vec<String>>(
+        "a_cleared_timer_does_not_fire",
         "const fired = [];
          let later;
          setTimeout(() => { fired.push('first'); clearTimeout(later); }, 5);
@@ -370,35 +355,27 @@ async fn a_cleared_timer_does_not_fire() {
          await new Promise(resolve => setTimeout(resolve, 50));
          return fired;",
     )
-    .await
-    .unwrap();
+    .await;
     assert_eq!(fired, ["first"]);
 }
 
 #[tokio::test]
 async fn an_interval_repeats_until_its_own_callback_clears_it() {
-    let folder = folder("an_interval_repeats_until_its_own_callback_clears_it");
-    let (runtime, _faults) = start(&folder).await;
-
-    let count = evaluate::<i32>(
-        &runtime,
+    let count = run::<i32>(
+        "an_interval_repeats_until_its_own_callback_clears_it",
         "let count = 0;
          const interval = setInterval(() => { count += 1; if (count === 3) clearInterval(interval); }, 2);
          await new Promise(resolve => setTimeout(resolve, 100));
          return count;",
     )
-    .await
-    .unwrap();
+    .await;
     assert_eq!(count, 3);
 }
 
 #[tokio::test]
 async fn an_interval_waits_its_delay_between_calls() {
-    let folder = folder("an_interval_waits_its_delay_between_calls");
-    let (runtime, _faults) = start(&folder).await;
-
-    let elapsed = evaluate::<f64>(
-        &runtime,
+    let elapsed = run::<f64>(
+        "an_interval_waits_its_delay_between_calls",
         "const begin = Date.now();
          await new Promise(resolve => {
            let count = 0;
@@ -406,23 +383,18 @@ async fn an_interval_waits_its_delay_between_calls() {
          });
          return Date.now() - begin;",
     )
-    .await
-    .unwrap();
+    .await;
     // The third call comes 90 ms or later after the set. `Date.now` counts whole milliseconds.
     assert!(elapsed >= 89.0, "{elapsed}");
 }
 
 #[tokio::test]
 async fn a_timer_callback_gets_the_extra_arguments() {
-    let folder = folder("a_timer_callback_gets_the_extra_arguments");
-    let (runtime, _faults) = start(&folder).await;
-
-    let arguments = evaluate::<Vec<String>>(
-        &runtime,
+    let arguments = run::<Vec<String>>(
+        "a_timer_callback_gets_the_extra_arguments",
         "return await new Promise(resolve => setTimeout((...values) => resolve(values), undefined, 'a', 'b'));",
     )
-    .await
-    .unwrap();
+    .await;
     assert_eq!(arguments, ["a", "b"]);
 }
 

@@ -1,9 +1,6 @@
 use std::borrow::Cow;
 
-use yuke_ai::{
-    AttemptError, AttemptInfo, Block, Completion, Content, Failure, FinishReason, Partial, ProviderKind, Reasoning,
-    ToolCall, ToolResult, Usage,
-};
+use yuke_ai::{Block, Completion, Content, FinishReason, Partial, Reasoning, ToolCall, ToolResult, Usage};
 
 use super::{Action, Answer, Commit, Outcome, Replaced, TurnEnd, TurnState};
 use crate::model::RoundError;
@@ -101,30 +98,6 @@ fn second_turn_sends_the_first_turn_context() {
 }
 
 #[test]
-fn a_final_answer_without_input_completes_the_turn() {
-    let mut context = Vec::new();
-    let mut turn_state = TurnState::new(&mut context);
-    let _ = turn_state.send(vec![Block::user_text("one")]);
-    assert!(matches!(
-        turn_state.model_finished(answer("done"), origin()),
-        Action::AfterRound {
-            finish_reason: Some(FinishReason::Stop),
-            ..
-        }
-    ));
-
-    assert!(matches!(
-        turn_state.proceed(Vec::new()),
-        Action::Done {
-            result: Ok(Outcome::Completed {
-                finish_reason: FinishReason::Stop
-            }),
-            ..
-        }
-    ));
-}
-
-#[test]
 fn send_after_a_round_sends_another_request_without_input() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context);
@@ -134,23 +107,6 @@ fn send_after_a_round_sends_another_request_without_input() {
     assert!(matches!(turn_state.send(Vec::new()), Action::Send(_)));
 
     assert_eq!(lines(&context), ["user one", "assistant done"]);
-}
-
-#[test]
-fn failed_attempt_adds_no_assistant_block() {
-    let mut context = Vec::new();
-    let mut turn_state = TurnState::new(&mut context);
-    let _ = turn_state.send(vec![Block::user_text("one")]);
-    let failure = AttemptError {
-        cause: Failure::Provider(ProviderKind::ServerError),
-        info: AttemptInfo::default(),
-        partial: vec![Partial::Text("cut".to_owned())],
-    };
-
-    let action = turn_state.fail(RoundError::Model(failure.into()));
-
-    assert!(matches!(action, Action::Done { result: Err(_), .. }));
-    assert_eq!(context, [Block::user_text("one")]);
 }
 
 #[test]

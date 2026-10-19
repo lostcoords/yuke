@@ -11,8 +11,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason};
 use yuke_engine::{
-    Answer, CancellationToken, Commit, Driver, Hooks, Inbox, Journal, Replaced, RoundDecision, RoundError, RoundPlan,
-    Timer, Tool, ToolContent, ToolContext, TurnEnd,
+    CancellationToken, Commit, Driver, Hooks, Inbox, Journal, RoundDecision, RoundError, RoundPlan, Timer, Tool,
+    ToolContent, ToolContext, TurnEnd,
 };
 use yuke_testing::target;
 
@@ -156,20 +156,11 @@ impl Hooks for Script {
     }
 }
 
-/// One saved commit.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Saved {
-    pub(crate) replaced: Option<(Vec<Block>, usize)>,
-    pub(crate) blocks: Vec<Block>,
-    pub(crate) answer: Option<Answer>,
-    pub(crate) end: Option<TurnEnd>,
-}
-
 /// A journal that replays each commit into one context and keeps each commit.
 #[derive(Debug, Default)]
 pub(crate) struct Replay {
     context: Mutex<Vec<Block>>,
-    saved: Mutex<Vec<Saved>>,
+    saved: Mutex<Vec<Commit<'static>>>,
 }
 
 impl Replay {
@@ -179,7 +170,7 @@ impl Replay {
     }
 
     /// Return each saved commit, in order.
-    pub(crate) fn saved(&self) -> Vec<Saved> {
+    pub(crate) fn saved(&self) -> Vec<Commit<'static>> {
         self.saved.lock().unwrap().clone()
     }
 
@@ -187,7 +178,7 @@ impl Replay {
     pub(crate) fn shapes(&self) -> Vec<(Vec<Block>, Option<TurnEnd>)> {
         self.saved()
             .into_iter()
-            .map(|saved| (saved.blocks, saved.end))
+            .map(|saved| (saved.blocks.into_owned(), saved.end))
             .collect()
     }
 }
@@ -197,15 +188,7 @@ impl Journal for Replay {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut context = self.context.lock().unwrap();
         commit.apply(&mut context);
-        self.saved.lock().unwrap().push(Saved {
-            replaced: commit
-                .replaced
-                .as_ref()
-                .map(|Replaced { head, keep }| (head.to_vec(), *keep)),
-            blocks: commit.blocks.to_vec(),
-            answer: commit.answer.clone(),
-            end: commit.end.clone(),
-        });
+        self.saved.lock().unwrap().push(commit.clone().into_owned());
         Ok(())
     }
 }

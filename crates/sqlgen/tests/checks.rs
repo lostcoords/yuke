@@ -7,11 +7,6 @@ const SCHEMA: &str = "CREATE TABLE notes (
     id INTEGER PRIMARY KEY NOT NULL,
     title TEXT NOT NULL,
     body TEXT
-) STRICT;
-CREATE TABLE drafts (
-    id INTEGER PRIMARY KEY NOT NULL,
-    title BLOB NOT NULL,
-    body TEXT
 ) STRICT;";
 
 /// Generate from a schema of notes and the query file `notes.sql` with `queries`, and return the error text.

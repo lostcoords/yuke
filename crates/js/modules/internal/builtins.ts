@@ -132,7 +132,8 @@ defineTool({
 
     const timeout = args.timeout_ms ?? DEFAULT_TIMEOUT;
     const end = await callOf(context).exec(command, { timeoutMs: timeout, maxBytes: OUTPUT_BYTES }, context.output);
-    const text = end.output.length === 0 ? "[no output]\n" : endLine(end.output);
+    const output = end.output.length === 0 ? "[no output]" : end.output;
+    const text = output.endsWith("\n") ? output : `${output}\n`;
     switch (end.cause) {
       case "cancelled":
         return `${text}[stopped: the tool call was cancelled.]`;
@@ -174,11 +175,6 @@ defineTool({
     return `[${id} ${stopped.label}.] Log: ${stopped.log}`;
   },
 });
-
-/** `text` with a final line feed. */
-function endLine(text: string): string {
-  return text.length === 0 || text.endsWith("\n") ? text : `${text}\n`;
-}
 
 /** The first line of `command`, at most 60 characters, for a job start. */
 function shortCommand(command: string): string {

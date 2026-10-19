@@ -82,9 +82,9 @@ struct Inputs {
     ended: Option<TurnEnd>,
 }
 
-impl TurnJournal<'_> {
-    /// Move each waiting input to the taken inputs, and return their model blocks in input order.
-    fn take_waiting(&self) -> Vec<yuke_ai::Block> {
+impl Inbox for TurnJournal<'_> {
+    // Each waiting input moves to the taken inputs, and its model blocks come back in input order.
+    fn take(&self) -> Vec<yuke_ai::Block> {
         let mut inputs = lock(&self.inputs);
         let mut blocks = Vec::new();
         for input in std::mem::take(&mut inputs.waiting) {
@@ -119,12 +119,6 @@ impl Journal for TurnJournal<'_> {
         let pending = self.store.pending(self.id).await?;
         lock(&self.inputs).waiting = pending;
         Ok(())
-    }
-}
-
-impl Inbox for TurnJournal<'_> {
-    fn take(&self) -> Vec<yuke_ai::Block> {
-        self.take_waiting()
     }
 }
 
@@ -424,7 +418,7 @@ impl<'s> SessionTurn<'s> {
                 ended: None,
             }),
         };
-        let input = turn_journal.take_waiting();
+        let input = turn_journal.take();
         let session_id = session.id.to_string();
         let turn = driver
             .settings(&session.settings.settings)
