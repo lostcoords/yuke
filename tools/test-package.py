@@ -12,6 +12,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import uuid
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -202,7 +203,10 @@ else:
         result = subprocess.run([str(self.binary), "--rpc"], input=json.dumps(request) + "\n",
                                 text=True, capture_output=True, env=self.environment,
                                 cwd=self.scratch, timeout=15, check=True)
-        self.assertEqual(json.loads(result.stdout), {"jsonrpc": "2.0", "id": 7, "result": {
+        response = json.loads(result.stdout)
+        instance_id = response["result"].pop("instanceId")
+        self.assertEqual(str(uuid.UUID(instance_id)), instance_id)
+        self.assertEqual(response, {"jsonrpc": "2.0", "id": 7, "result": {
             "protocolVersion": 1, "agentInfo": {"name": "yuke", "version": self.identity["version"]}}})
 
     def test_editor_checks_consumer_source_and_protocol_types_through_the_profile_link(self):
