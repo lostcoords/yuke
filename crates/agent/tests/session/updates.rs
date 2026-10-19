@@ -6,8 +6,9 @@ use std::task::{Context, Waker};
 
 use async_trait::async_trait;
 use yuke_agent::{MemoryStore, Session, SessionObserver, Store};
+use yuke_ai::route::Credential;
 use yuke_ai::{Block, ToolDefinition, Wire};
-use yuke_engine::{CancellationToken, Concurrency, Driver, Tool, ToolContent, ToolContext};
+use yuke_engine::{CancellationToken, Concurrency, CredentialSource, Driver, Model, Tool, ToolContent, ToolContext};
 use yuke_protocol::{
     BlockPosition, DraftDiscardReason, DraftId, EventNumber, LiveUpdate, ModelUpdate, SessionEvent, SessionUpdate,
     SessionUpdateParams,
@@ -404,6 +405,65 @@ async fn a_failed_stream_discards_visible_text_without_a_saved_answer() {
     assert!(matches!(updates.last().map(|update| &update.update),
         Some(SessionUpdate::Saved(event)) if event.event_number == EventNumber(3)
             && matches!(&event.event, SessionEvent::Commit { commit, .. } if matches!(commit.end, Some(yuke_engine::TurnEnd::Failed(_))))));
+}
+
+/// A refused login. Its text names no cause, so only `source` gives the cause.
+#[derive(Debug)]
+struct Refused(std::io::Error);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the login refresh failed")
+    }
+}
+
+impl std::error::Error for Refused {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+/// A credential source that fails with an error that has a cause.
+struct RefusedLogin;
+
+#[async_trait]
+impl CredentialSource for RefusedLogin {
+    async fn credential(&self) -> Result<Credential, Box<dyn std::error::Error + Send + Sync>> {
+        Err(Box::new(Refused(std::io::Error::other("the grant was revoked"))))
+    }
+}
+
+#[tokio::test]
+async fn a_round_failure_reaches_clients_with_each_cause() {
+    let transport = ScriptedTransport::new([]);
+    let model = Model {
+        target: target(),
+        source: Arc::new(RefusedLogin),
+    };
+    let mut session = Session::create(Arc::new(MemoryStore::new()), &settings())
+        .await
+        .unwrap();
+    session.input().send(user_input("go")).await.unwrap();
+    let capture = Capture::default();
+
+    let ran = session
+        .turn(Driver::new(&transport, &model, &NoWait))
+        .observer(&capture)
+        .run()
+        .await;
+
+    assert!(ran.is_err(), "{ran:?}");
+    let failures: Vec<LiveUpdate> = capture
+        .live()
+        .into_iter()
+        .filter(|update| matches!(update, LiveUpdate::RoundFailed { .. }))
+        .collect();
+    assert_eq!(
+        failures,
+        [LiveUpdate::RoundFailed {
+            error: "the login refresh failed: the grant was revoked".to_owned()
+        }]
+    );
 }
 
 #[tokio::test]

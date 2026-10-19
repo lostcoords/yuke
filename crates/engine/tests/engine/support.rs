@@ -8,7 +8,11 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use yuke_engine::{CancellationToken, Driver, Inbox, Timer, Tool, ToolContent, ToolContext};
+use yuke_ai::{Block, FinishReason};
+use yuke_engine::{
+    CancellationToken, Driver, Hooks, Inbox, RoundDecision, RoundError, RoundPlan, Timer, Tool, ToolContent,
+    ToolContext,
+};
 use yuke_testing::target;
 
 /// The origin of the shared test target.
@@ -51,11 +55,11 @@ impl Tool for Recorder {
 /// An inbox that hands out one scripted batch for each take, then nothing.
 #[derive(Debug, Default)]
 pub(crate) struct Batches {
-    batches: Mutex<VecDeque<Vec<yuke_ai::Block>>>,
+    batches: Mutex<VecDeque<Vec<Block>>>,
 }
 
 impl Batches {
-    pub(crate) fn new(batches: impl IntoIterator<Item = Vec<yuke_ai::Block>>) -> Self {
+    pub(crate) fn new(batches: impl IntoIterator<Item = Vec<Block>>) -> Self {
         Batches {
             batches: Mutex::new(batches.into_iter().collect()),
         }
@@ -63,8 +67,83 @@ impl Batches {
 }
 
 impl Inbox for Batches {
-    fn take(&self) -> Vec<yuke_ai::Block> {
+    fn take(&self) -> Vec<Block> {
         self.batches.lock().unwrap().pop_front().unwrap_or_default()
+    }
+}
+
+/// Hooks that give scripted answers in order. A hook without a script gives its default answer. A hook that runs
+/// out of answers fails the test, so an extra call shows.
+#[derive(Default)]
+pub(crate) struct Script {
+    plans: Mutex<Option<VecDeque<RoundPlan>>>,
+    retries: Mutex<Option<VecDeque<Option<RoundPlan>>>>,
+    decisions: Mutex<Option<VecDeque<RoundDecision>>>,
+    calls: Mutex<Vec<String>>,
+}
+
+impl Script {
+    /// Answer each `before_round` call with the next plan of `plans`.
+    pub(crate) fn plans(self, plans: impl IntoIterator<Item = RoundPlan>) -> Self {
+        Script {
+            plans: Mutex::new(Some(plans.into_iter().collect())),
+            ..self
+        }
+    }
+
+    /// Answer each `retry_round` call with the next answer of `retries`.
+    pub(crate) fn retries(self, retries: impl IntoIterator<Item = Option<RoundPlan>>) -> Self {
+        Script {
+            retries: Mutex::new(Some(retries.into_iter().collect())),
+            ..self
+        }
+    }
+
+    /// Answer each `after_round` call with the next decision of `decisions`.
+    pub(crate) fn decisions(self, decisions: impl IntoIterator<Item = RoundDecision>) -> Self {
+        Script {
+            decisions: Mutex::new(Some(decisions.into_iter().collect())),
+            ..self
+        }
+    }
+
+    /// Return one line for each `retry_round` and `after_round` call, in call order. A retry line holds "retry" and the
+    /// failure. An `after_round` line holds the finish reason and the last text of the context.
+    pub(crate) fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+/// Take the next answer of `script`. A missing script gives `default`, and an empty script fails the test.
+fn next<T>(script: &Mutex<Option<VecDeque<T>>>, default: impl FnOnce() -> T) -> T {
+    match script.lock().unwrap().as_mut() {
+        Some(answers) => answers
+            .pop_front()
+            .expect("the script has no answer for this hook call"),
+        None => default(),
+    }
+}
+
+#[async_trait]
+impl Hooks for Script {
+    async fn before_round(&self, _: &[Block]) -> RoundPlan {
+        next(&self.plans, RoundPlan::default)
+    }
+
+    async fn retry_round(&self, _: &[Block], failure: &RoundError) -> Option<RoundPlan> {
+        self.calls.lock().unwrap().push(format!("retry {failure}"));
+        next(&self.retries, || None)
+    }
+
+    async fn after_round(&self, context: &[Block], finish_reason: Option<FinishReason>) -> RoundDecision {
+        let last = match context.last() {
+            Some(Block::AssistantText(text)) => text.as_str(),
+            Some(Block::ToolResult(result)) => result.content.as_str(),
+            _ => "",
+        };
+        let finish_reason = finish_reason.map_or("none", FinishReason::as_str);
+        self.calls.lock().unwrap().push(format!("{finish_reason} {last}"));
+        next(&self.decisions, || RoundDecision::Proceed)
     }
 }
 
@@ -119,11 +198,11 @@ pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
 /// Run one turn, and return the tool results of the context.
 pub(crate) fn results_in_context(driver: Driver<'_>) -> Vec<yuke_ai::ToolResult> {
     let mut context = Vec::new();
-    block_on(driver.turn(&mut context, vec![yuke_ai::Block::user_text("go")]).run()).unwrap();
+    block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();
     context
         .iter()
         .filter_map(|block| match block {
-            yuke_ai::Block::ToolResult(result) => Some(result.clone()),
+            Block::ToolResult(result) => Some(result.clone()),
             _ => None,
         })
         .collect()

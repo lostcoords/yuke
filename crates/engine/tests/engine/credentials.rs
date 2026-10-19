@@ -12,7 +12,7 @@ use yuke_engine::{
 };
 use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, overloaded_reply, target, text_reply};
 
-use crate::support::block_on;
+use crate::support::{Script, block_on};
 
 /// A model of the test target under the name `name`, with an `x-api-key` header and `source`.
 fn keyed(name: &'static str, source: impl CredentialSource + 'static) -> Model {
@@ -162,36 +162,28 @@ fn a_cancel_during_the_credential_wait_sends_nothing() {
     assert_eq!(events.names(), Vec::<&str>::new());
 }
 
-/// Sends a failed round again to another model with its own key.
-#[derive(Default)]
-struct FallBack {
-    retries: AtomicUsize,
-}
-
-#[async_trait]
-impl Hooks for FallBack {
-    async fn retry_round(&self, _: &[Block], _: &RoundError) -> Option<RoundPlan> {
-        self.retries.fetch_add(1, Ordering::Relaxed);
-        Some(RoundPlan {
-            model: Some(keyed("fallback-model", Credential::ApiKey("fallback-key".into()))),
-            ..RoundPlan::default()
-        })
-    }
-}
-
 #[test]
 fn a_plan_model_presents_its_own_credential() {
     // The failure comes after output, so the retry policy of `ai` sends it no second attempt.
     let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("done")]);
     let model = keyed("test-model", Credential::ApiKey("driver-key".into()));
-    let hooks = FallBack::default();
+    let hooks = Script::default().retries([Some(RoundPlan {
+        model: Some(keyed("fallback-model", Credential::ApiKey("fallback-key".into()))),
+        ..RoundPlan::default()
+    })]);
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
     let mut context = Vec::new();
 
     let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
 
     assert!(matches!(outcome, Ok(Outcome::Completed { .. })), "{outcome:?}");
-    assert_eq!(hooks.retries.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        hooks.calls(),
+        [
+            "retry the provider returned a server error: overloaded_error: Overloaded",
+            "stop done"
+        ]
+    );
     assert_eq!(
         transport.header("x-api-key"),
         [Some("driver-key".to_owned()), Some("fallback-key".to_owned())]

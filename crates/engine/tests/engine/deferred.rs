@@ -5,7 +5,7 @@ use yuke_ai::{Block, Target, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::{Driver, Hooks, RoundPlan, ToolNameError, Toolset, TurnEvent};
 use yuke_testing::{NoWait, ScriptedTransport, model, model_of, target, text_reply, tool_reply};
 
-use crate::support::{Recorder, block_on, definition, results_in_context};
+use crate::support::{Recorder, Script, block_on, definition, results_in_context};
 
 /// A deferred `create_issue` tool with an object input schema.
 fn create_issue_definition() -> ToolDefinition {
@@ -260,22 +260,6 @@ fn on_the_native_path_deferred_tools_carry_defer_loading_and_a_search_loads_its_
     );
 }
 
-/// Hooks that select another target before the first tool result.
-struct FirstSearchTarget(Target);
-
-#[async_trait]
-impl Hooks for FirstSearchTarget {
-    async fn before_round(&self, context: &[Block]) -> RoundPlan {
-        if context.iter().any(|block| matches!(block, Block::ToolResult(_))) {
-            return RoundPlan::default();
-        }
-        RoundPlan {
-            model: Some(model_of(self.0.clone())),
-            ..RoundPlan::default()
-        }
-    }
-}
-
 #[test]
 fn a_search_uses_its_round_target_mode_after_a_hook_changes_the_target() {
     for native_first in [true, false] {
@@ -289,7 +273,15 @@ fn a_search_uses_its_round_target_mode_after_a_hook_changes_the_target() {
         } else {
             (target(), native_target())
         };
-        let hooks = FirstSearchTarget(first);
+        // The plan sends the first round to `first`. The two later rounds go to the driver's model.
+        let hooks = Script::default().plans([
+            RoundPlan {
+                model: Some(model_of(first)),
+                ..RoundPlan::default()
+            },
+            RoundPlan::default(),
+            RoundPlan::default(),
+        ]);
         let mut toolset = Toolset::new();
         toolset.add(create_issue_definition(), Recorder::default()).unwrap();
         let default = model_of(default);

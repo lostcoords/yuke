@@ -1,5 +1,4 @@
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -13,7 +12,7 @@ use yuke_testing::{
     tool_reply,
 };
 
-use crate::support::{Batches, CancelOnSleep, Recorder, Waits, block_on, definition, yield_once};
+use crate::support::{Batches, CancelOnSleep, Recorder, Script, Waits, block_on, definition, yield_once};
 
 #[test]
 fn driver_sends_the_context_and_keeps_each_answer() {
@@ -511,39 +510,13 @@ fn blocked_call_runs_no_tool_and_its_reason_reaches_the_model() {
     assert_eq!(requests[1].matches(r#""is_error":true"#).count(), 1, "{}", requests[1]);
 }
 
-/// Hooks that stop the turn after `limit` rounds.
-struct RoundLimit {
-    limit: usize,
-    rounds: AtomicUsize,
-}
-
-impl RoundLimit {
-    fn new(limit: usize) -> Self {
-        RoundLimit {
-            limit,
-            rounds: AtomicUsize::new(0),
-        }
-    }
-}
-
-#[async_trait]
-impl Hooks for RoundLimit {
-    async fn after_round(&self, _: &[Block], _: Option<FinishReason>) -> RoundDecision {
-        if self.rounds.fetch_add(1, Ordering::Relaxed) + 1 >= self.limit {
-            RoundDecision::Stop
-        } else {
-            RoundDecision::Proceed
-        }
-    }
-}
-
 #[test]
 fn stop_after_a_round_ends_the_turn_with_its_tool_results_and_leaves_the_input() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")])]);
     let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
-    let hooks = RoundLimit::new(1);
+    let hooks = Script::default().decisions([RoundDecision::Stop]);
     let inbox = Mutex::new(vec![Block::user_text("steer")]);
     let driver = Driver::new(&transport, &model, &NoWait)
         .toolset(&toolset)
@@ -567,7 +540,7 @@ fn round_limit_stops_a_turn_of_cut_answers() {
     let cut = || cut_reply(&[("c1", "write", "{}")]);
     let transport = ScriptedTransport::new([cut(), cut()]);
     let model = model();
-    let hooks = RoundLimit::new(2);
+    let hooks = Script::default().decisions([RoundDecision::Proceed, RoundDecision::Stop]);
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
     let mut context = Vec::new();
 

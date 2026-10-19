@@ -1,12 +1,11 @@
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use yuke_ai::{Block, Settings, Target};
-use yuke_engine::{CancellationToken, Driver, Hooks, Outcome, Replace, RoundError, RoundPlan, Toolset, TurnEvent};
+use yuke_engine::{CancellationToken, Driver, Hooks, Outcome, Replace, RoundPlan, Toolset, TurnEvent};
 use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, model_of, target, text_reply, tool_reply};
 
-use crate::support::{Recorder, block_on, definition};
+use crate::support::{Recorder, Script, block_on, definition};
 
 /// The test target under another model name.
 fn other_target(model: &'static str) -> Target {
@@ -41,33 +40,20 @@ fn the_driver_settings_reach_each_request() {
     }
 }
 
-/// Hooks that give the first round other settings and another model, and leave each later round alone.
-#[derive(Default)]
-struct FirstRoundOnly {
-    rounds: AtomicUsize,
-}
-
-#[async_trait]
-impl Hooks for FirstRoundOnly {
-    async fn before_round(&self, _: &[Block]) -> RoundPlan {
-        if self.rounds.fetch_add(1, Ordering::Relaxed) > 0 {
-            return RoundPlan::default();
-        }
-        RoundPlan {
-            model: Some(model_of(other_target("router-model"))),
-            settings: Some(system("First round.")),
-            ..RoundPlan::default()
-        }
-    }
-}
-
 #[test]
 fn a_plan_target_and_settings_apply_to_their_round_only() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
     let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
-    let hooks = FirstRoundOnly::default();
+    let hooks = Script::default().plans([
+        RoundPlan {
+            model: Some(model_of(other_target("router-model"))),
+            settings: Some(system("First round.")),
+            ..RoundPlan::default()
+        },
+        RoundPlan::default(),
+    ]);
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
     block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
@@ -79,35 +65,22 @@ fn a_plan_target_and_settings_apply_to_their_round_only() {
     assert!(!requests[1].contains("First round."), "{}", requests[1]);
 }
 
-/// Hooks that replace the context with a summary before the second round.
-#[derive(Default)]
-struct SummarizeSecondRound {
-    rounds: AtomicUsize,
-}
-
-#[async_trait]
-impl Hooks for SummarizeSecondRound {
-    async fn before_round(&self, _: &[Block]) -> RoundPlan {
-        if self.rounds.fetch_add(1, Ordering::Relaxed) != 1 {
-            return RoundPlan::default();
-        }
-        RoundPlan {
-            replace: Some(Replace {
-                head: vec![Block::user_text("Summary of the work so far.")],
-                keep: 0,
-            }),
-            ..RoundPlan::default()
-        }
-    }
-}
-
 #[test]
 fn a_plan_replacement_replaces_the_context_and_stays() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
     let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
-    let hooks = SummarizeSecondRound::default();
+    let hooks = Script::default().plans([
+        RoundPlan::default(),
+        RoundPlan {
+            replace: Some(Replace {
+                head: vec![Block::user_text("Summary of the work so far.")],
+                keep: 0,
+            }),
+            ..RoundPlan::default()
+        },
+    ]);
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
     let mut context = Vec::new();
 
@@ -125,38 +98,15 @@ fn a_plan_replacement_replaces_the_context_and_stays() {
     );
 }
 
-/// Hooks that answer a failure with `retry`, and keep the failures that they saw.
-struct FallBack {
-    retry: Option<RoundPlan>,
-    failures: Mutex<Vec<String>>,
-}
-
-impl FallBack {
-    fn new(retry: Option<RoundPlan>) -> Self {
-        FallBack {
-            retry,
-            failures: Mutex::new(Vec::new()),
-        }
-    }
-}
-
-#[async_trait]
-impl Hooks for FallBack {
-    async fn retry_round(&self, _: &[Block], failure: &RoundError) -> Option<RoundPlan> {
-        self.failures.lock().unwrap().push(failure.to_string());
-        self.retry.clone()
-    }
-}
-
 #[test]
 fn a_failed_round_runs_again_on_the_plan_model_in_the_same_turn() {
     // The failure comes after output, so the retry policy of `ai` sends it no second attempt.
     let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("done")]);
     let model = model();
-    let hooks = FallBack::new(Some(RoundPlan {
+    let hooks = Script::default().retries([Some(RoundPlan {
         model: Some(model_of(other_target("fallback-model"))),
         ..RoundPlan::default()
-    }));
+    })]);
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
     let mut context = Vec::new();
     let texts = Mutex::new(Vec::new());
@@ -177,7 +127,13 @@ fn a_failed_round_runs_again_on_the_plan_model_in_the_same_turn() {
     assert!(matches!(outcome, Ok(Outcome::Completed { .. })), "{outcome:?}");
     // The observer can tell the text of the failed round from the text of the fallback.
     assert_eq!(*texts.lock().unwrap(), ["cut", "[failed]", "done"]);
-    assert_eq!(hooks.failures.lock().unwrap().len(), 1);
+    assert_eq!(
+        hooks.calls(),
+        [
+            "retry the provider returned a server error: overloaded_error: Overloaded",
+            "stop done"
+        ]
+    );
     let requests = transport.requests();
     assert_eq!(requests.len(), 2);
     assert!(requests[1].contains(r#""model":"fallback-model""#), "{}", requests[1]);
@@ -189,10 +145,10 @@ fn a_failed_round_runs_again_on_the_plan_model_in_the_same_turn() {
 fn a_retry_plan_without_a_model_runs_again_on_the_driver_model() {
     let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("done")]);
     let model = model();
-    let hooks = FallBack::new(Some(RoundPlan {
+    let hooks = Script::default().retries([Some(RoundPlan {
         settings: Some(system("Try harder.")),
         ..RoundPlan::default()
-    }));
+    })]);
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
 
     let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
@@ -208,13 +164,16 @@ fn a_retry_plan_without_a_model_runs_again_on_the_driver_model() {
 fn a_failed_round_that_no_hook_retries_ends_the_turn() {
     let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("unused")]);
     let model = model();
-    let hooks = FallBack::new(None);
+    let hooks = Script::default().retries([None]);
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
 
     let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
 
     assert!(outcome.is_err(), "{outcome:?}");
-    assert_eq!(hooks.failures.lock().unwrap().len(), 1);
+    assert_eq!(
+        hooks.calls(),
+        ["retry the provider returned a server error: overloaded_error: Overloaded"]
+    );
     assert_eq!(transport.requests().len(), 1);
 }
 

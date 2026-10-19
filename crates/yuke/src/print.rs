@@ -9,13 +9,13 @@ use tokio::sync::Notify;
 use yuke_agent::StoreError;
 use yuke_ai::catalog::{Entry, ReasoningLevel};
 use yuke_ai::{Block, Role};
-use yuke_engine::{CancellationToken, Outcome, TurnEnd};
+use yuke_engine::{CancellationToken, Outcome, TurnEnd, chain_text};
 use yuke_protocol::{
     LiveUpdate, ModelReference, NoticeLevel, ServerNotification, SessionEvent, SessionId, SessionSettings,
     SessionState, SessionUpdate, StoredEvent,
 };
 
-use crate::app::{App, AppError, Jobs, Machine, Observer, SOURCE, describe, lock, warn};
+use crate::app::{App, AppError, Jobs, Machine, Observer, SOURCE, lock, warn};
 use crate::providers::Providers;
 
 /// What one run of `yuke -p` does.
@@ -92,7 +92,7 @@ async fn run_turn(
             let selector = task.model.as_deref().ok_or("no model: pass --model <provider/model>")?;
             let choice = task.reasoning.ok_or(NO_REASONING)?;
             let settings = new_settings(app.providers(), selector, choice, cwd)?;
-            app.create(settings).await.map_err(|error| describe(&error))?
+            app.create(settings).await.map_err(|error| chain_text(&error))?
         }
         SessionChoice::Id(id) => existing_session(task, id, app).await?,
         SessionChoice::Newest => {
@@ -100,7 +100,7 @@ async fn run_turn(
                 .store()
                 .newest_session(cwd)
                 .await
-                .map_err(|error| describe(&error))?
+                .map_err(|error| chain_text(&error))?
                 .ok_or_else(|| format!("no session works in {}", cwd.display()))?;
             existing_session(task, id, app).await?
         }
@@ -109,13 +109,13 @@ async fn run_turn(
     let input_id = app
         .input(id, vec![Block::user_text(&task.prompt)])
         .await
-        .map_err(|error| describe(&error))?;
+        .map_err(|error| chain_text(&error))?;
     tokio::select! {
         () = watcher.ended.notified() => {}
         () = cancellation_token.cancelled() => {}
     }
     // The close cancels a running turn, and that turn saves its end before the close returns.
-    app.close(id, true).await.map_err(|error| describe(&error))?;
+    app.close(id, true).await.map_err(|error| chain_text(&error))?;
     let watched = std::mem::take(&mut *lock(&watcher.watched));
     // A cancel before the turn leaves the input pending, and a later run must not answer it. After a failure, the input
     // stays for a later run.
@@ -123,7 +123,7 @@ async fn run_turn(
         app.store()
             .remove_input(id, input_id)
             .await
-            .map_err(|error| describe(&error))?;
+            .map_err(|error| chain_text(&error))?;
     }
 
     let end = match (watched.end, watched.failure) {
@@ -195,7 +195,7 @@ async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<S
     match app.open(id, changed).await {
         Ok(()) => Ok(id),
         Err(AppError::Store(StoreError::NotFound)) => Err(format!("no session has the id {id}")),
-        Err(error) => Err(describe(&error)),
+        Err(error) => Err(chain_text(&error)),
     }
 }
 

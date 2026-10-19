@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use yuke_ai::{
     AttemptError, AttemptInfo, Block, Completion, Content, Failure, FinishReason, Partial, ProviderKind, Reasoning,
-    Response, ToolCall, ToolResult, Usage,
+    ToolCall, ToolResult, Usage,
 };
 
 use super::{Action, Answer, Commit, Outcome, Replaced, TurnEnd, TurnState};
@@ -47,45 +47,39 @@ fn called_names(action: Action<'_>) -> Vec<String> {
     }
 }
 
-fn answer(text: &str) -> Response {
-    Response {
-        info: AttemptInfo::default(),
-        completion: Completion {
-            content: vec![Content::Text(text.to_owned())],
-            finish_reason: FinishReason::Stop,
-            raw_finish_reason: "end_turn".to_owned(),
-            usage: Usage::default(),
-        },
+fn answer(text: &str) -> Completion {
+    Completion {
+        content: vec![Content::Text(text.to_owned())],
+        finish_reason: FinishReason::Stop,
+        raw_finish_reason: "end_turn".to_owned(),
+        usage: Usage::default(),
     }
 }
 
 /// An answer with two calls between text and reasoning blocks.
-fn tool_answer(finish_reason: FinishReason) -> Response {
-    Response {
-        info: AttemptInfo::default(),
-        completion: Completion {
-            content: vec![
-                Content::Text("Let me check.".to_owned()),
-                Content::Reasoning(Reasoning {
-                    text: "Two files.".to_owned(),
-                    replay: None,
-                }),
-                Content::ToolCall(ToolCall {
-                    call_id: "c1".to_owned(),
-                    name: "read".to_owned(),
-                    arguments: "{}".to_owned(),
-                }),
-                Content::Text("And the other.".to_owned()),
-                Content::ToolCall(ToolCall {
-                    call_id: "c2".to_owned(),
-                    name: "write".to_owned(),
-                    arguments: "{}".to_owned(),
-                }),
-            ],
-            finish_reason,
-            raw_finish_reason: finish_reason.as_str().to_owned(),
-            usage: Usage::default(),
-        },
+fn tool_answer(finish_reason: FinishReason) -> Completion {
+    Completion {
+        content: vec![
+            Content::Text("Let me check.".to_owned()),
+            Content::Reasoning(Reasoning {
+                text: "Two files.".to_owned(),
+                replay: None,
+            }),
+            Content::ToolCall(ToolCall {
+                call_id: "c1".to_owned(),
+                name: "read".to_owned(),
+                arguments: "{}".to_owned(),
+            }),
+            Content::Text("And the other.".to_owned()),
+            Content::ToolCall(ToolCall {
+                call_id: "c2".to_owned(),
+                name: "write".to_owned(),
+                arguments: "{}".to_owned(),
+            }),
+        ],
+        finish_reason,
+        raw_finish_reason: finish_reason.as_str().to_owned(),
+        usage: Usage::default(),
     }
 }
 
@@ -93,13 +87,13 @@ fn tool_answer(finish_reason: FinishReason) -> Response {
 fn second_turn_sends_the_first_turn_context() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context);
-    let _ = turn_state.start(vec![Block::user_text("one")]);
-    let _ = turn_state.model_finished(Ok(answer("first answer")), origin());
+    let _ = turn_state.send(vec![Block::user_text("one")]);
+    let _ = turn_state.model_finished(answer("first answer"), origin());
     let _ = turn_state.stop();
 
     let mut turn_state = TurnState::new(&mut context);
     assert!(matches!(
-        turn_state.start(vec![Block::user_text("two")]),
+        turn_state.send(vec![Block::user_text("two")]),
         Action::Send(_)
     ));
 
@@ -110,9 +104,9 @@ fn second_turn_sends_the_first_turn_context() {
 fn a_final_answer_without_input_completes_the_turn() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context);
-    let _ = turn_state.start(vec![Block::user_text("one")]);
+    let _ = turn_state.send(vec![Block::user_text("one")]);
     assert!(matches!(
-        turn_state.model_finished(Ok(answer("done")), origin()),
+        turn_state.model_finished(answer("done"), origin()),
         Action::AfterRound {
             finish_reason: Some(FinishReason::Stop),
             ..
@@ -131,13 +125,13 @@ fn a_final_answer_without_input_completes_the_turn() {
 }
 
 #[test]
-fn continue_turn_sends_another_request_without_input() {
+fn send_after_a_round_sends_another_request_without_input() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context);
-    let _ = turn_state.start(vec![Block::user_text("one")]);
-    let _ = turn_state.model_finished(Ok(answer("done")), origin());
+    let _ = turn_state.send(vec![Block::user_text("one")]);
+    let _ = turn_state.model_finished(answer("done"), origin());
 
-    assert!(matches!(turn_state.continue_turn(Vec::new()), Action::Send(_)));
+    assert!(matches!(turn_state.send(Vec::new()), Action::Send(_)));
 
     assert_eq!(lines(&context), ["user one", "assistant done"]);
 }
@@ -146,14 +140,14 @@ fn continue_turn_sends_another_request_without_input() {
 fn failed_attempt_adds_no_assistant_block() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context);
-    let _ = turn_state.start(vec![Block::user_text("one")]);
+    let _ = turn_state.send(vec![Block::user_text("one")]);
     let failure = AttemptError {
         cause: Failure::Provider(ProviderKind::ServerError),
         info: AttemptInfo::default(),
         partial: vec![Partial::Text("cut".to_owned())],
     };
 
-    let action = turn_state.model_finished(Err(RoundError::Model(failure.into())), origin());
+    let action = turn_state.fail(RoundError::Model(failure.into()));
 
     assert!(matches!(action, Action::Done { result: Err(_), .. }));
     assert_eq!(context, [Block::user_text("one")]);
@@ -163,9 +157,9 @@ fn failed_attempt_adds_no_assistant_block() {
 fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_next_request() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context);
-    let _ = turn_state.start(vec![Block::user_text("one")]);
+    let _ = turn_state.send(vec![Block::user_text("one")]);
 
-    let action = turn_state.model_finished(Ok(tool_answer(FinishReason::ToolCalls)), origin());
+    let action = turn_state.model_finished(tool_answer(FinishReason::ToolCalls), origin());
     assert_eq!(called_names(action), ["read", "write"]);
 
     let results = vec![
@@ -204,9 +198,9 @@ fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_ne
 fn stop_finish_with_tool_calls_runs_them() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context);
-    let _ = turn_state.start(vec![Block::user_text("one")]);
+    let _ = turn_state.send(vec![Block::user_text("one")]);
 
-    let action = turn_state.model_finished(Ok(tool_answer(FinishReason::Stop)), origin());
+    let action = turn_state.model_finished(tool_answer(FinishReason::Stop), origin());
 
     assert_eq!(called_names(action), ["read", "write"]);
 }
@@ -215,9 +209,9 @@ fn stop_finish_with_tool_calls_runs_them() {
 fn length_finish_runs_no_tool_and_asks_the_model_again() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context);
-    let _ = turn_state.start(vec![Block::user_text("one")]);
+    let _ = turn_state.send(vec![Block::user_text("one")]);
 
-    let action = turn_state.model_finished(Ok(tool_answer(FinishReason::Length)), origin());
+    let action = turn_state.model_finished(tool_answer(FinishReason::Length), origin());
     assert!(matches!(
         action,
         Action::AfterRound {
@@ -247,8 +241,8 @@ fn length_finish_runs_no_tool_and_asks_the_model_again() {
 fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context);
-    let _ = turn_state.start(vec![Block::user_text("one")]);
-    let _ = turn_state.model_finished(Ok(tool_answer(FinishReason::ContentFilter)), origin());
+    let _ = turn_state.send(vec![Block::user_text("one")]);
+    let _ = turn_state.model_finished(tool_answer(FinishReason::ContentFilter), origin());
 
     assert!(matches!(
         turn_state.proceed(Vec::new()),
@@ -272,11 +266,11 @@ fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
 }
 
 #[test]
-fn start_sends_every_block_of_the_input() {
+fn send_adds_every_block_of_the_input_to_the_context() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context);
 
-    let _ = turn_state.start(vec![Block::user_text("look at this"), Block::user_text("and this")]);
+    let _ = turn_state.send(vec![Block::user_text("look at this"), Block::user_text("and this")]);
 
     assert_eq!(lines(&context), ["user look at this", "user and this"]);
 }
@@ -285,7 +279,7 @@ fn start_sends_every_block_of_the_input() {
 fn cancelled_request_keeps_its_text_and_gives_each_call_an_error_result() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context);
-    let _ = turn_state.start(vec![Block::user_text("one")]);
+    let _ = turn_state.send(vec![Block::user_text("one")]);
 
     let action = turn_state.model_cancelled(vec![
         Partial::Text("Let me check.".to_owned()),
@@ -332,14 +326,11 @@ fn a_failed_turn_saves_the_causes_of_its_error() {
 
     let commit = Commit::end(&[], Err(&error));
 
-    let Some(TurnEnd::Failed(text)) = commit.end else {
-        panic!("{:?}", commit.end);
-    };
-    assert!(
-        text.starts_with("the blob store failed to read the attachment blob 0000"),
-        "{text}"
+    let expected = format!(
+        "the blob store failed to read the attachment blob {}: the disk is gone",
+        "0".repeat(64)
     );
-    assert!(text.ends_with(": the disk is gone"), "{text}");
+    assert_eq!(commit.end, Some(TurnEnd::Failed(expected)));
 }
 
 #[test]

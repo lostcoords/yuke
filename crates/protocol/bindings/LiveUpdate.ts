@@ -101,6 +101,6 @@ afterMs: number,
  */
 error: string, } | { "sessionUpdate": "round_failed", 
 /**
- * The failure text.
+ * The failure text with each cause.
  */
 error: string, };

@@ -27,10 +27,10 @@ use tokio::signal::unix::{SignalKind, signal};
 use yuke_ai::Effort;
 use yuke_ai::catalog::ReasoningLevel;
 use yuke_ai::oauth::PendingLogin;
-use yuke_engine::{CancellationToken, Outcome, TurnEnd};
+use yuke_engine::{CancellationToken, Outcome, TurnEnd, chain_text};
 use yuke_protocol::SessionId;
 
-use crate::app::{Machine, describe, warn};
+use crate::app::{Machine, warn};
 use crate::paths::Paths;
 use crate::print::{Finished, ReasoningChoice, SessionChoice, Task};
 use crate::providers::Providers;
@@ -287,7 +287,7 @@ async fn login(id: &str) -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(error) => {
-                warn(&describe(&error));
+                warn(&chain_text(&error));
                 ExitCode::FAILURE
             }
         },
@@ -342,7 +342,7 @@ fn machine() -> Result<Machine, String> {
     let home = std::env::home_dir().filter(|home| home.is_absolute());
     let paths = Paths::of(&|name| std::env::var_os(name), home.as_deref())?;
     let http = yuke_ai::HttpTransport::new(yuke_ai::HttpOptions::new(concat!("yuke/", env!("YUKE_VERSION"))))
-        .map_err(|error| describe(&error))?;
+        .map_err(|error| chain_text(&error))?;
     let http = Arc::new(http);
     Ok(Machine {
         paths,

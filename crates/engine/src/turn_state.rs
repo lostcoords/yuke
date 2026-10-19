@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
-use yuke_ai::{Block, FinishReason, Origin, Partial, Response, ToolCall, ToolResult, Usage};
+use yuke_ai::{Block, Completion, FinishReason, Origin, Partial, ToolCall, ToolResult, Usage};
 
 use crate::model::RoundError;
 
@@ -25,8 +25,8 @@ pub(crate) struct TurnState<'c> {
 #[derive(Debug)]
 #[must_use = "the turn continues only when the driver carries out the action"]
 pub(crate) enum Action<'a> {
-    /// Send a request of the whole context, then give the result to [`TurnState::model_finished`]. The commit holds
-    /// the new input, and it is `None` without new input.
+    /// Send a request of the whole context, then give the answer to [`TurnState::model_finished`], or the failure to
+    /// [`TurnState::fail`]. The commit holds the new input, and it is `None` without new input.
     Send(Option<Commit<'a>>),
 
     /// Run these calls, then give the results to [`TurnState::tools_finished`] in call order. The commit holds the
@@ -34,7 +34,7 @@ pub(crate) enum Action<'a> {
     CallTools(Commit<'a>),
 
     /// A round ended, and its answer and tool results are in the context. Call [`TurnState::proceed`],
-    /// [`TurnState::continue_turn`], or [`TurnState::stop`].
+    /// [`TurnState::send`], [`TurnState::stop`], or [`TurnState::fail`].
     AfterRound {
         /// The whole context.
         context: &'a [Block],
@@ -46,7 +46,7 @@ pub(crate) enum Action<'a> {
         commit: Commit<'a>,
     },
 
-    /// The turn ended. `Err` holds the failure of a request, and the context keeps the blocks from before the failure.
+    /// The turn ended. `Err` holds the failure of a round, and the context keeps the blocks from before the failure.
     /// The end commit holds `tail` and `result`.
     Done {
         /// The blocks after the last commit, such as the partial output of a cancel.
@@ -133,7 +133,7 @@ impl<'a> Commit<'a> {
 pub enum TurnEnd {
     /// The turn ended without a failure.
     Outcome(Outcome),
-    /// A request failed, or the turn stopped before it saved its end. The text tells why.
+    /// A round failed, or the turn stopped before it saved its end. The text tells why.
     Failed(String),
 }
 
@@ -234,19 +234,8 @@ impl<'c> TurnState<'c> {
         }
     }
 
-    /// Start a turn with the blocks of `input`, such as a text and its attachments.
-    pub(crate) fn start(&mut self, input: Vec<Block>) -> Action<'_> {
-        self.context.extend(input);
-        Action::Send(self.commit())
-    }
-
-    /// Take the result of the request that [`Action::Send`] asked for. `origin` names the target that answered.
-    pub(crate) fn model_finished(&mut self, result: Result<Response, RoundError>, origin: Origin) -> Action<'_> {
-        let completion = match result {
-            Ok(response) => response.completion,
-            Err(error) => return self.done(Err(error)),
-        };
-
+    /// Take the answer to the request that [`Action::Send`] asked for. `origin` names the target that answered.
+    pub(crate) fn model_finished(&mut self, completion: Completion, origin: Origin) -> Action<'_> {
         let finish_reason = completion.finish_reason;
         let answer = Answer {
             origin,
@@ -303,12 +292,12 @@ impl<'c> TurnState<'c> {
         if self.turn_end.is_some() && input.is_empty() {
             return self.stop();
         }
-        self.continue_turn(input)
+        self.send(input)
     }
 
-    /// Send another request after [`Action::AfterRound`]. `input` joins the context before the request, also when it is
-    /// empty.
-    pub(crate) fn continue_turn(&mut self, input: Vec<Block>) -> Action<'_> {
+    /// Send a request at the start of the turn or after [`Action::AfterRound`]. `input`, such as a text and its
+    /// attachments, joins the context before the request, also when it is empty.
+    pub(crate) fn send(&mut self, input: Vec<Block>) -> Action<'_> {
         self.turn_end = None;
         self.context.extend(input);
         Action::Send(self.commit())
@@ -316,7 +305,7 @@ impl<'c> TurnState<'c> {
 
     /// End the turn after [`Action::AfterRound`]. A round that ended the turn still ends it as [`Outcome::Completed`].
     pub(crate) fn stop(&mut self) -> Action<'_> {
-        let outcome = match self.turn_end.take() {
+        let outcome = match self.turn_end {
             Some(finish_reason) => Outcome::Completed { finish_reason },
             None => Outcome::Stopped,
         };
@@ -348,8 +337,12 @@ impl<'c> TurnState<'c> {
 
     /// End the turn as [`Outcome::Cancelled`] after [`Action::AfterRound`].
     pub(crate) fn cancel(&mut self) -> Action<'_> {
-        self.turn_end = None;
         self.done(Ok(Outcome::Cancelled))
+    }
+
+    /// End the turn with `error` after [`Action::Send`] or [`Action::AfterRound`].
+    pub(crate) fn fail(&mut self, error: RoundError) -> Action<'_> {
+        self.done(Err(error))
     }
 
     /// The question to the caller after a round, with the commit of the round.
@@ -387,9 +380,9 @@ impl<'c> TurnState<'c> {
     }
 }
 
-/// The text of `error` and of each of its causes, joined by colons. The saved text is all that a reader of the turn
-/// gets, so it keeps the causes.
-fn chain_text(error: &dyn std::error::Error) -> String {
+/// Return the text of `error` and of each of its causes, joined by colons. [`TurnEnd::Failed`] saves this text, because it is
+/// all that a reader of the turn gets.
+pub fn chain_text(error: &dyn std::error::Error) -> String {
     std::iter::successors(Some(error), |error| error.source())
         .map(ToString::to_string)
         .collect::<Vec<_>>()

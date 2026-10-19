@@ -9,14 +9,14 @@ use tokio::sync::{Notify, OwnedMutexGuard};
 use tokio::task::JoinHandle;
 use yuke_agent::{InputSender, Loaded, Session, SessionError, SessionObserver, StoreError, system_notification};
 use yuke_ai::{Block, ToolDefinition};
-use yuke_engine::{CancellationToken, Driver, Model, Outcome, Toolset};
+use yuke_engine::{CancellationToken, Driver, Model, Outcome, Toolset, chain_text};
 use yuke_js::{JobEnded, Runtime, ScriptSession, ScriptTool, SessionHost};
 use yuke_protocol::{
     EventNumber, Input, InputId, InputSource, Job, LiveUpdate, NoticeLevel, NoticeParams, ServerNotification,
     SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
-use super::{AppError, Observer, SOURCE, Shared, TokioTimer, describe, lock, model_of, save_settings, warn};
+use super::{AppError, Observer, SOURCE, Shared, TokioTimer, lock, model_of, save_settings, warn};
 
 /// The source of the input that a background job sends when it ends.
 const JOBS_SOURCE: &str = "host:jobs";
@@ -63,7 +63,7 @@ impl LiveSession {
             runtime
                 .open_session(Arc::clone(&host) as Arc<dyn SessionHost>)
                 .await
-                .map_err(|error| AppError::Internal(describe(&error)))?,
+                .map_err(|error| AppError::Internal(chain_text(&error)))?,
         );
         let session = Arc::new(tokio::sync::Mutex::new(session));
         let turn = Arc::default();
@@ -180,7 +180,10 @@ impl LiveSession {
         }
         // After the task, so no turn takes the tools of the closed plugins.
         if let Err(error) = self.script.close().await {
-            warn(&format!("the plugins of a session did not close: {}", describe(&error)));
+            warn(&format!(
+                "the plugins of a session did not close: {}",
+                chain_text(&error)
+            ));
         }
         // After the task, so a job that the cancelled turn started also stops.
         self.host.shared.processes.close_owner(&self.owner()).await;
@@ -376,7 +379,7 @@ impl SessionTask {
                 Ok(pending) if !pending.is_empty() => {}
                 Ok(_) => return,
                 Err(error) => {
-                    output.notice(NoticeLevel::Error, &describe(&error));
+                    output.notice(NoticeLevel::Error, &chain_text(&error));
                     return;
                 }
             }
@@ -384,14 +387,14 @@ impl SessionTask {
             if session.is_stale()
                 && let Err(error) = recover(&mut session, output).await
             {
-                output.notice(NoticeLevel::Error, &describe(&error));
+                output.notice(NoticeLevel::Error, &chain_text(&error));
                 return;
             }
             // The settings name the model and the folder, so each turn takes both from the settings of that moment.
             let model = match model_of(session.settings(), &self.host.shared) {
                 Ok(model) => model,
                 Err(error) => {
-                    output.notice(NoticeLevel::Error, &describe(&error));
+                    output.notice(NoticeLevel::Error, &chain_text(&error));
                     return;
                 }
             };
@@ -444,7 +447,7 @@ impl SessionTask {
                 Ok(Ok(_) | Err(SessionError::Round(_) | SessionError::NoInput)) => {}
                 // A stale session recovers at the next wake, so a store failure does not repeat at once.
                 Ok(Err(error @ (SessionError::Store(_) | SessionError::Stale))) => {
-                    output.notice(NoticeLevel::Error, &describe(&error));
+                    output.notice(NoticeLevel::Error, &chain_text(&error));
                     return;
                 }
                 // The session in memory can be wrong after a panic, so it opens again from the store at once. The
@@ -453,7 +456,7 @@ impl SessionTask {
                     output.notice(NoticeLevel::Error, &format!("the turn failed: {error}"));
                     let mut session = self.session.lock().await;
                     if let Err(error) = recover(&mut session, output).await {
-                        output.notice(NoticeLevel::Error, &describe(&error));
+                        output.notice(NoticeLevel::Error, &chain_text(&error));
                     }
                     return;
                 }
@@ -474,8 +477,8 @@ async fn recover(session: &mut Session, output: &Output) -> Result<(), AppError>
 /// The toolset of a turn from the tools of the plugins.
 fn toolset_of(tools: Result<Vec<(ToolDefinition, ScriptTool)>, yuke_js::Error>) -> Result<Toolset, String> {
     let mut toolset = Toolset::new();
-    for (definition, tool) in tools.map_err(|error| describe(&error))? {
-        toolset.add(definition, tool).map_err(|error| describe(&error))?;
+    for (definition, tool) in tools.map_err(|error| chain_text(&error))? {
+        toolset.add(definition, tool).map_err(|error| chain_text(&error))?;
     }
     Ok(toolset)
 }
@@ -521,7 +524,7 @@ impl SessionHost for Host {
             .store
             .put_blob(self.inbox.output.session, bytes)
             .await
-            .map_err(|error| describe(&error))
+            .map_err(|error| chain_text(&error))
     }
 
     fn job_changed(&self, job: Job) {
@@ -537,8 +540,8 @@ impl SessionHost for Host {
         let job_input = Input::new(source, vec![Block::user_text(format!("{} ended", ended.id))])
             .and_then(|job_input| job_input.with_model_content(vec![system_notification(&ended.text)]));
         let accepted = match job_input {
-            Ok(job_input) => self.inbox.accept(job_input).await.map_err(|error| describe(&error)),
-            Err(error) => Err(describe(&error)),
+            Ok(job_input) => self.inbox.accept(job_input).await.map_err(|error| chain_text(&error)),
+            Err(error) => Err(chain_text(&error)),
         };
         if let Err(text) = accepted {
             self.inbox.output.notice(NoticeLevel::Error, &text);

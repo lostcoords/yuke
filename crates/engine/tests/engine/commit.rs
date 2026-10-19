@@ -7,12 +7,12 @@ use async_trait::async_trait;
 use yuke_ai::transport::{BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 use yuke_ai::{Block, FinishReason, Target, ToolCall, ToolResult, Usage};
 use yuke_engine::{
-    Answer, CancellationToken, Commit, Driver, Hooks, Journal, Outcome, Replace, Replaced, RoundDecision, RoundError,
-    RoundPlan, Tool, ToolContent, ToolContext, Toolset, TurnEnd, TurnError, TurnEvent,
+    Answer, CancellationToken, Commit, Driver, Journal, Outcome, Replace, Replaced, RoundDecision, RoundPlan, Tool,
+    ToolContent, ToolContext, Toolset, TurnEnd, TurnError, TurnEvent,
 };
 use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, model_of, target, text_reply, tool_reply};
 
-use crate::support::{Batches, Recorder, block_on, definition, origin, yield_once};
+use crate::support::{Batches, Recorder, Script, block_on, definition, origin, yield_once};
 
 /// One saved commit.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,7 +20,7 @@ struct Saved {
     replaced: Option<(Vec<Block>, usize)>,
     blocks: Vec<Block>,
     answer: Option<Answer>,
-    end: Option<&'static str>,
+    end: Option<TurnEnd>,
 }
 
 /// A journal that replays each commit into one context and keeps each commit.
@@ -40,7 +40,7 @@ impl Replay {
     }
 
     /// The blocks and the end of each commit, in order.
-    fn shapes(&self) -> Vec<(Vec<Block>, Option<&'static str>)> {
+    fn shapes(&self) -> Vec<(Vec<Block>, Option<TurnEnd>)> {
         self.saved()
             .into_iter()
             .map(|saved| (saved.blocks, saved.end))
@@ -60,15 +60,32 @@ impl Journal for Replay {
                 .map(|Replaced { head, keep }| (head.to_vec(), *keep)),
             blocks: commit.blocks.to_vec(),
             answer: commit.answer.clone(),
-            end: commit.end.as_ref().map(|end| match end {
-                TurnEnd::Outcome(Outcome::Completed { .. }) => "completed",
-                TurnEnd::Outcome(Outcome::Stopped) => "stopped",
-                TurnEnd::Outcome(Outcome::Cancelled) => "cancelled",
-                TurnEnd::Failed(_) => "failed",
-            }),
+            end: commit.end.clone(),
         });
         Ok(())
     }
+}
+
+/// Return the end of a turn that the model ended with `stop`.
+fn completed() -> TurnEnd {
+    TurnEnd::Outcome(Outcome::Completed {
+        finish_reason: FinishReason::Stop,
+    })
+}
+
+/// Return the end of a turn that a hook stopped.
+fn stopped() -> TurnEnd {
+    TurnEnd::Outcome(Outcome::Stopped)
+}
+
+/// Return the end of a cancelled turn.
+fn cancelled() -> TurnEnd {
+    TurnEnd::Outcome(Outcome::Cancelled)
+}
+
+/// Return the end of a turn whose request failed with the scripted failed reply.
+fn failed() -> TurnEnd {
+    TurnEnd::Failed("the provider returned a server error: overloaded_error: Overloaded".to_owned())
 }
 
 fn call(id: &str) -> Block {
@@ -109,22 +126,12 @@ fn the_commits_of_two_turns_replay_to_the_context_and_input_commits_before_its_r
             (vec![Block::ToolResult(ToolResult::success("c1", "result 1"))], None),
             (vec![Block::user_text("steer")], None),
             (vec![Block::assistant_text("done")], None),
-            (vec![], Some("completed")),
+            (vec![], Some(completed())),
             (vec![Block::user_text("two")], None),
             (vec![Block::assistant_text("second")], None),
-            (vec![], Some("completed")),
+            (vec![], Some(completed())),
         ]
     );
-}
-
-/// Hooks that stop each turn after its first round.
-struct StopAfterRound;
-
-#[async_trait]
-impl Hooks for StopAfterRound {
-    async fn after_round(&self, _: &[Block], _: Option<FinishReason>) -> RoundDecision {
-        RoundDecision::Stop
-    }
 }
 
 #[test]
@@ -133,10 +140,11 @@ fn a_stopped_turn_ends_with_a_stopped_commit() {
     let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
+    let hooks = Script::default().decisions([RoundDecision::Stop]);
     let journal = Replay::default();
     let driver = Driver::new(&transport, &model, &NoWait)
         .toolset(&toolset)
-        .hooks(&StopAfterRound)
+        .hooks(&hooks)
         .journal(&journal);
     let mut context = Vec::new();
 
@@ -144,7 +152,7 @@ fn a_stopped_turn_ends_with_a_stopped_commit() {
 
     assert!(matches!(outcome, Ok(Outcome::Stopped)));
     assert_eq!(journal.context(), context);
-    assert_eq!(journal.shapes().last(), Some(&(vec![], Some("stopped"))));
+    assert_eq!(journal.shapes().last(), Some(&(vec![], Some(stopped()))));
 }
 
 #[test]
@@ -160,7 +168,7 @@ fn a_failed_request_commits_an_end_after_its_input() {
     assert!(matches!(outcome, Err(TurnError::Round(_))));
     assert_eq!(
         journal.shapes(),
-        [(vec![Block::user_text("go")], None), (vec![], Some("failed"))]
+        [(vec![Block::user_text("go")], None), (vec![], Some(failed()))]
     );
     assert_eq!(journal.context(), context);
 }
@@ -184,7 +192,7 @@ fn inbox_input_before_a_failed_request_commits_before_the_request() {
     assert!(matches!(outcome, Err(TurnError::Round(_))));
     assert_eq!(
         journal.shapes()[3..],
-        [(vec![Block::user_text("steer")], None), (vec![], Some("failed"))]
+        [(vec![Block::user_text("steer")], None), (vec![], Some(failed()))]
     );
     assert_eq!(journal.context(), context);
 }
@@ -224,7 +232,7 @@ fn a_cancel_during_the_stream_commits_the_partial_output_with_the_end() {
             replaced: None,
             blocks: vec![Block::assistant_text("cut")],
             answer: None,
-            end: Some("cancelled"),
+            end: Some(cancelled()),
         }
     );
     assert_eq!(journal.context(), context);
@@ -268,7 +276,7 @@ fn a_cancel_during_a_tool_commits_the_results_with_the_end() {
     let shapes = journal.shapes();
     assert_eq!(shapes.len(), 3, "{shapes:?}");
     assert_eq!(shapes[2].0.len(), 2, "both calls get a result: {shapes:?}");
-    assert_eq!(shapes[2].1, Some("cancelled"));
+    assert_eq!(shapes[2].1, Some(cancelled()));
     assert_eq!(journal.context(), context);
 }
 
@@ -308,25 +316,6 @@ fn the_answer_is_saved_before_its_tool_runs() {
     assert_eq!(*saw.lock().unwrap(), Some(true));
 }
 
-/// Hooks that send the second round of each turn to `target`.
-struct SecondRoundTo {
-    target: Target,
-    rounds: AtomicUsize,
-}
-
-#[async_trait]
-impl Hooks for SecondRoundTo {
-    async fn before_round(&self, _: &[Block]) -> RoundPlan {
-        if self.rounds.fetch_add(1, Ordering::Relaxed) != 1 {
-            return RoundPlan::default();
-        }
-        RoundPlan {
-            model: Some(model_of(self.target.clone())),
-            ..RoundPlan::default()
-        }
-    }
-}
-
 #[test]
 fn each_answer_commit_names_the_target_of_its_round_with_usage_and_finish_reason() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
@@ -337,10 +326,13 @@ fn each_answer_commit_names_the_target_of_its_round_with_usage_and_finish_reason
     };
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
-    let hooks = SecondRoundTo {
-        target: other.clone(),
-        rounds: AtomicUsize::new(0),
-    };
+    let hooks = Script::default().plans([
+        RoundPlan::default(),
+        RoundPlan {
+            model: Some(model_of(other.clone())),
+            ..RoundPlan::default()
+        },
+    ]);
     let journal = Replay::default();
     let driver = Driver::new(&transport, &model, &NoWait)
         .toolset(&toolset)
@@ -457,43 +449,10 @@ fn a_cancel_during_a_commit_lets_the_commit_finish() {
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
     assert_eq!(
         journal.replay.shapes(),
-        [(vec![Block::user_text("go")], None), (vec![], Some("cancelled"))]
+        [(vec![Block::user_text("go")], None), (vec![], Some(cancelled()))]
     );
     assert_eq!(transport.requests().len(), 0);
     assert_eq!(journal.replay.context(), context);
-}
-
-/// Hooks that replace the context before the second round with `head` and the last `keep` blocks.
-struct Summarize {
-    head: Vec<Block>,
-    keep: usize,
-    rounds: AtomicUsize,
-}
-
-impl Summarize {
-    fn new(head: &[&str], keep: usize) -> Self {
-        Summarize {
-            head: head.iter().map(|text| Block::user_text(*text)).collect(),
-            keep,
-            rounds: AtomicUsize::new(0),
-        }
-    }
-}
-
-#[async_trait]
-impl Hooks for Summarize {
-    async fn before_round(&self, _: &[Block]) -> RoundPlan {
-        if self.rounds.fetch_add(1, Ordering::Relaxed) != 1 {
-            return RoundPlan::default();
-        }
-        RoundPlan {
-            replace: Some(Replace {
-                head: self.head.clone(),
-                keep: self.keep,
-            }),
-            ..RoundPlan::default()
-        }
-    }
 }
 
 #[test]
@@ -509,7 +468,7 @@ fn a_replacement_commits_before_its_request_and_replays_to_the_new_context() {
     ] {
         let transport = ScriptedTransport::new([text_reply("first"), text_reply("second")]);
         let model = model();
-        let hooks = Summarize::new(head, keep);
+        let hooks = Script::default().plans([RoundPlan::default(), summary(head, keep)]);
         let journal = Replay::default();
         let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).journal(&journal);
         let mut context = Vec::new();
@@ -529,37 +488,17 @@ fn a_replacement_commits_before_its_request_and_replays_to_the_new_context() {
         // The journal receives the replacement after the input of the turn and before its answer.
         let saved = journal.saved();
         assert_eq!(saved[3].blocks, [Block::user_text("two")], "keep {keep}");
-        assert_eq!(saved[4].replaced, Some((hooks.head.clone(), saved_keep)), "keep {keep}");
+        let head: Vec<Block> = head.iter().map(|text| Block::user_text(*text)).collect();
+        assert_eq!(saved[4].replaced, Some((head, saved_keep)), "keep {keep}");
         assert_eq!(saved[4].blocks, [], "keep {keep}");
     }
 }
 
-/// Hooks that replace the context before the first attempt of the second round and again after its failure.
-#[derive(Default)]
-struct SummarizeTwice {
-    rounds: AtomicUsize,
-}
-
-#[async_trait]
-impl Hooks for SummarizeTwice {
-    async fn before_round(&self, _: &[Block]) -> RoundPlan {
-        if self.rounds.fetch_add(1, Ordering::Relaxed) == 0 {
-            return RoundPlan::default();
-        }
-        summary("s1", 2)
-    }
-
-    // The retry keeps the first summary, the saved answer, and the input.
-    async fn retry_round(&self, _: &[Block], _: &RoundError) -> Option<RoundPlan> {
-        Some(summary("s2", 3))
-    }
-}
-
 /// A plan that replaces the context with the summary `head` and the last `keep` blocks.
-fn summary(head: &str, keep: usize) -> RoundPlan {
+fn summary(head: &[&str], keep: usize) -> RoundPlan {
     RoundPlan {
         replace: Some(Replace {
-            head: vec![Block::user_text(head)],
+            head: head.iter().map(|text| Block::user_text(*text)).collect(),
             keep,
         }),
         ..RoundPlan::default()
@@ -570,7 +509,11 @@ fn summary(head: &str, keep: usize) -> RoundPlan {
 fn a_replacement_before_a_retried_round_replays_to_the_new_context() {
     let transport = ScriptedTransport::new([text_reply("first"), failed_reply("cut"), text_reply("second")]);
     let model = model();
-    let hooks = SummarizeTwice::default();
+    // The first round of the second turn and its retry each replace the context. The retry keeps the first summary,
+    // the saved answer, and the input.
+    let hooks = Script::default()
+        .plans([RoundPlan::default(), summary(&["s1"], 2)])
+        .retries([Some(summary(&["s2"], 3))]);
     let journal = Replay::default();
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).journal(&journal);
     let mut context = Vec::new();
@@ -618,7 +561,7 @@ fn each_request_opens_after_the_journal_saved_its_input_and_replacement() {
         seen: Mutex::default(),
     };
     let model = model();
-    let hooks = Summarize::new(&["summary"], 1);
+    let hooks = Script::default().plans([RoundPlan::default(), summary(&["summary"], 1)]);
     let driver = Driver::new(&transport, &model, &NoWait)
         .hooks(&hooks)
         .journal(journal.as_ref());
@@ -636,27 +579,14 @@ fn each_request_opens_after_the_journal_saved_its_input_and_replacement() {
     );
 }
 
-/// Hooks that continue the turn once with input, then proceed.
-#[derive(Default)]
-struct ContinueOnce {
-    rounds: AtomicUsize,
-}
-
-#[async_trait]
-impl Hooks for ContinueOnce {
-    async fn after_round(&self, _: &[Block], _: Option<FinishReason>) -> RoundDecision {
-        if self.rounds.fetch_add(1, Ordering::Relaxed) == 0 {
-            return RoundDecision::Continue(vec![Block::user_text("the tests fail")]);
-        }
-        RoundDecision::Proceed
-    }
-}
-
 #[test]
 fn continue_input_commits_before_its_request() {
     let transport = ScriptedTransport::new([text_reply("first"), text_reply("second")]);
     let model = model();
-    let hooks = ContinueOnce::default();
+    let hooks = Script::default().decisions([
+        RoundDecision::Continue(vec![Block::user_text("the tests fail")]),
+        RoundDecision::Proceed,
+    ]);
     let journal = Replay::default();
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).journal(&journal);
     let mut context = Vec::new();
@@ -670,7 +600,7 @@ fn continue_input_commits_before_its_request() {
             (vec![Block::assistant_text("first")], None),
             (vec![Block::user_text("the tests fail")], None),
             (vec![Block::assistant_text("second")], None),
-            (vec![], Some("completed")),
+            (vec![], Some(completed())),
         ]
     );
     assert_eq!(journal.context(), context);

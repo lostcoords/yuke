@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 use yuke_ai::transport::{Answer, BoxFuture, ExchangeRequest, Fault};
 
 use super::*;
-use crate::app::describe;
 use crate::testing::Answers;
+use yuke_engine::chain_text;
 
 const PROVIDER: &str = "xai-grok";
 
@@ -71,7 +71,7 @@ async fn token_of(source: &LoginSource) -> Result<String, String> {
     match source.credential().await {
         Ok(Credential::OAuth(oauth)) => Ok(oauth.access_token.into_owned()),
         Ok(other) => panic!("{other:?}"),
-        Err(error) => Err(describe(&*error)),
+        Err(error) => Err(chain_text(&*error)),
     }
 }
 

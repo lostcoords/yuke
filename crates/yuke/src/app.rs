@@ -24,7 +24,7 @@ use yuke_ai::catalog::Auth;
 use yuke_ai::oauth::Flow;
 use yuke_ai::route::Credential;
 use yuke_ai::transport::{Exchange, Transport};
-use yuke_engine::{CredentialSource, Model, Timer};
+use yuke_engine::{CredentialSource, Model, Timer, chain_text};
 use yuke_js::{Options, Processes, Report, Runtime};
 use yuke_protocol::{
     EventNumber, Input, InputId, InputSource, Job, NoticeLevel, NoticeParams, ServerNotification, SessionEvent,
@@ -116,7 +116,7 @@ impl App {
         let store: Arc<dyn Store> = Arc::new(
             SqliteStore::open(&machine.paths.data)
                 .await
-                .map_err(|error| describe(&error))?,
+                .map_err(|error| chain_text(&error))?,
         );
         // The full outputs of the commands and the logs of the jobs go to a folder of this process, which the shutdown
         // removes.
@@ -140,7 +140,7 @@ impl App {
                 if let Err(shutdown) = processes.shutdown().await {
                     warn(&format!("{}: {shutdown}", processes_folder.display()));
                 }
-                return Err(describe(&error));
+                return Err(chain_text(&error));
             }
         };
         let reporter = tokio::spawn(report(reports, Arc::clone(&observer), io::stderr()));
@@ -160,7 +160,7 @@ impl App {
         };
         if let Err(error) = app.runtime.import("yuke:internal/builtins").await {
             app.shutdown().await;
-            return Err(describe(&error));
+            return Err(chain_text(&error));
         }
         // A plugin that does not load is left out; the other plugins load.
         for failure in app.runtime.load_plugins(&plugins).await {
@@ -168,7 +168,7 @@ impl App {
                 session_id: None,
                 level: NoticeLevel::Error,
                 source: SOURCE.to_owned(),
-                message: describe(&failure),
+                message: chain_text(&failure),
             }));
         }
         Ok(app)
@@ -296,7 +296,7 @@ impl App {
     /// Returns [`AppError::Invalid`] for content that is no input, and [`AppError::Store`] when the store fails.
     pub(crate) async fn input(&self, id: SessionId, content: Vec<Block>) -> Result<InputId, AppError> {
         let live = self.live(id)?;
-        let input = Input::new(InputSource::User, content).map_err(|error| AppError::Invalid(describe(&error)))?;
+        let input = Input::new(InputSource::User, content).map_err(|error| AppError::Invalid(chain_text(&error)))?;
         live.accept(input).await.map_err(AppError::Store)
     }
 
@@ -377,7 +377,7 @@ impl App {
             live.close().await;
         }
         if let Err(error) = runtime.shutdown().await {
-            warn(&describe(&error));
+            warn(&chain_text(&error));
         }
         // The shutdown of the runtime closes the channel of the reports, so the reporter ends.
         if let Err(error) = reporter.await {
@@ -513,7 +513,7 @@ async fn save_settings(
         .await
         .map_err(|error| match error {
             SessionError::Store(error) => AppError::Store(error),
-            error => AppError::Internal(describe(&error)),
+            error => AppError::Internal(chain_text(&error)),
         })?;
     Ok(StoredEvent {
         event_number,
@@ -605,18 +605,6 @@ async fn report(
         };
         observer.notify(ServerNotification::Notice(notice));
     }
-}
-
-/// The text of `error` and of each of its causes.
-pub(crate) fn describe(error: &dyn Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }
 
 /// Write `text` to stderr as a notice of yuke.

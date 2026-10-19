@@ -27,7 +27,8 @@ use yuke_protocol::{
     ServerNotification, SessionResult,
 };
 
-use crate::app::{App, AppError, Jobs, Machine, Observer, describe, lock, warn};
+use crate::app::{App, AppError, Jobs, Machine, Observer, lock, warn};
+use yuke_engine::chain_text;
 
 /// The most messages that wait to reach the client. A client that falls further behind loses its connection.
 const OUTGOING_LIMIT: usize = 8192;
@@ -548,5 +549,5 @@ fn response_error(error: &AppError) -> ResponseError {
         },
         AppError::Internal(_) => ResponseError::INTERNAL_ERROR,
     };
-    error_with(code, &describe(error))
+    error_with(code, &chain_text(error))
 }

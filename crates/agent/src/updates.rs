@@ -2,7 +2,7 @@
 
 use std::sync::Mutex;
 
-use yuke_engine::{Commit, Observer, TurnEvent};
+use yuke_engine::{Commit, Observer, TurnEvent, chain_text};
 use yuke_protocol::{
     BlockPosition, DraftDiscardReason, DraftId, EventNumber, LiveUpdate, SessionId, SessionUpdate, SessionUpdateParams,
     StoredEvent,
@@ -185,8 +185,9 @@ impl Observer for Updates<'_> {
                 after_ms: u64::try_from(after.as_millis()).unwrap_or(u64::MAX),
                 error: error.to_string(),
             }),
+            // The saved end of a failed turn keeps each cause, so the live text keeps them too.
             TurnEvent::RoundFailed(error) => self.live(LiveUpdate::RoundFailed {
-                error: error.to_string(),
+                error: chain_text(error),
             }),
         }
     }

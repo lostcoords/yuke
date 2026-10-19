@@ -21,4 +21,4 @@ pub use tool::{
     Concurrency, TOOL_CALL_NAME, Tool, ToolContent, ToolContext, ToolNameError, Toolset, is_reserved_tool_name,
     parse_arguments,
 };
-pub use turn_state::{Answer, Commit, Outcome, Replace, Replaced, TurnEnd};
+pub use turn_state::{Answer, Commit, Outcome, Replace, Replaced, TurnEnd, chain_text};

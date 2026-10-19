@@ -150,7 +150,7 @@ pub enum LiveUpdate {
     },
     /// A round failed after its retries.
     RoundFailed {
-        /// The failure text.
+        /// The failure text with each cause.
         error: String,
     },
 }

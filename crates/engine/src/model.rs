@@ -45,7 +45,7 @@ impl fmt::Debug for Model {
     }
 }
 
-/// Why a round failed after its retries.
+/// Why a round failed.
 #[derive(Debug)]
 pub enum RoundError {
     /// The credential source gave no credential. The driver sent nothing for that attempt.

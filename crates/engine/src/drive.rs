@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::future::poll_fn;
 use std::num::NonZeroU32;
-use std::pin::{Pin, pin};
+use std::pin::pin;
 use std::sync::{Mutex, PoisonError};
 use std::task::Poll;
 use std::time::Duration;
@@ -224,6 +224,47 @@ impl<'a> Driver<'a> {
         }
     }
 
+    /// Send each request with `settings`, unless a [`RoundPlan`](crate::RoundPlan) gives other settings for its round.
+    #[must_use]
+    pub fn settings(self, settings: &'a Settings) -> Self {
+        Driver { settings, ..self }
+    }
+
+    /// Send the session id `session_id` with each request, for routing and the Responses cache key. See
+    /// [`Request::session_id`].
+    #[must_use]
+    pub fn session_id(self, session_id: &'a str) -> Self {
+        Driver {
+            session_id: Some(session_id),
+            ..self
+        }
+    }
+
+    /// Read the media of each request from `blob_store`. Without a store, a request with media fails to encode.
+    #[must_use]
+    pub fn blobs(self, blob_store: &'a dyn BlobStore) -> Self {
+        Driver {
+            blob_store: Some(blob_store),
+            ..self
+        }
+    }
+
+    /// Set the attempt and delay bounds of each request. The default is [`retry::Policy::default`].
+    #[must_use]
+    pub fn retry_policy(self, retry_policy: retry::Policy) -> Self {
+        Driver { retry_policy, ..self }
+    }
+
+    /// Set the size bounds of each response: body bytes, event bytes, tool arguments, blocks, and error body. The
+    /// default is [`ResponseLimits::default`].
+    #[must_use]
+    pub fn response_limits(self, response_limits: ResponseLimits) -> Self {
+        Driver {
+            response_limits,
+            ..self
+        }
+    }
+
     /// Save `commit` in the journal. The save does not race the cancel. A failed save ends the turn.
     async fn save(&self, commit: &Commit<'_>) -> Result<(), TurnError> {
         match self.journal {
@@ -296,7 +337,7 @@ impl<'a> Driver<'a> {
                 call,
             });
             if result.is_none() {
-                *result = match race(self.hooks.before_tool(call), pin!(cancellation_token.cancelled())).await {
+                *result = match race(self.hooks.before_tool(call), cancellation_token.cancelled()).await {
                     Raced::Done(ToolDecision::Run) => None,
                     Raced::Done(ToolDecision::Block(reason)) => Some(ToolResult::error(&call.call_id, reason)),
                     Raced::Cancelled => Some(not_executed(call, CANCELLED_REASON)),
@@ -363,59 +404,13 @@ impl<'a> Driver<'a> {
         result: ToolResult,
         cancellation_token: &CancellationToken,
     ) -> ToolResult {
-        match race(
-            self.hooks.after_tool(call, &result),
-            pin!(cancellation_token.cancelled()),
-        )
-        .await
-        {
+        match race(self.hooks.after_tool(call, &result), cancellation_token.cancelled()).await {
             // The result answers this call, so a replacement keeps its call id.
             Raced::Done(Some(replacement)) => ToolResult {
                 call_id: result.call_id,
                 ..replacement
             },
             Raced::Done(None) | Raced::Cancelled => result,
-        }
-    }
-
-    /// Send each request with `settings`, unless a [`RoundPlan`](crate::RoundPlan) gives other settings for its round.
-    #[must_use]
-    pub fn settings(self, settings: &'a Settings) -> Self {
-        Driver { settings, ..self }
-    }
-
-    /// Send the session id `session_id` with each request, for routing and the Responses cache key. See
-    /// [`Request::session_id`].
-    #[must_use]
-    pub fn session_id(self, session_id: &'a str) -> Self {
-        Driver {
-            session_id: Some(session_id),
-            ..self
-        }
-    }
-
-    /// Read the media of each request from `blob_store`. Without a store, a request with media fails to encode.
-    #[must_use]
-    pub fn blobs(self, blob_store: &'a dyn BlobStore) -> Self {
-        Driver {
-            blob_store: Some(blob_store),
-            ..self
-        }
-    }
-
-    /// Set the attempt and delay bounds of each request. The default is [`retry::Policy::default`].
-    #[must_use]
-    pub fn retry_policy(self, retry_policy: retry::Policy) -> Self {
-        Driver { retry_policy, ..self }
-    }
-
-    /// Set the size bounds of each response: body bytes, event bytes, tool arguments, blocks, and error body. The
-    /// default is [`ResponseLimits::default`].
-    #[must_use]
-    pub fn response_limits(self, response_limits: ResponseLimits) -> Self {
-        Driver {
-            response_limits,
-            ..self
         }
     }
 
@@ -446,7 +441,7 @@ impl<'a> Driver<'a> {
         let cancelled = || Ok(Round::new(Sent::Cancelled(Vec::new()), &self.model.target));
         let Raced::Done(mut plan) = race(
             self.hooks.before_round(turn_state.context()),
-            pin!(cancellation_token.cancelled()),
+            cancellation_token.cancelled(),
         )
         .await
         else {
@@ -470,7 +465,7 @@ impl<'a> Driver<'a> {
             observer.event(&TurnEvent::RoundFailed(&error));
             let retry = race(
                 self.hooks.retry_round(turn_state.context(), &error),
-                pin!(cancellation_token.cancelled()),
+                cancellation_token.cancelled(),
             )
             .await;
             plan = match retry {
@@ -627,7 +622,7 @@ impl<'a> Turn<'a> {
         // turn encodes only the changed elements.
         let mut encoder = Encoder::new();
 
-        let mut action = turn_state.start(input);
+        let mut action = turn_state.send(input);
         loop {
             match action {
                 Action::Send(commit) => {
@@ -639,7 +634,8 @@ impl<'a> Turn<'a> {
                         .await?;
                     search_mode = round.search_mode;
                     action = match round.sent {
-                        Sent::Finished(result) => turn_state.model_finished(result, round.origin),
+                        Sent::Finished(Ok(response)) => turn_state.model_finished(response.completion, round.origin),
+                        Sent::Finished(Err(error)) => turn_state.fail(error),
                         Sent::Cancelled(partial) => turn_state.model_cancelled(partial),
                     };
                 }
@@ -689,13 +685,13 @@ impl<'a> Turn<'a> {
                 } => {
                     driver.save(&commit).await?;
                     let decided = driver.hooks.after_round(context, finish_reason);
-                    action = match race(decided, pin!(cancellation_token.cancelled())).await {
+                    action = match race(decided, cancellation_token.cancelled()).await {
                         // The driver takes the input only when the turn goes on, so a stop or a cancel leaves it.
                         Raced::Done(RoundDecision::Proceed) => turn_state.proceed(driver.inbox.take()),
                         Raced::Done(RoundDecision::Continue(more)) => {
                             // Input of the user comes first. The hook gets another call after the next round.
                             let input = driver.inbox.take();
-                            turn_state.continue_turn(if input.is_empty() { more } else { input })
+                            turn_state.send(if input.is_empty() { more } else { input })
                         }
                         Raced::Done(RoundDecision::Stop) => turn_state.stop(),
                         Raced::Cancelled => turn_state.cancel(),
@@ -793,8 +789,9 @@ enum Raced<T> {
 
 /// Wait for `work`, unless `cancelled` ends first. Each poll checks `cancelled` before `work`, and the drop of `work`
 /// stops it.
-async fn race<T>(work: impl Future<Output = T>, mut cancelled: Pin<&mut impl Future<Output = ()>>) -> Raced<T> {
+async fn race<T>(work: impl Future<Output = T>, cancelled: impl Future<Output = ()>) -> Raced<T> {
     let mut work = pin!(work);
+    let mut cancelled = pin!(cancelled);
     poll_fn(|context| {
         if cancelled.as_mut().poll(context).is_ready() {
             return Poll::Ready(Raced::Cancelled);
