@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
-use yuke_agent::{Access, Lease, Loaded, NewestTurn, Opened, Store, StoreError, check_consumed_blocks};
+use yuke_agent::{Access, Lease, Loaded, NewestTurn, Opened, PromptSection, Store, StoreError, check_consumed_blocks};
 use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_protocol::{ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings};
 use yuke_sql::rusqlite::{self, Connection, TransactionBehavior};
@@ -134,7 +134,7 @@ impl SqliteStore {
 
 #[async_trait]
 impl Store for SqliteStore {
-    async fn create_session(&self, settings: &SessionSettings, prompt: &str) -> Result<Opened, StoreError> {
+    async fn create_session(&self, settings: &SessionSettings, prompt: &[PromptSection]) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
         let folder = self.folder(id);
         let sessions_folder = self.sessions.clone();
@@ -142,7 +142,7 @@ impl Store for SqliteStore {
         let settings_json = serde_json::to_string(settings).map_err(failed)?;
         let params = sessions::InsertSessionParams {
             id: session,
-            prompt: prompt.to_owned(),
+            prompt: serde_json::to_string(prompt).map_err(failed)?,
         };
 
         let lock = self
@@ -166,7 +166,7 @@ impl Store for SqliteStore {
         Ok(Opened {
             id,
             settings: settings.clone(),
-            prompt: prompt.to_owned(),
+            prompt: prompt.to_vec(),
             context: Vec::new(),
             newest_turn: NewestTurn::Empty,
             lease: Some(self.lease(id, lock)),

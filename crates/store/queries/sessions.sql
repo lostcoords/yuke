@@ -7,8 +7,8 @@ INSERT INTO sessions(id, prompt) VALUES (:id, :prompt);
 --- Add session `id` with the prompt of session `source`. It adds no row for an unknown source.
 INSERT INTO sessions(id, prompt) SELECT :id, prompt FROM sessions WHERE id = :source;
 
---! session_prompt (id: [u8; 16]) : (prompt: String)
---- The system prompt of the session. It returns no row for an unknown session.
+--! session_prompt (id: [u8; 16]) : (prompt: crate::Json<Vec<yuke_agent::PromptSection>>)
+--- The sections of the system prompt of the session. It returns no row for an unknown session.
 SELECT prompt FROM sessions WHERE id = :id;
 
 --! session_count (id: [u8; 16]) : (count: i64)

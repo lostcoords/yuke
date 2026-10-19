@@ -9,9 +9,9 @@ use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, StoredEvent,
 };
 
-use crate::lock;
 use crate::store::{Access, Lease, NewestTurn, Opened, Store, StoreError};
 use crate::updates::{SessionObserver, Updates};
+use crate::{PromptSection, lock, prompt_text};
 
 /// The result of a call that was open when its turn stopped. The model reads it.
 const OUTCOME_UNKNOWN: &str = "The turn stopped before it saved the result of this call. The call can have run.";
@@ -43,8 +43,8 @@ fn interruption_note(newest_turn: &NewestTurn) -> Option<yuke_ai::Block> {
 /// the turn in its store before the turn goes on.
 pub struct Session {
     settings: SessionSettings,
-    /// The system prompt of each turn. It never changes.
-    prompt: String,
+    /// The sections of the system prompt of each turn. They never change.
+    prompt: Vec<PromptSection>,
     context: Vec<yuke_ai::Block>,
     store: Arc<dyn Store>,
     id: SessionId,
@@ -134,7 +134,7 @@ impl yuke_ai::BlobStore for TurnJournal<'_> {
 }
 
 impl Session {
-    /// Create a session with `settings` and the system prompt `prompt` in `store`, and own it.
+    /// Create a session in `store` with `settings` and the system prompt sections `prompt`, and own it.
     ///
     /// # Errors
     ///
@@ -142,7 +142,7 @@ impl Session {
     pub async fn create(
         store: Arc<dyn Store>,
         settings: &SessionSettings,
-        prompt: &str,
+        prompt: &[PromptSection],
     ) -> Result<Session, StoreError> {
         let opened = store.create_session(settings, prompt).await?;
         Ok(Session::from_opened(store, opened))
@@ -199,8 +199,8 @@ impl Session {
         &self.settings
     }
 
-    /// The system prompt of each turn.
-    pub fn prompt(&self) -> &str {
+    /// The sections of the system prompt of each turn.
+    pub fn prompt(&self) -> &[PromptSection] {
         &self.prompt
     }
 
@@ -432,8 +432,9 @@ impl<'s> SessionTurn<'s> {
         };
         let input = turn_journal.take();
         let session_id = session.id.to_string();
+        let system = prompt_text(&session.prompt);
         let turn = driver
-            .system(&session.prompt)
+            .system(&system)
             .settings(&session.settings.settings)
             .session_id(&session_id)
             .journal(&turn_journal)

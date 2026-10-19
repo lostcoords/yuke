@@ -500,7 +500,7 @@ pub(crate) mod sessions {
 
     #[derive(Debug, Clone, PartialEq)]
     pub(crate) struct SessionPrompt {
-        pub(crate) prompt: String,
+        pub(crate) prompt: crate::Json<Vec<yuke_agent::PromptSection>>,
     }
 
     impl FromRow for SessionPrompt {
@@ -553,7 +553,7 @@ pub(crate) mod sessions {
         )
     }
 
-    /// The system prompt of the session. It returns no row for an unknown session.
+    /// The sections of the system prompt of the session. It returns no row for an unknown session.
     pub(crate) fn session_prompt(connection: &Connection, id: [u8; 16]) -> Query<'_, SessionPrompt> {
         Query::new(
             connection,

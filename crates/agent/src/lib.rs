@@ -3,6 +3,7 @@
 //! shared behavior tests of a store.
 
 mod memory;
+mod prompt;
 mod session;
 mod store;
 #[cfg(any(test, feature = "testing"))]
@@ -12,6 +13,7 @@ mod updates;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub use memory::MemoryStore;
+pub use prompt::{PromptSection, prompt_text};
 pub use session::{InputSender, Session, SessionError, SessionTurn, system_notification};
 pub use store::{Access, Lease, Loaded, NewestTurn, Opened, Store, StoreError, blob_of, check_consumed_blocks};
 pub use updates::SessionObserver;

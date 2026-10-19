@@ -9,6 +9,8 @@ use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings, StoredEvent,
 };
 
+use crate::PromptSection;
+
 /// Saves and loads sessions. Each method is one atomic durable step. One writer at a time owns a session. A second
 /// [`Access::Write`] open gets [`StoreError::Owned`] until the [`Lease`] of the first writer drops and its writes end.
 /// Only the holder of the lease calls [`Store::set_settings`] and [`Store::commit`]. Any caller can accept input.
@@ -18,13 +20,13 @@ use yuke_protocol::{
 /// with the commit that consumes it.
 #[async_trait]
 pub trait Store: Send + Sync {
-    /// Save a new session with `settings` and the system prompt `prompt`, and open it for writing. Its first event
-    /// holds the settings. The prompt never changes.
+    /// Save a new session with `settings` and the system prompt sections `prompt`, and open it for writing. Its first
+    /// event holds the settings. The sections never change.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError::Failed`] when the save fails.
-    async fn create_session(&self, settings: &SessionSettings, prompt: &str) -> Result<Opened, StoreError>;
+    async fn create_session(&self, settings: &SessionSettings, prompt: &[PromptSection]) -> Result<Opened, StoreError>;
 
     /// Save a new session with the events of session `source` up to the end of a completed turn, and open it for
     /// writing. `through` is the event number of that end. `None` takes the newest completed turn, and a source with no
@@ -187,8 +189,8 @@ pub struct Opened {
     pub id: SessionId,
     /// The current settings.
     pub settings: SessionSettings,
-    /// The system prompt of the session.
-    pub prompt: String,
+    /// The sections of the system prompt of the session, in order.
+    pub prompt: Vec<PromptSection>,
     /// The model context: the head of the newest replacement, the blocks that it keeps, and the blocks after it.
     pub context: Vec<yuke_ai::Block>,
     /// The newest turn of the session.

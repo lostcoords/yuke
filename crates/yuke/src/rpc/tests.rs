@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use yuke_agent::{Session, Store};
+use yuke_agent::{PromptSection, Session, Store};
 use yuke_ai::transport::Transport;
 use yuke_engine::CancellationToken;
 use yuke_protocol::{Input, InputSource, ModelReference, SessionId, SessionSettings};
@@ -380,6 +380,7 @@ async fn the_server_builds_the_prompt_of_a_new_session_from_its_folder() {
         .await
         .unwrap()
         .prompt;
+    let prompt = yuke_agent::prompt_text(&prompt);
     assert!(prompt.starts_with("You are yuke"), "{prompt}");
     assert!(prompt.contains(place.work.to_str().unwrap()), "{prompt}");
     client.end().await;
@@ -594,7 +595,9 @@ async fn saved_session(place: &Place, provider: &str, model: &str) -> SessionId 
         settings: yuke_ai::Settings::new(),
         cwd: place.work.clone(),
     };
-    let session = Session::create(store, &settings, "the prompt").await.unwrap();
+    let session = Session::create(store, &settings, &[PromptSection::new("base", "the prompt")])
+        .await
+        .unwrap();
     let input = Input::new(InputSource::User, vec![yuke_ai::Block::user_text("waiting")]).unwrap();
     session.input().send(input).await.unwrap();
     session.id()

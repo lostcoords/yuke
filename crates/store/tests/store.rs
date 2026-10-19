@@ -7,7 +7,7 @@ use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
 use tokio_rusqlite::rusqlite;
-use yuke_agent::testing::{consumed, end, settings, step, user_input};
+use yuke_agent::testing::{consumed, end, prompt, settings, step, user_input};
 use yuke_agent::{Access, Store, StoreError};
 use yuke_engine::{Answer, Commit};
 use yuke_protocol::EventNumber;
@@ -34,7 +34,7 @@ yuke_agent::store_tests!(make_store);
 async fn a_session_survives_a_close_and_an_open_of_the_file() {
     let folder = folder("a_session_survives_a_close_and_an_open_of_the_file");
     let first = SqliteStore::open(&folder).await.unwrap();
-    let opened = first.create_session(&settings("one"), "the prompt").await.unwrap();
+    let opened = first.create_session(&settings("one"), &prompt()).await.unwrap();
     let id = opened.id;
     first.set_settings(id, &settings("two")).await.unwrap();
     first
@@ -49,7 +49,7 @@ async fn a_session_survives_a_close_and_an_open_of_the_file() {
     let opened = second.open(id, Access::Write).await.unwrap();
 
     assert_eq!(opened.settings, settings("two"));
-    assert_eq!(opened.prompt, "the prompt");
+    assert_eq!(opened.prompt, prompt());
     assert_eq!(opened.context, [yuke_ai::Block::user_text("a")]);
     assert!(opened.newest_turn.is_open());
     let pending = second.pending(id).await.unwrap();
@@ -63,7 +63,7 @@ async fn a_queued_write_finishes_before_the_lock_releases() {
     let folder = folder("a_queued_write_finishes_before_the_lock_releases");
     let first = SqliteStore::open(&folder).await.unwrap();
     let second = SqliteStore::open(&folder).await.unwrap();
-    let opened = first.create_session(&settings("one"), "the prompt").await.unwrap();
+    let opened = first.create_session(&settings("one"), &prompt()).await.unwrap();
     let id = opened.id;
     // A writer outside the stores holds the database, so the commit of the first store waits on its thread.
     let blocker = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
@@ -93,7 +93,7 @@ async fn a_queued_write_finishes_before_the_lock_releases() {
 async fn a_blob_survives_a_close_and_an_open_of_the_file() {
     let folder = folder("a_blob_survives_a_close_and_an_open_of_the_file");
     let first = SqliteStore::open(&folder).await.unwrap();
-    let id = first.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = first.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let blob = first.put_blob(id, b"image".to_vec()).await.unwrap();
     drop(first);
 
@@ -109,7 +109,7 @@ async fn a_blob_survives_a_close_and_an_open_of_the_file() {
 async fn a_delete_removes_the_folder_of_the_session() {
     let folder = folder("a_delete_removes_the_folder_of_the_session");
     let store = SqliteStore::open(&folder).await.unwrap();
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store.put_blob(id, b"image".to_vec()).await.unwrap();
     let sessions = || std::fs::read_dir(folder.join("sessions")).unwrap().count();
     let before = sessions();
@@ -161,7 +161,7 @@ fn commit_rows(folder: &std::path::Path, id: yuke_protocol::SessionId) -> Vec<St
 async fn a_fork_keeps_the_token_usage_and_the_creation_time_of_each_copied_commit() {
     let folder = folder("a_fork_keeps_the_token_usage_and_the_creation_time_of_each_copied_commit");
     let store = SqliteStore::open(&folder).await.unwrap();
-    let source = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let source = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let blocks = [yuke_ai::Block::assistant_text("a")];
     let answer = Commit {
         answer: Some(Answer {
@@ -204,7 +204,7 @@ async fn a_fork_keeps_the_token_usage_and_the_creation_time_of_each_copied_commi
 async fn a_failed_copy_of_the_blobs_leaves_no_fork() {
     let folder = folder("a_failed_copy_of_the_blobs_leaves_no_fork");
     let store = SqliteStore::open(&folder).await.unwrap();
-    let source = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let source = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store.put_blob(source, b"image".to_vec()).await.unwrap();
     let sessions = folder.join("sessions");
     let source_folder = std::fs::read_dir(&sessions).unwrap().next().unwrap().unwrap().path();
@@ -226,7 +226,7 @@ async fn a_failed_copy_of_the_blobs_leaves_no_fork() {
 async fn a_refused_fork_point_leaves_no_session_row_and_no_folder() {
     let folder = folder("a_refused_fork_point_leaves_no_session_row_and_no_folder");
     let store = SqliteStore::open(&folder).await.unwrap();
-    let source = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let source = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store
         .commit(source, &step(&[yuke_ai::Block::user_text("a")]), &[])
         .await
@@ -251,7 +251,7 @@ async fn a_create_that_cannot_make_its_folder_leaves_no_session_row() {
     std::fs::remove_dir(folder.join("sessions")).unwrap();
     std::fs::write(folder.join("sessions"), b"").unwrap();
 
-    let created = store.create_session(&settings("one"), "the prompt").await;
+    let created = store.create_session(&settings("one"), &prompt()).await;
 
     assert!(matches!(created, Err(StoreError::Failed(_))), "{created:?}");
     let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
@@ -265,7 +265,7 @@ async fn a_create_that_cannot_make_its_folder_leaves_no_session_row() {
 async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
     let folder = folder("a_failed_transaction_returns_no_receipt_and_keeps_the_input");
     let store = SqliteStore::open(&folder).await.unwrap();
-    let session = store.create_session(&settings("one"), "the prompt").await.unwrap();
+    let session = store.create_session(&settings("one"), &prompt()).await.unwrap();
     let blocks = [yuke_ai::Block::user_text("task")];
     let input = store.accept_input(session.id, user_input("task")).await.unwrap();
     let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
@@ -323,7 +323,7 @@ async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
 async fn a_saved_input_without_content_does_not_load() {
     let folder = folder("a_saved_input_without_content_does_not_load");
     let store = SqliteStore::open(&folder).await.unwrap();
-    let session = store.create_session(&settings("one"), "the prompt").await.unwrap();
+    let session = store.create_session(&settings("one"), &prompt()).await.unwrap();
     let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
     connection
         .execute(

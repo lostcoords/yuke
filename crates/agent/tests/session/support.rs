@@ -6,13 +6,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
-use yuke_agent::{Access, InputSender, Loaded, MemoryStore, Opened, Store, StoreError};
+use yuke_agent::{Access, InputSender, Loaded, MemoryStore, Opened, PromptSection, Store, StoreError};
 use yuke_ai::Block;
 use yuke_engine::{Commit, Tool, ToolContent, ToolContext};
 use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, InputSource, ModelReference, PendingInput, SessionEvent, SessionId,
     SessionSettings,
 };
+
+/// A system prompt of one section.
+pub(crate) fn prompt() -> Vec<PromptSection> {
+    vec![PromptSection::new("base", "the prompt")]
+}
 
 /// Session settings for the shared test target.
 pub(crate) fn settings() -> SessionSettings {
@@ -102,7 +107,7 @@ impl FailingStore {
 
 #[async_trait]
 impl Store for FailingStore {
-    async fn create_session(&self, settings: &SessionSettings, prompt: &str) -> Result<Opened, StoreError> {
+    async fn create_session(&self, settings: &SessionSettings, prompt: &[PromptSection]) -> Result<Opened, StoreError> {
         self.store.create_session(settings, prompt).await
     }
 

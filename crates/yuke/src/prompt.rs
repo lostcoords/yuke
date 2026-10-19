@@ -1,9 +1,11 @@
-//! The system prompt of a new session: the base text, the `AGENTS.md` instructions, and the facts of the environment.
-//! A session keeps the prompt of its creation.
+//! The system prompt of a new session. It has three sections: the base text, the `AGENTS.md` instructions, and the
+//! facts of the environment. A session keeps the prompt of its creation.
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use yuke_agent::PromptSection;
 
 const BASE: &str = "\
 You are yuke, an assistant for software development.
@@ -41,9 +43,10 @@ pub(crate) struct Environment<'a> {
     pub(crate) now: SystemTime,
 }
 
-/// The system prompt for a session in `environment`.
-pub(crate) fn system_prompt(environment: &Environment<'_>) -> Result<String, String> {
-    let mut sections = vec![BASE.to_owned()];
+/// The sections of the system prompt for a session in `environment`: `base`, `instructions`, and `environment`. The
+/// `instructions` section exists only when at least one `AGENTS.md` file exists.
+pub(crate) fn system_prompt(environment: &Environment<'_>) -> Result<Vec<PromptSection>, String> {
+    let mut sections = vec![PromptSection::new("base", BASE)];
     let instructions = instructions(environment.workspace, environment.home)?;
     if !instructions.is_empty() {
         let blocks: Vec<String> = instructions
@@ -57,16 +60,20 @@ pub(crate) fn system_prompt(environment: &Environment<'_>) -> Result<String, Str
                 )
             })
             .collect();
-        sections.push(format!("{INSTRUCTIONS_LEAD}\n\n{}", blocks.join("\n\n")));
+        sections.push(PromptSection::new(
+            "instructions",
+            format!("{INSTRUCTIONS_LEAD}\n\n{}", blocks.join("\n\n")),
+        ));
     }
-    sections.push(format!(
+    let environment = format!(
         "<environment>\nworkspace: {}\noperating_system: {}\nshell: {}\nsession_start_date_utc: {}\n</environment>",
         escape(&environment.workspace.to_string_lossy()),
         std::env::consts::OS,
         escape(&environment.shell.to_string_lossy()),
         utc_date(environment.now),
-    ));
-    Ok(sections.join("\n\n"))
+    );
+    sections.push(PromptSection::new("environment", environment));
+    Ok(sections)
 }
 
 /// One `AGENTS.md` file.
@@ -186,6 +193,8 @@ mod tests {
         assert_eq!(date(4_107_542_400), "2100-03-01");
     }
 
+    // Each turn joins the sections. The test pins the joined text, so a change of the sections cannot change the text
+    // that the model reads.
     #[test]
     fn the_prompt_holds_the_base_the_instructions_and_the_environment_in_order() {
         let root = folder("order");
@@ -204,8 +213,10 @@ mod tests {
         })
         .unwrap();
 
+        let keys: Vec<&str> = prompt.iter().map(|section| section.key.as_str()).collect();
+        assert_eq!(keys, ["base", "instructions", "environment"]);
         assert_eq!(
-            prompt,
+            yuke_agent::prompt_text(&prompt),
             format!(
                 "{BASE}\n\n{INSTRUCTIONS_LEAD}\n\n## AGENTS.md ({})\nScope: global.\n\nGlobal rule.\n\n## AGENTS.md ({})\nScope: \
                  workspace.\n\nWorkspace rule.\n\n<environment>\nworkspace: {}\noperating_system: {}\nshell: \
@@ -230,8 +241,9 @@ mod tests {
         })
         .unwrap();
 
-        assert!(!prompt.contains(INSTRUCTIONS_LEAD));
-        assert!(prompt.starts_with(&format!("{BASE}\n\n<environment>\n")));
+        let keys: Vec<&str> = prompt.iter().map(|section| section.key.as_str()).collect();
+        assert_eq!(keys, ["base", "environment"]);
+        assert!(yuke_agent::prompt_text(&prompt).starts_with(&format!("{BASE}\n\n<environment>\n")));
     }
 
     #[test]

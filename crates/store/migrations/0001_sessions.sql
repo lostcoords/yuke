@@ -3,7 +3,7 @@
 
 CREATE TABLE sessions (
     id BLOB PRIMARY KEY NOT NULL,          -- 16 bytes of a version 7 UUID, so new rows go near the end of the key
-    prompt TEXT NOT NULL                   -- the system prompt of the session. A create sets it, and a fork copies it.
+    prompt TEXT NOT NULL                   -- the system prompt sections as a JSON list of {key, text}. A fork copies them.
 ) STRICT;
 
 CREATE TABLE events (                      -- the commits and the settings of each session, numbered 1, 2, 3, and so on

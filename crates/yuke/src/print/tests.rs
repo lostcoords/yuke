@@ -76,7 +76,7 @@ async fn a_new_run_saves_a_session_in_the_current_folder_and_answers_the_last_te
             model: "MiniMax-M3".to_owned()
         }
     );
-    assert!(opened.prompt.starts_with("You are yuke"));
+    assert!(yuke_agent::prompt_text(&opened.prompt).starts_with("You are yuke"));
     assert_eq!(
         opened.context,
         [Block::user_text("Say hello."), Block::assistant_text("Hello.")]

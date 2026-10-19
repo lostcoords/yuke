@@ -16,6 +16,7 @@ use yuke_protocol::{
     SessionSettings, StoredEvent,
 };
 
+use crate::PromptSection;
 use crate::store::{Access, NewestTurn, Store, StoreError, blob_of};
 
 /// Write one `#[tokio::test]` for each behavior of this module. `$make_store` is an async function that takes the
@@ -85,6 +86,11 @@ macro_rules! store_tests {
     };
 }
 
+/// A system prompt of one section.
+pub fn prompt() -> Vec<PromptSection> {
+    vec![PromptSection::new("base", "the prompt")]
+}
+
 /// Settings with the model `model` of the test provider.
 pub fn settings(model: &str) -> SessionSettings {
     SessionSettings {
@@ -134,7 +140,7 @@ pub fn end(blocks: &[yuke_ai::Block]) -> Commit<'_> {
 
 /// A new session opens with its settings, an empty context, no pending input, and no open turn.
 pub async fn a_new_session_opens_with_its_settings_and_no_context(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
 
     let opened = store.open(id, Access::Read).await.unwrap();
 
@@ -144,28 +150,28 @@ pub async fn a_new_session_opens_with_its_settings_and_no_context(store: &dyn St
     assert_eq!(store.pending(id).await.unwrap(), []);
 }
 
-/// A session keeps the prompt of its creation after a settings change, and a fork copies it.
+/// A session keeps the sections of its prompt in order after a settings change, and a fork copies them.
 pub async fn a_session_keeps_its_prompt_and_a_fork_copies_it(store: &dyn Store) {
-    let id = store
-        .create_session(&settings("one"), "the first prompt")
-        .await
-        .unwrap()
-        .id;
+    let sections = [
+        PromptSection::new("base", "the first prompt"),
+        PromptSection::new("empty", ""),
+        PromptSection::new("environment", "the place"),
+    ];
+    let created = store.create_session(&settings("one"), &sections).await.unwrap();
+    let id = created.id;
     store.set_settings(id, &settings("two")).await.unwrap();
 
     let forked = store.fork_session(id, None).await.unwrap();
 
-    assert_eq!(store.open(id, Access::Read).await.unwrap().prompt, "the first prompt");
-    assert_eq!(forked.prompt, "the first prompt");
-    assert_eq!(
-        store.open(forked.id, Access::Read).await.unwrap().prompt,
-        "the first prompt"
-    );
+    assert_eq!(created.prompt, sections);
+    assert_eq!(store.open(id, Access::Read).await.unwrap().prompt, sections);
+    assert_eq!(forked.prompt, sections);
+    assert_eq!(store.open(forked.id, Access::Read).await.unwrap().prompt, sections);
 }
 
 /// Each commit adds its blocks after the blocks of the earlier commits.
 pub async fn a_commit_adds_its_blocks_to_the_context(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
 
     store
         .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[])
@@ -185,7 +191,7 @@ pub async fn a_commit_adds_its_blocks_to_the_context(store: &dyn Store) {
 
 /// A replacement makes its head the start of the context, keeps the last blocks, and the next commit adds after them.
 pub async fn a_replacement_keeps_its_head_and_the_last_blocks(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let first = [
         yuke_ai::Block::user_text("a"),
         yuke_ai::Block::assistant_text("b"),
@@ -220,7 +226,7 @@ pub async fn a_replacement_keeps_its_head_and_the_last_blocks(store: &dyn Store)
 
 /// A replacement that keeps no block leaves only its head.
 pub async fn a_replacement_that_keeps_nothing_leaves_its_head(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store
         .commit(
             id,
@@ -245,7 +251,7 @@ pub async fn a_replacement_that_keeps_nothing_leaves_its_head(store: &dyn Store)
 
 /// A second replacement can keep blocks that the first replacement kept and the end of the first head.
 pub async fn a_second_replacement_keeps_blocks_from_before_the_first(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let first = [yuke_ai::Block::user_text("a"), yuke_ai::Block::assistant_text("b")];
     store.commit(id, &step(&first), &[]).await.unwrap();
     let first_head = [
@@ -294,7 +300,7 @@ pub async fn a_second_replacement_keeps_blocks_from_before_the_first(store: &dyn
 
 /// A turn is open after a commit without an end, and closed after a commit with an end.
 pub async fn a_turn_is_open_until_its_end_commit(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
 
     store
         .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[])
@@ -310,7 +316,7 @@ pub async fn a_turn_is_open_until_its_end_commit(store: &dyn Store) {
 
 /// An open gives the end of the newest turn, so a session can tell the model how its last turn ended.
 pub async fn the_newest_turn_keeps_a_cancelled_or_failed_end(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let newest = || async { store.open(id, Access::Read).await.unwrap().newest_turn };
     let ending = |end: TurnEnd| Commit {
         replaced: None,
@@ -341,7 +347,7 @@ pub async fn the_newest_turn_keeps_a_cancelled_or_failed_end(store: &dyn Store) 
 
 /// A second writer of a session gets [`StoreError::Owned`] while the first writer holds its lease.
 pub async fn a_second_writer_gets_owned(store: &dyn Store) {
-    let opened = store.create_session(&settings("one"), "the prompt").await.unwrap();
+    let opened = store.create_session(&settings("one"), &prompt()).await.unwrap();
 
     let second = store.open(opened.id, Access::Write).await;
 
@@ -350,7 +356,7 @@ pub async fn a_second_writer_gets_owned(store: &dyn Store) {
 
 /// The drop of a lease lets a new writer open the session.
 pub async fn a_dropped_lease_lets_a_new_writer_open(store: &dyn Store) {
-    let opened = store.create_session(&settings("one"), "the prompt").await.unwrap();
+    let opened = store.create_session(&settings("one"), &prompt()).await.unwrap();
     let id = opened.id;
 
     drop(opened);
@@ -361,7 +367,7 @@ pub async fn a_dropped_lease_lets_a_new_writer_open(store: &dyn Store) {
 
 /// A reader opens a session that a writer holds.
 pub async fn a_reader_opens_while_a_writer_holds_the_session(store: &dyn Store) {
-    let opened = store.create_session(&settings("one"), "the prompt").await.unwrap();
+    let opened = store.create_session(&settings("one"), &prompt()).await.unwrap();
 
     let read = store.open(opened.id, Access::Read).await;
 
@@ -370,7 +376,7 @@ pub async fn a_reader_opens_while_a_writer_holds_the_session(store: &dyn Store) 
 
 /// A read open holds no lock, so a writer opens while the reader holds its open session.
 pub async fn a_reader_holds_no_lock(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     #[expect(unused_variables, reason = "the read session stays open while the writer opens")]
     let read = store.open(id, Access::Read).await.unwrap();
 
@@ -381,7 +387,7 @@ pub async fn a_reader_holds_no_lock(store: &dyn Store) {
 
 /// An accepted input is pending, in id order, until a commit consumes it.
 pub async fn a_pending_input_stays_until_a_commit_consumes_it(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let first = store.accept_input(id, user_input("one")).await.unwrap();
     let second = store.accept_input(id, user_input("two")).await.unwrap();
 
@@ -401,7 +407,7 @@ pub async fn a_pending_input_stays_until_a_commit_consumes_it(store: &dyn Store)
 
 /// The id of a consumed input does not go to a new input, also when the consumed input was the newest one.
 pub async fn a_consumed_input_id_is_not_given_again(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let first = store.accept_input(id, user_input("one")).await.unwrap();
     store
         .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[consumed(first, 1)])
@@ -416,7 +422,7 @@ pub async fn a_consumed_input_id_is_not_given_again(store: &dyn Store) {
 /// A commit that consumes an input that is not pending fails, and it saves nothing: no event, and no change of the
 /// pending inputs.
 pub async fn a_commit_of_an_input_that_is_not_pending_saves_nothing(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let first = store.accept_input(id, user_input("one")).await.unwrap();
     store
         .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[consumed(first, 1)])
@@ -464,7 +470,7 @@ pub async fn a_commit_of_an_input_that_is_not_pending_saves_nothing(store: &dyn 
 
 /// A commit whose consumed inputs have more model blocks than the commit fails, and it saves nothing.
 pub async fn a_commit_with_fewer_blocks_than_its_inputs_saves_nothing(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let input = store.accept_input(id, user_input("one")).await.unwrap();
     let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
 
@@ -490,7 +496,7 @@ pub async fn a_commit_with_fewer_blocks_than_its_inputs_saves_nothing(store: &dy
 /// A load gives the events after a number and the inputs that no commit consumed. A consumed input is in the commit
 /// event, not in the pending inputs.
 pub async fn a_load_gives_the_events_with_the_inputs_that_are_still_pending(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let first = store.accept_input(id, user_input("one")).await.unwrap();
     let second = store.accept_input(id, user_input("two")).await.unwrap();
     store
@@ -521,7 +527,7 @@ pub async fn a_load_gives_the_events_with_the_inputs_that_are_still_pending(stor
 
 /// New settings give the number of the event that holds them.
 pub async fn new_settings_give_the_number_of_their_event(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store.commit(id, &step(&[]), &[]).await.unwrap();
 
     let event_number = store.set_settings(id, &settings("two")).await.unwrap();
@@ -540,7 +546,7 @@ pub async fn new_settings_give_the_number_of_their_event(store: &dyn Store) {
 /// A removed input leaves the pending inputs. A second removal fails, and so does a commit that consumes it. An input
 /// that a commit consumed cannot be removed.
 pub async fn a_removed_input_is_not_pending_and_cannot_be_removed_or_consumed_again(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let removed = store.accept_input(id, user_input("one")).await.unwrap();
     let kept = store.accept_input(id, user_input("two")).await.unwrap();
 
@@ -573,7 +579,7 @@ pub async fn a_removed_input_is_not_pending_and_cannot_be_removed_or_consumed_ag
 /// An input keeps its source, its content, and its model content while it is pending. The commit that consumes it
 /// keeps the source and the content that the user saw.
 pub async fn an_input_keeps_its_source_and_both_contents_through_its_commit(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let source = InputSource::Plugin {
         name: "host:jobs".to_owned(),
     };
@@ -609,7 +615,7 @@ pub async fn an_input_keeps_its_source_and_both_contents_through_its_commit(stor
 
 /// New settings replace the settings that a session opens with.
 pub async fn new_settings_replace_the_old_settings(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
 
     store.set_settings(id, &settings("two")).await.unwrap();
 
@@ -649,7 +655,7 @@ pub async fn an_unknown_session_is_not_found(store: &dyn Store) {
 
 /// A put returns the digest and the length of the bytes, and the blob reads back.
 pub async fn a_put_blob_reads_back(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
 
     let blob = store.put_blob(id, b"image".to_vec()).await.unwrap();
 
@@ -667,7 +673,7 @@ pub async fn a_put_blob_reads_back(store: &dyn Store) {
 
 /// A second put of the same bytes gives the same blob, and the blob still reads back.
 pub async fn the_same_bytes_give_the_same_blob(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
 
     let first = store.put_blob(id, b"image".to_vec()).await.unwrap();
     let second = store.put_blob(id, b"image".to_vec()).await.unwrap();
@@ -681,8 +687,8 @@ pub async fn the_same_bytes_give_the_same_blob(store: &dyn Store) {
 
 /// A blob belongs to the session that put it. Another session has no blob with its digest.
 pub async fn a_blob_of_another_session_does_not_read(store: &dyn Store) {
-    let owner = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
-    let other = store.create_session(&settings("two"), "the prompt").await.unwrap().id;
+    let owner = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
+    let other = store.create_session(&settings("two"), &prompt()).await.unwrap().id;
 
     let blob = store.put_blob(owner, b"image".to_vec()).await.unwrap();
 
@@ -691,7 +697,7 @@ pub async fn a_blob_of_another_session_does_not_read(store: &dyn Store) {
 
 /// A deleted session is not found, and its pending inputs and its blobs are not found.
 pub async fn a_deleted_session_is_not_found(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store
         .commit(id, &end(&[yuke_ai::Block::user_text("one")]), &[])
         .await
@@ -711,7 +717,7 @@ pub async fn a_deleted_session_is_not_found(store: &dyn Store) {
 
 /// A delete of a session that a writer holds gets [`StoreError::Owned`], and the session stays.
 pub async fn a_delete_of_a_held_session_gets_owned(store: &dyn Store) {
-    let opened = store.create_session(&settings("one"), "the prompt").await.unwrap();
+    let opened = store.create_session(&settings("one"), &prompt()).await.unwrap();
 
     let delete = store.delete_session(opened.id).await;
 
@@ -721,7 +727,7 @@ pub async fn a_delete_of_a_held_session_gets_owned(store: &dyn Store) {
 
 /// A fork has a new id, and the settings and the context of its source. It has a closed turn and no pending input.
 pub async fn a_fork_has_the_settings_and_the_context_of_its_source_and_no_pending_input(store: &dyn Store) {
-    let source = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let source = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store
         .commit(
             source,
@@ -766,7 +772,7 @@ pub async fn a_fork_has_the_settings_and_the_context_of_its_source_and_no_pendin
 
 /// A source forks while its writer keeps its lease. The fork has its own lease, and the source keeps its lease.
 pub async fn a_source_forks_while_its_writer_keeps_its_lease_and_the_fork_has_its_own_lease(store: &dyn Store) {
-    let source = store.create_session(&settings("one"), "the prompt").await.unwrap();
+    let source = store.create_session(&settings("one"), &prompt()).await.unwrap();
 
     let fork = store.fork_session(source.id, None).await.unwrap();
 
@@ -779,7 +785,7 @@ pub async fn a_source_forks_while_its_writer_keeps_its_lease_and_the_fork_has_it
 
 /// A commit to a fork does not change its source, and a commit to the source does not change the fork.
 pub async fn a_commit_to_a_fork_or_its_source_does_not_change_the_other(store: &dyn Store) {
-    let source = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let source = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store
         .commit(source, &end(&[yuke_ai::Block::user_text("a")]), &[])
         .await
@@ -809,7 +815,7 @@ pub async fn a_commit_to_a_fork_or_its_source_does_not_change_the_other(store: &
 
 /// A fork reads each blob of its source, also after the delete of the source.
 pub async fn a_fork_keeps_the_blobs_of_its_source_after_the_delete_of_the_source(store: &dyn Store) {
-    let source = store.create_session(&settings("one"), "the prompt").await.unwrap();
+    let source = store.create_session(&settings("one"), &prompt()).await.unwrap();
     let first = store.put_blob(source.id, b"image".to_vec()).await.unwrap();
     let second = store.put_blob(source.id, b"audio".to_vec()).await.unwrap();
     let fork = store.fork_session(source.id, None).await.unwrap().id;
@@ -831,7 +837,7 @@ pub async fn a_fork_keeps_the_blobs_of_its_source_after_the_delete_of_the_source
 /// A fork of a source in a running turn ends at the newest completed turn: it has neither the running turn nor the
 /// settings after the completed turn, and it has no open turn.
 pub async fn a_fork_of_a_source_in_a_running_turn_ends_at_its_newest_completed_turn(store: &dyn Store) {
-    let source = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let source = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store
         .commit(source, &end(&[yuke_ai::Block::assistant_text("a")]), &[])
         .await
@@ -855,7 +861,7 @@ pub async fn a_fork_of_a_source_in_a_running_turn_ends_at_its_newest_completed_t
 
 /// A fork through an earlier completed turn has the context and the settings of that point.
 pub async fn a_fork_at_an_earlier_completed_turn_has_the_context_and_the_settings_of_that_point(store: &dyn Store) {
-    let source = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let source = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store
         .commit(source, &end(&[yuke_ai::Block::assistant_text("a")]), &[])
         .await
@@ -882,7 +888,7 @@ pub async fn a_fork_at_an_earlier_completed_turn_has_the_context_and_the_setting
 /// commit in the middle of a turn, a turn that stopped, was cancelled, or failed, and a number after the newest event, also
 /// the largest number.
 pub async fn a_fork_point_that_does_not_end_a_completed_turn_gets_not_a_completed_turn(store: &dyn Store) {
-    let source = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let source = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let ends = [
         Some(TurnEnd::Outcome(Outcome::Stopped)),
         Some(TurnEnd::Outcome(Outcome::Cancelled)),
@@ -908,7 +914,7 @@ pub async fn a_fork_point_that_does_not_end_a_completed_turn_gets_not_a_complete
 
 /// A source with no completed turn forks to the settings before its first commit and an empty context.
 pub async fn a_source_without_a_completed_turn_forks_to_its_settings_and_an_empty_context(store: &dyn Store) {
-    let source = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let source = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store.set_settings(source, &settings("two")).await.unwrap();
     store
         .commit(source, &step(&[yuke_ai::Block::user_text("running")]), &[])
@@ -939,7 +945,7 @@ fn kinds(events: &[StoredEvent]) -> Vec<(u64, &'static str)> {
 
 /// A new session has one event: its settings, with the number 1.
 pub async fn a_new_session_has_its_settings_as_its_first_event(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
 
     let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
 
@@ -955,7 +961,7 @@ pub async fn a_new_session_has_its_settings_as_its_first_event(store: &dyn Store
 /// A commit and new settings each save the next event. An accepted input saves no event, and the commit that
 /// consumes it keeps its record.
 pub async fn each_commit_and_each_new_settings_is_the_next_event_and_an_input_is_no_event(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let blocks = [yuke_ai::Block::user_text("one")];
 
     let input = store.accept_input(id, user_input("one")).await.unwrap();
@@ -978,7 +984,7 @@ pub async fn each_commit_and_each_new_settings_is_the_next_event_and_an_input_is
 
 /// A commit reads back equal to the saved one: its replacement, its blocks, its answer, and each kind of end.
 pub async fn a_saved_commit_reads_back_equal(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let head = [yuke_ai::Block::user_text("summary")];
     let blocks = [yuke_ai::Block::assistant_text("answer")];
     let answer = Answer {
@@ -1050,7 +1056,7 @@ pub async fn a_saved_commit_reads_back_equal(store: &dyn Store) {
 /// The events after a number are the events with a larger number, in order. After the newest number, also after the
 /// largest number, there are none.
 pub async fn events_after_a_number_are_the_newer_events(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store
         .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[])
         .await
@@ -1081,7 +1087,7 @@ pub async fn events_after_a_number_are_the_newer_events(store: &dyn Store) {
 /// A fork has the events of its source with their numbers. The next event of the fork takes the next number, and the
 /// source does not change.
 pub async fn a_fork_has_the_events_of_its_source_and_numbers_on_from_them(store: &dyn Store) {
-    let source = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let source = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store
         .commit(source, &end(&[yuke_ai::Block::user_text("one")]), &[])
         .await
@@ -1108,7 +1114,7 @@ pub async fn a_fork_has_the_events_of_its_source_and_numbers_on_from_them(store:
 
 /// The event numbers of a session do not depend on the events of other sessions.
 pub async fn each_session_numbers_its_own_events(store: &dyn Store) {
-    let busy = store.create_session(&settings("busy"), "the prompt").await.unwrap().id;
+    let busy = store.create_session(&settings("busy"), &prompt()).await.unwrap().id;
     for text in ["one", "two"] {
         store
             .commit(busy, &end(&[yuke_ai::Block::user_text(text)]), &[])
@@ -1116,7 +1122,7 @@ pub async fn each_session_numbers_its_own_events(store: &dyn Store) {
             .unwrap();
     }
 
-    let quiet = store.create_session(&settings("quiet"), "the prompt").await.unwrap().id;
+    let quiet = store.create_session(&settings("quiet"), &prompt()).await.unwrap().id;
     store.set_settings(quiet, &settings("still quiet")).await.unwrap();
 
     let numbers: Vec<EventNumber> = store
@@ -1133,7 +1139,7 @@ pub async fn each_session_numbers_its_own_events(store: &dyn Store) {
 /// The context holds the blocks of the commits only. Pending inputs and settings events before and after a replacement
 /// add no block.
 pub async fn the_context_holds_only_commit_blocks_across_pending_inputs_and_settings_events(store: &dyn Store) {
-    let id = store.create_session(&settings("one"), "the prompt").await.unwrap().id;
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     store
         .commit(id, &step(&[yuke_ai::Block::user_text("a")]), &[])
         .await
@@ -1183,18 +1189,10 @@ fn settings_in(cwd: &str) -> SessionSettings {
 /// The newest session of a folder is the session of that folder with the newest event. A session of another folder
 /// does not count.
 pub async fn the_newest_session_of_a_folder_has_the_newest_event(store: &dyn Store) {
-    let first = store
-        .create_session(&settings_in("/work"), "the prompt")
-        .await
-        .unwrap()
-        .id;
-    let second = store
-        .create_session(&settings_in("/work"), "the prompt")
-        .await
-        .unwrap()
-        .id;
+    let first = store.create_session(&settings_in("/work"), &prompt()).await.unwrap().id;
+    let second = store.create_session(&settings_in("/work"), &prompt()).await.unwrap().id;
     let other = store
-        .create_session(&settings_in("/other"), "the prompt")
+        .create_session(&settings_in("/other"), &prompt())
         .await
         .unwrap()
         .id;
@@ -1208,15 +1206,8 @@ pub async fn the_newest_session_of_a_folder_has_the_newest_event(store: &dyn Sto
 
 /// A session works in the folder of its newest settings, not in the folder of earlier settings.
 pub async fn a_session_works_in_the_folder_of_its_newest_settings(store: &dyn Store) {
-    let id = store
-        .create_session(&settings_in("/work"), "the prompt")
-        .await
-        .unwrap()
-        .id;
-    store
-        .create_session(&settings_in("/other"), "the prompt")
-        .await
-        .unwrap();
+    let id = store.create_session(&settings_in("/work"), &prompt()).await.unwrap().id;
+    store.create_session(&settings_in("/other"), &prompt()).await.unwrap();
 
     store.set_settings(id, &settings_in("/other")).await.unwrap();
 
@@ -1226,12 +1217,8 @@ pub async fn a_session_works_in_the_folder_of_its_newest_settings(store: &dyn St
 
 /// A fork is newer than its source and than the other sessions of its folder.
 pub async fn a_fork_is_the_newest_session_of_its_folder(store: &dyn Store) {
-    let source = store
-        .create_session(&settings_in("/work"), "the prompt")
-        .await
-        .unwrap()
-        .id;
-    store.create_session(&settings_in("/work"), "the prompt").await.unwrap();
+    let source = store.create_session(&settings_in("/work"), &prompt()).await.unwrap().id;
+    store.create_session(&settings_in("/work"), &prompt()).await.unwrap();
 
     let fork = store.fork_session(source, None).await.unwrap().id;
 
@@ -1240,8 +1227,8 @@ pub async fn a_fork_is_the_newest_session_of_its_folder(store: &dyn Store) {
 
 /// A receipt gives the saved commit's session-local event number after settings changes, other-session writes, and a fork.
 pub async fn a_commit_receipt_names_its_saved_event_after_settings_and_a_fork(store: &dyn Store) {
-    let source = store.create_session(&settings("one"), "the prompt").await.unwrap();
-    let other = store.create_session(&settings("other"), "the prompt").await.unwrap();
+    let source = store.create_session(&settings("one"), &prompt()).await.unwrap();
+    let other = store.create_session(&settings("other"), &prompt()).await.unwrap();
     store.commit(other.id, &end(&[]), &[]).await.unwrap();
     store.set_settings(source.id, &settings("two")).await.unwrap();
     let blocks = [yuke_ai::Block::user_text("task")];

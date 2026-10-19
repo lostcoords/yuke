@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use yuke_engine::{Commit, Outcome, TurnEnd};
 
-use crate::lock;
+use crate::{PromptSection, lock};
 use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, StoredEvent,
 };
@@ -43,8 +43,8 @@ impl State {
 /// One session. Its settings, its context, and whether a turn is open follow from its events.
 #[derive(Debug)]
 struct Saved {
-    /// The system prompt of the session.
-    prompt: String,
+    /// The sections of the system prompt of the session.
+    prompt: Vec<PromptSection>,
     /// The events of the session. The event at index `i` has the number `i + 1`.
     events: Vec<StoredEvent>,
     pending: Vec<PendingInput>,
@@ -160,11 +160,11 @@ impl MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
-    async fn create_session(&self, settings: &SessionSettings, prompt: &str) -> Result<Opened, StoreError> {
+    async fn create_session(&self, settings: &SessionSettings, prompt: &[PromptSection]) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
         let mut state = lock(&self.state);
         let mut saved = Saved {
-            prompt: prompt.to_owned(),
+            prompt: prompt.to_vec(),
             events: Vec::new(),
             pending: Vec::new(),
             blobs: HashMap::new(),

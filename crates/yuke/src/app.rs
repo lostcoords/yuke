@@ -18,7 +18,7 @@ use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use yuke_agent::{Session, SessionError, Store, StoreError};
+use yuke_agent::{PromptSection, Session, SessionError, Store, StoreError};
 use yuke_ai::Block;
 use yuke_ai::catalog::Auth;
 use yuke_ai::oauth::Flow;
@@ -552,8 +552,8 @@ async fn canonical(folder: PathBuf) -> Result<PathBuf, AppError> {
     .await
 }
 
-/// The system prompt of a session in `workspace`.
-async fn system_prompt(workspace: PathBuf, home: Option<PathBuf>) -> Result<String, AppError> {
+/// The sections of the system prompt of a session in `workspace`.
+async fn system_prompt(workspace: PathBuf, home: Option<PathBuf>) -> Result<Vec<PromptSection>, AppError> {
     blocking(move || {
         prompt::system_prompt(&Environment {
             workspace: &workspace,

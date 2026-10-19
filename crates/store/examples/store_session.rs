@@ -2,7 +2,7 @@
 //! A program usually gives the store to a `yuke_agent::Session`, which runs the turns and saves each commit.
 #![expect(clippy::print_stdout, reason = "an example prints what the store saved")]
 
-use yuke_agent::{Access, Store};
+use yuke_agent::{Access, PromptSection, Store};
 use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_protocol::{Input, InputSource, ModelReference, PendingInput, SessionSettings};
 use yuke_store::SqliteStore;
@@ -23,7 +23,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         settings: yuke_ai::Settings::new(),
         cwd: std::env::current_dir()?,
     };
-    let opened = store.create_session(&settings, "the prompt").await?;
+    let opened = store
+        .create_session(&settings, &[PromptSection::new("base", "the prompt")])
+        .await?;
     let id = opened.id;
 
     // Any caller can add input. The input stays pending until a commit consumes it.
