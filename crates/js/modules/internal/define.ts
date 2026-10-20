@@ -24,14 +24,13 @@ export function defineTool<const S extends ObjectSchema>(tool: Tool<S>, open?: n
     deferLoading: tool.deferLoading === true,
     open,
   };
-  return register(description, (text, metadata, output, call) => {
+  return register(description, ({ arguments: args, sessionId, callId, folder, output, call }) => {
     const { signal, abort } = hostSignal();
-    const { sessionId, callId, folder } = metadata;
     const context: ToolContext = { sessionId, callId, folder, signal, output };
     bindCall(context, call);
     const answer = (async () => {
       try {
-        return answerOf(await execute(checkArguments(parameters, JSON.parse(text)) as Infer<S>, context));
+        return answerOf(await execute(checkArguments(parameters, args) as Infer<S>, context));
       } finally {
         abort("The tool call has ended");
       }

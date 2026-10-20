@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rquickjs::{Ctx, FromJs, Function, Object, Persistent, Promise, Value};
+use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Persistent, Promise, Value};
 use tokio::sync::mpsc;
 use yuke_engine::{
     CancellationToken, Concurrency, Tool, ToolContent, ToolContext, ToolNameError, is_reserved_tool_name,
@@ -298,11 +298,15 @@ impl ScriptTool {
                 let stop = token.child_token();
                 let _guard = stop.clone().drop_guard();
                 let call = caught(&ctx, call::object(&ctx, &processes, &host, session_folder, &stop))?;
-                let metadata = caught(&ctx, crate::native::internal_record(&ctx))?;
-                caught(&ctx, metadata.set("sessionId", session_id))?;
-                caught(&ctx, metadata.set("callId", call_id))?;
-                caught(&ctx, metadata.set("folder", folder_text))?;
-                let started: Object<'_> = caught(&ctx, start.call((arguments, metadata, output, call)))?;
+                let request = CallRequest {
+                    arguments: JsonText(arguments),
+                    session_id,
+                    call_id,
+                    folder: folder_text,
+                    output,
+                    call,
+                };
+                let started: Object<'_> = caught(&ctx, start.call((request,)))?;
                 let promise: Promise<'_> = caught(&ctx, started.get("answer"))?;
                 let abort: Function<'_> = caught(&ctx, started.get("abort"))?;
 
@@ -394,8 +398,33 @@ fn too_large() -> String {
     format!("the media is larger than the limit of {MAX_MEDIA_BYTES} bytes")
 }
 
-/// The checked result of a call: `{ text, isError, media }`.
-#[derive(Debug)]
+/// What the start function of a tool gets for one call.
+#[derive(IntoJs)]
+#[qjs(rename_all = "camelCase")]
+struct CallRequest<'js> {
+    arguments: JsonText,
+    session_id: String,
+    call_id: String,
+    /// The workspace folder of the session at the start of the call.
+    folder: String,
+    /// Sends one text of the call to the consumer.
+    output: Function<'js>,
+    /// The natives that need the session or the life of the call.
+    call: Object<'js>,
+}
+
+/// The JSON text of a value, which crosses to JavaScript as the parsed value.
+pub(crate) struct JsonText(pub(crate) String);
+
+impl<'js> IntoJs<'js> for JsonText {
+    fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+        ctx.json_parse(self.0)
+    }
+}
+
+/// The checked result of a call.
+#[derive(Debug, FromJs)]
+#[qjs(rename_all = "camelCase")]
 struct Answer {
     text: String,
     is_error: bool,
@@ -416,17 +445,6 @@ enum Source {
     Path(String),
     /// The bytes that the tool gave.
     Bytes(Vec<u8>),
-}
-
-impl<'js> FromJs<'js> for Answer {
-    fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-        let object = Object::from_value(value)?;
-        Ok(Self {
-            text: object.get("text")?,
-            is_error: object.get("isError")?,
-            media: object.get("media")?,
-        })
-    }
 }
 
 impl<'js> FromJs<'js> for MediaFile {

@@ -122,11 +122,18 @@ export async function load(spec: PluginSpec): Promise<void> {
   }
 }
 
+/** What `openSession` gets: the open number of the host, the id of the session, and its workspace folder. */
+interface OpenRequest {
+  readonly open: number;
+  readonly sessionId: string;
+  readonly folder: string;
+}
+
 /**
- * Start `session(s)` of each loaded plugin for the session `sessionId`, under the open number `open`. Each call starts
- * before any of them settles. The open does not wait for them; `ready(open)` does.
+ * Start `session(s)` of each loaded plugin for the session of `request`. Each call starts before any of them settles.
+ * The open does not wait for them; `ready(open)` does.
  */
-export function openSession(open: number, sessionId: string, folder: string): void {
+export function openSession({ open, sessionId, folder }: OpenRequest): void {
   const scopes = sessionExports.map(({ plugin, session }) => start(open, sessionId, folder, plugin, session));
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
   opens.set(open, { scopes, ready });
@@ -137,17 +144,28 @@ export function ready(open: number): Promise<void> {
   return opens.get(open)?.ready ?? Promise.resolve();
 }
 
+/** One system prompt section, as the host gives it and reads it. */
+interface Section {
+  readonly key: string;
+  readonly text: string;
+}
+
+/** What `startPromptBuild` gets. */
+interface PromptBuildRequest {
+  readonly open: number;
+  readonly sections: readonly Section[];
+}
+
 /**
  * Start the `prompt.build` handlers of the open session `open` on `sections`. Each handler gets the sections of the
  * answer before it. The answer is the sections after the last handler, and `sections` for a closed session. `abort`
  * aborts the signal of the build.
  */
-export function startPromptBuild(
-  open: number,
-  sections: readonly (readonly [string, string])[],
-): Started<[string, string][]> {
+export function startPromptBuild({ open, sections }: PromptBuildRequest): Started<Section[]> {
   return started(async (signal) => {
-    let current: Readonly<Record<string, string>> = Object.freeze(Object.fromEntries(sections));
+    let current: Readonly<Record<string, string>> = Object.freeze(
+      Object.fromEntries(sections.map(({ key, text }) => [key, text])),
+    );
     await runHandlers(
       open,
       "prompt.build",
@@ -157,18 +175,24 @@ export function startPromptBuild(
         return false;
       },
     );
-    return Object.entries(current);
+    return Object.entries(current).map(([key, text]) => ({ key, text }));
   });
 }
 
+/** What `startToolBefore` gets. The host gives the arguments of the call as their parsed JSON. */
+interface ToolBeforeRequest {
+  readonly open: number;
+  readonly call: ToolCall;
+}
+
 /**
- * Start the `tool.before` handlers of the open session `open` on one call. `id` is the id of the call, `name` is the
- * name of its tool, and `args` is its JSON text. The answer is the reason of the first block, or `undefined` when the
- * call runs. A closed session blocks nothing. A failed handler throws. `abort` aborts the signal of the call.
+ * Start the `tool.before` handlers of the open session `open` on `call`. The answer is the reason of the first block,
+ * or `undefined` when the call runs. A closed session blocks nothing. A failed handler throws. `abort` aborts the
+ * signal of the call.
  */
-export function startToolBefore(open: number, id: string, name: string, args: string): Started<string | undefined> {
+export function startToolBefore({ open, call }: ToolBeforeRequest): Started<string | undefined> {
   return started(async (signal) => {
-    const event = Object.freeze({ call: callOf(id, name, args), signal });
+    const event = Object.freeze({ call: frozen(call), signal });
     let reason: string | undefined;
     await runHandlers(
       open,
@@ -193,25 +217,31 @@ interface ChangedResult {
   readonly media: readonly ChangedMedia[];
 }
 
+/** What `startToolAfter` gets: the call as for `startToolBefore`, and its result with each media item as its facts. */
+interface ToolAfterRequest {
+  readonly open: number;
+  readonly call: ToolCall;
+  readonly result: {
+    readonly text: string;
+    readonly isError: boolean;
+    readonly media: readonly ResultMedia[];
+  };
+}
+
 /**
- * Start the `tool.after` handlers of the open session `open` on the result of one call. `id`, `name`, and `args` are
- * as for `startToolBefore`. `text`, `isError`, and `media` are the result, with each media item as its media type and
- * its size. The answer is the result after the last handler, or `undefined` when no handler answered. A closed session
- * changes nothing. A failed handler throws. `abort` aborts the signal of the call.
+ * Start the `tool.after` handlers of the open session `open` on the result of `call`. The answer is the result after
+ * the last handler, or `undefined` when no handler answered. A closed session changes nothing. A failed handler throws.
+ * `abort` aborts the signal of the call.
  */
-export function startToolAfter(
-  open: number,
-  id: string,
-  name: string,
-  args: string,
-  text: string,
-  isError: boolean,
-  media: readonly (readonly [string, number])[],
-): Started<ChangedResult | undefined> {
+export function startToolAfter({ open, call, result: given }: ToolAfterRequest): Started<ChangedResult | undefined> {
   return started(async (signal) => {
-    const call = callOf(id, name, args);
-    const originals: readonly ResultMedia[] = media.map(([mimeType, size]) => Object.freeze({ mimeType, size }));
-    let result: ToolCallResult = Object.freeze({ text, isError, media: Object.freeze([...originals]) });
+    frozen(call);
+    const originals: readonly ResultMedia[] = given.media.map((item) => Object.freeze(item));
+    let result: ToolCallResult = Object.freeze({
+      text: given.text,
+      isError: given.isError,
+      media: Object.freeze([...originals]),
+    });
     let answered = false;
     await runHandlers(
       open,
@@ -290,11 +320,6 @@ function blockOf(answer: unknown): string {
   return block;
 }
 
-/** The call `id` of the tool `name` with the JSON arguments `args`, frozen at each depth. */
-function callOf(id: string, name: string, args: string): ToolCall {
-  return Object.freeze({ id, name, arguments: frozen(JSON.parse(args)) });
-}
-
 /** The fields of a `tool.after` answer. */
 const AFTER_FIELDS = ["text", "isError", "media"];
 
@@ -349,7 +374,7 @@ function started<T>(run: (signal: AbortSignal) => Promise<T>): Started<T> {
 }
 
 /** `value` with each object in it frozen. A JSON value has no cycle. */
-function frozen(value: unknown): unknown {
+function frozen<T>(value: T): T {
   if (typeof value === "object" && value !== null) {
     for (const inner of Object.values(value)) frozen(inner);
     Object.freeze(value);

@@ -4,12 +4,17 @@ declare module "yuke:internal/native" {
   import type { NoticeLevel } from "yuke:plugins";
   import type { ToolMedia } from "yuke:tools";
 
-  /** The facts of one call. */
-  export interface CallMetadata {
+  /** What the start function of a tool gets for one call. */
+  export interface CallRequest {
+    /** The parsed JSON arguments of the model. */
+    readonly arguments: unknown;
     readonly sessionId: string;
     readonly callId: string;
     /** The workspace folder of the session at the start of the call. */
     readonly folder: string;
+    /** Send one text of the call to the consumer. */
+    readonly output: (text: string) => void;
+    readonly call: CallHost;
   }
 
   /** The checked result of a call. */
@@ -83,7 +88,7 @@ declare module "yuke:internal/native" {
       readonly deferLoading: boolean;
       readonly open: number | undefined;
     },
-    start: (argumentsText: string, metadata: CallMetadata, output: (text: string) => void, call: CallHost) => Started,
+    start: (request: CallRequest) => Started,
   ): number;
 
   /** Remove the tools of `ids`. */

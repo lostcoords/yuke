@@ -5,9 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rquickjs::convert::List;
-use rquickjs::function::IntoArgs;
-use rquickjs::{Ctx, FromJs, Function, Object, Promise, Value};
+use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Promise, Value};
 use tokio::sync::oneshot;
 use yuke_agent::PromptSection;
 use yuke_ai::{ToolCall, ToolResult};
@@ -18,7 +16,7 @@ use crate::error::{Error, caught};
 use crate::plugins::loader;
 use crate::processes::Processes;
 use crate::runtime::Caller;
-use crate::tools::{self, MediaFile, Registry, ScriptTool, SessionHost, error_text, store_media};
+use crate::tools::{self, JsonText, MediaFile, Registry, ScriptTool, SessionHost, error_text, store_media};
 
 /// An open session of the plugins. Call [`ScriptSession::close`] to await the cleanups. A drop posts the close and does
 /// not wait. The posted close runs only while the runtime thread runs, so close each session before a shutdown.
@@ -57,7 +55,12 @@ impl Runtime {
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
                 let open_session: Function<'_> = caught(&ctx, loader(&ctx).await?.get("openSession"))?;
                 let open = registry.open();
-                if let Err(error) = caught(&ctx, open_session.call::<_, ()>((open, session_id, folder))) {
+                let request = OpenRequest {
+                    open,
+                    session_id,
+                    folder,
+                };
+                if let Err(error) = caught(&ctx, open_session.call::<_, ()>((request,))) {
                     registry.close(open);
                     return Err(error);
                 }
@@ -114,20 +117,23 @@ impl ScriptSession {
         sections: &[PromptSection],
         token: &CancellationToken,
     ) -> Result<Vec<PromptSection>, Error> {
-        let open = self.open;
-        // A `List` crosses as an array, so each section is a `[key, text]` pair.
-        let pairs: Vec<List<(String, String)>> = sections
-            .iter()
-            .map(|section| List((section.key.clone(), section.text.clone())))
-            .collect();
-        let built: Option<Vec<List<(String, String)>>> =
-            run_hook(&self.caller, "startPromptBuild", (open, pairs), token.clone()).await?;
+        let request = PromptBuildRequest {
+            open: self.open,
+            sections: sections
+                .iter()
+                .map(|section| Section {
+                    key: section.key.clone(),
+                    text: section.text.clone(),
+                })
+                .collect(),
+        };
+        let built: Option<Vec<Section>> = run_hook(&self.caller, "startPromptBuild", request, token.clone()).await?;
         Ok(built.map_or_else(
             || sections.to_vec(),
-            |pairs| {
-                pairs
+            |built| {
+                built
                     .into_iter()
-                    .map(|List((key, text))| PromptSection { key, text })
+                    .map(|Section { key, text }| PromptSection { key, text })
                     .collect()
             },
         ))
@@ -192,14 +198,12 @@ impl std::fmt::Debug for ScriptHooks {
 #[async_trait]
 impl Hooks for ScriptHooks {
     async fn before_tool(&self, call: &ToolCall) -> ToolDecision {
-        let args = (
-            self.open,
-            call.call_id.clone(),
-            call.name.clone(),
-            call.arguments.clone(),
-        );
+        let request = ToolBeforeRequest {
+            open: self.open,
+            call: HookCall::of(call),
+        };
         let answer: Result<Option<Option<String>>, Error> =
-            run_hook(&self.caller, "startToolBefore", args, self.token.clone()).await;
+            run_hook(&self.caller, "startToolBefore", request, self.token.clone()).await;
         match answer {
             Ok(Some(Some(reason))) => ToolDecision::Block(reason),
             // A cancel stops the turn, so the driver does not start the call.
@@ -210,23 +214,24 @@ impl Hooks for ScriptHooks {
     }
 
     async fn after_tool(&self, call: &ToolCall, result: &ToolResult) -> Option<ToolResult> {
-        // A `List` crosses as an array, so each media item is a `[mimeType, size]` pair.
-        let media: Vec<List<(String, usize)>> = result
-            .media
-            .iter()
-            .map(|item| List((item.mime.clone(), item.blob.len)))
-            .collect();
-        let args = (
-            self.open,
-            call.call_id.clone(),
-            call.name.clone(),
-            call.arguments.clone(),
-            result.content.clone(),
-            result.is_error,
-            media,
-        );
+        let request = ToolAfterRequest {
+            open: self.open,
+            call: HookCall::of(call),
+            result: HookResult {
+                text: result.content.clone(),
+                is_error: result.is_error,
+                media: result
+                    .media
+                    .iter()
+                    .map(|item| HookMedia {
+                        mime_type: item.mime.clone(),
+                        size: item.blob.len,
+                    })
+                    .collect(),
+            },
+        };
         let answer: Result<Option<Option<ChangedResult>>, Error> =
-            run_hook(&self.caller, "startToolAfter", args, self.token.clone()).await;
+            run_hook(&self.caller, "startToolAfter", request, self.token.clone()).await;
         let changed = match answer {
             Ok(Some(Some(changed))) => self.changed(result, changed).await,
             Ok(Some(None) | None) => return None,
@@ -278,8 +283,82 @@ impl ScriptHooks {
     }
 }
 
-/// The result after the `tool.after` handlers: `{ text, isError, media }`.
-#[derive(Debug)]
+/// What `openSession` gets.
+#[derive(IntoJs)]
+#[qjs(rename_all = "camelCase")]
+struct OpenRequest {
+    open: u64,
+    session_id: String,
+    folder: String,
+}
+
+/// What `startPromptBuild` gets.
+#[derive(IntoJs)]
+struct PromptBuildRequest {
+    open: u64,
+    sections: Vec<Section>,
+}
+
+/// One system prompt section, in both directions.
+#[derive(IntoJs, FromJs)]
+struct Section {
+    key: String,
+    text: String,
+}
+
+/// What `startToolBefore` gets.
+#[derive(IntoJs)]
+struct ToolBeforeRequest {
+    open: u64,
+    call: HookCall,
+}
+
+/// What `startToolAfter` gets.
+#[derive(IntoJs)]
+struct ToolAfterRequest {
+    open: u64,
+    call: HookCall,
+    result: HookResult,
+}
+
+/// One tool call of the model. The arguments cross as their parsed JSON.
+#[derive(IntoJs)]
+struct HookCall {
+    id: String,
+    name: String,
+    arguments: JsonText,
+}
+
+impl HookCall {
+    fn of(call: &ToolCall) -> Self {
+        Self {
+            id: call.call_id.clone(),
+            name: call.name.clone(),
+            arguments: JsonText(call.arguments.clone()),
+        }
+    }
+}
+
+/// The result of one tool call before the `tool.after` handlers.
+#[derive(IntoJs)]
+#[qjs(rename_all = "camelCase")]
+struct HookResult {
+    text: String,
+    is_error: bool,
+    media: Vec<HookMedia>,
+}
+
+/// A media item of a result: its media type and the size of its bytes.
+#[derive(IntoJs)]
+#[qjs(rename_all = "camelCase")]
+struct HookMedia {
+    mime_type: String,
+    size: usize,
+}
+
+/// The result after the `tool.after` handlers.
+#[derive(Debug, FromJs)]
+#[qjs(rename_all = "camelCase")]
 struct ChangedResult {
     text: String,
     is_error: bool,
@@ -293,17 +372,6 @@ enum ChangedMedia {
     Kept(usize),
     /// A new item of an answer.
     New(MediaFile),
-}
-
-impl<'js> FromJs<'js> for ChangedResult {
-    fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-        let object = Object::from_value(value)?;
-        Ok(Self {
-            text: object.get("text")?,
-            is_error: object.get("isError")?,
-            media: object.get("media")?,
-        })
-    }
 }
 
 impl<'js> FromJs<'js> for ChangedMedia {
@@ -324,38 +392,39 @@ fn failure_text(point: &str, error: &Error) -> String {
     }
 }
 
-/// Call the loader function `start` with `args` on the JavaScript thread, and return the answer of the run that it
+/// Call the loader function `start` with `request` on the JavaScript thread, and return the answer of the run that it
 /// starts. When `token` is cancelled, the run aborts its signal, and the call returns `None`.
-async fn run_hook<A, T>(
+async fn run_hook<R, T>(
     caller: &Caller,
     start: &'static str,
-    args: A,
+    request: R,
     token: CancellationToken,
 ) -> Result<Option<T>, Error>
 where
-    A: for<'js> IntoArgs<'js> + Send + 'static,
+    R: for<'js> IntoJs<'js> + Send + 'static,
     T: for<'js> FromJs<'js> + Send + 'static,
 {
     // A driver drops a hook future at a cancel. A posted run goes on after that drop, so the cancel still reaches it.
     let (reply, answer) = oneshot::channel();
     caller.post(async move |ctx: Ctx<'_>, _: Rc<Registry>| {
-        if reply.send(start_and_settle(&ctx, start, args, &token).await).is_err() {
+        let answer = start_and_settle(&ctx, start, request, &token).await;
+        if reply.send(answer).is_err() {
             // The caller has left, and the run has ended.
         }
     })?;
     answer.await.map_err(|_| Error::Stopped)?
 }
 
-/// Start the run of the loader function `start` with `args`, and await its answer. When `token` is cancelled, the run
+/// Start the run of the loader function `start` with `request`, and await its answer. When `token` is cancelled, the run
 /// aborts its signal, and the call returns `None` at once.
-async fn start_and_settle<'js, A: IntoArgs<'js>, T: FromJs<'js>>(
+async fn start_and_settle<'js, R: IntoJs<'js>, T: FromJs<'js>>(
     ctx: &Ctx<'js>,
     start: &str,
-    args: A,
+    request: R,
     token: &CancellationToken,
 ) -> Result<Option<T>, Error> {
     let function: Function<'js> = caught(ctx, loader(ctx).await?.get(start))?;
-    let started: Object<'js> = caught(ctx, function.call(args))?;
+    let started: Object<'js> = caught(ctx, function.call((request,)))?;
     let promise: Promise<'js> = caught(ctx, started.get("answer"))?;
     let abort: Function<'js> = caught(ctx, started.get("abort"))?;
     tokio::select! {
