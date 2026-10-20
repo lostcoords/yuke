@@ -448,6 +448,32 @@ async fn the_model_calls_a_tool_of_a_plugin_from_the_config() {
 }
 
 #[tokio::test]
+async fn a_question_of_a_plugin_gets_no_answer_because_the_run_has_no_client() {
+    let place = Place::new("print", "question");
+    place.plugin(
+        "asker",
+        "export function session(s) {
+           s.tools.define({
+             name: 'ask', description: 'Ask.', concurrency: 'serial',
+             parameters: { type: 'object', properties: {} },
+             execute: async () => `answer: ${await s.confirm('Run the migration?')}`,
+           });
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["asker"] }"#).unwrap();
+
+    let (finished, requests) = run_with(
+        &place,
+        &task("Ask.", SessionChoice::New),
+        &[tool_reply(&[("call-1", "ask", "{}")]), text_reply("Done.")],
+    )
+    .await;
+
+    assert_eq!(finished.unwrap().text, "Done.");
+    assert!(requests[1].contains("answer: undefined"), "{}", requests[1]);
+}
+
+#[tokio::test]
 async fn a_background_command_fails_because_the_run_ends_with_its_turn() {
     let place = Place::new("print", "background");
 

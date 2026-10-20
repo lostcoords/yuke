@@ -1,8 +1,10 @@
 import { defineTool, fieldsOf, mediaOf } from "yuke:internal/define";
-import { hostSignal } from "yuke:internal/events";
-import { notify, unregister } from "yuke:internal/native";
+import { abortState, addAbortStep, hostSignal } from "yuke:internal/events";
+import { notify, type Operation, unregister } from "yuke:internal/native";
 import type {
+  AskOptions,
   FinishReason,
+  InputOptions,
   NoticeLevel,
   PluginContext,
   PluginSession,
@@ -124,19 +126,36 @@ export async function load(spec: PluginSpec): Promise<void> {
   }
 }
 
-/** What `openSession` gets: the open number of the host, the id of the session, and its workspace folder. */
+/** A question as the native `ask` reads it. */
+interface Question {
+  readonly kind: "confirm" | "select" | "input";
+  readonly title: string;
+  readonly message?: string | undefined;
+  readonly options?: readonly string[];
+  readonly placeholder?: string | undefined;
+  readonly secret?: boolean | undefined;
+}
+
+/** Ask the user `question` for the plugin `source`. The promise gives the answer, or `undefined` without one. */
+type Ask = (source: string, question: Question) => Operation<boolean | string | undefined>;
+
+/**
+ * What `openSession` gets: the open number of the host, the id of the session, its workspace folder, and the native
+ * `ask` of the session.
+ */
 interface OpenRequest {
   readonly open: number;
   readonly sessionId: string;
   readonly folder: string;
+  readonly ask: Ask;
 }
 
 /**
  * Start `session(s)` of each loaded plugin for the session of `request`. Each call starts before any of them settles.
  * The open does not wait for them; `ready(open)` does.
  */
-export function openSession({ open, sessionId, folder }: OpenRequest): void {
-  const scopes = sessionExports.map(({ plugin, session }) => start(open, sessionId, folder, plugin, session));
+export function openSession({ open, sessionId, folder, ask }: OpenRequest): void {
+  const scopes = sessionExports.map(({ plugin, session }) => start(open, sessionId, folder, ask, plugin, session));
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
   opens.set(open, { scopes, ready });
 }
@@ -497,8 +516,31 @@ export async function closeSession(open: number): Promise<void> {
 }
 
 /** Run `session(s)` of `plugin` in its own scope. */
-function start(open: number, sessionId: string, folder: string, plugin: string, session: PluginSession): Scope {
+function start(
+  open: number,
+  sessionId: string,
+  folder: string,
+  ask: Ask,
+  plugin: string,
+  session: PluginSession,
+): Scope {
   const { signal, abort } = hostSignal();
+  // The end of the scope and an abort of `stop` close the question, and it answers `undefined`.
+  const question = async <T extends boolean | string>(
+    asked: Question,
+    stop: AbortSignal | undefined,
+  ): Promise<T | undefined> => {
+    if (scope.closed || (stop !== undefined && abortState(stop).aborted)) return undefined;
+    const { promise, cancel } = ask(plugin, asked);
+    const removes = [addAbortStep(signal, cancel)];
+    if (stop !== undefined) removes.push(addAbortStep(stop, cancel));
+    try {
+      // The host answers with the type of the kind of the question.
+      return (await promise) as T | undefined;
+    } finally {
+      for (const remove of removes) remove();
+    }
+  };
   const report = (message: string): void => notify(plugin, "error", message, sessionId);
   const clean = async (cleanup: SessionCleanup): Promise<void> => {
     try {
@@ -545,6 +587,20 @@ function start(open: number, sessionId: string, folder: string, plugin: string, 
     },
     notify(level: NoticeLevel, message: string): void {
       notify(plugin, level, String(message), sessionId);
+    },
+    confirm(title: string, message?: string, options?: AskOptions): Promise<boolean | undefined> {
+      return question<boolean>({ kind: "confirm", title, message }, options?.signal);
+    },
+    select(title: string, choices: readonly string[], options?: AskOptions): Promise<string | undefined> {
+      if (choices.length === 0) return Promise.reject(new TypeError("select: choices is empty"));
+      if (new Set(choices).size !== choices.length) {
+        return Promise.reject(new TypeError("select: choices has a choice twice"));
+      }
+      return question<string>({ kind: "select", title, options: [...choices] }, options?.signal);
+    },
+    input(title: string, options?: InputOptions): Promise<string | undefined> {
+      const { placeholder, secret, signal: stop } = options ?? {};
+      return question<string>({ kind: "input", title, placeholder, secret }, stop);
     },
   });
   scope.settled = (async () => {

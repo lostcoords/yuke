@@ -19,6 +19,13 @@ use tokio::sync::mpsc;
 use crate::error::{ErrorClass, Report, throw};
 use crate::tools::Registry;
 
+/// A started operation: the promise of its value, and the function that stops it.
+#[derive(rquickjs::IntoJs)]
+pub(crate) struct Operation<'js> {
+    pub(crate) promise: rquickjs::Promise<'js>,
+    pub(crate) cancel: Function<'js>,
+}
+
 /// The name of the native module.
 const NAME: &str = "yuke:internal/native";
 

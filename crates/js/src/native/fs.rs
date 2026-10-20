@@ -14,6 +14,7 @@ use std::time::UNIX_EPOCH;
 use rquickjs::{Ctx, Function, IntoJs, Object, Promise, TypedArray, Value};
 use rustix::io::Errno;
 
+use super::Operation;
 use crate::error::{ErrorClass, throw};
 
 /// The bytes of one chunk of a read or a write. A stop takes effect between two chunks.
@@ -367,13 +368,6 @@ pub(super) fn describe(error: &io::Error) -> (&'static str, String) {
         Some((_, code, description)) => (code, (*description).to_owned()),
         None => ("EIO", format!("the file system reported a failure ({error})")),
     }
-}
-
-/// A started operation: the promise of its value, and the function that stops it.
-#[derive(IntoJs)]
-struct Operation<'js> {
-    promise: Promise<'js>,
-    cancel: Function<'js>,
 }
 
 /// Start `work` on a blocking thread. `convert` makes the value of the promise on the JavaScript thread.

@@ -1,3 +1,4 @@
+mod ask;
 mod exec;
 mod fs;
 mod globals;

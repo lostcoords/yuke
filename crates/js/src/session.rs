@@ -12,10 +12,11 @@ use tokio::sync::oneshot;
 use yuke_agent::PromptSection;
 use yuke_ai::{Block, FinishReason, ToolCall, ToolResult, answer_text};
 use yuke_engine::{CancellationToken, Hooks, RoundDecision, ToolDecision};
-use yuke_protocol::Input;
+use yuke_protocol::{Input, InteractionRequest, InteractionResponse};
 
 use crate::Runtime;
-use crate::error::{Error, caught};
+use crate::error::{Error, ErrorClass, caught, throw};
+use crate::native::Operation;
 use crate::plugins::loader;
 use crate::processes::Processes;
 use crate::runtime::Caller;
@@ -53,6 +54,7 @@ impl Runtime {
         let folder = host.folder();
         let folder = folder.to_str().ok_or_else(|| Error::Folder(folder.clone()))?.to_owned();
         let session_id = host.session_id().to_string();
+        let ask_host = Arc::clone(&host);
         let open = self
             .caller
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
@@ -62,6 +64,7 @@ impl Runtime {
                     open,
                     session_id,
                     folder,
+                    ask: caught(&ctx, ask_function(&ctx, ask_host))?,
                 };
                 if let Err(error) = caught(&ctx, open_session.call::<_, ()>((request,))) {
                     registry.close(open);
@@ -321,10 +324,83 @@ impl ScriptHooks {
 /// What `openSession` gets.
 #[derive(IntoJs)]
 #[qjs(rename_all = "camelCase")]
-struct OpenRequest {
+struct OpenRequest<'js> {
     open: u64,
     session_id: String,
     folder: String,
+    /// The native `ask(source, question)` of the session.
+    ask: Function<'js>,
+}
+
+/// A question as the session context gives it to the native `ask`.
+#[derive(FromJs)]
+struct Question {
+    kind: String,
+    title: String,
+    message: Option<String>,
+    options: Option<Vec<String>>,
+    placeholder: Option<String>,
+    secret: Option<bool>,
+}
+
+impl Question {
+    fn request(self) -> Option<InteractionRequest> {
+        let Question {
+            kind,
+            title,
+            message,
+            options,
+            placeholder,
+            secret,
+        } = self;
+        Some(match kind.as_str() {
+            "confirm" => InteractionRequest::Confirm {
+                title,
+                message: message.unwrap_or_default(),
+            },
+            "select" => InteractionRequest::Select {
+                title,
+                options: options?,
+            },
+            "input" => InteractionRequest::Input {
+                title,
+                placeholder,
+                secret: secret.unwrap_or(false),
+            },
+            _ => return None,
+        })
+    }
+}
+
+/// The native `ask(source, question)` of the session of `host`. It answers an operation whose promise gives the answer:
+/// a boolean for a confirm, a text for a select and an input, and `undefined` without an answer. Its cancel ends the
+/// question.
+fn ask_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>) -> rquickjs::Result<Function<'js>> {
+    Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, source: String, question: Question| -> rquickjs::Result<Operation<'js>> {
+            let Some(request) = question.request() else {
+                return Err(throw(
+                    &ctx,
+                    ErrorClass::TypeError,
+                    "ask: the question has no known kind",
+                ));
+            };
+            let (host, stop) = (Arc::clone(&host), CancellationToken::new());
+            let (settle, waiting) = (ctx.clone(), stop.clone());
+            let promise = Promise::wrap_future(&ctx, async move {
+                match host.ask(&source, request, waiting).await {
+                    InteractionResponse::Confirm { value } => value.into_js(&settle),
+                    InteractionResponse::Select { value } | InteractionResponse::Input { value } => {
+                        value.into_js(&settle)
+                    }
+                    InteractionResponse::Canceled => Ok(Value::new_undefined(settle.clone())),
+                }
+            })?;
+            let cancel = Function::new(ctx.clone(), move || stop.cancel())?;
+            Ok(Operation { promise, cancel })
+        },
+    )
 }
 
 /// What `startPromptBuild` gets.

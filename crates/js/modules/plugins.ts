@@ -224,6 +224,20 @@ export interface SessionHooks {
   "round.after": (event: RoundAfterEvent) => undefined | RoundAfterAnswer | Promise<undefined | RoundAfterAnswer>;
 }
 
+/** The options of a question to the user. */
+export interface AskOptions {
+  /** An abort of this signal closes the question, and the question answers `undefined`. */
+  readonly signal?: AbortSignal | undefined;
+}
+
+/** The options of `input`. */
+export interface InputOptions extends AskOptions {
+  /** The text that an empty field shows. */
+  readonly placeholder?: string | undefined;
+  /** The field hides what the user types, as for a password. */
+  readonly secret?: boolean | undefined;
+}
+
 /** What `session` of a plugin gets for one session. */
 export interface SessionContext {
   /** The id of the session. */
@@ -249,6 +263,21 @@ export interface SessionContext {
   readonly hook: <K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]) => () => void;
   /** Send a notice of this session with this plugin as its source. */
   readonly notify: (level: NoticeLevel, message: string) => void;
+  /**
+   * Ask the user a yes or no question with this plugin as its source, and wait for the answer.
+   * - The answer is `undefined` when the user cancels, the signal aborts, the session closes, or no client can answer,
+   *   as in `yuke -p`.
+   * - The turn waits while a hook or a tool waits for the answer. Pass the signal of the hook or the tool, so that a
+   *   cancel of the turn closes the question.
+   */
+  readonly confirm: (title: string, message?: string, options?: AskOptions) => Promise<boolean | undefined>;
+  /**
+   * Ask the user to choose one of `choices`, and wait for the answer. `choices` is not empty, and each choice is unique.
+   * The answer is `undefined` as for `confirm`.
+   */
+  readonly select: (title: string, choices: readonly string[], options?: AskOptions) => Promise<string | undefined>;
+  /** Ask the user for one line of text, and wait for the answer. The answer is `undefined` as for `confirm`. */
+  readonly input: (title: string, options?: InputOptions) => Promise<string | undefined>;
 }
 
 /** The `apply` export of the entry module. It runs once per runtime. */
