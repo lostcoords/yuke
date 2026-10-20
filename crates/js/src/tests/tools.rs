@@ -356,6 +356,10 @@ async fn a_bad_tool_definition_fails_the_session_with_a_notice_that_names_its_pr
             "the engine reserves the tool name \"tool_search\"",
         ),
         (
+            format!("name: 'notes.search', description: 'd', execute: () => 'x', concurrency: 'serial', {empty}"),
+            "the tool name \"notes.search\" does not match ^[a-zA-Z0-9_-]{1,64}$",
+        ),
+        (
             format!("{base}, concurrency: 'serial', parameters: {{ type: 'string' }}"),
             "parameters.type is not object",
         ),

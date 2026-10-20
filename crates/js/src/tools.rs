@@ -12,9 +12,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Persistent, Promise, Value};
 use tokio::sync::mpsc;
-use yuke_engine::{
-    CancellationToken, Concurrency, Tool, ToolContent, ToolContext, ToolNameError, is_reserved_tool_name,
-};
+use yuke_engine::{CancellationToken, Concurrency, Tool, ToolContent, ToolContext, check_tool_name};
 
 use crate::error::{Error, caught};
 use crate::native::call;
@@ -81,9 +79,7 @@ impl Registry {
         start: Function<'js>,
         open: Option<u64>,
     ) -> Result<u64, String> {
-        if is_reserved_tool_name(&definition.name) {
-            return Err(ToolNameError::Reserved(definition.name).to_string());
-        }
+        check_tool_name(&definition.name).map_err(|error| error.to_string())?;
         if open.is_some_and(|open| !self.opens.borrow().contains(&open)) {
             return Err("the session is closed".to_owned());
         }

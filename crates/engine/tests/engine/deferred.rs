@@ -34,6 +34,22 @@ fn declared_tools(body: &str) -> &str {
 }
 
 #[test]
+fn toolset_add_refuses_a_name_that_a_provider_refuses() {
+    let mut toolset = Toolset::new();
+
+    for name in ["", "notes.search", "a b", "é", &"a".repeat(65)] {
+        assert_eq!(
+            toolset.add(definition(name), Recorder::default()),
+            Err(ToolNameError::Invalid(name.to_owned())),
+            "{name}"
+        );
+    }
+    for name in ["Notes_search-2", &"a".repeat(64)] {
+        assert_eq!(toolset.add(definition(name), Recorder::default()), Ok(()), "{name}");
+    }
+}
+
+#[test]
 fn toolset_add_refuses_the_reserved_names() {
     let mut toolset = Toolset::new();
 

@@ -123,9 +123,25 @@ impl From<&str> for ToolContent {
     }
 }
 
-/// Whether the engine owns `name`: [`yuke_ai::SEARCH_TOOL_NAME`] or [`TOOL_CALL_NAME`]. No other tool can have it.
-pub fn is_reserved_tool_name(name: &str) -> bool {
-    [yuke_ai::SEARCH_TOOL_NAME, TOOL_CALL_NAME].contains(&name)
+/// Check that a tool can have `name`: it matches `^[a-zA-Z0-9_-]{1,64}$`, and the engine does not own it.
+///
+/// # Errors
+///
+/// Returns [`ToolNameError::Invalid`] for another form, and [`ToolNameError::Reserved`] for
+/// [`yuke_ai::SEARCH_TOOL_NAME`] and [`TOOL_CALL_NAME`].
+pub fn check_tool_name(name: &str) -> Result<(), ToolNameError> {
+    // Each provider that yuke supports accepts this form, and Anthropic and OpenAI accept no other.
+    let valid = (1..=64).contains(&name.len())
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-');
+    if !valid {
+        return Err(ToolNameError::Invalid(name.to_owned()));
+    }
+    if [yuke_ai::SEARCH_TOOL_NAME, TOOL_CALL_NAME].contains(&name) {
+        return Err(ToolNameError::Reserved(name.to_owned()));
+    }
+    Ok(())
 }
 
 /// The error of [`Toolset::add`].
@@ -135,6 +151,8 @@ pub enum ToolNameError {
     Duplicate(String),
     /// The engine owns the name: [`yuke_ai::SEARCH_TOOL_NAME`] or [`TOOL_CALL_NAME`].
     Reserved(String),
+    /// The name does not match `^[a-zA-Z0-9_-]{1,64}$`.
+    Invalid(String),
 }
 
 impl std::fmt::Display for ToolNameError {
@@ -142,6 +160,9 @@ impl std::fmt::Display for ToolNameError {
         match self {
             ToolNameError::Duplicate(name) => write!(f, "another tool already has the name \"{name}\""),
             ToolNameError::Reserved(name) => write!(f, "the engine reserves the tool name \"{name}\""),
+            ToolNameError::Invalid(name) => {
+                write!(f, "the tool name \"{name}\" does not match ^[a-zA-Z0-9_-]{{1,64}}$")
+            }
         }
     }
 }
@@ -184,9 +205,7 @@ impl Toolset {
     /// Returns [`ToolNameError`] if the toolset already holds a tool of that name, or if the engine reserves the
     /// name. The toolset stays unchanged.
     pub fn add(&mut self, definition: yuke_ai::ToolDefinition, tool: impl Tool + 'static) -> Result<(), ToolNameError> {
-        if is_reserved_tool_name(&definition.name) {
-            return Err(ToolNameError::Reserved(definition.name));
-        }
+        check_tool_name(&definition.name)?;
         if self.definitions.iter().any(|held| held.name == definition.name) {
             return Err(ToolNameError::Duplicate(definition.name));
         }

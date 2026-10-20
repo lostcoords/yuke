@@ -117,7 +117,10 @@ export interface ToolContext {
  * is an error result with the message of the error.
  */
 export interface Tool<S extends ObjectSchema = ObjectSchema> {
-  /** The name of the tool. A name that the session already has, or a name that yuke reserves, throws a `TypeError`. */
+  /**
+   * The name of the tool. It matches `^[a-zA-Z0-9_-]{1,64}$`, the rule of the providers. Another form, a name that the
+   * session already has, or a name that yuke reserves, throws a `TypeError`.
+   */
   readonly name: string;
   /** When the model uses the tool, and what the tool does. */
   readonly description: string;
