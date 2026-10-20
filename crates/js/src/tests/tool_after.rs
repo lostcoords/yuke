@@ -172,6 +172,37 @@ async fn an_answer_keeps_the_second_of_two_items_with_the_same_bytes() {
     assert_eq!(changed.media, [media("image/webp", 1, 3)]);
 }
 
+// The handlers of a run are fixed at its start, also for the plugins after the one that changes them.
+#[tokio::test]
+async fn a_change_of_the_handlers_during_a_run_changes_only_the_next_run() {
+    let (_runtime, session, _reports) = opened(
+        "a_change_of_the_handlers_during_a_run_changes_only_the_next_run",
+        &[
+            (
+                "first",
+                "export function session(s) { s.hook('tool.after', () => { globalThis.swap(); }); }",
+            ),
+            (
+                "second",
+                "export function session(s) {
+                   let remove = s.hook('tool.after', ({ result }) => ({ text: `${result.text} old` }));
+                   globalThis.swap = () => {
+                     remove();
+                     remove = s.hook('tool.after', ({ result }) => ({ text: `${result.text} new` }));
+                   };
+                 }",
+            ),
+        ],
+    )
+    .await;
+
+    let first = after(&session).await.unwrap();
+    let second = after(&session).await.unwrap();
+
+    assert_eq!(first.content, "secret: hunter2 old");
+    assert_eq!(second.content, "secret: hunter2 new");
+}
+
 // The engine asks for the calls of a parallel group together, so the runs of two calls overlap.
 #[tokio::test]
 async fn each_of_two_overlapping_calls_gets_its_own_answer() {

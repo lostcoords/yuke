@@ -283,10 +283,10 @@ async function runHandlers<K extends keyof SessionHooks>(
   const state = opens.get(open);
   if (state === undefined) return;
   await state.ready;
-  for (const scope of state.scopes) {
-    const handlers: SessionHooks[K][] = scope.hooks[point];
-    // An addition or a removal during a run changes the next run.
-    for (const handler of [...handlers]) {
+  // One copy of every list at the start, so an addition or a removal during the run changes only the next run.
+  const lists = state.scopes.map((scope) => ({ scope, handlers: [...scope.hooks[point]] as SessionHooks[K][] }));
+  for (const { scope, handlers } of lists) {
+    for (const handler of handlers) {
       if (scope.closed) break;
       try {
         const answer: unknown = await call(handler);
