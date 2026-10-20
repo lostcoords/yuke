@@ -52,8 +52,17 @@ async fn ended_texts(host: &TestHost, count: usize) -> Vec<String> {
 
 /// The text of a call that `exec` answers for `command`.
 async fn run(tools: &Tools, command: &str) -> String {
+    run_flagged(tools, command).await.0
+}
+
+/// The text and the error flag of a call that `exec` answers for `command`.
+async fn run_flagged(tools: &Tools, command: &str) -> (String, bool) {
     let arguments = json_string(command);
-    text_of(&tools["exec"], &format!(r#"{{"command": {arguments}}}"#)).await
+    let content = call(&tools["exec"], &format!(r#"{{"command": {arguments}}}"#))
+        .await
+        .0
+        .unwrap();
+    (content.text, content.is_error)
 }
 
 /// `text` as a JSON string.
@@ -76,9 +85,10 @@ async fn exec_answers_the_output_in_write_order_and_the_exit_code() {
     let folder = folder("exec_answers_the_output_in_write_order_and_the_exit_code");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
-    let text = run(&tools, "printf 'a\\n'; printf 'b\\n' >&2; printf 'c\\n'; pwd; exit 3").await;
+    let (text, is_error) = run_flagged(&tools, "printf 'a\\n'; printf 'b\\n' >&2; printf 'c\\n'; pwd; exit 3").await;
 
     assert_eq!(text, format!("a\nb\nc\n{}\n[exit code: 3]", folder.display()));
+    assert!(is_error);
 }
 
 #[tokio::test]
@@ -98,7 +108,10 @@ async fn exec_names_the_signal_that_ended_the_shell() {
     let folder = folder("exec_names_the_signal_that_ended_the_shell");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
-    assert_eq!(run(&tools, "kill -9 $$").await, "[no output]\n[signal: 9]");
+    assert_eq!(
+        run_flagged(&tools, "kill -9 $$").await,
+        ("[no output]\n[signal: 9]".to_owned(), true)
+    );
 }
 
 #[tokio::test]
@@ -106,7 +119,10 @@ async fn exec_without_output_says_so() {
     let folder = folder("exec_without_output_says_so");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
-    assert_eq!(run(&tools, "true").await, "[no output]\n[exit code: 0]");
+    assert_eq!(
+        run_flagged(&tools, "true").await,
+        ("[no output]\n[exit code: 0]".to_owned(), false)
+    );
 }
 
 #[tokio::test]
@@ -125,13 +141,20 @@ async fn exec_reports_its_deadline_also_when_the_shell_exits_0_at_the_stop() {
     let folder = folder("exec_reports_its_deadline_also_when_the_shell_exits_0_at_the_stop");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
-    let text = text_of(
+    let content = call(
         &tools["exec"],
         r#"{"command": "trap 'exit 0' TERM; sleep 30 & wait", "timeout_ms": 200}"#,
     )
-    .await;
+    .await
+    .0
+    .unwrap();
 
-    assert!(text.starts_with("[no output]\n[timeout: 200 ms."), "{text}");
+    assert!(
+        content.text.starts_with("[no output]\n[timeout: 200 ms."),
+        "{}",
+        content.text
+    );
+    assert!(content.is_error);
 }
 
 #[tokio::test]
@@ -182,10 +205,9 @@ async fn a_cancel_stops_the_command_and_the_tool_still_answers() {
 
     let (answer, _texts) = call_with(&tools["exec"], r#"{"command": "sleep 30"}"#, token).await;
 
-    assert_eq!(
-        answer.unwrap().text,
-        "[no output]\n[stopped: the tool call was cancelled.]"
-    );
+    let content = answer.unwrap();
+    assert_eq!(content.text, "[no output]\n[stopped: the tool call was cancelled.]");
+    assert!(content.is_error);
 }
 
 #[tokio::test]

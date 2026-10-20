@@ -134,18 +134,21 @@ defineTool({
     const end = await callOf(context).exec(command, { timeoutMs: timeout, maxBytes: OUTPUT_BYTES }, context.output);
     const output = end.output.length === 0 ? "[no output]" : end.output;
     const text = output.endsWith("\n") ? output : `${output}\n`;
+    // Only a command that exits with 0 succeeds.
     switch (end.cause) {
       case "cancelled":
-        return `${text}[stopped: the tool call was cancelled.]`;
+        return { text: `${text}[stopped: the tool call was cancelled.]`, isError: true };
       case "timeout":
-        return (
-          `${text}[timeout: ${timeout} ms. yuke stopped the process group. Run a smaller command. Raise timeout_ms ` +
-          `up to ${LONGEST_TIMEOUT}. Set background to true for a server or watcher.]`
-        );
+        return {
+          text:
+            `${text}[timeout: ${timeout} ms. yuke stopped the process group. Run a smaller command. Raise ` +
+            `timeout_ms up to ${LONGEST_TIMEOUT}. Set background to true for a server or watcher.]`,
+          isError: true,
+        };
       case "signal":
-        return `${text}[signal: ${end.signal}]`;
+        return { text: `${text}[signal: ${end.signal}]`, isError: true };
       case "exit":
-        return `${text}[exit code: ${end.code}]`;
+        return { text: `${text}[exit code: ${end.code}]`, isError: end.code !== 0 };
     }
   },
 });
