@@ -1,4 +1,5 @@
-//! Base64 (RFC 4648): the standard padded encoder of request media, and the URL-safe decoder of a JSON Web Token.
+//! Base64 (RFC 4648): the standard padded encoder of request media, the standard decoder of media in a tool result,
+//! and the URL-safe decoder of a JSON Web Token.
 
 /// The two base64 characters of each 12-bit value. Two lookups encode a group of 3 bytes.
 static PAIRS: [[u8; 2]; 4096] = {
@@ -36,10 +37,21 @@ pub(crate) fn encode_into(out: &mut Vec<u8>, data: &[u8]) {
     last[0] = [c0, c1, if rest.len() == 2 { c2 } else { b'=' }, b'='];
 }
 
-/// The bytes of the URL-safe base64 `text` (RFC 4648, section 5), as a JSON Web Token holds it. The padding is
-/// optional. `None` for a text that no canonical encoder writes: a byte outside the alphabet, a wrong length or
-/// padding, or unused bits that are not zero.
+/// The bytes of the standard base64 `text` (RFC 4648, section 4), as an MCP image holds them. The padding is optional.
+/// `None` for a text that no canonical encoder writes: a byte outside the alphabet, a wrong length or padding, or
+/// unused bits that are not zero.
+pub fn decode_base64(text: &[u8]) -> Option<Vec<u8>> {
+    decode(text, *b"+/")
+}
+
+/// The bytes of the URL-safe base64 `text` (RFC 4648, section 5), as a JSON Web Token holds it. It reads as
+/// [`decode_base64`] does, with `-` and `_` in place of `+` and `/`.
 pub(crate) fn decode_url_safe(text: &[u8]) -> Option<Vec<u8>> {
+    decode(text, *b"-_")
+}
+
+/// The bytes of the base64 `text` whose last two digits are `symbols`.
+fn decode(text: &[u8], symbols: [u8; 2]) -> Option<Vec<u8>> {
     let bare = text
         .strip_suffix(b"==")
         .or_else(|| text.strip_suffix(b"="))
@@ -52,8 +64,8 @@ pub(crate) fn decode_url_safe(text: &[u8]) -> Option<Vec<u8>> {
         b'A'..=b'Z' => Some(c - b'A'),
         b'a'..=b'z' => Some(c - b'a' + 26),
         b'0'..=b'9' => Some(c - b'0' + 52),
-        b'-' => Some(62),
-        b'_' => Some(63),
+        _ if c == symbols[0] => Some(62),
+        _ if c == symbols[1] => Some(63),
         _ => None,
     };
     let mut out = Vec::with_capacity(bare.len() / 4 * 3 + 2);
@@ -110,9 +122,11 @@ mod tests {
     }
 
     #[test]
-    fn the_decoder_takes_the_url_safe_symbols_only() {
+    fn each_decoder_takes_the_symbols_of_its_alphabet_only() {
         assert_eq!(decode_url_safe(b"-_8"), Some(vec![0xfb, 0xff]));
         assert_eq!(decode_url_safe(b"+/8"), None);
+        assert_eq!(decode_base64(b"+/8="), Some(vec![0xfb, 0xff]));
+        assert_eq!(decode_base64(b"-_8="), None);
     }
 
     #[test]

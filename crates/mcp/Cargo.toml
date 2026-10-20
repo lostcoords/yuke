@@ -1,0 +1,31 @@
+[package]
+name = "yuke-mcp"
+version = "0.0.1-dev"
+description = "The MCP client of yuke: the servers of a session and their tools."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait = "0.1.92"
+# rmcp makes breaking releases often, so the crate pins one exact version.
+rmcp = { version = "=3.5.1", default-features = false, features = ["client", "transport-child-process"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53", features = ["macros", "process", "rt", "sync"] }
+yuke-ai = { path = "../ai", default-features = false }
+yuke-engine = { path = "../engine" }
+
+# The MCP server of the tests. It speaks just enough of the protocol, so the tests need no other server.
+[[bin]]
+name = "yuke-mcp-test-server"
+path = "test-server/main.rs"
+test = false
+doc = false
+
+[dev-dependencies]
+tokio = { version = "1.53", features = ["macros", "process", "rt", "sync", "time"] }
+yuke-testing = { path = "../testing" }
+
+[lints]
+workspace = true

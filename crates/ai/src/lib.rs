@@ -22,9 +22,10 @@ mod wyhash;
 #[cfg(test)]
 mod testing;
 
+#[cfg(feature = "http-tokio")]
+pub use base64::decode_base64;
 pub use encoder::{EncodeError, Encoded, Encoder, Unsupported};
 pub use failure::{Failure, ProviderKind};
-#[cfg(feature = "http-tokio")]
 pub use http::{HttpOptions, HttpTransport, InvalidUserAgent};
 pub use reply::Reply;
 pub use request::{
