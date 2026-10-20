@@ -150,6 +150,39 @@ export interface ToolAfterAnswer {
   readonly media?: readonly (KeptMedia | (ToolMedia & { readonly id?: never }))[] | undefined;
 }
 
+/** Why a model answer ended: the name of the provider reason, in snake case. */
+export type FinishReason = "stop" | "length" | "content_filter" | "refusal" | "tool_calls" | "pause" | "unknown";
+
+/** What a `round.after` handler gets. */
+export interface RoundAfterEvent {
+  /** The assistant text of the answer of this round. It can be empty, for example for an answer with calls only. */
+  readonly text: string;
+  /**
+   * Why the answer ended, when it needs no other request. `null` after a round of tool calls, because the turn then
+   * goes on.
+   */
+  readonly finishReason: FinishReason | null;
+  /** The `continue` answers of the `round.after` handlers in this turn. The host sets no limit, so guard a loop here. */
+  readonly continues: number;
+  /**
+   * The host aborts this signal when the turn is cancelled. After the abort, the host does not wait for the handler,
+   * and it ignores the answer of the handler.
+   */
+  readonly signal: AbortSignal;
+}
+
+/**
+ * The answer of a `round.after` handler.
+ * - `{ stop: true }` ends the turn. The input that the user sent during the turn stays for the next turn.
+ * - `{ continue }` sends another request with the text as input, between `<hook_feedback plugin="name">` and
+ *   `</hook_feedback>`.
+ * - When the user sent input during the turn, the request sends that input in place of the text. The handlers run
+ *   again after its round, so a handler that still needs its request answers `continue` again.
+ */
+export type RoundAfterAnswer =
+  | { readonly stop: true; readonly continue?: never }
+  | { readonly continue: string; readonly stop?: never };
+
 /**
  * The hooks of a session, by point.
  * - Each handler gets one frozen event, and the host awaits it.
@@ -183,6 +216,13 @@ export interface SessionHooks {
    * - The handlers of two calls can run at the same time.
    */
   "tool.after": (event: ToolAfterEvent) => undefined | ToolAfterAnswer | Promise<undefined | ToolAfterAnswer>;
+  /**
+   * Decide whether the turn goes on after a model answer.
+   * - The handlers run after each round: after a final answer, and after the results of the calls of an answer.
+   * - They run in order until one answers.
+   * - A failed handler ends the turn with its error. The round stays in the context.
+   */
+  "round.after": (event: RoundAfterEvent) => undefined | RoundAfterAnswer | Promise<undefined | RoundAfterAnswer>;
 }
 
 /** What `session` of a plugin gets for one session. */

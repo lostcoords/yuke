@@ -5,6 +5,7 @@ import type {
   PluginSession,
   PromptBuildAnswer,
   PromptBuildEvent,
+  RoundAfterAnswer,
   SessionContext,
   ToolAfterAnswer,
   ToolBeforeAnswer,
@@ -226,6 +227,16 @@ const mixed = { id: "ab", mimeType: "image/png", bytes: new Uint8Array() };
 s.hook("tool.after", () => ({ media: [mixed] }));
 // @ts-expect-error: a new media item needs a path or bytes.
 s.hook("tool.after", () => ({ media: [{ mimeType: "image/png" }] }));
+
+// A round.after handler reads the reason and the count, and answers a stop or a continue.
+s.hook("round.after", ({ finishReason, continues }): RoundAfterAnswer | undefined => {
+  if (finishReason === null) return undefined;
+  return continues < 3 ? { continue: "Run the tests." } : { stop: true };
+});
+// @ts-expect-error: an answer is a stop or a continue, not both.
+s.hook("round.after", () => ({ stop: true, continue: "x" }));
+// @ts-expect-error: a stop is `true`.
+s.hook("round.after", () => ({ stop: false }));
 
 // The web globals declare what the runtime has, and no more.
 assert<Equal<typeof DOMException.ABORT_ERR, 20>>();

@@ -2,10 +2,13 @@ import { defineTool, fieldsOf, mediaOf } from "yuke:internal/define";
 import { hostSignal } from "yuke:internal/events";
 import { notify, unregister } from "yuke:internal/native";
 import type {
+  FinishReason,
   NoticeLevel,
   PluginContext,
   PluginSession,
   ResultMedia,
+  RoundAfterAnswer,
+  RoundAfterEvent,
   Services,
   SessionCleanup,
   SessionContext,
@@ -207,6 +210,59 @@ export function startToolBefore({ open, call }: ToolBeforeRequest): Started<stri
   });
 }
 
+/** What `startRoundAfter` gets. */
+interface RoundAfterRequest {
+  readonly open: number;
+  readonly text: string;
+  /** `undefined` after a tool round: a Rust `None` crosses as `undefined`. */
+  readonly finishReason: FinishReason | undefined;
+  readonly continues: number;
+}
+
+/**
+ * Start the `round.after` handlers of the open session `open` after one round. The answer is the first answer of a
+ * handler, with the text of a `continue` wrapped in a `hook_feedback` tag that names the plugin, or `undefined` when no
+ * handler answered. A closed session answers nothing. A failed handler throws. `abort` aborts the signal of the turn.
+ */
+export function startRoundAfter({
+  open,
+  text,
+  finishReason,
+  continues,
+}: RoundAfterRequest): Started<RoundAfterAnswer | undefined> {
+  return started(async (signal) => {
+    const event: RoundAfterEvent = Object.freeze({ text, finishReason: finishReason ?? null, continues, signal });
+    let decision: RoundAfterAnswer | undefined;
+    await runHandlers(
+      open,
+      "round.after",
+      (handler) => handler(event),
+      (answer, plugin) => {
+        decision = roundOf(answer, plugin);
+        return true;
+      },
+    );
+    return decision;
+  });
+}
+
+/** The fields of a `round.after` answer. */
+const ROUND_FIELDS = ["stop", "continue"];
+
+/** The checked `round.after` answer of `plugin`. Another shape throws a `TypeError`. */
+function roundOf(answer: unknown, plugin: string): RoundAfterAnswer {
+  const fields = fieldsOf(answer, "the answer", ROUND_FIELDS);
+  if (Object.hasOwn(fields, "stop") === Object.hasOwn(fields, "continue")) {
+    throw new TypeError("the answer needs exactly one of stop and continue");
+  }
+  if (Object.hasOwn(fields, "stop")) {
+    if (fields.stop !== true) throw new TypeError("the stop of the answer is not true");
+    return { stop: true };
+  }
+  if (typeof fields.continue !== "string") throw new TypeError("the continue of the answer is not a string");
+  return { continue: `<hook_feedback plugin="${plugin}">\n${fields.continue}\n</hook_feedback>` };
+}
+
 /** A media item of a changed result as the host reads it: the index of an original item, or a new item. */
 type ChangedMedia = number | ToolMedia;
 
@@ -278,7 +334,7 @@ async function runHandlers<K extends keyof SessionHooks>(
   open: number,
   point: K,
   call: (handler: SessionHooks[K]) => unknown,
-  take: (answer: unknown) => boolean,
+  take: (answer: unknown, plugin: string) => boolean,
 ): Promise<void> {
   const state = opens.get(open);
   if (state === undefined) return;
@@ -293,7 +349,7 @@ async function runHandlers<K extends keyof SessionHooks>(
         // A close during the wait ends the turn, so the answer of the closed scope no longer counts.
         if (scope.closed) return;
         // A getter in the answer is code of the plugin, so the check runs in the same `try`.
-        if (answer !== undefined && take(answer)) return;
+        if (answer !== undefined && take(answer, scope.plugin)) return;
       } catch (error) {
         throw hookFailure(point, scope.plugin, error);
       }
@@ -453,7 +509,7 @@ function start(open: number, sessionId: string, folder: string, plugin: string, 
     closed: false,
     abort,
     tools: [],
-    hooks: { "prompt.build": [], "tool.before": [], "tool.after": [] },
+    hooks: { "prompt.build": [], "tool.before": [], "tool.after": [], "round.after": [] },
     settled: Promise.resolve(undefined),
     clean,
   };

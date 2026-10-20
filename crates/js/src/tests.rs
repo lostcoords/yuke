@@ -3,6 +3,7 @@ mod fs;
 mod globals;
 mod plugins;
 mod prompt;
+mod round_after;
 mod sessions;
 mod tool_after;
 mod tool_before;

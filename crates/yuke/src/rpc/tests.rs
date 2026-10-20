@@ -920,6 +920,38 @@ async fn a_plugin_patches_a_tool_result_before_the_model_reads_it() {
     client.end().await;
 }
 
+// The feedback joins the context of the session, so the next request and a later load both hold it.
+#[tokio::test]
+async fn a_plugin_sends_the_model_on_once_after_its_final_answer() {
+    let place = Place::new("rpc", "a_plugin_sends_the_model_on_once_after_its_final_answer");
+    place.plugin(
+        "guard",
+        "export function session(s) {
+           s.hook('round.after', ({ finishReason, continues }) =>
+             finishReason === 'stop' && continues === 0 ? { continue: 'Run the tests.' } : undefined);
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["guard"] }"#).unwrap();
+    let transport = ScriptedTransport::new([text_reply("done"), text_reply("tests pass")]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+
+    client.request("session/input", input_params(&session, "fix it")).await;
+    client.until(is_idle).await;
+    let loaded = client.load(&session, json!({})).await;
+
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    let feedback = r#"<hook_feedback plugin=\"guard\">\nRun the tests.\n</hook_feedback>"#;
+    assert!(requests[1].contains(feedback), "{}", requests[1]);
+    let saved = serde_json::to_string(&loaded.messages).unwrap();
+    assert!(
+        saved.contains("Run the tests.") && saved.contains("tests pass"),
+        "{saved}"
+    );
+    client.end().await;
+}
+
 #[tokio::test]
 async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_again() {
     let place = Place::new(

@@ -1,15 +1,17 @@
 //! These types open, use, and close one session of the plugins. Its tools are the tools of yuke and the tools that the
 //! `session` exports define. Its hooks are the hooks that the `session` exports add.
 
+use std::error::Error as StdError;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Promise, Value};
 use tokio::sync::oneshot;
 use yuke_agent::PromptSection;
-use yuke_ai::{ToolCall, ToolResult};
-use yuke_engine::{CancellationToken, Hooks, ToolDecision};
+use yuke_ai::{Block, FinishReason, ToolCall, ToolResult};
+use yuke_engine::{CancellationToken, Hooks, RoundDecision, ToolDecision};
 
 use crate::Runtime;
 use crate::error::{Error, caught};
@@ -147,6 +149,7 @@ impl ScriptSession {
             host: Arc::clone(&self.host),
             open: self.open,
             token,
+            continues: AtomicU64::new(0),
         }
     }
 
@@ -185,6 +188,8 @@ pub struct ScriptHooks {
     host: Arc<dyn SessionHost>,
     open: u64,
     token: CancellationToken,
+    /// The `continue` answers of the `round.after` hooks in this turn.
+    continues: AtomicU64,
 }
 
 impl std::fmt::Debug for ScriptHooks {
@@ -197,6 +202,32 @@ impl std::fmt::Debug for ScriptHooks {
 
 #[async_trait]
 impl Hooks for ScriptHooks {
+    async fn after_round(
+        &self,
+        context: &[Block],
+        finish_reason: Option<FinishReason>,
+    ) -> Result<RoundDecision, Box<dyn StdError + Send + Sync>> {
+        let request = RoundAfterRequest {
+            open: self.open,
+            text: answer_text(context),
+            finish_reason: finish_reason.map(FinishReason::as_str),
+            continues: self.continues.load(Ordering::Relaxed),
+        };
+        let answer: Option<Option<RoundAnswer>> =
+            run_hook(&self.caller, "startRoundAfter", request, self.token.clone())
+                .await
+                .map_err(|error| failure_text("round.after", &error))?;
+        Ok(match answer {
+            Some(Some(RoundAnswer::Stop)) => RoundDecision::Stop,
+            Some(Some(RoundAnswer::Continue(text))) => {
+                self.continues.fetch_add(1, Ordering::Relaxed);
+                RoundDecision::Continue(vec![Block::user_text(text)])
+            }
+            // A cancel ends the turn, so the driver does not read this answer.
+            Some(None) | None => RoundDecision::Proceed,
+        })
+    }
+
     async fn before_tool(&self, call: &ToolCall) -> ToolDecision {
         let request = ToolBeforeRequest {
             open: self.open,
@@ -354,6 +385,51 @@ struct HookResult {
 struct HookMedia {
     mime_type: String,
     size: usize,
+}
+
+/// What `startRoundAfter` gets.
+#[derive(IntoJs)]
+#[qjs(rename_all = "camelCase")]
+struct RoundAfterRequest {
+    open: u64,
+    text: String,
+    finish_reason: Option<&'static str>,
+    continues: u64,
+}
+
+/// The answer of the `round.after` handlers: `{ stop: true }`, or `{ continue }` with the wrapped text.
+#[derive(Debug)]
+enum RoundAnswer {
+    Stop,
+    Continue(String),
+}
+
+impl<'js> FromJs<'js> for RoundAnswer {
+    fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+        let object = Object::from_value(value)?;
+        Ok(match object.get::<_, Option<String>>("continue")? {
+            Some(text) => Self::Continue(text),
+            None => Self::Stop,
+        })
+    }
+}
+
+/// The assistant text of the last answer in `context`: the text blocks after the last block of the user, before the
+/// results of its calls.
+fn answer_text(context: &[Block]) -> String {
+    let answer = context
+        .iter()
+        .rev()
+        .skip_while(|block| matches!(block, Block::ToolResult(_)))
+        .take_while(|block| block.role() == yuke_ai::Role::Assistant);
+    let mut texts: Vec<&str> = answer
+        .filter_map(|block| match block {
+            Block::AssistantText(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    texts.reverse();
+    texts.join("\n")
 }
 
 /// The result after the `tool.after` handlers.
