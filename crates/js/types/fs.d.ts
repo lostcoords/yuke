@@ -58,26 +58,26 @@ declare module "yuke:fs" {
     force?: boolean | undefined;
   }
 
-  /** The facts of a path. */
+  /** The facts of a path. Each call gives a new object, and the caller owns it. */
   export interface FileInfo {
-    readonly isFile: boolean;
-    readonly isDirectory: boolean;
+    isFile: boolean;
+    isDirectory: boolean;
     /** `true` only for `lstat` of a symbolic link. */
-    readonly isSymlink: boolean;
+    isSymlink: boolean;
     /** The size in bytes. */
-    readonly size: number;
+    size: number;
     /** The time of the last change of the content, or `null` when the file system gives none. */
-    readonly mtime: Date | null;
+    mtime: Date | null;
   }
 
-  /** One entry of a directory. */
+  /** One entry of a directory. Each call gives new objects, and the caller owns them. */
   export interface DirEntry {
     /** The name of the entry, without its folder. */
-    readonly name: string;
-    readonly isFile: boolean;
-    readonly isDirectory: boolean;
+    name: string;
+    isFile: boolean;
+    isDirectory: boolean;
     /** The entry is a symbolic link. `isFile` and `isDirectory` are then `false`. */
-    readonly isSymlink: boolean;
+    isSymlink: boolean;
   }
 
   /** The failure of a file operation. */
