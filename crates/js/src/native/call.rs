@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rquickjs::function::Async;
-use rquickjs::{Ctx, Function, Object};
+use rquickjs::{Ctx, Function, IntoJs, Object};
 use yuke_engine::CancellationToken;
 
 use super::exec::exec;
@@ -25,7 +25,7 @@ pub(crate) fn object<'js>(
     folder: PathBuf,
     stop: &CancellationToken,
 ) -> rquickjs::Result<Object<'js>> {
-    let object = super::internal_record(ctx)?;
+    let object = Object::new(ctx.clone())?;
 
     let (exec_processes, exec_stop) = (Arc::clone(processes), stop.clone());
     object.set(
@@ -63,10 +63,10 @@ pub(crate) fn object<'js>(
                 async move {
                     let started = processes.start_job(command, host).await;
                     let (id, log) = started.map_err(|message| throw(&ctx, ErrorClass::Error, &message))?;
-                    let job = super::internal_record(&ctx)?;
-                    job.set("id", id)?;
-                    job.set("log", log.to_string_lossy().into_owned())?;
-                    Ok::<_, rquickjs::Error>(job)
+                    Ok::<_, rquickjs::Error>(StartedJob {
+                        id,
+                        log: log.to_string_lossy().into_owned(),
+                    })
                 }
             }),
         )?,
@@ -77,16 +77,16 @@ pub(crate) fn object<'js>(
         "stopJob",
         Function::new(
             ctx.clone(),
-            Async(move |ctx: Ctx<'js>, id: String| {
+            Async(move |id: String| {
                 let (processes, host) = (Arc::clone(&stop_processes), Arc::clone(&stop_host));
                 async move {
                     let Some((label, log)) = processes.stop_job(&id, &host).await else {
                         return Ok(None);
                     };
-                    let object = super::internal_record(&ctx)?;
-                    object.set("label", label)?;
-                    object.set("log", log.to_string_lossy().into_owned())?;
-                    Ok::<_, rquickjs::Error>(Some(object))
+                    Ok::<_, rquickjs::Error>(Some(StoppedJob {
+                        label,
+                        log: log.to_string_lossy().into_owned(),
+                    }))
                 }
             }),
         )?,
@@ -104,4 +104,18 @@ pub(crate) fn object<'js>(
         })?,
     )?;
     Ok(object)
+}
+
+/// What `startJob` gives: the id of the job and its log file.
+#[derive(IntoJs)]
+struct StartedJob {
+    id: String,
+    log: String,
+}
+
+/// What `stopJob` gives: how the job ended and its log file.
+#[derive(IntoJs)]
+struct StoppedJob {
+    label: String,
+    log: String,
 }

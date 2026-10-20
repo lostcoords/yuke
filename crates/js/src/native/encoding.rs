@@ -1,7 +1,7 @@
 //! The UTF-8 functions of the native module for `TextEncoder` and `TextDecoder`. The text that reaches them is well
 //! formed: `TextEncoder` replaces each lone surrogate first.
 
-use rquickjs::{Ctx, Function, Object, TypedArray};
+use rquickjs::{Ctx, Function, IntoJs, Object, TypedArray};
 
 use crate::error::{ErrorClass, throw};
 
@@ -17,10 +17,10 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
         "encodeTextInto",
         Function::new(ctx.clone(), |ctx: Ctx<'js>, text: String, capacity: usize| {
             let (bytes, read) = prefix(&text, capacity);
-            let result = super::internal_record(&ctx)?;
-            result.set("bytes", TypedArray::<u8>::new(ctx, bytes.as_bytes())?)?;
-            result.set("read", read)?;
-            Ok::<_, rquickjs::Error>(result)
+            Ok::<_, rquickjs::Error>(Encoded {
+                bytes: TypedArray::new(ctx, bytes.as_bytes())?,
+                read,
+            })
         })?,
     )?;
     object.set(
@@ -32,14 +32,25 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
                 let Some((text, rest)) = decode(&bytes, fatal, stream) else {
                     return Err(throw(&ctx, ErrorClass::TypeError, "the bytes are not valid UTF-8"));
                 };
-                let result = super::internal_record(&ctx)?;
-                result.set("text", text)?;
-                result.set("rest", rest)?;
-                Ok(result)
+                Ok(Decoded { text, rest })
             },
         )?,
     )?;
     Ok(())
+}
+
+/// What `encodeTextInto` gives: the bytes, and the UTF-16 units of the text that they hold.
+#[derive(IntoJs)]
+struct Encoded<'js> {
+    bytes: TypedArray<'js, u8>,
+    read: usize,
+}
+
+/// What `decodeText` gives: the text, and the bytes of an incomplete character at the end of a stream.
+#[derive(IntoJs)]
+struct Decoded {
+    text: String,
+    rest: usize,
 }
 
 /// The longest start of `text` that fits in `capacity` bytes without a cut character, and its length in UTF-16 code

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use rquickjs::{Ctx, Function, Module, Object, Promise};
+use rquickjs::{Ctx, Function, IntoJs, Module, Object, Promise};
 
 use crate::Runtime;
 use crate::error::{Error, caught};
@@ -114,19 +114,32 @@ impl Runtime {
         self.caller
             .run(async move |ctx: Ctx<'_>, _registry| {
                 let load: Function<'_> = caught(&ctx, loader(&ctx).await?.get("load"))?;
-                let spec = caught(&ctx, crate::native::internal_record(&ctx))?;
                 let path = |path: &PathBuf| path.to_string_lossy().into_owned();
-                caught(&ctx, spec.set("name", plugin.name))?;
-                caught(&ctx, spec.set("root", path(&plugin.root)))?;
-                caught(&ctx, spec.set("dataDir", path(&plugin.data_dir)))?;
-                caught(&ctx, spec.set("entry", plugin.entry.as_ref().map(path)))?;
-                caught(&ctx, spec.set("uses", plugin.uses))?;
-                caught(&ctx, spec.set("provides", plugin.provides))?;
+                let spec = PluginSpec {
+                    name: plugin.name,
+                    root: path(&plugin.root),
+                    data_dir: path(&plugin.data_dir),
+                    entry: plugin.entry.as_ref().map(path),
+                    uses: plugin.uses,
+                    provides: plugin.provides,
+                };
                 let promise: Promise<'_> = caught(&ctx, load.call((spec,)))?;
                 caught(&ctx, promise.into_future::<()>().await)
             })
             .await
     }
+}
+
+/// One plugin as `load` of the loader gets it.
+#[derive(IntoJs)]
+#[qjs(rename_all = "camelCase")]
+struct PluginSpec {
+    name: String,
+    root: String,
+    data_dir: String,
+    entry: Option<String>,
+    uses: Vec<String>,
+    provides: Vec<String>,
 }
 
 /// The internal module that loads the plugins and opens their sessions.

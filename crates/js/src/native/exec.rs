@@ -36,7 +36,7 @@ pub(crate) async fn exec<'js>(
         Ok(Err(message)) => return Err(throw(&ctx, ErrorClass::Error, &message)),
         Err(_) => return Err(throw(&ctx, ErrorClass::Error, "the command ended without an answer")),
     };
-    let object = super::internal_record(&ctx)?;
+    let object = Object::new(ctx.clone())?;
     object.set("output", end.output)?;
     match end.cause {
         EndCause::Exit(code) => {

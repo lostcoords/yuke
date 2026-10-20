@@ -11,10 +11,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 
-use rquickjs::{Array, Ctx, Function, IntoJs, Object, Promise, TypedArray, Value};
+use rquickjs::{Ctx, Function, IntoJs, Object, Promise, TypedArray, Value};
 use rustix::io::Errno;
 
-use super::internal_record;
 use crate::error::{ErrorClass, throw};
 
 /// The bytes of one chunk of a read or a write. A stop takes effect between two chunks.
@@ -107,7 +106,7 @@ fn read_file<'js>(
     base: Option<&str>,
     position: f64,
     length: Option<f64>,
-) -> rquickjs::Result<Object<'js>> {
+) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
     // `yuke:fs` checks that both numbers are whole and in range.
     #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a safe integer")]
@@ -120,7 +119,7 @@ fn read_file<'js>(
 }
 
 /// `fsReadTextFile(path, baseDir)`: the whole file as strict UTF-8.
-fn read_text_file<'js>(ctx: &Ctx<'js>, path: &str, base: Option<&str>) -> rquickjs::Result<Object<'js>> {
+fn read_text_file<'js>(ctx: &Ctx<'js>, path: &str, base: Option<&str>) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
     operation(
         ctx,
@@ -140,7 +139,7 @@ fn write_file<'js>(
     data: &Value<'js>,
     atomic: bool,
     mode: Option<u32>,
-) -> rquickjs::Result<Object<'js>> {
+) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
     // A copy at the call, so a later change of the bytes does not reach the file.
     let bytes = match data.as_string() {
@@ -151,37 +150,22 @@ fn write_file<'js>(
 }
 
 /// `fsReadDir(path, baseDir)`: the entries of a directory.
-fn read_dir_entries<'js>(ctx: &Ctx<'js>, path: &str, base: Option<&str>) -> rquickjs::Result<Object<'js>> {
+fn read_dir_entries<'js>(ctx: &Ctx<'js>, path: &str, base: Option<&str>) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
     operation(
         ctx,
         move |stop| read_dir(&path, stop),
-        |ctx, entries| {
-            let array = Array::new(ctx.clone())?;
-            for (index, entry) in entries.into_iter().enumerate() {
-                let record = internal_record(ctx)?;
-                record.set("name", entry.name)?;
-                set_kind(&record, entry.kind)?;
-                array.set(index, record)?;
-            }
-            Ok(array.into_value())
-        },
+        |ctx, entries| entries.into_js(ctx),
     )
 }
 
 /// `fsStat(path, baseDir, follow)`: the facts of a path, of the target of a link when `follow`.
-fn stat_path<'js>(ctx: &Ctx<'js>, path: &str, base: Option<&str>, follow: bool) -> rquickjs::Result<Object<'js>> {
+fn stat_path<'js>(ctx: &Ctx<'js>, path: &str, base: Option<&str>, follow: bool) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
     operation(
         ctx,
         move |stop| stat(&path, follow, stop),
-        |ctx, info| {
-            let record = internal_record(ctx)?;
-            set_kind(&record, info.kind)?;
-            record.set("size", info.size)?;
-            record.set("mtime", info.modified)?;
-            Ok(record.into_value())
-        },
+        |ctx, info| info.into_js(ctx),
     )
 }
 
@@ -192,7 +176,7 @@ fn make_dir<'js>(
     base: Option<&str>,
     recursive: bool,
     mode: Option<u32>,
-) -> rquickjs::Result<Object<'js>> {
+) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
     operation(
         ctx,
@@ -216,7 +200,7 @@ fn remove_path<'js>(
     base: Option<&str>,
     recursive: bool,
     force: bool,
-) -> rquickjs::Result<Object<'js>> {
+) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
     operation(ctx, move |stop| remove(&path, recursive, force, stop), nothing)
 }
@@ -227,7 +211,7 @@ fn rename_path<'js>(
     source: &str,
     destination: &str,
     base: Option<&str>,
-) -> rquickjs::Result<Object<'js>> {
+) -> rquickjs::Result<Operation<'js>> {
     let source = resolve(ctx, source, base)?;
     let destination = resolve(ctx, destination, base)?;
     operation(
@@ -308,24 +292,37 @@ impl Failure {
     }
 
     /// The record that the promise rejects with.
-    fn record<'js>(self, ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
-        let record = internal_record(ctx)?;
+    fn record<'js>(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
         let Some(error) = self.error else {
-            record.set("cancelled", true)?;
-            return Ok(record);
+            return Cancelled { cancelled: true }.into_js(ctx);
         };
         let (code, description) = describe(&error);
         let path = self.path.to_string_lossy().into_owned();
-        record.set("code", code)?;
-        record.set("message", format!("{description}: {path}"))?;
-        record.set("path", path)?;
-        record.set(
-            "destination",
-            self.destination
+        FileError {
+            code,
+            message: format!("{description}: {path}"),
+            path,
+            destination: self
+                .destination
                 .map(|destination| destination.to_string_lossy().into_owned()),
-        )?;
-        Ok(record)
+        }
+        .into_js(ctx)
     }
+}
+
+/// The record of a failed operation.
+#[derive(IntoJs)]
+struct FileError {
+    code: &'static str,
+    message: String,
+    path: String,
+    destination: Option<String>,
+}
+
+/// The record of a stopped operation.
+#[derive(IntoJs)]
+struct Cancelled {
+    cancelled: bool,
 }
 
 /// The stable code and the description of `error`. The codes are the POSIX names that most runtimes give.
@@ -357,13 +354,19 @@ fn describe(error: &io::Error) -> (&'static str, String) {
     }
 }
 
-/// Start `work` on a blocking thread, and give `{ promise, cancel }`. `convert` makes the value of the promise on the
-/// JavaScript thread.
+/// A started operation: the promise of its value, and the function that stops it.
+#[derive(IntoJs)]
+struct Operation<'js> {
+    promise: Promise<'js>,
+    cancel: Function<'js>,
+}
+
+/// Start `work` on a blocking thread. `convert` makes the value of the promise on the JavaScript thread.
 fn operation<'js, T: Send + 'static>(
     ctx: &Ctx<'js>,
     work: impl FnOnce(&Stop) -> Result<T, Failure> + Send + 'static,
     convert: impl FnOnce(&Ctx<'js>, T) -> rquickjs::Result<Value<'js>> + 'js,
-) -> rquickjs::Result<Object<'js>> {
+) -> rquickjs::Result<Operation<'js>> {
     let stop = Stop::default();
     let worker = stop.clone();
     let settle = ctx.clone();
@@ -372,7 +375,7 @@ fn operation<'js, T: Send + 'static>(
         // Each throw comes last, after the await, so no exception waits across it.
         match done {
             Ok(Ok(value)) => convert(&settle, value),
-            Ok(Err(failure)) => Err(settle.throw(failure.record(&settle)?.into_value())),
+            Ok(Err(failure)) => Err(settle.throw(failure.record(&settle)?)),
             Err(error) => Err(throw(
                 &settle,
                 ErrorClass::Error,
@@ -381,10 +384,7 @@ fn operation<'js, T: Send + 'static>(
         }
     })?;
     let cancel = Function::new(ctx.clone(), move || stop.0.store(true, Ordering::Relaxed))?;
-    let record = internal_record(ctx)?;
-    record.set("promise", promise)?;
-    record.set("cancel", cancel)?;
-    Ok(record)
+    Ok(Operation { promise, cancel })
 }
 
 /// The bytes of the file at `path` from `position`, at most `length`, or to the end. A directory and a special file
@@ -497,19 +497,14 @@ fn check_kind(kind: fs::FileType) -> io::Result<()> {
     }
 }
 
-/// Set `isFile`, `isDirectory`, and `isSymlink` of `record` for `kind`. The three checks are exclusive. A link that
-/// `stat` does not follow is only a link.
-fn set_kind(record: &Object<'_>, kind: fs::FileType) -> rquickjs::Result<()> {
-    record.set("isFile", kind.is_file())?;
-    record.set("isDirectory", kind.is_dir())?;
-    record.set("isSymlink", kind.is_symlink())
-}
-
-/// One entry of a directory.
-#[derive(Debug)]
+/// One entry of a directory. The three kind checks are exclusive: a link is only a link.
+#[derive(Debug, IntoJs)]
+#[qjs(rename_all = "camelCase")]
 struct Entry {
     name: String,
-    kind: fs::FileType,
+    is_file: bool,
+    is_directory: bool,
+    is_symlink: bool,
 }
 
 /// The entries of the directory at `path`, in the order of the file system. A name that is not UTF-8 fails.
@@ -525,18 +520,27 @@ fn read_dir(path: &Path, stop: &Stop) -> Result<Vec<Entry>, Failure> {
             .into_string()
             .map_err(|_| Failure::new(io::Error::from(Errno::ILSEQ), &entry.path()))?;
         let kind = entry.file_type().map_err(fail)?;
-        entries.push(Entry { name, kind });
+        entries.push(Entry {
+            name,
+            is_file: kind.is_file(),
+            is_directory: kind.is_dir(),
+            is_symlink: kind.is_symlink(),
+        });
     }
     Ok(entries)
 }
 
 /// The facts of a path.
-#[derive(Debug)]
+#[derive(Debug, IntoJs)]
+#[qjs(rename_all = "camelCase")]
 struct Info {
-    kind: fs::FileType,
+    /// The three kind checks are exclusive. A link that `stat` does not follow is only a link.
+    is_file: bool,
+    is_directory: bool,
+    is_symlink: bool,
     size: f64,
     /// The time of the last change, in milliseconds since the epoch, when the file system gives one.
-    modified: Option<f64>,
+    mtime: Option<f64>,
 }
 
 /// The facts of the path at `path`. `follow` reads the target of a symbolic link, and otherwise the link.
@@ -558,10 +562,13 @@ fn stat(path: &Path, follow: bool, stop: &Stop) -> Result<Info, Failure> {
         });
     #[expect(clippy::cast_precision_loss, reason = "a file of 2^53 bytes does not exist")]
     let size = metadata.len() as f64;
+    let kind = metadata.file_type();
     Ok(Info {
-        kind: metadata.file_type(),
+        is_file: kind.is_file(),
+        is_directory: kind.is_dir(),
+        is_symlink: kind.is_symlink(),
         size,
-        modified,
+        mtime: modified,
     })
 }
 

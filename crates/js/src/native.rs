@@ -60,19 +60,13 @@ pub(crate) fn declare<'js>(ctx: &Ctx<'js>, name: &str) -> Option<rquickjs::Resul
     (name == NAME).then(|| Module::declare_def::<Native, _>(ctx.clone(), name))
 }
 
-/// A new object for the internal modules, without a prototype: a setter of `Object.prototype` then does not see a field
-/// that a native sets. A value for a plugin needs a normal object.
-pub(crate) fn internal_record<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
-    Object::new_proto(ctx.clone(), None)
-}
-
 /// Build the export object of the native module.
 pub(crate) fn install(
     ctx: &Ctx<'_>,
     registry: &Rc<Registry>,
     reports: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
-    let object = internal_record(ctx)?;
+    let object = Object::new(ctx.clone())?;
     fs::add(ctx, &object)?;
     lines::add(ctx, &object)?;
     encoding::add(ctx, &object)?;

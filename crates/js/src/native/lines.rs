@@ -7,7 +7,7 @@ use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
 use rquickjs::function::Async;
-use rquickjs::{Ctx, Function, Object};
+use rquickjs::{Ctx, Function, IntoJs, Object, Value};
 
 use crate::error::{ErrorClass, throw};
 
@@ -40,7 +40,7 @@ async fn read_lines(
     offset: u32,
     limit: u32,
     max_bytes: u32,
-) -> rquickjs::Result<Object<'_>> {
+) -> rquickjs::Result<Value<'_>> {
     let full = Path::new(&folder).join(&path);
     let read = tokio::task::spawn_blocking(move || lines(&full, offset, limit, max_bytes as usize))
         .await
@@ -48,21 +48,35 @@ async fn read_lines(
     // A throw comes last: a pending exception across an await can reach other code.
     let lines = read.map_err(|message| throw(&ctx, ErrorClass::Error, &message))?;
 
-    let object = super::internal_record(&ctx)?;
     match lines {
-        Lines::Text { text, next, cut } => {
-            object.set("text", text)?;
-            object.set("next", next)?;
-            object.set("cut", cut)?;
+        Lines::Text { text, next, cut } => TextLines { text, next, cut }.into_js(&ctx),
+        Lines::Image { path, mime } => ImageLines {
+            image: Image { path, mime_type: mime },
         }
-        Lines::Image { path, mime } => {
-            let image = super::internal_record(&ctx)?;
-            image.set("path", path)?;
-            image.set("mimeType", mime)?;
-            object.set("image", image)?;
-        }
+        .into_js(&ctx),
     }
-    Ok(object)
+}
+
+/// What `readLines` gives for a text file.
+#[derive(IntoJs)]
+struct TextLines {
+    text: String,
+    next: Option<u32>,
+    cut: Option<u32>,
+}
+
+/// What `readLines` gives for an image.
+#[derive(IntoJs)]
+struct ImageLines {
+    image: Image,
+}
+
+/// An image file: its path and its media type.
+#[derive(IntoJs)]
+#[qjs(rename_all = "camelCase")]
+struct Image {
+    path: String,
+    mime_type: &'static str,
 }
 
 /// The text of a file that is not UTF-8.
