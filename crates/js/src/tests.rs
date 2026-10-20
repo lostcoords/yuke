@@ -332,9 +332,9 @@ async fn timers_with_one_delay_fire_in_the_order_of_their_set() {
 }
 
 #[tokio::test]
-async fn a_promise_job_of_a_timer_callback_runs_before_the_next_callback() {
+async fn a_promise_reaction_of_a_timer_callback_runs_before_the_next_callback() {
     let order = run::<Vec<String>>(
-        "a_promise_job_of_a_timer_callback_runs_before_the_next_callback",
+        "a_promise_reaction_of_a_timer_callback_runs_before_the_next_callback",
         "const order = [];
          setTimeout(() => { order.push('first'); Promise.resolve().then(() => order.push('job')); }, 5);
          setTimeout(() => order.push('second'), 5);

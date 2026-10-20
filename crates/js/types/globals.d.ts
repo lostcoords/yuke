@@ -82,7 +82,7 @@ declare var DOMException: {
   readonly DATA_CLONE_ERR: 25;
 };
 
-/** Run `callback` as a microtask: after the current job, before the next timer. */
+/** Run `callback` as a microtask: after the current script, before the next timer. */
 declare function queueMicrotask(callback: () => void): void;
 /** The binary string of the base64 text `data`. A text that is not base64 throws a `DOMException`. */
 declare function atob(data: string): string;

@@ -5,7 +5,7 @@
  */
 export type Job = { 
 /**
- * The id of the job, for example `job-3`.
+ * The id of the job, for example `job-1a2b`.
  */
 id: string, 
 /**

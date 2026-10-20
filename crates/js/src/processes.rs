@@ -1,5 +1,7 @@
-//! The child processes of the tools: the commands of `exec` and the background jobs. They run on the tokio runtime of
-//! the consumer, so a job outlives a reload of the JavaScript.
+//! The child processes of the tools: the commands of `exec` and the jobs. A job is background work of one session: a
+//! shell command that outlives the tool call that starts it. When it ends by itself, its session gets one report. A
+//! stop ends it without a report. The processes run on the tokio runtime of the consumer, so a job outlives a reload
+//! of the JavaScript.
 
 use std::collections::VecDeque;
 use std::ffi::OsStr;
@@ -160,7 +162,7 @@ impl JobEnd {
 /// from the user.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobEnded {
-    /// The id of the job, for example `job-3`.
+    /// The id of the job, for example `job-1a2b`.
     pub id: String,
     /// The text for the model: the end, the log file, and the last lines of the log.
     pub text: String,

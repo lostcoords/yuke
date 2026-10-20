@@ -244,7 +244,7 @@ async fn serve_calls(
         return;
     }
 
-    // The drive runs the promise jobs and the spawned futures. It holds the runtime, so it drops before the engine.
+    // The drive runs the promise reactions and the spawned futures. It holds the runtime, so it drops before the engine.
     let mut drive = pin!(engine.runtime.drive());
     loop {
         tokio::select! {

@@ -350,7 +350,7 @@ pub struct ListJobsResult {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Job {
-    /// The id of the job, for example `job-3`.
+    /// The id of the job, for example `job-1a2b`.
     pub id: String,
     /// The command of the job.
     pub command: String,

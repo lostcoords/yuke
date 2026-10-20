@@ -30,7 +30,7 @@ const performance: typeof globalThis.performance = Object.freeze({
   toJSON: () => ({ timeOrigin }),
 });
 
-// The engine drops the throw of a job, so the callback reports its own throw, as on the web.
+// The engine drops the throw of a queued callback, so the callback reports its own throw, as on the web.
 const { queueMicrotask: engineQueueMicrotask, reportError } = globalThis;
 function queueMicrotask(callback: () => void): void {
   if (typeof callback !== "function") throw new TypeError("queueMicrotask: the callback is no function");

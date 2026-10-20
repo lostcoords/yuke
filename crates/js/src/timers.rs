@@ -207,7 +207,7 @@ async fn fire(ctx: Ctx<'_>, timers: Rc<Timers>, faults: mpsc::UnboundedSender<Re
             {
                 // The owner dropped the receiver, so it ignores faults.
             }
-            // The promise jobs of a callback run before the next callback, as on the web.
+            // The promise reactions of a callback run before the next callback, as on the web.
             while ctx.execute_pending_job() {}
             timers.finish(id, timer);
         }
