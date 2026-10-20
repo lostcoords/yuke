@@ -48,7 +48,19 @@ request: InteractionRequest, } | { "sessionUpdate": "interaction_closed",
 /**
  * The question.
  */
-interactionId: InteractionId, } | { "sessionUpdate": "input_removed", 
+interactionId: InteractionId, } | { "sessionUpdate": "mcp_server", 
+/**
+ * The name of the server in its config.
+ */
+name: string, } & ({ "state": "connecting" } | { "state": "connected", 
+/**
+ * The number of its tools.
+ */
+tools: number, } | { "state": "failed", 
+/**
+ * Why.
+ */
+error: string, } | { "state": "disabled" }) | { "sessionUpdate": "input_removed", 
 /**
  * The id of the input.
  */

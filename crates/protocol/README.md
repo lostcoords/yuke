@@ -11,7 +11,8 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   connect. The server holds `PATH.lock`, so a second server on the path fails.
 - SIGINT, SIGTERM, and SIGHUP end the server. The active client gets the updates of the shutdown.
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
-  `session/remove_input`, `session/set_settings`, `job/list`, `job/stop`, `credential/update`, `interaction/respond`.
+  `session/remove_input`, `session/set_settings`, `job/list`, `job/stop`, `credential/update`, `interaction/respond`,
+  `mcp/list`.
 - Each connection starts with `initialize`. Its `instanceId` is the id of the server process. A client that
   reconnects and gets another id talks to a new process, so the turns and jobs of the old process are gone. The client
   then loads each session again.
@@ -36,8 +37,9 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   settings (model, request settings, folder) do not change: `session/set_settings` fails while a turn
   runs or input waits.
 - `session/load` sends the session as updates: the saved events, a `state` update, an `input_accepted` for each
-  pending input, a `job` update for each running job, and an `interaction_requested` for each open question. Then
-  come the live updates of the load time that these do not hold, and the empty answer. A client applies the updates
+  pending input, a `job` update for each running job, an `interaction_requested` for each open question, and an
+  `mcp_server` update for each MCP server. Then come the live updates of the load time that these do not hold, and the
+  empty answer. A client applies the updates
   in order. It drops a saved event that it has (by `seq`), an `input_accepted` that it has (by `inputId`), and an
   `interaction_requested` that it has (by `interactionId`). The server disconnects a client that falls behind. On
   stdin and stdout, that ends the server. On a socket, the client connects and loads again.
@@ -63,6 +65,9 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   option that the question lacks, or an unknown id fails the request. An `interaction_closed` update ends each
   question: an answer, an abort of the asker, or the close of the session. A run without a client (`yuke -p`) answers
   each question with no answer.
+- MCP servers: each open session runs the servers of the user config. An `mcp_server` live update holds the whole
+  state of one server: `connecting`, `connected` with its tool count, `failed` with its error, or `disabled`.
+  `mcp/list` gives each server of a session.
 - Each type holds one message. The protocol has no batches.
 
 The session types of the messages (`SessionId`, `SessionSettings`, `SessionEvent`, and others) are the types that

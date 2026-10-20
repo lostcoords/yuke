@@ -2,7 +2,7 @@
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -13,10 +13,11 @@ use yuke_agent::{InputSender, Loaded, Session, SessionError, SessionObserver, St
 use yuke_ai::ToolDefinition;
 use yuke_engine::{CancellationToken, Driver, MediaStore, Toolset, chain_text};
 use yuke_js::{Runtime, ScriptSession, ScriptTool, SessionHost};
+use yuke_mcp::{McpTool, OnChange, Servers};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InteractionId, InteractionRequest, InteractionResponse, Job, LiveUpdate, NoticeLevel,
-    NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate,
-    SessionUpdateParams, StoredEvent,
+    EventNumber, Input, InputId, InteractionId, InteractionRequest, InteractionResponse, Job, LiveUpdate, McpServer,
+    NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings, SessionState,
+    SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 use super::{AppError, Mode, Observer, SOURCE, Shared, TokioTimer, lock, model_of, save_settings, warn};
@@ -35,6 +36,8 @@ pub(super) struct LiveSession {
     host: Arc<Host>,
     /// The session of the plugins. Each turn takes its tools.
     script: Arc<ScriptSession>,
+    /// The MCP servers of the session. Each turn takes their tools.
+    servers: Arc<Servers>,
     task: JoinHandle<()>,
 }
 
@@ -69,11 +72,13 @@ impl LiveSession {
                 .await
                 .map_err(|error| AppError::Internal(chain_text(&error)))?,
         );
+        let servers = Arc::new(start_servers(&host, &session.settings().cwd));
         let session = Arc::new(tokio::sync::Mutex::new(session));
         let turn = Arc::default();
         let task = SessionTask {
             session: Arc::clone(&session),
             script: Arc::clone(&script),
+            servers: Arc::clone(&servers),
             host: Arc::clone(&host),
             inbox: inbox.clone(),
             turn: Arc::clone(&turn),
@@ -86,8 +91,14 @@ impl LiveSession {
             closed,
             host,
             script,
+            servers,
             task: tokio::spawn(task.run()),
         })
+    }
+
+    /// Each MCP server of the session and its state.
+    pub(super) fn mcp_servers(&self) -> Vec<McpServer> {
+        self.servers.states()
     }
 
     /// Whether a turn runs.
@@ -122,7 +133,7 @@ impl LiveSession {
             .load(self.inbox.output.session, after)
             .await
             .map_err(AppError::Store)?;
-        hold.release(loaded, || (self.state(), self.jobs()));
+        hold.release(loaded, || (self.state(), self.jobs(), self.servers.states()));
         Ok(())
     }
 
@@ -185,6 +196,7 @@ impl LiveSession {
         }
         // After the task, so a job that the cancelled turn started also stops.
         self.host.shared.processes.close_owner(&self.owner()).await;
+        self.servers.close().await;
     }
 
     /// The owner of the jobs of the session.
@@ -372,10 +384,10 @@ impl<'a> Hold<'a> {
     /// Send the snapshot: `loaded` from one store read, then the state and the running jobs from `now`. Then send the
     /// kept updates without the saved events that the snapshot holds. `now` runs under the lock, so no update comes
     /// between it and its send.
-    fn release(self, loaded: Loaded, now: impl FnOnce() -> (SessionState, Vec<Job>)) {
+    fn release(self, loaded: Loaded, now: impl FnOnce() -> (SessionState, Vec<Job>, Vec<McpServer>)) {
         let mut sent = lock(&self.output.sent);
         let last = loaded.events.last().map(|event| event.event_number);
-        let (state, jobs) = now();
+        let (state, jobs, servers) = now();
         for event in loaded.events {
             self.output.send(&mut sent, SessionUpdate::Saved(event));
         }
@@ -391,6 +403,10 @@ impl<'a> Hold<'a> {
         for job in jobs {
             self.output
                 .send(&mut sent, SessionUpdate::Live(LiveUpdate::Job { job }));
+        }
+        for server in servers {
+            self.output
+                .send(&mut sent, SessionUpdate::Live(LiveUpdate::McpServer { server }));
         }
         let questions: Vec<LiveUpdate> = sent
             .questions
@@ -427,6 +443,7 @@ impl Drop for Hold<'_> {
 struct SessionTask {
     session: Arc<tokio::sync::Mutex<Session>>,
     script: Arc<ScriptSession>,
+    servers: Arc<Servers>,
     host: Arc<Host>,
     inbox: Inbox,
     turn: Arc<Mutex<Option<CancellationToken>>>,
@@ -442,6 +459,19 @@ impl SessionTask {
                 () = self.inbox.wake.notified() => self.run_waiting_turns().await,
                 () = self.closed.cancelled() => return,
             }
+        }
+    }
+
+    /// The tools of the next turn: the tools of the plugins and of the MCP servers. The first turn waits for the plugins
+    /// and the servers. A cancel or a close ends the wait, and the turn then ends as cancelled, so it needs no tool.
+    async fn toolset(&self, token: &CancellationToken) -> Result<Toolset, String> {
+        tokio::select! {
+            tools = async {
+                let tools = self.script.tools().await;
+                self.servers.ready().await;
+                tools
+            } => toolset_of(tools, self.servers.tools()),
+            () = token.cancelled() => Ok(Toolset::new()),
         }
     }
 
@@ -486,12 +516,7 @@ impl SessionTask {
             output.publish(SessionUpdate::Live(LiveUpdate::State {
                 state: SessionState::Running,
             }));
-            // The first turn waits for the plugins. A cancel or a close ends the wait, and the turn then ends as
-            // cancelled, so it needs no tool.
-            let toolset = tokio::select! {
-                tools = self.script.tools() => toolset_of(tools),
-                () = token.cancelled() => Ok(Toolset::new()),
-            };
+            let toolset = self.toolset(&token).await;
             let prepared = match toolset {
                 Ok(toolset) => self
                     .script
@@ -568,12 +593,36 @@ async fn recover(session: &mut Session, output: &Output) -> Result<(), AppError>
 }
 
 /// The toolset of a turn from the tools of the plugins.
-fn toolset_of(tools: Result<Vec<(ToolDefinition, ScriptTool)>, yuke_js::Error>) -> Result<Toolset, String> {
+fn toolset_of(
+    tools: Result<Vec<(ToolDefinition, ScriptTool)>, yuke_js::Error>,
+    mcp: Vec<(ToolDefinition, McpTool)>,
+) -> Result<Toolset, String> {
     let mut toolset = Toolset::new();
     for (definition, tool) in tools.map_err(|error| chain_text(&error))? {
         toolset.add(definition, tool).map_err(|error| chain_text(&error))?;
     }
+    for (definition, tool) in mcp {
+        toolset.add(definition, tool).map_err(|error| chain_text(&error))?;
+    }
     Ok(toolset)
+}
+
+/// Start the MCP servers of the user config for the session of `host` in `folder`. Each change of a server state is a
+/// live update of the session.
+fn start_servers(host: &Arc<Host>, folder: &Path) -> Servers {
+    let output = Arc::clone(&host.inbox.output);
+    let on_change: OnChange =
+        Arc::new(move |server| output.publish(SessionUpdate::Live(LiveUpdate::McpServer { server })));
+    let shared = &host.shared;
+    let variable = |name: &str| (shared.machine.variable)(name).and_then(|value| value.into_string().ok());
+    let servers = shared.mcp.servers.clone().into_iter().collect();
+    Servers::start(
+        servers,
+        &variable,
+        folder,
+        Arc::clone(host) as Arc<dyn MediaStore>,
+        on_change,
+    )
 }
 
 /// Closes an open question when its asker stops waiting.
@@ -787,7 +836,7 @@ mod tests {
                 input: input(),
             }],
         };
-        hold.release(loaded, || (SessionState::Running, vec![running_job()]));
+        hold.release(loaded, || (SessionState::Running, vec![running_job()], Vec::new()));
         output.publish(removed(3));
 
         assert_eq!(
@@ -943,7 +992,7 @@ mod tests {
             events: Vec::new(),
             pending: Vec::new(),
         };
-        hold.release(loaded, || (SessionState::Idle, Vec::new()));
+        hold.release(loaded, || (SessionState::Idle, Vec::new(), Vec::new()));
         output.close_question(first);
 
         assert_eq!(

@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{DraftId, EventNumber, Input, InputId, InteractionId, InteractionRequest, Job, SessionId, StoredEvent};
+use crate::{
+    DraftId, EventNumber, Input, InputId, InteractionId, InteractionRequest, Job, McpServer, SessionId, StoredEvent,
+};
 
 /// The params of `session/update`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -96,6 +98,13 @@ pub enum LiveUpdate {
     InteractionClosed {
         /// The question.
         interaction_id: InteractionId,
+    },
+    /// An MCP server of the session started, failed, or stopped. The update holds its whole state, so a client replaces
+    /// its copy.
+    McpServer {
+        /// The server.
+        #[serde(flatten)]
+        server: McpServer,
     },
     /// A pending input was removed. A turn that took it before the removal fails its next commit.
     InputRemoved {

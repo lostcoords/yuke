@@ -15,6 +15,7 @@ serde_json = "1.0.151"
 tokio = { version = "1.53", features = ["macros", "process", "rt", "sync"] }
 yuke-ai = { path = "../ai", default-features = false }
 yuke-engine = { path = "../engine" }
+yuke-protocol = { path = "../protocol" }
 
 [features]
 # Builds the MCP server of the tests, so a plain build of the crate leaves it out.

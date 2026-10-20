@@ -2610,6 +2610,7 @@ dependencies = [
  "yuke-ai",
  "yuke-engine",
  "yuke-js",
+ "yuke-mcp",
  "yuke-protocol",
  "yuke-store",
  "yuke-testing",
@@ -2699,6 +2700,7 @@ dependencies = [
  "tokio",
  "yuke-ai",
  "yuke-engine",
+ "yuke-protocol",
  "yuke-testing",
 ]
 

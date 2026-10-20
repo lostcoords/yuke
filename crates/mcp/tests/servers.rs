@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use yuke_ai::{Blob, Block, Target};
 use yuke_engine::{CancellationToken, Driver, MediaStore, Toolset};
-use yuke_mcp::{ServerConfig, ServerState, Servers};
+use yuke_mcp::{ServerConfig, Servers};
+use yuke_protocol::{McpServer, McpServerState};
 use yuke_testing::{NoWait, ScriptedTransport, model_of, target, text_reply, tool_reply};
 
 /// The base64 PNG of one pixel, as the `picture` tool of the test server sends it.
@@ -60,14 +61,27 @@ fn folder(name: &str) -> PathBuf {
     yuke_testing::folder("mcp", name)
 }
 
-/// The servers of `entries`, after each start ended.
-async fn started(entries: Vec<(String, ServerConfig)>, folder: &Path, media: Arc<Recorded>) -> Servers {
+/// Keeps each change of a server state.
+type Changes = Arc<Mutex<Vec<McpServer>>>;
+
+/// The servers of `entries`, after each start ended, and the changes of their states.
+async fn started(entries: Vec<(String, ServerConfig)>, folder: &Path, media: Arc<Recorded>) -> (Servers, Changes) {
     let variable = |name: &str| (name == "SET").then(|| "set".to_owned());
-    let servers = Servers::start(entries, &variable, folder, media);
+    let changes = Changes::default();
+    let kept = Arc::clone(&changes);
+    let on_change = Arc::new(move |server| kept.lock().unwrap().push(server));
+    let servers = Servers::start(entries, &variable, folder, media, on_change);
     tokio::time::timeout(Duration::from_secs(10), servers.ready())
         .await
         .unwrap();
-    servers
+    (servers, changes)
+}
+
+fn server(name: &str, state: McpServerState) -> McpServer {
+    McpServer {
+        name: name.to_owned(),
+        state,
+    }
 }
 
 /// The test target with a native tool search, so the model calls a deferred tool by its name.
@@ -91,16 +105,17 @@ async fn a_server_starts_and_gives_its_tools_deferred_with_their_names_and_schem
     let folder = folder("a_server_starts");
     let log = folder.join("log");
     let entry = test_server(&[("MCP_TEST_LOG", log.to_str().unwrap())]);
-    let servers = started(vec![("test".to_owned(), entry)], &folder, Arc::default()).await;
+    let (servers, changes) = started(vec![("test".to_owned(), entry)], &folder, Arc::default()).await;
 
     let tools = servers.tools();
 
     assert_eq!(
         servers.states(),
-        [("test".to_owned(), ServerState::Connected { tools: 7 })]
+        [server("test", McpServerState::Connected { tools: 7 })]
     );
     // The newest version with `initialize`, which each server of this era speaks.
     assert_eq!(std::fs::read_to_string(&log).unwrap(), "initialize \"2025-11-25\"\n");
+    assert_eq!(*changes.lock().unwrap(), servers.states());
     let names: Vec<_> = tools.iter().map(|(definition, _)| definition.name.as_str()).collect();
     assert_eq!(
         names,
@@ -128,7 +143,7 @@ async fn a_server_starts_and_gives_its_tools_deferred_with_their_names_and_schem
 async fn the_model_reads_the_text_the_image_the_error_and_the_structure_of_the_results() {
     let folder = folder("the_model_reads_the_results");
     let media = Arc::new(Recorded::default());
-    let servers = started(vec![("test".to_owned(), test_server(&[]))], &folder, Arc::clone(&media)).await;
+    let (servers, _changes) = started(vec![("test".to_owned(), test_server(&[]))], &folder, Arc::clone(&media)).await;
     let toolset = toolset(&servers);
     let transport = ScriptedTransport::new([
         tool_reply(&[
@@ -168,7 +183,7 @@ async fn a_cancel_of_a_call_sends_the_cancel_to_the_server() {
     let folder = folder("a_cancel_of_a_call");
     let log = folder.join("log");
     let entry = test_server(&[("MCP_TEST_LOG", log.to_str().unwrap())]);
-    let servers = started(vec![("test".to_owned(), entry)], &folder, Arc::default()).await;
+    let (servers, _changes) = started(vec![("test".to_owned(), entry)], &folder, Arc::default()).await;
     let toolset = toolset(&servers);
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "mcp__test__wait", "{}")]), text_reply("done")]);
     let model = model_of(native_target());
@@ -213,7 +228,7 @@ async fn two_servers_with_one_valid_name_both_keep_their_tools() {
         ("a b".to_owned(), test_server(&[])),
         ("a_b".to_owned(), test_server(&[])),
     ];
-    let servers = started(entries, &folder, Arc::default()).await;
+    let (servers, _changes) = started(entries, &folder, Arc::default()).await;
 
     let tools = servers.tools();
 
@@ -230,7 +245,7 @@ async fn two_servers_with_one_valid_name_both_keep_their_tools() {
 #[tokio::test]
 async fn a_server_that_exits_fails_and_loses_its_tools() {
     let folder = folder("a_server_that_exits");
-    let servers = started(vec![("test".to_owned(), test_server(&[]))], &folder, Arc::default()).await;
+    let (servers, changes) = started(vec![("test".to_owned(), test_server(&[]))], &folder, Arc::default()).await;
     let toolset = toolset(&servers);
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "mcp__test__exit", "{}")]), text_reply("done")]);
     let model = model_of(native_target());
@@ -242,15 +257,18 @@ async fn a_server_that_exits_fails_and_loses_its_tools() {
         .await
         .unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while servers.states()[0].1
-        != (ServerState::Failed {
+    let stopped = server(
+        "test",
+        McpServerState::Failed {
             error: "the server stopped".to_owned(),
-        })
-    {
-        assert!(Instant::now() < deadline, "{:?}", servers.states());
+        },
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while changes.lock().unwrap().last() != Some(&stopped) {
+        assert!(Instant::now() < deadline, "{:?}", changes.lock().unwrap());
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    assert_eq!(servers.states(), [stopped]);
     assert!(servers.tools().is_empty());
     assert!(
         transport.requests()[1].contains("The server closed before its answer."),
@@ -258,6 +276,33 @@ async fn a_server_that_exits_fails_and_loses_its_tools() {
         transport.requests()[1]
     );
     servers.close().await;
+}
+
+#[tokio::test]
+async fn a_close_stops_a_server_that_never_answers_its_start() {
+    let folder = folder("a_close_stops_a_server_that_never_answers");
+    // `sleep` reads nothing, so the start waits for `initialize` forever.
+    let silent = ServerConfig {
+        command: Some("sleep".to_owned()),
+        args: vec!["30".to_owned()],
+        ..test_server(&[])
+    };
+    let on_change = Arc::new(|_| {});
+    let servers = Servers::start(
+        vec![("silent".to_owned(), silent)],
+        &|_| None,
+        &folder,
+        Arc::new(Recorded::default()),
+        on_change,
+    );
+
+    let waited = tokio::time::timeout(Duration::from_millis(200), servers.ready()).await;
+    tokio::time::timeout(Duration::from_secs(5), servers.close())
+        .await
+        .unwrap();
+
+    assert!(waited.is_err(), "the start ended");
+    assert_eq!(servers.states(), [server("silent", McpServerState::Connecting)]);
 }
 
 #[tokio::test]
@@ -287,7 +332,7 @@ async fn an_entry_that_cannot_start_fails_and_a_disabled_one_stays_off() {
         ("disabled", disabled),
     ];
 
-    let servers = started(
+    let (servers, changes) = started(
         entries
             .into_iter()
             .map(|(name, entry)| (name.to_owned(), entry))
@@ -298,28 +343,30 @@ async fn an_entry_that_cannot_start_fails_and_a_disabled_one_stays_off() {
     .await;
 
     let states = servers.states();
-    let ServerState::Failed { error } = &states[0].1 else {
+    let McpServerState::Failed { error } = &states[0].state else {
         panic!("{states:?}");
     };
     assert!(error.starts_with("the server did not start: "), "{error}");
     assert_eq!(
         states[1..],
         [
-            (
-                "http".to_owned(),
-                ServerState::Failed {
+            server(
+                "http",
+                McpServerState::Failed {
                     error: "yuke cannot reach an HTTP server yet".to_owned()
                 }
             ),
-            (
-                "unset".to_owned(),
-                ServerState::Failed {
+            server(
+                "unset",
+                McpServerState::Failed {
                     error: "the variable UNSET has no value and no default".to_owned()
                 }
             ),
-            ("disabled".to_owned(), ServerState::Disabled),
+            server("disabled", McpServerState::Disabled),
         ]
     );
     assert!(servers.tools().is_empty());
+    // Only the end of a start is a change, so the entries that never start send none.
+    assert_eq!(changes.lock().unwrap().len(), 1);
     servers.close().await;
 }

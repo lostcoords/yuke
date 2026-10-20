@@ -22,7 +22,10 @@ mise exec -- cargo test --all-features
 mise exec -- env RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --all-features
 mise exec -- tsc -p crates/js/tsconfig.json
 mise exec -- biome ci --error-on-warnings
+for manifest in crates/*/Cargo.toml; do mise exec -- cargo check --manifest-path "$manifest" --all-targets || break; done
 ```
+
+The last line builds each crate with its own features only, so a feature that another crate turns on hides no gap.
 
 Ask the user before you add a dependency.
 

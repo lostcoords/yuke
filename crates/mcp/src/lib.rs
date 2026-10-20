@@ -6,4 +6,4 @@ mod names;
 mod servers;
 
 pub use config::{Config, ServerConfig};
-pub use servers::{McpTool, ServerState, Servers};
+pub use servers::{McpTool, OnChange, Servers};

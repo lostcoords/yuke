@@ -1,7 +1,7 @@
 //! The protocol server against a scripted provider, through a pair of pipes.
 
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -1135,6 +1135,79 @@ async fn a_question_after_a_close_and_a_load_has_a_new_id() {
     assert_eq!(asked["params"]["update"]["interactionId"], 2);
     assert_eq!(old.unwrap_err()["code"], -32_005);
     assert!(new.is_ok(), "{new:?}");
+    client.end().await;
+}
+
+fn mcp_state(message: &Value, name: &str, state: &str) -> bool {
+    let update = &message["params"]["update"];
+    update["sessionUpdate"] == "mcp_server" && update["name"] == name && update["state"] == state
+}
+
+// A server of the user config starts with the session: its state reaches the client, its tool reaches the model, and
+// `mcp/list` and a load give its state.
+#[tokio::test]
+async fn a_user_mcp_server_gives_its_tool_to_the_model_and_its_state_to_the_client() {
+    let place = Place::new(
+        "rpc",
+        "a_user_mcp_server_gives_its_tool_to_the_model_and_its_state_to_the_client",
+    );
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/rpc/mcp_server.sh");
+    let config = json!({ "mcpServers": {
+        "sh": { "command": "sh", "args": [script] },
+        "off": { "command": "sh", "enabled": false },
+    } });
+    std::fs::create_dir_all(&place.paths.config).unwrap();
+    std::fs::write(place.paths.config.join("mcp.json"), config.to_string()).unwrap();
+    // The tool is deferred, so the model calls it through the bridge.
+    let call = r#"{"name":"mcp__sh__ping","arguments":{}}"#;
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", "tool_call", call)]), text_reply("done")]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let id = client.request("session/new", settings(&place)).await;
+    let opened = client.until(|message| message["id"] == json!(id)).await;
+    let session = opened.last().unwrap()["result"]["sessionId"].clone();
+
+    let started = if opened.iter().any(|message| mcp_state(message, "sh", "connected")) {
+        Vec::new()
+    } else {
+        client.until(|message| mcp_state(message, "sh", "connected")).await
+    };
+    client.request("session/input", input_params(&session, "ping it")).await;
+    client.until(is_idle).await;
+    let listed = client.call("mcp/list", json!({ "sessionId": session })).await.unwrap();
+    let loaded = client.load(&session, json!({})).await;
+
+    let servers = json!([
+        { "name": "off", "state": "disabled" },
+        { "name": "sh", "state": "connected", "tools": 1 },
+    ]);
+    assert_eq!(listed, json!({ "servers": servers }));
+    let replayed: Vec<Value> = loaded
+        .messages
+        .iter()
+        .map(|message| &message["params"]["update"])
+        .filter(|update| update["sessionUpdate"] == "mcp_server")
+        .map(|update| json!({ "name": update["name"], "state": update["state"], "tools": update["tools"] }))
+        .collect();
+    assert_eq!(
+        replayed,
+        [
+            json!({ "name": "off", "state": "disabled", "tools": null }),
+            json!({ "name": "sh", "state": "connected", "tools": 1 }),
+        ]
+    );
+    assert!(
+        opened
+            .iter()
+            .chain(&started)
+            .any(|message| mcp_state(message, "sh", "connected"))
+    );
+    let requests = transport.requests();
+    assert!(
+        !requests[0].contains("mcp__sh__ping") && requests[0].contains("tool_search"),
+        "{}",
+        requests[0]
+    );
+    assert!(requests[1].contains("pong"), "{}", requests[1]);
     client.end().await;
 }
 

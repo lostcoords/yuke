@@ -16,6 +16,7 @@ yuke-agent = { path = "../agent" }
 yuke-ai = { path = "../ai" }
 yuke-engine = { path = "../engine" }
 yuke-js = { path = "../js" }
+yuke-mcp = { path = "../mcp" }
 yuke-protocol = { path = "../protocol" }
 yuke-store = { path = "../store" }
 

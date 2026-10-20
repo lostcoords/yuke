@@ -23,8 +23,8 @@ use tokio::task::{AbortHandle, JoinHandle};
 use yuke_agent::StoreError;
 use yuke_protocol::{
     ClientNotification, ClientRequest, EmptyResult, Implementation, InitializeResult, InputResult, InstanceId, JsonRpc,
-    ListJobsResult, Notification, PROTOCOL_VERSION, Request, RequestId, Response, ResponseError, ResponseOutcome,
-    ServerNotification, SessionResult,
+    ListJobsResult, ListMcpServersResult, Notification, PROTOCOL_VERSION, Request, RequestId, Response, ResponseError,
+    ResponseOutcome, ServerNotification, SessionResult,
 };
 
 use crate::app::{App, AppError, Machine, Mode, Observer, lock, warn};
@@ -363,6 +363,9 @@ impl Server {
             }
             ClientRequest::Input(params) => result(&InputResult {
                 input_id: app.input(params.session_id, params.content).await?,
+            }),
+            ClientRequest::ListMcpServers(params) => result(&ListMcpServersResult {
+                servers: app.mcp_servers(params.session_id)?,
             }),
             ClientRequest::InteractionRespond(params) => {
                 app.respond(params.session_id, params.interaction_id, params.response)?;

@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
@@ -10,55 +11,70 @@ use rmcp::model::{
     CallToolRequest, CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig, ClientRequest,
     ContentBlock, Implementation, JsonObject, ProtocolVersion, ResourceContents, ServerResult, Tool as McpToolInfo,
 };
-use rmcp::service::{PeerRequestOptions, RunningService};
+use rmcp::service::{PeerRequestOptions, RunningService, RunningServiceCancellationToken};
 use rmcp::transport::TokioChildProcess;
 use rmcp::{Peer, RoleClient, ServiceExt};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use yuke_ai::{Blob, MAX_MEDIA_BYTES, Media, ToolDefinition};
 use yuke_engine::{MediaStore, Tool, ToolContent, ToolContext, parse_arguments};
+use yuke_protocol::{McpServer, McpServerState};
 
 use crate::config::{Launch, ServerConfig};
+use crate::names::{hashed_name, tool_name};
 
 /// The connection to one running server.
 type Client = RunningService<RoleClient, ClientConfig>;
-use crate::names::{hashed_name, tool_name};
 
-/// The state of one server.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ServerState {
-    /// The server starts.
-    Connecting,
-    /// The server runs, with this many tools.
-    Connected {
-        /// The number of its tools.
-        tools: usize,
-    },
-    /// The server did not start, or it stopped.
-    Failed {
-        /// Why.
-        error: String,
-    },
-    /// The config turns the server off.
-    Disabled,
-}
+/// Receives each change of the state of a server. It must not wait, and it must not call the [`Servers`].
+pub type OnChange = Arc<dyn Fn(McpServer) + Send + Sync>;
 
 /// One server of the session.
 struct Slot {
     name: String,
-    state: ServerState,
+    state: McpServerState,
     /// The connection while the server runs.
-    client: Option<Client>,
+    peer: Option<Peer<RoleClient>>,
+    /// Stops the connection while the server runs.
+    stop: Option<RunningServiceCancellationToken>,
     tools: Vec<McpToolInfo>,
 }
 
-/// The MCP servers of one session. Each server starts in the background. A drop stops each server.
+/// What the servers and their tasks share.
+struct Shared {
+    slots: Mutex<Vec<Slot>>,
+    on_change: OnChange,
+    /// After a close, a stop is no news.
+    closed: AtomicBool,
+}
+
+impl Shared {
+    /// Change the slot `index` with `change`, and report its new state after the lock.
+    fn update(&self, index: usize, change: impl FnOnce(&mut Slot)) {
+        let server = {
+            let mut slots = lock(&self.slots);
+            let slot = &mut slots[index];
+            change(slot);
+            McpServer {
+                name: slot.name.clone(),
+                state: slot.state.clone(),
+            }
+        };
+        if !self.closed.load(Ordering::Acquire) {
+            (self.on_change)(server);
+        }
+    }
+}
+
+/// The MCP servers of one session. Each server starts in the background, and its task holds its connection until the
+/// server ends. A drop stops each server.
 pub struct Servers {
-    slots: Arc<Mutex<Vec<Slot>>>,
+    shared: Arc<Shared>,
     /// The number of servers that still start.
     starting: watch::Receiver<usize>,
     media: Arc<dyn MediaStore>,
-    tasks: Vec<JoinHandle<()>>,
+    /// The task of each started server, by the index of its slot.
+    tasks: Mutex<Vec<(usize, JoinHandle<()>)>>,
 }
 
 impl std::fmt::Debug for Servers {
@@ -72,18 +88,20 @@ impl std::fmt::Debug for Servers {
 impl Servers {
     /// Start each server of `servers` in the background. `variable` gives the values of the variables of the config.
     /// A stdio server without its own folder runs in `folder`. `media` stores the attachments of the results.
+    /// `on_change` gets each later state of a server: the end of its start, and its stop.
     pub fn start(
         servers: Vec<(String, ServerConfig)>,
         variable: &dyn Fn(&str) -> Option<String>,
         folder: &Path,
         media: Arc<dyn MediaStore>,
+        on_change: OnChange,
     ) -> Servers {
         let mut slots = Vec::new();
         let mut launches = Vec::new();
         for (index, (name, config)) in servers.into_iter().enumerate() {
             let launch = config.enabled.then(|| config.launch(variable));
             let state = match launch {
-                None => ServerState::Disabled,
+                None => McpServerState::Disabled,
                 Some(Ok(Launch {
                     command,
                     args,
@@ -96,47 +114,39 @@ impl Servers {
                         .envs(env)
                         .current_dir(folder.join(cwd.unwrap_or_default()));
                     launches.push((index, process));
-                    ServerState::Connecting
+                    McpServerState::Connecting
                 }
-                Some(Err(error)) => ServerState::Failed {
+                Some(Err(error)) => McpServerState::Failed {
                     error: error.to_string(),
                 },
             };
             slots.push(Slot {
                 name,
                 state,
-                client: None,
+                peer: None,
+                stop: None,
                 tools: Vec::new(),
             });
         }
-        let slots = Arc::new(Mutex::new(slots));
+        let shared = Arc::new(Shared {
+            slots: Mutex::new(slots),
+            on_change,
+            closed: AtomicBool::new(false),
+        });
         let (count, starting) = watch::channel(launches.len());
         let count = Arc::new(count);
         let tasks = launches
             .into_iter()
             .map(|(index, process)| {
-                let (slots, count) = (Arc::clone(&slots), Arc::clone(&count));
-                tokio::spawn(async move {
-                    let connected = connect(process).await;
-                    let mut slots = lock(&slots);
-                    let slot = &mut slots[index];
-                    match connected {
-                        Ok((client, tools)) => {
-                            slot.state = ServerState::Connected { tools: tools.len() };
-                            slot.client = Some(client);
-                            slot.tools = tools;
-                        }
-                        Err(error) => slot.state = ServerState::Failed { error },
-                    }
-                    count.send_modify(|starting| *starting -= 1);
-                })
+                let (shared, count) = (Arc::clone(&shared), Arc::clone(&count));
+                (index, tokio::spawn(run(index, process, shared, count)))
             })
             .collect();
         Servers {
-            slots,
+            shared,
             starting,
             media,
-            tasks,
+            tasks: Mutex::new(tasks),
         }
     }
 
@@ -149,25 +159,25 @@ impl Servers {
         }
     }
 
-    /// The name and the state of each server, in config order.
-    pub fn states(&self) -> Vec<(String, ServerState)> {
-        let mut slots = lock(&self.slots);
-        mark_stopped(&mut slots);
-        slots
+    /// Each server and its state, in config order.
+    pub fn states(&self) -> Vec<McpServer> {
+        lock(&self.shared.slots)
             .iter()
-            .map(|slot| (slot.name.clone(), slot.state.clone()))
+            .map(|slot| McpServer {
+                name: slot.name.clone(),
+                state: slot.state.clone(),
+            })
             .collect()
     }
 
     /// The tools of the running servers, each deferred, with its definition. A tool whose name an earlier tool has gets
     /// the name with the hash.
     pub fn tools(&self) -> Vec<(ToolDefinition, McpTool)> {
-        let mut slots = lock(&self.slots);
-        mark_stopped(&mut slots);
+        let slots = lock(&self.shared.slots);
         let mut names = HashSet::new();
         let mut tools = Vec::new();
         for slot in slots.iter() {
-            let Some(client) = &slot.client else {
+            let Some(peer) = &slot.peer else {
                 continue;
             };
             for info in &slot.tools {
@@ -187,7 +197,7 @@ impl Servers {
                 }
                 .deferred();
                 let tool = McpTool {
-                    peer: client.peer().clone(),
+                    peer: peer.clone(),
                     name: info.name.to_string(),
                     media: Arc::clone(&self.media),
                 };
@@ -197,25 +207,24 @@ impl Servers {
         tools
     }
 
-    /// Stop each server, and wait for its end.
-    pub async fn close(mut self) {
-        for task in &self.tasks {
-            task.abort();
-        }
-        // The end of a task drops its start, so the program of an unfinished start has stopped too.
-        for task in self.tasks.drain(..) {
-            match task.await {
-                Ok(()) | Err(_) => {}
-            }
-        }
-        let clients: Vec<_> = lock(&self.slots)
+    /// Stop each server, and wait for its end. A running server closes its connection, and a server that still starts
+    /// stops its start.
+    pub async fn close(&self) {
+        self.shared.closed.store(true, Ordering::Release);
+        let tasks = std::mem::take(&mut *lock(&self.tasks));
+        let mut stops: Vec<_> = lock(&self.shared.slots)
             .iter_mut()
-            .filter_map(|slot| slot.client.take())
+            .map(|slot| slot.stop.take())
             .collect();
-        for client in clients {
-            match client.cancel().await {
-                // A failed service task has stopped its server already.
-                Ok(_) | Err(_) => {}
+        for (index, task) in tasks {
+            match stops.get_mut(index).and_then(Option::take) {
+                // The task ends after the cleanup of the connection.
+                Some(stop) => stop.cancel(),
+                None => task.abort(),
+            }
+            match task.await {
+                // An aborted start dropped its program, and a cancelled connection closed it.
+                Ok(()) | Err(_) => {}
             }
         }
     }
@@ -223,25 +232,46 @@ impl Servers {
 
 impl Drop for Servers {
     fn drop(&mut self) {
-        for task in &self.tasks {
+        for (_, task) in lock(&self.tasks).iter() {
             task.abort();
         }
     }
 }
 
-/// Mark each server whose connection closed as failed, and drop its tools.
-fn mark_stopped(slots: &mut [Slot]) {
-    for slot in slots {
-        // The service loop drops its receiver when the server ends, also without a cancel.
-        let closed = |client: &Client| client.is_closed() || client.peer().is_transport_closed();
-        if slot.client.as_ref().is_some_and(closed) {
-            slot.client = None;
-            slot.tools.clear();
-            slot.state = ServerState::Failed {
-                error: "the server stopped".to_owned(),
-            };
+/// Start the server of the slot `index` with `process`, and hold its connection until the server ends.
+async fn run(index: usize, process: tokio::process::Command, shared: Arc<Shared>, count: Arc<watch::Sender<usize>>) {
+    let connected = connect(process).await;
+    let client = match connected {
+        Ok((client, tools)) => {
+            shared.update(index, |slot| {
+                slot.state = McpServerState::Connected { tools: tools.len() };
+                slot.peer = Some(client.peer().clone());
+                slot.stop = Some(client.cancellation_token());
+                slot.tools = tools;
+            });
+            Some(client)
         }
+        Err(error) => {
+            shared.update(index, |slot| slot.state = McpServerState::Failed { error });
+            None
+        }
+    };
+    count.send_modify(|starting| *starting -= 1);
+    let Some(client) = client else {
+        return;
+    };
+    // The connection ends when the server ends or a close cancels it.
+    match client.waiting().await {
+        Ok(_) | Err(_) => {}
     }
+    shared.update(index, |slot| {
+        slot.peer = None;
+        slot.stop = None;
+        slot.tools.clear();
+        slot.state = McpServerState::Failed {
+            error: "the server stopped".to_owned(),
+        };
+    });
 }
 
 /// Start the program of `process`, agree on the protocol, and list its tools.

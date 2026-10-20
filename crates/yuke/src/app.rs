@@ -35,7 +35,7 @@ use yuke_store::SqliteStore;
 
 use self::live::LiveSession;
 use crate::auth::{LOCK_LIMIT, LoginSource, Pushed};
-use crate::config::Config;
+use crate::config::{Config, read_json};
 use crate::paths::Paths;
 use crate::plugins;
 use crate::prompt::{self, Environment};
@@ -86,6 +86,8 @@ struct Shared {
     processes: Arc<Processes>,
     observer: Arc<dyn Observer>,
     mode: Mode,
+    /// The MCP servers of the user, from `mcp.json` in the config folder.
+    mcp: yuke_mcp::Config,
     /// The id of the last question of any session.
     last_question: Arc<AtomicU64>,
     /// The credential of each provider with a login. One source serves each session, so one refresh serves all.
@@ -117,6 +119,7 @@ impl App {
     pub(crate) async fn start(machine: Machine, mode: Mode, observer: Arc<dyn Observer>) -> Result<App, String> {
         let providers = Providers::load(&machine.paths.config)?;
         let config = Config::load(&machine.paths.config.join("config.json"))?;
+        let mcp = read_json::<yuke_mcp::Config>(&machine.paths.config.join("mcp.json"))?;
         let plugins = plugins::plugins(&machine.paths.config, &config.plugins, &machine.paths.data)?;
         let store: Arc<dyn Store> = Arc::new(
             SqliteStore::open(&machine.paths.data)
@@ -157,6 +160,7 @@ impl App {
                 processes,
                 observer,
                 mode,
+                mcp,
                 last_question: Arc::default(),
                 logins: Mutex::default(),
             }),
@@ -366,6 +370,15 @@ impl App {
         } else {
             Err(AppError::NoJob(job_id.to_owned()))
         }
+    }
+
+    /// The MCP servers of session `id` and their states, in config order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotOpen`].
+    pub(crate) fn mcp_servers(&self, id: SessionId) -> Result<Vec<yuke_protocol::McpServer>, AppError> {
+        Ok(self.live(id)?.mcp_servers())
     }
 
     /// Give `response` to the open question `interaction_id` of session `id`.
