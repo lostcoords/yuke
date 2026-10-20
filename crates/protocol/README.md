@@ -11,7 +11,7 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   connect. The server holds `PATH.lock`, so a second server on the path fails.
 - SIGINT, SIGTERM, and SIGHUP end the server. The active client gets the updates of the shutdown.
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
-  `session/remove_input`, `session/set_settings`, `job/list`, `job/stop`, `credential/update`.
+  `session/remove_input`, `session/set_settings`, `job/list`, `job/stop`, `credential/update`, `interaction/respond`.
 - Each connection starts with `initialize`. Its `instanceId` is the id of the server process. A client that
   reconnects and gets another id talks to a new process, so the turns and jobs of the old process are gone. The client
   then loads each session again.
@@ -36,9 +36,10 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   settings (model, request settings, folder) do not change: `session/set_settings` fails while a turn
   runs or input waits.
 - `session/load` sends the session as updates: the saved events, a `state` update, an `input_accepted` for each
-  pending input, and a `job` update for each running job. Then come the live updates of the load time that these do
-  not hold, and the empty answer. A client applies the updates in order. It drops a saved event that it has (by
-  `seq`) and an `input_accepted` that it has (by `inputId`). The server disconnects a client that falls behind. On
+  pending input, a `job` update for each running job, and an `interaction_requested` for each open question. Then
+  come the live updates of the load time that these do not hold, and the empty answer. A client applies the updates
+  in order. It drops a saved event that it has (by `seq`), an `input_accepted` that it has (by `inputId`), and an
+  `interaction_requested` that it has (by `interactionId`). The server disconnects a client that falls behind. On
   stdin and stdout, that ends the server. On a socket, the client connects and loads again.
 - A notice that comes while no client is connected goes to stderr. The server drops the session updates of that
   interval. The store keeps the saved events, and `session/load` sends them again.
@@ -57,6 +58,11 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - An input holds the content that the user saw. It holds model content only when the model reads other blocks.
 - A saved commit starts with the model blocks of its consumed inputs. `consumed` gives the id, the source, the kind, and
   the block count of each input. It gives the content that the user saw only when that content differs.
+- Questions: a plugin or yuke asks the user with an `interaction_requested` live update: a `confirm`, a `select`, or
+  an `input`, with its `source`. The client answers with `interaction/respond`, or with `canceled`. A wrong kind, an
+  option that the question lacks, or an unknown id fails the request. An `interaction_closed` update ends each
+  question: an answer, an abort of the asker, or the close of the session. A run without a client (`yuke -p`) answers
+  each question with no answer.
 - Each type holds one message. The protocol has no batches.
 
 The session types of the messages (`SessionId`, `SessionSettings`, `SessionEvent`, and others) are the types that

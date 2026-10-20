@@ -70,6 +70,12 @@ pub struct EventNumber(pub u64);
 #[serde(transparent)]
 pub struct InputId(pub u64);
 
+/// The id of a question. The server gives each question a larger id than the questions before it, in each session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(transparent)]
+pub struct InteractionId(pub u64);
+
 /// The ephemeral identity of one live provider attempt. The store never saves it.
 /// A reconnect cannot resume this draft. The client replaces prior drafts with saved history.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

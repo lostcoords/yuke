@@ -45,6 +45,15 @@ pub trait SessionHost: Send + Sync {
     /// idle, and a running turn takes it after its round. The host reports a failure to the user. A job sends its end
     /// here, and a close and a shutdown wait for the return.
     async fn accept_input(&self, input: yuke_protocol::Input);
+
+    /// Ask the user `request` for `source`, a plugin name, and wait for the answer. A cancel of `cancel`, the close of
+    /// the session, and a run without a client answer [`yuke_protocol::InteractionResponse::Canceled`].
+    async fn ask(
+        &self,
+        source: &str,
+        request: yuke_protocol::InteractionRequest,
+        cancel: CancellationToken,
+    ) -> yuke_protocol::InteractionResponse;
 }
 
 /// The tools that the JavaScript defined, and the open sessions, on the JavaScript thread.

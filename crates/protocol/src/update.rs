@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{DraftId, EventNumber, Input, InputId, Job, SessionId, StoredEvent};
+use crate::{DraftId, EventNumber, Input, InputId, InteractionId, InteractionRequest, Job, SessionId, StoredEvent};
 
 /// The params of `session/update`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -81,6 +81,21 @@ pub enum LiveUpdate {
         input_id: InputId,
         /// The input.
         input: Input,
+    },
+    /// A plugin or yuke asks the user a question. The client answers with `interaction/respond`. The question stays
+    /// open until an `interaction_closed` update names it.
+    InteractionRequested {
+        /// The id that the answer names.
+        interaction_id: InteractionId,
+        /// The plugin that asks, or a part of yuke with a name that starts with `host:`.
+        source: String,
+        /// The question.
+        request: InteractionRequest,
+    },
+    /// A question ended: the user answered it, its asker stopped waiting, or its session closed. The client removes it.
+    InteractionClosed {
+        /// The question.
+        interaction_id: InteractionId,
     },
     /// A pending input was removed. A turn that took it before the removal fails its next commit.
     InputRemoved {

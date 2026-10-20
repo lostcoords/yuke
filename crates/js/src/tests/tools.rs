@@ -1,6 +1,7 @@
 //! The built-in modules, the tool bridge, and the tools `read`, `write`, `edit`.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -10,7 +11,7 @@ use async_trait::async_trait;
 use rquickjs::Ctx;
 use tokio::sync::mpsc;
 use yuke_engine::{CancellationToken, Concurrency, Tool, ToolContent};
-use yuke_protocol::SessionId;
+use yuke_protocol::{InteractionRequest, InteractionResponse, SessionId};
 
 use super::{evaluate, folder, load_entry, module, next_fault, next_notice, script_error, start, write};
 use crate::tools::forward;
@@ -29,6 +30,10 @@ pub(super) struct TestHost {
     pub(super) end_gate: Option<Arc<tokio::sync::Notify>>,
     /// Each input that the plugins and the jobs gave the session, in order.
     pub(super) inputs: Mutex<Vec<yuke_protocol::Input>>,
+    /// Each question and its source, in order.
+    pub(super) questions: Mutex<Vec<(String, InteractionRequest)>>,
+    /// The answer of each question, in order. A question after the last answer waits for its cancel.
+    pub(super) answers: Mutex<VecDeque<InteractionResponse>>,
 }
 
 impl TestHost {
@@ -41,6 +46,8 @@ impl TestHost {
             changed: Mutex::default(),
             end_gate: None,
             inputs: Mutex::default(),
+            questions: Mutex::default(),
+            answers: Mutex::default(),
         }
     }
 }
@@ -73,6 +80,16 @@ impl SessionHost for TestHost {
             gate.notified().await;
         }
         self.inputs.lock().unwrap().push(input);
+    }
+
+    async fn ask(&self, source: &str, request: InteractionRequest, cancel: CancellationToken) -> InteractionResponse {
+        self.questions.lock().unwrap().push((source.to_owned(), request));
+        let answer = self.answers.lock().unwrap().pop_front();
+        if let Some(answer) = answer {
+            return answer;
+        }
+        cancel.cancelled().await;
+        InteractionResponse::Canceled
     }
 }
 

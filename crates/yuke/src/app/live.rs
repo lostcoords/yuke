@@ -1,22 +1,25 @@
 //! One open session: a task that runs its turns, and the parts that the app shares with that task.
 
-use std::collections::HashSet;
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, oneshot};
 use tokio::task::JoinHandle;
 use yuke_agent::{InputSender, Loaded, Session, SessionError, SessionObserver, StoreError};
 use yuke_ai::ToolDefinition;
 use yuke_engine::{CancellationToken, Driver, Toolset, chain_text};
 use yuke_js::{Runtime, ScriptSession, ScriptTool, SessionHost};
 use yuke_protocol::{
-    EventNumber, Input, InputId, Job, LiveUpdate, NoticeLevel, NoticeParams, ServerNotification, SessionEvent,
-    SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
+    EventNumber, Input, InputId, InteractionId, InteractionRequest, InteractionResponse, Job, LiveUpdate, NoticeLevel,
+    NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate,
+    SessionUpdateParams, StoredEvent,
 };
 
-use super::{AppError, Observer, SOURCE, Shared, TokioTimer, lock, model_of, save_settings, warn};
+use super::{AppError, Mode, Observer, SOURCE, Shared, TokioTimer, lock, model_of, save_settings, warn};
 
 /// An open session.
 pub(super) struct LiveSession {
@@ -50,12 +53,15 @@ impl LiveSession {
                 session: session.id(),
                 observer: Arc::clone(&shared.observer),
                 sent: Mutex::default(),
+                last_question: Arc::clone(&shared.last_question),
             }),
         };
+        let closed = CancellationToken::new();
         let host = Arc::new(Host {
             folder: Mutex::new(session.settings().cwd.clone()),
             shared,
             inbox: inbox.clone(),
+            closed: closed.clone(),
         });
         let script = Arc::new(
             runtime
@@ -65,7 +71,6 @@ impl LiveSession {
         );
         let session = Arc::new(tokio::sync::Mutex::new(session));
         let turn = Arc::default();
-        let closed = CancellationToken::new();
         let task = SessionTask {
             session: Arc::clone(&session),
             script: Arc::clone(&script),
@@ -92,6 +97,11 @@ impl LiveSession {
         } else {
             SessionState::Idle
         }
+    }
+
+    /// Give `response` to the open question `id`.
+    pub(super) fn answer(&self, id: InteractionId, response: InteractionResponse) -> Result<(), AppError> {
+        self.inbox.output.answer(id, response)
     }
 
     /// Cancel the running turn.
@@ -223,6 +233,8 @@ struct Output {
     session: SessionId,
     observer: Arc<dyn Observer>,
     sent: Mutex<Sent>,
+    /// The id of the last question of any session, so an id names one question also after a close and a load.
+    last_question: Arc<AtomicU64>,
 }
 
 /// What the output keeps under its lock.
@@ -233,16 +245,79 @@ struct Sent {
     /// The inputs that a sent commit consumed or a sent removal named. An `input_accepted` can come after them, because
     /// the store saves an input before the server sends it, so the output drops it.
     gone: HashSet<InputId>,
+    /// The open questions. A load sends them, so they live under the same lock as the updates.
+    questions: BTreeMap<InteractionId, Question>,
+}
+
+/// An open question of the session.
+struct Question {
+    source: String,
+    request: InteractionRequest,
+    /// Takes the answer of the user.
+    answer: oneshot::Sender<InteractionResponse>,
 }
 
 impl Output {
     /// Send `update` to the observer, or keep it while a load runs.
     fn publish(&self, update: SessionUpdate) {
         let mut sent = lock(&self.sent);
+        self.publish_in(&mut sent, update);
+    }
+
+    fn publish_in(&self, sent: &mut Sent, update: SessionUpdate) {
         match sent.held.as_mut() {
             Some(held) => held.push(update),
-            None => self.send(&mut sent, update),
+            None => self.send(sent, update),
         }
+    }
+
+    /// Open the question `request` of `source`, and return its id and the receiver of its answer.
+    fn ask(
+        &self,
+        source: &str,
+        request: InteractionRequest,
+    ) -> (InteractionId, oneshot::Receiver<InteractionResponse>) {
+        let mut sent = lock(&self.sent);
+        let id = InteractionId(self.last_question.fetch_add(1, Ordering::Relaxed) + 1);
+        let (answer, answered) = oneshot::channel();
+        let update = LiveUpdate::InteractionRequested {
+            interaction_id: id,
+            source: source.to_owned(),
+            request: request.clone(),
+        };
+        sent.questions.insert(
+            id,
+            Question {
+                source: source.to_owned(),
+                request,
+                answer,
+            },
+        );
+        self.publish_in(&mut sent, SessionUpdate::Live(update));
+        (id, answered)
+    }
+
+    /// End the question `id` without an answer, when it is still open.
+    fn close_question(&self, id: InteractionId) {
+        let mut sent = lock(&self.sent);
+        if sent.questions.remove(&id).is_some() {
+            let update = LiveUpdate::InteractionClosed { interaction_id: id };
+            self.publish_in(&mut sent, SessionUpdate::Live(update));
+        }
+    }
+
+    /// End the open question `id` with `response`.
+    fn answer(&self, id: InteractionId, response: InteractionResponse) -> Result<(), AppError> {
+        let mut sent = lock(&self.sent);
+        let Entry::Occupied(open) = sent.questions.entry(id) else {
+            return Err(AppError::NoInteraction(id));
+        };
+        check_answer(&open.get().request, &response)?;
+        let question = open.remove();
+        let update = LiveUpdate::InteractionClosed { interaction_id: id };
+        self.publish_in(&mut sent, SessionUpdate::Live(update));
+        // The asker closes the question before it stops waiting, so an open question has a receiver.
+        question.answer.send(response).map_err(|_| AppError::NoInteraction(id))
     }
 
     fn send(&self, sent: &mut Sent, update: SessionUpdate) {
@@ -316,6 +391,18 @@ impl<'a> Hold<'a> {
         for job in jobs {
             self.output
                 .send(&mut sent, SessionUpdate::Live(LiveUpdate::Job { job }));
+        }
+        let questions: Vec<LiveUpdate> = sent
+            .questions
+            .iter()
+            .map(|(id, question)| LiveUpdate::InteractionRequested {
+                interaction_id: *id,
+                source: question.source.clone(),
+                request: question.request.clone(),
+            })
+            .collect();
+        for update in questions {
+            self.output.send(&mut sent, SessionUpdate::Live(update));
         }
         for update in sent.held.take().unwrap_or_default() {
             let read =
@@ -489,12 +576,45 @@ fn toolset_of(tools: Result<Vec<(ToolDefinition, ScriptTool)>, yuke_js::Error>) 
     Ok(toolset)
 }
 
+/// Closes an open question when its asker stops waiting.
+struct Open<'a> {
+    output: &'a Output,
+    id: InteractionId,
+}
+
+impl Drop for Open<'_> {
+    fn drop(&mut self) {
+        self.output.close_question(self.id);
+    }
+}
+
+/// Fail an answer that does not fit `request`: another kind, or an option that `request` does not offer.
+fn check_answer(request: &InteractionRequest, response: &InteractionResponse) -> Result<(), AppError> {
+    match (request, response) {
+        (_, InteractionResponse::Canceled)
+        | (InteractionRequest::Confirm { .. }, InteractionResponse::Confirm { .. })
+        | (InteractionRequest::Input { .. }, InteractionResponse::Input { .. }) => Ok(()),
+        (InteractionRequest::Select { options, .. }, InteractionResponse::Select { value }) => {
+            if options.contains(value) {
+                Ok(())
+            } else {
+                Err(AppError::Invalid(format!("the question offers no option {value:?}")))
+            }
+        }
+        _ => Err(AppError::Invalid(
+            "the answer is of another kind than the question".to_owned(),
+        )),
+    }
+}
+
 /// The session of the tools: its folder, its blob store, and the input of its background jobs.
 struct Host {
     /// The folder of the session. Each turn sets it from the settings.
     folder: Mutex<PathBuf>,
     shared: Arc<Shared>,
     inbox: Inbox,
+    /// The close of the session. It ends each open question.
+    closed: CancellationToken,
 }
 
 #[async_trait]
@@ -524,6 +644,27 @@ impl SessionHost for Host {
             self.inbox.output.notice(NoticeLevel::Error, &chain_text(&error));
         }
     }
+
+    async fn ask(&self, source: &str, request: InteractionRequest, cancel: CancellationToken) -> InteractionResponse {
+        let output = &self.inbox.output;
+        if self.shared.mode == Mode::Print {
+            output.notice(
+                NoticeLevel::Warn,
+                &format!("no client can answer the question of {source}: {}", request.title()),
+            );
+            return InteractionResponse::Canceled;
+        }
+        let (id, answered) = output.ask(source, request);
+        // A dropped wait closes the question too, so an open question always has a waiter.
+        let open = Open { output, id };
+        let response = tokio::select! {
+            answered = answered => answered.unwrap_or(InteractionResponse::Canceled),
+            () = cancel.cancelled() => InteractionResponse::Canceled,
+            () = self.closed.cancelled() => InteractionResponse::Canceled,
+        };
+        drop(open);
+        response
+    }
 }
 
 #[cfg(test)]
@@ -550,6 +691,7 @@ mod tests {
             session: SessionId::generate(),
             observer: Arc::clone(recorder) as Arc<dyn Observer>,
             sent: Mutex::default(),
+            last_question: Arc::default(),
         }
     }
 
@@ -694,5 +836,128 @@ mod tests {
         output.publish(removed(1));
 
         assert_eq!(*lock(&recorder.0), [saved(5), removed(1)]);
+    }
+
+    fn confirm() -> InteractionRequest {
+        InteractionRequest::Confirm {
+            title: "Run the migration?".to_owned(),
+            message: String::new(),
+        }
+    }
+
+    fn requested(id: u64, request: InteractionRequest) -> SessionUpdate {
+        SessionUpdate::Live(LiveUpdate::InteractionRequested {
+            interaction_id: InteractionId(id),
+            source: "guard".to_owned(),
+            request,
+        })
+    }
+
+    fn closed(id: u64) -> SessionUpdate {
+        SessionUpdate::Live(LiveUpdate::InteractionClosed {
+            interaction_id: InteractionId(id),
+        })
+    }
+
+    #[test]
+    fn an_answer_closes_its_question_and_reaches_the_asker_once() {
+        let recorder = Arc::new(Recorder::default());
+        let output = output(&recorder);
+
+        let (id, mut answered) = output.ask("guard", confirm());
+        let first = output.answer(id, InteractionResponse::Confirm { value: true });
+        let second = output.answer(id, InteractionResponse::Confirm { value: false });
+
+        assert!(first.is_ok(), "{first:?}");
+        assert!(
+            matches!(second, Err(AppError::NoInteraction(InteractionId(1)))),
+            "{second:?}"
+        );
+        assert_eq!(answered.try_recv(), Ok(InteractionResponse::Confirm { value: true }));
+        assert_eq!(*lock(&recorder.0), [requested(1, confirm()), closed(1)]);
+    }
+
+    #[test]
+    fn an_answer_of_another_kind_or_an_option_that_the_question_lacks_leaves_the_question_open() {
+        let recorder = Arc::new(Recorder::default());
+        let output = output(&recorder);
+        let select = InteractionRequest::Select {
+            title: "Deploy to?".to_owned(),
+            options: vec!["staging".to_owned(), "production".to_owned()],
+        };
+
+        let (id, mut answered) = output.ask("guard", select.clone());
+        let other_kind = output.answer(id, InteractionResponse::Confirm { value: true });
+        let other_option = output.answer(
+            id,
+            InteractionResponse::Select {
+                value: "local".to_owned(),
+            },
+        );
+        let fitting = output.answer(
+            id,
+            InteractionResponse::Select {
+                value: "staging".to_owned(),
+            },
+        );
+
+        assert!(matches!(other_kind, Err(AppError::Invalid(_))), "{other_kind:?}");
+        assert!(matches!(other_option, Err(AppError::Invalid(_))), "{other_option:?}");
+        assert!(fitting.is_ok(), "{fitting:?}");
+        assert_eq!(
+            answered.try_recv(),
+            Ok(InteractionResponse::Select {
+                value: "staging".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn a_dropped_wait_closes_its_question_and_a_later_answer_finds_none() {
+        let recorder = Arc::new(Recorder::default());
+        let output = output(&recorder);
+
+        let (id, _answered) = output.ask("guard", confirm());
+        drop(Open { output: &output, id });
+        let late = output.answer(id, InteractionResponse::Canceled);
+
+        assert!(matches!(late, Err(AppError::NoInteraction(_))), "{late:?}");
+        assert_eq!(*lock(&recorder.0), [requested(1, confirm()), closed(1)]);
+    }
+
+    #[test]
+    fn a_load_sends_each_open_question() {
+        let recorder = Arc::new(Recorder::default());
+        let output = output(&recorder);
+
+        let (first, _first) = output.ask("guard", confirm());
+        let hold = Hold::start(&output);
+        // The second question opens during the load, and the third opens and closes during it.
+        let (_second, _second_answer) = output.ask("guard", confirm());
+        let (third, _third_answer) = output.ask("guard", confirm());
+        output.close_question(third);
+        let loaded = Loaded {
+            events: Vec::new(),
+            pending: Vec::new(),
+        };
+        hold.release(loaded, || (SessionState::Idle, Vec::new()));
+        output.close_question(first);
+
+        assert_eq!(
+            *lock(&recorder.0),
+            [
+                requested(1, confirm()),
+                SessionUpdate::Live(LiveUpdate::State {
+                    state: SessionState::Idle
+                }),
+                requested(1, confirm()),
+                requested(2, confirm()),
+                // A client drops the second copy of question 2.
+                requested(2, confirm()),
+                requested(3, confirm()),
+                closed(3),
+                closed(1),
+            ]
+        );
     }
 }

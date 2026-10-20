@@ -27,7 +27,7 @@ use yuke_protocol::{
     ServerNotification, SessionResult,
 };
 
-use crate::app::{App, AppError, Jobs, Machine, Observer, lock, warn};
+use crate::app::{App, AppError, Machine, Mode, Observer, lock, warn};
 use yuke_engine::chain_text;
 
 /// The most messages that wait to reach the client. A client that falls further behind loses its connection.
@@ -157,7 +157,7 @@ pub(crate) async fn serve(
         Clients::One(stream) => (Some(Connection::open(stream, &outbox)), None),
         Clients::Socket(socket) => (None, Some(socket)),
     };
-    let app = match App::start(machine, Jobs::Allowed, Arc::clone(&outbox) as Arc<dyn Observer>).await {
+    let app = match App::start(machine, Mode::Server, Arc::clone(&outbox) as Arc<dyn Observer>).await {
         Ok(app) => app,
         Err(error) => {
             outbox.detach();
@@ -364,6 +364,10 @@ impl Server {
             ClientRequest::Input(params) => result(&InputResult {
                 input_id: app.input(params.session_id, params.content).await?,
             }),
+            ClientRequest::InteractionRespond(params) => {
+                app.respond(params.session_id, params.interaction_id, params.response)?;
+                result(&EmptyResult {})
+            }
             ClientRequest::RemoveInput(params) => {
                 app.remove_input(params.session_id, params.input_id).await?;
                 result(&EmptyResult {})
@@ -540,6 +544,7 @@ fn response_error(error: &AppError) -> ResponseError {
         AppError::Invalid(_) => ResponseError::INVALID_PARAMS,
         AppError::Busy | AppError::JobsRun(_) => ResponseError::INVALID_REQUEST,
         AppError::NoJob(_) => ResponseError::JOB_NOT_FOUND,
+        AppError::NoInteraction(_) => ResponseError::INTERACTION_NOT_FOUND,
         AppError::Store(error) => match error {
             StoreError::NotFound => ResponseError::SESSION_NOT_FOUND,
             StoreError::Owned => ResponseError::SESSION_OWNED,

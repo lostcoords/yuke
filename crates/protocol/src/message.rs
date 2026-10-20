@@ -9,7 +9,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{EventNumber, InputId, InstanceId, SessionId, SessionSettings, SessionUpdateParams};
+use crate::{
+    EventNumber, InputId, InstanceId, InteractionRespondParams, SessionId, SessionSettings, SessionUpdateParams,
+};
 
 /// The protocol version that this crate speaks. A breaking change of the messages takes the next number.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -63,8 +65,8 @@ pub enum ClientRequest {
     #[serde(rename = "session/fork")]
     ForkSession(ForkSessionParams),
     /// Open a session, and send it as `session/update` notifications: the saved events, a `state` update, an
-    /// `input_accepted` update for each pending input, and a `job` update for each running job. The live updates that
-    /// come during the load follow them. The result comes last. A load starts no turn, also when input waits. Result:
+    /// `input_accepted` update for each pending input, a `job` update for each running job, and an
+    /// `interaction_requested` update for each open question. The live updates that come during the load follow them. The result comes last. A load starts no turn, also when input waits. Result:
     /// [`EmptyResult`].
     #[serde(rename = "session/load")]
     LoadSession(LoadSessionParams),
@@ -97,11 +99,15 @@ pub enum ClientRequest {
     /// [`EmptyResult`].
     #[serde(rename = "credential/update")]
     UpdateCredential(UpdateCredentialParams),
+    /// Answer an open question of a session. The `interaction_closed` update of the question comes before the answer.
+    /// Result: [`EmptyResult`].
+    #[serde(rename = "interaction/respond")]
+    InteractionRespond(InteractionRespondParams),
 }
 
 impl ClientRequest {
     /// The method of each request. A server tells an unknown method from bad params with it.
-    pub const METHODS: [&str; 11] = [
+    pub const METHODS: [&str; 12] = [
         "initialize",
         "session/new",
         "session/fork",
@@ -113,6 +119,7 @@ impl ClientRequest {
         "job/list",
         "job/stop",
         "credential/update",
+        "interaction/respond",
     ];
 }
 
@@ -240,6 +247,8 @@ impl ResponseError {
     pub const SESSION_OWNED: i32 = -32_003;
     /// The session runs no background job with this id: the id is unknown, or the job has ended.
     pub const JOB_NOT_FOUND: i32 = -32_004;
+    /// The session has no open question with this id: the id is unknown, or the question has ended.
+    pub const INTERACTION_NOT_FOUND: i32 = -32_005;
 }
 
 /// The name, an optional title, and the version of a client or a server.

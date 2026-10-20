@@ -5,6 +5,8 @@ import type { DraftId } from "./DraftId";
 import type { EventNumber } from "./EventNumber";
 import type { Input } from "./Input";
 import type { InputId } from "./InputId";
+import type { InteractionId } from "./InteractionId";
+import type { InteractionRequest } from "./InteractionRequest";
 import type { Job } from "./Job";
 import type { ModelUpdate } from "./ModelUpdate";
 import type { SessionState } from "./SessionState";
@@ -30,7 +32,23 @@ inputId: InputId,
 /**
  * The input.
  */
-input: Input, } | { "sessionUpdate": "input_removed", 
+input: Input, } | { "sessionUpdate": "interaction_requested", 
+/**
+ * The id that the answer names.
+ */
+interactionId: InteractionId, 
+/**
+ * The plugin that asks, or a part of yuke with a name that starts with `host:`.
+ */
+source: string, 
+/**
+ * The question.
+ */
+request: InteractionRequest, } | { "sessionUpdate": "interaction_closed", 
+/**
+ * The question.
+ */
+interactionId: InteractionId, } | { "sessionUpdate": "input_removed", 
 /**
  * The id of the input.
  */

@@ -12,6 +12,7 @@ use std::fmt;
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime};
 
@@ -27,8 +28,8 @@ use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CredentialSource, Model, Timer, chain_text};
 use yuke_js::{Options, Processes, Report, Runtime};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InputKind, InputSource, Job, NoticeLevel, NoticeParams, ServerNotification,
-    SessionEvent, SessionId, SessionSettings, StoredEvent, UpdateCredentialParams,
+    EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, Job, NoticeLevel,
+    NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings, StoredEvent, UpdateCredentialParams,
 };
 use yuke_store::SqliteStore;
 
@@ -60,13 +61,14 @@ pub(crate) struct Machine {
     pub(crate) exchange: Arc<dyn Exchange>,
 }
 
-/// Whether the sessions can start background jobs.
+/// How the app runs: as a server that clients come to (`yuke --rpc`), or for one task with no client (`yuke -p`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Jobs {
-    /// A job runs until it ends, until a stop, or until the close of its session.
-    Allowed,
-    /// A background command fails, because the run ends with its turn.
-    Refused,
+pub(crate) enum Mode {
+    /// A background job runs until it ends, until a stop, or until the close of its session. A question waits for an
+    /// answer, also while no client is connected.
+    Server,
+    /// A background command fails, because the run ends with its turn. A question gets no answer.
+    Print,
 }
 
 /// Receives the notifications of the app: the updates of each open session, and the notices.
@@ -83,6 +85,9 @@ struct Shared {
     store: Arc<dyn Store>,
     processes: Arc<Processes>,
     observer: Arc<dyn Observer>,
+    mode: Mode,
+    /// The id of the last question of any session.
+    last_question: Arc<AtomicU64>,
     /// The credential of each provider with a login. One source serves each session, so one refresh serves all.
     logins: Mutex<HashMap<String, LoginSource>>,
 }
@@ -109,7 +114,7 @@ impl App {
     /// # Errors
     ///
     /// Returns a text for the user when a part does not start.
-    pub(crate) async fn start(machine: Machine, jobs: Jobs, observer: Arc<dyn Observer>) -> Result<App, String> {
+    pub(crate) async fn start(machine: Machine, mode: Mode, observer: Arc<dyn Observer>) -> Result<App, String> {
         let providers = Providers::load(&machine.paths.config)?;
         let config = Config::load(&machine.paths.config.join("config.json"))?;
         let plugins = plugins::plugins(&machine.paths.config, &config.plugins, &machine.paths.data)?;
@@ -125,9 +130,9 @@ impl App {
             std::process::id(),
             RandomState::new().hash_one(0_u8)
         ));
-        let processes = Arc::new(match jobs {
-            Jobs::Allowed => Processes::new(processes_folder.clone()),
-            Jobs::Refused => Processes::without_jobs(processes_folder.clone()),
+        let processes = Arc::new(match mode {
+            Mode::Server => Processes::new(processes_folder.clone()),
+            Mode::Print => Processes::without_jobs(processes_folder.clone()),
         });
         let (runtime, reports) = match Runtime::start(Options {
             cache: machine.paths.cache.join("js"),
@@ -151,6 +156,8 @@ impl App {
                 store,
                 processes,
                 observer,
+                mode,
+                last_question: Arc::default(),
                 logins: Mutex::default(),
             }),
             runtime,
@@ -361,6 +368,21 @@ impl App {
         }
     }
 
+    /// Give `response` to the open question `interaction_id` of session `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NoInteraction`] when the session has no such open question, and [`AppError::Invalid`] when
+    /// the answer does not fit the question.
+    pub(crate) fn respond(
+        &self,
+        id: SessionId,
+        interaction_id: InteractionId,
+        response: InteractionResponse,
+    ) -> Result<(), AppError> {
+        self.live(id)?.answer(interaction_id, response)
+    }
+
     /// Close each session, stop the runtime, and stop the jobs.
     pub(crate) async fn shutdown(self) {
         let App {
@@ -436,6 +458,8 @@ pub(crate) enum AppError {
     JobsRun(Vec<String>),
     /// The session runs no job with this id.
     NoJob(String),
+    /// The session has no open question with this id.
+    NoInteraction(InteractionId),
     /// The store failed.
     Store(StoreError),
     /// A part of yuke failed. The text tells why.
@@ -454,6 +478,7 @@ impl fmt::Display for AppError {
                 ids.join(", ")
             ),
             AppError::NoJob(id) => write!(f, "the session runs no job {id}"),
+            AppError::NoInteraction(id) => write!(f, "the session has no open question {}", id.0),
             AppError::Store(error) => fmt::Display::fmt(error, f),
         }
     }
