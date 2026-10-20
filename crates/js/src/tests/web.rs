@@ -143,6 +143,23 @@ async fn a_dispatch_sets_the_targets_and_the_phase_only_while_it_runs() {
 }
 
 #[tokio::test]
+async fn an_event_names_its_phases_on_the_class_and_on_each_event() {
+    let text = run::<String>(
+        "an_event_names_its_phases_on_the_class_and_on_each_event",
+        "const event = new Event('x');
+         const names = ['NONE', 'CAPTURING_PHASE', 'AT_TARGET', 'BUBBLING_PHASE'];
+         const fixed = names.every((name) => [Event, Event.prototype].every((owner) => {
+           const { writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(owner, name);
+           return !writable && enumerable && !configurable;
+         }));
+         return [...names.map((name) => Event[name]), ...names.map((name) => event[name]), fixed].join(' ');",
+    )
+    .await;
+
+    assert_eq!(text, "0 1 2 3 0 1 2 3 true");
+}
+
+#[tokio::test]
 async fn capture_listeners_run_before_the_other_listeners() {
     let text = run::<String>(
         "capture_listeners_run_before_the_other_listeners",

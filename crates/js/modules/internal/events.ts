@@ -138,6 +138,14 @@ export class Event {
   }
 
   declare readonly isTrusted: boolean;
+  declare static readonly NONE: 0;
+  declare static readonly CAPTURING_PHASE: 1;
+  declare static readonly AT_TARGET: 2;
+  declare static readonly BUBBLING_PHASE: 3;
+  declare readonly NONE: 0;
+  declare readonly CAPTURING_PHASE: 1;
+  declare readonly AT_TARGET: 2;
+  declare readonly BUBBLING_PHASE: 3;
 
   get type(): string {
     return eventState(this).type;
@@ -151,7 +159,7 @@ export class Event {
     return eventState(this).currentTarget;
   }
 
-  /** 2 (at the target) during a dispatch, 0 otherwise. A target has no tree, so it has no other phase. */
+  /** `AT_TARGET` (2) during a dispatch, `NONE` (0) otherwise. A target has no tree, so it has no other phase. */
   get eventPhase(): number {
     return eventState(this).dispatching ? 2 : 0;
   }
@@ -588,6 +596,18 @@ function wait(milliseconds: number, done: () => void): void {
   }, delay);
 }
 
+// The DOM puts each phase constant on the interface and on its prototype: enumerable, and neither writable nor
+// configurable.
+for (const [name, value] of [
+  ["NONE", 0],
+  ["CAPTURING_PHASE", 1],
+  ["AT_TARGET", 2],
+  ["BUBBLING_PHASE", 3],
+] as const) {
+  for (const target of [Event, Event.prototype]) {
+    Object.defineProperty(target, name, { value, enumerable: true, writable: false, configurable: false });
+  }
+}
 webClass(Event, "Event");
 webClass(CustomEvent, "CustomEvent");
 webClass(EventTarget, "EventTarget");

@@ -226,3 +226,10 @@ const mixed = { id: "ab", mimeType: "image/png", bytes: new Uint8Array() };
 s.hook("tool.after", () => ({ media: [mixed] }));
 // @ts-expect-error: a new media item needs a path or bytes.
 s.hook("tool.after", () => ({ media: [{ mimeType: "image/png" }] }));
+
+// The web globals declare what the runtime has, and no more.
+assert<Equal<typeof DOMException.ABORT_ERR, 20>>();
+assert<Equal<typeof Event.AT_TARGET, 2>>();
+new TextDecoder("utf8");
+// @ts-expect-error: the decoder decodes UTF-8 only.
+new TextDecoder("utf-16le");
