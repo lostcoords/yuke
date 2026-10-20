@@ -326,7 +326,7 @@ struct Cancelled {
 }
 
 /// The stable code and the description of `error`. The codes are the POSIX names that most runtimes give.
-fn describe(error: &io::Error) -> (&'static str, String) {
+pub(super) fn describe(error: &io::Error) -> (&'static str, String) {
     const CODES: &[(Errno, &str, &str)] = &[
         (Errno::NOENT, "ENOENT", "the path does not exist"),
         (Errno::EXIST, "EEXIST", "the path exists already"),
@@ -346,6 +346,21 @@ fn describe(error: &io::Error) -> (&'static str, String) {
         (Errno::NAMETOOLONG, "ENAMETOOLONG", "the path is too long"),
         (Errno::ILSEQ, "EILSEQ", "the bytes are not valid UTF-8"),
         (Errno::INVAL, "EINVAL", "the path names a special file"),
+        (Errno::MFILE, "EMFILE", "the process has too many open files"),
+        (Errno::NFILE, "ENFILE", "the system has too many open files"),
+        (
+            Errno::BUSY,
+            "EBUSY",
+            "a device or a resource that the path needs is busy",
+        ),
+        (
+            Errno::TXTBSY,
+            "ETXTBSY",
+            "the system uses the file, for example as a running program",
+        ),
+        (Errno::FBIG, "EFBIG", "the file is too large"),
+        (Errno::DQUOT, "EDQUOT", "the quota of the user on the disk is full"),
+        (Errno::AGAIN, "EAGAIN", "the resource is not available now; try again"),
     ];
     let errno = Errno::from_io_error(error);
     match CODES.iter().find(|(known, _, _)| Some(*known) == errno) {
@@ -488,7 +503,7 @@ fn write_chunks(file: &mut File, bytes: &[u8], path: &Path, stop: &Stop) -> Resu
 
 /// Refuse a directory with `EISDIR` and a special file with `EINVAL`. An open of a FIFO waits for its other end, so
 /// the check comes before each open.
-fn check_kind(kind: fs::FileType) -> io::Result<()> {
+pub(super) fn check_kind(kind: fs::FileType) -> io::Result<()> {
     if kind.is_dir() {
         Err(io::Error::from(Errno::ISDIR))
     } else if kind.is_file() {

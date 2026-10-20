@@ -34,7 +34,7 @@ defineTool({
   concurrency: "parallel",
   async execute(args, context) {
     const read = await readLines(args.path, context.folder, args.offset ?? 1, args.limit ?? LAST_LINE, OUTPUT_BYTES);
-    if ("image" in read) return { text: "Image read successfully", media: [read.image] };
+    if ("image" in read) return { text: "The tool read the image.", media: [read.image] };
 
     // The native read ends each line with a line feed. The result drops the last one.
     let text = read.text.endsWith("\n") ? read.text.slice(0, -1) : read.text;
@@ -93,7 +93,7 @@ defineTool({
       throw new Error("old_string matches more than one place. Add context to old_string, or set replace_all to true.");
     }
     await writeTextFile(path, parts.join(newString), options);
-    return `The tool replaced ${count} match(es).`;
+    return count === 1 ? "The tool replaced 1 match." : `The tool replaced ${count} matches.`;
   },
 });
 

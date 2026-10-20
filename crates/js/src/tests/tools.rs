@@ -672,20 +672,30 @@ async fn a_line_longer_than_the_cap_is_cut() {
     );
 }
 
+// The texts are the texts of `yuke:fs`, and a FIFO fails before an open that would wait for its other end.
 #[tokio::test]
-async fn read_of_a_missing_file_or_of_bytes_that_are_no_text_fails() {
-    let folder = folder("read_of_a_missing_file_or_of_bytes_that_are_no_text_fails");
+async fn read_of_a_missing_file_bytes_that_are_no_text_or_a_fifo_fails_with_the_path() {
+    let folder = folder("read_of_a_missing_file_bytes_that_are_no_text_or_a_fifo_fails_with_the_path");
     std::fs::write(folder.join("binary.dat"), [0x61, 0xff, 0xfe, 0x0a]).unwrap();
+    let status = std::process::Command::new("mkfifo")
+        .arg(folder.join("pipe"))
+        .status()
+        .unwrap();
+    assert!(status.success());
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
-    assert_eq!(
-        error_of(&tools["read"], r#"{"path": "gone.txt"}"#).await,
-        "the path does not exist"
-    );
-    assert_eq!(
-        error_of(&tools["read"], r#"{"path": "binary.dat"}"#).await,
-        "the file holds invalid UTF-8"
-    );
+    for (path, text) in [
+        ("gone.txt", "the path does not exist"),
+        ("binary.dat", "the bytes are not valid UTF-8"),
+        ("pipe", "the path names a special file"),
+        (".", "the path is a directory"),
+    ] {
+        let arguments = format!(r#"{{"path": "{path}"}}"#);
+        let error = tokio::time::timeout(Duration::from_secs(5), error_of(&tools["read"], &arguments))
+            .await
+            .unwrap();
+        assert_eq!(error, format!("{text}: {}", folder.join(path).display()));
+    }
 }
 
 #[tokio::test]
@@ -697,7 +707,7 @@ async fn an_image_read_answers_media_through_the_host() {
 
     let content = call(&tools["read"], r#"{"path": "dot.png"}"#).await.0.unwrap();
 
-    assert_eq!(content.text, "Image read successfully");
+    assert_eq!(content.text, "The tool read the image.");
     assert_eq!(content.media.len(), 1);
     assert_eq!(content.media[0].mime, "image/png");
     assert_eq!(content.media[0].blob.len, png.len());
@@ -762,7 +772,7 @@ async fn edit_replaces_one_exact_match() {
     )
     .await;
 
-    assert_eq!(text, "The tool replaced 1 match(es).");
+    assert_eq!(text, "The tool replaced 1 match.");
     assert_eq!(
         std::fs::read_to_string(folder.join("main.rs")).unwrap(),
         "fn main() {\n    new($&);\n}\n"
@@ -789,7 +799,7 @@ async fn edit_of_two_matches_needs_replace_all() {
         "old_string matches more than one place. Add context to old_string, or set replace_all to true."
     );
     assert_eq!(unchanged, "a, b, a\n");
-    assert_eq!(text, "The tool replaced 2 match(es).");
+    assert_eq!(text, "The tool replaced 2 matches.");
     assert_eq!(std::fs::read_to_string(folder.join("list.txt")).unwrap(), "c, b, c\n");
 }
 

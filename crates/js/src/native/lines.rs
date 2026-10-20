@@ -2,12 +2,13 @@
 //! in the folder that the caller gives. The read runs off the JavaScript thread, because a blocking call would hold up
 //! the other JavaScript.
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
 use rquickjs::function::Async;
 use rquickjs::{Ctx, Function, IntoJs, Object, Value};
+use rustix::io::Errno;
 
 use crate::error::{ErrorClass, throw};
 
@@ -79,20 +80,10 @@ struct Image {
     mime_type: &'static str,
 }
 
-/// The text of a file that is not UTF-8.
-const INVALID_UTF8: &str = "the file holds invalid UTF-8";
-
-/// The text of a path that names a folder or a special file.
-const NOT_A_FILE: &str = "the path names a directory or a special file";
-
-/// The text of a failed file operation for the model.
-fn describe(error: &io::Error) -> String {
-    match error.kind() {
-        io::ErrorKind::NotFound => "the path does not exist".to_owned(),
-        io::ErrorKind::IsADirectory | io::ErrorKind::NotADirectory => NOT_A_FILE.to_owned(),
-        io::ErrorKind::PermissionDenied => "the file system denied access to the path".to_owned(),
-        _ => format!("the file system reported a failure: {error}"),
-    }
+/// The text of the failure `error` at `path` for the model: the text that `yuke:fs` gives.
+fn failure(error: &io::Error, path: &Path) -> String {
+    let (_, description) = super::fs::describe(error);
+    format!("{description}: {}", path.display())
 }
 
 /// The media type of an image by its first bytes: PNG, JPEG, GIF, or WebP (WHATWG MIME Sniffing, section 6.1).
@@ -112,14 +103,12 @@ fn image_type(start: &[u8]) -> Option<&'static str> {
 
 /// Read lines of the file at `full`.
 fn lines(full: &Path, offset: u32, limit: u32, max_bytes: usize) -> Result<Lines, String> {
-    let file = File::open(full).map_err(|error| describe(&error))?;
-    let is_folder = file.metadata().map_err(|error| describe(&error))?.is_dir();
-    if is_folder {
-        return Err(NOT_A_FILE.to_owned());
-    }
-    let mut reader = BufReader::new(file);
+    let fail = |error: io::Error| failure(&error, full);
+    // An open of a FIFO waits for its other end, so the check of the kind comes first.
+    super::fs::check_kind(fs::metadata(full).map_err(fail)?.file_type()).map_err(fail)?;
+    let mut reader = BufReader::new(File::open(full).map_err(fail)?);
 
-    let start = reader.fill_buf().map_err(|error| describe(&error))?;
+    let start = reader.fill_buf().map_err(fail)?;
     if let Some(mime) = image_type(start) {
         return Ok(Lines::Image {
             // A path from the root, so a later read finds the same file.
@@ -136,7 +125,7 @@ fn lines(full: &Path, offset: u32, limit: u32, max_bytes: usize) -> Result<Lines
     let mut number: u32 = 0;
     let mut line = Vec::new();
     loop {
-        if reader.fill_buf().map_err(|error| describe(&error))?.is_empty() {
+        if reader.fill_buf().map_err(fail)?.is_empty() {
             return Ok(Lines::Text {
                 text,
                 next: None,
@@ -145,7 +134,7 @@ fn lines(full: &Path, offset: u32, limit: u32, max_bytes: usize) -> Result<Lines
         }
         number = number.saturating_add(1);
         if number < offset {
-            reader.skip_until(b'\n').map_err(|error| describe(&error))?;
+            reader.skip_until(b'\n').map_err(fail)?;
             continue;
         }
         if taken == limit {
@@ -157,13 +146,13 @@ fn lines(full: &Path, offset: u32, limit: u32, max_bytes: usize) -> Result<Lines
         }
 
         // A line longer than the limit cannot fit, so the read keeps only its start.
-        let whole = read_line(&mut reader, max_bytes, &mut line).map_err(|error| describe(&error))?;
+        let whole = read_line(&mut reader, max_bytes, &mut line).map_err(fail)?;
         let content = match std::str::from_utf8(&line) {
             Ok(content) => content,
             Err(error) if !whole && error.error_len().is_none() => {
                 std::str::from_utf8(&line[..error.valid_up_to()]).unwrap_or_default()
             }
-            Err(_) => return Err(INVALID_UTF8.to_owned()),
+            Err(_) => return Err(fail(io::Error::from(Errno::ILSEQ))),
         };
         let entry = format!("{number}: {content}\n");
 
@@ -178,9 +167,9 @@ fn lines(full: &Path, offset: u32, limit: u32, max_bytes: usize) -> Result<Lines
             // The first line alone is over the limit: the read gives its start.
             let end = entry.floor_char_boundary(max_bytes);
             if !whole {
-                reader.skip_until(b'\n').map_err(|error| describe(&error))?;
+                reader.skip_until(b'\n').map_err(fail)?;
             }
-            let more = !reader.fill_buf().map_err(|error| describe(&error))?.is_empty();
+            let more = !reader.fill_buf().map_err(fail)?.is_empty();
             return Ok(Lines::Text {
                 text: entry[..end].to_owned(),
                 next: more.then(|| number.saturating_add(1)),
