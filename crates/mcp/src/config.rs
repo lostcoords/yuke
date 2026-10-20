@@ -4,10 +4,10 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The servers of one MCP config file, by name.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     /// Each server by its name.
     #[serde(rename = "mcpServers", default)]
@@ -15,7 +15,7 @@ pub struct Config {
 }
 
 /// One server entry as the file holds it. A file of another tool can hold more fields; the parse ignores them.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfig {
     /// The program of a stdio server.
     #[serde(default)]

@@ -18,7 +18,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use yuke_ai::{Blob, MAX_MEDIA_BYTES, Media, ToolDefinition};
 use yuke_engine::{MediaStore, Tool, ToolContent, ToolContext, parse_arguments};
-use yuke_protocol::{McpServer, McpServerState};
+use yuke_protocol::{McpServer, McpServerSource, McpServerState};
 
 use crate::config::{Launch, ServerConfig};
 use crate::names::{hashed_name, tool_name};
@@ -32,6 +32,7 @@ pub type OnChange = Arc<dyn Fn(McpServer) + Send + Sync>;
 /// One server of the session.
 struct Slot {
     name: String,
+    source: McpServerSource,
     state: McpServerState,
     /// The connection while the server runs.
     peer: Option<Peer<RoleClient>>,
@@ -44,8 +45,21 @@ struct Slot {
 struct Shared {
     slots: Mutex<Vec<Slot>>,
     on_change: OnChange,
-    /// After a close, a stop is no news.
+    /// After a close, a stop is no news and no gated server starts.
     closed: AtomicBool,
+    /// The task of each started server by the index of its slot, and the task of the trust without one. A close takes
+    /// them under this lock, so the trust task starts no server after the close.
+    tasks: Mutex<Vec<(Option<usize>, JoinHandle<()>)>>,
+}
+
+impl Slot {
+    fn server(&self) -> McpServer {
+        McpServer {
+            name: self.name.clone(),
+            source: self.source,
+            state: self.state.clone(),
+        }
+    }
 }
 
 impl Shared {
@@ -55,10 +69,7 @@ impl Shared {
             let mut slots = lock(&self.slots);
             let slot = &mut slots[index];
             change(slot);
-            McpServer {
-                name: slot.name.clone(),
-                state: slot.state.clone(),
-            }
+            slot.server()
         };
         if !self.closed.load(Ordering::Acquire) {
             (self.on_change)(server);
@@ -70,11 +81,9 @@ impl Shared {
 /// server ends. A drop stops each server.
 pub struct Servers {
     shared: Arc<Shared>,
-    /// The number of servers that still start.
+    /// The number of servers that still start or wait for the trust.
     starting: watch::Receiver<usize>,
     media: Arc<dyn MediaStore>,
-    /// The task of each started server, by the index of its slot.
-    tasks: Mutex<Vec<(usize, JoinHandle<()>)>>,
 }
 
 impl std::fmt::Debug for Servers {
@@ -86,19 +95,28 @@ impl std::fmt::Debug for Servers {
 }
 
 impl Servers {
-    /// Start each server of `servers` in the background. `variable` gives the values of the variables of the config.
-    /// A stdio server without its own folder runs in `folder`. `media` stores the attachments of the results.
-    /// `on_change` gets each later state of a server: the end of its start, and its stop.
+    /// Start each server of `user` in the background. Each server of `project` replaces a user server of its name, and
+    /// waits in [`McpServerState::Untrusted`] until `trust` answers; a `true` starts it. `trust` runs only when a
+    /// project server can start. `variable` gives the values of the variables of the config. A server without its own
+    /// folder runs in `folder`. `media` stores the attachments of the results. `on_change` gets each later state of a
+    /// server: the end of its start, the start after the trust, and its stop.
     pub fn start(
-        servers: Vec<(String, ServerConfig)>,
+        user: &[(String, ServerConfig)],
+        project: &[(String, ServerConfig)],
+        trust: impl Future<Output = bool> + Send + 'static,
         variable: &dyn Fn(&str) -> Option<String>,
         folder: &Path,
         media: Arc<dyn MediaStore>,
         on_change: OnChange,
     ) -> Servers {
+        let overridden: HashSet<&str> = project.iter().map(|(name, _)| name.as_str()).collect();
+        let user = user.iter().filter(|(name, _)| !overridden.contains(name.as_str()));
+        let entries = user
+            .map(|entry| (McpServerSource::User, entry))
+            .chain(project.iter().map(|entry| (McpServerSource::Project, entry)));
         let mut slots = Vec::new();
-        let mut launches = Vec::new();
-        for (index, (name, config)) in servers.into_iter().enumerate() {
+        let (mut launches, mut gated) = (Vec::new(), Vec::new());
+        for (index, (source, (name, config))) in entries.enumerate() {
             let launch = config.enabled.then(|| config.launch(variable));
             let state = match launch {
                 None => McpServerState::Disabled,
@@ -113,15 +131,24 @@ impl Servers {
                         .args(args)
                         .envs(env)
                         .current_dir(folder.join(cwd.unwrap_or_default()));
-                    launches.push((index, process));
-                    McpServerState::Connecting
+                    match source {
+                        McpServerSource::User => {
+                            launches.push((index, process));
+                            McpServerState::Connecting
+                        }
+                        McpServerSource::Project => {
+                            gated.push((index, process));
+                            McpServerState::Untrusted
+                        }
+                    }
                 }
                 Some(Err(error)) => McpServerState::Failed {
                     error: error.to_string(),
                 },
             };
             slots.push(Slot {
-                name,
+                name: name.clone(),
+                source,
                 state,
                 peer: None,
                 stop: None,
@@ -132,21 +159,24 @@ impl Servers {
             slots: Mutex::new(slots),
             on_change,
             closed: AtomicBool::new(false),
+            tasks: Mutex::default(),
         });
-        let (count, starting) = watch::channel(launches.len());
+        let (count, starting) = watch::channel(launches.len() + gated.len());
         let count = Arc::new(count);
-        let tasks = launches
-            .into_iter()
-            .map(|(index, process)| {
-                let (shared, count) = (Arc::clone(&shared), Arc::clone(&count));
-                (index, tokio::spawn(run(index, process, shared, count)))
-            })
-            .collect();
+        let mut tasks = lock(&shared.tasks);
+        for (index, process) in launches {
+            let (task_shared, count) = (Arc::clone(&shared), Arc::clone(&count));
+            tasks.push((Some(index), tokio::spawn(run(index, process, task_shared, count))));
+        }
+        if !gated.is_empty() {
+            let (task_shared, count) = (Arc::clone(&shared), Arc::clone(&count));
+            tasks.push((None, tokio::spawn(start_trusted(gated, trust, task_shared, count))));
+        }
+        drop(tasks);
         Servers {
             shared,
             starting,
             media,
-            tasks: Mutex::new(tasks),
         }
     }
 
@@ -161,13 +191,7 @@ impl Servers {
 
     /// Each server and its state, in config order.
     pub fn states(&self) -> Vec<McpServer> {
-        lock(&self.shared.slots)
-            .iter()
-            .map(|slot| McpServer {
-                name: slot.name.clone(),
-                state: slot.state.clone(),
-            })
-            .collect()
+        lock(&self.shared.slots).iter().map(Slot::server).collect()
     }
 
     /// The tools of the running servers, each deferred, with its definition. A tool whose name an earlier tool has gets
@@ -210,14 +234,17 @@ impl Servers {
     /// Stop each server, and wait for its end. A running server closes its connection, and a server that still starts
     /// stops its start.
     pub async fn close(&self) {
-        self.shared.closed.store(true, Ordering::Release);
-        let tasks = std::mem::take(&mut *lock(&self.tasks));
+        let tasks = {
+            let mut tasks = lock(&self.shared.tasks);
+            self.shared.closed.store(true, Ordering::Release);
+            std::mem::take(&mut *tasks)
+        };
         let mut stops: Vec<_> = lock(&self.shared.slots)
             .iter_mut()
             .map(|slot| slot.stop.take())
             .collect();
         for (index, task) in tasks {
-            match stops.get_mut(index).and_then(Option::take) {
+            match index.and_then(|index| stops.get_mut(index)).and_then(Option::take) {
                 // The task ends after the cleanup of the connection.
                 Some(stop) => stop.cancel(),
                 None => task.abort(),
@@ -232,9 +259,29 @@ impl Servers {
 
 impl Drop for Servers {
     fn drop(&mut self) {
-        for (_, task) in lock(&self.tasks).iter() {
+        for (_, task) in lock(&self.shared.tasks).iter() {
             task.abort();
         }
+    }
+}
+
+/// Wait for `trust`, then start each server of `gated` when it is `true`. A server that does not start stays untrusted.
+async fn start_trusted(
+    gated: Vec<(usize, tokio::process::Command)>,
+    trust: impl Future<Output = bool>,
+    shared: Arc<Shared>,
+    count: Arc<watch::Sender<usize>>,
+) {
+    let trusted = trust.await;
+    for (index, process) in gated {
+        let mut tasks = lock(&shared.tasks);
+        if !trusted || shared.closed.load(Ordering::Acquire) {
+            count.send_modify(|starting| *starting -= 1);
+            continue;
+        }
+        shared.update(index, |slot| slot.state = McpServerState::Connecting);
+        let (task_shared, count) = (Arc::clone(&shared), Arc::clone(&count));
+        tasks.push((Some(index), tokio::spawn(run(index, process, task_shared, count))));
     }
 }
 

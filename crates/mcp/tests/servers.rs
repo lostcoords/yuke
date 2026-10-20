@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use yuke_ai::{Blob, Block, Target};
 use yuke_engine::{CancellationToken, Driver, MediaStore, Toolset};
 use yuke_mcp::{ServerConfig, Servers};
-use yuke_protocol::{McpServer, McpServerState};
+use yuke_protocol::{McpServer, McpServerSource, McpServerState};
 use yuke_testing::{NoWait, ScriptedTransport, model_of, target, text_reply, tool_reply};
 
 /// The base64 PNG of one pixel, as the `picture` tool of the test server sends it.
@@ -66,11 +66,23 @@ type Changes = Arc<Mutex<Vec<McpServer>>>;
 
 /// The servers of `entries`, after each start ended, and the changes of their states.
 async fn started(entries: Vec<(String, ServerConfig)>, folder: &Path, media: Arc<Recorded>) -> (Servers, Changes) {
+    started_with(entries, Vec::new(), false, folder, media).await
+}
+
+/// The user servers of `user` and the project servers of `project` with the trust `trusted`, after each start ended.
+async fn started_with(
+    user: Vec<(String, ServerConfig)>,
+    project: Vec<(String, ServerConfig)>,
+    trusted: bool,
+    folder: &Path,
+    media: Arc<Recorded>,
+) -> (Servers, Changes) {
     let variable = |name: &str| (name == "SET").then(|| "set".to_owned());
     let changes = Changes::default();
     let kept = Arc::clone(&changes);
     let on_change = Arc::new(move |server| kept.lock().unwrap().push(server));
-    let servers = Servers::start(entries, &variable, folder, media, on_change);
+    let trust = async move { trusted };
+    let servers = Servers::start(&user, &project, trust, &variable, folder, media, on_change);
     tokio::time::timeout(Duration::from_secs(10), servers.ready())
         .await
         .unwrap();
@@ -80,7 +92,15 @@ async fn started(entries: Vec<(String, ServerConfig)>, folder: &Path, media: Arc
 fn server(name: &str, state: McpServerState) -> McpServer {
     McpServer {
         name: name.to_owned(),
+        source: McpServerSource::User,
         state,
+    }
+}
+
+fn project_server(name: &str, state: McpServerState) -> McpServer {
+    McpServer {
+        source: McpServerSource::Project,
+        ..server(name, state)
     }
 }
 
@@ -289,7 +309,9 @@ async fn a_close_stops_a_server_that_never_answers_its_start() {
     };
     let on_change = Arc::new(|_| {});
     let servers = Servers::start(
-        vec![("silent".to_owned(), silent)],
+        &[("silent".to_owned(), silent)],
+        &[],
+        async { false },
         &|_| None,
         &folder,
         Arc::new(Recorded::default()),
@@ -303,6 +325,105 @@ async fn a_close_stops_a_server_that_never_answers_its_start() {
 
     assert!(waited.is_err(), "the start ended");
     assert_eq!(servers.states(), [server("silent", McpServerState::Connecting)]);
+}
+
+#[tokio::test]
+async fn a_project_server_replaces_a_user_server_and_starts_only_when_trusted() {
+    let folder = folder("a_project_server_replaces_a_user_server");
+    let user = vec![
+        ("test".to_owned(), test_server(&[])),
+        ("mine".to_owned(), test_server(&[])),
+    ];
+    let project = vec![("test".to_owned(), test_server(&[]))];
+
+    let (trusted, changes) = started_with(user.clone(), project.clone(), true, &folder, Arc::default()).await;
+    let (refused, refused_changes) = started_with(user, project, false, &folder, Arc::default()).await;
+
+    let connected = McpServerState::Connected { tools: 7 };
+    assert_eq!(
+        trusted.states(),
+        [
+            server("mine", connected.clone()),
+            project_server("test", connected.clone())
+        ]
+    );
+    assert!(
+        changes
+            .lock()
+            .unwrap()
+            .contains(&project_server("test", McpServerState::Connecting))
+    );
+    assert_eq!(
+        refused.states(),
+        [
+            server("mine", connected),
+            project_server("test", McpServerState::Untrusted)
+        ]
+    );
+    assert!(
+        refused_changes
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|change| change.source == McpServerSource::User)
+    );
+    trusted.close().await;
+    refused.close().await;
+}
+
+#[tokio::test]
+async fn the_trust_runs_only_when_a_project_server_can_start() {
+    let folder = folder("the_trust_runs_only_when_a_project_server_can_start");
+    let asked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let marked = Arc::clone(&asked);
+    let trust = async move {
+        marked.store(true, std::sync::atomic::Ordering::SeqCst);
+        true
+    };
+    let disabled = ServerConfig {
+        enabled: false,
+        ..test_server(&[])
+    };
+
+    let servers = Servers::start(
+        &[],
+        &[("off".to_owned(), disabled)],
+        trust,
+        &|_| None,
+        &folder,
+        Arc::new(Recorded::default()),
+        Arc::new(|_| {}),
+    );
+    servers.ready().await;
+
+    assert!(!asked.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(servers.states(), [project_server("off", McpServerState::Disabled)]);
+}
+
+#[tokio::test]
+async fn a_close_during_the_trust_starts_no_project_server() {
+    let folder = folder("a_close_during_the_trust");
+    let (answer, answered) = tokio::sync::oneshot::channel::<bool>();
+    let trust = async move { answered.await.unwrap_or(false) };
+    let servers = Servers::start(
+        &[],
+        &[("proj".to_owned(), test_server(&[]))],
+        trust,
+        &|_| None,
+        &folder,
+        Arc::new(Recorded::default()),
+        Arc::new(|_| {}),
+    );
+
+    tokio::time::timeout(Duration::from_secs(5), servers.close())
+        .await
+        .unwrap();
+    // The trust task ended with the close, so the answer finds no receiver.
+    let late = answer.send(true);
+
+    assert!(late.is_err());
+    assert_eq!(servers.states(), [project_server("proj", McpServerState::Untrusted)]);
+    assert!(servers.tools().is_empty());
 }
 
 #[tokio::test]

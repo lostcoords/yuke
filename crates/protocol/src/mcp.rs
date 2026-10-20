@@ -23,6 +23,19 @@ pub enum McpServerState {
     },
     /// The config turns the server off.
     Disabled,
+    /// A project server that the user did not confirm. It does not start.
+    Untrusted,
+}
+
+/// The config file of an MCP server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum McpServerSource {
+    /// `mcp.json` in the config folder of the user.
+    User,
+    /// `.mcp.json` in the folder of the session. It starts only after the user confirms it.
+    Project,
 }
 
 /// One MCP server of a session.
@@ -32,6 +45,8 @@ pub enum McpServerState {
 pub struct McpServer {
     /// The name of the server in its config.
     pub name: String,
+    /// The config file of the server.
+    pub source: McpServerSource,
     /// Its state.
     #[serde(flatten)]
     pub state: McpServerState,

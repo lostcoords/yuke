@@ -8,6 +8,7 @@ import type { InputId } from "./InputId";
 import type { InteractionId } from "./InteractionId";
 import type { InteractionRequest } from "./InteractionRequest";
 import type { Job } from "./Job";
+import type { McpServerSource } from "./McpServerSource";
 import type { ModelUpdate } from "./ModelUpdate";
 import type { SessionState } from "./SessionState";
 import type { ToolCall } from "./ToolCall";
@@ -52,7 +53,11 @@ interactionId: InteractionId, } | { "sessionUpdate": "mcp_server",
 /**
  * The name of the server in its config.
  */
-name: string, } & ({ "state": "connecting" } | { "state": "connected", 
+name: string, 
+/**
+ * The config file of the server.
+ */
+source: McpServerSource, } & ({ "state": "connecting" } | { "state": "connected", 
 /**
  * The number of its tools.
  */
@@ -60,7 +65,7 @@ tools: number, } | { "state": "failed",
 /**
  * Why.
  */
-error: string, } | { "state": "disabled" }) | { "sessionUpdate": "input_removed", 
+error: string, } | { "state": "disabled" } | { "state": "untrusted" }) | { "sessionUpdate": "input_removed", 
 /**
  * The id of the input.
  */

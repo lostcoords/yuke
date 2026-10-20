@@ -65,9 +65,12 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   option that the question lacks, or an unknown id fails the request. An `interaction_closed` update ends each
   question: an answer, an abort of the asker, or the close of the session. A run without a client (`yuke -p`) answers
   each question with no answer.
-- MCP servers: each open session runs the servers of the user config. An `mcp_server` live update holds the whole
-  state of one server: `connecting`, `connected` with its tool count, `failed` with its error, or `disabled`.
-  `mcp/list` gives each server of a session.
+- MCP servers: each open session runs the servers of the user config and of `.mcp.json` in its folder. An
+  `mcp_server` live update holds the whole state of one server, with its `source` (`user` or `project`): `connecting`,
+  `connected` with its tool count, `failed` with its error, `disabled`, or `untrusted`. `mcp/list` gives each server
+  of a session.
+- Project servers start only after the user confirms them. yuke asks with a `confirm` from `host:mcp`, and keeps a
+  yes for that folder and that list of servers.
 - Each type holds one message. The protocol has no batches.
 
 The session types of the messages (`SessionId`, `SessionSettings`, `SessionEvent`, and others) are the types that

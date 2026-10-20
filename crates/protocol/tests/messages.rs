@@ -10,9 +10,9 @@ use serde_json::{Value, json};
 use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_protocol::{
     ClientNotification, ClientRequest, ConsumedInput, EventNumber, Input, InputError, InputId, InputKind, InputSource,
-    JobState, ListMcpServersResult, LiveUpdate, McpServer, McpServerState, ModelReference, NoticeLevel, NoticeParams,
-    Notification, Request, Response, ServerNotification, SessionEvent, SessionId, SessionSettings, SessionUpdate,
-    SessionUpdateParams, StoredEvent,
+    JobState, ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState, ModelReference,
+    NoticeLevel, NoticeParams, Notification, Request, Response, ServerNotification, SessionEvent, SessionId,
+    SessionSettings, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 const SESSION: &str = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9d";
@@ -413,12 +413,13 @@ fn a_job_update_holds_the_whole_job_and_its_end() {
 fn an_mcp_server_update_and_the_server_list_read_and_write_their_json() {
     let server = |state| McpServer {
         name: "git".to_owned(),
+        source: McpServerSource::Project,
         state,
     };
 
     assert_json(
         &json!({ "sessionId": SESSION, "update": {
-            "sessionUpdate": "mcp_server", "name": "git", "state": "connected", "tools": 3
+            "sessionUpdate": "mcp_server", "name": "git", "source": "project", "state": "connected", "tools": 3
         } }),
         &SessionUpdateParams {
             session_id: session(),
@@ -429,15 +430,15 @@ fn an_mcp_server_update_and_the_server_list_read_and_write_their_json() {
     );
     assert_json(
         &json!({ "servers": [
-            { "name": "git", "state": "failed", "error": "the server stopped" },
-            { "name": "git", "state": "disabled" },
+            { "name": "git", "source": "project", "state": "failed", "error": "the server stopped" },
+            { "name": "git", "source": "project", "state": "untrusted" },
         ] }),
         &ListMcpServersResult {
             servers: vec![
                 server(McpServerState::Failed {
                     error: "the server stopped".to_owned(),
                 }),
-                server(McpServerState::Disabled),
+                server(McpServerState::Untrusted),
             ],
         },
     );

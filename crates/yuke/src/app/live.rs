@@ -20,7 +20,9 @@ use yuke_protocol::{
     SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
+use super::trust;
 use super::{AppError, Mode, Observer, SOURCE, Shared, TokioTimer, lock, model_of, save_settings, warn};
+use crate::config::read_json;
 
 /// An open session.
 pub(super) struct LiveSession {
@@ -607,22 +609,60 @@ fn toolset_of(
     Ok(toolset)
 }
 
-/// Start the MCP servers of the user config for the session of `host` in `folder`. Each change of a server state is a
-/// live update of the session.
+/// The source of the questions about MCP servers.
+const MCP_SOURCE: &str = "host:mcp";
+
+/// Start the MCP servers of the user config and of `.mcp.json` in `folder` for the session of `host`. The project
+/// servers start after the trust. Each change of a server state is a live update of the session.
 fn start_servers(host: &Arc<Host>, folder: &Path) -> Servers {
     let output = Arc::clone(&host.inbox.output);
+    let project = match read_json::<yuke_mcp::Config>(&folder.join(".mcp.json")) {
+        Ok(project) => project,
+        Err(error) => {
+            output.notice(NoticeLevel::Error, &error);
+            yuke_mcp::Config::default()
+        }
+    };
     let on_change: OnChange =
         Arc::new(move |server| output.publish(SessionUpdate::Live(LiveUpdate::McpServer { server })));
     let shared = &host.shared;
     let variable = |name: &str| (shared.machine.variable)(name).and_then(|value| value.into_string().ok());
-    let servers = shared.mcp.servers.clone().into_iter().collect();
-    Servers::start(
-        servers,
-        &variable,
-        folder,
-        Arc::clone(host) as Arc<dyn MediaStore>,
-        on_change,
-    )
+    let user: Vec<_> = shared.mcp.servers.clone().into_iter().collect();
+    let entries: Vec<_> = project.servers.clone().into_iter().collect();
+    let trust = trust_of(Arc::clone(host), folder.to_owned(), project);
+    let media = Arc::clone(host) as Arc<dyn MediaStore>;
+    Servers::start(&user, &entries, trust, &variable, folder, media, on_change)
+}
+
+/// Whether the user trusts the project servers `project` of `folder`: a kept confirm, or a yes to the question now. A
+/// yes is kept. The close of the session ends the question.
+async fn trust_of(host: Arc<Host>, folder: PathBuf, project: yuke_mcp::Config) -> bool {
+    let output = &host.inbox.output;
+    let data = &host.shared.machine.paths.data;
+    let key = match trust::key(&folder, &project) {
+        Ok(key) => key,
+        Err(error) => {
+            output.notice(
+                NoticeLevel::Error,
+                &format!("the project MCP servers have no key: {error}"),
+            );
+            return false;
+        }
+    };
+    if trust::trusted(data, &key) {
+        return true;
+    }
+    let question = trust::question(&folder, &project);
+    if host.ask(MCP_SOURCE, question, host.closed.clone()).await != (InteractionResponse::Confirm { value: true }) {
+        return false;
+    }
+    if let Err(error) = trust::trust(data, &key) {
+        output.notice(
+            NoticeLevel::Warn,
+            &format!("yuke did not keep the trust of the MCP servers: {error}"),
+        );
+    }
+    true
 }
 
 /// Closes an open question when its asker stops waiting.

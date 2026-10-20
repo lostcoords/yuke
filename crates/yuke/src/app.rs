@@ -3,6 +3,7 @@
 //! of the protocol.
 
 mod live;
+mod trust;
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;

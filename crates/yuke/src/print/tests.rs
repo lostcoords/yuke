@@ -474,6 +474,20 @@ async fn a_question_of_a_plugin_gets_no_answer_because_the_run_has_no_client() {
 }
 
 #[tokio::test]
+async fn a_project_mcp_server_stays_off_because_the_run_has_no_client_to_confirm_it() {
+    let place = Place::new("print", "project_mcp");
+    // The program does not exist, so a start would fail the server instead of leaving it untrusted.
+    let config = r#"{ "mcpServers": { "proj": { "command": "/no/such/program" } } }"#;
+    std::fs::write(place.work.join(".mcp.json"), config).unwrap();
+
+    let (finished, requests) = run_with(&place, &task("Hi.", SessionChoice::New), &[text_reply("Done.")]).await;
+
+    assert_eq!(finished.unwrap().text, "Done.");
+    assert_eq!(requests.len(), 1);
+    assert!(!place.paths.data.join("mcp-trust").exists());
+}
+
+#[tokio::test]
 async fn a_background_command_fails_because_the_run_ends_with_its_turn() {
     let place = Place::new("print", "background");
 
