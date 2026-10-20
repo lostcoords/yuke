@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use yuke_agent::StoreError;
+use yuke_ai::hex;
 use yuke_sql::rusqlite::Connection;
 
 use crate::queries::sessions;
@@ -171,17 +172,6 @@ fn parse_session(name: &str) -> Option<[u8; 16]> {
         return None;
     }
     u128::from_str_radix(name, 16).ok().map(u128::to_be_bytes)
-}
-
-/// The lowercase hex digits of `bytes`.
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut text = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        text.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        text.push(char::from(DIGITS[usize::from(byte & 15)]));
-    }
-    text
 }
 
 #[cfg(test)]

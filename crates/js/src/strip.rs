@@ -18,9 +18,6 @@ const TRANSFORM: [&str; 2] = [include_str!("../Cargo.toml"), include_str!("types
 /// The start of the name of each temporary file. No cache file name starts with a dot.
 const TEMPORARY_PREFIX: &str = ".tmp-";
 
-/// The digits of a hex text.
-const DIGITS: &[u8; 16] = b"0123456789abcdef";
-
 /// The counter of the temporary files of this process. The process id and the counter make the name of each file.
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
@@ -91,12 +88,5 @@ fn key(source: &str) -> String {
         hasher.update([0]);
         hasher.update(text.as_bytes());
     }
-    let digest = hasher.finalize();
-
-    let mut text = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        text.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        text.push(char::from(DIGITS[usize::from(byte & 15)]));
-    }
-    text
+    yuke_ai::hex(&hasher.finalize())
 }

@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Promise, Value};
 use tokio::sync::oneshot;
 use yuke_agent::PromptSection;
-use yuke_ai::{Block, FinishReason, ToolCall, ToolResult};
+use yuke_ai::{Block, FinishReason, ToolCall, ToolResult, answer_text};
 use yuke_engine::{CancellationToken, Hooks, RoundDecision, ToolDecision};
 
 use crate::Runtime;
@@ -412,24 +412,6 @@ impl<'js> FromJs<'js> for RoundAnswer {
             None => Self::Stop,
         })
     }
-}
-
-/// The assistant text of the last answer in `context`: the text blocks after the last block of the user, before the
-/// results of its calls.
-fn answer_text(context: &[Block]) -> String {
-    let answer = context
-        .iter()
-        .rev()
-        .skip_while(|block| matches!(block, Block::ToolResult(_)))
-        .take_while(|block| block.role() == yuke_ai::Role::Assistant);
-    let mut texts: Vec<&str> = answer
-        .filter_map(|block| match block {
-            Block::AssistantText(text) => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    texts.reverse();
-    texts.join("\n")
 }
 
 /// The result after the `tool.after` handlers.

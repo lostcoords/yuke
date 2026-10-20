@@ -32,6 +32,7 @@ pub use request::{
     Origin, OriginRef, OutputSchema, Protocol, Reasoning, ReasoningReplay, ReasoningReplayMode, ReasoningReplayRef,
     ReasoningSettings, ReplayKind, Request, ResponsesDialect, ResponsesWire, Role, SEARCH_TOOL_NAME, Settings, Target,
     Thinking, ThinkingDisplay, ThinkingFormat, ToolCall, ToolCallRef, ToolChoice, ToolDefinition, ToolResult, Wire,
+    answer_text, hex,
 };
 pub use response::{
     AttemptError, AttemptInfo, BlockId, BlockKind, BlockResult, BlockStarted, BlockStopped, Completion, Content, Delta,

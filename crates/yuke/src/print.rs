@@ -9,7 +9,7 @@ use serde::Serialize;
 use tokio::sync::Notify;
 use yuke_agent::StoreError;
 use yuke_ai::catalog::{Entry, ReasoningLevel};
-use yuke_ai::{Block, Role};
+use yuke_ai::{Block, answer_text};
 use yuke_engine::{CancellationToken, Outcome, TurnEnd, chain_text};
 use yuke_protocol::{
     LiveUpdate, ModelReference, NoticeLevel, ServerNotification, SessionEvent, SessionId, SessionSettings,
@@ -210,27 +210,6 @@ fn reasoning(entry: &Entry<'_>, choice: ReasoningChoice) -> Result<yuke_ai::Reas
         .model
         .reasoning(level)
         .map_err(|error| format!("{}/{}: {error}", entry.provider.id, entry.model.id))
-}
-
-/// The text of the last answer: the text blocks of the last run of assistant blocks.
-fn answer_text(context: &[Block]) -> String {
-    // A cancel after a tool call saves error results after the answer. A tool result has the user role.
-    let end = context
-        .iter()
-        .rposition(|block| block.role() == Role::Assistant)
-        .map_or(0, |last| last + 1);
-    let start = context[..end]
-        .iter()
-        .rposition(|block| block.role() != Role::Assistant)
-        .map_or(0, |last| last + 1);
-    let texts: Vec<&str> = context[start..end]
-        .iter()
-        .filter_map(|block| match block {
-            Block::AssistantText(text) => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    texts.join("\n")
 }
 
 /// Keeps what a run needs from the notifications of its session: the saved blocks of the turn, its end, and a

@@ -541,26 +541,6 @@ async fn a_rejected_credential_ends_the_turn_with_its_text_once() {
 }
 
 #[test]
-fn the_answer_text_is_the_text_of_the_last_run_of_assistant_blocks() {
-    let context = [
-        Block::user_text("Go."),
-        Block::assistant_text("Early."),
-        Block::ToolResult(yuke_ai::ToolResult::error("call-1", "failed")),
-        Block::assistant_text("One."),
-        Block::assistant_text("Two."),
-        Block::ToolCall(yuke_ai::ToolCall {
-            call_id: "call-2".to_owned(),
-            name: "exec".to_owned(),
-            arguments: "{}".to_owned(),
-        }),
-        Block::ToolResult(yuke_ai::ToolResult::error("call-2", "not run")),
-    ];
-
-    assert_eq!(answer_text(&context), "One.\nTwo.");
-    assert_eq!(answer_text(&context[..1]), "");
-}
-
-#[test]
 fn only_an_error_notice_of_yuke_fails_the_run() {
     let watcher = Watcher::default();
     let session_id = Some(SessionId::generate());

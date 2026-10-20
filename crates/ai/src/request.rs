@@ -191,17 +191,10 @@ mod digest_hex {
     use serde::de::{Error, Unexpected};
     use serde::{Deserialize, Deserializer, Serializer};
 
-    use super::Digest;
-
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    use super::{Digest, hex};
 
     pub(super) fn serialize<S: Serializer>(digest: &Digest, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut text = String::with_capacity(64);
-        for byte in digest {
-            text.push(char::from(DIGITS[usize::from(byte >> 4)]));
-            text.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
-        }
-        serializer.serialize_str(&text)
+        serializer.serialize_str(&hex(digest))
     }
 
     pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Digest, D::Error> {
@@ -287,6 +280,39 @@ impl From<ToolResult> for Block {
     fn from(result: ToolResult) -> Self {
         Block::ToolResult(result)
     }
+}
+
+/// The text of the last answer in `context`: the text blocks of the assistant blocks before the tool results at the end,
+/// one per line. A context that ends with other user input has no answer after it, so its text is empty.
+pub fn answer_text(context: &[Block]) -> String {
+    // The results of the calls of an answer come after it, also the error results of a cancel.
+    let end = context
+        .iter()
+        .rposition(|block| !matches!(block, Block::ToolResult(_)))
+        .map_or(0, |last| last + 1);
+    let start = context[..end]
+        .iter()
+        .rposition(|block| block.role() != Role::Assistant)
+        .map_or(0, |last| last + 1);
+    let texts: Vec<&str> = context[start..end]
+        .iter()
+        .filter_map(|block| match block {
+            Block::AssistantText(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    texts.join("\n")
+}
+
+/// The lowercase hex text of `bytes`. The text of a [`Digest`] is also the name of its stored file.
+pub fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        text.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        text.push(char::from(DIGITS[usize::from(byte & 15)]));
+    }
+    text
 }
 
 /// One attachment. Its media type selects the block each protocol writes.
@@ -935,6 +961,31 @@ mod tests {
     use super::*;
 
     use crate::testing::assert_same;
+
+    #[test]
+    fn the_answer_text_is_the_text_of_the_last_run_of_assistant_blocks() {
+        let context = [
+            Block::user_text("Go."),
+            Block::assistant_text("Early."),
+            Block::ToolResult(ToolResult::error("call-1", "failed")),
+            Block::assistant_text("One."),
+            Block::assistant_text("Two."),
+            Block::ToolCall(ToolCall {
+                call_id: "call-2".to_owned(),
+                name: "exec".to_owned(),
+                arguments: "{}".to_owned(),
+            }),
+            Block::ToolResult(ToolResult::error("call-2", "not run")),
+        ];
+
+        assert_eq!(answer_text(&context), "One.\nTwo.");
+        assert_eq!(answer_text(&context[..1]), "");
+        // An empty answer adds no block, so the input of its round ends the context.
+        assert_eq!(
+            answer_text(&[Block::assistant_text("Old."), Block::user_text("New.")]),
+            ""
+        );
+    }
 
     struct Store;
 
