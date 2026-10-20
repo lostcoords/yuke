@@ -7,9 +7,11 @@ mod encoding;
 mod exec;
 mod fs;
 mod lines;
+mod process;
 mod tools;
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use rquickjs::module::{Declarations, Declared, Exports, ModuleDef};
 use rquickjs::{Ctx, Function, Module, Object};
@@ -17,6 +19,7 @@ use rquickjs::{Ctx, Function, Module, Object};
 use tokio::sync::mpsc;
 
 use crate::error::{ErrorClass, Report, throw};
+use crate::processes::Processes;
 use crate::tools::Registry;
 
 /// A started operation: the promise of its value, and the function that stops it.
@@ -71,10 +74,12 @@ pub(crate) fn declare<'js>(ctx: &Ctx<'js>, name: &str) -> Option<rquickjs::Resul
 pub(crate) fn install(
     ctx: &Ctx<'_>,
     registry: &Rc<Registry>,
+    processes: &Arc<Processes>,
     reports: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
     let object = Object::new(ctx.clone())?;
     fs::add(ctx, &object)?;
+    process::add(ctx, &object, processes)?;
     lines::add(ctx, &object)?;
     encoding::add(ctx, &object)?;
     console::add(ctx, &object, reports.clone())?;

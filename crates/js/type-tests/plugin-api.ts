@@ -153,6 +153,23 @@ async function files(): Promise<void> {
 }
 void files;
 
+// `yuke:process` runs a program in a required folder, and its output is bytes.
+async function programs(): Promise<void> {
+  const { Command } = await import("yuke:process");
+  const out = await new Command("git", { args: ["status"], cwd: ctx.root, signal: ctx.signal }).output();
+  const ok: boolean = out.success;
+  const stdout: Uint8Array = out.stdout;
+  const signal: string | null = out.signal;
+  // @ts-expect-error: a command needs its folder.
+  new Command("git", { args: ["status"] });
+  // @ts-expect-error: the output of a program never goes to the terminal of yuke.
+  new Command("git", { cwd: ctx.root, stdout: "inherit" });
+  void ok;
+  void stdout;
+  void signal;
+}
+void programs;
+
 export { results };
 
 // A `prompt.build` handler gets the sections, and answers new sections or nothing.

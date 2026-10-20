@@ -290,6 +290,17 @@ impl Processes {
         RunningCommand { output, end, stop }
     }
 
+    /// Run `program` until it ends, and answer its end and its output. A cancel of `stop` stops its process group:
+    /// SIGTERM, then SIGKILL after a grace. A dropped call stops it too.
+    pub(crate) async fn output(&self, program: Program, stop: CancellationToken) -> Result<ProgramEnd, String> {
+        // The task runs on the runtime of the consumer, which drives the pipes of the child.
+        let task = self.handle.spawn(run_program(program, stop.clone()));
+        let guard = stop.drop_guard();
+        let end = task.await.map_err(|error| error.to_string());
+        guard.disarm();
+        end?
+    }
+
     /// Start `command` in the folder of `owner` as a job, and answer its id and log file. A job that ends by itself
     /// reports to `owner`. Without jobs, the start fails with a text for the model.
     pub(crate) async fn start_job(
@@ -540,13 +551,7 @@ pub fn shell() -> &'static Path {
     if bash.exists() { bash } else { Path::new("/bin/sh") }
 }
 
-/// The shell command for `command` in `folder`: the [`shell`]. The child leads a new session with no
-/// controlling terminal, so a prompt such as the password of `ssh` fails at once instead of a read of the terminal of
-/// yuke. The new session is a new process group too. The child reads no input.
-#[expect(
-    unsafe_code,
-    reason = "the hook runs between fork and exec, where only async-signal-safe calls are sound"
-)]
+/// The shell command for `command` in `folder`: the [`shell`] in a new session. The child reads no input.
 fn shell_command(command: &str, folder: &Path) -> Command {
     let mut shell_command = Command::new(shell());
     shell_command
@@ -554,17 +559,54 @@ fn shell_command(command: &str, folder: &Path) -> Command {
         .arg(command)
         .current_dir(folder)
         .stdin(Stdio::null());
-    // SAFETY: the hook makes one system call, `setsid`, which POSIX lists as async-signal-safe, and it allocates nothing.
-    unsafe {
-        shell_command.pre_exec(|| match rustix::process::setsid() {
-            Ok(_) => Ok(()),
-            Err(error) => Err(error.into()),
-        });
-    }
+    new_session(&mut shell_command);
     if let Some(home) = recovered_home(std::env::var_os("HOME").as_deref()) {
         shell_command.env("HOME", home);
     }
     shell_command
+}
+
+/// Make the child of `command` lead a new session with no controlling terminal, so a prompt such as the password of
+/// `ssh` fails at once instead of a read of the terminal of yuke. The new session is a new process group too.
+#[expect(
+    unsafe_code,
+    reason = "the hook runs between fork and exec, where only async-signal-safe calls are sound"
+)]
+fn new_session(command: &mut Command) {
+    // SAFETY: the hook makes one system call, `setsid`, which POSIX lists as async-signal-safe, and it allocates nothing.
+    unsafe {
+        command.pre_exec(|| match rustix::process::setsid() {
+            Ok(_) => Ok(()),
+            Err(error) => Err(error.into()),
+        });
+    }
+}
+
+/// A program of a plugin, with its arguments and without a shell.
+#[derive(Debug)]
+pub(crate) struct Program {
+    /// The program: a name that the `PATH` finds, or a path.
+    pub(crate) command: String,
+    pub(crate) args: Vec<String>,
+    /// The absolute folder of the program.
+    pub(crate) cwd: PathBuf,
+    /// The environment variables beside the environment of yuke, or in place of it with `clear_env`.
+    pub(crate) env: Vec<(String, String)>,
+    pub(crate) clear_env: bool,
+    /// Whether the answer keeps stdout, and stderr. A stream that it does not keep goes to the null device.
+    pub(crate) stdout: bool,
+    pub(crate) stderr: bool,
+}
+
+/// How a program ended, and its output.
+#[derive(Debug)]
+pub(crate) struct ProgramEnd {
+    /// The exit code, or 128 and the number of the signal that ended the program.
+    pub(crate) code: i32,
+    /// The name of the signal that ended the program, such as `SIGTERM`.
+    pub(crate) signal: Option<&'static str>,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
 }
 
 /// The process group that a child leads.
@@ -614,6 +656,108 @@ fn kill_rest_of_group(group: Pid) {
 /// process that changed its user, still counts as a process, so the kill after the grace comes.
 fn group_has_processes(group: Pid) -> bool {
     rustix::process::test_kill_process_group(group) != Err(rustix::io::Errno::SRCH)
+}
+
+/// The run of one program: start it, read stdout and stderr at once, and stop its group at a stop. After the exit, the
+/// read waits for the end of each stream, as a process that the program left can still write.
+async fn run_program(program: Program, stop: CancellationToken) -> Result<ProgramEnd, String> {
+    let piped = |keep: bool| if keep { Stdio::piped() } else { Stdio::null() };
+    let mut command = Command::new(&program.command);
+    command
+        .args(&program.args)
+        .current_dir(&program.cwd)
+        .stdin(Stdio::null())
+        .stdout(piped(program.stdout))
+        .stderr(piped(program.stderr));
+    if program.clear_env {
+        command.env_clear();
+    } else if let Some(home) = recovered_home(std::env::var_os("HOME").as_deref()) {
+        command.env("HOME", home);
+    }
+    command.envs(program.env);
+    new_session(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("{} did not start: {error}", program.command))?;
+    let group = group_of(&child).map_err(|error| error.to_string())?;
+    let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
+    let mut reading = tokio::spawn(async move { tokio::try_join!(read_all(stdout), read_all(stderr)) });
+    let status = tokio::select! {
+        status = child.wait() => status,
+        () = stop.cancelled() => stop_group(group, &mut child).await,
+    }
+    .map_err(|error| error.to_string())?;
+    // A process that the program left in its group can hold a stream open. A stop ends it, so the read ends too.
+    let read = tokio::select! {
+        read = &mut reading => read,
+        () = stop.cancelled() => {
+            kill_rest_of_group(group);
+            reading.await
+        }
+    };
+    let (stdout, stderr) = read
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("the output of {} did not read: {error}", program.command))?;
+    let signal = std::os::unix::process::ExitStatusExt::signal(&status);
+    let code = match (status.code(), signal) {
+        (Some(code), _) => code,
+        (None, Some(signal)) => 128 + signal,
+        (None, None) => return Err(format!("{} ended without an exit code or a signal", program.command)),
+    };
+    Ok(ProgramEnd {
+        code,
+        signal: signal.and_then(signal_name),
+        stdout,
+        stderr,
+    })
+}
+
+/// Each byte of `pipe` until its end, or nothing without a pipe.
+async fn read_all(pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    if let Some(mut pipe) = pipe {
+        tokio::io::AsyncReadExt::read_to_end(&mut pipe, &mut bytes).await?;
+    }
+    Ok(bytes)
+}
+
+/// The name of the signal with the number `number` on this system, as Deno names it.
+fn signal_name(number: i32) -> Option<&'static str> {
+    const NAMES: [(Signal, &str); 29] = [
+        (Signal::HUP, "SIGHUP"),
+        (Signal::INT, "SIGINT"),
+        (Signal::QUIT, "SIGQUIT"),
+        (Signal::ILL, "SIGILL"),
+        (Signal::TRAP, "SIGTRAP"),
+        (Signal::ABORT, "SIGABRT"),
+        (Signal::BUS, "SIGBUS"),
+        (Signal::FPE, "SIGFPE"),
+        (Signal::KILL, "SIGKILL"),
+        (Signal::USR1, "SIGUSR1"),
+        (Signal::SEGV, "SIGSEGV"),
+        (Signal::USR2, "SIGUSR2"),
+        (Signal::PIPE, "SIGPIPE"),
+        (Signal::ALARM, "SIGALRM"),
+        (Signal::TERM, "SIGTERM"),
+        (Signal::CHILD, "SIGCHLD"),
+        (Signal::CONT, "SIGCONT"),
+        (Signal::STOP, "SIGSTOP"),
+        (Signal::TSTP, "SIGTSTP"),
+        (Signal::TTIN, "SIGTTIN"),
+        (Signal::TTOU, "SIGTTOU"),
+        (Signal::URG, "SIGURG"),
+        (Signal::XCPU, "SIGXCPU"),
+        (Signal::XFSZ, "SIGXFSZ"),
+        (Signal::VTALARM, "SIGVTALRM"),
+        (Signal::PROF, "SIGPROF"),
+        (Signal::WINCH, "SIGWINCH"),
+        (Signal::IO, "SIGIO"),
+        (Signal::SYS, "SIGSYS"),
+    ];
+    NAMES
+        .iter()
+        .find(|(signal, _)| signal.as_raw() == number)
+        .map(|(_, name)| *name)
 }
 
 /// The run of one command: start it, read its output, and stop it at the deadline or at a stop.

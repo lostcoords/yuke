@@ -3,6 +3,7 @@ mod exec;
 mod fs;
 mod globals;
 mod plugins;
+mod process;
 mod prompt;
 mod round_after;
 mod sessions;

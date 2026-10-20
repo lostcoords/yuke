@@ -312,7 +312,7 @@ impl Engine {
                 crate::error::install_error_classes(&ctx)?;
                 timers::install(&ctx, &timers, faults.clone())?;
                 crate::error::install_report_error(&ctx, faults.clone())?;
-                native::install(&ctx, &registry, faults)
+                native::install(&ctx, &registry, &options.processes, faults)
             })
             .await
             .map_err(engine_error)?;

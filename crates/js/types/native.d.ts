@@ -125,6 +125,35 @@ declare module "yuke:internal/native" {
       }
     | { readonly image: { readonly path: string; readonly mimeType: string } };
 
+  /** What `processOutput` runs: a program with its arguments, without a shell. */
+  export interface ProcessRequest {
+    readonly command: string;
+    readonly args: readonly string[];
+    /** The absolute folder of the program. */
+    readonly cwd: string;
+    readonly env: Readonly<Record<string, string>>;
+    readonly clearEnv: boolean;
+    /** Whether the answer keeps stdout, and stderr. A stream that it does not keep goes to the null device. */
+    readonly stdout: boolean;
+    readonly stderr: boolean;
+  }
+
+  /** How a program ended, and its output. */
+  export interface ProcessEnd {
+    /** The exit code, or 128 and the number of the signal that ended the program. */
+    readonly code: number;
+    /** The name of the signal that ended the program, such as `SIGTERM`. */
+    readonly signal: string | null;
+    readonly stdout: Uint8Array;
+    readonly stderr: Uint8Array;
+  }
+
+  /**
+   * Run `request` in its own process group. A program that does not start rejects with an `Error`. The cancel stops
+   * the group: SIGTERM, then SIGKILL after 2 seconds; the promise then fulfills with the end of the signal.
+   */
+  export function processOutput(request: ProcessRequest): Operation<ProcessEnd>;
+
   /** One file operation in flight: its promise, and the function that asks it to stop at its next check. */
   export interface Operation<T> {
     readonly promise: Promise<T>;
