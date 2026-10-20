@@ -27,6 +27,8 @@ turn reads the blobs of its media from the store, so the driver needs no blob st
   no pending input, and no open turn. A fork names the end by its event number, or takes the newest completed turn. A
   number that does not end a completed turn gets `StoreError::NotACompletedTurn`.
 - An input from `Session::input` is pending in the store until a commit consumes it. An open starts no turn.
+- A turn reads the pending inputs from the store at its start and after each round. After a cancelled or failed turn,
+  the next turn adds a notification from `host:session` after its inputs.
 - After a failed commit, or when the caller drops a turn, the session is stale. `Session::recover` opens it again
   from the store before the next turn.
 

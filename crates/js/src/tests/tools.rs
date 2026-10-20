@@ -14,20 +14,21 @@ use yuke_protocol::SessionId;
 
 use super::{evaluate, folder, load_entry, module, next_fault, next_notice, script_error, start, write};
 use crate::tools::forward;
-use crate::{JobEnded, Runtime, ScriptSession, ScriptTool, SessionHost, baked};
+use crate::{Runtime, ScriptSession, ScriptTool, SessionHost, baked};
 
-/// A session host that keeps the bytes of each stored attachment and each job end.
+/// A session host that keeps the bytes of each stored attachment and each input.
 #[derive(Debug)]
 pub(super) struct TestHost {
     pub(super) session: SessionId,
     /// The folder of the session. A test can change it while a call runs.
     pub(super) folder: Mutex<PathBuf>,
     pub(super) media: Mutex<Vec<Vec<u8>>>,
-    pub(super) ended: Mutex<Vec<JobEnded>>,
     /// Each start and end of a job, in order.
     pub(super) changed: Mutex<Vec<yuke_protocol::Job>>,
-    /// Holds each job end until a notify, when it is set.
+    /// Holds each input until a notify, when it is set.
     pub(super) end_gate: Option<Arc<tokio::sync::Notify>>,
+    /// Each input that the plugins and the jobs gave the session, in order.
+    pub(super) inputs: Mutex<Vec<yuke_protocol::Input>>,
 }
 
 impl TestHost {
@@ -37,9 +38,9 @@ impl TestHost {
             session: SessionId::generate(),
             folder: Mutex::new(folder.to_owned()),
             media: Mutex::default(),
-            ended: Mutex::default(),
             changed: Mutex::default(),
             end_gate: None,
+            inputs: Mutex::default(),
         }
     }
 }
@@ -67,11 +68,11 @@ impl SessionHost for TestHost {
         self.changed.lock().unwrap().push(job);
     }
 
-    async fn job_ended(&self, ended: JobEnded) {
+    async fn accept_input(&self, input: yuke_protocol::Input) {
         if let Some(gate) = &self.end_gate {
             gate.notified().await;
         }
-        self.ended.lock().unwrap().push(ended);
+        self.inputs.lock().unwrap().push(input);
     }
 }
 

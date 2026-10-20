@@ -12,6 +12,7 @@ use tokio::sync::oneshot;
 use yuke_agent::PromptSection;
 use yuke_ai::{Block, FinishReason, ToolCall, ToolResult, answer_text};
 use yuke_engine::{CancellationToken, Hooks, RoundDecision, ToolDecision};
+use yuke_protocol::Input;
 
 use crate::Runtime;
 use crate::error::{Error, caught};
@@ -219,9 +220,12 @@ impl Hooks for ScriptHooks {
                 .map_err(|error| failure_text("round.after", &error))?;
         Ok(match answer {
             Some(Some(RoundAnswer::Stop)) => RoundDecision::Stop,
-            Some(Some(RoundAnswer::Continue(text))) => {
+            Some(Some(RoundAnswer::Continue { plugin, text })) => {
                 self.continues.fetch_add(1, Ordering::Relaxed);
-                RoundDecision::Continue(vec![Block::user_text(text)])
+                // The request is a notification of the plugin, so the user sees who sent it. The turn takes the
+                // input of the session after this round, together with an input of the user.
+                self.host.accept_input(Input::notification(&plugin, &text, &text)).await;
+                RoundDecision::Proceed
             }
             // A cancel ends the turn, so the driver does not read this answer.
             Some(None) | None => RoundDecision::Proceed,
@@ -397,18 +401,25 @@ struct RoundAfterRequest {
     continues: u64,
 }
 
-/// The answer of the `round.after` handlers: `{ stop: true }`, or `{ continue }` with the wrapped text.
+/// The answer of the `round.after` handlers: `{ stop: true }`, or `{ continue, plugin }`.
 #[derive(Debug)]
 enum RoundAnswer {
     Stop,
-    Continue(String),
+    /// The text of the request, and the plugin that sent it.
+    Continue {
+        plugin: String,
+        text: String,
+    },
 }
 
 impl<'js> FromJs<'js> for RoundAnswer {
     fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
         let object = Object::from_value(value)?;
         Ok(match object.get::<_, Option<String>>("continue")? {
-            Some(text) => Self::Continue(text),
+            Some(text) => Self::Continue {
+                plugin: object.get("plugin")?,
+                text,
+            },
             None => Self::Stop,
         })
     }

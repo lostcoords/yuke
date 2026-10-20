@@ -14,7 +14,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub use memory::MemoryStore;
 pub use prompt::{PromptSection, prompt_text};
-pub use session::{InputSender, Session, SessionError, SessionTurn, system_notification};
+pub use session::{InputSender, Session, SessionError, SessionTurn};
 pub use store::{Access, Lease, Loaded, NewestTurn, Opened, Store, StoreError, blob_of, check_consumed_blocks};
 pub use updates::SessionObserver;
 

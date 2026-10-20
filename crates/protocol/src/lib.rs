@@ -12,7 +12,7 @@ mod update;
 
 pub use event::{SessionEvent, StoredEvent};
 pub use id::{DraftId, EventNumber, InputId, InstanceId, SessionId};
-pub use input::{ConsumedInput, Input, InputError, InputSource, PendingInput};
+pub use input::{ConsumedInput, Input, InputError, InputKind, InputSource, PendingInput};
 pub use message::{
     CancelParams, ClientNotification, ClientRequest, CloseSessionParams, EmptyResult, ForkSessionParams,
     Implementation, InitializeParams, InitializeResult, InputParams, InputResult, Job, JobState, JsonRpc,

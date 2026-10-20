@@ -327,7 +327,7 @@ async fn a_saved_input_without_content_does_not_load() {
     let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
     connection
         .execute(
-            r#"INSERT INTO pending_inputs(session_id, input) VALUES (?1, '{"source":{"kind":"user"},"content":[]}')"#,
+            r#"INSERT INTO pending_inputs(session_id, input) VALUES (?1, '{"source":{"kind":"user"},"kind":"message","content":[]}')"#,
             [session.id.as_bytes().as_slice()],
         )
         .unwrap();

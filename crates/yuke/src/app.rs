@@ -27,8 +27,8 @@ use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CredentialSource, Model, Timer, chain_text};
 use yuke_js::{Options, Processes, Report, Runtime};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InputSource, Job, NoticeLevel, NoticeParams, ServerNotification, SessionEvent,
-    SessionId, SessionSettings, StoredEvent, UpdateCredentialParams,
+    EventNumber, Input, InputId, InputKind, InputSource, Job, NoticeLevel, NoticeParams, ServerNotification,
+    SessionEvent, SessionId, SessionSettings, StoredEvent, UpdateCredentialParams,
 };
 use yuke_store::SqliteStore;
 
@@ -296,7 +296,8 @@ impl App {
     /// Returns [`AppError::Invalid`] for content that is no input, and [`AppError::Store`] when the store fails.
     pub(crate) async fn input(&self, id: SessionId, content: Vec<Block>) -> Result<InputId, AppError> {
         let live = self.live(id)?;
-        let input = Input::new(InputSource::User, content).map_err(|error| AppError::Invalid(chain_text(&error)))?;
+        let input = Input::new(InputSource::User, InputKind::Message, content)
+            .map_err(|error| AppError::Invalid(chain_text(&error)))?;
         live.inbox.accept(input).await.map_err(AppError::Store)
     }
 

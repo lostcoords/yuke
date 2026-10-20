@@ -51,9 +51,12 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - Tool updates use `{ eventNumber, blockIndex }` within the enclosing session. The position names the saved call block.
 - Saved commits still contain model context data. A visible-history projection is separate from that raw journal.
 - An input has a source: `user`, or a `plugin` with a name. The inputs of yuke itself use names that start with `host:`.
+- An input has a kind: `message` for a text of a person, or `notification` for a notice that no person wrote. A client
+  shows a notification as a notice. The model reads a notification in `<system_notification plugin="name">`.
+- After a cancelled or failed turn, the next turn gets a notification from `host:session` after its other inputs.
 - An input holds the content that the user saw. It holds model content only when the model reads other blocks.
-- A saved commit starts with the model blocks of its consumed inputs. `consumed` gives the id, the source, and the block
-  count of each input. It gives the content that the user saw only when that content differs.
+- A saved commit starts with the model blocks of its consumed inputs. `consumed` gives the id, the source, the kind, and
+  the block count of each input. It gives the content that the user saw only when that content differs.
 - Each type holds one message. The protocol has no batches.
 
 The session types of the messages (`SessionId`, `SessionSettings`, `SessionEvent`, and others) are the types that

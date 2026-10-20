@@ -32,7 +32,7 @@ mod typescript;
 
 pub use error::{Error, Report, ScriptError};
 pub use plugins::{Plugin, PluginFailure};
-pub use processes::{JobEnded, Processes, shell};
+pub use processes::{Processes, shell};
 pub use runtime::{Options, Runtime};
 pub use session::{ScriptHooks, ScriptSession};
 pub use tools::{ScriptTool, SessionHost};

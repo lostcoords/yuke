@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use yuke_engine::{Answer, Commit, Outcome, Replaced, TurnEnd};
 
 use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputId, InputSource, ModelReference, PendingInput, SessionEvent, SessionId,
-    SessionSettings, StoredEvent,
+    ConsumedInput, EventNumber, Input, InputId, InputKind, InputSource, ModelReference, PendingInput, SessionEvent,
+    SessionId, SessionSettings, StoredEvent,
 };
 
 use crate::PromptSection;
@@ -105,7 +105,12 @@ pub fn settings(model: &str) -> SessionSettings {
 
 /// An input of the user with one text block.
 pub fn user_input(text: &str) -> Input {
-    Input::new(InputSource::User, vec![yuke_ai::Block::user_text(text)]).unwrap()
+    Input::new(
+        InputSource::User,
+        InputKind::Message,
+        vec![yuke_ai::Block::user_text(text)],
+    )
+    .unwrap()
 }
 
 /// The record of input `id` of the user, consumed with `block_count` model blocks that the user saw too.
@@ -113,6 +118,7 @@ pub fn consumed(id: InputId, block_count: usize) -> ConsumedInput {
     ConsumedInput {
         id,
         source: InputSource::User,
+        kind: InputKind::Message,
         display_content: None,
         block_count,
     }
@@ -583,10 +589,14 @@ pub async fn an_input_keeps_its_source_and_both_contents_through_its_commit(stor
     let source = InputSource::Plugin {
         name: "host:jobs".to_owned(),
     };
-    let input = Input::new(source.clone(), vec![yuke_ai::Block::user_text("job-1 finished")])
-        .unwrap()
-        .with_model_content(vec![yuke_ai::Block::user_text("job-1 ended with exit code 0.")])
-        .unwrap();
+    let input = Input::new(
+        source.clone(),
+        InputKind::Notification,
+        vec![yuke_ai::Block::user_text("job-1 finished")],
+    )
+    .unwrap()
+    .with_model_content(vec![yuke_ai::Block::user_text("job-1 ended with exit code 0.")])
+    .unwrap();
     let input_id = store.accept_input(id, input.clone()).await.unwrap();
 
     let pending = store.pending(id).await.unwrap();
@@ -606,6 +616,7 @@ pub async fn an_input_keeps_its_source_and_both_contents_through_its_commit(stor
             consumed: vec![ConsumedInput {
                 id: input_id,
                 source,
+                kind: InputKind::Notification,
                 display_content: Some(vec![yuke_ai::Block::user_text("job-1 finished")]),
                 block_count: 1,
             }],

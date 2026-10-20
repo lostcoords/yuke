@@ -533,30 +533,3 @@ fn each_request_opens_after_the_journal_saved_its_input_and_replacement() {
         ]
     );
 }
-
-#[test]
-fn continue_input_commits_before_its_request() {
-    let transport = ScriptedTransport::new([text_reply("first"), text_reply("second")]);
-    let model = model();
-    let hooks = Script::default().decisions([
-        RoundDecision::Continue(vec![Block::user_text("the tests fail")]),
-        RoundDecision::Proceed,
-    ]);
-    let journal = Replay::default();
-    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).journal(&journal);
-    let mut context = Vec::new();
-
-    block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();
-
-    assert_eq!(
-        journal.shapes(),
-        [
-            (vec![Block::user_text("go")], None),
-            (vec![Block::assistant_text("first")], None),
-            (vec![Block::user_text("the tests fail")], None),
-            (vec![Block::assistant_text("second")], None),
-            (vec![], Some(completed())),
-        ]
-    );
-    assert_eq!(journal.context(), context);
-}

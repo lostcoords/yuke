@@ -67,9 +67,10 @@ impl Batches {
     }
 }
 
+#[async_trait]
 impl Inbox for Batches {
-    fn take(&self) -> Vec<Block> {
-        self.batches.lock().unwrap().pop_front().unwrap_or_default()
+    async fn take(&self) -> Result<Vec<Block>, Box<dyn Error + Send + Sync>> {
+        Ok(self.batches.lock().unwrap().pop_front().unwrap_or_default())
     }
 }
 

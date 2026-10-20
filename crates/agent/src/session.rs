@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use yuke_engine::{CancellationToken, Commit, Driver, Inbox, Journal, Outcome, RoundError, TurnEnd, TurnError};
 use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, StoredEvent,
+    ConsumedInput, EventNumber, Input, InputId, InputSource, SessionEvent, SessionId, SessionSettings, StoredEvent,
 };
 
 use crate::store::{Access, Lease, NewestTurn, Opened, Store, StoreError};
@@ -19,22 +19,22 @@ const OUTCOME_UNKNOWN: &str = "The turn stopped before it saved the result of th
 /// The failure of a turn that stopped before it saved its end.
 const TURN_STOPPED: &str = "the turn stopped before it saved its end";
 
-/// A notice of yuke to the model: user text in a `system_notification` tag.
-pub fn system_notification(text: &str) -> yuke_ai::Block {
-    // A job log can hold the closing tag, which would end the notice early.
-    let text = text.replace("</system_notification>", "</ system_notification>");
-    yuke_ai::Block::user_text(format!("<system_notification>{text}</system_notification>"))
-}
+/// The plugin name of the notes of the session.
+const SESSION_SOURCE: &str = "host:session";
 
-/// The note for the model about `newest_turn`, when that turn was cancelled or failed.
-fn interruption_note(newest_turn: &NewestTurn) -> Option<yuke_ai::Block> {
+/// The note about `newest_turn`, when that turn was cancelled or failed.
+fn interruption_note(newest_turn: &NewestTurn) -> Option<Input> {
     match newest_turn {
-        NewestTurn::Ended(TurnEnd::Outcome(Outcome::Cancelled)) => Some(system_notification(
+        NewestTurn::Ended(TurnEnd::Outcome(Outcome::Cancelled)) => Some(Input::notification(
+            SESSION_SOURCE,
+            "The previous turn was cancelled.",
             "The user cancelled the previous turn before it ended.",
         )),
-        NewestTurn::Ended(TurnEnd::Failed(error)) => Some(system_notification(&format!(
-            "The previous turn ended with an error: {error}"
-        ))),
+        NewestTurn::Ended(TurnEnd::Failed(error)) => Some(Input::notification(
+            SESSION_SOURCE,
+            "The previous turn failed.",
+            &format!("The previous turn ended with an error: {error}"),
+        )),
         NewestTurn::Empty | NewestTurn::Open | NewestTurn::Ended(TurnEnd::Outcome(_)) => None,
     }
 }
@@ -65,42 +65,49 @@ impl fmt::Debug for Session {
 }
 
 /// The journal, the inbox, and the blob store of one turn. The turn owns its input state. A dropped turn drops that
-/// state, and the next turn loads the pending inputs from the store.
+/// state, and the next turn takes the pending inputs again.
 struct TurnJournal<'a> {
-    store: &'a dyn Store,
-    id: SessionId,
+    inputs: TurnInputs<'a>,
     updates: &'a Updates<'a>,
-    inputs: Mutex<Inputs>,
 }
 
+/// The input state of one turn.
+struct TurnInputs<'a> {
+    store: &'a dyn Store,
+    id: SessionId,
+    state: Mutex<Inputs>,
+}
+
+#[derive(Default)]
 struct Inputs {
-    /// The pending inputs from the latest load of the store that the turn did not take.
-    waiting: Vec<PendingInput>,
-    /// The records of the inputs that the turn took and that no saved commit consumed.
+    /// The records of the inputs that the turn took and that no saved commit consumed. They are still pending.
     taken: Vec<ConsumedInput>,
-    /// The note about the previous turn. The first input that the turn takes carries it to the model.
-    note: Option<yuke_ai::Block>,
     /// The end of the turn, after the store saved it.
     ended: Option<TurnEnd>,
 }
 
-impl Inbox for TurnJournal<'_> {
-    // Each waiting input moves to the taken inputs, and its model blocks come back in input order.
-    fn take(&self) -> Vec<yuke_ai::Block> {
-        let mut inputs = lock(&self.inputs);
+impl TurnInputs<'_> {
+    /// Take each pending input that the turn did not take, and return their model blocks in input order.
+    async fn take(&self) -> Result<Vec<yuke_ai::Block>, StoreError> {
+        let pending = self.store.pending(self.id).await?;
+        let mut inputs = lock(&self.state);
         let mut blocks = Vec::new();
-        for input in std::mem::take(&mut inputs.waiting) {
-            let (mut consumed, mut model_blocks) = input.into_consumed();
-            // Only the model reads the note, so the record keeps what the user saw.
-            if let Some(note) = inputs.note.take() {
-                consumed.display_content.get_or_insert_with(|| model_blocks.clone());
-                model_blocks.insert(0, note);
-                consumed.block_count += 1;
+        for input in pending {
+            if inputs.taken.iter().any(|taken| taken.id == input.id) {
+                continue;
             }
+            let (consumed, model_blocks) = input.into_consumed();
             inputs.taken.push(consumed);
             blocks.extend(model_blocks);
         }
-        blocks
+        Ok(blocks)
+    }
+}
+
+#[async_trait]
+impl Inbox for TurnJournal<'_> {
+    async fn take(&self) -> Result<Vec<yuke_ai::Block>, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self.inputs.take().await?)
     }
 }
 
@@ -109,17 +116,13 @@ impl Journal for TurnJournal<'_> {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // The first commit after a take starts with the taken model blocks, so it consumes their inputs. The records
         // leave `taken` before the save. After a failed save, the next turn takes the pending inputs again.
-        let consumed = std::mem::take(&mut lock(&self.inputs).taken);
-        let event_number = self.store.commit(self.id, commit, &consumed).await?;
+        let TurnInputs { store, id, state } = &self.inputs;
+        let consumed = std::mem::take(&mut lock(state).taken);
+        let event_number = store.commit(*id, commit, &consumed).await?;
         self.updates.committed(event_number, commit, consumed);
         if let Some(end) = &commit.end {
-            // The engine reads the inbox only while the turn goes on.
-            lock(&self.inputs).ended = Some(end.clone());
-            return Ok(());
+            lock(state).ended = Some(end.clone());
         }
-        // The inbox then gives the input that arrived during the round.
-        let pending = self.store.pending(self.id).await?;
-        lock(&self.inputs).waiting = pending;
         Ok(())
     }
 }
@@ -129,7 +132,11 @@ impl yuke_ai::BlobStore for TurnJournal<'_> {
         &self,
         digest: &yuke_ai::Digest,
     ) -> Result<Option<std::borrow::Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
-        Ok(self.store.read_blob(self.id, digest)?.map(std::borrow::Cow::Owned))
+        Ok(self
+            .inputs
+            .store
+            .read_blob(self.inputs.id, digest)?
+            .map(std::borrow::Cow::Owned))
     }
 }
 
@@ -425,25 +432,32 @@ impl<'s> SessionTurn<'s> {
         if session.is_stale() {
             return Err(SessionError::Stale);
         }
-        let waiting = session.store.pending(session.id).await?;
-        if waiting.is_empty() {
+        let inputs = TurnInputs {
+            store: &*session.store,
+            id: session.id,
+            state: Mutex::default(),
+        };
+        let mut input = inputs.take().await?;
+        if input.is_empty() {
             return Err(SessionError::NoInput);
+        }
+        // The note follows the input that starts the turn, so a note alone never starts a turn. A turn that failed
+        // before its first commit leaves its note pending.
+        let noted = lock(&inputs.state)
+            .taken
+            .iter()
+            .any(|taken| matches!(&taken.source, InputSource::Plugin { name } if name == SESSION_SOURCE));
+        if !noted && let Some(note) = interruption_note(&session.newest_turn) {
+            session.store.accept_input(session.id, note).await?;
+            input.extend(inputs.take().await?);
         }
         // The future holds the lease while the turn runs, so a dropped future releases it.
         let lease = session.lease.take();
         let updates = Updates::new(session.id, observer);
         let turn_journal = TurnJournal {
-            store: &*session.store,
-            id: session.id,
+            inputs,
             updates: &updates,
-            inputs: Mutex::new(Inputs {
-                waiting,
-                taken: Vec::new(),
-                note: interruption_note(&session.newest_turn),
-                ended: None,
-            }),
         };
-        let input = turn_journal.take();
         let session_id = session.id.to_string();
         let system = prompt_text(prompt.as_deref().unwrap_or(&session.prompt));
         let turn = driver
@@ -457,7 +471,7 @@ impl<'s> SessionTurn<'s> {
             .cancellation_token(cancellation_token)
             .observer(&updates);
         let ran = turn.run().await;
-        if let Some(end) = lock(&turn_journal.inputs).ended.take() {
+        if let Some(end) = lock(&turn_journal.inputs.state).ended.take() {
             session.newest_turn = NewestTurn::Ended(end);
         }
         match ran {

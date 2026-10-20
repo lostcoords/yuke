@@ -53,8 +53,8 @@ pub trait Hooks: Send + Sync {
 
     /// Decide whether the turn continues. The driver asks after each answer, when the answer and its tool results are
     /// in `context`, and before it takes the input of the inbox. `finish_reason` is the reason of an answer that needs
-    /// no other request, and `None` after a round that asks for another request. The engine sets no limit on
-    /// `Continue`, so a caller bounds its own loop.
+    /// no other request, and `None` after a round that asks for another request. To continue after such an answer, the
+    /// hook puts input in the inbox and answers `Proceed`. The engine sets no limit on that loop, so a caller bounds it.
     ///
     /// # Errors
     ///
@@ -97,10 +97,6 @@ pub enum RoundDecision {
     /// Send the next request with the input of the inbox. After an answer that needs no other request, an empty inbox
     /// ends the turn as [`crate::Outcome::Completed`].
     Proceed,
-    /// Send another request with this input. When the inbox holds input, the request sends only the inbox input, and
-    /// the driver asks again after the next round. Some models reject a request that ends with an answer, so give
-    /// input after an answer.
-    Continue(Vec<Block>),
     /// End the turn, and leave the input of the inbox for the next turn. A turn that asked for another request ends as
     /// [`crate::Outcome::Stopped`]. After an answer that needs no other request, the turn ends as
     /// [`crate::Outcome::Completed`].

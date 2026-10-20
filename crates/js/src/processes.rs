@@ -21,9 +21,12 @@ use tokio::process::{Child, Command};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use yuke_engine::CancellationToken;
-use yuke_protocol::JobState;
+use yuke_protocol::{Input, JobState};
 
 use crate::tools::SessionHost;
+
+/// The plugin name of the input that a background job sends when it ends.
+const JOBS_SOURCE: &str = "host:jobs";
 
 /// The job numbers with four base-36 digits: from `1000` to `zzzz`.
 const FIRST_JOB_NUMBER: u32 = 36 * 36 * 36;
@@ -156,16 +159,6 @@ impl JobEnd {
             stopped: self.stopped,
         }
     }
-}
-
-/// A background job that ended by itself. The consumer gives [`JobEnded::text`] to the session as an input that is not
-/// from the user.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JobEnded {
-    /// The id of the job, for example `job-1a2b`.
-    pub id: String,
-    /// The text for the model: the end, the log file, and the last lines of the log.
-    pub text: String,
 }
 
 /// How a command ended.
@@ -470,11 +463,9 @@ impl JobTask {
         owner.job_changed(self.job(end.state()));
         if !end.stopped && !silenced {
             let text = end_message(&self.id, &end.label(), self.log.clone()).await;
+            let display = format!("{} ended", self.id);
             owner
-                .job_ended(JobEnded {
-                    id: self.id.clone(),
-                    text,
-                })
+                .accept_input(Input::notification(JOBS_SOURCE, &display, &text))
                 .await;
         }
         self.end(Some(end));

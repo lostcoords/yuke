@@ -174,10 +174,9 @@ export interface RoundAfterEvent {
 /**
  * The answer of a `round.after` handler.
  * - `{ stop: true }` ends the turn. The input that the user sent during the turn stays for the next turn.
- * - `{ continue }` sends another request with the text as input, between `<hook_feedback plugin="name">` and
- *   `</hook_feedback>`.
- * - When the user sent input during the turn, the request sends that input in place of the text. The handlers run
- *   again after its round, so a handler that still needs its request answers `continue` again.
+ * - `{ continue }` gives the session the text as a notification of the plugin, and the turn goes on with it. The user
+ *   sees the text as a notice of the plugin. The model reads it in `<system_notification plugin="name">`.
+ * - Input that the user sent during the turn goes with the text in the same request. The text is not empty.
  */
 export type RoundAfterAnswer =
   | { readonly stop: true; readonly continue?: never }

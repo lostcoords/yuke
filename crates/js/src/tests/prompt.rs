@@ -1,6 +1,5 @@
 //! These tests cover the `prompt.build` hook: its order, its answers, its checks, its failures, and its cancel.
 
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,6 +26,15 @@ pub(super) async fn opened(
     name: &str,
     plugins: &[(&str, &str)],
 ) -> (Runtime, ScriptSession, mpsc::UnboundedReceiver<Report>) {
+    let (runtime, session, _host, reports) = opened_with_host(name, plugins).await;
+    (runtime, session, reports)
+}
+
+/// [`opened`], with the host of the session.
+pub(super) async fn opened_with_host(
+    name: &str,
+    plugins: &[(&str, &str)],
+) -> (Runtime, ScriptSession, Arc<TestHost>, mpsc::UnboundedReceiver<Report>) {
     let folder = folder(name);
     let (runtime, reports) = start(&folder).await;
     let specs: Vec<_> = plugins
@@ -34,12 +42,9 @@ pub(super) async fn opened(
         .map(|(plugin_name, source)| plugin(&folder, plugin_name, Some(source), &[], &[]))
         .collect();
     assert!(runtime.load_plugins(&specs).await.is_empty());
-    let session = runtime.open_session(host(&folder)).await.unwrap();
-    (runtime, session, reports)
-}
-
-fn host(folder: &Path) -> Arc<TestHost> {
-    Arc::new(TestHost::new(folder))
+    let host = Arc::new(TestHost::new(&folder));
+    let session = runtime.open_session(host.clone()).await.unwrap();
+    (runtime, session, host, reports)
 }
 
 /// The sections that the hooks of `session` build from [`saved`], as `(key, text)` pairs.

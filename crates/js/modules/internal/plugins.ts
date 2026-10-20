@@ -7,7 +7,6 @@ import type {
   PluginContext,
   PluginSession,
   ResultMedia,
-  RoundAfterAnswer,
   RoundAfterEvent,
   Services,
   SessionCleanup,
@@ -221,18 +220,18 @@ interface RoundAfterRequest {
 
 /**
  * Start the `round.after` handlers of the open session `open` after one round. The answer is the first answer of a
- * handler, with the text of a `continue` wrapped in a `hook_feedback` tag that names the plugin, or `undefined` when no
- * handler answered. A closed session answers nothing. A failed handler throws. `abort` aborts the signal of the turn.
+ * handler, with the plugin that sent a `continue`, or `undefined` when no handler answered. A closed session answers
+ * nothing. A failed handler throws. `abort` aborts the signal of the turn.
  */
 export function startRoundAfter({
   open,
   text,
   finishReason,
   continues,
-}: RoundAfterRequest): Started<RoundAfterAnswer | undefined> {
+}: RoundAfterRequest): Started<RoundDecision | undefined> {
   return started(async (signal) => {
     const event: RoundAfterEvent = Object.freeze({ text, finishReason: finishReason ?? null, continues, signal });
-    let decision: RoundAfterAnswer | undefined;
+    let decision: RoundDecision | undefined;
     await runHandlers(
       open,
       "round.after",
@@ -249,8 +248,11 @@ export function startRoundAfter({
 /** The fields of a `round.after` answer. */
 const ROUND_FIELDS = ["stop", "continue"];
 
+/** What the host reads of a `round.after` answer: a stop, or the text of a continue and the plugin that sent it. */
+type RoundDecision = { readonly stop: true } | { readonly continue: string; readonly plugin: string };
+
 /** The checked `round.after` answer of `plugin`. Another shape throws a `TypeError`. */
-function roundOf(answer: unknown, plugin: string): RoundAfterAnswer {
+function roundOf(answer: unknown, plugin: string): RoundDecision {
   const fields = fieldsOf(answer, "the answer", ROUND_FIELDS);
   if (Object.hasOwn(fields, "stop") === Object.hasOwn(fields, "continue")) {
     throw new TypeError("the answer needs exactly one of stop and continue");
@@ -260,7 +262,8 @@ function roundOf(answer: unknown, plugin: string): RoundAfterAnswer {
     return { stop: true };
   }
   if (typeof fields.continue !== "string") throw new TypeError("the continue of the answer is not a string");
-  return { continue: `<hook_feedback plugin="${plugin}">\n${fields.continue}\n</hook_feedback>` };
+  if (fields.continue === "") throw new TypeError("the continue of the answer is empty");
+  return { continue: fields.continue, plugin };
 }
 
 /** A media item of a changed result as the host reads it: the index of an original item, or a new item. */

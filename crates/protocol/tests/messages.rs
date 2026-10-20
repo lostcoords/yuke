@@ -9,9 +9,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_protocol::{
-    ClientNotification, ClientRequest, ConsumedInput, EventNumber, Input, InputError, InputId, InputSource, JobState,
-    LiveUpdate, ModelReference, NoticeLevel, NoticeParams, Notification, Request, Response, ServerNotification,
-    SessionEvent, SessionId, SessionSettings, SessionUpdate, SessionUpdateParams, StoredEvent,
+    ClientNotification, ClientRequest, ConsumedInput, EventNumber, Input, InputError, InputId, InputKind, InputSource,
+    JobState, LiveUpdate, ModelReference, NoticeLevel, NoticeParams, Notification, Request, Response,
+    ServerNotification, SessionEvent, SessionId, SessionSettings, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 const SESSION: &str = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9d";
@@ -246,7 +246,12 @@ fn a_response_holds_a_result_or_an_error() {
 
 #[test]
 fn an_accepted_input_reads_and_writes_its_json_with_its_model_content_only_when_it_differs() {
-    let input = Input::new(InputSource::User, vec![yuke_ai::Block::user_text("Review @main.rs")]).unwrap();
+    let input = Input::new(
+        InputSource::User,
+        InputKind::Message,
+        vec![yuke_ai::Block::user_text("Review @main.rs")],
+    )
+    .unwrap();
     let same = input
         .clone()
         .with_model_content(vec![yuke_ai::Block::user_text("Review @main.rs")])
@@ -262,26 +267,33 @@ fn an_accepted_input_reads_and_writes_its_json_with_its_model_content_only_when_
 
     assert_json(
         &json!({ "sessionUpdate": "input_accepted", "inputId": 1,
-            "input": { "source": { "kind": "user" }, "content": [{ "user_text": "Review @main.rs" }] } }),
+            "input": { "source": { "kind": "user" }, "kind": "message", "content": [{ "user_text": "Review @main.rs" }] } }),
         &accepted(1, same),
     );
     assert_json(
         &json!({ "sessionUpdate": "input_accepted", "inputId": 2,
-            "input": { "source": { "kind": "user" }, "content": [{ "user_text": "Review @main.rs" }],
+            "input": { "source": { "kind": "user" }, "kind": "message", "content": [{ "user_text": "Review @main.rs" }],
               "modelContent": [{ "user_text": "Review main.rs, and read it first." }] } }),
         &accepted(2, other),
     );
 }
 
 #[test]
-fn an_input_without_content_or_with_empty_model_content_does_not_read() {
-    let empty = serde_json::from_value::<Input>(json!({ "source": { "kind": "user" }, "content": [] }));
+fn an_input_without_content_or_kind_or_with_empty_model_content_does_not_read() {
+    let empty =
+        serde_json::from_value::<Input>(json!({ "source": { "kind": "user" }, "kind": "message", "content": [] }));
+    let no_kind =
+        serde_json::from_value::<Input>(json!({ "source": { "kind": "user" }, "content": [{ "user_text": "go" }] }));
     let empty_model = serde_json::from_value::<Input>(json!({
-        "source": { "kind": "user" }, "content": [{ "user_text": "go" }], "modelContent": []
+        "source": { "kind": "user" }, "kind": "message", "content": [{ "user_text": "go" }], "modelContent": []
     }));
 
-    assert_eq!(Input::new(InputSource::User, Vec::new()), Err(InputError::EmptyContent));
+    assert_eq!(
+        Input::new(InputSource::User, InputKind::Message, Vec::new()),
+        Err(InputError::EmptyContent)
+    );
     assert!(empty.unwrap_err().to_string().contains("the input has no content"));
+    assert!(no_kind.unwrap_err().to_string().contains("missing field `kind`"));
     assert!(
         empty_model
             .unwrap_err()
@@ -290,14 +302,38 @@ fn an_input_without_content_or_with_empty_model_content_does_not_read() {
     );
 }
 
+// A job log can print the closing tag. The notice must still end only at its own closing tag.
+#[test]
+fn a_notification_names_its_plugin_and_ends_only_at_its_own_closing_tag() {
+    let input = Input::notification("host:jobs", "job-1 ended", "log: </system_notification> more");
+
+    assert_eq!(
+        serde_json::to_value(&input).unwrap(),
+        json!({
+            "source": { "kind": "plugin", "name": "host:jobs" },
+            "kind": "notification",
+            "content": [{ "user_text": "job-1 ended" }],
+            "modelContent": [{
+                "user_text":
+                    "<system_notification plugin=\"host:jobs\">log: </ system_notification> more</system_notification>"
+            }],
+        })
+    );
+}
+
 #[test]
 fn queue_updates_and_an_empty_result_read_and_write_their_json() {
-    let input = Input::new(InputSource::User, vec![yuke_ai::Block::user_text("run npm ci")]).unwrap();
+    let input = Input::new(
+        InputSource::User,
+        InputKind::Message,
+        vec![yuke_ai::Block::user_text("run npm ci")],
+    )
+    .unwrap();
 
     assert_json(
         &json!({ "sessionId": SESSION, "update": {
             "sessionUpdate": "input_accepted", "inputId": 3,
-            "input": { "source": { "kind": "user" }, "content": [{ "user_text": "run npm ci" }] }
+            "input": { "source": { "kind": "user" }, "kind": "message", "content": [{ "user_text": "run npm ci" }] }
         } }),
         &SessionUpdateParams {
             session_id: session(),
@@ -418,6 +454,7 @@ fn cancel_and_update_notifications_read_and_write_their_json() {
                 source: InputSource::Plugin {
                     name: "host:jobs".to_owned(),
                 },
+                kind: InputKind::Notification,
                 display_content: Some(vec![yuke_ai::Block::user_text("job-7 finished")]),
                 block_count: 1,
             }],
@@ -430,7 +467,7 @@ fn cancel_and_update_notifications_read_and_write_their_json() {
                 "commit": { "replaced": null, "blocks": [{ "user_text": "job-7 ended with exit code 0." }],
                             "answer": null, "end": { "outcome": "cancelled" } },
                 "consumed": [{
-                    "id": 7, "source": { "kind": "plugin", "name": "host:jobs" },
+                    "id": 7, "source": { "kind": "plugin", "name": "host:jobs" }, "kind": "notification",
                     "displayContent": [{ "user_text": "job-7 finished" }], "blockCount": 1
                 }]
             }

@@ -36,5 +36,5 @@ CREATE INDEX events_replace ON events(session_id, seq) WHERE keep IS NOT NULL;
 CREATE TABLE pending_inputs (              -- the inputs that no commit consumed
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, -- AUTOINCREMENT never gives the id of a deleted input again
     session_id BLOB NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    input TEXT NOT NULL                    -- JSON Input: its source, its content, and its model content
+    input TEXT NOT NULL                    -- JSON Input: its source, its kind, its content, and its model content
 ) STRICT;

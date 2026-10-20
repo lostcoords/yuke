@@ -16,7 +16,7 @@ use yuke_engine::{CancellationToken, Concurrency, Tool, ToolContent, ToolContext
 
 use crate::error::{Error, caught};
 use crate::native::call;
-use crate::processes::{JobEnded, Processes};
+use crate::processes::Processes;
 use crate::runtime::Caller;
 
 /// What the tools of one session need from the consumer. One process can serve sessions of several workspaces at
@@ -41,9 +41,10 @@ pub trait SessionHost: Send + Sync {
     /// A background job of the session started or ended. The call must not wait.
     fn job_changed(&self, job: yuke_protocol::Job);
 
-    /// A background job of the session ended by itself. Give [`JobEnded::text`] to the session as an input that is not
-    /// from the user. A close and a shutdown wait for the return.
-    async fn job_ended(&self, ended: JobEnded);
+    /// Accept `input` as an input of the session, as an input of a client is. It starts a turn when the session is
+    /// idle, and a running turn takes it after its round. The host reports a failure to the user. A job sends its end
+    /// here, and a close and a shutdown wait for the return.
+    async fn accept_input(&self, input: yuke_protocol::Input);
 }
 
 /// The tools that the JavaScript defined, and the open sessions, on the JavaScript thread.

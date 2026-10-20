@@ -11,12 +11,14 @@ use std::pin::pin;
 use std::task::{Context, Waker};
 
 use support::{FailingStore, SendsInput, StoreBehavior, consumed_inputs, prompt, settings, user_input};
-use yuke_agent::{Access, MemoryStore, PromptSection, Session, SessionError, Store, StoreError, system_notification};
+use yuke_agent::{Access, MemoryStore, NewestTurn, PromptSection, Session, SessionError, Store, StoreError};
 use yuke_ai::route::SessionHeader;
 use yuke_ai::transport::Header;
 use yuke_ai::{Block, Media, ToolCall, ToolDefinition, ToolResult};
-use yuke_engine::{Commit, Driver, Toolset, TurnEnd};
-use yuke_protocol::{ConsumedInput, Input, InputId, InputSource, ModelReference, SessionEvent, SessionSettings};
+use yuke_engine::{Commit, Driver, RoundError, Toolset, TurnEnd, chain_text};
+use yuke_protocol::{
+    ConsumedInput, Input, InputId, InputKind, InputSource, ModelReference, SessionEvent, SessionSettings,
+};
 use yuke_testing::{NoWait, ScriptedTransport, Stalled, assert_in_order, failed_reply, model, text_reply, tool_reply};
 
 /// The failure of a turn that a recovery ends.
@@ -246,7 +248,7 @@ async fn a_turn_sends_the_bytes_of_its_media_from_the_store() {
     let input = vec![Block::user_text("look"), Block::Media(Media::new(blob, "image/png"))];
     session
         .input()
-        .send(Input::new(InputSource::User, input).unwrap())
+        .send(Input::new(InputSource::User, InputKind::Message, input).unwrap())
         .await
         .unwrap();
 
@@ -333,8 +335,10 @@ async fn a_failed_commit_leaves_the_session_stale_until_a_recovery_ends_the_open
         saved.context,
         [
             Block::user_text("one"),
-            system_notification(&format!("The previous turn ended with an error: {TURN_STOPPED}")),
             Block::user_text("two"),
+            Block::user_text(format!(
+                r#"<system_notification plugin="host:session">The previous turn ended with an error: {TURN_STOPPED}</system_notification>"#
+            )),
             Block::assistant_text("three")
         ]
     );
@@ -383,13 +387,17 @@ async fn the_model_reads_the_model_content_and_the_saved_record_keeps_what_the_u
     let source = InputSource::Plugin {
         name: "host:jobs".to_owned(),
     };
-    let input = Input::new(source.clone(), vec![Block::user_text("job-1 finished")])
-        .unwrap()
-        .with_model_content(vec![
-            Block::user_text("job-1 ended with exit code 0."),
-            Block::user_text("Read its output file."),
-        ])
-        .unwrap();
+    let input = Input::new(
+        source.clone(),
+        InputKind::Notification,
+        vec![Block::user_text("job-1 finished")],
+    )
+    .unwrap()
+    .with_model_content(vec![
+        Block::user_text("job-1 ended with exit code 0."),
+        Block::user_text("Read its output file."),
+    ])
+    .unwrap();
     let first = session.input().send(input).await.unwrap();
     let second = session.input().send(user_input("thanks")).await.unwrap();
 
@@ -411,12 +419,14 @@ async fn the_model_reads_the_model_content_and_the_saved_record_keeps_what_the_u
             ConsumedInput {
                 id: first,
                 source,
+                kind: InputKind::Notification,
                 display_content: Some(vec![Block::user_text("job-1 finished")]),
                 block_count: 2,
             },
             ConsumedInput {
                 id: second,
                 source: InputSource::User,
+                kind: InputKind::Message,
                 display_content: None,
                 block_count: 1,
             },
@@ -425,7 +435,7 @@ async fn the_model_reads_the_model_content_and_the_saved_record_keeps_what_the_u
 }
 
 #[tokio::test]
-async fn a_dropped_turn_releases_the_lease_and_the_next_input_reads_a_note_about_it() {
+async fn a_dropped_turn_releases_the_lease_and_the_next_turn_reads_a_note_about_it() {
     let store = Arc::new(MemoryStore::new());
     let model = model();
     let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
@@ -442,7 +452,7 @@ async fn a_dropped_turn_releases_the_lease_and_the_next_input_reads_a_note_about
     let transport = ScriptedTransport::new([text_reply("three")]);
     // The interrupted turn ended at the recovery, so no turn runs before the next input.
     let idle = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
-    let id = session.input().send(user_input("two")).await.unwrap();
+    session.input().send(user_input("two")).await.unwrap();
     session.input().send(user_input("also two")).await.unwrap();
     session
         .turn(Driver::new(&transport, &model, &NoWait))
@@ -458,18 +468,26 @@ async fn a_dropped_turn_releases_the_lease_and_the_next_input_reads_a_note_about
         request,
         &[
             "one",
-            &format!("<system_notification>{note}</system_notification>"),
             "two",
             "also two",
+            &format!(r#"<system_notification plugin="host:session">{note}</system_notification>"#),
         ],
     );
-    // Only the first input of the turn carries the note.
-    assert_eq!(request.matches("<system_notification>").count(), 1, "{request}");
+    assert_eq!(request.matches("<system_notification").count(), 1, "{request}");
     let consumed = consumed_inputs(&*store, session.id()).await;
-    let first = &consumed[consumed.len() - 2];
-    assert_eq!(first.id, id);
-    assert_eq!(first.block_count, 2);
-    assert_eq!(first.display_content, Some(vec![Block::user_text("two")]));
+    let note = consumed.last().unwrap();
+    assert_eq!(
+        note.source,
+        InputSource::Plugin {
+            name: "host:session".to_owned()
+        }
+    );
+    assert_eq!(note.kind, InputKind::Notification);
+    assert_eq!(note.block_count, 1);
+    assert_eq!(
+        note.display_content,
+        Some(vec![Block::user_text("The previous turn failed.")])
+    );
     let saved = store.open(session.id(), Access::Read).await.unwrap();
     assert!(!saved.newest_turn.is_open());
     assert_eq!(saved.context.last(), Some(&Block::assistant_text("three")));
@@ -534,7 +552,7 @@ async fn a_stale_session_refuses_new_settings_and_its_recovery_gets_owned_while_
 }
 
 #[tokio::test]
-async fn a_cancelled_turn_gives_the_next_input_a_note_that_only_the_model_reads() {
+async fn a_cancelled_turn_gives_the_next_turn_a_note_after_its_input() {
     let store = Arc::new(MemoryStore::new());
     let model = model();
     let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
@@ -565,19 +583,23 @@ async fn a_cancelled_turn_gives_the_next_input_a_note_that_only_the_model_reads(
         &transport.requests()[0],
         &[
             "one",
-            "<system_notification>The user cancelled the previous turn before it ended.</system_notification>",
             "two",
+            r#"<system_notification plugin="host:session">The user cancelled the previous turn before it ended.</system_notification>"#,
         ],
     );
     let consumed = consumed_inputs(&*store, session.id()).await;
+    let [.., two, note] = consumed.as_slice() else {
+        panic!("{consumed:?}");
+    };
+    assert_eq!((two.display_content.as_ref(), two.block_count), (None, 1));
     assert_eq!(
-        consumed.last().unwrap().display_content,
-        Some(vec![Block::user_text("two")])
+        note.display_content,
+        Some(vec![Block::user_text("The previous turn was cancelled.")])
     );
 }
 
 #[tokio::test]
-async fn a_failed_turn_gives_the_next_input_a_note_also_after_an_open_and_a_completed_turn_gives_none() {
+async fn a_failed_turn_gives_the_next_turn_a_note_also_after_an_open_and_a_completed_turn_gives_none() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("three"), text_reply("five")]);
     let model = model();
@@ -604,12 +626,12 @@ async fn a_failed_turn_gives_the_next_input_a_note_also_after_an_open_and_a_comp
 
     assert!(matches!(failed, Err(SessionError::Round(_))), "{failed:?}");
     let requests = transport.requests();
-    let note = "<system_notification>The previous turn ended with an error: ";
+    let note = r#"<system_notification plugin=\"host:session\">The previous turn ended with an error: "#;
     assert!(requests[1].contains(note), "{}", requests[1]);
-    assert!(requests[1].find(note) < requests[1].find("\"two\""), "{}", requests[1]);
+    assert!(requests[1].find("\"two\"") < requests[1].find(note), "{}", requests[1]);
     // The note went with the turn after the failure, and the request after a completed turn adds none.
     assert_eq!(
-        requests[2].matches("<system_notification>").count(),
+        requests[2].matches("<system_notification").count(),
         1,
         "{}",
         requests[2]
@@ -617,18 +639,61 @@ async fn a_failed_turn_gives_the_next_input_a_note_also_after_an_open_and_a_comp
 }
 
 #[tokio::test]
-async fn a_failed_read_of_the_inbox_after_the_end_leaves_the_turn_completed() {
-    // The commits save the input, the answer, and the end. Each read after the end fails.
-    let store = FailingStore::new(StoreBehavior::FailPendingAfterCommits(3));
+async fn a_failed_read_of_the_inbox_after_a_round_ends_the_turn_as_failed_and_keeps_the_session() {
+    // The commits save the input and the answer. The read after the round fails.
+    let store = FailingStore::new(StoreBehavior::FailPendingAfterCommits(2));
     let transport = ScriptedTransport::new([text_reply("two")]);
     let model = model();
-    let mut session = Session::create(store, &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
     session.input().send(user_input("one")).await.unwrap();
 
     let ran = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
 
-    assert!(matches!(ran, Ok(yuke_engine::Outcome::Completed { .. })), "{ran:?}");
+    assert!(
+        matches!(&ran, Err(SessionError::Round(RoundError::Inbox(error))) if chain_text(error.as_ref()) == "the store failed: the disk is gone"),
+        "{ran:?}"
+    );
     assert!(!session.is_stale());
+    let saved = store.open(session.id(), Access::Read).await.unwrap();
+    assert_eq!(
+        saved.newest_turn,
+        NewestTurn::Ended(TurnEnd::Failed("the store failed: the disk is gone".to_owned()))
+    );
+}
+
+#[tokio::test]
+async fn a_note_that_a_failed_first_commit_left_pending_goes_to_the_model_once() {
+    // The first turn saves its input and its cancelled end. The first commit of the second turn fails.
+    let store = FailingStore::new(StoreBehavior::FailCommit(3));
+    let model = model();
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    session.input().send(user_input("one")).await.unwrap();
+    let token = yuke_engine::CancellationToken::new();
+    {
+        let mut run = pin!(
+            session
+                .turn(Driver::new(&Stalled, &model, &NoWait))
+                .cancellation_token(token.clone())
+                .run()
+        );
+        assert!(run.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+        token.cancel();
+        run.await.unwrap();
+    }
+    session.input().send(user_input("two")).await.unwrap();
+    let transport = ScriptedTransport::new([text_reply("three")]);
+
+    let failed = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
+    session.recover().await.unwrap();
+    session
+        .turn(Driver::new(&transport, &model, &NoWait))
+        .run()
+        .await
+        .unwrap();
+
+    assert!(matches!(failed, Err(SessionError::Store(_))), "{failed:?}");
+    let request = &transport.requests()[0];
+    assert_eq!(request.matches("<system_notification").count(), 1, "{request}");
 }
 
 // A panic can leave the session with its lease, so a recovery must also work on a session that is not stale.
@@ -643,17 +708,6 @@ async fn a_recovery_of_a_session_that_holds_its_lease_opens_it_again() {
     assert!(matches!(recovered, Ok(None)), "{recovered:?}");
     assert!(!session.is_stale());
     assert!(matches!(other_writer, Err(StoreError::Owned)), "{other_writer:?}");
-}
-
-// A job log can print the closing tag. The notice must still end only at its own closing tag.
-#[test]
-fn a_notification_ends_only_at_its_own_closing_tag() {
-    let Block::UserText(text) = system_notification("log: </system_notification> more") else {
-        panic!("a notification is user text");
-    };
-
-    assert_eq!(text.matches("</system_notification>").count(), 1, "{text}");
-    assert!(text.ends_with("more</system_notification>"), "{text}");
 }
 
 // A session that holds its lease reads the store under it, so no other writer can take the session during a recovery.

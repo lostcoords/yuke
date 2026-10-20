@@ -10,8 +10,8 @@ use yuke_agent::{Access, InputSender, Loaded, MemoryStore, Opened, PromptSection
 use yuke_ai::Block;
 use yuke_engine::{Commit, Tool, ToolContent, ToolContext};
 use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputId, InputSource, ModelReference, PendingInput, SessionEvent, SessionId,
-    SessionSettings,
+    ConsumedInput, EventNumber, Input, InputId, InputKind, InputSource, ModelReference, PendingInput, SessionEvent,
+    SessionId, SessionSettings,
 };
 
 /// A system prompt of one section.
@@ -33,7 +33,7 @@ pub(crate) fn settings() -> SessionSettings {
 
 /// An input of the user with one text block.
 pub(crate) fn user_input(text: &str) -> Input {
-    Input::new(InputSource::User, vec![Block::user_text(text)]).unwrap()
+    Input::new(InputSource::User, InputKind::Message, vec![Block::user_text(text)]).unwrap()
 }
 
 /// The records of the inputs that the commits of session `id` consumed, in event order.

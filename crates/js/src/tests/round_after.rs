@@ -4,9 +4,10 @@ use std::time::Duration;
 
 use yuke_ai::{Block, FinishReason, ToolCall, ToolResult};
 use yuke_engine::{CancellationToken, Hooks, RoundDecision};
+use yuke_protocol::{InputKind, InputSource};
 
 use super::evaluate;
-use super::prompt::opened;
+use super::prompt::{opened, opened_with_host};
 use crate::ScriptSession;
 
 /// A final answer: the input, two texts of the answer, and the reason `stop`.
@@ -105,9 +106,9 @@ async fn a_round_of_calls_has_no_reason_and_the_text_before_its_calls() {
 
 // The count belongs to the hooks of one turn, so a plugin can guard its loop with it.
 #[tokio::test]
-async fn the_first_answer_decides_and_a_continue_is_wrapped_and_counted() {
-    let (runtime, session, _reports) = opened(
-        "the_first_answer_decides_and_a_continue_is_wrapped_and_counted",
+async fn the_first_answer_decides_and_a_continue_is_a_counted_notification_of_its_plugin() {
+    let (runtime, session, host, _reports) = opened_with_host(
+        "the_first_answer_decides_and_a_continue_is_a_counted_notification_of_its_plugin",
         &[
             (
                 "tests-guard",
@@ -131,10 +132,28 @@ async fn the_first_answer_decides_and_a_continue_is_wrapped_and_counted() {
     let second = decide(&hooks, &final_answer(), Some(FinishReason::Stop)).await;
     let next_turn = after_final(&session).await;
 
-    let feedback = "<hook_feedback plugin=\"tests-guard\">\nRun the tests.\n</hook_feedback>";
-    assert_eq!(first, Ok(RoundDecision::Continue(vec![Block::user_text(feedback)])));
+    // The turn takes the notification from the session after the round, so the hook proceeds.
+    assert_eq!(first, Ok(RoundDecision::Proceed));
     assert_eq!(second, Ok(RoundDecision::Stop));
-    assert_eq!(next_turn, first);
+    assert_eq!(next_turn, Ok(RoundDecision::Proceed));
+    let inputs = host.inputs.lock().unwrap().clone();
+    assert_eq!(inputs.len(), 2);
+    for input in inputs {
+        assert_eq!(
+            input.source(),
+            &InputSource::Plugin {
+                name: "tests-guard".to_owned()
+            }
+        );
+        assert_eq!(input.kind(), InputKind::Notification);
+        assert_eq!(input.content(), [Block::user_text("Run the tests.")]);
+        assert_eq!(
+            input.model_content(),
+            [Block::user_text(
+                r#"<system_notification plugin="tests-guard">Run the tests.</system_notification>"#
+            )]
+        );
+    }
     let second_runs = evaluate::<i32>(&runtime, "return globalThis.second;").await.unwrap();
     assert_eq!(second_runs, 1);
 }
@@ -158,6 +177,10 @@ async fn a_throw_or_an_answer_of_another_shape_fails_the_turn_and_names_the_plug
         (
             "return { continue: 1 };",
             "TypeError: the continue of the answer is not a string",
+        ),
+        (
+            "return { continue: '' };",
+            "TypeError: the continue of the answer is empty",
         ),
         (
             "return { stop: true, why: 'x' };",

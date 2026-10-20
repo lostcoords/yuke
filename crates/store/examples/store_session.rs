@@ -4,7 +4,7 @@
 
 use yuke_agent::{Access, PromptSection, Store};
 use yuke_engine::{Commit, Outcome, TurnEnd};
-use yuke_protocol::{Input, InputSource, ModelReference, PendingInput, SessionSettings};
+use yuke_protocol::{Input, InputKind, InputSource, ModelReference, PendingInput, SessionSettings};
 use yuke_store::SqliteStore;
 
 #[tokio::main(flavor = "current_thread")]
@@ -29,7 +29,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let id = opened.id;
 
     // Any caller can add input. The input stays pending until a commit consumes it.
-    let input = Input::new(InputSource::User, vec![yuke_ai::Block::user_text("hello")])?;
+    let input = Input::new(
+        InputSource::User,
+        InputKind::Message,
+        vec![yuke_ai::Block::user_text("hello")],
+    )?;
     let input_id = store.accept_input(id, input.clone()).await?;
     println!("pending after accept_input: {}", store.pending(id).await?.len());
 

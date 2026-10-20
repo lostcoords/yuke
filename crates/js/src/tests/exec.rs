@@ -6,8 +6,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use yuke_ai::Block;
 use yuke_engine::CancellationToken;
-use yuke_protocol::JobState;
+use yuke_protocol::{Input, JobState};
 
 use super::tools::{TestHost, Tools, call, call_with, error_of, text_of, tools_in, tools_of};
 use super::{folder, start};
@@ -29,20 +30,23 @@ fn job_id(started: &str) -> String {
     id.to_owned()
 }
 
+/// The text that the model reads for `input`.
+fn model_text(input: &Input) -> String {
+    match input.model_content() {
+        [Block::UserText(text)] => text.clone(),
+        other => panic!("the input is not one text: {other:?}"),
+    }
+}
+
 /// The longest wait of a test step.
 const WAIT: Duration = Duration::from_secs(5);
 
-/// The job ends that `host` has received, after at most five seconds of waiting for `count` of them.
+/// The model texts of the job ends that `host` has received, after at most five seconds of waiting for `count` of
+/// them.
 async fn ended_texts(host: &TestHost, count: usize) -> Vec<String> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let texts: Vec<String> = host
-            .ended
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|ended| ended.text.clone())
-            .collect();
+        let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
         if texts.len() >= count || Instant::now() > deadline {
             return texts;
         }
@@ -319,7 +323,14 @@ async fn a_background_job_starts_and_its_end_reaches_the_session() {
     );
     assert_eq!(
         ended_texts(&host, 1).await,
-        [format!("{id} exited 4.\nLog: {}\nhello", log.display())]
+        [format!(
+            "<system_notification plugin=\"host:jobs\">{id} exited 4.\nLog: {}\nhello</system_notification>",
+            log.display()
+        )]
+    );
+    assert_eq!(
+        host.inputs.lock().unwrap()[0].content(),
+        [Block::user_text(format!("{id} ended"))]
     );
     // An ended job leaves the list: its end message has told the model already.
     assert_eq!(
@@ -347,7 +358,7 @@ async fn a_background_start_fails_when_the_processes_start_no_jobs() {
         "This run ends with its turn, so it cannot start a background job. Run the command without background."
     );
     assert!(!folder.join("started").exists());
-    assert!(host.ended.lock().unwrap().is_empty());
+    assert!(host.inputs.lock().unwrap().is_empty());
     // A command in the foreground still runs.
     assert_eq!(run(&tools, "echo ran").await, "ran\n[exit code: 0]");
 }
@@ -367,7 +378,7 @@ async fn stop_ends_a_job_and_no_end_message_follows() {
             folder.join(format!("processes/{id}.log")).display()
         )
     );
-    assert!(host.ended.lock().unwrap().is_empty());
+    assert!(host.inputs.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -427,11 +438,11 @@ async fn a_job_outlives_a_reload_of_the_runtime() {
     let texts = ended_texts(&host, 1).await;
     assert_eq!(texts.len(), 1, "{texts:?}");
     assert!(
-        texts[0].starts_with("job-") && texts[0].contains(" exited 0."),
+        texts[0].contains(">job-") && texts[0].contains(" exited 0."),
         "{}",
         texts[0]
     );
-    assert!(texts[0].ends_with("\ndone"), "{}", texts[0]);
+    assert!(texts[0].ends_with("\ndone</system_notification>"), "{}", texts[0]);
 }
 
 #[tokio::test]
@@ -492,7 +503,7 @@ async fn close_owner_stops_only_the_jobs_of_its_owner_and_refuses_its_later_jobs
             .collect::<Vec<_>>(),
         [(kept.as_str(), "sleep 31")]
     );
-    assert!(first.ended.lock().unwrap().is_empty());
+    assert!(first.inputs.lock().unwrap().is_empty());
     processes.shutdown().await.unwrap();
 }
 
@@ -521,9 +532,9 @@ async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
     tokio::time::timeout(WAIT, shutdown).await.unwrap().unwrap();
 
     assert!(waited.is_err(), "the shutdown did not wait for the end");
-    let ended = host.ended.lock().unwrap().clone();
-    assert_eq!(ended.len(), 1);
-    assert!(ended[0].text.ends_with("\nhello"), "{}", ended[0].text);
+    let texts = ended_texts(&host, 1).await;
+    assert_eq!(texts.len(), 1);
+    assert!(texts[0].ends_with("\nhello</system_notification>"), "{}", texts[0]);
 }
 
 #[tokio::test]
@@ -539,7 +550,7 @@ async fn a_shutdown_of_the_processes_stops_each_job_without_an_end_message() {
         .unwrap()
         .unwrap();
 
-    assert!(host.ended.lock().unwrap().is_empty());
+    assert!(host.inputs.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -572,7 +583,7 @@ async fn a_dropped_processes_kills_its_jobs_without_an_end_message() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(host.ended.lock().unwrap().is_empty());
+    assert!(host.inputs.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -713,7 +724,7 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     expected.sort_by(|left, right| left.id.cmp(&right.id));
     assert_eq!(closed, expected);
     // A stopped job sends no end message.
-    assert_eq!(host.ended.lock().unwrap().len(), 1);
+    assert_eq!(host.inputs.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

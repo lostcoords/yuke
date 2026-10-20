@@ -61,12 +61,14 @@ pub enum RoundError {
         /// The round failure that [`crate::Hooks::retry_round`] received. `None` for the other hooks.
         after: Option<Box<RoundError>>,
     },
+    /// The inbox of the driver failed to give its input. The input stays in the inbox.
+    Inbox(Box<dyn Error + Send + Sync>),
 }
 
 impl fmt::Display for RoundError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Credential(error) => fmt::Display::fmt(error, f),
+            Self::Credential(error) | Self::Inbox(error) => fmt::Display::fmt(error, f),
             Self::Model(error) => fmt::Display::fmt(error, f),
             Self::Hook { error, after } => {
                 fmt::Display::fmt(error, f)?;
@@ -84,7 +86,7 @@ impl Error for RoundError {
     // The text is the text of the inner error, so the source is the source of the inner error.
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Credential(error) | Self::Hook { error, .. } => error.source(),
+            Self::Credential(error) | Self::Hook { error, .. } | Self::Inbox(error) => error.source(),
             Self::Model(error) => error.source(),
         }
     }

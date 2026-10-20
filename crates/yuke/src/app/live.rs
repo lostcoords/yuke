@@ -7,19 +7,16 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
-use yuke_agent::{InputSender, Loaded, Session, SessionError, SessionObserver, StoreError, system_notification};
-use yuke_ai::{Block, ToolDefinition};
+use yuke_agent::{InputSender, Loaded, Session, SessionError, SessionObserver, StoreError};
+use yuke_ai::ToolDefinition;
 use yuke_engine::{CancellationToken, Driver, Toolset, chain_text};
-use yuke_js::{JobEnded, Runtime, ScriptSession, ScriptTool, SessionHost};
+use yuke_js::{Runtime, ScriptSession, ScriptTool, SessionHost};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InputSource, Job, LiveUpdate, NoticeLevel, NoticeParams, ServerNotification,
-    SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
+    EventNumber, Input, InputId, Job, LiveUpdate, NoticeLevel, NoticeParams, ServerNotification, SessionEvent,
+    SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 use super::{AppError, Observer, SOURCE, Shared, TokioTimer, lock, model_of, save_settings, warn};
-
-/// The source of the input that a background job sends when it ends.
-const JOBS_SOURCE: &str = "host:jobs";
 
 /// An open session.
 pub(super) struct LiveSession {
@@ -522,27 +519,17 @@ impl SessionHost for Host {
         self.inbox.output.publish(SessionUpdate::Live(LiveUpdate::Job { job }));
     }
 
-    // The end of a job is an input of `host:jobs`. The user sees a short line, and the model reads the whole text as a
-    // notification of yuke. The input starts a turn when the session is idle.
-    async fn job_ended(&self, ended: JobEnded) {
-        let source = InputSource::Plugin {
-            name: JOBS_SOURCE.to_owned(),
-        };
-        let job_input = Input::new(source, vec![Block::user_text(format!("{} ended", ended.id))])
-            .and_then(|job_input| job_input.with_model_content(vec![system_notification(&ended.text)]));
-        let accepted = match job_input {
-            Ok(job_input) => self.inbox.accept(job_input).await.map_err(|error| chain_text(&error)),
-            Err(error) => Err(chain_text(&error)),
-        };
-        if let Err(text) = accepted {
-            self.inbox.output.notice(NoticeLevel::Error, &text);
+    async fn accept_input(&self, input: Input) {
+        if let Err(error) = self.inbox.accept(input).await {
+            self.inbox.output.notice(NoticeLevel::Error, &chain_text(&error));
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use yuke_protocol::ModelReference;
+    use yuke_ai::Block;
+    use yuke_protocol::{InputKind, InputSource, ModelReference};
 
     use super::*;
 
@@ -602,6 +589,7 @@ mod tests {
                 consumed: vec![yuke_protocol::ConsumedInput {
                     id: InputId(input),
                     source: InputSource::User,
+                    kind: InputKind::Message,
                     display_content: None,
                     block_count: 0,
                 }],
@@ -610,7 +598,7 @@ mod tests {
     }
 
     fn input() -> Input {
-        Input::new(InputSource::User, vec![Block::user_text("go")]).unwrap()
+        Input::new(InputSource::User, InputKind::Message, vec![Block::user_text("go")]).unwrap()
     }
 
     fn accepted(id: u64) -> SessionUpdate {

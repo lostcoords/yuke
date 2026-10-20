@@ -107,17 +107,25 @@ pub trait Timer: Send + Sync {
 
 /// Holds the input that arrives during a turn. The driver takes it after a round only when the turn continues, so
 /// input never changes a request in flight. An inbox is `Sync`, so another task can add input while a turn runs.
+#[async_trait]
 pub trait Inbox: Send + Sync {
-    /// Remove and return the input that arrived since the last call. Return at once, with an empty `Vec` when none
-    /// arrived.
-    fn take(&self) -> Vec<Block>;
+    /// Remove and return the input that arrived since the last call, or an empty `Vec` when none arrived. Do not wait
+    /// for input.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the inbox cannot give its input. The turn then ends with [`RoundError::Inbox`].
+    async fn take(&self) -> Result<Vec<Block>, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 // A locked `Vec` is the simplest inbox: one task pushes, and the driver takes.
+#[async_trait]
 impl Inbox for Mutex<Vec<Block>> {
-    fn take(&self) -> Vec<Block> {
+    async fn take(&self) -> Result<Vec<Block>, Box<dyn std::error::Error + Send + Sync>> {
         // A panic of another holder leaves a valid `Vec`, so its input stays usable.
-        std::mem::take(&mut *self.lock().unwrap_or_else(PoisonError::into_inner))
+        Ok(std::mem::take(
+            &mut *self.lock().unwrap_or_else(PoisonError::into_inner),
+        ))
     }
 }
 
@@ -137,9 +145,10 @@ pub trait Journal: Send + Sync {
 /// The inbox of a driver without an inbox. It never holds input.
 struct NoInput;
 
+#[async_trait]
 impl Inbox for NoInput {
-    fn take(&self) -> Vec<Block> {
-        Vec::new()
+    async fn take(&self) -> Result<Vec<Block>, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(Vec::new())
     }
 }
 
@@ -708,12 +717,10 @@ impl<'a> Turn<'a> {
                     let decided = driver.hooks.after_round(context, finish_reason);
                     action = match race(decided, cancellation_token.cancelled()).await {
                         // The driver takes the input only when the turn goes on, so a stop or a cancel leaves it.
-                        Raced::Done(Ok(RoundDecision::Proceed)) => turn_state.proceed(driver.inbox.take()),
-                        Raced::Done(Ok(RoundDecision::Continue(more))) => {
-                            // Input of the user comes first. The hook gets another call after the next round.
-                            let input = driver.inbox.take();
-                            turn_state.send(if input.is_empty() { more } else { input })
-                        }
+                        Raced::Done(Ok(RoundDecision::Proceed)) => match driver.inbox.take().await {
+                            Ok(input) => turn_state.proceed(input),
+                            Err(error) => turn_state.fail(RoundError::Inbox(error)),
+                        },
                         Raced::Done(Ok(RoundDecision::Stop)) => turn_state.stop(),
                         Raced::Done(Err(error)) => turn_state.fail(RoundError::Hook { error, after: None }),
                         Raced::Cancelled => turn_state.cancel(),

@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use yuke_agent::{PromptSection, Session, Store};
 use yuke_ai::transport::Transport;
 use yuke_engine::CancellationToken;
-use yuke_protocol::{Input, InputSource, ModelReference, SessionId, SessionSettings};
+use yuke_protocol::{Input, InputKind, InputSource, ModelReference, SessionId, SessionSettings};
 
 use super::*;
 use yuke_testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
@@ -570,7 +570,7 @@ async fn a_background_job_tells_its_start_and_end_then_sends_an_input_that_the_m
     let job = shown.trim_end_matches(" ended");
     let model_text = job_input["modelContent"][0]["user_text"].as_str().unwrap();
     assert!(
-        model_text.starts_with(&format!("<system_notification>{job} exited 3.")),
+        model_text.starts_with(&format!(r#"<system_notification plugin="host:jobs">{job} exited 3."#)),
         "{model_text}"
     );
     assert!(model_text.ends_with("</system_notification>"), "{model_text}");
@@ -598,7 +598,12 @@ async fn saved_session(place: &Place, provider: &str, model: &str) -> SessionId 
     let session = Session::create(store, &settings, &[PromptSection::new("base", "the prompt")])
         .await
         .unwrap();
-    let input = Input::new(InputSource::User, vec![yuke_ai::Block::user_text("waiting")]).unwrap();
+    let input = Input::new(
+        InputSource::User,
+        InputKind::Message,
+        vec![yuke_ai::Block::user_text("waiting")],
+    )
+    .unwrap();
     session.input().send(input).await.unwrap();
     session.id()
 }
@@ -920,7 +925,8 @@ async fn a_plugin_patches_a_tool_result_before_the_model_reads_it() {
     client.end().await;
 }
 
-// The feedback joins the context of the session, so the next request and a later load both hold it.
+// The request is an input of the plugin in the same turn: the model reads the notice, and the saved record keeps what
+// the user saw.
 #[tokio::test]
 async fn a_plugin_sends_the_model_on_once_after_its_final_answer() {
     let place = Place::new("rpc", "a_plugin_sends_the_model_on_once_after_its_final_answer");
@@ -942,12 +948,38 @@ async fn a_plugin_sends_the_model_on_once_after_its_final_answer() {
 
     let requests = transport.requests();
     assert_eq!(requests.len(), 2);
-    let feedback = r#"<hook_feedback plugin=\"guard\">\nRun the tests.\n</hook_feedback>"#;
-    assert!(requests[1].contains(feedback), "{}", requests[1]);
-    let saved = serde_json::to_string(&loaded.messages).unwrap();
-    assert!(
-        saved.contains("Run the tests.") && saved.contains("tests pass"),
-        "{saved}"
+    let notice = r#"<system_notification plugin=\"guard\">Run the tests.</system_notification>"#;
+    assert!(requests[1].contains(notice), "{}", requests[1]);
+    let commits: Vec<&Value> = loaded
+        .messages
+        .iter()
+        .map(|message| &message["params"]["update"])
+        .filter(|update| update["sessionUpdate"] == "commit")
+        .collect();
+    let ends: Vec<&Value> = commits.iter().map(|commit| &commit["commit"]["end"]).collect();
+    assert_eq!(
+        ends,
+        [
+            &Value::Null,
+            &Value::Null,
+            &Value::Null,
+            &Value::Null,
+            &json!({ "outcome": { "completed": { "finishReason": "stop" } } })
+        ]
+    );
+    assert_eq!(
+        commits[2]["consumed"],
+        json!([{
+            "id": 2,
+            "source": { "kind": "plugin", "name": "guard" },
+            "kind": "notification",
+            "displayContent": [{ "user_text": "Run the tests." }],
+            "blockCount": 1,
+        }])
+    );
+    assert_eq!(
+        commits[3]["commit"]["blocks"],
+        json!([{ "assistant_text": "tests pass" }])
     );
     client.end().await;
 }
@@ -1267,7 +1299,7 @@ async fn a_panic_in_a_turn_ends_the_turn_and_the_next_input_runs_with_a_note_abo
         .collect();
     let first = saved.first().unwrap()["params"]["update"].to_string();
     assert!(
-        first.contains("<system_notification>The previous turn ended with an error: the turn stopped before it saved its end</system_notification>"),
+        first.contains(r#"<system_notification plugin=\"host:session\">The previous turn ended with an error: the turn stopped before it saved its end</system_notification>"#),
         "{first}"
     );
     assert!(
