@@ -19,7 +19,7 @@ const OUTCOME_UNKNOWN: &str = "The turn stopped before it saved the result of th
 /// The failure of a turn that stopped before it saved its end.
 const TURN_STOPPED: &str = "the turn stopped before it saved its end";
 
-/// A notice of yuke to the model, in the one form that the system prompt explains.
+/// A notice of yuke to the model: user text in a `system_notification` tag.
 pub fn system_notification(text: &str) -> yuke_ai::Block {
     // A job log can hold the closing tag, which would end the notice early.
     let text = text.replace("</system_notification>", "</ system_notification>");

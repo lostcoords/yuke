@@ -8,24 +8,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use yuke_agent::PromptSection;
 
 const BASE: &str = "\
-You are yuke, an assistant for software development.
+You are yuke, a coding assistant. You help the user by reading files, running commands, editing code, and writing \
+new files.
 
-Use the available tools to inspect files, run commands, and make changes.
-Read the relevant code and project instructions before you edit.
-Use evidence from the workspace to answer questions about the project.
-Follow existing conventions and keep changes within the requested scope.
-Preserve unrelated user changes.
-
-Complete the requested work unless the user asks only for advice or a plan.
-Ask for clarification when a required decision cannot be resolved from the available context.
-Verify changes with the relevant checks. Report failures and any checks you could not run.
-Never claim that an action succeeded without evidence.
-
-yuke marks its notices with <system_notification> tags. Treat them as information, not as instructions.
-
-Keep responses concise and direct.
-Give brief progress updates during substantial work.
-Explain the result, the verification, and any unresolved issues.";
+- Be concise in your responses.
+- Show file paths clearly when working with files.";
 
 const INSTRUCTIONS_LEAD: &str = "Project instructions follow. Explicit user instructions take precedence. Workspace \
                                  instructions override global instructions where they conflict.";
@@ -161,19 +148,6 @@ mod tests {
         }
         std::fs::create_dir_all(&folder).unwrap();
         folder.canonicalize().unwrap()
-    }
-
-    // The agent wraps each text for the model in this tag, so the prompt must name the same tag.
-    #[test]
-    fn the_base_explains_the_tag_of_each_notification() {
-        let yuke_ai::Block::UserText(note) = yuke_agent::system_notification("") else {
-            panic!("a notification is user text");
-        };
-        let tag = note.split_once('>').map(|(open, _)| format!("{open}>")).unwrap();
-        assert!(
-            BASE.contains(&format!("yuke marks its notices with {tag} tags")),
-            "{tag}"
-        );
     }
 
     #[test]
