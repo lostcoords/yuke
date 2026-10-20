@@ -30,9 +30,23 @@ const performance: typeof globalThis.performance = Object.freeze({
   toJSON: () => ({ timeOrigin }),
 });
 
-const objects = { console, performance } satisfies {
+// The engine drops the throw of a job, so the callback reports its own throw, as on the web.
+const { queueMicrotask: engineQueueMicrotask, reportError } = globalThis;
+function queueMicrotask(callback: () => void): void {
+  if (typeof callback !== "function") throw new TypeError("queueMicrotask: the callback is no function");
+  engineQueueMicrotask(() => {
+    try {
+      callback();
+    } catch (error) {
+      reportError(error);
+    }
+  });
+}
+
+const objects = { console, performance, queueMicrotask } satisfies {
   console: typeof globalThis.console;
   performance: typeof globalThis.performance;
+  queueMicrotask: typeof globalThis.queueMicrotask;
 };
 
 // A hook of `Error.prepareStackTrace` gets the function of each stack frame, internal functions too. A data property

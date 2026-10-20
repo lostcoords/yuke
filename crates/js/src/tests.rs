@@ -416,6 +416,40 @@ async fn a_throw_in_a_timer_callback_is_a_fault() {
 }
 
 #[tokio::test]
+async fn a_throw_in_a_microtask_of_a_timer_is_a_fault() {
+    let folder = folder("a_throw_in_a_microtask_of_a_timer_is_a_fault");
+    let (runtime, mut faults) = start(&folder).await;
+
+    evaluate::<()>(
+        &runtime,
+        "setTimeout(() => queueMicrotask(() => { throw new TypeError('from a timer'); }), 1);",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(next_fault(&mut faults).await.message, "from a timer");
+}
+
+#[tokio::test]
+async fn a_throw_in_a_microtask_is_a_fault() {
+    let folder = folder("a_throw_in_a_microtask_is_a_fault");
+    let (runtime, mut faults) = start(&folder).await;
+
+    let refused = evaluate::<String>(
+        &runtime,
+        "try { queueMicrotask(1); return 'none'; } catch (error) { return error.name; }",
+    )
+    .await
+    .unwrap();
+    evaluate::<()>(&runtime, "queueMicrotask(() => { throw new TypeError('direct'); });")
+        .await
+        .unwrap();
+
+    assert_eq!(refused, "TypeError");
+    assert_eq!(next_fault(&mut faults).await.message, "direct");
+}
+
+#[tokio::test]
 async fn a_rejection_without_a_handler_is_a_fault() {
     let folder = folder("a_rejection_without_a_handler_is_a_fault");
     let (runtime, mut faults) = start(&folder).await;
