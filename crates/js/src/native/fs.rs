@@ -418,12 +418,16 @@ static TEMPORARY: AtomicU64 = AtomicU64::new(0);
 fn write(path: &Path, bytes: &[u8], atomic: bool, mode: Option<u32>, stop: &Stop) -> Result<(), Failure> {
     stop.check()?;
     let fail = |error| Failure::new(error, path);
-    if !atomic {
-        match fs::metadata(path) {
-            Ok(metadata) => check_kind(metadata.file_type()).map_err(fail)?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(fail(error)),
+    // A rename would replace a special file too, so both forms check the kind.
+    let existing = match fs::metadata(path) {
+        Ok(metadata) => {
+            check_kind(metadata.file_type()).map_err(fail)?;
+            Some(metadata)
         }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(fail(error)),
+    };
+    if !atomic {
         let mut options = OpenOptions::new();
         options.write(true).create(true).truncate(true);
         if let Some(mode) = mode {
@@ -435,10 +439,7 @@ fn write(path: &Path, bytes: &[u8], atomic: bool, mode: Option<u32>, stop: &Stop
 
     let name = path.file_name().ok_or_else(|| fail(io::Error::from(Errno::ISDIR)))?;
     // Without `mode`, the new file keeps the permissions of the file that it replaces.
-    let kept = match (mode, fs::metadata(path)) {
-        (None, Ok(metadata)) if metadata.is_file() => Some(metadata.permissions().mode() & 0o7777),
-        _ => None,
-    };
+    let kept = existing.map(|metadata| metadata.permissions().mode() & 0o7777);
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     if let Some(mode) = mode.or(kept) {

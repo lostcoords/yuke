@@ -1,6 +1,6 @@
 //! The public module `yuke:fs`: reads, writes, directories, facts, failures, and stops.
 
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::Path;
 use std::time::Duration;
 
@@ -350,21 +350,29 @@ async fn an_abort_during_a_large_atomic_write_leaves_the_old_file_and_no_tempora
 
 #[tokio::test]
 async fn a_read_or_a_write_of_a_fifo_rejects_at_once_and_does_not_wait_for_its_other_end() {
-    let (text, _folder) = run_fs(
+    let (text, folder) = run_fs(
         "a_read_or_a_write_of_a_fifo_rejects_at_once_and_does_not_wait_for_its_other_end",
         |folder| {
-            let status = std::process::Command::new("mkfifo").arg(folder.join("pipe")).status().unwrap();
+            let status = std::process::Command::new("mkfifo")
+                .arg(folder.join("pipe"))
+                .status()
+                .unwrap();
             assert!(status.success());
         },
         "const codes = [];
-         for (const work of [() => fs.readFile('pipe', { baseDir: base }), () => fs.writeTextFile('pipe', 'x', { baseDir: base })]) {
+         for (const work of [
+           () => fs.readFile('pipe', { baseDir: base }),
+           () => fs.writeTextFile('pipe', 'x', { baseDir: base }),
+           () => fs.writeTextFile('pipe', 'x', { baseDir: base, atomic: true }),
+         ]) {
            try { await work(); codes.push('none'); } catch (error) { codes.push(error.code); }
          }
          return codes.join(' ');",
     )
     .await;
 
-    assert_eq!(text, "EINVAL EINVAL");
+    assert_eq!(text, "EINVAL EINVAL EINVAL");
+    assert!(folder.join("pipe").metadata().unwrap().file_type().is_fifo());
 }
 
 #[tokio::test]
