@@ -1,4 +1,6 @@
 /** The code of the public module `yuke:fs`. Its declaration is `types/fs.d.ts`, and the check at the end compares the two. */
+
+import { fieldsOf } from "yuke:internal/define";
 import { abortState, addAbortStep } from "yuke:internal/events";
 import {
   fsMkdir,
@@ -11,7 +13,7 @@ import {
   fsWriteFile,
   type Operation,
 } from "yuke:internal/native";
-import { checkUint8Array, dictionary, domString, usvString } from "yuke:internal/webidl";
+import { checkUint8Array, domString, usvString } from "yuke:internal/webidl";
 
 export class FileSystemError extends Error {
   readonly code: string;
@@ -36,21 +38,33 @@ interface Common {
   readonly signal: AbortSignal | undefined;
 }
 
-function common(fields: Readonly<Record<string, unknown>>): Common {
-  const signal = fields.signal;
+/**
+ * The checked fields of `options`. `options` is `undefined`, or an object with only `baseDir`, `signal`, and the
+ * fields in `names`. Another value throws a `TypeError`. An unknown field and a common field of another type also
+ * throw. A field that is `undefined` is missing.
+ */
+function optionsOf(options: unknown, names: readonly string[] = []): Readonly<Record<string, unknown>> & Common {
+  // A typo of a field would otherwise change the operation without a word.
+  const fields = options === undefined ? {} : fieldsOf(options, "the options", ["baseDir", "signal", ...names]);
+  const { baseDir, signal } = fields;
+  if (baseDir !== undefined && typeof baseDir !== "string") throw new TypeError("the option baseDir is not a string");
   // The check of the brand throws a `TypeError` for a value that is no signal.
   if (signal !== undefined) abortState(signal);
-  return {
-    baseDir: fields.baseDir === undefined ? undefined : domString(fields.baseDir),
-    signal: signal as AbortSignal | undefined,
-  };
+  return { ...fields, baseDir, signal: signal as AbortSignal | undefined };
+}
+
+/** `value` as a boolean, `false` when it is missing. Another value throws a `TypeError`. */
+function flag(value: unknown, name: string): boolean {
+  if (value === undefined) return false;
+  if (typeof value !== "boolean") throw new TypeError(`the option ${name} is not a boolean`);
+  return value;
 }
 
 /** `value` as a whole number in 0..2^53-1, or `fallback` when it is missing. Another value throws a `TypeError`. */
 function wholeNumber<T>(value: unknown, name: string, fallback: T): number | T {
   if (value === undefined) return fallback;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new TypeError(`${name} is not a whole number in 0..2^53-1`);
+    throw new TypeError(`the option ${name} is not a whole number in 0..2^53-1`);
   }
   return value;
 }
@@ -58,7 +72,7 @@ function wholeNumber<T>(value: unknown, name: string, fallback: T): number | T {
 /** `value` as permission bits in 0..0o7777, or `undefined` when it is missing. */
 function modeOf(value: unknown): number | undefined {
   const mode = wholeNumber(value, "mode", undefined);
-  if (mode !== undefined && mode > 0o7777) throw new TypeError("mode is not in 0..0o7777");
+  if (mode !== undefined && mode > 0o7777) throw new TypeError("the option mode is not in 0..0o7777");
   return mode;
 }
 
@@ -95,8 +109,8 @@ function failureOf(error: unknown, signal: AbortSignal | undefined): unknown {
 }
 
 export async function readFile(path: string, options?: unknown): Promise<Uint8Array> {
-  const fields = dictionary(options, "the options");
-  const { baseDir, signal } = common(fields);
+  const fields = optionsOf(options, ["position", "length"]);
+  const { baseDir, signal } = fields;
   const position = wholeNumber(fields.position, "position", 0);
   const length = wholeNumber(fields.length, "length", undefined);
   const text = domString(path);
@@ -104,16 +118,16 @@ export async function readFile(path: string, options?: unknown): Promise<Uint8Ar
 }
 
 export async function readTextFile(path: string, options?: unknown): Promise<string> {
-  const { baseDir, signal } = common(dictionary(options, "the options"));
+  const { baseDir, signal } = optionsOf(options);
   const text = domString(path);
   return await run(signal, () => fsReadTextFile(text, baseDir));
 }
 
 /** The write of `data`, bytes or text, with the options of a write. */
 async function writeData(path: string, data: Uint8Array | string, options: unknown): Promise<void> {
-  const fields = dictionary(options, "the options");
-  const { baseDir, signal } = common(fields);
-  const atomic = Boolean(fields.atomic);
+  const fields = optionsOf(options, ["atomic", "mode"]);
+  const { baseDir, signal } = fields;
+  const atomic = flag(fields.atomic, "atomic");
   const mode = modeOf(fields.mode);
   const text = domString(path);
   await run(signal, () => fsWriteFile(text, baseDir, data, atomic, mode));
@@ -132,7 +146,7 @@ export async function readDir(
   path: string,
   options?: unknown,
 ): Promise<{ name: string; isFile: boolean; isDirectory: boolean; isSymlink: boolean }[]> {
-  const { baseDir, signal } = common(dictionary(options, "the options"));
+  const { baseDir, signal } = optionsOf(options);
   const text = domString(path);
   const entries = await run(signal, () => fsReadDir(text, baseDir));
   return entries
@@ -142,7 +156,7 @@ export async function readDir(
 
 /** The facts of `path`, through or without a follow of a symbolic link. */
 async function info(path: string, options: unknown, follow: boolean) {
-  const { baseDir, signal } = common(dictionary(options, "the options"));
+  const { baseDir, signal } = optionsOf(options);
   const text = domString(path);
   const facts = await run(signal, () => fsStat(text, baseDir, follow));
   return {
@@ -163,25 +177,25 @@ export async function lstat(path: string, options?: unknown) {
 }
 
 export async function mkdir(path: string, options?: unknown): Promise<void> {
-  const fields = dictionary(options, "the options");
-  const { baseDir, signal } = common(fields);
-  const recursive = Boolean(fields.recursive);
+  const fields = optionsOf(options, ["recursive", "mode"]);
+  const { baseDir, signal } = fields;
+  const recursive = flag(fields.recursive, "recursive");
   const mode = modeOf(fields.mode);
   const text = domString(path);
   await run(signal, () => fsMkdir(text, baseDir, recursive, mode));
 }
 
 export async function remove(path: string, options?: unknown): Promise<void> {
-  const fields = dictionary(options, "the options");
-  const { baseDir, signal } = common(fields);
-  const recursive = Boolean(fields.recursive);
-  const force = Boolean(fields.force);
+  const fields = optionsOf(options, ["recursive", "force"]);
+  const { baseDir, signal } = fields;
+  const recursive = flag(fields.recursive, "recursive");
+  const force = flag(fields.force, "force");
   const text = domString(path);
   await run(signal, () => fsRemove(text, baseDir, recursive, force));
 }
 
 export async function rename(source: string, destination: string, options?: unknown): Promise<void> {
-  const { baseDir, signal } = common(dictionary(options, "the options"));
+  const { baseDir, signal } = optionsOf(options);
   const from = domString(source);
   const to = domString(destination);
   await run(signal, () => fsRename(from, to, baseDir));

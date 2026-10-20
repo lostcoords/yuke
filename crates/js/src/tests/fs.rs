@@ -74,6 +74,51 @@ async fn a_bad_path_or_option_throws_a_type_error() {
     assert_eq!(text, ["TypeError"; 9].join(" "));
 }
 
+// A typo or a coerced value would change the operation without a word, so each one throws before the operation.
+#[tokio::test]
+async fn an_unknown_option_or_an_option_of_another_type_throws_and_changes_nothing() {
+    let (text, folder) = run_fs(
+        "an_unknown_option_or_an_option_of_another_type_throws_and_changes_nothing",
+        |folder| {
+            std::fs::create_dir(folder.join("keep")).unwrap();
+            std::fs::write(folder.join("keep/note.txt"), "kept").unwrap();
+        },
+        "const message = async (work) => { try { await work(); return 'none'; } catch (error) { return error.message; } };
+         return (await Promise.all([
+           message(() => fs.remove('keep', { baseDir: base, recursive: 'false' })),
+           message(() => fs.remove('keep/note.txt', { baseDir: base, force: 1 })),
+           message(() => fs.writeTextFile('new.txt', 'x', { baseDir: base, atmoic: true })),
+           message(() => fs.writeTextFile('new.txt', 'x', { baseDir: base, atomic: 'yes' })),
+           message(() => fs.mkdir('new', { baseDir: base, recursive: 0 })),
+           message(() => fs.readTextFile('keep/note.txt', null)),
+           message(() => fs.readTextFile('keep/note.txt', { baseDir: 1 })),
+           message(() => fs.readTextFile('keep/note.txt', { baseDir: base, signal: undefined, length: 1 })),
+           message(() => fs.readDir('keep', { baseDir: base, recursive: true })),
+           fs.readTextFile(base + '/keep/note.txt', { baseDir: undefined, signal: undefined }),
+         ])).join('\\n');",
+    )
+    .await;
+
+    assert_eq!(
+        text,
+        [
+            "the option recursive is not a boolean",
+            "the option force is not a boolean",
+            "the options has the unknown field 'atmoic'",
+            "the option atomic is not a boolean",
+            "the option recursive is not a boolean",
+            "the options is not an object",
+            "the option baseDir is not a string",
+            "the options has the unknown field 'length'",
+            "the options has the unknown field 'recursive'",
+            "kept",
+        ]
+        .join("\n")
+    );
+    assert!(folder.join("keep/note.txt").exists());
+    assert!(!folder.join("new.txt").exists() && !folder.join("new").exists());
+}
+
 #[tokio::test]
 async fn a_failure_is_a_file_system_error_with_a_code_and_the_absolute_path() {
     let (text, folder) = run_fs(

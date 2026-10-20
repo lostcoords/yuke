@@ -202,8 +202,8 @@ impl Toolset {
     ///
     /// # Errors
     ///
-    /// Returns [`ToolNameError`] if the toolset already holds a tool of that name, or if the engine reserves the
-    /// name. The toolset stays unchanged.
+    /// Returns [`ToolNameError`] if the name does not match `^[a-zA-Z0-9_-]{1,64}$`, if the engine reserves the
+    /// name, or if the toolset already holds a tool of that name. The toolset stays unchanged.
     pub fn add(&mut self, definition: yuke_ai::ToolDefinition, tool: impl Tool + 'static) -> Result<(), ToolNameError> {
         check_tool_name(&definition.name)?;
         if self.definitions.iter().any(|held| held.name == definition.name) {
