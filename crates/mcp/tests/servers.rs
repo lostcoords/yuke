@@ -8,9 +8,12 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use yuke_ai::{Blob, Block, Target};
-use yuke_engine::{CancellationToken, Driver, Toolset};
-use yuke_mcp::{MediaStore, ServerConfig, ServerState, Servers};
+use yuke_engine::{CancellationToken, Driver, MediaStore, Toolset};
+use yuke_mcp::{ServerConfig, ServerState, Servers};
 use yuke_testing::{NoWait, ScriptedTransport, model_of, target, text_reply, tool_reply};
+
+/// The base64 PNG of one pixel, as the `picture` tool of the test server sends it.
+const PIXEL: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
 /// Keeps the bytes of each stored attachment.
 #[derive(Default)]
@@ -27,7 +30,7 @@ impl yuke_ai::BlobStore for Recorded {
 
 #[async_trait]
 impl MediaStore for Recorded {
-    async fn put(&self, bytes: Vec<u8>) -> Result<Blob, String> {
+    async fn put_media(&self, bytes: Vec<u8>) -> Result<Blob, String> {
         let blob = Blob {
             digest: [7; 32],
             len: bytes.len(),
@@ -48,22 +51,13 @@ fn test_server(env: &[(&str, &str)]) -> ServerConfig {
             .collect(),
         cwd: None,
         url: None,
-        headers: std::collections::BTreeMap::default(),
         enabled: true,
     }
 }
 
 /// A new empty folder for the test `name`.
 fn folder(name: &str) -> PathBuf {
-    let folder = std::env::temp_dir()
-        .join(format!("yuke-mcp-tests-{}", std::process::id()))
-        .join(name);
-    match std::fs::remove_dir_all(&folder) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        result => result.unwrap(),
-    }
-    std::fs::create_dir_all(&folder).unwrap();
-    folder
+    yuke_testing::folder("mcp", name)
 }
 
 /// The servers of `entries`, after each start ended.
@@ -95,20 +89,25 @@ fn toolset(servers: &Servers) -> Toolset {
 #[tokio::test]
 async fn a_server_starts_and_gives_its_tools_deferred_with_their_names_and_schemas() {
     let folder = folder("a_server_starts");
-    let servers = started(vec![("test".to_owned(), test_server(&[]))], &folder, Arc::default()).await;
+    let log = folder.join("log");
+    let entry = test_server(&[("MCP_TEST_LOG", log.to_str().unwrap())]);
+    let servers = started(vec![("test".to_owned(), entry)], &folder, Arc::default()).await;
 
     let tools = servers.tools();
 
     assert_eq!(
         servers.states(),
-        [("test".to_owned(), ServerState::Connected { tools: 6 })]
+        [("test".to_owned(), ServerState::Connected { tools: 7 })]
     );
+    // The newest version with `initialize`, which each server of this era speaks.
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "initialize \"2025-11-25\"\n");
     let names: Vec<_> = tools.iter().map(|(definition, _)| definition.name.as_str()).collect();
     assert_eq!(
         names,
         [
             "mcp__test__echo",
             "mcp__test__picture",
+            "mcp__test__huge",
             "mcp__test__fail",
             "mcp__test__structured",
             "mcp__test__wait",
@@ -135,6 +134,7 @@ async fn the_model_reads_the_text_the_image_the_error_and_the_structure_of_the_r
         tool_reply(&[
             ("c1", "mcp__test__echo", r#"{"text":"hello"}"#),
             ("c2", "mcp__test__picture", "{}"),
+            ("c5", "mcp__test__huge", "{}"),
             ("c3", "mcp__test__fail", "{}"),
             ("c4", "mcp__test__structured", "{}"),
         ]),
@@ -152,10 +152,14 @@ async fn the_model_reads_the_text_the_image_the_error_and_the_structure_of_the_r
         .unwrap();
 
     let request = &transport.requests()[1];
-    for text in ["hello", "a picture", "it broke", r#"{\"answer\":42}"#] {
+    let lost = "[an image of type image/png was lost: it is larger than the limit of 3932160 bytes]";
+    for text in ["hello", "a picture", lost, "it broke", r#"{\"answer\":42}"#] {
         assert!(request.contains(text), "{text}: {request}");
     }
-    assert_eq!(*media.0.lock().unwrap(), [b"png!".to_vec()]);
+    assert_eq!(
+        *media.0.lock().unwrap(),
+        [yuke_ai::decode_base64(PIXEL.as_bytes()).unwrap()]
+    );
     servers.close().await;
 }
 
@@ -185,11 +189,12 @@ async fn a_cancel_of_a_call_sends_the_cancel_to_the_server() {
         .unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    while !log.exists() {
+    while !std::fs::read_to_string(&log).unwrap().contains("cancelled") {
         assert!(Instant::now() < deadline, "the server got no cancel");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(std::fs::read_to_string(&log).unwrap().starts_with("cancelled "));
+    let lines = std::fs::read_to_string(&log).unwrap();
+    assert!(lines.lines().any(|line| line.starts_with("cancelled ")), "{lines}");
     let results: Vec<_> = context
         .iter()
         .filter_map(|block| match block {
@@ -213,10 +218,10 @@ async fn two_servers_with_one_valid_name_both_keep_their_tools() {
     let tools = servers.tools();
 
     let names: Vec<_> = tools.iter().map(|(definition, _)| definition.name.clone()).collect();
-    assert_eq!(names.len(), 12);
+    assert_eq!(names.len(), 14);
     assert_eq!(names[0], "mcp__a_b__echo");
     assert!(
-        names[6].starts_with("mcp__a_b__echo_") && names[6].len() == 23,
+        names[7].starts_with("mcp__a_b__echo_") && names[7].len() == 23,
         "{names:?}"
     );
     servers.close().await;

@@ -315,6 +315,10 @@ pub fn hex(bytes: &[u8]) -> String {
     text
 }
 
+/// The largest attachment, in bytes: 5 MiB as base64. Anthropic on Bedrock and Google Cloud, which OpenRouter can use,
+/// has this limit per image. A provider refuses a larger one in each later request, so the session could not go on.
+pub const MAX_MEDIA_BYTES: u64 = 5 * 1024 * 1024 / 4 * 3;
+
 /// One attachment. Its media type selects the block each protocol writes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

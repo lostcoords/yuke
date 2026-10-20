@@ -38,6 +38,7 @@ rquickjs = { version = "0.14.0", default-features = false, features = ["std", "l
 [dev-dependencies]
 # A test calls the runtime from the worker threads of a multi-thread tokio runtime.
 tokio = { version = "1.53", features = ["rt-multi-thread"] }
+yuke-testing = { path = "../testing" }
 
 [lints]
 workspace = true

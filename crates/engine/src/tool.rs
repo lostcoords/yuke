@@ -123,6 +123,25 @@ impl From<&str> for ToolContent {
     }
 }
 
+/// The most characters of a tool name. Each provider that yuke supports accepts it.
+pub const TOOL_NAME_MAX: usize = 64;
+
+/// Whether each provider that yuke supports accepts `character` in a tool name. Anthropic and OpenAI accept no other.
+pub fn tool_name_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+}
+
+/// Stores the bytes of a result attachment, such as an image, for the session of a turn.
+#[async_trait]
+pub trait MediaStore: Send + Sync {
+    /// Store `bytes`, and return their blob.
+    ///
+    /// # Errors
+    ///
+    /// Returns the text of the failure. The model reads it in place of the attachment.
+    async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String>;
+}
+
 /// Check that a tool can have `name`: it matches `^[a-zA-Z0-9_-]{1,64}$`, and the engine does not own it.
 ///
 /// # Errors
@@ -130,11 +149,7 @@ impl From<&str> for ToolContent {
 /// Returns [`ToolNameError::Invalid`] for another form, and [`ToolNameError::Reserved`] for
 /// [`yuke_ai::SEARCH_TOOL_NAME`] and [`TOOL_CALL_NAME`].
 pub fn check_tool_name(name: &str) -> Result<(), ToolNameError> {
-    // Each provider that yuke supports accepts this form, and Anthropic and OpenAI accept no other.
-    let valid = (1..=64).contains(&name.len())
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-');
+    let valid = (1..=TOOL_NAME_MAX).contains(&name.len()) && name.chars().all(tool_name_character);
     if !valid {
         return Err(ToolNameError::Invalid(name.to_owned()));
     }

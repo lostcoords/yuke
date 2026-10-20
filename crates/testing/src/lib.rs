@@ -1,5 +1,6 @@
 //! Test fixtures that the tests of several yuke crates share: a test model, scripted provider answers as Anthropic SSE,
-//! a scripted transport, and a timer that never waits. A fixture that one crate alone uses stays in that crate.
+//! a scripted transport, a timer that never waits, and a new folder for each test. A fixture that one crate alone uses
+//! stays in that crate.
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -290,4 +291,19 @@ impl Body for Stalled {
     fn poll_chunk(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Result<Bytes, Fault>>> {
         Poll::Pending
     }
+}
+
+/// A new empty folder for the test `name` of the test group `group`, as a canonical path. The process id keeps two test
+/// runs at once apart.
+pub fn folder(group: &str, name: &str) -> std::path::PathBuf {
+    let folder = std::env::temp_dir()
+        .join(format!("yuke-{group}-tests-{}", std::process::id()))
+        .join(name);
+    match std::fs::remove_dir_all(&folder) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        result => result.unwrap(),
+    }
+    std::fs::create_dir_all(&folder).unwrap();
+    // On macOS, the temporary folder is a symbolic link. A command reports the canonical path of its working folder.
+    folder.canonicalize().unwrap()
 }

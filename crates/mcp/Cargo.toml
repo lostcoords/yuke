@@ -16,12 +16,21 @@ tokio = { version = "1.53", features = ["macros", "process", "rt", "sync"] }
 yuke-ai = { path = "../ai", default-features = false }
 yuke-engine = { path = "../engine" }
 
+[features]
+# Builds the MCP server of the tests, so a plain build of the crate leaves it out.
+test-server = []
+
 # The MCP server of the tests. It speaks just enough of the protocol, so the tests need no other server.
 [[bin]]
 name = "yuke-mcp-test-server"
 path = "test-server/main.rs"
 test = false
 doc = false
+required-features = ["test-server"]
+
+[[test]]
+name = "servers"
+required-features = ["test-server"]
 
 [dev-dependencies]
 tokio = { version = "1.53", features = ["macros", "process", "rt", "sync", "time"] }

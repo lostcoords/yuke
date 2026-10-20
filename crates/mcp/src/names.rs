@@ -1,42 +1,32 @@
 //! The model name of each MCP tool: `mcp__<server>__<tool>`, in the characters and the length that providers accept.
 
-/// The most characters of a tool name that every provider accepts.
-const MAX: usize = 64;
+use yuke_engine::{TOOL_NAME_MAX, tool_name_character};
 
-/// The model name of the tool `tool` of the server `server`. A character outside `[A-Za-z0-9_-]` becomes `_`. A name
+/// The model name of the tool `tool` of the server `server`. A character that a provider refuses becomes `_`. A name
 /// over 64 characters keeps its first 55 characters and adds `_` and 8 hex digits of a hash of the server and the tool.
-/// The name is ASCII, so each cut falls on a character.
 pub(crate) fn tool_name(server: &str, tool: &str) -> String {
-    let name: String = format!("mcp__{server}__{tool}")
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '_' | '-') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if name.len() <= MAX {
+    let name = sanitized(server, tool);
+    if name.len() <= TOOL_NAME_MAX {
         return name;
     }
-    hashed(&name, server, tool)
+    hashed_name(server, tool)
 }
 
 /// The model name of the tool `tool` of the server `server` with the hash, also when the name is short. A tool gets it
 /// when an earlier tool has its plain name.
 pub(crate) fn hashed_name(server: &str, tool: &str) -> String {
-    let name = tool_name(server, tool);
-    match name.len() {
-        // A long name ends in the hash already.
-        MAX => name,
-        _ => hashed(&name, server, tool),
-    }
+    let name = sanitized(server, tool);
+    // The name is ASCII, so the cut falls on a character.
+    let kept = &name[..name.len().min(TOOL_NAME_MAX - 9)];
+    format!("{kept}_{:08x}", fnv1a(server, tool))
 }
 
-/// The first characters of `name`, `_`, and 8 hex digits of the hash of `server` and `tool`, in at most 64 characters.
-fn hashed(name: &str, server: &str, tool: &str) -> String {
-    format!("{}_{:08x}", &name[..name.len().min(MAX - 9)], fnv1a(server, tool))
+/// `mcp__<server>__<tool>`, with `_` for each character that a provider refuses.
+fn sanitized(server: &str, tool: &str) -> String {
+    format!("mcp__{server}__{tool}")
+        .chars()
+        .map(|character| if tool_name_character(character) { character } else { '_' })
+        .collect()
 }
 
 /// The 32-bit FNV-1a hash of `server`, a NUL byte, and `tool`. It is stable across processes, so a saved call names the

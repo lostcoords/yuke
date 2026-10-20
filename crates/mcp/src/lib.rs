@@ -5,5 +5,5 @@ mod config;
 mod names;
 mod servers;
 
-pub use config::{Config, ConfigError, Launch, ServerConfig};
-pub use servers::{McpTool, MediaStore, ServerState, Servers};
+pub use config::{Config, ServerConfig};
+pub use servers::{McpTool, ServerState, Servers};

@@ -2685,6 +2685,7 @@ dependencies = [
  "yuke-ai",
  "yuke-engine",
  "yuke-protocol",
+ "yuke-testing",
 ]
 
 [[package]]

@@ -12,7 +12,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Persistent, Promise, Value};
 use tokio::sync::mpsc;
-use yuke_engine::{CancellationToken, Concurrency, Tool, ToolContent, ToolContext, check_tool_name};
+use yuke_ai::MAX_MEDIA_BYTES;
+use yuke_engine::{CancellationToken, Concurrency, MediaStore, Tool, ToolContent, ToolContext, check_tool_name};
 
 use crate::error::{Error, caught};
 use crate::native::call;
@@ -22,21 +23,15 @@ use crate::runtime::Caller;
 /// What the tools of one session need from the consumer. One process can serve sessions of several workspaces at
 /// once, so each session gives its own host. Give the same host to every
 /// [`Runtime::open_session`](crate::Runtime::open_session) of a session, also after a reload or a change of its folder:
-/// the jobs of a session belong to its host.
+/// the jobs of a session belong to its host. The host stores the attachments of the session as a [`MediaStore`], for
+/// example an image that a tool read.
 #[async_trait]
-pub trait SessionHost: Send + Sync {
+pub trait SessionHost: MediaStore {
     /// The id of the session. A tool gets it as `sessionId`.
     fn session_id(&self) -> yuke_protocol::SessionId;
 
     /// The workspace folder of the session now. Relative paths and commands of the tools start here.
     fn folder(&self) -> PathBuf;
-
-    /// Store the bytes of an attachment of the session, for example an image that a tool read, and return its blob.
-    ///
-    /// # Errors
-    ///
-    /// Returns the text of the failure. The model receives it as the error of the tool call.
-    async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String>;
 
     /// A background job of the session started or ended. The call must not wait.
     fn job_changed(&self, job: yuke_protocol::Job);
@@ -368,16 +363,11 @@ pub(crate) async fn store_media(
     Ok(media)
 }
 
-/// The largest media item of each provider, from a file or from bytes: 5 MiB as base64. Anthropic on Bedrock and
-/// Google Cloud, which OpenRouter can use, has this limit per image.
-const MAX_MEDIA_BYTES: u64 = 5 * 1024 * 1024 / 4 * 3;
-
 /// The bytes of the file at `path`, at most [`MAX_MEDIA_BYTES`]. A blocking thread of tokio reads them, so the task of
 /// the caller does not wait.
 async fn read_file(path: PathBuf) -> std::io::Result<Vec<u8>> {
     tokio::task::spawn_blocking(move || {
         let mut bytes = Vec::new();
-        // A provider refuses a larger file in each later request, so the session could not go on.
         std::fs::File::open(path)?
             .take(MAX_MEDIA_BYTES + 1)
             .read_to_end(&mut bytes)?;

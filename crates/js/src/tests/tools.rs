@@ -10,7 +10,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use rquickjs::Ctx;
 use tokio::sync::mpsc;
-use yuke_engine::{CancellationToken, Concurrency, Tool, ToolContent};
+use yuke_engine::{CancellationToken, Concurrency, MediaStore, Tool, ToolContent};
 use yuke_protocol::{InteractionRequest, InteractionResponse, SessionId};
 
 use super::{evaluate, folder, load_entry, module, next_fault, next_notice, script_error, start, write};
@@ -53,15 +53,7 @@ impl TestHost {
 }
 
 #[async_trait]
-impl SessionHost for TestHost {
-    fn session_id(&self) -> SessionId {
-        self.session
-    }
-
-    fn folder(&self) -> PathBuf {
-        self.folder.lock().unwrap().clone()
-    }
-
+impl MediaStore for TestHost {
     async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String> {
         let blob = yuke_ai::Blob {
             digest: [7; 32],
@@ -69,6 +61,17 @@ impl SessionHost for TestHost {
         };
         self.media.lock().unwrap().push(bytes);
         Ok(blob)
+    }
+}
+
+#[async_trait]
+impl SessionHost for TestHost {
+    fn session_id(&self) -> SessionId {
+        self.session
+    }
+
+    fn folder(&self) -> PathBuf {
+        self.folder.lock().unwrap().clone()
     }
 
     fn job_changed(&self, job: yuke_protocol::Job) {

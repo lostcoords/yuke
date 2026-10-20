@@ -32,9 +32,6 @@ pub struct ServerConfig {
     /// The URL of an HTTP server.
     #[serde(default)]
     pub url: Option<String>,
-    /// The HTTP header fields of each request.
-    #[serde(default)]
-    pub headers: BTreeMap<String, String>,
     /// `false` keeps the server off.
     #[serde(default = "enabled")]
     pub enabled: bool,
@@ -44,72 +41,53 @@ fn enabled() -> bool {
     true
 }
 
-/// How yuke reaches a server, after the expansion of the variables.
+/// How yuke starts a stdio server, after the expansion of the variables.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Launch {
-    /// A program that speaks MCP on stdin and stdout.
-    Stdio {
-        /// The program.
-        command: String,
-        /// Its arguments.
-        args: Vec<String>,
-        /// The environment variables beside the environment of yuke.
-        env: BTreeMap<String, String>,
-        /// Its folder, or `None` for the session folder.
-        cwd: Option<PathBuf>,
-    },
-    /// A server at a URL.
-    Http {
-        /// The URL.
-        url: String,
-        /// The header fields of each request.
-        headers: BTreeMap<String, String>,
-    },
+pub(crate) struct Launch {
+    /// The program.
+    pub(crate) command: String,
+    /// Its arguments.
+    pub(crate) args: Vec<String>,
+    /// The environment variables beside the environment of yuke.
+    pub(crate) env: BTreeMap<String, String>,
+    /// Its folder, or `None` for the session folder.
+    pub(crate) cwd: Option<PathBuf>,
 }
 
 impl ServerConfig {
-    /// How to reach the server. `${NAME}` and `${NAME:-default}` in the command, the arguments, the environment values,
-    /// the folder, the URL, and the header values take the value of the variable `NAME` from `variable`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError`] when the entry has both or neither of `command` and `url`, or names a variable that has
-    /// no value and no default.
-    pub fn launch(&self, variable: &dyn Fn(&str) -> Option<String>) -> Result<Launch, ConfigError> {
+    /// How to start the server. `${NAME}` and `${NAME:-default}` in the command, the arguments, the environment values,
+    /// and the folder take the value of the variable `NAME` from `variable`.
+    pub(crate) fn launch(&self, variable: &dyn Fn(&str) -> Option<String>) -> Result<Launch, ConfigError> {
         let expand = |text: &str| expand(text, variable);
-        match (&self.command, &self.url) {
-            (Some(command), None) => Ok(Launch::Stdio {
-                command: expand(command)?,
-                args: self.args.iter().map(|arg| expand(arg)).collect::<Result<_, _>>()?,
-                env: self
-                    .env
-                    .iter()
-                    .map(|(name, value)| Ok((name.clone(), expand(value)?)))
-                    .collect::<Result<_, ConfigError>>()?,
-                cwd: self
-                    .cwd
-                    .as_ref()
-                    .map(|cwd| expand(&cwd.to_string_lossy()).map(PathBuf::from))
-                    .transpose()?,
-            }),
-            (None, Some(url)) => Ok(Launch::Http {
-                url: expand(url)?,
-                headers: self
-                    .headers
-                    .iter()
-                    .map(|(name, value)| Ok((name.clone(), expand(value)?)))
-                    .collect::<Result<_, ConfigError>>()?,
-            }),
-            _ => Err(ConfigError::Transport),
-        }
+        let command = match (&self.command, &self.url) {
+            (Some(command), None) => command,
+            (None, Some(_)) => return Err(ConfigError::Http),
+            _ => return Err(ConfigError::Transport),
+        };
+        Ok(Launch {
+            command: expand(command)?,
+            args: self.args.iter().map(|arg| expand(arg)).collect::<Result<_, _>>()?,
+            env: self
+                .env
+                .iter()
+                .map(|(name, value)| Ok((name.clone(), expand(value)?)))
+                .collect::<Result<_, ConfigError>>()?,
+            cwd: self
+                .cwd
+                .as_ref()
+                .map(|cwd| expand(&cwd.to_string_lossy()).map(PathBuf::from))
+                .transpose()?,
+        })
     }
 }
 
 /// Why a server entry cannot start.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConfigError {
+pub(crate) enum ConfigError {
     /// The entry has both or neither of `command` and `url`.
     Transport,
+    /// The entry names an HTTP server.
+    Http,
     /// The entry names a variable that has no value and no default.
     Variable(String),
 }
@@ -118,6 +96,7 @@ impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Transport => f.write_str("the server needs exactly one of command and url"),
+            Self::Http => f.write_str("yuke cannot reach an HTTP server yet"),
             Self::Variable(name) => write!(f, "the variable {name} has no value and no default"),
         }
     }
@@ -198,7 +177,7 @@ mod tests {
 
         assert_eq!(
             git,
-            Ok(Launch::Stdio {
+            Ok(Launch {
                 command: "uvx".to_owned(),
                 args: vec!["mcp-server-git".to_owned()],
                 env: BTreeMap::new(),

@@ -24,18 +24,7 @@ use crate::{Error, Options, Plugin, Processes, Report, Runtime, ScriptError};
 
 /// A new empty folder for the test `name`.
 fn folder(name: &str) -> PathBuf {
-    // The process id keeps two test runs at once apart.
-    let folder = std::env::temp_dir()
-        .join(format!("yuke-js-tests-{}", std::process::id()))
-        .join(name);
-    match std::fs::remove_dir_all(&folder) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => panic!("{}: {error}", folder.display()),
-    }
-    std::fs::create_dir_all(&folder).unwrap();
-    // On macOS, the temporary folder is a symbolic link. A command reports the canonical path of its working folder.
-    folder.canonicalize().unwrap()
+    yuke_testing::folder("js", name)
 }
 
 /// The module name of the file `file` below `folder`: its absolute path.

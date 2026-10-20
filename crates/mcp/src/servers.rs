@@ -7,30 +7,22 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use rmcp::model::{
-    CallToolRequest, CallToolRequestParams, CallToolResult, ClientRequest, ContentBlock, JsonObject, ResourceContents,
-    ServerResult, Tool as McpToolInfo,
+    CallToolRequest, CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig, ClientRequest,
+    ContentBlock, Implementation, JsonObject, ProtocolVersion, ResourceContents, ServerResult, Tool as McpToolInfo,
 };
 use rmcp::service::{PeerRequestOptions, RunningService};
 use rmcp::transport::TokioChildProcess;
 use rmcp::{Peer, RoleClient, ServiceExt};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use yuke_ai::{Blob, Media, ToolDefinition};
-use yuke_engine::{Tool, ToolContent, ToolContext};
+use yuke_ai::{Blob, MAX_MEDIA_BYTES, Media, ToolDefinition};
+use yuke_engine::{MediaStore, Tool, ToolContent, ToolContext, parse_arguments};
 
 use crate::config::{Launch, ServerConfig};
-use crate::names::{hashed_name, tool_name};
 
-/// Stores the bytes of a result attachment, such as an image, for the session.
-#[async_trait]
-pub trait MediaStore: Send + Sync {
-    /// Store `bytes`, and return their blob.
-    ///
-    /// # Errors
-    ///
-    /// Returns the text of the failure. The model reads it in place of the attachment.
-    async fn put(&self, bytes: Vec<u8>) -> Result<Blob, String>;
-}
+/// The connection to one running server.
+type Client = RunningService<RoleClient, ClientConfig>;
+use crate::names::{hashed_name, tool_name};
 
 /// The state of one server.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,7 +48,7 @@ struct Slot {
     name: String,
     state: ServerState,
     /// The connection while the server runs.
-    client: Option<RunningService<RoleClient, ()>>,
+    client: Option<Client>,
     tools: Vec<McpToolInfo>,
 }
 
@@ -92,7 +84,7 @@ impl Servers {
             let launch = config.enabled.then(|| config.launch(variable));
             let state = match launch {
                 None => ServerState::Disabled,
-                Some(Ok(Launch::Stdio {
+                Some(Ok(Launch {
                     command,
                     args,
                     env,
@@ -106,9 +98,6 @@ impl Servers {
                     launches.push((index, process));
                     ServerState::Connecting
                 }
-                Some(Ok(Launch::Http { .. })) => ServerState::Failed {
-                    error: "yuke cannot reach an HTTP server yet".to_owned(),
-                },
                 Some(Err(error)) => ServerState::Failed {
                     error: error.to_string(),
                 },
@@ -244,8 +233,7 @@ impl Drop for Servers {
 fn mark_stopped(slots: &mut [Slot]) {
     for slot in slots {
         // The service loop drops its receiver when the server ends, also without a cancel.
-        let closed =
-            |client: &RunningService<RoleClient, ()>| client.is_closed() || client.peer().is_transport_closed();
+        let closed = |client: &Client| client.is_closed() || client.peer().is_transport_closed();
         if slot.client.as_ref().is_some_and(closed) {
             slot.client = None;
             slot.tools.clear();
@@ -257,15 +245,22 @@ fn mark_stopped(slots: &mut [Slot]) {
 }
 
 /// Start the program of `process`, agree on the protocol, and list its tools.
-async fn connect(
-    process: tokio::process::Command,
-) -> Result<(RunningService<RoleClient, ()>, Vec<McpToolInfo>), String> {
+async fn connect(process: tokio::process::Command) -> Result<(Client, Vec<McpToolInfo>), String> {
     // The log of a server is no message; a later version can keep its last lines for a failure.
     let (transport, _stderr) = TokioChildProcess::builder(process)
         .stderr(Stdio::null())
         .spawn()
         .map_err(|error| format!("the server did not start: {error}"))?;
-    let client = ().serve(transport).await.map_err(|error| format!("the server did not initialize: {error}"))?;
+    // Each server of this era speaks `initialize`. A version without it needs the newer requests that yuke lacks yet.
+    let config = ClientConfig::new(
+        ClientCapabilities::default(),
+        Implementation::new("yuke", env!("CARGO_PKG_VERSION")),
+    )
+    .with_protocol_version(ProtocolVersion::LATEST_WITH_INITIALIZE);
+    let client = config
+        .serve(transport)
+        .await
+        .map_err(|error| format!("the server did not initialize: {error}"))?;
     let tools = client
         .list_all_tools()
         .await
@@ -292,8 +287,7 @@ impl std::fmt::Debug for McpTool {
 #[async_trait]
 impl Tool for McpTool {
     async fn call(&self, arguments: &str, context: &ToolContext<'_>) -> Result<ToolContent, String> {
-        let arguments: JsonObject =
-            serde_json::from_str(arguments).map_err(|error| format!("The arguments are not a JSON object: {error}"))?;
+        let arguments: JsonObject = parse_arguments(arguments)?;
         let params = CallToolRequestParams::new(self.name.clone()).with_arguments(arguments);
         let request = ClientRequest::CallToolRequest(CallToolRequest::new(params));
         let mut handle = self
@@ -359,7 +353,10 @@ async fn content(result: CallToolResult, media: &dyn MediaStore) -> ToolContent 
 /// Store the base64 image `data`.
 async fn image_of(data: &str, media: &dyn MediaStore) -> Result<Blob, String> {
     let bytes = yuke_ai::decode_base64(data.as_bytes()).ok_or("its data is not base64")?;
-    media.put(bytes).await
+    if bytes.len() as u64 > MAX_MEDIA_BYTES {
+        return Err(format!("it is larger than the limit of {MAX_MEDIA_BYTES} bytes"));
+    }
+    media.put_media(bytes).await
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

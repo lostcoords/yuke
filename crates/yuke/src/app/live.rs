@@ -11,7 +11,7 @@ use tokio::sync::{Notify, oneshot};
 use tokio::task::JoinHandle;
 use yuke_agent::{InputSender, Loaded, Session, SessionError, SessionObserver, StoreError};
 use yuke_ai::ToolDefinition;
-use yuke_engine::{CancellationToken, Driver, Toolset, chain_text};
+use yuke_engine::{CancellationToken, Driver, MediaStore, Toolset, chain_text};
 use yuke_js::{Runtime, ScriptSession, ScriptTool, SessionHost};
 use yuke_protocol::{
     EventNumber, Input, InputId, InteractionId, InteractionRequest, InteractionResponse, Job, LiveUpdate, NoticeLevel,
@@ -618,6 +618,17 @@ struct Host {
 }
 
 #[async_trait]
+impl MediaStore for Host {
+    async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String> {
+        self.shared
+            .store
+            .put_blob(self.inbox.output.session, bytes)
+            .await
+            .map_err(|error| chain_text(&error))
+    }
+}
+
+#[async_trait]
 impl SessionHost for Host {
     fn session_id(&self) -> SessionId {
         self.inbox.output.session
@@ -625,14 +636,6 @@ impl SessionHost for Host {
 
     fn folder(&self) -> PathBuf {
         lock(&self.folder).clone()
-    }
-
-    async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String> {
-        self.shared
-            .store
-            .put_blob(self.inbox.output.session, bytes)
-            .await
-            .map_err(|error| chain_text(&error))
     }
 
     fn job_changed(&self, job: Job) {

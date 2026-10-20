@@ -22,18 +22,18 @@ mod wyhash;
 #[cfg(test)]
 mod testing;
 
-#[cfg(feature = "http-tokio")]
 pub use base64::decode_base64;
 pub use encoder::{EncodeError, Encoded, Encoder, Unsupported};
 pub use failure::{Failure, ProviderKind};
+#[cfg(feature = "http-tokio")]
 pub use http::{HttpOptions, HttpTransport, InvalidUserAgent};
 pub use reply::Reply;
 pub use request::{
-    AnthropicWire, Blob, BlobStore, Block, ChatDialect, ChatWire, Digest, Effort, MaxTokensField, Media, Modality,
-    Origin, OriginRef, OutputSchema, Protocol, Reasoning, ReasoningReplay, ReasoningReplayMode, ReasoningReplayRef,
-    ReasoningSettings, ReplayKind, Request, ResponsesDialect, ResponsesWire, Role, SEARCH_TOOL_NAME, Settings, Target,
-    Thinking, ThinkingDisplay, ThinkingFormat, ToolCall, ToolCallRef, ToolChoice, ToolDefinition, ToolResult, Wire,
-    answer_text, hex,
+    AnthropicWire, Blob, BlobStore, Block, ChatDialect, ChatWire, Digest, Effort, MAX_MEDIA_BYTES, MaxTokensField,
+    Media, Modality, Origin, OriginRef, OutputSchema, Protocol, Reasoning, ReasoningReplay, ReasoningReplayMode,
+    ReasoningReplayRef, ReasoningSettings, ReplayKind, Request, ResponsesDialect, ResponsesWire, Role,
+    SEARCH_TOOL_NAME, Settings, Target, Thinking, ThinkingDisplay, ThinkingFormat, ToolCall, ToolCallRef, ToolChoice,
+    ToolDefinition, ToolResult, Wire, answer_text, hex,
 };
 pub use response::{
     AttemptError, AttemptInfo, BlockId, BlockKind, BlockResult, BlockStarted, BlockStopped, Completion, Content, Delta,
