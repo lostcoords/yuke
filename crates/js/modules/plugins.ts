@@ -88,9 +88,9 @@ export interface ResultMedia {
 export interface KeptMedia {
   readonly id: string;
   /** When present, it equals the media type of the kept item. */
-  readonly mimeType?: string;
+  readonly mimeType?: string | undefined;
   /** When present, it equals the size of the kept item. */
-  readonly size?: number;
+  readonly size?: number | undefined;
   readonly path?: never;
   readonly bytes?: never;
 }
@@ -129,13 +129,13 @@ export interface ToolAfterEvent {
 
 /** The answer of a `tool.after` handler that changes the result. A field that is not `undefined` replaces its value. */
 export interface ToolAfterAnswer {
-  readonly text?: string;
-  readonly isError?: boolean;
+  readonly text?: string | undefined;
+  readonly isError?: boolean | undefined;
   /**
    * The new media list. A `KeptMedia` keeps an item of the result, and a `ToolMedia` adds a new item. A relative path
    * starts in the workspace folder of the session.
    */
-  readonly media?: readonly (KeptMedia | (ToolMedia & { readonly id?: never }))[];
+  readonly media?: readonly (KeptMedia | (ToolMedia & { readonly id?: never }))[] | undefined;
 }
 
 /**

@@ -205,6 +205,18 @@ s.hook("tool.after", async (): Promise<ToolAfterAnswer | undefined> => {
   await Promise.resolve();
   return { isError: true };
 });
+// An optional field takes `undefined` as missing, as the runtime does.
+declare const maybe: boolean | undefined;
+s.hook("tool.after", () => ({ text: undefined, isError: maybe, media: undefined }));
+s.hook("tool.after", ({ result }) => ({ media: [{ id: "0", mimeType: undefined, size: undefined }, ...result.media] }));
+s.tools.define({
+  name: "maybe",
+  description: "d",
+  concurrency: "serial",
+  deferLoading: maybe,
+  parameters: { type: "object", properties: {} },
+  execute: () => ({ text: "x", isError: maybe, media: undefined }),
+});
 // A copy of an item keeps it, and so does its id alone.
 s.hook("tool.after", ({ result }) => ({ media: [...result.media.map((item) => ({ ...item })), { id: "ab" }] }));
 // @ts-expect-error: an answer has no field outside text, isError, and media.

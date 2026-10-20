@@ -93,9 +93,9 @@ export type ToolResult =
   | {
       /** The text for the model. It can be empty when the result has media. */
       readonly text: string;
-      readonly media?: readonly ToolMedia[];
+      readonly media?: readonly ToolMedia[] | undefined;
       /** `true` makes the result an error. The model still gets the text and the media. The default is `false`. */
-      readonly isError?: boolean;
+      readonly isError?: boolean | undefined;
     };
 
 /** What a call gives its tool besides the arguments. */
@@ -135,6 +135,6 @@ export interface Tool<S extends ObjectSchema = ObjectSchema> {
    * `true` keeps the tool out of each request until the model finds it with the tool search. Use it for a tool that
    * the model rarely needs. The default is `false`.
    */
-  readonly deferLoading?: boolean;
+  readonly deferLoading?: boolean | undefined;
   readonly execute: (this: void, args: Infer<S>, context: ToolContext) => ToolResult | Promise<ToolResult>;
 }
