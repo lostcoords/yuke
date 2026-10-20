@@ -15,7 +15,7 @@ const DEFAULT_TIMEOUT = 120_000;
 const LONGEST_TIMEOUT = 600_000;
 
 /** The description of the `path` argument of each tool. */
-const PATH = "A relative path resolves against the workspace root.";
+const PATH = "A relative path resolves against the workspace.";
 
 defineTool({
   name: "read",
@@ -100,7 +100,7 @@ defineTool({
 defineTool({
   name: "exec",
   description:
-    "Run a shell command in the working directory. Return stdout and stderr in write order, and the exit status. " +
+    "Run a shell command in the workspace. Return stdout and stderr in write order, and the exit status. " +
     "Each call starts a fresh shell and ends every process it starts. For a server or watcher, set background to " +
     "true. Do not use &, nohup, or setsid.",
   parameters: {

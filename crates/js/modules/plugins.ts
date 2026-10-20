@@ -1,11 +1,14 @@
 /**
- * The plugin API. The entry module of a plugin exports `apply`, `session`, or both. `apply(ctx)` runs once per runtime,
- * for the parts that every session shares. `session(s)` runs once per session, for the tools and hooks of that
- * session. The declarations need TypeScript 5.4 or later.
+ * The plugin API. The entry module of a plugin exports `apply`, `session`, or both.
+ * - `apply(ctx)` runs once per runtime, for the parts that every session shares.
+ * - `session(s)` runs once per session, for the tools and hooks of that session.
+ * - The declarations need TypeScript 5.4 or later.
  *
- * Errors: a misuse of the API throws a `TypeError`. A cancellation aborts a signal with a `DOMException` named
- * `AbortError`. A tool that throws, or a result with `isError: true`, gives the model an error result. A notice only
- * informs the user. It fails no tool and no turn.
+ * Errors:
+ * - A misuse of the API throws a `TypeError`.
+ * - A cancellation aborts a signal with a `DOMException` named `AbortError`.
+ * - A tool that throws, or a result with `isError: true`, gives the model an error result.
+ * - A notice only informs the user. It fails no tool and no turn.
  */
 import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
@@ -45,7 +48,10 @@ export interface PluginContext {
 export interface PromptBuildEvent {
   /** The system prompt sections of the turn, by key, in order, after the answers of the handlers before. */
   readonly sections: Readonly<Record<string, string>>;
-  /** The host aborts this signal when the turn is cancelled. */
+  /**
+   * The host aborts this signal when the turn is cancelled. After the abort, the host does not wait for the handler,
+   * and it ignores the answer of the handler.
+   */
   readonly signal: AbortSignal;
 }
 
@@ -108,7 +114,10 @@ export interface ToolCallResult {
 /** What a `tool.before` handler gets. */
 export interface ToolBeforeEvent {
   readonly call: ToolCall;
-  /** The host aborts this signal when the turn is cancelled. */
+  /**
+   * The host aborts this signal when the turn is cancelled. After the abort, the host does not wait for the handler,
+   * and it ignores the answer of the handler.
+   */
   readonly signal: AbortSignal;
 }
 
@@ -123,7 +132,10 @@ export interface ToolAfterEvent {
   readonly call: ToolCall;
   /** The result after the answers of the handlers before. */
   readonly result: ToolCallResult;
-  /** The host aborts this signal when the turn is cancelled. */
+  /**
+   * The host aborts this signal when the turn is cancelled. After the abort, the host does not wait for the handler,
+   * and it ignores the answer of the handler.
+   */
   readonly signal: AbortSignal;
 }
 
@@ -139,30 +151,36 @@ export interface ToolAfterAnswer {
 }
 
 /**
- * The hooks of a session, by point. Each handler gets one frozen event, and the host awaits it. The handler returns
- * `undefined` for no change, or an answer. A throw, or an answer of another shape, is a failure of the handler. Its
- * error names the point and the plugin.
+ * The hooks of a session, by point.
+ * - Each handler gets one frozen event, and the host awaits it.
+ * - The handler returns `undefined` for no change, or an answer.
+ * - A throw, or an answer of another shape, is a failure of the handler. Its error names the point and the plugin.
  */
 export interface SessionHooks {
   /**
-   * Change the system prompt of a turn. The handlers run once before each turn, after `session` of each plugin
-   * settles. Each handler gets the sections after the answers of the handlers before it. When a handler fails, the host
-   * sends a notice and starts no turn. The input stays pending until the next input. The answers are for that turn
-   * only. A text that changes at each turn makes each turn miss the prompt cache of the provider.
+   * Change the system prompt of a turn.
+   * - The handlers run once before each turn, after `session` of each plugin settles.
+   * - Each handler gets the sections after the answers of the handlers before it.
+   * - When a handler fails, the host sends a notice and starts no turn. The input stays pending until the next input.
+   * - The answers are for that turn only.
+   * - A text that changes at each turn makes each turn miss the prompt cache of the provider.
    */
   "prompt.build": (event: PromptBuildEvent) => undefined | PromptBuildAnswer | Promise<undefined | PromptBuildAnswer>;
   /**
-   * Decide whether a tool call runs. The handlers run before each call, in call order. They run in order until one
-   * answers. The call then does not run, and the turn goes on. A failed handler also stops the call, so a failed check
-   * never lets a call run.
+   * Decide whether a tool call runs.
+   * - The handlers run before each call, in call order.
+   * - They run in order until one answers. The call then does not run, and the turn goes on.
+   * - A failed handler also stops the call, so a failed check never lets a call run.
    */
   "tool.before": (event: ToolBeforeEvent) => undefined | ToolBeforeAnswer | Promise<undefined | ToolBeforeAnswer>;
   /**
-   * Change the result of a tool call before the model reads it. The handlers run after each call that started, also
-   * after a failed call and a call of an unknown tool. A call that `tool.before` stopped gets no `tool.after`. Each
-   * handler gets the result after the answers of the handlers before it. A failed handler makes the result an error
-   * without media, so it never shows the original result. A cancel during the handlers keeps the original result. The
-   * handlers of two calls can run at the same time.
+   * Change the result of a tool call before the model reads it.
+   * - The handlers run after each call that started, also after a failed call and a call of an unknown tool.
+   * - A call that `tool.before` stopped gets no `tool.after`.
+   * - Each handler gets the result after the answers of the handlers before it.
+   * - A failed handler makes the result an error without media, so it never shows the original result.
+   * - A cancel during the handlers keeps the original result.
+   * - The handlers of two calls can run at the same time.
    */
   "tool.after": (event: ToolAfterEvent) => undefined | ToolAfterAnswer | Promise<undefined | ToolAfterAnswer>;
 }
@@ -178,9 +196,9 @@ export interface SessionContext {
   /** The tools of the plugin in this session. They stay until their removal or the close of the session. */
   readonly tools: {
     /**
-     * Define `tool` for this session. `execute` gets the arguments with the types of `parameters`. The returned
-     * function removes the tool: the next turn does not have it, and a call of it fails. A change of the tools makes the
-     * next turn miss the prompt cache of the provider.
+     * Define `tool` for this session. `execute` gets the arguments with the types of `parameters`.
+     * - The returned function removes the tool: the next turn does not have it, and a call of it fails.
+     * - A change of the tools makes the next turn miss the prompt cache of the provider.
      */
     readonly define: <const S extends ObjectSchema>(tool: Tool<S>) => () => void;
   };
@@ -201,8 +219,9 @@ export type PluginApply = (ctx: PluginContext) => undefined | Promise<undefined>
 export type SessionCleanup = () => void | Promise<void>;
 
 /**
- * The `session` export of the entry module. It runs once per session. The open of the session does not wait for it.
- * The first request for the tools of the session waits for it. A throw removes its tools and aborts its signal. The
- * close of the session waits for it to settle, so it must end when its signal aborts.
+ * The `session` export of the entry module. It runs once per session.
+ * - The open of the session does not wait for it. The first request for the tools of the session waits for it.
+ * - A throw removes its tools and aborts its signal.
+ * - The close of the session waits for it to settle, so it must end when its signal aborts.
  */
 export type PluginSession = (s: SessionContext) => undefined | SessionCleanup | Promise<undefined | SessionCleanup>;

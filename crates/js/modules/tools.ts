@@ -76,7 +76,10 @@ export type ToolMedia = {
   readonly mimeType: string;
 } & (
   | {
-      /** The path of the file. A relative path starts in the folder of the call. */
+      /**
+       * The path of the file. In a tool result, a relative path starts in the workspace folder of the call. In a
+       * `tool.after` answer, it starts in the workspace folder of the session.
+       */
       readonly path: string;
       readonly bytes?: never;
     }
@@ -104,9 +107,16 @@ export interface ToolContext {
   readonly sessionId: string;
   /** The id of the call. It is unique in its session only. */
   readonly callId: string;
-  /** The workspace folder of the session at the start of the call. Relative paths and commands start here. */
+  /**
+   * The workspace folder of the call: the folder of the session at the start of the call. Relative paths and commands
+   * start here.
+   */
   readonly folder: string;
-  /** Aborts when the turn cancels the call, and when the call ends. The reason is a `DOMException` named `AbortError`. */
+  /**
+   * Aborts when the turn cancels the call, and when the call ends. The reason is a `DOMException` named `AbortError`.
+   * After a cancel, the host still waits until `execute` settles. Its result goes into the context of the session, and
+   * then the turn ends. Thus `execute` must stop its work when the signal aborts.
+   */
   readonly signal: AbortSignal;
   /** Show `text` to the user while the call runs. The model does not receive it. */
   readonly output: (this: void, text: string) => void;

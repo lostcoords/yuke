@@ -1,14 +1,19 @@
 // The declaration of the public module `yuke:fs`.
 
 /**
- * Files and directories. Each function gives a promise. A path is absolute, or relative to the absolute `baseDir` of
- * the options. No function uses a working folder of its own: a tool passes `context.folder`, and a plugin passes
- * `ctx.dataDir`. A failure rejects with a `FileSystemError`. A misuse rejects with a `TypeError`. A relative path
- * without `baseDir` is a misuse. An unknown option and an option of another type are misuses too. An option that is
- * `undefined` is missing. An abort of the `signal` stops the operation at its next check: before each chunk of 1 MiB,
- * and before the rename of an atomic write. A stopped operation rejects with the reason of the signal. An operation
- * that finished its change before the check still fulfills. A stopped write can leave a part of the file, except an atomic
- * write. A directory or a special file, such as a FIFO, is no file: a read or a write of one rejects.
+ * Files and directories. Each function gives a promise.
+ * - A path is absolute, or relative to the absolute `baseDir` of the options.
+ * - No function uses a working folder of its own: a tool passes `context.folder`, and a plugin passes `ctx.dataDir`.
+ * - A failure rejects with a `FileSystemError`.
+ * - A misuse rejects with a `TypeError`.
+ * - A relative path without `baseDir` is a misuse.
+ * - An unknown option, or an option of another type, is a misuse.
+ * - An option that is `undefined` is missing.
+ * - An abort of the `signal` stops the operation at its next check: before each chunk of 1 MiB, and before the rename
+ *   of an atomic write. A stopped operation rejects with the reason of the signal.
+ * - An operation that finished its change before the check still fulfills.
+ * - A stopped write can leave a part of the file, except an atomic write.
+ * - A directory or a special file, such as a FIFO, is no file: a read or a write of one rejects.
  */
 declare module "yuke:fs" {
   /** The options of each function. */
