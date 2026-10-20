@@ -108,14 +108,17 @@ async fn each_handler_gets_the_call_and_the_result_after_the_answers_before_it()
     assert_eq!(after(&session).await, Some(expected));
 }
 
+// An item keeps its original by its id, so the item itself, a copy, and its id alone each keep it.
 #[tokio::test]
 async fn an_answer_keeps_reorders_removes_and_adds_media() {
     // The answer adds this source of the plugin as a file.
     let source = "export function session(s) {
                s.hook('tool.after', ({ call, result }) => ({
-                 text: result.media.map((item) => `${item.mimeType} ${item.size}`).join(', '),
+                 text: result.media.map((item) => `${item.id} ${item.mimeType} ${item.size}`).join(', '),
                  media: [
                    result.media[1],
+                   { ...result.media[0] },
+                   { id: result.media[1].id },
                    { mimeType: 'image/gif', bytes: new Uint8Array([1, 2]) },
                    { mimeType: 'text/plain', path: 'pics/index.ts' },
                  ],
@@ -126,7 +129,7 @@ async fn an_answer_keeps_reorders_removes_and_adds_media() {
 
     let changed = after(&session).await.unwrap();
 
-    assert_eq!(changed.content, "image/png 3, image/jpeg 5");
+    assert_eq!(changed.content, "0 image/png 3, 1 image/jpeg 5");
     let shapes: Vec<_> = changed
         .media
         .iter()
@@ -137,37 +140,36 @@ async fn an_answer_keeps_reorders_removes_and_adds_media() {
         shapes,
         [
             ("image/jpeg", 2, 5),
+            ("image/png", 1, 3),
+            ("image/jpeg", 2, 5),
             ("image/gif", 7, 2),
             ("text/plain", 7, source.len())
         ]
     );
 }
 
-// A kept item crosses as a number, so a field of `Object.prototype` cannot make a new item look kept.
+// Two items can hold the same bytes, so each item has its own id.
 #[tokio::test]
-async fn a_new_media_item_stays_new_when_a_plugin_adds_kept_to_the_object_prototype() {
+async fn an_answer_keeps_the_second_of_two_items_with_the_same_bytes() {
     let (_runtime, session, _reports) = opened(
-        "a_new_media_item_stays_new_when_a_plugin_adds_kept_to_the_object_prototype",
+        "an_answer_keeps_the_second_of_two_items_with_the_same_bytes",
         &[(
-            "polluter",
+            "pick",
             "export function session(s) {
-               s.hook('tool.after', () => {
-                 Object.prototype.kept = 0;
-                 return { media: [{ mimeType: 'image/gif', bytes: new Uint8Array([1, 2]) }] };
-               });
+               s.hook('tool.after', ({ result }) => ({ media: [{ id: result.media[1].id }] }));
              }",
         )],
     )
     .await;
+    let result = ToolResult {
+        media: vec![media("image/png", 1, 3), media("image/webp", 1, 3)],
+        ..original()
+    };
 
-    let changed = after(&session).await.unwrap();
+    let hooks = session.hooks(CancellationToken::new());
+    let changed = hooks.after_tool(&call(), &result).await.unwrap();
 
-    let shapes: Vec<_> = changed
-        .media
-        .iter()
-        .map(|item| (item.mime.as_str(), item.blob.digest[0], item.blob.len))
-        .collect();
-    assert_eq!(shapes, [("image/gif", 7, 2)]);
+    assert_eq!(changed.media, [media("image/webp", 1, 3)]);
 }
 
 // The engine asks for the calls of a parallel group together, so the runs of two calls overlap.
@@ -229,8 +231,20 @@ async fn a_throw_or_an_answer_of_another_shape_gives_an_error_result_that_names_
         ("return 'x';", "TypeError: the answer is not an object"),
         ("return null;", "TypeError: the answer is not an object"),
         (
-            "return { media: [{ ...result.media[0] }] };",
-            "TypeError: the answer media[0] has the unknown field 'size'",
+            "return { media: [{ id: '00' }] };",
+            "TypeError: the answer media[0].id names no media item of the result",
+        ),
+        (
+            "return { media: [result.media[0], { ...result.media[0], mimeType: 'image/gif' }] };",
+            "TypeError: the answer media[1].mimeType differs from the kept item",
+        ),
+        (
+            "return { media: [{ ...result.media[1], size: 1 }] };",
+            "TypeError: the answer media[0].size differs from the kept item",
+        ),
+        (
+            "return { media: [{ ...result.media[0], path: 'a.png' }] };",
+            "TypeError: the answer media[0] has the unknown field 'path'",
         ),
     ];
     for (index, (body, error)) in cases.into_iter().enumerate() {

@@ -224,7 +224,7 @@ interface ToolAfterRequest {
   readonly result: {
     readonly text: string;
     readonly isError: boolean;
-    readonly media: readonly ResultMedia[];
+    readonly media: readonly { readonly mimeType: string; readonly size: number }[];
   };
 }
 
@@ -236,7 +236,10 @@ interface ToolAfterRequest {
 export function startToolAfter({ open, call, result: given }: ToolAfterRequest): Started<ChangedResult | undefined> {
   return started(async (signal) => {
     frozen(call);
-    const originals: readonly ResultMedia[] = given.media.map((item) => Object.freeze(item));
+    // The index is the id, and a kept item crosses back to the host as its index.
+    const originals: readonly ResultMedia[] = given.media.map(({ mimeType, size }, index) =>
+      Object.freeze({ id: String(index), mimeType, size }),
+    );
     let result: ToolCallResult = Object.freeze({
       text: given.text,
       isError: given.isError,
@@ -340,11 +343,10 @@ function applied(result: ToolCallResult, answer: unknown, originals: readonly Re
     // An index loop, so a hole of a sparse array fails as a value that is not an object.
     for (let index = 0; index < list.length; index += 1) {
       const item: unknown = list[index];
-      items.push(
-        originals.includes(item as ResultMedia)
-          ? (item as ResultMedia)
-          : Object.freeze(mediaOf(item, `the answer media[${index}]`)),
-      );
+      const place = `the answer media[${index}]`;
+      // A `ToolMedia` has no `id`, so the field tells the two forms apart.
+      const kept = typeof item === "object" && item !== null && Object.hasOwn(item, "id");
+      items.push(kept ? keptOf(item, place, originals) : Object.freeze(mediaOf(item, place)));
     }
     media = Object.freeze(items);
   }
@@ -353,6 +355,23 @@ function applied(result: ToolCallResult, answer: unknown, originals: readonly Re
     isError: (fields.isError as boolean | undefined) ?? result.isError,
     media,
   });
+}
+
+/** The fields of a `KeptMedia`. */
+const KEPT_FIELDS = ["id", "mimeType", "size"];
+
+/** The item of `originals` that the answer item `value` keeps by its `id`. An unknown id or a changed fact throws. */
+function keptOf(value: unknown, place: string, originals: readonly ResultMedia[]): ResultMedia {
+  const fields = fieldsOf(value, place, KEPT_FIELDS);
+  const original = originals.find((item) => item.id === fields.id);
+  if (original === undefined) throw new TypeError(`${place}.id names no media item of the result`);
+  if (fields.mimeType !== undefined && fields.mimeType !== original.mimeType) {
+    throw new TypeError(`${place}.mimeType differs from the kept item`);
+  }
+  if (fields.size !== undefined && fields.size !== original.size) {
+    throw new TypeError(`${place}.size differs from the kept item`);
+  }
+  return original;
 }
 
 /** A run of the handlers of one point, and the abort of its signal. */

@@ -205,7 +205,12 @@ s.hook("tool.after", async (): Promise<ToolAfterAnswer | undefined> => {
   await Promise.resolve();
   return { isError: true };
 });
+// A copy of an item keeps it, and so does its id alone.
+s.hook("tool.after", ({ result }) => ({ media: [...result.media.map((item) => ({ ...item })), { id: "ab" }] }));
 // @ts-expect-error: an answer has no field outside text, isError, and media.
 s.hook("tool.after", () => ({ content: "x" }));
+const mixed = { id: "ab", mimeType: "image/png", bytes: new Uint8Array() };
+// @ts-expect-error: an item with an id keeps an item, so it has no path or bytes.
+s.hook("tool.after", () => ({ media: [mixed] }));
 // @ts-expect-error: a new media item needs a path or bytes.
 s.hook("tool.after", () => ({ media: [{ mimeType: "image/png" }] }));

@@ -74,12 +74,25 @@ export interface ToolCall {
   readonly arguments: unknown;
 }
 
-/** A media item that the result had before the `tool.after` handlers. An answer keeps it when its `media` holds it. */
+/** A media item that the result had before the `tool.after` handlers. The bytes stay in the host. */
 export interface ResultMedia {
+  /** The id of the item in this result. It is opaque: a `KeptMedia` uses it to keep the item. */
+  readonly id: string;
   /** The media type, for example `image/png`. */
   readonly mimeType: string;
   /** The size of the bytes. */
   readonly size: number;
+}
+
+/** An item of a `tool.after` answer that keeps the `ResultMedia` with its `id`. A copy of that item is one. */
+export interface KeptMedia {
+  readonly id: string;
+  /** When present, it equals the media type of the kept item. */
+  readonly mimeType?: string;
+  /** When present, it equals the size of the kept item. */
+  readonly size?: number;
+  readonly path?: never;
+  readonly bytes?: never;
 }
 
 /** The result of one tool call. */
@@ -119,10 +132,10 @@ export interface ToolAfterAnswer {
   readonly text?: string;
   readonly isError?: boolean;
   /**
-   * The new media list. It holds an item of `result.media` to keep it, and a `ToolMedia` to add a new item. A relative
-   * path starts in the workspace folder of the session.
+   * The new media list. A `KeptMedia` keeps an item of the result, and a `ToolMedia` adds a new item. A relative path
+   * starts in the workspace folder of the session.
    */
-  readonly media?: readonly (ResultMedia | ToolMedia)[];
+  readonly media?: readonly (KeptMedia | (ToolMedia & { readonly id?: never }))[];
 }
 
 /**
