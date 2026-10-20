@@ -267,6 +267,41 @@ async fn a_tool_that_session_defines_after_its_setup_reaches_the_next_tools() {
 }
 
 #[tokio::test]
+async fn a_removed_tool_leaves_the_next_tools_and_frees_its_name() {
+    let (folder, runtime, _reports) = loaded(
+        "a_removed_tool_leaves_the_next_tools_and_frees_its_name",
+        &format!(
+            "export function session(s) {{
+               const remove = s.tools.define({});
+               s.tools.define({});
+               globalThis.removeGone = remove;
+               globalThis.defineAgain = () => s.tools.define({{ ...{}, execute: () => 'again' }});
+             }}",
+            tool("gone"),
+            tool("kept"),
+            tool("gone")
+        ),
+    )
+    .await;
+    let tools = Tools::open(&runtime, host(&folder)).await;
+
+    // A second call removes nothing, so the tool of the same name defined after it stays.
+    evaluate::<bool>(
+        &runtime,
+        "globalThis.removeGone(); globalThis.defineAgain(); globalThis.removeGone(); return true;",
+    )
+    .await
+    .unwrap();
+    let next = tools.session.tools().await.unwrap();
+
+    assert_eq!(error_of(&tools["gone"], "{}").await, "the tool is no longer defined");
+    let names: Vec<&str> = next.iter().map(|(definition, _)| definition.name.as_str()).collect();
+    assert_eq!(names, ["kept", "gone"]);
+    let again = &next.iter().find(|(definition, _)| definition.name == "gone").unwrap().1;
+    assert_eq!(text_of(again, "{}").await, "again");
+}
+
+#[tokio::test]
 async fn a_failed_session_drops_only_its_tools_aborts_its_signal_and_sends_one_notice() {
     let folder = folder("a_failed_session_drops_only_its_tools_aborts_its_signal_and_sends_one_notice");
     let (runtime, mut reports) = start(&folder).await;

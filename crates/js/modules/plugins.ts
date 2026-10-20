@@ -162,10 +162,14 @@ export interface SessionContext {
   readonly folder: string;
   /** The host aborts this signal when the session closes or `session` of this plugin fails. The plugin then stops. */
   readonly signal: AbortSignal;
-  /** The tools of the plugin in this session. They stay until the session closes. */
+  /** The tools of the plugin in this session. They stay until their removal or the close of the session. */
   readonly tools: {
-    /** Define `tool` for this session. `execute` gets the arguments with the types of `parameters`. */
-    readonly define: <const S extends ObjectSchema>(tool: Tool<S>) => void;
+    /**
+     * Define `tool` for this session. `execute` gets the arguments with the types of `parameters`. The returned
+     * function removes the tool: the next turn does not have it, and a call of it fails. A change of the tools makes the
+     * next turn miss the prompt cache of the provider.
+     */
+    readonly define: <const S extends ObjectSchema>(tool: Tool<S>) => () => void;
   };
   /**
    * Add `handler` to the hook `point` of this session. The handlers of a point run in plugin order, then in the order

@@ -443,9 +443,12 @@ function start(open: number, sessionId: string, folder: string, plugin: string, 
     folder,
     signal,
     tools: Object.freeze({
-      define<const S extends ObjectSchema>(tool: Tool<S>): void {
+      define<const S extends ObjectSchema>(tool: Tool<S>): () => void {
         if (scope.closed) throw new TypeError(`plugin ${plugin} defines a tool after the end of its session`);
-        scope.tools.push(defineTool(tool, open));
+        const id = defineTool(tool, open);
+        scope.tools.push(id);
+        // Each id is new, so a second removal finds nothing, and the removal at a failure skips a removed id.
+        return () => unregister([id]);
       },
     }),
     hook<K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]): () => void {
