@@ -1,6 +1,6 @@
 //! The MCP servers of one session: their connections, their states, and their tools.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,6 +15,9 @@ use rmcp::model::{
 use rmcp::service::{PeerRequestOptions, RunningService, RunningServiceCancellationToken};
 use rmcp::transport::TokioChildProcess;
 use rmcp::{Peer, RoleClient, ServiceExt};
+use rustix::process::{Pid, Signal, kill_process_group};
+use tokio::io::AsyncReadExt;
+use tokio::process::ChildStderr;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use yuke_ai::{Blob, MAX_MEDIA_BYTES, Media, ToolDefinition};
@@ -26,6 +29,12 @@ use crate::names::{hashed_name, tool_name};
 
 /// The connection to one running server.
 type Client = RunningService<RoleClient, ClientConfig>;
+
+/// The number of the last stderr lines of a server that its failure shows.
+const LOG_LINES: usize = 20;
+
+/// The longest stderr line of a server that its failure shows, in bytes. A longer line is cut.
+const LOG_LINE_BYTES: usize = 500;
 
 /// Receives each change of the state of a server. It must not wait, and it must not call the [`Servers`].
 pub type OnChange = Arc<dyn Fn(McpServer) + Send + Sync>;
@@ -289,15 +298,15 @@ async fn start_trusted(
 /// Start the server of the slot `index` with `process`, and hold its connection until the server ends.
 async fn run(index: usize, process: tokio::process::Command, shared: Arc<Shared>, count: Arc<watch::Sender<usize>>) {
     let connected = connect(process).await;
-    let client = match connected {
-        Ok((client, tools)) => {
+    let connection = match connected {
+        Ok((client, tools, program)) => {
             shared.update(index, |slot| {
                 slot.state = McpServerState::Connected { tools: tools.len() };
                 slot.peer = Some(client.peer().clone());
                 slot.stop = Some(client.cancellation_token());
                 slot.tools = tools;
             });
-            Some(client)
+            Some((client, program))
         }
         Err(error) => {
             shared.update(index, |slot| slot.state = McpServerState::Failed { error });
@@ -305,34 +314,48 @@ async fn run(index: usize, process: tokio::process::Command, shared: Arc<Shared>
         }
     };
     count.send_modify(|starting| *starting -= 1);
-    let Some(client) = client else {
+    let Some((client, program)) = connection else {
         return;
     };
     // The connection ends when the server ends or a close cancels it.
     match client.waiting().await {
         Ok(_) | Err(_) => {}
     }
+    let log = program.end().await;
     shared.update(index, |slot| {
         slot.peer = None;
         slot.stop = None;
         slot.tools.clear();
         slot.state = McpServerState::Failed {
-            error: "the server stopped".to_owned(),
+            error: with_log("the server stopped".to_owned(), &log),
         };
     });
 }
 
-/// Start the program of `process`, agree on the protocol, and list its tools.
-async fn connect(process: tokio::process::Command) -> Result<(Client, Vec<McpToolInfo>), String> {
+/// Start the program of `process`, agree on the protocol, and list its tools. The error of a failed start holds the
+/// last stderr lines of the program.
+async fn connect(process: tokio::process::Command) -> Result<(Client, Vec<McpToolInfo>, Program), String> {
     // A wrapper such as `npx` starts the real server as its child. In a session of its own, a kill of the server stops
     // the whole group.
     let mut process = CommandWrap::from(process);
     process.wrap(ProcessSession);
-    // The log of a server is no message; a later version can keep its last lines for a failure.
-    let (transport, _stderr) = TokioChildProcess::builder(process)
-        .stderr(Stdio::null())
+    let (transport, stderr) = TokioChildProcess::builder(process)
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("the server did not start: {error}"))?;
+    let program = Program {
+        // In a session of its own, the server leads its group.
+        group: transport.id().and_then(|id| Pid::from_raw(i32::try_from(id).ok()?)),
+        log: stderr.map(|stderr| tokio::spawn(read_log(stderr))),
+    };
+    match agree(transport).await {
+        Ok((client, tools)) => Ok((client, tools, program)),
+        Err(error) => Err(with_log(error, &program.end().await)),
+    }
+}
+
+/// Agree on the protocol with the server of `transport`, and list its tools.
+async fn agree(transport: TokioChildProcess) -> Result<(Client, Vec<McpToolInfo>), String> {
     // Each server of this era speaks `initialize`. A version without it needs the newer requests that yuke lacks yet.
     let config = ClientConfig::new(
         ClientCapabilities::default(),
@@ -348,6 +371,72 @@ async fn connect(process: tokio::process::Command) -> Result<(Client, Vec<McpToo
         .await
         .map_err(|error| format!("the server did not list its tools: {error}"))?;
     Ok((client, tools))
+}
+
+/// The program of a server: its process group and the reader of its stderr.
+struct Program {
+    group: Option<Pid>,
+    log: Option<JoinHandle<String>>,
+}
+
+impl Program {
+    /// Kill each process that remains in the group, and give the last lines of the stderr. A child that outlives the
+    /// server holds the stderr open, so the kill comes first.
+    async fn end(self) -> String {
+        if let Some(group) = self.group
+            && kill_process_group(group, Signal::KILL).is_err()
+        {
+            // An empty group has nothing to kill, and macOS can refuse the kill of a group that empties.
+        }
+        match self.log {
+            Some(log) => log.await.unwrap_or_default(),
+            None => String::new(),
+        }
+    }
+}
+
+/// Read `stderr` to its end, and give its last [`LOG_LINES`] lines that are not blank, each cut to
+/// [`LOG_LINE_BYTES`]. The read never stops early, so the pipe never fills and the server never blocks.
+async fn read_log(mut stderr: ChildStderr) -> String {
+    let mut lines = VecDeque::new();
+    let mut line = Vec::new();
+    let mut chunk = [0; 4096];
+    // A read error ends the log as its end does.
+    while let Ok(read @ 1..) = stderr.read(&mut chunk).await {
+        for &byte in &chunk[..read] {
+            if byte == b'\n' {
+                keep_line(&mut lines, std::mem::take(&mut line));
+            } else if line.len() < LOG_LINE_BYTES {
+                line.push(byte);
+            }
+        }
+    }
+    keep_line(&mut lines, line);
+    lines
+        .iter()
+        .map(|line| String::from_utf8_lossy(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Add `line` to the last `lines` when it is not blank.
+fn keep_line(lines: &mut VecDeque<Vec<u8>>, line: Vec<u8>) {
+    if line.trim_ascii().is_empty() {
+        return;
+    }
+    if lines.len() == LOG_LINES {
+        lines.pop_front();
+    }
+    lines.push_back(line);
+}
+
+/// `error` with the last stderr lines of its server, when the server wrote any.
+fn with_log(error: String, log: &str) -> String {
+    if log.is_empty() {
+        error
+    } else {
+        format!("{error}\n{log}")
+    }
 }
 
 /// One tool of a server, for the engine. A cancel of a call sends `notifications/cancelled` to the server.

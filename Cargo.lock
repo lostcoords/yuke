@@ -2696,6 +2696,7 @@ dependencies = [
  "async-trait",
  "process-wrap",
  "rmcp",
+ "rustix",
  "serde",
  "serde_json",
  "tokio",

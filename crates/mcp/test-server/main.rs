@@ -6,7 +6,7 @@
 //! - `huge` answers an image one byte over the media limit of yuke.
 //! - `fail` answers an error result.
 //! - `structured` answers only structured content.
-//! - `exit` ends the server without an answer.
+//! - `exit` writes `exit` to stderr and ends the server without an answer.
 //! - `wait` never answers.
 //!
 //! With `MCP_TEST_LOG`, the server adds a line to that file for the version that the client asks for
@@ -116,7 +116,10 @@ fn call(params: &Value) -> Option<Value> {
         }),
         "fail" => json!({ "content": [text("it broke")], "isError": true }),
         "structured" => json!({ "content": [], "structuredContent": { "answer": 42 } }),
-        "exit" => std::process::exit(0),
+        // The server exits after a failed write too.
+        "exit" => match writeln!(std::io::stderr(), "exit") {
+            Ok(()) | Err(_) => std::process::exit(0),
+        },
         _ => return None,
     })
 }

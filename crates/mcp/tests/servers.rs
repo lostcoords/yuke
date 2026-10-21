@@ -263,9 +263,22 @@ async fn two_servers_with_one_valid_name_both_keep_their_tools() {
 }
 
 #[tokio::test]
-async fn a_server_that_exits_fails_and_loses_its_tools() {
+async fn a_server_that_exits_fails_with_its_last_stderr_line_loses_its_tools_and_stops_its_children() {
     let folder = folder("a_server_that_exits");
-    let (servers, changes) = started(vec![("test".to_owned(), test_server(&[]))], &folder, Arc::default()).await;
+    // The child keeps the stderr of the server open after the server ends.
+    let script = r#"sleep 30 >/dev/null & echo $! > "$1"; exec "$2""#;
+    let wrapper = ServerConfig {
+        command: Some("sh".to_owned()),
+        args: vec![
+            "-c".to_owned(),
+            script.to_owned(),
+            "sh".to_owned(),
+            folder.join("child.pid").display().to_string(),
+            env!("CARGO_BIN_EXE_yuke-mcp-test-server").to_owned(),
+        ],
+        ..test_server(&[])
+    };
+    let (servers, changes) = started(vec![("test".to_owned(), wrapper)], &folder, Arc::default()).await;
     let toolset = toolset(&servers);
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "mcp__test__exit", "{}")]), text_reply("done")]);
     let model = model_of(native_target());
@@ -280,7 +293,7 @@ async fn a_server_that_exits_fails_and_loses_its_tools() {
     let stopped = server(
         "test",
         McpServerState::Failed {
-            error: "the server stopped".to_owned(),
+            error: "the server stopped\nexit".to_owned(),
         },
     );
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -295,7 +308,44 @@ async fn a_server_that_exits_fails_and_loses_its_tools() {
         "{}",
         transport.requests()[1]
     );
+    child_stops(&folder).await;
     servers.close().await;
+}
+
+#[tokio::test]
+async fn a_failed_start_shows_the_last_twenty_stderr_lines_and_stops_the_children() {
+    let folder = folder("a_failed_start_shows_the_last_lines");
+    // 25 lines, a blank one, and a child that keeps the stderr open after the server ends.
+    let script = r#"i=1; while [ $i -le 25 ]; do echo "line $i" >&2; i=$((i + 1)); done; echo >&2
+        sleep 30 >/dev/null & echo $! > "$1"; exit 1"#;
+    let failing = ServerConfig {
+        command: Some("sh".to_owned()),
+        args: vec![
+            "-c".to_owned(),
+            script.to_owned(),
+            "sh".to_owned(),
+            folder.join("child.pid").display().to_string(),
+        ],
+        ..test_server(&[])
+    };
+
+    let (servers, _) = started(vec![("failing".to_owned(), failing)], &folder, Arc::default()).await;
+
+    let states = servers.states();
+    let [
+        McpServer {
+            state: McpServerState::Failed { error },
+            ..
+        },
+    ] = states.as_slice()
+    else {
+        panic!("{states:?}");
+    };
+    let (head, log) = error.split_once('\n').unwrap();
+    assert!(head.starts_with("the server did not initialize"), "{head}");
+    let expected: Vec<String> = (6..=25).map(|line| format!("line {line}")).collect();
+    assert_eq!(log, expected.join("\n"));
+    child_stops(&folder).await;
 }
 
 #[tokio::test]
