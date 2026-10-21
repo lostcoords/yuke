@@ -2694,6 +2694,7 @@ name = "yuke-mcp"
 version = "0.0.1-dev"
 dependencies = [
  "async-trait",
+ "process-wrap",
  "rmcp",
  "serde",
  "serde_json",

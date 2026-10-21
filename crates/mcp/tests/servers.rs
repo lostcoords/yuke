@@ -327,6 +327,73 @@ async fn a_close_stops_a_server_that_never_answers_its_start() {
     assert_eq!(servers.states(), [server("silent", McpServerState::Connecting)]);
 }
 
+/// A server behind a shell that starts a child and waits for it after the server ends, so the server outlives its
+/// input. The file `child.pid` in `folder` gets the id of the child.
+fn wrapped_server(folder: &Path) -> ServerConfig {
+    let script = r#"sleep 30 </dev/null >/dev/null 2>&1 & echo $! > "$1"; "$2"; wait"#;
+    ServerConfig {
+        command: Some("sh".to_owned()),
+        args: vec![
+            "-c".to_owned(),
+            script.to_owned(),
+            "sh".to_owned(),
+            folder.join("child.pid").display().to_string(),
+            env!("CARGO_BIN_EXE_yuke-mcp-test-server").to_owned(),
+        ],
+        ..test_server(&[])
+    }
+}
+
+/// Wait until the child of [`wrapped_server`] in `folder` no longer exists.
+async fn child_stops(folder: &Path) {
+    let child = std::fs::read_to_string(folder.join("child.pid")).unwrap();
+    let child = child.trim();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while std::process::Command::new("kill")
+        .args(["-0", child])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+    {
+        assert!(Instant::now() < deadline, "the child {child} runs");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_close_stops_the_children_of_a_server_that_outlives_its_input() {
+    let folder = folder("a_close_stops_the_children");
+    let (servers, _) = started(
+        vec![("wrapped".to_owned(), wrapped_server(&folder))],
+        &folder,
+        Arc::default(),
+    )
+    .await;
+
+    // The close waits for the server, then kills it.
+    tokio::time::timeout(Duration::from_secs(10), servers.close())
+        .await
+        .unwrap();
+
+    child_stops(&folder).await;
+}
+
+#[tokio::test]
+async fn a_drop_stops_the_children_of_a_server() {
+    let folder = folder("a_drop_stops_the_children");
+    let (servers, _) = started(
+        vec![("wrapped".to_owned(), wrapped_server(&folder))],
+        &folder,
+        Arc::default(),
+    )
+    .await;
+
+    drop(servers);
+
+    child_stops(&folder).await;
+}
+
 #[tokio::test]
 async fn a_project_server_replaces_a_user_server_and_starts_only_when_trusted() {
     let folder = folder("a_project_server_replaces_a_user_server");

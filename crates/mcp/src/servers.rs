@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
+use process_wrap::tokio::{CommandWrap, ProcessSession};
 use rmcp::model::{
     CallToolRequest, CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig, ClientRequest,
     ContentBlock, Implementation, JsonObject, ProtocolVersion, ResourceContents, ServerResult, Tool as McpToolInfo,
@@ -323,6 +324,10 @@ async fn run(index: usize, process: tokio::process::Command, shared: Arc<Shared>
 
 /// Start the program of `process`, agree on the protocol, and list its tools.
 async fn connect(process: tokio::process::Command) -> Result<(Client, Vec<McpToolInfo>), String> {
+    // A wrapper such as `npx` starts the real server as its child. In a session of its own, a kill of the server stops
+    // the whole group.
+    let mut process = CommandWrap::from(process);
+    process.wrap(ProcessSession);
     // The log of a server is no message; a later version can keep its last lines for a failure.
     let (transport, _stderr) = TokioChildProcess::builder(process)
         .stderr(Stdio::null())
