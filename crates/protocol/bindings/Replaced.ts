@@ -2,7 +2,9 @@
 import type { Block } from "./Block";
 
 /**
- * A replacement in a [`Commit`]. The new context is `head`, then the last `keep` blocks of the saved context.
+ * A new context: `head`, then the last `keep` blocks of the old context. A compaction gives a summary and the recent
+ * blocks. Another rewrite gives the whole new context as `head` and keeps nothing. A hook asks for one in a
+ * [`RoundPlan`](crate::RoundPlan), and a [`Commit`] saves it.
  */
 export type Replaced = { 
 /**
@@ -10,6 +12,7 @@ export type Replaced = {
  */
 head: Array<Block>, 
 /**
- * The number of saved blocks that stay after `head`.
+ * The number of blocks at the end of the old context that stay after `head`. In a plan, a number above the length
+ * keeps the whole old context; a commit holds the number that stayed.
  */
 keep: number, };

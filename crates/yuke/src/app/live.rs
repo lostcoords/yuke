@@ -498,7 +498,7 @@ impl SessionTask {
                 return;
             }
             // The settings name the model and the folder, so each turn takes both from the settings of that moment.
-            let model = match model_of(session.settings(), &self.host.shared) {
+            let model = match model_of(&session.settings().model, &self.host.shared) {
                 Ok(model) => model,
                 Err(error) => {
                     output.notice(NoticeLevel::Error, &chain_text(&error));

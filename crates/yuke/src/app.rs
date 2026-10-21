@@ -29,8 +29,9 @@ use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CredentialSource, Model, Timer, chain_text};
 use yuke_js::{Options, Processes, Report, Runtime};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, Job, NoticeLevel,
-    NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings, StoredEvent, UpdateCredentialParams,
+    EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, Job, ModelReference,
+    NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings, StoredEvent,
+    UpdateCredentialParams,
 };
 use yuke_store::SqliteStore;
 
@@ -203,7 +204,7 @@ impl App {
     ///
     /// Returns [`AppError::Invalid`] for an unknown model, a missing API key, or a provider with no login flow.
     fn check_model(&self, settings: &SessionSettings) -> Result<(), AppError> {
-        model_of(settings, &self.shared).map(drop)
+        model_of(&settings.model, &self.shared).map(drop)
     }
 
     /// Create a session with `settings`, and open it. The folder loses its links, and the app builds the system prompt
@@ -510,9 +511,9 @@ impl Error for AppError {
     }
 }
 
-/// The model of `settings`, with the credential source of its provider: an API key, or the login of `shared`.
-fn model_of(settings: &SessionSettings, shared: &Shared) -> Result<Model, AppError> {
-    let selector = format!("{}/{}", settings.model.provider, settings.model.model);
+/// The model of `reference`, with the credential source of its provider: an API key, or the login of `shared`.
+fn model_of(reference: &ModelReference, shared: &Shared) -> Result<Model, AppError> {
+    let selector = format!("{}/{}", reference.provider, reference.model);
     let entry = shared
         .providers
         .lookup(&selector)
@@ -549,7 +550,7 @@ async fn save_settings(
     if settings.cwd != session.settings().cwd {
         settings.cwd = canonical(settings.cwd).await?;
     }
-    model_of(&settings, shared)?;
+    model_of(&settings.model, shared)?;
     let event_number = session
         .set_settings(settings.clone())
         .await

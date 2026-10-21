@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason, Settings, ToolCall, ToolResult};
 
 use crate::model::{Model, RoundError};
-use crate::turn_state::Replace;
+use crate::turn_state::Replaced;
 
 /// The decisions of a caller at the boundaries of a turn. Each method has a default that changes nothing, so a
 /// caller implements only the hooks that it needs. A round hook can fail, and its error ends the turn as
@@ -75,7 +75,7 @@ pub trait Hooks: Send + Sync {
 pub struct RoundPlan {
     /// A new first part of the context and the number of old blocks that stay after it, for example a summary and the
     /// recent blocks. It replaces the context before the request, and the replacement stays after the round.
-    pub replace: Option<Replace>,
+    pub replace: Option<Replaced<'static>>,
     /// The model of this round. The next round uses the driver's model again.
     pub model: Option<Model>,
     /// The settings of this round. The next round uses the driver's settings again.

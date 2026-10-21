@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use yuke_ai::transport::{BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 use yuke_ai::{Block, FinishReason, Target, ToolCall, ToolResult, Usage};
 use yuke_engine::{
-    Answer, CancellationToken, Commit, Driver, Journal, Outcome, Replace, Replaced, RoundDecision, RoundPlan, Tool,
-    ToolContent, ToolContext, Toolset, TurnEnd, TurnError, TurnEvent,
+    Answer, CancellationToken, Commit, Driver, Journal, Outcome, Replaced, RoundDecision, RoundPlan, Tool, ToolContent,
+    ToolContext, Toolset, TurnEnd, TurnError, TurnEvent,
 };
 use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, model_of, target, text_reply, tool_reply};
 
@@ -452,8 +452,12 @@ fn a_replacement_commits_before_its_request_and_replays_to_the_new_context() {
 /// A plan that replaces the context with the summary `head` and the last `keep` blocks.
 fn summary(head: &[&str], keep: usize) -> RoundPlan {
     RoundPlan {
-        replace: Some(Replace {
-            head: head.iter().map(|text| Block::user_text(*text)).collect(),
+        replace: Some(Replaced {
+            head: head
+                .iter()
+                .map(|text| Block::user_text(*text))
+                .collect::<Vec<_>>()
+                .into(),
             keep,
         }),
         ..RoundPlan::default()

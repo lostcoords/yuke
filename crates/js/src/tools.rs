@@ -11,6 +11,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Persistent, Promise, Value};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 use yuke_ai::MAX_MEDIA_BYTES;
 use yuke_engine::{CancellationToken, Concurrency, MediaStore, Tool, ToolContent, ToolContext, check_tool_name};
@@ -415,6 +417,29 @@ pub(crate) struct JsonText(pub(crate) String);
 impl<'js> IntoJs<'js> for JsonText {
     fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
         ctx.json_parse(self.0)
+    }
+}
+
+/// A value that crosses to JavaScript and back as its serde JSON, so a type of another crate needs no copy here.
+pub(crate) struct Json<T>(pub(crate) T);
+
+impl<'js, T: Serialize> IntoJs<'js> for Json<T> {
+    fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+        let text = serde_json::to_string(&self.0)
+            .map_err(|error| rquickjs::Error::new_into_js_message("value", "JSON", error.to_string()))?;
+        ctx.json_parse(text)
+    }
+}
+
+impl<'js, T: DeserializeOwned> FromJs<'js> for Json<T> {
+    fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+        let text = ctx
+            .json_stringify(value)?
+            .ok_or_else(|| rquickjs::Error::new_from_js("undefined", "JSON"))?
+            .to_string()?;
+        serde_json::from_str(&text)
+            .map(Json)
+            .map_err(|error| rquickjs::Error::new_from_js_message("JSON", "value", error.to_string()))
     }
 }
 

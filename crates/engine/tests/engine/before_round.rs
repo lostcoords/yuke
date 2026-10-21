@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use yuke_ai::{Block, Settings, Target};
-use yuke_engine::{CancellationToken, Driver, Hooks, Outcome, Replace, RoundPlan, Toolset, TurnEvent};
+use yuke_engine::{CancellationToken, Driver, Hooks, Outcome, Replaced, RoundPlan, Toolset, TurnEvent};
 use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, model_of, target, text_reply, tool_reply};
 
 use crate::support::{Recorder, Script, block_on, definition};
@@ -76,8 +76,8 @@ fn a_plan_replacement_replaces_the_context_and_stays() {
     let hooks = Script::default().plans([
         RoundPlan::default(),
         RoundPlan {
-            replace: Some(Replace {
-                head: vec![Block::user_text("Summary of the work so far.")],
+            replace: Some(Replaced {
+                head: vec![Block::user_text("Summary of the work so far.")].into(),
                 keep: 0,
             }),
             ..RoundPlan::default()

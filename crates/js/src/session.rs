@@ -20,7 +20,7 @@ use crate::native::Operation;
 use crate::plugins::loader;
 use crate::processes::Processes;
 use crate::runtime::Caller;
-use crate::tools::{self, JsonText, MediaFile, Registry, ScriptTool, SessionHost, error_text, store_media};
+use crate::tools::{self, Json, JsonText, MediaFile, Registry, ScriptTool, SessionHost, error_text, store_media};
 
 /// An open session of the plugins. Call [`ScriptSession::close`] to await the cleanups. A drop posts the close and does
 /// not wait. The posted close runs only while the runtime thread runs, so close each session before a shutdown.
@@ -125,24 +125,11 @@ impl ScriptSession {
     ) -> Result<Vec<PromptSection>, Error> {
         let request = PromptBuildRequest {
             open: self.open,
-            sections: sections
-                .iter()
-                .map(|section| Section {
-                    key: section.key.clone(),
-                    text: section.text.clone(),
-                })
-                .collect(),
+            sections: Json(sections.to_vec()),
         };
-        let built: Option<Vec<Section>> = run_hook(&self.caller, "startPromptBuild", request, token.clone()).await?;
-        Ok(built.map_or_else(
-            || sections.to_vec(),
-            |built| {
-                built
-                    .into_iter()
-                    .map(|Section { key, text }| PromptSection { key, text })
-                    .collect()
-            },
-        ))
+        let built: Option<Json<Vec<PromptSection>>> =
+            run_hook(&self.caller, "startPromptBuild", request, token.clone()).await?;
+        Ok(built.map_or_else(|| sections.to_vec(), |Json(built)| built))
     }
 
     /// The engine hooks of one turn of the session. The plugins answer them. When `token` is cancelled, each hook
@@ -407,14 +394,7 @@ fn ask_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>) -> rquickjs::Re
 #[derive(IntoJs)]
 struct PromptBuildRequest {
     open: u64,
-    sections: Vec<Section>,
-}
-
-/// One system prompt section, in both directions.
-#[derive(IntoJs, FromJs)]
-struct Section {
-    key: String,
-    text: String,
+    sections: Json<Vec<PromptSection>>,
 }
 
 /// What `startToolBefore` gets.
@@ -552,33 +532,24 @@ where
     // A driver drops a hook future at a cancel. A posted run goes on after that drop, so the cancel still reaches it.
     let (reply, answer) = oneshot::channel();
     caller.post(async move |ctx: Ctx<'_>, _: Rc<Registry>| {
-        let answer = start_and_settle(&ctx, start, request, &token).await;
-        if reply.send(answer).is_err() {
+        let answer = async {
+            let function: Function<'_> = caught(&ctx, loader(&ctx).await?.get(start))?;
+            let started: Object<'_> = caught(&ctx, function.call((request,)))?;
+            let promise: Promise<'_> = caught(&ctx, started.get("answer"))?;
+            let abort: Function<'_> = caught(&ctx, started.get("abort"))?;
+            tokio::select! {
+                answer = promise.into_future::<T>() => caught(&ctx, answer).map(Some),
+                () = token.cancelled() => {
+                    caught(&ctx, abort.call::<_, ()>(()))?;
+                    Ok(None)
+                }
+            }
+        };
+        if reply.send(answer.await).is_err() {
             // The caller has left, and the run has ended.
         }
     })?;
     answer.await.map_err(|_| Error::Stopped)?
-}
-
-/// Start the run of the loader function `start` with `request`, and await its answer. When `token` is cancelled, the run
-/// aborts its signal, and the call returns `None` at once.
-async fn start_and_settle<'js, R: IntoJs<'js>, T: FromJs<'js>>(
-    ctx: &Ctx<'js>,
-    start: &str,
-    request: R,
-    token: &CancellationToken,
-) -> Result<Option<T>, Error> {
-    let function: Function<'js> = caught(ctx, loader(ctx).await?.get(start))?;
-    let started: Object<'js> = caught(ctx, function.call((request,)))?;
-    let promise: Promise<'js> = caught(ctx, started.get("answer"))?;
-    let abort: Function<'js> = caught(ctx, started.get("abort"))?;
-    tokio::select! {
-        answer = promise.into_future::<T>() => caught(ctx, answer).map(Some),
-        () = token.cancelled() => {
-            caught(ctx, abort.call::<_, ()>(()))?;
-            Ok(None)
-        }
-    }
 }
 
 /// Close the open session `open` on the JavaScript thread: remove its tools, then await `closeSession`.

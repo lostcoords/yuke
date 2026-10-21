@@ -137,7 +137,9 @@ pub enum TurnEnd {
     Failed(String),
 }
 
-/// A replacement in a [`Commit`]. The new context is `head`, then the last `keep` blocks of the saved context.
+/// A new context: `head`, then the last `keep` blocks of the old context. A compaction gives a summary and the recent
+/// blocks. Another rewrite gives the whole new context as `head` and keeps nothing. A hook asks for one in a
+/// [`RoundPlan`](crate::RoundPlan), and a [`Commit`] saves it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -145,19 +147,8 @@ pub struct Replaced<'a> {
     /// The new first blocks, such as a summary.
     pub head: Cow<'a, [Block]>,
 
-    /// The number of saved blocks that stay after `head`.
-    pub keep: usize,
-}
-
-/// A new context: `head`, then the last `keep` blocks of the old context. A compaction gives a summary and the recent
-/// blocks. Another rewrite gives the whole new context as `head` and keeps nothing.
-#[derive(Debug, Clone, Default)]
-pub struct Replace {
-    /// The new first blocks.
-    pub head: Vec<Block>,
-
-    /// The number of blocks at the end of the old context that stay after `head`. A number above the length keeps the
-    /// whole old context.
+    /// The number of blocks at the end of the old context that stay after `head`. In a plan, a number above the length
+    /// keeps the whole old context; a commit holds the number that stayed.
     pub keep: usize,
 }
 
@@ -216,12 +207,12 @@ impl<'c> TurnState<'c> {
     /// Replace the context with `replace.head` and the last `replace.keep` blocks, and return the commit of the
     /// replacement. Call it after the input commit of [`Action::Send`], so the replacement keeps only saved blocks. The
     /// driver saves the returned commit before the next request.
-    pub(crate) fn replace(&mut self, replace: Replace) -> Commit<'_> {
-        let Replace { head, keep } = replace;
+    pub(crate) fn replace(&mut self, replace: Replaced<'_>) -> Commit<'_> {
+        let Replaced { head, keep } = replace;
         let keep = keep.min(self.context.len());
         let head_len = head.len();
         let kept = self.context.len() - keep;
-        let mut context = head;
+        let mut context = head.into_owned();
         context.extend(self.context.drain(kept..));
         *self.context = context;
         self.saved = self.context.len();
