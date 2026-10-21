@@ -151,6 +151,157 @@ async fn a_failed_apply_aborts_its_signal_and_its_session_never_runs() {
 }
 
 #[tokio::test]
+async fn the_close_aborts_each_signal_then_awaits_each_cleanup_newest_first_once() {
+    let folder = folder("the_close_aborts_each_signal_then_awaits_each_cleanup_newest_first_once");
+    let (runtime, mut reports) = start(&folder).await;
+    let one = plugin(
+        &folder,
+        "one",
+        Some(
+            "globalThis.events = []; globalThis.signals = [];
+             export function apply(ctx) {
+               globalThis.signals.push(ctx.signal);
+               return async () => {
+                 await new Promise((resolve) => setTimeout(resolve, 10));
+                 globalThis.events.push('one');
+               };
+             }",
+        ),
+        &[],
+        &[],
+    );
+    let two = plugin(
+        &folder,
+        "two",
+        Some(
+            "export async function apply(ctx) {
+               globalThis.signals.push(ctx.signal);
+               return () => { globalThis.events.push(`two ${globalThis.signals.map((signal) => signal.aborted)}`); };
+             }",
+        ),
+        &[],
+        &[],
+    );
+    let three = plugin(
+        &folder,
+        "three",
+        Some(
+            "export function apply(ctx) {
+               globalThis.signals.push(ctx.signal);
+               return () => { globalThis.events.push('three'); throw new Error('stuck'); };
+             }",
+        ),
+        &[],
+        &[],
+    );
+    assert!(runtime.load_plugins(&[one, two, three]).await.is_empty());
+
+    runtime.close_plugins().await.unwrap();
+    runtime.close_plugins().await.unwrap();
+
+    assert_eq!(
+        evaluate::<String>(&runtime, "return globalThis.events.join(' | ');")
+            .await
+            .unwrap(),
+        "three | two true,true,true | one"
+    );
+    let report = tokio::time::timeout(Duration::from_secs(5), reports.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        report,
+        Report::Notice(NoticeParams {
+            session_id: None,
+            level: NoticeLevel::Error,
+            source: "three".to_owned(),
+            message: "the cleanup of the plugin failed: Error: stuck".to_owned(),
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_plugin_that_fails_after_its_apply_returned_runs_its_cleanup_once() {
+    let folder = folder("a_plugin_that_fails_after_its_apply_returned_runs_its_cleanup_once");
+    let (runtime, _reports) = start(&folder).await;
+    let silent = plugin(
+        &folder,
+        "silent",
+        Some(
+            "globalThis.cleanups = [];
+             export function apply(ctx) { return () => { globalThis.cleanups.push(ctx.signal.aborted); }; }",
+        ),
+        &[],
+        &["a"],
+    );
+
+    let failures = runtime.load_plugins(&[silent]).await;
+    runtime.close_plugins().await.unwrap();
+
+    assert_eq!(
+        texts(&failures),
+        [(
+            "silent".to_owned(),
+            "plugin silent did not load: TypeError: apply did not provide a of provides".to_owned()
+        )]
+    );
+    assert_eq!(
+        evaluate::<String>(&runtime, "return globalThis.cleanups.join(' ');")
+            .await
+            .unwrap(),
+        "true"
+    );
+}
+
+#[tokio::test]
+async fn a_load_during_or_after_the_close_fails_and_runs_its_cleanup() {
+    let folder = folder("a_load_during_or_after_the_close_fails_and_runs_its_cleanup");
+    let (runtime, _reports) = start(&folder).await;
+    let slow = plugin(
+        &folder,
+        "slow",
+        Some(
+            "globalThis.cleanups = [];
+             export async function apply(ctx) {
+               await new Promise((resolve) => setTimeout(resolve, 50));
+               return () => { globalThis.cleanups.push(`slow ${ctx.signal.aborted}`); };
+             }",
+        ),
+        &[],
+        &[],
+    );
+    let late = plugin(&folder, "late", Some("export function apply() {}"), &[], &[]);
+
+    let slow = [slow];
+    let (during, ()) = tokio::join!(runtime.load_plugins(&slow), async {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        runtime.close_plugins().await.unwrap();
+    });
+    let after = runtime.load_plugins(&[late]).await;
+
+    assert_eq!(
+        texts(&during),
+        [(
+            "slow".to_owned(),
+            "plugin slow did not load: TypeError: plugin slow loads after the close of the plugins".to_owned()
+        )]
+    );
+    assert_eq!(
+        texts(&after),
+        [(
+            "late".to_owned(),
+            "plugin late did not load: TypeError: plugin late loads after the close of the plugins".to_owned()
+        )]
+    );
+    assert_eq!(
+        evaluate::<String>(&runtime, "return globalThis.cleanups.join(' ');")
+            .await
+            .unwrap(),
+        "slow true"
+    );
+}
+
+#[tokio::test]
 async fn a_failed_apply_that_replaces_the_web_globals_still_aborts_its_signal() {
     let folder = folder("a_failed_apply_that_replaces_the_web_globals_still_aborts_its_signal");
     let (runtime, _reports) = start(&folder).await;
@@ -366,7 +517,7 @@ async fn the_context_refuses_undeclared_services_and_apply_must_provide_each_dec
             ),
             (
                 "value".to_owned(),
-                "plugin value did not load: TypeError: apply must return nothing or a promise of nothing".to_owned()
+                "plugin value did not load: TypeError: apply must return nothing or a cleanup function".to_owned()
             ),
             (
                 "neither".to_owned(),

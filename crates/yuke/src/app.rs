@@ -397,7 +397,7 @@ impl App {
         self.live(id)?.answer(interaction_id, response)
     }
 
-    /// Close each session, stop the runtime, and stop the jobs.
+    /// Close each session, close the plugins, stop the runtime, and stop the jobs.
     pub(crate) async fn shutdown(self) {
         let App {
             shared,
@@ -412,6 +412,9 @@ impl App {
         }
         for (_, live) in sessions.drain() {
             live.close().await;
+        }
+        if let Err(error) = runtime.close_plugins().await {
+            warn(&chain_text(&error));
         }
         if let Err(error) = runtime.shutdown().await {
             warn(&chain_text(&error));

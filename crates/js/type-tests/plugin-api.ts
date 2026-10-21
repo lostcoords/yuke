@@ -142,7 +142,7 @@ ctx.notify("info", "x", "session");
 s.provide;
 s.notify("info", "x");
 
-// `session` returns nothing, a cleanup, or a promise of either. `apply` returns nothing.
+// `session` and `apply` return nothing, a cleanup, or a promise of either.
 const session: PluginSession = async (scope) => {
   void scope.sessionId;
   return async () => {};
@@ -156,9 +156,13 @@ const quiet: PluginSession = (scope) => {
   scope.notify("info", "x");
 };
 const apply: PluginApply = () => {};
-// @ts-expect-error: `apply` returns nothing.
+const cleaned: PluginApply = async (context) => {
+  void context.signal;
+  return () => {};
+};
+// @ts-expect-error: a cleanup is a function.
 const valuedApply: PluginApply = () => 5;
-void [session, valued, plain, quiet, apply, valuedApply];
+void [session, valued, plain, quiet, apply, cleaned, valuedApply];
 
 // A service name must come from a declaration of `Services`, and its value must not be null.
 assert<Equal<ReturnType<typeof ctx.get<"test.notes.v1">>, { readonly count: () => number }>>();

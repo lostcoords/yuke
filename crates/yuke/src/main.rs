@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::unix::{Signal, SignalKind, signal};
 use yuke_ai::Effort;
 use yuke_ai::catalog::ReasoningLevel;
 use yuke_ai::oauth::PendingLogin;
@@ -218,7 +218,7 @@ async fn print_task(task: &Task, json: bool) -> ExitCode {
     let cancellation_token = CancellationToken::new();
     let ran = run_until_signal(run_here(task, cancellation_token.clone()), &cancellation_token).await;
     match ran {
-        Ok((Ok(finished), signal_number)) => {
+        Ok(Signaled::Ended(Ok(finished), signal_number)) => {
             if let Err(error) = write_output(&finished, json) {
                 warn(&format!("the output did not write: {error}"));
                 return ExitCode::FAILURE;
@@ -230,7 +230,8 @@ async fn print_task(task: &Task, json: bool) -> ExitCode {
             }
             exit_code(&finished.end, signal_number)
         }
-        Ok((Err(error), _)) | Err(error) => {
+        Ok(Signaled::Stopped(number)) => ExitCode::from(128 + number),
+        Ok(Signaled::Ended(Err(error), _)) | Err(error) => {
             warn(&error);
             ExitCode::FAILURE
         }
@@ -257,7 +258,7 @@ async fn login(id: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let signals = match termination_signal() {
+    let mut signals = match Signals::new() {
         Ok(signals) => signals,
         Err(error) => {
             warn(&error);
@@ -282,7 +283,7 @@ async fn login(id: &str) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        number = signals => ExitCode::from(128 + number),
+        number = signals.next() => ExitCode::from(128 + number),
     }
 }
 
@@ -299,9 +300,9 @@ async fn serve_rpc(listen: Option<PathBuf>) -> ExitCode {
         rpc::serve(machine, DRAIN_LIMIT, clients, shutdown.clone().cancelled_owned()).await
     };
     match run_until_signal(served, &shutdown).await {
-        Ok((Ok(()), Some(number))) => ExitCode::from(128 + number),
-        Ok((Ok(()), None)) => ExitCode::SUCCESS,
-        Ok((Err(error), _)) | Err(error) => {
+        Ok(Signaled::Ended(Ok(()), Some(number)) | Signaled::Stopped(number)) => ExitCode::from(128 + number),
+        Ok(Signaled::Ended(Ok(()), None)) => ExitCode::SUCCESS,
+        Ok(Signaled::Ended(Err(error), _)) | Err(error) => {
             warn(&error);
             ExitCode::FAILURE
         }
@@ -365,23 +366,46 @@ fn exit_code(end: &TurnEnd, signal_number: Option<u8>) -> ExitCode {
     }
 }
 
-/// Wait for the first SIGINT, SIGTERM, or SIGHUP, and answer its number. The handlers start at the call.
-fn termination_signal() -> Result<impl Future<Output = u8>, String> {
-    let failure = |error: io::Error| format!("the signal handlers did not start: {error}");
-    let mut interrupt = signal(SignalKind::interrupt()).map_err(failure)?;
-    let mut terminate = signal(SignalKind::terminate()).map_err(failure)?;
-    let mut hangup = signal(SignalKind::hangup()).map_err(failure)?;
-    Ok(async move {
+/// The termination signals: SIGINT, SIGTERM, and SIGHUP. The handlers start at the creation, and they replace the
+/// default exit for the rest of the process.
+struct Signals {
+    interrupt: Signal,
+    terminate: Signal,
+    hangup: Signal,
+}
+
+impl Signals {
+    fn new() -> Result<Self, String> {
+        let failure = |error: io::Error| format!("the signal handlers did not start: {error}");
+        Ok(Self {
+            interrupt: signal(SignalKind::interrupt()).map_err(failure)?,
+            terminate: signal(SignalKind::terminate()).map_err(failure)?,
+            hangup: signal(SignalKind::hangup()).map_err(failure)?,
+        })
+    }
+
+    /// Wait for the next signal, and answer its number.
+    async fn next(&mut self) -> u8 {
         tokio::select! {
-            _ = interrupt.recv() => 2,
-            _ = terminate.recv() => 15,
-            _ = hangup.recv() => 1,
+            _ = self.interrupt.recv() => 2,
+            _ = self.terminate.recv() => 15,
+            _ = self.hangup.recv() => 1,
         }
-    })
+    }
+}
+
+/// How an operation under the termination signals ended.
+#[derive(Debug)]
+enum Signaled<T> {
+    /// The operation ended with its output, after the signal of the number when there was one.
+    Ended(T, Option<u8>),
+    /// A second signal of the number stopped the operation before its end.
+    Stopped(u8),
 }
 
 /// Run `operation` to its end. The first termination signal cancels `cancellation_token`, and `operation` still runs
-/// to its end. Answer its output and the number of the signal.
+/// to its end. A second signal drops `operation`: the user stops an end that does not come, such as a cleanup of a
+/// plugin that waits forever.
 ///
 /// # Errors
 ///
@@ -389,15 +413,17 @@ fn termination_signal() -> Result<impl Future<Output = u8>, String> {
 async fn run_until_signal<T>(
     operation: impl Future<Output = T>,
     cancellation_token: &CancellationToken,
-) -> Result<(T, Option<u8>), String> {
-    let signals = termination_signal()?;
-    tokio::pin!(operation, signals);
+) -> Result<Signaled<T>, String> {
+    let mut signals = Signals::new()?;
+    tokio::pin!(operation);
+    let number = tokio::select! {
+        output = &mut operation => return Ok(Signaled::Ended(output, None)),
+        number = signals.next() => number,
+    };
+    cancellation_token.cancel();
     Ok(tokio::select! {
-        output = &mut operation => (output, None),
-        number = &mut signals => {
-            cancellation_token.cancel();
-            (operation.await, Some(number))
-        }
+        output = operation => Signaled::Ended(output, Some(number)),
+        again = signals.next() => Signaled::Stopped(again),
     })
 }
 
@@ -412,6 +438,27 @@ mod tests {
         Cli::try_parse_from(std::iter::once("yuke").chain(arguments.iter().copied()))
             .map(Cli::into_mode)
             .map_err(|error| error.kind())
+    }
+
+    #[tokio::test]
+    async fn a_second_signal_stops_an_operation_that_does_not_end() {
+        let cancellation_token = CancellationToken::new();
+        let send = async {
+            for _ in 0..2 {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                let pid = std::process::id().to_string();
+                let sent = std::process::Command::new("kill").args(["-HUP", &pid]).status();
+                assert!(sent.unwrap().success());
+            }
+        };
+
+        let (ran, ()) = tokio::join!(
+            run_until_signal(std::future::pending::<()>(), &cancellation_token),
+            send
+        );
+
+        assert!(matches!(ran, Ok(Signaled::Stopped(1))), "{ran:?}");
+        assert!(cancellation_token.is_cancelled());
     }
 
     #[test]

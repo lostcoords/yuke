@@ -3,6 +3,7 @@ import { abortState, addAbortStep, hostSignal } from "yuke:internal/events";
 import { notify, type Operation, unregister } from "yuke:internal/native";
 import type {
   AskOptions,
+  Cleanup,
   FinishReason,
   InputOptions,
   NoticeLevel,
@@ -11,7 +12,6 @@ import type {
   ResultMedia,
   RoundAfterEvent,
   Services,
-  SessionCleanup,
   SessionContext,
   SessionHooks,
   ToolCall,
@@ -32,6 +32,12 @@ interface PluginSpec {
 
 /** The services of the loaded plugins. A service enters only after its provider's `apply` succeeds. */
 const services = new Map<string, unknown>();
+
+/** Set at the start of the close of the plugins. A later load fails, so the close misses no plugin. */
+let closing = false;
+
+/** Each loaded plugin, in load order: the abort of its signal and the cleanup of its `apply`. */
+const loaded: { readonly plugin: string; readonly abort: (reason: string) => void; readonly cleanup?: Cleanup }[] = [];
 
 /** The `session` export of each loaded plugin, in load order. */
 const sessionExports: { readonly plugin: string; readonly session: PluginSession }[] = [];
@@ -54,9 +60,9 @@ interface Scope {
   /** The hook handlers of the scope. */
   readonly hooks: HookLists;
   /** Settles with the cleanup that `session` returns, or `undefined` after a failure. It never rejects. */
-  settled: Promise<SessionCleanup | undefined>;
+  settled: Promise<Cleanup | undefined>;
   /** Run `cleanup`. A failure is a notice. */
-  readonly clean: (cleanup: SessionCleanup) => Promise<void>;
+  readonly clean: (cleanup: Cleanup) => Promise<void>;
 }
 
 /** The scopes of each open session, by the open number of the host. */
@@ -67,6 +73,7 @@ const opens = new Map<number, { readonly scopes: readonly Scope[]; readonly read
  * the plugin and throws. Only a loaded plugin runs `session`.
  */
 export async function load(spec: PluginSpec): Promise<void> {
+  if (closing) throw new TypeError(`plugin ${spec.name} loads after the close of the plugins`);
   const { signal, abort } = hostSignal();
   const pending = new Map<string, unknown>();
   let applying = true;
@@ -94,6 +101,7 @@ export async function load(spec: PluginSpec): Promise<void> {
     },
   });
 
+  let cleanup: Cleanup | undefined;
   try {
     let session: PluginSession | undefined;
     if (spec.entry !== undefined) {
@@ -109,20 +117,44 @@ export async function load(spec: PluginSpec): Promise<void> {
         throw new TypeError("the session export is no function");
       }
       session = exported as PluginSession | undefined;
-      const result: unknown = apply === undefined ? undefined : apply(ctx);
-      if (result !== undefined && (await result) !== undefined) {
-        throw new TypeError("apply must return nothing or a promise of nothing");
+      const result: unknown = apply === undefined ? undefined : await apply(ctx);
+      if (result !== undefined && typeof result !== "function") {
+        throw new TypeError("apply must return nothing or a cleanup function");
       }
+      cleanup = result as Cleanup | undefined;
     }
     applying = false;
+    if (closing) throw new TypeError(`plugin ${spec.name} loads after the close of the plugins`);
     const missing = spec.provides.filter((name) => !pending.has(name));
     if (missing.length > 0) throw new TypeError(`apply did not provide ${missing.join(", ")} of provides`);
     for (const [name, value] of pending) services.set(name, value);
     if (session !== undefined) sessionExports.push({ plugin: spec.name, session });
+    loaded.push(cleanup === undefined ? { plugin: spec.name, abort } : { plugin: spec.name, abort, cleanup });
   } catch (error) {
     applying = false;
     abort(`plugin ${spec.name} did not load`);
+    if (cleanup !== undefined) await clean(spec.name, cleanup);
     throw error;
+  }
+}
+
+/**
+ * Close the loaded plugins after each session closed: abort each signal, then await the cleanup of each `apply`, newest
+ * plugin first. A failed cleanup sends a notice, and the next cleanup still runs. A second close does nothing.
+ */
+export async function closePlugins(): Promise<void> {
+  closing = true;
+  const plugins = loaded.splice(0).reverse();
+  for (const { plugin, abort } of plugins) abort(`the runtime of plugin ${plugin} closed`);
+  for (const { plugin, cleanup } of plugins) if (cleanup !== undefined) await clean(plugin, cleanup);
+}
+
+/** Run the cleanup of the `apply` of `plugin`. A failure is a notice. */
+async function clean(plugin: string, cleanup: Cleanup): Promise<void> {
+  try {
+    await cleanup();
+  } catch (error) {
+    notify(plugin, "error", `the cleanup of the plugin failed: ${String(error)}`, undefined);
   }
 }
 
@@ -542,7 +574,7 @@ function start(
     }
   };
   const report = (message: string): void => notify(plugin, "error", message, sessionId);
-  const clean = async (cleanup: SessionCleanup): Promise<void> => {
+  const clean = async (cleanup: Cleanup): Promise<void> => {
     try {
       await cleanup();
     } catch (error) {
@@ -609,7 +641,7 @@ function start(
       if (result !== undefined && typeof result !== "function") {
         throw new TypeError("session must return nothing or a cleanup function");
       }
-      return result as SessionCleanup | undefined;
+      return result as Cleanup | undefined;
     } catch (error) {
       // The close owns the scope, so a failure after the close needs no rollback.
       if (scope.closed) return undefined;

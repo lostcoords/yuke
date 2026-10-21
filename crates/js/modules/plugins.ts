@@ -32,8 +32,8 @@ export interface PluginContext {
   /** The absolute data folder of the plugin. It exists, and it stays across reloads. */
   readonly dataDir: string;
   /**
-   * The host aborts this signal when the plugin fails to load. The plugin must then clear its timers, because the host
-   * does not clear them. A shutdown stops the JavaScript without an abort.
+   * The host aborts this signal when the plugin fails to load, and when the runtime closes, before the cleanup of
+   * `apply`. The plugin must then clear its timers, because the host does not clear them.
    */
   readonly signal: AbortSignal;
   /** Publish the service `name` once, during `apply`. The value is not null or undefined. `name` must be in `provides`. */
@@ -280,11 +280,15 @@ export interface SessionContext {
   readonly input: (title: string, options?: InputOptions) => Promise<string | undefined>;
 }
 
-/** The `apply` export of the entry module. It runs once per runtime. */
-export type PluginApply = (ctx: PluginContext) => undefined | Promise<undefined>;
+/**
+ * The `apply` export of the entry module. It runs once per runtime.
+ * - The close of the runtime awaits its cleanup after each session closed, newest plugin first, with no time limit.
+ * - A plugin that fails to load after its `apply` returned still runs the cleanup.
+ */
+export type PluginApply = (ctx: PluginContext) => undefined | Cleanup | Promise<undefined | Cleanup>;
 
-/** What `session` can return: the work that the close of the session awaits. */
-export type SessionCleanup = () => void | Promise<void>;
+/** What `apply` or `session` can return: the work that the close awaits. A throw is a notice. */
+export type Cleanup = () => void | Promise<void>;
 
 /**
  * The `session` export of the entry module. It runs once per session.
@@ -292,4 +296,4 @@ export type SessionCleanup = () => void | Promise<void>;
  * - A throw removes its tools and aborts its signal.
  * - The close of the session waits for it to settle, so it must end when its signal aborts.
  */
-export type PluginSession = (s: SessionContext) => undefined | SessionCleanup | Promise<undefined | SessionCleanup>;
+export type PluginSession = (s: SessionContext) => undefined | Cleanup | Promise<undefined | Cleanup>;
