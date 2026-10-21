@@ -53,8 +53,8 @@ declare module "yuke:fs" {
      */
     atomic?: boolean | undefined;
     /**
-     * The permissions of a new file, for example `0o600`, less the bits of the umask. An atomic write without `mode`
-     * keeps the permissions of the file that it replaces.
+     * The permissions of the file, for example `0o600`, also of a file that exists. The umask does not cut them. An
+     * atomic write without `mode` keeps the permissions of the file that it replaces.
      */
     mode?: number | undefined;
   }

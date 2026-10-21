@@ -498,8 +498,8 @@ fn read(path: &Path, position: u64, length: Option<u64>, stop: &Stop) -> Result<
 static TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
 /// Write `bytes` to the file at `path` by `placement`, and create it by `creation`. Its folder must exist. `mode` sets
-/// the permissions of a new file. An atomic write goes to a temporary file in the same folder and renames it over
-/// `path`, with the permissions of the file that it replaces when `mode` is missing.
+/// the permissions of the file, also of one that exists. An atomic write goes to a temporary file in the same folder
+/// and renames it over `path`, with the permissions of the file that it replaces when `mode` is missing.
 fn write(
     path: &Path,
     bytes: &[u8],
@@ -535,15 +535,19 @@ fn write(
             options.mode(mode);
         }
         let mut file = options.open(path).map_err(fail)?;
+        if let Some(mode) = mode {
+            // `mode` holds for a file that exists too, and the umask does not cut it.
+            file.set_permissions(fs::Permissions::from_mode(mode)).map_err(fail)?;
+        }
         return write_chunks(&mut file, bytes, path, stop);
     }
 
     let name = path.file_name().ok_or_else(|| fail(io::Error::from(Errno::ISDIR)))?;
     // Without `mode`, the new file keeps the permissions of the file that it replaces.
-    let kept = existing.map(|metadata| metadata.permissions().mode() & 0o7777);
+    let wanted = mode.or_else(|| existing.map(|metadata| metadata.permissions().mode() & 0o7777));
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
-    if let Some(mode) = mode.or(kept) {
+    if let Some(mode) = wanted {
         options.mode(mode);
     }
     // A name that a crash left, or another process took, gives the next number.
@@ -564,8 +568,8 @@ fn write(
         write_chunks(&mut file, bytes, path, stop)?;
         // The rename shows the new file, so its bytes must reach the disk first.
         file.sync_all().map_err(|error| Failure::new(error, path))?;
-        if let Some(mode) = kept {
-            // The umask cuts the mode of a new file, and a kept mode must hold as it was.
+        if let Some(mode) = wanted {
+            // The umask cuts the mode of a new file, and the mode must hold as it was.
             fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))
                 .map_err(|error| Failure::new(error, path))?;
         }

@@ -283,6 +283,31 @@ async fn a_write_sets_the_mode_of_a_new_file_and_an_atomic_write_keeps_the_mode_
 }
 
 #[tokio::test]
+async fn the_mode_of_a_write_holds_for_a_file_that_exists_and_the_umask_does_not_cut_it() {
+    let (_text, folder) = run_fs(
+        "the_mode_of_a_write_holds_for_a_file_that_exists_and_the_umask_does_not_cut_it",
+        |folder| {
+            for name in ["plain", "append", "atomic"] {
+                std::fs::write(folder.join(name), "one").unwrap();
+                std::fs::set_permissions(folder.join(name), std::fs::Permissions::from_mode(0o644)).unwrap();
+            }
+        },
+        "await fs.writeTextFile('plain', 'two', { baseDir: base, mode: 0o600 });
+         await fs.writeTextFile('append', 'two', { baseDir: base, append: true, mode: 0o600 });
+         await fs.writeTextFile('atomic', 'two', { baseDir: base, atomic: true, mode: 0o600 });
+         await fs.writeTextFile('shared', 'x', { baseDir: base, mode: 0o666 });
+         return '';",
+    )
+    .await;
+
+    let mode = |name: &str| std::fs::metadata(folder.join(name)).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        ["plain", "append", "atomic", "shared"].map(mode),
+        [0o600, 0o600, 0o600, 0o666]
+    );
+}
+
+#[tokio::test]
 async fn an_atomic_write_into_a_missing_folder_fails_and_leaves_no_temporary_file() {
     let (text, folder) = run_fs(
         "an_atomic_write_into_a_missing_folder_fails_and_leaves_no_temporary_file",
