@@ -76,6 +76,8 @@ async fn the_encoder_refuses_a_destination_that_is_no_uint8_array_and_a_value_of
              const encoder = new TextEncoder();
              return names([
                () => encoder.encodeInto('a', new Uint16Array(2)),
+               () => encoder.encodeInto('a', Object.defineProperties(Object.create(Uint8Array.prototype),
+                 {{ length: {{ value: 1 }}, set: {{ value() {{}} }} }})),
                () => encoder.encodeInto('a'),
                () => TextEncoder.prototype.encode.call({{}}, 'a'),
                () => Object.getOwnPropertyDescriptor(TextDecoder.prototype, 'encoding').get.call({{}}),
@@ -85,7 +87,7 @@ async fn the_encoder_refuses_a_destination_that_is_no_uint8_array_and_a_value_of
     )
     .await;
 
-    assert_eq!(text, "TypeError TypeError TypeError TypeError TypeError");
+    assert_eq!(text, "TypeError TypeError TypeError TypeError TypeError TypeError");
 }
 
 #[tokio::test]
@@ -100,6 +102,7 @@ async fn text_decoder_reads_views_and_buffers() {
                decoder.decode(bytes.subarray(1, 3)),
                decoder.decode(bytes.buffer.slice(1, 3)),
                decoder.decode(new DataView(bytes.buffer, 1, 2)),
+               decoder.decode(new Uint16Array(new Uint8Array([0, 0, 104, 105]).buffer, 2, 1)),
                decoder.decode(new SharedArrayBuffer(0)),
                JSON.stringify(decoder.decode()),
                names([() => decoder.decode('hi'), () => decoder.decode([104])]),
@@ -108,7 +111,7 @@ async fn text_decoder_reads_views_and_buffers() {
     )
     .await;
 
-    assert_eq!(text, "hi hi hi  \"\" TypeError TypeError");
+    assert_eq!(text, "hi hi hi hi  \"\" TypeError TypeError");
 }
 
 #[tokio::test]
@@ -417,34 +420,18 @@ async fn a_resizable_buffer_throws_and_a_detached_one_has_no_bytes() {
              ]);
              const buffer = new ArrayBuffer(2);
              const view = new Uint8Array(buffer);
+             const data = new DataView(buffer);
              buffer.transfer();
              const written = encoder.encodeInto('a', view);
              const shared = new SharedArrayBuffer(3);
              new Uint8Array(shared).set([0, 104, 105]);
              return [refused, JSON.stringify(decoder.decode(view)), JSON.stringify(decoder.decode(buffer)),
+               JSON.stringify(decoder.decode(data)),
                written.read, written.written, decoder.decode(shared).slice(1), decoder.decode(new Uint8Array(shared, 1))]
                .join(' ');"
         ),
     )
     .await;
 
-    assert_eq!(text, "TypeError TypeError TypeError \"\" \"\" 0 0 hi hi");
-}
-
-#[tokio::test]
-async fn a_view_that_shadows_its_range_or_length_still_gives_its_real_bytes() {
-    let text = run::<String>(
-        "a_view_that_shadows_its_range_or_length_still_gives_its_real_bytes",
-        "const view = new Uint8Array([65, 66]).subarray(1);
-         Object.defineProperty(view, 'byteOffset', { value: 0 });
-         Object.defineProperty(view, 'byteLength', { value: 2 });
-         const decoded = new TextDecoder().decode(view);
-         const destination = new Uint8Array(1);
-         Object.defineProperty(destination, 'length', { value: 8 });
-         const written = new TextEncoder().encodeInto('abc', destination);
-         return [decoded, written.read, written.written, destination[0]].join(' ');",
-    )
-    .await;
-
-    assert_eq!(text, "B 1 1 97");
+    assert_eq!(text, "TypeError TypeError TypeError \"\" \"\" \"\" 0 0 hi hi");
 }

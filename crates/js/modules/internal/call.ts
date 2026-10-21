@@ -1,9 +1,8 @@
 import type { CallHost } from "yuke:internal/native";
-import { PrivateMap } from "yuke:internal/webidl";
 import type { ToolContext } from "yuke:tools";
 
 /** The host of each call, by its context. A tool of a plugin cannot import this module, so it cannot reach it. */
-const calls = new PrivateMap<ToolContext, CallHost>();
+const calls = new WeakMap<ToolContext, CallHost>();
 
 /** Keep `host` for the call of `context`. */
 export function bindCall(context: ToolContext, host: CallHost): void {

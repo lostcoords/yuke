@@ -2,7 +2,6 @@ import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { bindCall } from "yuke:internal/call";
 import { hostSignal } from "yuke:internal/events";
 import { type Answer, register } from "yuke:internal/native";
-import { ByteArray, isUint8Array } from "yuke:internal/webidl";
 import type { Infer, ObjectSchema, Tool, ToolContext, ToolMedia } from "yuke:tools";
 
 /**
@@ -71,9 +70,10 @@ export function mediaOf(value: unknown, place: string): ToolMedia {
     if (typeof fields.path !== "string") throw new TypeError(`${place}.path is not a string`);
     return { mimeType, path: fields.path };
   }
-  if (!isUint8Array(fields.bytes)) throw new TypeError(`${place}.bytes is not a Uint8Array`);
+  if (!(ArrayBuffer.isView(fields.bytes) && fields.bytes instanceof Uint8Array))
+    throw new TypeError(`${place}.bytes is not a Uint8Array`);
   // A copy through the constructor, so a later change of the bytes by the plugin does not change the result.
-  return { mimeType, bytes: new ByteArray(fields.bytes as Uint8Array) };
+  return { mimeType, bytes: new Uint8Array(fields.bytes) };
 }
 
 /**

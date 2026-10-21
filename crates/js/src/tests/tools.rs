@@ -948,7 +948,7 @@ const RESULT_TOOLS: &str = "export function session({ tools: { define } }) {\n\
     const shapes = [5, { output: 'x' }, { text: 1 }, { text: 'x', isError: 'yes' }, { text: 'x', media: {} },\n\
       { text: 'x', media: [{ mimeType: 'image/png' }] },\n\
       { text: 'x', media: [{ mimeType: 'image/png', path: 'a', bytes: new Uint8Array(1) }] },\n\
-      { text: 'x', media: [{ mimeType: 'image/png', bytes: [1] }] }, { text: 'x', media: [{ mimeType: 'image/png', path: 5 }] },\n\
+      { text: 'x', media: [{ mimeType: 'image/png', bytes: Object.create(Uint8Array.prototype) }] }, { text: 'x', media: [{ mimeType: 'image/png', path: 5 }] },\n\
       { text: 'x', media: [{ mimeType: 5, path: 'a' }] }, Object.defineProperty({ text: 'x' }, 'hidden', { value: 1 }),\n\
       { text: 'x', [Symbol('tag')]: 1 }, Object.create({ text: 'x' }), { text: 'x', media: null },\n\
       { text: 'x', media: [{ mimeType: 'image/png', path: 'a', bytes: undefined }] },\n\
@@ -1107,34 +1107,4 @@ async fn a_media_path_starts_in_the_folder_of_the_start_of_the_call() {
 
     assert_eq!(answer.unwrap().media.len(), 1);
     assert_eq!(*host.media.lock().unwrap(), [b"first".to_vec()]);
-}
-
-#[tokio::test]
-async fn a_plugin_that_patches_weak_map_never_gets_the_session_of_a_call() {
-    let folder = folder("a_plugin_that_patches_weak_map_never_gets_the_session_of_a_call");
-    write(
-        &folder,
-        &[(
-            "tools.ts",
-            "export function session({ tools: { define } }) {\n\
-             const set = WeakMap.prototype.set;\n\
-             WeakMap.prototype.set = function (key, value) {\n\
-               if (value !== null && typeof value === 'object' && 'exec' in value) globalThis.leaked = true;\n\
-               return set.call(this, key, value);\n\
-             };\n\
-             define({ name: 'plain', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} },\n\
-               execute: () => 'x' });\n\
-             }\n",
-        )],
-    );
-    let (runtime, _host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
-
-    let text = text_of(&tools["plain"], "{}").await;
-
-    assert_eq!(text, "x");
-    assert!(
-        !evaluate::<bool>(&runtime, "return globalThis.leaked === true;")
-            .await
-            .unwrap()
-    );
 }

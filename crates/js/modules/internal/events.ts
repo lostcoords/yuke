@@ -2,17 +2,11 @@
  * The web classes `Event`, `CustomEvent`, `EventTarget`, `AbortSignal`, and `AbortController` for targets without a
  * tree. `yuke:internal/web` installs them as globals.
  */
-import { dictionary, domString, needs, PrivateMap, uncurryThis, webClass } from "yuke:internal/webidl";
+import { dictionary, domString, needs, webClass } from "yuke:internal/webidl";
 
 // The classes keep the globals of the runtime start, so a plugin that replaces a global does not change them.
 const { DOMException, reportError, setTimeout } = globalThis;
 const now = globalThis.performance.now.bind(globalThis.performance);
-// The signal graph keeps the `WeakRef` and `FinalizationRegistry` functions of the runtime start. A later patch of
-// these globals or of their prototypes does not change the graph.
-const StartWeakRef = WeakRef;
-const deref = uncurryThis(WeakRef.prototype.deref) as (ref: WeakRef<AbortSignal>) => AbortSignal | undefined;
-const register = uncurryThis(FinalizationRegistry.prototype.register);
-const unregister = uncurryThis(FinalizationRegistry.prototype.unregister);
 
 /** The longest delay of one timer. A longer timeout uses a chain of timers with this delay. */
 const LONGEST_DELAY = 2 ** 31 - 1;
@@ -68,9 +62,9 @@ interface Source {
   readonly ref: WeakRef<AbortSignal>;
 }
 
-const events = new PrivateMap<Event, EventState>();
-const targets = new PrivateMap<EventTarget, Listener[]>();
-const signals = new PrivateMap<AbortSignal, SignalState>();
+const events = new WeakMap<Event, EventState>();
+const targets = new WeakMap<EventTarget, Listener[]>();
+const signals = new WeakMap<AbortSignal, SignalState>();
 
 /** Remove the weak reference of a source to a dependent signal that the collector freed. */
 const collected = new FinalizationRegistry<{
@@ -402,7 +396,7 @@ export class AbortSignal extends EventTarget {
       if (!source.state.dependent) link(signal, source.signal);
       else {
         for (const root of source.state.sources) {
-          const live = deref(root.signal);
+          const live = root.signal.deref();
           if (live !== undefined) link(signal, live);
         }
       }
@@ -509,10 +503,7 @@ function abortError(message = "the signal is aborted without reason"): DOMExcept
   return new DOMException(message, "AbortError");
 }
 
-/**
- * A signal that only the host aborts, with its abort function. The abort reason is an `AbortError` with `message`. No
- * public member takes part, so a plugin that changes a prototype or a global does not change the abort.
- */
+/** A signal that only the host aborts, with its abort function. The abort reason is an `AbortError` with `message`. */
 export function hostSignal(): { readonly signal: AbortSignal; readonly abort: (message: string) => void } {
   const signal = new AbortSignal(CREATE);
   return { signal, abort: (message) => signalAbort(signal, abortError(message)) };
@@ -521,12 +512,12 @@ export function hostSignal(): { readonly signal: AbortSignal; readonly abort: (m
 /** Make `signal` a dependent of `source`. */
 function link(signal: AbortSignal, source: AbortSignal): void {
   const state = signalState(signal);
-  if (state.sources.some((known) => deref(known.signal) === source)) return;
-  const ref = new StartWeakRef(signal);
+  if (state.sources.some((known) => known.signal.deref() === source)) return;
+  const ref = new WeakRef(signal);
   const dependents = signalState(source).dependents;
   dependents.add(ref);
-  state.sources.push({ signal: new StartWeakRef(source), ref });
-  register(collected, signal, { dependents, ref }, ref);
+  state.sources.push({ signal: new WeakRef(source), ref });
+  collected.register(signal, { dependents, ref }, ref);
 }
 
 /** Keep a dependent signal alive through its sources while it has an `abort` listener or an abort step. */
@@ -536,7 +527,7 @@ function retain(target: EventTarget): void {
   const signal = target as AbortSignal;
   const keep = state.steps.size > 0 || listenersOf(signal).some((listener) => listener.type === "abort");
   for (const known of state.sources) {
-    const source = deref(known.signal);
+    const source = known.signal.deref();
     if (source === undefined) continue;
     const retained = signalState(source).retained;
     if (keep) retained.add(signal);
@@ -547,15 +538,15 @@ function retain(target: EventTarget): void {
 /** Drop the links of `signal` to its sources and its dependents. An aborted signal needs none of them. */
 function release(signal: AbortSignal, state: SignalState): void {
   for (const { signal: source, ref } of state.sources) {
-    unregister(collected, ref);
-    const live = deref(source);
+    collected.unregister(ref);
+    const live = source.deref();
     if (live === undefined) continue;
     const sourceState = signalState(live);
     sourceState.dependents.delete(ref);
     sourceState.retained.delete(signal);
   }
   state.sources.length = 0;
-  for (const ref of state.dependents) unregister(collected, ref);
+  for (const ref of state.dependents) collected.unregister(ref);
   state.dependents.clear();
   state.retained.clear();
 }
@@ -568,7 +559,7 @@ function signalAbort(signal: AbortSignal, reason: unknown): void {
   state.reason = reason === undefined ? abortError() : reason;
   const aborted: [AbortSignal, SignalState][] = [[signal, state]];
   for (const ref of state.dependents) {
-    const dependent = deref(ref);
+    const dependent = ref.deref();
     if (dependent === undefined) continue;
     const dependentState = signalState(dependent);
     dependentState.aborted = true;

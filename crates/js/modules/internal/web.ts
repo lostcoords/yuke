@@ -78,15 +78,6 @@ const objects = { console, performance, queueMicrotask } satisfies {
   queueMicrotask: typeof globalThis.queueMicrotask;
 };
 
-// A hook of `Error.prepareStackTrace` gets the function of each stack frame, internal functions too. A data property
-// in its place keeps the hook from the engine, and code that sets it still runs.
-Object.defineProperty(Error, "prepareStackTrace", {
-  value: undefined,
-  writable: true,
-  enumerable: false,
-  configurable: false,
-});
-
 // Web IDL gives each global a property that a script can replace: writable, configurable, and not enumerable.
 for (const [name, value] of Object.entries({ ...classes, ...objects })) {
   Object.defineProperty(globalThis, name, { value, writable: true, enumerable: false, configurable: true });

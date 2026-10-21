@@ -1,16 +1,6 @@
 /** The web classes `TextEncoder` and `TextDecoder`, for UTF-8 only. `yuke:internal/web` installs them as globals. */
 import { decodeText, encodeText, encodeTextInto } from "yuke:internal/native";
-import {
-  ByteArray,
-  bytesOf,
-  checkUint8Array,
-  copyInto,
-  dictionary,
-  domString,
-  lengthOf,
-  usvString,
-  webClass,
-} from "yuke:internal/webidl";
+import { bytesOf, checkUint8Array, dictionary, domString, usvString, webClass } from "yuke:internal/webidl";
 
 /** The labels of UTF-8 in the Encoding Standard. */
 const UTF8_LABELS = ["unicode-1-1-utf-8", "unicode11utf8", "unicode20utf8", "utf-8", "utf8", "x-unicode20utf8"];
@@ -35,8 +25,8 @@ export class TextEncoder {
     const destination: unknown = args[1];
     checkUint8Array(destination, "the destination");
     // A detached destination has the length 0, so the encoder writes nothing.
-    const { bytes, read } = encodeTextInto(source, lengthOf(destination));
-    if (bytes.length > 0) copyInto(destination, bytes);
+    const { bytes, read } = encodeTextInto(source, destination.length);
+    if (bytes.length > 0) destination.set(bytes);
     return { read, written: bytes.length };
   }
 }
@@ -45,7 +35,7 @@ export class TextDecoder {
   readonly #fatal: boolean;
   readonly #ignoreBOM: boolean;
   /** The bytes of an incomplete sequence at the end of the last `decode` with `stream`. */
-  #pending: Uint8Array = new ByteArray(0);
+  #pending: Uint8Array = new Uint8Array(0);
   /** The decoder has given its first character, so a later U+FEFF is text, not a byte order mark. */
   #started = false;
 
@@ -77,7 +67,7 @@ export class TextDecoder {
 
   /** Decode `input`. With `stream: true`, an incomplete sequence at the end waits for the next call. */
   decode(input?: unknown, options?: { readonly stream?: boolean }): string {
-    const fresh = input === undefined ? new ByteArray(0) : bytesOf(input, "the input");
+    const fresh = input === undefined ? new Uint8Array(0) : bytesOf(input, "the input");
     const stream = Boolean(dictionary(options, "the options").stream);
     const bytes = this.#pending.length === 0 ? fresh : join(this.#pending, fresh);
     let result: { readonly text: string; readonly rest: number };
@@ -87,7 +77,7 @@ export class TextDecoder {
       this.#reset();
       throw error;
     }
-    this.#pending = result.rest === 0 ? new ByteArray(0) : new ByteArray(bytes.subarray(bytes.length - result.rest));
+    this.#pending = result.rest === 0 ? new Uint8Array(0) : new Uint8Array(bytes.subarray(bytes.length - result.rest));
     let text = result.text;
     if (!this.#started && text.length > 0) {
       this.#started = true;
@@ -98,15 +88,15 @@ export class TextDecoder {
   }
 
   #reset(): void {
-    this.#pending = new ByteArray(0);
+    this.#pending = new Uint8Array(0);
     this.#started = false;
   }
 }
 
 function join(first: Uint8Array, second: Uint8Array): Uint8Array {
-  const bytes = new ByteArray(first.length + second.length);
-  copyInto(bytes, first);
-  copyInto(bytes.subarray(first.length), second);
+  const bytes = new Uint8Array(first.length + second.length);
+  bytes.set(first);
+  bytes.set(second, first.length);
   return bytes;
 }
 
