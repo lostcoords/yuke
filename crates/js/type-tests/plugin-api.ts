@@ -93,6 +93,35 @@ assert<
   >
 >();
 
+// An inline `enum` gives the union of its values, and a list typed as `string[]` gives `string`.
+s.tools.define({
+  name: "sort",
+  description: "d",
+  concurrency: "parallel",
+  parameters: {
+    type: "object",
+    properties: { order: { type: "string", enum: ["asc", "desc"] }, size: { type: "integer", enum: [1, 2] } },
+    required: ["order"],
+  },
+  execute(args) {
+    assert<Equal<typeof args, { order: "asc" | "desc"; size?: 1 | 2 }>>();
+    return "";
+  },
+});
+assert<
+  Equal<
+    Infer<{ type: "object"; properties: { order: { type: "string"; enum: string[] } }; required: ["order"] }>,
+    {
+      order: string;
+    }
+  >
+>();
+// @ts-expect-error: a boolean takes no `enum`.
+const booleanEnum: ObjectSchema = { type: "object", properties: { flag: { type: "boolean", enum: [true] } } };
+// @ts-expect-error: the values of an `enum` have the type of the schema.
+const numberInStringEnum: ObjectSchema = { type: "object", properties: { order: { type: "string", enum: [1] } } };
+void [booleanEnum, numberInStringEnum];
+
 // A result is a string, or text with media and an error flag. A media file has a path or bytes, never both.
 const results: ToolResult[] = [
   "done",

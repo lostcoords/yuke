@@ -2,9 +2,9 @@ import type { ObjectSchema, Schema } from "yuke:tools";
 
 /** The keywords of each type. A schema with another keyword has a part that no check covers, so it fails. */
 const KEYWORDS: Readonly<Record<Schema["type"], readonly string[]>> = {
-  string: ["type", "description"],
-  integer: ["type", "description", "minimum", "maximum"],
-  number: ["type", "description", "minimum", "maximum"],
+  string: ["type", "description", "enum"],
+  integer: ["type", "description", "minimum", "maximum", "enum"],
+  number: ["type", "description", "minimum", "maximum", "enum"],
   boolean: ["type", "description"],
   array: ["type", "description", "items"],
   object: ["type", "description", "properties", "required", "additionalProperties"],
@@ -34,6 +34,7 @@ function checkSchema(schema: unknown, place: string): asserts schema is Schema {
       throw new TypeError(`${place}.${bound} is not a finite number`);
     }
   }
+  if (schema.enum !== undefined) checkEnum(schema.enum, type as Schema["type"], place);
   if (type === "array") checkSchema(schema.items, `${place}.items`);
   if (type === "object") {
     const properties = schema.properties;
@@ -50,6 +51,17 @@ function checkSchema(schema: unknown, place: string): asserts schema is Schema {
       throw new TypeError(`${place}.additionalProperties is not false`);
     }
   }
+}
+
+/** Throw a `TypeError` when `values` is not a non-empty list of values of `type`, each once. */
+function checkEnum(values: unknown, type: Schema["type"], place: string): void {
+  if (!Array.isArray(values) || values.length === 0) throw new TypeError(`${place}.enum is not a non-empty array`);
+  const fits = (value: unknown) =>
+    type === "string"
+      ? typeof value === "string"
+      : typeof value === "number" && Number.isFinite(value) && (type === "number" || Number.isInteger(value));
+  if (!values.every(fits)) throw new TypeError(`${place}.enum has a value that is not ${expected({ type } as Schema)}`);
+  if (new Set(values).size !== values.length) throw new TypeError(`${place}.enum has a value twice`);
 }
 
 /**
@@ -93,7 +105,8 @@ function checkValue(schema: Schema, value: unknown, place: string): unknown {
   };
   switch (schema.type) {
     case "string":
-      return typeof value === "string" ? value : fail();
+      if (typeof value !== "string" || !inEnum(schema.enum, value)) return fail();
+      return value;
     case "boolean":
       return typeof value === "boolean" ? value : fail();
     case "integer":
@@ -102,6 +115,7 @@ function checkValue(schema: Schema, value: unknown, place: string): unknown {
       if (schema.type === "integer" && !Number.isInteger(value)) return fail();
       if (schema.minimum !== undefined && value < schema.minimum) return fail();
       if (schema.maximum !== undefined && value > schema.maximum) return fail();
+      if (!inEnum(schema.enum, value)) return fail();
       return value;
     }
     case "array":
@@ -112,8 +126,16 @@ function checkValue(schema: Schema, value: unknown, place: string): unknown {
   }
 }
 
-/** The words for what a field must hold, for example "an integer from 1 to 10". */
+/** Whether `value` is one of `values`. A schema without `enum` takes each value. */
+function inEnum<T>(values: readonly T[] | undefined, value: T): boolean {
+  return values === undefined || values.includes(value);
+}
+
+/** The words for what a field must hold, for example "an integer from 1 to 10" or "one of "asc", "desc"". */
 function expected(schema: Schema | undefined): string {
+  if (schema !== undefined && "enum" in schema && schema.enum !== undefined) {
+    return `one of ${schema.enum.map((value) => JSON.stringify(value)).join(", ")}`;
+  }
   switch (schema?.type) {
     case "string":
       return "a string";

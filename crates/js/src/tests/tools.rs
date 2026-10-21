@@ -362,15 +362,39 @@ async fn a_bad_tool_definition_fails_the_session_with_a_notice_that_names_its_pr
         ),
         (
             format!(
-                "{base}, concurrency: 'serial', parameters: {{ type: 'object', properties: {{ mode: {{ type: 'string', enum: ['a'] }} }} }}"
+                "{base}, concurrency: 'serial', parameters: {{ type: 'object', properties: {{ mode: {{ type: 'string', pattern: 'a' }} }} }}"
             ),
-            "parameters.properties.mode: yuke does not check the keyword 'enum'",
+            "parameters.properties.mode: yuke does not check the keyword 'pattern'",
         ),
         (
             format!(
                 "{base}, concurrency: 'serial', parameters: {{ type: 'object', properties: {{ n: {{ type: 'integer', minimum: null }} }} }}"
             ),
             "parameters.properties.n.minimum is not a finite number",
+        ),
+        (
+            format!(
+                "{base}, concurrency: 'serial', parameters: {{ type: 'object', properties: {{ o: {{ type: 'string', enum: [] }} }} }}"
+            ),
+            "parameters.properties.o.enum is not a non-empty array",
+        ),
+        (
+            format!(
+                "{base}, concurrency: 'serial', parameters: {{ type: 'object', properties: {{ n: {{ type: 'integer', enum: [1, 1.5] }} }} }}"
+            ),
+            "parameters.properties.n.enum has a value that is not an integer",
+        ),
+        (
+            format!(
+                "{base}, concurrency: 'serial', parameters: {{ type: 'object', properties: {{ o: {{ type: 'string', enum: ['a', 'a'] }} }} }}"
+            ),
+            "parameters.properties.o.enum has a value twice",
+        ),
+        (
+            format!(
+                "{base}, concurrency: 'serial', parameters: {{ type: 'object', properties: {{ f: {{ type: 'boolean', enum: [true] }} }} }}"
+            ),
+            "parameters.properties.f: yuke does not check the keyword 'enum'",
         ),
         (
             format!("name: 'tool_search', description: 'd', execute: () => 'x', concurrency: 'serial', {empty}"),
@@ -392,9 +416,9 @@ async fn a_bad_tool_definition_fails_the_session_with_a_notice_that_names_its_pr
         (
             format!(
                 "{base}, concurrency: 'serial', parameters: {{ type: 'object', properties: {{}}, \
-                 toJSON: () => ({{ type: 'object', properties: {{ m: {{ type: 'string', enum: ['a'] }} }} }}) }}"
+                 toJSON: () => ({{ type: 'object', properties: {{ m: {{ type: 'string', pattern: 'a' }} }} }}) }}"
             ),
-            "parameters.properties.m: yuke does not check the keyword 'enum'",
+            "parameters.properties.m: yuke does not check the keyword 'pattern'",
         ),
     ];
 
@@ -463,6 +487,34 @@ async fn arguments_that_do_not_fit_the_schema_fail_before_the_tool_runs() {
         "Set offset to an integer from 1 to 4294967295."
     );
     assert!(!folder.join("a.txt").exists());
+}
+
+#[tokio::test]
+async fn a_value_outside_the_enum_fails_with_the_list_and_a_value_in_it_runs_the_tool() {
+    let folder = folder("a_value_outside_the_enum_fails_with_the_list");
+    write(
+        &folder,
+        &[(
+            "tools.ts",
+            "export function session({ tools: { define } }) {\n\
+               define({ name: 'sort', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {\n\
+                 order: { type: 'string', enum: ['asc', 'desc'] }, size: { type: 'number', enum: [0.5, 2] } } },\n\
+                 execute: (args) => JSON.stringify(args) });\n\
+             }\n",
+        )],
+    );
+    let (_runtime, _host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
+    let sort = &tools["sort"];
+
+    assert_eq!(
+        error_of(sort, r#"{"order": "up"}"#).await,
+        r#"Set order to one of "asc", "desc"."#
+    );
+    assert_eq!(error_of(sort, r#"{"size": 1}"#).await, "Set size to one of 0.5, 2.");
+    assert_eq!(
+        text_of(sort, r#"{"order": "desc", "size": 0.5}"#).await,
+        r#"{"order":"desc","size":0.5}"#
+    );
 }
 
 #[tokio::test]

@@ -1,14 +1,26 @@
-/** A JSON schema of a value, in the subset that yuke checks. */
+/**
+ * A JSON schema of a value, in the subset that yuke checks:
+ * - Each type takes only the keywords of its schema below. Another keyword fails the definition of the tool.
+ * - An object is closed: a field outside `properties` is an error.
+ * - A `null` field that `required` does not name counts as absent, because a model sends `null` for a field that it
+ *   leaves out.
+ * - `enum` lists each value that a string, an integer, or a number can take.
+ */
 export type Schema = ScalarSchema | ArraySchema | ObjectSchema;
 
-/** A string, a boolean, or a number. An integer or a number can have `minimum` and `maximum`. */
+/**
+ * A string, a boolean, or a number. An integer or a number can have `minimum` and `maximum`. A string or a number can
+ * have `enum`: a list of values of its type, each once.
+ */
 export type ScalarSchema =
-  | { readonly type: "string" | "boolean"; readonly description?: string }
+  | { readonly type: "boolean"; readonly description?: string }
+  | { readonly type: "string"; readonly description?: string; readonly enum?: readonly string[] }
   | {
       readonly type: "integer" | "number";
       readonly description?: string;
       readonly minimum?: number;
       readonly maximum?: number;
+      readonly enum?: readonly number[];
     };
 
 /** An array of `items`. */
@@ -55,9 +67,11 @@ type Value<S extends Schema> = Schema extends S
     ? Value<T>[]
     : S extends ObjectSchema
       ? Infer<S>
-      : S extends { readonly type: infer T extends keyof Scalars }
-        ? Scalars[T]
-        : never;
+      : S extends { readonly enum: readonly (infer E)[] }
+        ? E
+        : S extends { readonly type: infer T extends keyof Scalars }
+          ? Scalars[T]
+          : never;
 
 /** The value of each scalar type. A union of types, such as `"string" | "boolean"`, gives the union of values. */
 interface Scalars {
