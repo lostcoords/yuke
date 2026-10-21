@@ -757,6 +757,51 @@ async fn an_unreachable_dependent_signal_without_an_abort_listener_is_collected(
 }
 
 #[tokio::test]
+async fn a_throw_in_a_finalization_callback_is_a_fault_and_the_next_callback_runs() {
+    let folder = folder("a_throw_in_a_finalization_callback_is_a_fault_and_the_next_callback_runs");
+    let (runtime, mut faults) = start(&folder).await;
+    evaluate::<()>(
+        &runtime,
+        "globalThis.collected = [];
+         globalThis.registry = new FinalizationRegistry((name) => {
+           collected.push(name);
+           if (name === 'first') throw new TypeError('from a cleanup');
+         });
+         registry.register({}, 'first');
+         registry.register({}, 'second');",
+    )
+    .await
+    .unwrap();
+
+    collect_garbage(&runtime).await;
+    let collected = evaluate::<String>(&runtime, "return collected.sort().join(' ');")
+        .await
+        .unwrap();
+
+    let shape = evaluate::<String>(
+        &runtime,
+        "const refused = (() => { try { new FinalizationRegistry(1); return 'none'; } catch (error) { return error.name; } })();
+         const called = (() => { try { FinalizationRegistry(() => {}); return 'none'; } catch (error) { return error.name; } })();
+         class Kept extends FinalizationRegistry {}
+         const kept = new Kept(() => {});
+         const { prototype } = FinalizationRegistry;
+         return [FinalizationRegistry.name, FinalizationRegistry.length, registry instanceof FinalizationRegistry,
+           Object.prototype.toString.call(registry), refused, called, kept instanceof Kept,
+           Object.hasOwn(prototype, 'register'), Object.getPrototypeOf(prototype) === Object.prototype,
+           prototype.constructor === FinalizationRegistry].join(' ');",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(next_fault(&mut faults).await.message, "from a cleanup");
+    assert_eq!(collected, "first second");
+    assert_eq!(
+        shape,
+        "FinalizationRegistry 1 true [object FinalizationRegistry] TypeError TypeError true true true true"
+    );
+}
+
+#[tokio::test]
 async fn timeout_aborts_with_a_timeout_error_after_its_delay() {
     let text = run::<String>(
         "timeout_aborts_with_a_timeout_error_after_its_delay",

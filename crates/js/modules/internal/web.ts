@@ -2,6 +2,34 @@ import { console } from "yuke:internal/console";
 import { TextDecoder, TextEncoder } from "yuke:internal/encoding";
 import * as events from "yuke:internal/events";
 
+const {
+  FinalizationRegistry: EngineFinalizationRegistry,
+  queueMicrotask: engineQueueMicrotask,
+  reportError,
+} = globalThis;
+
+// The engine drops the throw of a finalization callback, so the callback reports its own throw, as on the web. The
+// property key names the constructor, and the prototype of the engine stays, so a registry keeps its standard shape.
+const ReportingFinalizationRegistry = {
+  FinalizationRegistry: function (cleanup: unknown): object {
+    if (new.target === undefined) throw new TypeError("FinalizationRegistry: the constructor needs new");
+    if (typeof cleanup !== "function") throw new TypeError("FinalizationRegistry: the cleanup is no function");
+    const report = (heldValue: unknown): void => {
+      try {
+        cleanup(heldValue);
+      } catch (error) {
+        reportError(error);
+      }
+    };
+    return Reflect.construct(EngineFinalizationRegistry, [report], new.target);
+  },
+}.FinalizationRegistry as unknown as FinalizationRegistryConstructor;
+Object.defineProperty(ReportingFinalizationRegistry, "prototype", {
+  value: EngineFinalizationRegistry.prototype,
+  writable: false,
+});
+Object.defineProperty(EngineFinalizationRegistry.prototype, "constructor", { value: ReportingFinalizationRegistry });
+
 // The check against the global declarations keeps the classes and the declarations of the authors in step.
 const classes = {
   AbortController: events.AbortController,
@@ -9,6 +37,7 @@ const classes = {
   CustomEvent: events.CustomEvent,
   Event: events.Event,
   EventTarget: events.EventTarget,
+  FinalizationRegistry: ReportingFinalizationRegistry,
   TextDecoder,
   TextEncoder,
 } satisfies {
@@ -17,6 +46,7 @@ const classes = {
   CustomEvent: typeof CustomEvent;
   Event: typeof Event;
   EventTarget: typeof EventTarget;
+  FinalizationRegistry: typeof FinalizationRegistry;
   TextDecoder: typeof TextDecoder;
   TextEncoder: typeof TextEncoder;
 };
@@ -31,7 +61,6 @@ const performance: typeof globalThis.performance = Object.freeze({
 });
 
 // The engine drops the throw of a queued callback, so the callback reports its own throw, as on the web.
-const { queueMicrotask: engineQueueMicrotask, reportError } = globalThis;
 function queueMicrotask(callback: () => void): void {
   if (typeof callback !== "function") throw new TypeError("queueMicrotask: the callback is no function");
   engineQueueMicrotask(() => {
