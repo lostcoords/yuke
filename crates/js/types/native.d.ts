@@ -177,12 +177,14 @@ declare module "yuke:internal/native" {
     position: number,
     length: number | undefined,
   ): Operation<Uint8Array>;
-  export function fsReadTextFile(path: string, baseDir: string | undefined): Operation<string>;
+  export function fsReadTextFile(path: string, baseDir: string | undefined, fatal: boolean): Operation<string>;
+  /** `atomic` comes only with `create`. */
   export function fsWriteFile(
     path: string,
     baseDir: string | undefined,
     data: Uint8Array | string,
-    atomic: boolean,
+    placement: "replace" | "append" | "atomic",
+    creation: "create" | "existing" | "new",
     mode: number | undefined,
   ): Operation<undefined>;
   export function fsReadDir(

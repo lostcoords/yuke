@@ -109,6 +109,34 @@ declare var console: {
   info: (...data: unknown[]) => void;
   warn: (...data: unknown[]) => void;
   error: (...data: unknown[]) => void;
+  /** An error entry `Assertion failed` with `data` when `condition` is falsy. */
+  assert: (condition?: unknown, ...data: unknown[]) => void;
+  /** Clears nothing, because the entries have no screen. It closes each group. */
+  clear: () => void;
+  /** An info entry `label: n` with the number of calls for `label`. The default label is `default`. */
+  count: (label?: string) => void;
+  /** Start the count of `label` again. */
+  countReset: (label?: string) => void;
+  /** A debug entry with the object view of `item`. */
+  dir: (item?: unknown, options?: unknown) => void;
+  /** A debug entry, as `log`. */
+  dirxml: (...data: unknown[]) => void;
+  /** A debug entry with `data`, when there is some, and two more spaces before each later entry. */
+  group: (...data: unknown[]) => void;
+  /** As `group`, because the entries cannot collapse. */
+  groupCollapsed: (...data: unknown[]) => void;
+  /** Close the last group. */
+  groupEnd: () => void;
+  /** A debug entry with a text table of an array or an object: a row for each item, and only `properties` when given. */
+  table: (tabularData?: unknown, properties?: readonly string[]) => void;
+  /** Start the timer `label`. */
+  time: (label?: string) => void;
+  /** An info entry `label: 1.234ms` with the time since `time`, and `data`. */
+  timeLog: (label?: string, ...data: unknown[]) => void;
+  /** As `timeLog`, and stop the timer. */
+  timeEnd: (label?: string) => void;
+  /** An error entry `Trace` with `data` and the stack of the call. */
+  trace: (...data: unknown[]) => void;
 };
 
 /** An encoder of text to UTF-8. */

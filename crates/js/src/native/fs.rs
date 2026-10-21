@@ -35,9 +35,12 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
         ),
         (
             "fsReadTextFile",
-            Function::new(ctx.clone(), |ctx: Ctx<'js>, path: String, base: Option<String>| {
-                read_text_file(&ctx, &path, base.as_deref())
-            })?,
+            Function::new(
+                ctx.clone(),
+                |ctx: Ctx<'js>, path: String, base: Option<String>, fatal: bool| {
+                    read_text_file(&ctx, &path, base.as_deref(), fatal)
+                },
+            )?,
         ),
         (
             "fsWriteFile",
@@ -47,8 +50,12 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
                  path: String,
                  base: Option<String>,
                  data: Value<'js>,
-                 atomic: bool,
-                 mode: Option<u32>| { write_file(&ctx, &path, base.as_deref(), &data, atomic, mode) },
+                 placement: String,
+                 creation: String,
+                 mode: Option<u32>| {
+                    let how = (placement.as_str(), creation.as_str());
+                    write_file(&ctx, &path, base.as_deref(), &data, how, mode)
+                },
             )?,
         ),
         (
@@ -119,35 +126,104 @@ fn read_file<'js>(
     )
 }
 
-/// `fsReadTextFile(path, baseDir)`: the whole file as strict UTF-8.
-fn read_text_file<'js>(ctx: &Ctx<'js>, path: &str, base: Option<&str>) -> rquickjs::Result<Operation<'js>> {
+/// `fsReadTextFile(path, baseDir, fatal)`: the whole file as UTF-8. Bytes that are not UTF-8 become U+FFFD, or fail
+/// with `EILSEQ` when `fatal`.
+fn read_text_file<'js>(
+    ctx: &Ctx<'js>,
+    path: &str,
+    base: Option<&str>,
+    fatal: bool,
+) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
     operation(
         ctx,
         move |stop| {
             let bytes = read(&path, 0, None, stop)?;
-            String::from_utf8(bytes).map_err(|_| Failure::new(io::Error::from(Errno::ILSEQ), &path))
+            match String::from_utf8(bytes) {
+                Ok(text) => Ok(text),
+                Err(_) if fatal => Err(Failure::new(io::Error::from(Errno::ILSEQ), &path)),
+                Err(error) => Ok(String::from_utf8_lossy(error.as_bytes()).into_owned()),
+            }
         },
         |ctx, text| text.into_js(ctx),
     )
 }
 
-/// `fsWriteFile(path, baseDir, data, atomic, mode)`: write `data`, a `Uint8Array` or a string, to a file.
+/// How a write puts its bytes into the file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Placement {
+    /// Replace the content of the file.
+    Replace,
+    /// Add to the end of the file.
+    Append,
+    /// Write a temporary file and rename it over the path.
+    Atomic,
+}
+
+/// When a write creates its file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Creation {
+    /// Create the file when it is missing.
+    Create,
+    /// Fail when the file is missing.
+    Existing,
+    /// Fail when the path exists.
+    New,
+}
+
+/// `fsWriteFile(path, baseDir, data, placement, creation, mode)`: write `data`, a `Uint8Array` or a string, to a file.
+/// `placement` is `replace`, `append`, or `atomic`; `creation` is `create`, `existing`, or `new`. `yuke:fs` sends
+/// `atomic` only with `create`.
 fn write_file<'js>(
     ctx: &Ctx<'js>,
     path: &str,
     base: Option<&str>,
     data: &Value<'js>,
-    atomic: bool,
+    (placement, creation): (&str, &str),
     mode: Option<u32>,
 ) -> rquickjs::Result<Operation<'js>> {
+    let placement = match placement {
+        "replace" => Placement::Replace,
+        "append" => Placement::Append,
+        "atomic" => Placement::Atomic,
+        _ => {
+            return Err(throw(
+                ctx,
+                ErrorClass::TypeError,
+                "the placement is not replace, append, or atomic",
+            ));
+        }
+    };
+    let creation = match creation {
+        "create" => Creation::Create,
+        "existing" => Creation::Existing,
+        "new" => Creation::New,
+        _ => {
+            return Err(throw(
+                ctx,
+                ErrorClass::TypeError,
+                "the creation is not create, existing, or new",
+            ));
+        }
+    };
+    if placement == Placement::Atomic && creation != Creation::Create {
+        return Err(throw(
+            ctx,
+            ErrorClass::TypeError,
+            "an atomic write creates or replaces its file",
+        ));
+    }
     let path = resolve(ctx, path, base)?;
     // A copy at the call, so a later change of the bytes does not reach the file.
     let bytes = match data.as_string() {
         Some(text) => text.to_string()?.into_bytes(),
         None => crate::bytes::copy(&TypedArray::<u8>::from_value(data.clone())?)?,
     };
-    operation(ctx, move |stop| write(&path, &bytes, atomic, mode, stop), nothing)
+    operation(
+        ctx,
+        move |stop| write(&path, &bytes, placement, creation, mode, stop),
+        nothing,
+    )
 }
 
 /// `fsReadDir(path, baseDir)`: the entries of a directory.
@@ -421,14 +497,22 @@ fn read(path: &Path, position: u64, length: Option<u64>, stop: &Stop) -> Result<
 /// The number of the next temporary file of this process.
 static TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
-/// Write `bytes` to the file at `path`. Its folder must exist. `mode` sets the permissions of a new file. An atomic
-/// write goes to a temporary file in the same folder and renames it over `path`, with the permissions of the file
-/// that it replaces when `mode` is missing.
-fn write(path: &Path, bytes: &[u8], atomic: bool, mode: Option<u32>, stop: &Stop) -> Result<(), Failure> {
+/// Write `bytes` to the file at `path` by `placement`, and create it by `creation`. Its folder must exist. `mode` sets
+/// the permissions of a new file. An atomic write goes to a temporary file in the same folder and renames it over
+/// `path`, with the permissions of the file that it replaces when `mode` is missing.
+fn write(
+    path: &Path,
+    bytes: &[u8],
+    placement: Placement,
+    creation: Creation,
+    mode: Option<u32>,
+    stop: &Stop,
+) -> Result<(), Failure> {
     stop.check()?;
     let fail = |error| Failure::new(error, path);
-    // A rename would replace a special file too, so both forms check the kind.
+    // A rename would replace a special file too, so both forms check the kind. A new file opens nothing that exists.
     let existing = match fs::metadata(path) {
+        Ok(_) if creation == Creation::New => None,
         Ok(metadata) => {
             check_kind(metadata.file_type()).map_err(fail)?;
             Some(metadata)
@@ -436,9 +520,17 @@ fn write(path: &Path, bytes: &[u8], atomic: bool, mode: Option<u32>, stop: &Stop
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => return Err(fail(error)),
     };
-    if !atomic {
+    if placement != Placement::Atomic {
         let mut options = OpenOptions::new();
-        options.write(true).create(true).truncate(true);
+        match placement {
+            Placement::Append => options.append(true),
+            Placement::Replace | Placement::Atomic => options.write(true).truncate(true),
+        };
+        match creation {
+            Creation::Create => options.create(true),
+            Creation::Existing => options.create(false),
+            Creation::New => options.create_new(true),
+        };
         if let Some(mode) = mode {
             options.mode(mode);
         }

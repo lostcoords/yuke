@@ -86,7 +86,8 @@ defineTool({
     if (oldString === newString) throw new Error("Set new_string to a value that differs from old_string.");
 
     const options = { baseDir: context.folder, signal: context.signal };
-    const parts = (await readTextFile(path, options)).split(oldString);
+    // A replaced byte would reach the file at the write, so the read is fatal.
+    const parts = (await readTextFile(path, { ...options, fatal: true })).split(oldString);
     const count = parts.length - 1;
     if (count === 0) throw new Error("The file has no match for old_string. Read the file and copy the exact text.");
     if (count > 1 && !replaceAll) {

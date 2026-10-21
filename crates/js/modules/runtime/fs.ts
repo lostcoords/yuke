@@ -118,19 +118,30 @@ export async function readFile(path: string, options?: unknown): Promise<Uint8Ar
 }
 
 export async function readTextFile(path: string, options?: unknown): Promise<string> {
-  const { baseDir, signal } = optionsOf(options);
+  const fields = optionsOf(options, ["fatal"]);
+  const { baseDir, signal } = fields;
+  const fatal = flag(fields.fatal, "fatal");
   const text = domString(path);
-  return await run(signal, () => fsReadTextFile(text, baseDir));
+  return await run(signal, () => fsReadTextFile(text, baseDir, fatal));
 }
 
 /** The write of `data`, bytes or text, with the options of a write. */
 async function writeData(path: string, data: Uint8Array | string, options: unknown): Promise<void> {
-  const fields = optionsOf(options, ["atomic", "mode"]);
+  const fields = optionsOf(options, ["append", "atomic", "create", "createNew", "mode"]);
   const { baseDir, signal } = fields;
+  const append = flag(fields.append, "append");
   const atomic = flag(fields.atomic, "atomic");
+  const create = fields.create === undefined || flag(fields.create, "create");
+  const createNew = flag(fields.createNew, "createNew");
   const mode = modeOf(fields.mode);
+  // A rename replaces the whole file, and it cannot check that the path is new or that it exists.
+  if (atomic && append) throw new TypeError("the options atomic and append exclude each other");
+  if (atomic && createNew) throw new TypeError("the options atomic and createNew exclude each other");
+  if (atomic && !create) throw new TypeError("an atomic write needs create");
+  const placement = atomic ? "atomic" : append ? "append" : "replace";
+  const creation = createNew ? "new" : create ? "create" : "existing";
   const text = domString(path);
-  await run(signal, () => fsWriteFile(text, baseDir, data, atomic, mode));
+  await run(signal, () => fsWriteFile(text, baseDir, data, placement, creation, mode));
 }
 
 export async function writeFile(path: string, data: Uint8Array, options?: unknown): Promise<void> {

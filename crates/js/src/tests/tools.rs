@@ -908,6 +908,25 @@ async fn edit_of_a_missing_file_names_its_path() {
     assert_eq!(error, format!("the path does not exist: {}/gone.txt", folder.display()));
 }
 
+#[tokio::test]
+async fn edit_of_a_file_that_is_not_utf8_fails_and_keeps_its_bytes() {
+    let folder = folder("edit_of_a_file_that_is_not_utf8_fails_and_keeps_its_bytes");
+    std::fs::write(folder.join("latin1.txt"), b"caf\xe9 old").unwrap();
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
+
+    let error = error_of(
+        &tools["edit"],
+        r#"{"path": "latin1.txt", "old_string": "old", "new_string": "new"}"#,
+    )
+    .await;
+
+    assert_eq!(
+        error,
+        format!("the bytes are not valid UTF-8: {}/latin1.txt", folder.display())
+    );
+    assert_eq!(std::fs::read(folder.join("latin1.txt")).unwrap(), b"caf\xe9 old");
+}
+
 /// A module that defines the tools of the result tests.
 const RESULT_TOOLS: &str = "export function session({ tools: { define } }) {\n\
     const empty = { type: 'object', properties: {} } as const;\n\

@@ -235,6 +235,103 @@ async fn console_writes_one_formatted_entry_at_the_level_of_its_method() {
 }
 
 #[tokio::test]
+async fn console_asserts_counts_groups_and_tables_as_the_console_standard() {
+    let folder = folder("console_asserts_counts_groups_and_tables_as_the_console_standard");
+    let (runtime, mut reports) = start(&folder).await;
+
+    evaluate::<()>(
+        &runtime,
+        "console.assert(true, 'never');
+         console.assert(false, 'x is %d', 5);
+         console.assert(0, { x: 1 });
+         console.count(); console.count(); console.count('jobs');
+         console.countReset(); console.count(); console.countReset('none');
+         console.group('outer');
+         console.groupCollapsed();
+         console.log('two\\nlines');
+         console.groupEnd(); console.groupEnd(); console.groupEnd();
+         console.dir('text');
+         console.table([{ a: 1, b: 'x' }, { a: 22 }, 7]);
+         console.table({ first: { a: 1, b: 2 } }, ['b']);
+         console.table('plain');",
+    )
+    .await
+    .unwrap();
+
+    let expected = [
+        (NoticeLevel::Error, "Assertion failed: x is 5"),
+        (NoticeLevel::Error, "Assertion failed { x: 1 }"),
+        (NoticeLevel::Info, "default: 1"),
+        (NoticeLevel::Info, "default: 2"),
+        (NoticeLevel::Info, "jobs: 1"),
+        (NoticeLevel::Info, "default: 1"),
+        (NoticeLevel::Warn, "Count for 'none' does not exist"),
+        (NoticeLevel::Debug, "outer"),
+        (NoticeLevel::Debug, "    two\n    lines"),
+        (NoticeLevel::Debug, "\"text\""),
+        (
+            NoticeLevel::Debug,
+            "┌─────────┬────┬─────┬────────┐\n\
+             │ (index) │ a  │ b   │ Values │\n\
+             ├─────────┼────┼─────┼────────┤\n\
+             │ 0       │ 1  │ \"x\" │        │\n\
+             │ 1       │ 22 │     │        │\n\
+             │ 2       │    │     │ 7      │\n\
+             └─────────┴────┴─────┴────────┘",
+        ),
+        (
+            NoticeLevel::Debug,
+            "┌─────────┬───┐\n\
+             │ (index) │ b │\n\
+             ├─────────┼───┤\n\
+             │ first   │ 2 │\n\
+             └─────────┴───┘",
+        ),
+        (NoticeLevel::Debug, "plain"),
+    ];
+    for (level, text) in expected {
+        assert_eq!(next_line(&mut reports).await, (level, text.to_owned()));
+    }
+}
+
+#[tokio::test]
+async fn console_timers_and_traces_name_their_label_and_stack() {
+    let folder = folder("console_timers_and_traces_name_their_label_and_stack");
+    let (runtime, mut reports) = start(&folder).await;
+
+    evaluate::<()>(
+        &runtime,
+        "console.time('load'); console.time('load');
+         console.timeLog('load', 'half');
+         console.timeEnd('load'); console.timeEnd('load');
+         function inner() { console.trace('here %s', 'now'); }
+         inner();",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        next_line(&mut reports).await,
+        (NoticeLevel::Warn, "Timer 'load' already exists".to_owned())
+    );
+    let (level, text) = next_line(&mut reports).await;
+    assert_eq!(level, NoticeLevel::Info);
+    assert!(text.starts_with("load: ") && text.ends_with("ms half"), "{text}");
+    let (level, text) = next_line(&mut reports).await;
+    assert_eq!(level, NoticeLevel::Info);
+    assert!(text.starts_with("load: ") && text.ends_with("ms"), "{text}");
+    assert_eq!(
+        next_line(&mut reports).await,
+        (NoticeLevel::Warn, "Timer 'load' does not exist".to_owned())
+    );
+    let (level, text) = next_line(&mut reports).await;
+    assert_eq!(level, NoticeLevel::Error);
+    let mut lines = text.lines();
+    assert_eq!(lines.next(), Some("Trace: here now"));
+    assert!(lines.next().is_some_and(|frame| frame.contains("inner")), "{text}");
+}
+
+#[tokio::test]
 async fn performance_gives_its_origin_as_epoch_time() {
     let text = run::<String>(
         "performance_gives_its_origin_as_epoch_time",

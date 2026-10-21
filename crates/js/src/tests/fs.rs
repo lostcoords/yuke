@@ -128,7 +128,7 @@ async fn a_failure_is_a_file_system_error_with_a_code_and_the_absolute_path() {
          const codes = [];
          for (const work of [
            () => fs.readTextFile('gone.txt', { baseDir: base }),
-           () => fs.readTextFile('binary.dat', { baseDir: base }),
+           () => fs.readTextFile('binary.dat', { baseDir: base, fatal: true }),
            () => fs.readFile(base),
            () => fs.writeTextFile('missing/folder/x.txt', 'x', { baseDir: base }),
            () => fs.rename('gone.txt', 'other.txt', { baseDir: base }),
@@ -152,6 +152,75 @@ async fn a_failure_is_a_file_system_error_with_a_code_and_the_absolute_path() {
              true FileSystemError ENOENT {folder}/gone.txt {folder}/other.txt"
         )
     );
+}
+
+#[tokio::test]
+async fn a_text_read_replaces_bytes_that_are_not_utf8_and_a_fatal_read_rejects() {
+    let (text, _) = run_fs(
+        "a_text_read_replaces_bytes_that_are_not_utf8_and_a_fatal_read_rejects",
+        |folder| std::fs::write(folder.join("mixed.txt"), b"a\xffb\xe2\x82").unwrap(),
+        "const replaced = await fs.readTextFile('mixed.txt', { baseDir: base });
+         const fatal = await fs.readTextFile('mixed.txt', { baseDir: base, fatal: true }).catch((error) => error.code);
+         return `${JSON.stringify(replaced)} ${fatal}`;",
+    )
+    .await;
+
+    assert_eq!(text, "\"a\u{fffd}b\u{fffd}\" EILSEQ");
+}
+
+#[tokio::test]
+async fn a_write_appends_creates_only_a_new_file_or_needs_an_existing_one() {
+    let (text, folder) = run_fs(
+        "a_write_appends_creates_only_a_new_file_or_needs_an_existing_one",
+        |folder| {
+            std::fs::write(folder.join("log.txt"), "one\n").unwrap();
+            std::os::unix::fs::symlink(folder.join("nowhere"), folder.join("dangling")).unwrap();
+        },
+        "const attempt = (work) => work().then(() => 'ok', (error) => error.code);
+         return [
+           await attempt(() => fs.writeTextFile('log.txt', 'two\\n', { baseDir: base, append: true })),
+           await attempt(() => fs.writeTextFile('started.txt', 'x', { baseDir: base, append: true })),
+           await attempt(() => fs.writeTextFile('log.txt', 'x', { baseDir: base, createNew: true })),
+           await attempt(() => fs.writeTextFile('dangling', 'x', { baseDir: base, createNew: true })),
+           await attempt(() => fs.writeTextFile('fresh.txt', 'new', { baseDir: base, createNew: true, create: false })),
+           await attempt(() => fs.writeTextFile('missing.txt', 'x', { baseDir: base, create: false })),
+           await attempt(() => fs.writeTextFile('log.txt', 'tail', { baseDir: base, append: true, create: false })),
+         ].join(' ');",
+    )
+    .await;
+
+    assert_eq!(text, "ok ok EEXIST EEXIST ok ENOENT ok");
+    let read = |name: &str| std::fs::read_to_string(folder.join(name)).unwrap();
+    assert_eq!(read("log.txt"), "one\ntwo\ntail");
+    assert_eq!(read("started.txt"), "x");
+    assert_eq!(read("fresh.txt"), "new");
+    assert!(!folder.join("missing.txt").exists() && !folder.join("nowhere").exists());
+}
+
+#[tokio::test]
+async fn an_atomic_write_with_append_create_new_or_without_create_is_a_misuse() {
+    let (text, folder) = run_fs(
+        "an_atomic_write_with_append_create_new_or_without_create_is_a_misuse",
+        |_| {},
+        "const message = (options) =>
+           fs.writeTextFile('x.txt', 'x', { baseDir: base, atomic: true, ...options }).then(() => 'none', (error) => error.message);
+         return [
+           await message({ append: true }),
+           await message({ createNew: true }),
+           await message({ create: false }),
+           await fs.writeTextFile('x.txt', 'x', { baseDir: base, create: 1 }).catch((error) => error.message),
+         ].join('\\n');",
+    )
+    .await;
+
+    assert_eq!(
+        text,
+        "the options atomic and append exclude each other\n\
+         the options atomic and createNew exclude each other\n\
+         an atomic write needs create\n\
+         the option create is not a boolean"
+    );
+    assert!(!folder.join("x.txt").exists());
 }
 
 #[tokio::test]

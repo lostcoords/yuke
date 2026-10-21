@@ -32,12 +32,24 @@ declare module "yuke:fs" {
     length?: number | undefined;
   }
 
+  /** The options of `readTextFile`. */
+  export interface ReadTextFileOptions extends FileOptions {
+    /** A fatal read rejects with `EILSEQ` when the file has bytes that are not UTF-8. The default is `false`. */
+    fatal?: boolean | undefined;
+  }
+
   /** The options of `writeFile` and `writeTextFile`. */
   export interface WriteFileOptions extends FileOptions {
+    /** An append adds the data to the end of the file and keeps its content. The default is `false`. */
+    append?: boolean | undefined;
+    /** Without `create`, a missing file rejects with `ENOENT`. The default is `true`. */
+    create?: boolean | undefined;
+    /** With `createNew`, a path that exists, also a link, rejects with `EEXIST`. It wins over `create`. */
+    createNew?: boolean | undefined;
     /**
      * An atomic write writes a temporary file in the same folder and renames it over the path. A reader then sees the
      * old file or the new one, never a part. A crash right after the rename can still lose it, because the folder is
-     * not synced. The default is `false`.
+     * not synced. An atomic write with `append`, `createNew`, or `create: false` is a misuse. The default is `false`.
      */
     atomic?: boolean | undefined;
     /**
@@ -105,11 +117,13 @@ declare module "yuke:fs" {
 
   /** The bytes of a file, or a part of them. A range that starts at or after the end gives no bytes. */
   export function readFile(path: string, options?: ReadFileOptions): Promise<Uint8Array>;
-  /** The whole file as UTF-8 text. A file with bytes that are not UTF-8 rejects with `EILSEQ`. A byte order mark stays. */
-  export function readTextFile(path: string, options?: FileOptions): Promise<string>;
-  /** Create or replace a file with `data`. The folder of the file must exist. */
+  /**
+   * The whole file as UTF-8 text. Bytes that are not UTF-8 become U+FFFD, as in `TextDecoder`. A byte order mark stays.
+   */
+  export function readTextFile(path: string, options?: ReadTextFileOptions): Promise<string>;
+  /** Create, replace, or add to a file with `data`. The folder of the file must exist. */
   export function writeFile(path: string, data: Uint8Array, options?: WriteFileOptions): Promise<void>;
-  /** Create or replace a file with the UTF-8 bytes of `text`. A lone surrogate becomes U+FFFD. */
+  /** Create, replace, or add to a file with the UTF-8 bytes of `text`. A lone surrogate becomes U+FFFD. */
   export function writeTextFile(path: string, text: string, options?: WriteFileOptions): Promise<void>;
   /** The entries of a directory, without `.` and `..`, by name in JavaScript string order. */
   export function readDir(path: string, options?: FileOptions): Promise<DirEntry[]>;
