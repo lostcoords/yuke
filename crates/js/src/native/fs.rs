@@ -7,12 +7,12 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 
-use rquickjs::{Ctx, Function, IntoJs, Object, Promise, TypedArray, Value};
+use rquickjs::{Ctx, Function, IntoJs, Object, TypedArray, Value};
 use rustix::io::Errno;
+use yuke_engine::CancellationToken;
 
 use super::Operation;
 use crate::error::{ErrorClass, throw};
@@ -119,11 +119,7 @@ fn read_file<'js>(
     // `yuke:fs` checks that both numbers are whole and in range.
     #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a safe integer")]
     let (position, length) = (position as u64, length.map(|length| length as u64));
-    operation(
-        ctx,
-        move |stop| read(&path, position, length, stop),
-        |ctx, bytes| Ok(TypedArray::<u8>::new(ctx.clone(), bytes)?.into_value()),
-    )
+    operation(ctx, move |stop| read(&path, position, length, stop).map(Bytes))
 }
 
 /// `fsReadTextFile(path, baseDir, fatal)`: the whole file as UTF-8. Bytes that are not UTF-8 become U+FFFD, or fail
@@ -135,18 +131,14 @@ fn read_text_file<'js>(
     fatal: bool,
 ) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
-    operation(
-        ctx,
-        move |stop| {
-            let bytes = read(&path, 0, None, stop)?;
-            match String::from_utf8(bytes) {
-                Ok(text) => Ok(text),
-                Err(_) if fatal => Err(Failure::new(io::Error::from(Errno::ILSEQ), &path)),
-                Err(error) => Ok(String::from_utf8_lossy(error.as_bytes()).into_owned()),
-            }
-        },
-        |ctx, text| text.into_js(ctx),
-    )
+    operation(ctx, move |stop| {
+        let bytes = read(&path, 0, None, stop)?;
+        match String::from_utf8(bytes) {
+            Ok(text) => Ok(text),
+            Err(_) if fatal => Err(Failure::new(io::Error::from(Errno::ILSEQ), &path)),
+            Err(error) => Ok(String::from_utf8_lossy(error.as_bytes()).into_owned()),
+        }
+    })
 }
 
 /// How a write puts its bytes into the file.
@@ -219,31 +211,19 @@ fn write_file<'js>(
         Some(text) => text.to_string()?.into_bytes(),
         None => crate::bytes::copy(&TypedArray::<u8>::from_value(data.clone())?)?,
     };
-    operation(
-        ctx,
-        move |stop| write(&path, &bytes, placement, creation, mode, stop),
-        nothing,
-    )
+    operation(ctx, move |stop| write(&path, &bytes, placement, creation, mode, stop))
 }
 
 /// `fsReadDir(path, baseDir)`: the entries of a directory.
 fn read_dir_entries<'js>(ctx: &Ctx<'js>, path: &str, base: Option<&str>) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
-    operation(
-        ctx,
-        move |stop| read_dir(&path, stop),
-        |ctx, entries| entries.into_js(ctx),
-    )
+    operation(ctx, move |stop| read_dir(&path, stop))
 }
 
 /// `fsStat(path, baseDir, follow)`: the facts of a path, of the target of a link when `follow`.
 fn stat_path<'js>(ctx: &Ctx<'js>, path: &str, base: Option<&str>, follow: bool) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
-    operation(
-        ctx,
-        move |stop| stat(&path, follow, stop),
-        |ctx, info| info.into_js(ctx),
-    )
+    operation(ctx, move |stop| stat(&path, follow, stop))
 }
 
 /// `fsMkdir(path, baseDir, recursive, mode)`: create a directory.
@@ -255,19 +235,15 @@ fn make_dir<'js>(
     mode: Option<u32>,
 ) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
-    operation(
-        ctx,
-        move |stop| {
-            stop.check()?;
-            let mut builder = fs::DirBuilder::new();
-            builder.recursive(recursive);
-            if let Some(mode) = mode {
-                builder.mode(mode);
-            }
-            builder.create(&path).map_err(|error| Failure::new(error, &path))
-        },
-        nothing,
-    )
+    operation(ctx, move |stop| {
+        check(stop)?;
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(recursive);
+        if let Some(mode) = mode {
+            builder.mode(mode);
+        }
+        builder.create(&path).map_err(|error| Failure::new(error, &path))
+    })
 }
 
 /// `fsRemove(path, baseDir, recursive, force)`: remove a path.
@@ -279,7 +255,7 @@ fn remove_path<'js>(
     force: bool,
 ) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
-    operation(ctx, move |stop| remove(&path, recursive, force, stop), nothing)
+    operation(ctx, move |stop| remove(&path, recursive, force, stop))
 }
 
 /// `fsRename(source, destination, baseDir)`: move a path.
@@ -291,22 +267,23 @@ fn rename_path<'js>(
 ) -> rquickjs::Result<Operation<'js>> {
     let source = resolve(ctx, source, base)?;
     let destination = resolve(ctx, destination, base)?;
-    operation(
-        ctx,
-        move |stop| {
-            stop.check()?;
-            fs::rename(&source, &destination).map_err(|error| Failure {
-                destination: Some(destination.clone()),
-                ..Failure::new(error, &source)
-            })
-        },
-        nothing,
-    )
+    operation(ctx, move |stop| {
+        check(stop)?;
+        fs::rename(&source, &destination).map_err(|error| Failure::Io {
+            error,
+            path: source.clone(),
+            destination: Some(destination.clone()),
+        })
+    })
 }
 
-/// The value of an operation that gives nothing.
-fn nothing<'js>(ctx: &Ctx<'js>, (): ()) -> rquickjs::Result<Value<'js>> {
-    ().into_js(ctx)
+/// The bytes of a read, which JavaScript gets as a `Uint8Array`.
+struct Bytes(Vec<u8>);
+
+impl<'js> IntoJs<'js> for Bytes {
+    fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+        Ok(TypedArray::<u8>::new(ctx.clone(), self.0)?.into_value())
+    }
 }
 
 /// The absolute path of `path`. A relative path needs the absolute folder `base`. A bad path throws a `TypeError`.
@@ -328,60 +305,54 @@ fn resolve(ctx: &Ctx<'_>, path: &str, base: Option<&str>) -> rquickjs::Result<Pa
     }
 }
 
-/// The stop flag of one operation. `cancel` of JavaScript sets it, and the worker checks it.
-#[derive(Debug, Clone, Default)]
-struct Stop(Arc<AtomicBool>);
-
-impl Stop {
-    /// Fail with [`Failure::cancelled`] when a stop came.
-    fn check(&self) -> Result<(), Failure> {
-        if self.0.load(Ordering::Relaxed) {
-            Err(Failure::cancelled())
-        } else {
-            Ok(())
-        }
+/// Fail with [`Failure::Cancelled`] after a call of `cancel`.
+fn check(stop: &CancellationToken) -> Result<(), Failure> {
+    if stop.is_cancelled() {
+        Err(Failure::Cancelled)
+    } else {
+        Ok(())
     }
 }
 
-/// Why an operation failed. `error` is `None` for a stop.
+/// Why an operation failed.
 #[derive(Debug)]
-struct Failure {
-    error: Option<io::Error>,
-    path: PathBuf,
-    destination: Option<PathBuf>,
+enum Failure {
+    /// A call of `cancel` came before a check.
+    Cancelled,
+    /// The file system failed at `path`, or at the pair of `path` and `destination`.
+    Io {
+        error: io::Error,
+        path: PathBuf,
+        destination: Option<PathBuf>,
+    },
 }
 
 impl Failure {
     fn new(error: io::Error, path: &Path) -> Self {
-        Failure {
-            error: Some(error),
+        Failure::Io {
+            error,
             path: path.to_owned(),
-            destination: None,
-        }
-    }
-
-    fn cancelled() -> Self {
-        Failure {
-            error: None,
-            path: PathBuf::new(),
             destination: None,
         }
     }
 
     /// The record that the promise rejects with.
     fn record<'js>(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-        let Some(error) = self.error else {
+        let Failure::Io {
+            error,
+            path,
+            destination,
+        } = self
+        else {
             return Cancelled { cancelled: true }.into_js(ctx);
         };
         let (code, description) = describe(&error);
-        let path = self.path.to_string_lossy().into_owned();
+        let path = path.to_string_lossy().into_owned();
         FileError {
             code,
             message: format!("{description}: {path}"),
             path,
-            destination: self
-                .destination
-                .map(|destination| destination.to_string_lossy().into_owned()),
+            destination: destination.map(|destination| destination.to_string_lossy().into_owned()),
         }
         .into_js(ctx)
     }
@@ -446,35 +417,29 @@ pub(super) fn describe(error: &io::Error) -> (&'static str, String) {
     }
 }
 
-/// Start `work` on a blocking thread. `convert` makes the value of the promise on the JavaScript thread.
-fn operation<'js, T: Send + 'static>(
+/// Start `work` on a blocking thread. The worker sees a call of `cancel` at its next check.
+fn operation<'js, T: IntoJs<'js> + Send + 'static>(
     ctx: &Ctx<'js>,
-    work: impl FnOnce(&Stop) -> Result<T, Failure> + Send + 'static,
-    convert: impl FnOnce(&Ctx<'js>, T) -> rquickjs::Result<Value<'js>> + 'js,
+    work: impl FnOnce(&CancellationToken) -> Result<T, Failure> + Send + 'static,
 ) -> rquickjs::Result<Operation<'js>> {
-    let stop = Stop::default();
-    let worker = stop.clone();
-    let settle = ctx.clone();
-    let promise = Promise::wrap_future(ctx, async move {
-        let done = tokio::task::spawn_blocking(move || work(&worker)).await;
+    Operation::start(ctx, move |ctx, stop| async move {
+        let done = tokio::task::spawn_blocking(move || work(&stop)).await;
         // Each throw comes last, after the await, so no exception waits across it.
         match done {
-            Ok(Ok(value)) => convert(&settle, value),
-            Ok(Err(failure)) => Err(settle.throw(failure.record(&settle)?)),
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(failure)) => Err(ctx.throw(failure.record(&ctx)?)),
             Err(error) => Err(throw(
-                &settle,
+                &ctx,
                 ErrorClass::Error,
                 &format!("the file operation failed: {error}"),
             )),
         }
-    })?;
-    let cancel = Function::new(ctx.clone(), move || stop.0.store(true, Ordering::Relaxed))?;
-    Ok(Operation { promise, cancel })
+    })
 }
 
 /// The bytes of the file at `path` from `position`, at most `length`, or to the end. A directory and a special file
 /// fail.
-fn read(path: &Path, position: u64, length: Option<u64>, stop: &Stop) -> Result<Vec<u8>, Failure> {
+fn read(path: &Path, position: u64, length: Option<u64>, stop: &CancellationToken) -> Result<Vec<u8>, Failure> {
     // The check before each chunk is the first check too. An open and a seek change nothing.
     let fail = |error| Failure::new(error, path);
     check_kind(fs::metadata(path).map_err(fail)?.file_type()).map_err(fail)?;
@@ -483,7 +448,7 @@ fn read(path: &Path, position: u64, length: Option<u64>, stop: &Stop) -> Result<
     let mut reader = file.take(length.unwrap_or(u64::MAX));
     let mut bytes = Vec::new();
     loop {
-        stop.check()?;
+        check(stop)?;
         let start = bytes.len();
         bytes.resize(start + CHUNK, 0);
         let count = reader.read(&mut bytes[start..]).map_err(fail)?;
@@ -506,9 +471,9 @@ fn write(
     placement: Placement,
     creation: Creation,
     mode: Option<u32>,
-    stop: &Stop,
+    stop: &CancellationToken,
 ) -> Result<(), Failure> {
-    stop.check()?;
+    check(stop)?;
     let fail = |error| Failure::new(error, path);
     // A rename would replace a special file too, so both forms check the kind. A new file opens nothing that exists.
     let existing = match fs::metadata(path) {
@@ -573,7 +538,7 @@ fn write(
             fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))
                 .map_err(|error| Failure::new(error, path))?;
         }
-        stop.check()?;
+        check(stop)?;
         fs::rename(&temporary, path).map_err(|error| Failure::new(error, path))
     })();
     if written.is_err() && fs::remove_file(&temporary).is_err() {
@@ -583,9 +548,9 @@ fn write(
 }
 
 /// Write `bytes` to `file` in chunks, with a stop check before each chunk. An I/O failure names `path`.
-fn write_chunks(file: &mut File, bytes: &[u8], path: &Path, stop: &Stop) -> Result<(), Failure> {
+fn write_chunks(file: &mut File, bytes: &[u8], path: &Path, stop: &CancellationToken) -> Result<(), Failure> {
     for chunk in bytes.chunks(CHUNK) {
-        stop.check()?;
+        check(stop)?;
         file.write_all(chunk).map_err(|error| Failure::new(error, path))?;
     }
     Ok(())
@@ -614,12 +579,12 @@ struct Entry {
 }
 
 /// The entries of the directory at `path`, in the order of the file system. A name that is not UTF-8 fails.
-fn read_dir(path: &Path, stop: &Stop) -> Result<Vec<Entry>, Failure> {
-    stop.check()?;
+fn read_dir(path: &Path, stop: &CancellationToken) -> Result<Vec<Entry>, Failure> {
+    check(stop)?;
     let fail = |error| Failure::new(error, path);
     let mut entries = Vec::new();
     for entry in fs::read_dir(path).map_err(fail)? {
-        stop.check()?;
+        check(stop)?;
         let entry = entry.map_err(fail)?;
         let name = entry
             .file_name()
@@ -650,8 +615,8 @@ struct Info {
 }
 
 /// The facts of the path at `path`. `follow` reads the target of a symbolic link, and otherwise the link.
-fn stat(path: &Path, follow: bool, stop: &Stop) -> Result<Info, Failure> {
-    stop.check()?;
+fn stat(path: &Path, follow: bool, stop: &CancellationToken) -> Result<Info, Failure> {
+    check(stop)?;
     let metadata = if follow {
         fs::metadata(path)
     } else {
@@ -680,8 +645,8 @@ fn stat(path: &Path, follow: bool, stop: &Stop) -> Result<Info, Failure> {
 
 /// Remove the file, the link, or the directory at `path`. A directory with entries needs `recursive`. `force` ignores a
 /// missing path.
-fn remove(path: &Path, recursive: bool, force: bool, stop: &Stop) -> Result<(), Failure> {
-    stop.check()?;
+fn remove(path: &Path, recursive: bool, force: bool, stop: &CancellationToken) -> Result<(), Failure> {
+    check(stop)?;
     let fail = |error| Failure::new(error, path);
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,

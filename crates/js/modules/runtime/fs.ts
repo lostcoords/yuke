@@ -1,7 +1,7 @@
 /** The code of the public module `yuke:fs`. Its declaration is `types/fs.d.ts`, and the check at the end compares the two. */
 
 import { fieldsOf } from "yuke:internal/define";
-import { abortState, addAbortStep } from "yuke:internal/events";
+import { signalOf, underSignal } from "yuke:internal/events";
 import {
   fsMkdir,
   fsReadDir,
@@ -48,9 +48,7 @@ function optionsOf(options: unknown, names: readonly string[] = []): Readonly<Re
   const fields = options === undefined ? {} : fieldsOf(options, "the options", ["baseDir", "signal", ...names]);
   const { baseDir, signal } = fields;
   if (baseDir !== undefined && typeof baseDir !== "string") throw new TypeError("the option baseDir is not a string");
-  // The check of the brand throws a `TypeError` for a value that is no signal.
-  if (signal !== undefined) abortState(signal);
-  return { ...fields, baseDir, signal: signal as AbortSignal | undefined };
+  return { ...fields, baseDir, signal: signalOf(signal) };
 }
 
 /** `value` as a boolean, `false` when it is missing. Another value throws a `TypeError`. */
@@ -81,18 +79,12 @@ function modeOf(value: unknown): number | undefined {
  * operation stops it at its next check. A failure record becomes a `FileSystemError`.
  */
 async function run<T>(signal: AbortSignal | undefined, start: () => Operation<T>): Promise<T> {
-  if (signal !== undefined) {
-    const state = abortState(signal);
-    if (state.aborted) throw state.reason;
-  }
-  const { promise, cancel } = start();
-  const remove = signal === undefined ? undefined : addAbortStep(signal, cancel);
+  // The reason of an abort before the start is no failure record, so it stays out of `failureOf`.
+  signal?.throwIfAborted();
   try {
-    return await promise;
+    return await underSignal(signal, start);
   } catch (error) {
     throw failureOf(error, signal);
-  } finally {
-    remove?.();
   }
 }
 
@@ -100,7 +92,7 @@ async function run<T>(signal: AbortSignal | undefined, start: () => Operation<T>
 function failureOf(error: unknown, signal: AbortSignal | undefined): unknown {
   if (typeof error !== "object" || error === null || error instanceof Error) return error;
   const record = error as Readonly<Record<string, unknown>>;
-  if (record.cancelled === true && signal !== undefined) return abortState(signal).reason;
+  if (record.cancelled === true && signal !== undefined) return signal.reason;
   return new FileSystemError(String(record.message), {
     code: String(record.code),
     path: String(record.path),

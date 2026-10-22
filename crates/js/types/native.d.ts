@@ -24,12 +24,6 @@ declare module "yuke:internal/native" {
     readonly media: readonly ToolMedia[];
   }
 
-  /** The start of a call: the promise of its result, and the function that aborts its signal at a cancellation. */
-  export interface Started {
-    readonly answer: Promise<Answer>;
-    readonly abort: () => void;
-  }
-
   /** A started job: its id and its log file. */
   export interface StartedJob {
     readonly id: string;
@@ -88,7 +82,7 @@ declare module "yuke:internal/native" {
       readonly deferLoading: boolean;
       readonly open: number | undefined;
     },
-    start: (request: CallRequest) => Started,
+    start: (request: CallRequest) => Operation<Answer>,
   ): number;
 
   /** Remove the tools of `ids`. */
@@ -154,7 +148,7 @@ declare module "yuke:internal/native" {
    */
   export function processOutput(request: ProcessRequest): Operation<ProcessEnd>;
 
-  /** One file operation in flight: its promise, and the function that asks it to stop at its next check. */
+  /** One operation in flight: its promise, and the function that asks it to stop. */
   export interface Operation<T> {
     readonly promise: Promise<T>;
     readonly cancel: () => void;

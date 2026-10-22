@@ -390,7 +390,8 @@ async fn an_aborted_signal_rejects_with_its_reason_and_changes_nothing() {
     let (text, folder) = run_fs(
         "an_aborted_signal_rejects_with_its_reason_and_changes_nothing",
         |_| {},
-        "const reason = new Error('stop');
+        // A plain object reason must not become a `FileSystemError`.
+        "const reason = { why: 'stop' };
          try { await fs.writeTextFile('x.txt', 'x', { baseDir: base, signal: AbortSignal.abort(reason) }); }
          catch (error) { return String(error === reason); }
          return 'none';",

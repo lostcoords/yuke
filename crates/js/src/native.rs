@@ -14,19 +14,38 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use rquickjs::module::{Declarations, Declared, Exports, ModuleDef};
-use rquickjs::{Ctx, Function, Module, Object};
+use rquickjs::{Ctx, Function, IntoJs, Module, Object};
 
 use tokio::sync::mpsc;
+use yuke_engine::CancellationToken;
 
 use crate::error::{ErrorClass, Report, throw};
 use crate::processes::Processes;
 use crate::tools::Registry;
 
-/// A started operation: the promise of its value, and the function that stops it.
-#[derive(rquickjs::IntoJs)]
+/// A started operation: the promise of its value, and the function that stops it. Rust gives one to JavaScript for a
+/// native, and JavaScript gives one to Rust for a tool call or a hook run.
+#[derive(rquickjs::IntoJs, rquickjs::FromJs)]
 pub(crate) struct Operation<'js> {
     pub(crate) promise: rquickjs::Promise<'js>,
     pub(crate) cancel: Function<'js>,
+}
+
+impl<'js> Operation<'js> {
+    /// Start the future that `run` makes with a new token. A call of `cancel` cancels the token.
+    pub(crate) fn start<F, R>(
+        ctx: &Ctx<'js>,
+        run: impl FnOnce(Ctx<'js>, CancellationToken) -> F,
+    ) -> rquickjs::Result<Self>
+    where
+        F: Future<Output = rquickjs::Result<R>> + 'js,
+        R: IntoJs<'js>,
+    {
+        let token = CancellationToken::new();
+        let promise = rquickjs::Promise::wrap_future(ctx, run(ctx.clone(), token.clone()))?;
+        let cancel = Function::new(ctx.clone(), move || token.cancel())?;
+        Ok(Self { promise, cancel })
+    }
 }
 
 /// The name of the native module.

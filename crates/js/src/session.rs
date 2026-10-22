@@ -373,19 +373,14 @@ fn ask_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>) -> rquickjs::Re
                     "ask: the question has no known kind",
                 ));
             };
-            let (host, stop) = (Arc::clone(&host), CancellationToken::new());
-            let (settle, waiting) = (ctx.clone(), stop.clone());
-            let promise = Promise::wrap_future(&ctx, async move {
-                match host.ask(&source, request, waiting).await {
-                    InteractionResponse::Confirm { value } => value.into_js(&settle),
-                    InteractionResponse::Select { value } | InteractionResponse::Input { value } => {
-                        value.into_js(&settle)
-                    }
-                    InteractionResponse::Canceled => Ok(Value::new_undefined(settle.clone())),
+            let host = Arc::clone(&host);
+            Operation::start(&ctx, move |ctx, stop| async move {
+                match host.ask(&source, request, stop).await {
+                    InteractionResponse::Confirm { value } => value.into_js(&ctx),
+                    InteractionResponse::Select { value } | InteractionResponse::Input { value } => value.into_js(&ctx),
+                    InteractionResponse::Canceled => Ok(Value::new_undefined(ctx.clone())),
                 }
-            })?;
-            let cancel = Function::new(ctx.clone(), move || stop.cancel())?;
-            Ok(Operation { promise, cancel })
+            })
         },
     )
 }
@@ -534,13 +529,11 @@ where
     caller.post(async move |ctx: Ctx<'_>, _: Rc<Registry>| {
         let answer = async {
             let function: Function<'_> = caught(&ctx, loader(&ctx).await?.get(start))?;
-            let started: Object<'_> = caught(&ctx, function.call((request,)))?;
-            let promise: Promise<'_> = caught(&ctx, started.get("answer"))?;
-            let abort: Function<'_> = caught(&ctx, started.get("abort"))?;
+            let Operation { promise, cancel } = caught(&ctx, function.call((request,)))?;
             tokio::select! {
                 answer = promise.into_future::<T>() => caught(&ctx, answer).map(Some),
                 () = token.cancelled() => {
-                    caught(&ctx, abort.call::<_, ()>(()))?;
+                    caught(&ctx, cancel.call::<_, ()>(()))?;
                     Ok(None)
                 }
             }

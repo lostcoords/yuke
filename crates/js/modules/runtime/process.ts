@@ -1,7 +1,7 @@
 /** The code of the public module `yuke:process`. Its declaration is `types/process.d.ts`, and the check at the end compares the two. */
 
 import { fieldsOf } from "yuke:internal/define";
-import { abortState, addAbortStep } from "yuke:internal/events";
+import { signalOf, underSignal } from "yuke:internal/events";
 import { type ProcessRequest, processOutput } from "yuke:internal/native";
 import type { CommandOutput } from "yuke:process";
 
@@ -32,8 +32,6 @@ function requestOf(command: unknown, options: unknown): { request: ProcessReques
   }
   if (typeof clearEnv !== "boolean") throw new TypeError("the option clearEnv is not a boolean");
   if (stdin !== undefined && stdin !== "null") throw new TypeError('the option stdin is not "null"');
-  // The check of the brand throws a `TypeError` for a value that is no signal.
-  if (signal !== undefined) abortState(signal);
   const request: ProcessRequest = {
     command,
     args: [...(args as string[])],
@@ -43,7 +41,7 @@ function requestOf(command: unknown, options: unknown): { request: ProcessReques
     stdout: keeps(fields.stdout, "stdout"),
     stderr: keeps(fields.stderr, "stderr"),
   };
-  return { request, signal: signal as AbortSignal | undefined };
+  return { request, signal: signalOf(signal) };
 }
 
 export class Command {
@@ -57,19 +55,8 @@ export class Command {
   }
 
   async output(): Promise<CommandOutput> {
-    const signal = this.#signal;
-    if (signal !== undefined) {
-      const state = abortState(signal);
-      if (state.aborted) throw state.reason;
-    }
-    const { promise, cancel } = processOutput(this.#request);
-    const remove = signal === undefined ? undefined : addAbortStep(signal, cancel);
-    try {
-      const end = await promise;
-      return Object.freeze({ success: end.code === 0, ...end });
-    } finally {
-      remove?.();
-    }
+    const end = await underSignal(this.#signal, () => processOutput(this.#request));
+    return Object.freeze({ success: end.code === 0, ...end });
   }
 }
 

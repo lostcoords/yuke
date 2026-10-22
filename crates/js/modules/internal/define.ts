@@ -1,6 +1,6 @@
 import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { bindCall } from "yuke:internal/call";
-import { hostSignal } from "yuke:internal/events";
+import { hostOperation } from "yuke:internal/events";
 import { type Answer, register } from "yuke:internal/native";
 import type { Infer, ObjectSchema, Tool, ToolContext, ToolMedia } from "yuke:tools";
 
@@ -23,19 +23,17 @@ export function defineTool<const S extends ObjectSchema>(tool: Tool<S>, open?: n
     deferLoading: tool.deferLoading === true,
     open,
   };
-  return register(description, ({ arguments: args, sessionId, callId, folder, output, call }) => {
-    const { signal, abort } = hostSignal();
-    const context: ToolContext = { sessionId, callId, folder, signal, output };
-    bindCall(context, call);
-    const answer = (async () => {
+  return register(description, ({ arguments: args, sessionId, callId, folder, output, call }) =>
+    hostOperation(async (signal, abort) => {
+      const context: ToolContext = { sessionId, callId, folder, signal, output };
+      bindCall(context, call);
       try {
         return answerOf(await execute(checkArguments(parameters, args) as Infer<S>, context));
       } finally {
         abort("The tool call has ended");
       }
-    })();
-    return { answer, abort: () => abort("The tool call was cancelled") };
-  });
+    }, "The tool call was cancelled"),
+  );
 }
 
 /** The fields of a result object and of one media item. */

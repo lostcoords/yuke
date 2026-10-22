@@ -91,7 +91,8 @@ async fn a_cancel_or_an_abort_answers_undefined_and_an_aborted_signal_asks_nothi
          controller.abort();
          const aborted = await waiting;
          const late = await s.input('Third?', { signal: controller.signal });
-         return [canceled, aborted, late].map((answer) => answer === undefined);",
+         const refused = await s.confirm('Fourth?', '', { signal: 5 }).then(() => 'answered', (error) => error.name);
+         return [...[canceled, aborted, late].map((answer) => answer === undefined), refused];",
     );
     let (_runtime, session, host, _reports) = opened_with_host(
         "a_cancel_or_an_abort_answers_undefined_and_an_aborted_signal_asks_nothing",
@@ -104,7 +105,8 @@ async fn a_cancel_or_an_abort_answers_undefined_and_an_aborted_signal_asks_nothi
 
     let text = text_of(ask, "{}").await;
 
-    assert_eq!(text, "[true,true,true]");
+    assert_eq!(text, r#"[true,true,true,"TypeError"]"#);
+    // A `signal` option of another type throws a `TypeError` before the question.
     assert_eq!(
         *host.questions.lock().unwrap(),
         [confirm("First?", ""), confirm("Second?", "")]

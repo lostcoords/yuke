@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Persistent, Promise, Value};
+use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Persistent, Value};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
@@ -18,7 +18,7 @@ use yuke_ai::MAX_MEDIA_BYTES;
 use yuke_engine::{CancellationToken, Concurrency, MediaStore, Tool, ToolContent, ToolContext, check_tool_name};
 
 use crate::error::{Error, caught};
-use crate::native::call;
+use crate::native::{Operation, call};
 use crate::processes::Processes;
 use crate::runtime::Caller;
 
@@ -309,15 +309,13 @@ impl ScriptTool {
                     output,
                     call,
                 };
-                let started: Object<'_> = caught(&ctx, start.call((request,)))?;
-                let promise: Promise<'_> = caught(&ctx, started.get("answer"))?;
-                let abort: Function<'_> = caught(&ctx, started.get("abort"))?;
+                let Operation { promise, cancel } = caught(&ctx, start.call((request,)))?;
 
                 let mut settled = pin!(promise.into_future::<Answer>());
                 tokio::select! {
                     answer = &mut settled => caught(&ctx, answer),
                     () = token.cancelled() => {
-                        caught(&ctx, abort.call::<_, ()>(()))?;
+                        caught(&ctx, cancel.call::<_, ()>(()))?;
                         // The tool answers what the stopped work did.
                         caught(&ctx, settled.await)
                     }

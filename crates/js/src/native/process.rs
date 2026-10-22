@@ -4,8 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Promise, TypedArray};
-use yuke_engine::CancellationToken;
+use rquickjs::{Ctx, FromJs, Function, Object, TypedArray};
 
 use super::Operation;
 use crate::error::{ErrorClass, throw};
@@ -49,21 +48,17 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, processes: &Arc<Pro
 
 /// Start `program`, and answer the operation of its run.
 fn output<'js>(ctx: &Ctx<'js>, processes: Arc<Processes>, program: Program) -> rquickjs::Result<Operation<'js>> {
-    let stop = CancellationToken::new();
-    let (settle, running) = (ctx.clone(), stop.clone());
-    let promise = Promise::wrap_future(ctx, async move {
-        match processes.output(program, running).await {
+    Operation::start(ctx, move |ctx, stop| async move {
+        match processes.output(program, stop).await {
             Ok(end) => {
-                let object = Object::new(settle.clone())?;
+                let object = Object::new(ctx.clone())?;
                 object.set("code", end.code)?;
                 object.set("signal", end.signal)?;
-                object.set("stdout", TypedArray::<u8>::new(settle.clone(), end.stdout)?)?;
-                object.set("stderr", TypedArray::<u8>::new(settle.clone(), end.stderr)?)?;
-                object.into_js(&settle)
+                object.set("stdout", TypedArray::<u8>::new(ctx.clone(), end.stdout)?)?;
+                object.set("stderr", TypedArray::<u8>::new(ctx.clone(), end.stderr)?)?;
+                Ok(object)
             }
-            Err(message) => Err(throw(&settle, ErrorClass::Error, &message)),
+            Err(message) => Err(throw(&ctx, ErrorClass::Error, &message)),
         }
-    })?;
-    let cancel = Function::new(ctx.clone(), move || stop.cancel())?;
-    Ok(Operation { promise, cancel })
+    })
 }

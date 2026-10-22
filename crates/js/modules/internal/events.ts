@@ -2,6 +2,7 @@
  * The web classes `Event`, `CustomEvent`, `EventTarget`, `AbortSignal`, and `AbortController` for targets without a
  * tree. `yuke:internal/web` installs them as globals.
  */
+import type { Operation } from "yuke:internal/native";
 import { dictionary, domString, needs, webClass } from "yuke:internal/webidl";
 
 // The classes keep the globals of the runtime start, so a plugin that replaces a global does not change them.
@@ -479,10 +480,10 @@ export class AbortController {
   }
 }
 
-/** Whether `signal` has aborted, and its reason, from its private state. A value that is no signal throws a `TypeError`. */
-export function abortState(signal: unknown): { readonly aborted: boolean; readonly reason: unknown } {
-  const state = signalState(signal);
-  return { aborted: state.aborted, reason: state.reason };
+/** `value` as an `AbortSignal`, or `undefined` when it is missing. Another value throws a `TypeError`. */
+export function signalOf(value: unknown): AbortSignal | undefined {
+  if (value !== undefined) signalState(value);
+  return value as AbortSignal | undefined;
 }
 
 /**
@@ -507,6 +508,38 @@ function abortError(message = "the signal is aborted without reason"): DOMExcept
 export function hostSignal(): { readonly signal: AbortSignal; readonly abort: (message: string) => void } {
   const signal = new AbortSignal(CREATE);
   return { signal, abort: (message) => signalAbort(signal, abortError(message)) };
+}
+
+/**
+ * Start `run` with a host signal and its abort. The `cancel` of the operation aborts the signal with `message`, and
+ * marks a later rejection as handled. A hook host stops its wait at a cancel, and a tool host awaits the result.
+ */
+export function hostOperation<T>(
+  run: (signal: AbortSignal, abort: (message: string) => void) => Promise<T>,
+  message: string,
+): Operation<T> {
+  const { signal, abort } = hostSignal();
+  const promise = run(signal, abort);
+  const cancel = (): void => {
+    promise.catch(() => undefined);
+    abort(message);
+  };
+  return { promise, cancel };
+}
+
+/**
+ * Await the operation of `start` under `signal`. An aborted signal throws its reason before the start. An abort during
+ * the operation calls its `cancel`.
+ */
+export async function underSignal<T>(signal: AbortSignal | undefined, start: () => Operation<T>): Promise<T> {
+  signal?.throwIfAborted();
+  const { promise, cancel } = start();
+  const remove = signal === undefined ? undefined : addAbortStep(signal, cancel);
+  try {
+    return await promise;
+  } finally {
+    remove?.();
+  }
 }
 
 /** Make `signal` a dependent of `source`. */

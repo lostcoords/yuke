@@ -1,5 +1,5 @@
 import { defineTool, fieldsOf, mediaOf } from "yuke:internal/define";
-import { abortState, addAbortStep, hostSignal } from "yuke:internal/events";
+import { addAbortStep, hostOperation, hostSignal, signalOf } from "yuke:internal/events";
 import { notify, type Operation, unregister } from "yuke:internal/native";
 import type {
   AskOptions,
@@ -209,13 +209,16 @@ interface PromptBuildRequest {
   readonly sections: readonly Section[];
 }
 
+/** The abort message of a hook run at a cancel. */
+const TURN_CANCELLED = "the turn was cancelled";
+
 /**
  * Start the `prompt.build` handlers of the open session `open` on `sections`. Each handler gets the sections of the
- * answer before it. The answer is the sections after the last handler, and `sections` for a closed session. `abort`
+ * answer before it. The answer is the sections after the last handler, and `sections` for a closed session. `cancel`
  * aborts the signal of the build.
  */
-export function startPromptBuild({ open, sections }: PromptBuildRequest): Started<Section[]> {
-  return started(async (signal) => {
+export function startPromptBuild({ open, sections }: PromptBuildRequest): Operation<Section[]> {
+  return hostOperation(async (signal) => {
     let current: Readonly<Record<string, string>> = Object.freeze(
       Object.fromEntries(sections.map(({ key, text }) => [key, text])),
     );
@@ -229,7 +232,7 @@ export function startPromptBuild({ open, sections }: PromptBuildRequest): Starte
       },
     );
     return Object.entries(current).map(([key, text]) => ({ key, text }));
-  });
+  }, TURN_CANCELLED);
 }
 
 /** What `startToolBefore` gets. The host gives the arguments of the call as their parsed JSON. */
@@ -240,11 +243,11 @@ interface ToolBeforeRequest {
 
 /**
  * Start the `tool.before` handlers of the open session `open` on `call`. The answer is the reason of the first block,
- * or `undefined` when the call runs. A closed session blocks nothing. A failed handler throws. `abort` aborts the
+ * or `undefined` when the call runs. A closed session blocks nothing. A failed handler throws. `cancel` aborts the
  * signal of the call.
  */
-export function startToolBefore({ open, call }: ToolBeforeRequest): Started<string | undefined> {
-  return started(async (signal) => {
+export function startToolBefore({ open, call }: ToolBeforeRequest): Operation<string | undefined> {
+  return hostOperation(async (signal) => {
     const event = Object.freeze({ call: frozen(call), signal });
     let reason: string | undefined;
     await runHandlers(
@@ -257,7 +260,7 @@ export function startToolBefore({ open, call }: ToolBeforeRequest): Started<stri
       },
     );
     return reason;
-  });
+  }, TURN_CANCELLED);
 }
 
 /** What `startRoundAfter` gets. */
@@ -272,15 +275,15 @@ interface RoundAfterRequest {
 /**
  * Start the `round.after` handlers of the open session `open` after one round. The answer is the first answer of a
  * handler, with the plugin that sent a `continue`, or `undefined` when no handler answered. A closed session answers
- * nothing. A failed handler throws. `abort` aborts the signal of the turn.
+ * nothing. A failed handler throws. `cancel` aborts the signal of the turn.
  */
 export function startRoundAfter({
   open,
   text,
   finishReason,
   continues,
-}: RoundAfterRequest): Started<RoundDecision | undefined> {
-  return started(async (signal) => {
+}: RoundAfterRequest): Operation<RoundDecision | undefined> {
+  return hostOperation(async (signal) => {
     const event: RoundAfterEvent = Object.freeze({ text, finishReason: finishReason ?? null, continues, signal });
     let decision: RoundDecision | undefined;
     await runHandlers(
@@ -293,7 +296,7 @@ export function startRoundAfter({
       },
     );
     return decision;
-  });
+  }, TURN_CANCELLED);
 }
 
 /** The fields of a `round.after` answer. */
@@ -341,10 +344,10 @@ interface ToolAfterRequest {
 /**
  * Start the `tool.after` handlers of the open session `open` on the result of `call`. The answer is the result after
  * the last handler, or `undefined` when no handler answered. A closed session changes nothing. A failed handler throws.
- * `abort` aborts the signal of the call.
+ * `cancel` aborts the signal of the call.
  */
-export function startToolAfter({ open, call, result: given }: ToolAfterRequest): Started<ChangedResult | undefined> {
-  return started(async (signal) => {
+export function startToolAfter({ open, call, result: given }: ToolAfterRequest): Operation<ChangedResult | undefined> {
+  return hostOperation(async (signal) => {
     frozen(call);
     // The index is the id, and a kept item crosses back to the host as its index.
     const originals: readonly ResultMedia[] = given.media.map(({ mimeType, size }, index) =>
@@ -375,7 +378,7 @@ export function startToolAfter({ open, call, result: given }: ToolAfterRequest):
         return index === -1 ? (item as ToolMedia) : index;
       }),
     };
-  });
+  }, TURN_CANCELLED);
 }
 
 /**
@@ -484,24 +487,6 @@ function keptOf(value: unknown, place: string, originals: readonly ResultMedia[]
   return original;
 }
 
-/** A run of the handlers of one point, and the abort of its signal. */
-interface Started<T> {
-  readonly answer: Promise<T>;
-  readonly abort: () => void;
-}
-
-/** Start `run` with a new signal. `abort` aborts the signal. */
-function started<T>(run: (signal: AbortSignal) => Promise<T>): Started<T> {
-  const { signal, abort } = hostSignal();
-  const answer = run(signal);
-  const cancel = (): void => {
-    // The host stops its wait at a cancel, so a later failure of the run has no reader and is no fault.
-    answer.catch(() => undefined);
-    abort("the turn was cancelled");
-  };
-  return { answer, abort: cancel };
-}
-
 /** `value` with each object in it frozen. A JSON value has no cycle. */
 function frozen<T>(value: T): T {
   if (typeof value === "object" && value !== null) {
@@ -562,7 +547,7 @@ function start(
     asked: Question,
     stop: AbortSignal | undefined,
   ): Promise<T | undefined> => {
-    if (scope.closed || (stop !== undefined && abortState(stop).aborted)) return undefined;
+    if (scope.closed || signalOf(stop)?.aborted) return undefined;
     const { promise, cancel } = ask(plugin, asked);
     const removes = [addAbortStep(signal, cancel)];
     if (stop !== undefined) removes.push(addAbortStep(stop, cancel));
