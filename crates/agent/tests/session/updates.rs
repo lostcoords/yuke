@@ -432,6 +432,7 @@ async fn a_round_failure_reaches_clients_with_each_cause() {
     let model = Model {
         target: target(),
         source: Arc::new(RefusedLogin),
+        context_window: None,
     };
     let store = Arc::new(MemoryStore::new());
     let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();

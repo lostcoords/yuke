@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason};
-use yuke_engine::{Driver, Hooks, RoundDecision, RoundError, RoundPlan, TurnEnd, TurnError, chain_text};
+use yuke_engine::{Driver, Hooks, RoundDecision, RoundError, RoundPlan, RoundStart, TurnEnd, TurnError, chain_text};
 use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, text_reply};
 
 use crate::support::{Replay, block_on};
@@ -58,7 +58,7 @@ impl Failing {
 
 #[async_trait]
 impl Hooks for Failing {
-    async fn before_round(&self, _: &[Block]) -> Result<RoundPlan, Box<dyn Error + Send + Sync>> {
+    async fn before_round(&self, _: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn Error + Send + Sync>> {
         self.fail_at(RoundHook::Before, RoundPlan::default())
     }
 

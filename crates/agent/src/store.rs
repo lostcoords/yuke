@@ -196,6 +196,8 @@ pub struct Opened {
     pub context: Vec<yuke_ai::Block>,
     /// The newest turn of the session.
     pub newest_turn: NewestTurn,
+    /// The input tokens of the newest answer, or `None` without an answer or when the provider sent no count.
+    pub input_tokens: Option<u64>,
     /// The owner lock of an [`Access::Write`] open. A read holds no lock.
     pub lease: Option<Lease>,
 }

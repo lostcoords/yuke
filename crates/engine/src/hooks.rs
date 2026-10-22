@@ -19,7 +19,7 @@ pub trait Hooks: Send + Sync {
     /// # Errors
     ///
     /// Returns why the hook failed. The turn then ends with no request.
-    async fn before_round(&self, _context: &[Block]) -> Result<RoundPlan, Box<dyn Error + Send + Sync>> {
+    async fn before_round(&self, _round: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn Error + Send + Sync>> {
         Ok(RoundPlan::default())
     }
 
@@ -67,6 +67,20 @@ pub trait Hooks: Send + Sync {
     ) -> Result<RoundDecision, Box<dyn Error + Send + Sync>> {
         Ok(RoundDecision::Proceed)
     }
+}
+
+/// What [`Hooks::before_round`] knows about the round.
+#[derive(Debug, Clone, Copy)]
+pub struct RoundStart<'a> {
+    /// The context, oldest first.
+    pub context: &'a [Block],
+    /// The settings of the driver.
+    pub settings: &'a Settings,
+    /// The context window of the model of the driver in tokens, from [`Model::context_window`].
+    pub window: Option<u64>,
+    /// The input tokens of the newest answer, or `None` before the first answer or when the provider sent no count. A
+    /// replacement does not change the count, so after one the count describes the old context until the next answer.
+    pub input_tokens: Option<u64>,
 }
 
 /// The plan of a round, from [`Hooks::before_round`] or [`Hooks::retry_round`]. A `None` replacement keeps the

@@ -2,8 +2,8 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use yuke_ai::{Block, Settings, Target};
-use yuke_engine::{CancellationToken, Driver, Hooks, Outcome, Replaced, RoundPlan, Toolset, TurnEvent};
-use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, model_of, target, text_reply, tool_reply};
+use yuke_engine::{CancellationToken, Driver, Hooks, Outcome, Replaced, RoundPlan, RoundStart, Toolset, TurnEvent};
+use yuke_testing::{NoWait, ScriptedTransport, counted, failed_reply, model, model_of, target, text_reply, tool_reply};
 
 use crate::support::{Recorder, Script, block_on, definition};
 
@@ -184,7 +184,7 @@ struct CancelBeforeRound(CancellationToken);
 
 #[async_trait]
 impl Hooks for CancelBeforeRound {
-    async fn before_round(&self, _: &[Block]) -> Result<RoundPlan, Box<dyn std::error::Error + Send + Sync>> {
+    async fn before_round(&self, _: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn std::error::Error + Send + Sync>> {
         self.0.cancel();
         std::future::pending().await
     }
@@ -209,4 +209,61 @@ fn a_cancel_during_before_round_sends_no_request() {
     assert!(matches!(outcome, Ok(Outcome::Cancelled)), "{outcome:?}");
     assert_eq!(transport.requests().len(), 0);
     assert_eq!(context, [Block::user_text("go")]);
+}
+
+/// Hooks that keep the facts of each round start as one line: the blocks, the window, the input tokens, and the
+/// temperature.
+#[derive(Default)]
+struct Starts(Mutex<Vec<String>>);
+
+#[async_trait]
+impl Hooks for Starts {
+    async fn before_round(
+        &self,
+        round: &RoundStart<'_>,
+    ) -> Result<RoundPlan, Box<dyn std::error::Error + Send + Sync>> {
+        let line = format!(
+            "{} {:?} {:?} {:?}",
+            round.context.len(),
+            round.window,
+            round.input_tokens,
+            round.settings.temperature
+        );
+        self.0.lock().unwrap().push(line);
+        Ok(RoundPlan::default())
+    }
+}
+
+#[test]
+fn before_round_gets_the_window_the_settings_and_the_input_tokens_of_the_newest_answer() {
+    let transport = ScriptedTransport::new([counted(&tool_reply(&[("c1", "echo", "{}")]), 1200), text_reply("done")]);
+    let model = yuke_engine::Model {
+        context_window: Some(200_000),
+        ..model()
+    };
+    let mut toolset = Toolset::new();
+    toolset.add(definition("echo"), Recorder::default()).unwrap();
+    let settings = temperature(0.25);
+    let hooks = Starts::default();
+    let driver = Driver::new(&transport, &model, &NoWait)
+        .toolset(&toolset)
+        .settings(&settings)
+        .hooks(&hooks);
+
+    block_on(
+        driver
+            .turn(&mut Vec::new(), vec![Block::user_text("go")])
+            .input_tokens(Some(7))
+            .run(),
+    )
+    .unwrap();
+
+    // The first round starts from the count of the turn. The second round has the count of the answer of the first.
+    assert_eq!(
+        *hooks.0.lock().unwrap(),
+        [
+            "1 Some(200000) Some(7) Some(0.25)",
+            "3 Some(200000) Some(1200) Some(0.25)"
+        ]
+    );
 }

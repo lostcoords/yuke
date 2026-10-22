@@ -254,6 +254,18 @@ ORDER BY seq DESC LIMIT 1;",
         )
     }
 
+    /// The input tokens of the newest answer of the session. It returns no row for a session without an answer.
+    pub(crate) fn newest_input_tokens(connection: &Connection, session_id: [u8; 16]) -> Query<'_, Option<u64>> {
+        Query::new(
+            connection,
+            r"SELECT input_tokens FROM events
+WHERE session_id = :session_id AND kind = 'commit' AND model IS NOT NULL
+ORDER BY seq DESC LIMIT 1;",
+            &[(":session_id", &session_id)],
+            |row| row.get("input_tokens"),
+        )
+    }
+
     /// The newest commit of the session with a replacement.
     pub(crate) fn newest_replacement(connection: &Connection, session_id: [u8; 16]) -> Query<'_, NewestReplacement> {
         Query::new(

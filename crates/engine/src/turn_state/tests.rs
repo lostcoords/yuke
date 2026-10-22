@@ -83,12 +83,12 @@ fn tool_answer(finish_reason: FinishReason) -> Completion {
 #[test]
 fn second_turn_sends_the_first_turn_context() {
     let mut context = Vec::new();
-    let mut turn_state = TurnState::new(&mut context);
+    let mut turn_state = TurnState::new(&mut context, None);
     let _ = turn_state.send(vec![Block::user_text("one")]);
     let _ = turn_state.model_finished(answer("first answer"), origin());
     let _ = turn_state.stop();
 
-    let mut turn_state = TurnState::new(&mut context);
+    let mut turn_state = TurnState::new(&mut context, None);
     assert!(matches!(
         turn_state.send(vec![Block::user_text("two")]),
         Action::Send(_)
@@ -100,7 +100,7 @@ fn second_turn_sends_the_first_turn_context() {
 #[test]
 fn send_after_a_round_sends_another_request_without_input() {
     let mut context = Vec::new();
-    let mut turn_state = TurnState::new(&mut context);
+    let mut turn_state = TurnState::new(&mut context, None);
     let _ = turn_state.send(vec![Block::user_text("one")]);
     let _ = turn_state.model_finished(answer("done"), origin());
 
@@ -112,7 +112,7 @@ fn send_after_a_round_sends_another_request_without_input() {
 #[test]
 fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_next_request() {
     let mut context = Vec::new();
-    let mut turn_state = TurnState::new(&mut context);
+    let mut turn_state = TurnState::new(&mut context, None);
     let _ = turn_state.send(vec![Block::user_text("one")]);
 
     let action = turn_state.model_finished(tool_answer(FinishReason::ToolCalls), origin());
@@ -153,7 +153,7 @@ fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_ne
 #[test]
 fn stop_finish_with_tool_calls_runs_them() {
     let mut context = Vec::new();
-    let mut turn_state = TurnState::new(&mut context);
+    let mut turn_state = TurnState::new(&mut context, None);
     let _ = turn_state.send(vec![Block::user_text("one")]);
 
     let action = turn_state.model_finished(tool_answer(FinishReason::Stop), origin());
@@ -164,7 +164,7 @@ fn stop_finish_with_tool_calls_runs_them() {
 #[test]
 fn length_finish_runs_no_tool_and_asks_the_model_again() {
     let mut context = Vec::new();
-    let mut turn_state = TurnState::new(&mut context);
+    let mut turn_state = TurnState::new(&mut context, None);
     let _ = turn_state.send(vec![Block::user_text("one")]);
 
     let action = turn_state.model_finished(tool_answer(FinishReason::Length), origin());
@@ -196,7 +196,7 @@ fn length_finish_runs_no_tool_and_asks_the_model_again() {
 #[test]
 fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
     let mut context = Vec::new();
-    let mut turn_state = TurnState::new(&mut context);
+    let mut turn_state = TurnState::new(&mut context, None);
     let _ = turn_state.send(vec![Block::user_text("one")]);
     let _ = turn_state.model_finished(tool_answer(FinishReason::ContentFilter), origin());
 
@@ -224,7 +224,7 @@ fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
 #[test]
 fn send_adds_every_block_of_the_input_to_the_context() {
     let mut context = Vec::new();
-    let mut turn_state = TurnState::new(&mut context);
+    let mut turn_state = TurnState::new(&mut context, None);
 
     let _ = turn_state.send(vec![Block::user_text("look at this"), Block::user_text("and this")]);
 
@@ -234,7 +234,7 @@ fn send_adds_every_block_of_the_input_to_the_context() {
 #[test]
 fn cancelled_request_keeps_its_text_and_gives_each_call_an_error_result() {
     let mut context = Vec::new();
-    let mut turn_state = TurnState::new(&mut context);
+    let mut turn_state = TurnState::new(&mut context, None);
     let _ = turn_state.send(vec![Block::user_text("one")]);
 
     let action = turn_state.model_cancelled(vec![
@@ -344,4 +344,62 @@ fn a_commit_reads_back_from_its_json() {
         assert_eq!(serde_json::to_string(&commit).unwrap(), json);
         assert_eq!(serde_json::from_str::<Commit<'static>>(json).unwrap(), commit);
     }
+}
+
+/// A call `id` and its result.
+fn pair(id: &str) -> [Block; 2] {
+    [
+        Block::ToolCall(ToolCall {
+            call_id: id.to_owned(),
+            name: "read".to_owned(),
+            arguments: "{}".to_owned(),
+        }),
+        Block::ToolResult(ToolResult::success(id, "done")),
+    ]
+}
+
+#[test]
+fn a_replacement_check_refuses_a_kept_result_without_its_call() {
+    let [call, result] = pair("c1");
+    let context = [Block::user_text("one"), call, result, Block::assistant_text("two")];
+    let keep = |keep| Replaced {
+        head: Cow::Owned(vec![Block::user_text("summary")]),
+        keep,
+    };
+
+    // The call is the third block from the end, so a cut between the call and its result keeps 2 blocks.
+    assert_eq!(
+        keep(2).check(&context),
+        Err("the replacement contains the result of call c1 without its call".to_owned())
+    );
+    assert_eq!(keep(3).check(&context), Ok(()));
+    assert_eq!(keep(1).check(&context), Ok(()));
+}
+
+#[test]
+fn a_replacement_check_refuses_a_result_in_the_head_without_its_call() {
+    let [call, result] = pair("c1");
+    let orphan = Replaced {
+        head: Cow::Owned(vec![result.clone()]),
+        keep: 0,
+    };
+    let paired = Replaced {
+        head: Cow::Owned(vec![call, result]),
+        keep: 0,
+    };
+
+    assert!(orphan.check(&[]).is_err());
+    assert_eq!(paired.check(&[]), Ok(()));
+}
+
+#[test]
+fn a_replacement_check_refuses_a_result_before_its_call() {
+    let [call, result] = pair("c1");
+    let context = [result, call];
+    let keep_both = Replaced {
+        head: Cow::Owned(Vec::new()),
+        keep: 2,
+    };
+
+    assert!(keep_both.check(&context).is_err());
 }

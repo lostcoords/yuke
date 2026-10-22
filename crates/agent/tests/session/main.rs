@@ -15,11 +15,13 @@ use yuke_agent::{Access, MemoryStore, NewestTurn, PromptSection, Session, Sessio
 use yuke_ai::route::SessionHeader;
 use yuke_ai::transport::Header;
 use yuke_ai::{Block, Media, ToolCall, ToolDefinition, ToolResult};
-use yuke_engine::{Commit, Driver, RoundError, Toolset, TurnEnd, chain_text};
+use yuke_engine::{Commit, Driver, Hooks, RoundError, RoundPlan, RoundStart, Toolset, TurnEnd, chain_text};
 use yuke_protocol::{
     ConsumedInput, Input, InputId, InputKind, InputSource, ModelReference, SessionEvent, SessionSettings,
 };
-use yuke_testing::{NoWait, ScriptedTransport, Stalled, assert_in_order, failed_reply, model, text_reply, tool_reply};
+use yuke_testing::{
+    NoWait, ScriptedTransport, Stalled, assert_in_order, counted, failed_reply, model, text_reply, tool_reply,
+};
 
 /// The failure of a turn that a recovery ends.
 const TURN_STOPPED: &str = "the turn stopped before it saved its end";
@@ -746,4 +748,49 @@ async fn a_recovery_under_the_lease_needs_no_open_for_writing() {
 
     assert!(matches!(recovered, Ok(None)), "{recovered:?}");
     assert!(!session.is_stale());
+}
+
+/// Hooks that keep the input tokens of each round start.
+#[derive(Default)]
+struct InputTokens(std::sync::Mutex<Vec<Option<u64>>>);
+
+#[async_trait::async_trait]
+impl Hooks for InputTokens {
+    async fn before_round(
+        &self,
+        round: &RoundStart<'_>,
+    ) -> Result<RoundPlan, Box<dyn std::error::Error + Send + Sync>> {
+        self.0.lock().unwrap().push(round.input_tokens);
+        Ok(RoundPlan::default())
+    }
+}
+
+#[tokio::test]
+async fn a_turn_starts_from_the_input_tokens_of_the_newest_answer_also_after_an_open() {
+    let store = Arc::new(MemoryStore::new());
+    let transport = ScriptedTransport::new([
+        counted(&text_reply("two"), 900),
+        counted(&text_reply("four"), 1500),
+        text_reply("six"),
+    ]);
+    let model = model();
+    let hooks = InputTokens::default();
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    for text in ["one", "three"] {
+        store.accept_input(session.id(), user_input(text)).await.unwrap();
+        let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
+        session.turn(driver).run().await.unwrap();
+    }
+    let id = session.id();
+    drop(session);
+    let mut again = Session::open(store.clone(), id).await.unwrap();
+    store.accept_input(id, user_input("five")).await.unwrap();
+
+    again
+        .turn(Driver::new(&transport, &model, &NoWait).hooks(&hooks))
+        .run()
+        .await
+        .unwrap();
+
+    assert_eq!(*hooks.0.lock().unwrap(), [None, Some(900), Some(1500)]);
 }

@@ -1,4 +1,4 @@
-//! The model of a turn: its target and the source of its credential, and the error of a round.
+//! The model of a turn: its target, the source of its credential, and its context window, and the error of a round.
 
 use std::error::Error;
 use std::fmt;
@@ -29,14 +29,16 @@ impl CredentialSource for Credential {
     }
 }
 
-/// A target and the source of its credential. A planned model brings its own source, so it never takes the credential
-/// of the driver's model.
+/// A target, the source of its credential, and its context window. A planned model brings its own source, so it never
+/// takes the credential of the driver's model.
 #[derive(Clone)]
 pub struct Model {
     /// Where and how the requests go.
     pub target: Target,
     /// Gives the credential of each attempt.
     pub source: Arc<dyn CredentialSource>,
+    /// The context window in tokens, or `None` when the caller knows none. [`crate::Hooks::before_round`] gets it.
+    pub context_window: Option<u64>,
 }
 
 impl fmt::Debug for Model {

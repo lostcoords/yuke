@@ -26,6 +26,7 @@ fn keyed(name: &'static str, source: impl CredentialSource + 'static) -> Model {
             ..target()
         },
         source: Arc::new(source),
+        context_window: None,
     }
 }
 

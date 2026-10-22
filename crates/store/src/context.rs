@@ -45,12 +45,14 @@ pub(crate) fn load(connection: &Connection, id: SessionId) -> rusqlite::Result<O
         Some((kind, finish_reason, message)) => event::turn_end(kind.as_deref(), finish_reason, message)?
             .map_or(yuke_agent::NewestTurn::Open, yuke_agent::NewestTurn::Ended),
     };
+    let input_tokens = events::newest_input_tokens(connection, session).opt()?.flatten();
     Ok(Some(Opened {
         id,
         settings: required(settings, "settings")?.0,
         prompt,
         context,
         newest_turn,
+        input_tokens,
         lease: None,
     }))
 }

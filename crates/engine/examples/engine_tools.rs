@@ -49,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = yuke_engine::Model {
         target: yuke_ai::catalog::resolve("minimax/MiniMax-M3")?,
         source: std::sync::Arc::new(yuke_ai::route::Credential::ApiKey(key.into())),
+        context_window: None,
     };
     let http = HttpTransport::new(HttpOptions::new("engine-example"))?;
     let mut toolset = Toolset::new();

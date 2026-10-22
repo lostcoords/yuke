@@ -77,12 +77,16 @@ impl Saved {
         let mut settings = None;
         let mut context = Vec::new();
         let mut newest_turn = NewestTurn::Empty;
+        let mut input_tokens = None;
         for stored in &self.events {
             match &stored.event {
                 SessionEvent::Settings(event_settings) => settings = Some(event_settings),
                 SessionEvent::Commit { commit, .. } => {
                     commit.apply(&mut context);
                     newest_turn = commit.end.clone().map_or(NewestTurn::Open, NewestTurn::Ended);
+                    if let Some(answer) = &commit.answer {
+                        input_tokens = answer.usage.input;
+                    }
                 }
             }
         }
@@ -92,6 +96,7 @@ impl Saved {
             prompt: self.prompt.clone(),
             context,
             newest_turn,
+            input_tokens,
             lease,
         }
     }

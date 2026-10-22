@@ -35,6 +35,7 @@ macro_rules! store_tests {
             a_second_replacement_keeps_blocks_from_before_the_first,
             a_turn_is_open_until_its_end_commit,
             the_newest_turn_keeps_a_cancelled_or_failed_end,
+            an_open_gives_the_input_tokens_of_the_newest_answer,
             a_second_writer_gets_owned,
             a_dropped_lease_lets_a_new_writer_open,
             a_reader_opens_while_a_writer_holds_the_session,
@@ -991,6 +992,36 @@ pub async fn each_commit_and_each_new_settings_is_the_next_event_and_an_input_is
         }
     );
     assert_eq!(events[2].event, SessionEvent::Settings(settings("two")));
+}
+
+/// An open gives the input tokens of the newest answer. A session without an answer has none, and a later commit without
+/// an answer keeps them.
+pub async fn an_open_gives_the_input_tokens_of_the_newest_answer(store: &dyn Store) {
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
+    let before = store.open(id, Access::Read).await.unwrap().input_tokens;
+    let blocks = [yuke_ai::Block::assistant_text("answer")];
+    let answer = Answer {
+        origin: yuke_ai::Origin {
+            model: "test-model".to_owned(),
+            base_url: "https://example.test".to_owned(),
+        },
+        usage: yuke_ai::Usage {
+            input: Some(1200),
+            ..yuke_ai::Usage::default()
+        },
+        finish_reason: yuke_ai::FinishReason::Stop,
+    };
+    let answered = Commit {
+        answer: Some(answer),
+        ..step(&blocks)
+    };
+    store.commit(id, &answered, &[]).await.unwrap();
+    store.commit(id, &end(&[]), &[]).await.unwrap();
+
+    let after = store.open(id, Access::Read).await.unwrap().input_tokens;
+
+    assert_eq!(before, None);
+    assert_eq!(after, Some(1200));
 }
 
 /// A commit reads back equal to the saved one: its replacement, its blocks, its answer, and each kind of end.

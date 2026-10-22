@@ -19,7 +19,7 @@ use yuke_ai::{
     ResponseLimits, SEARCH_TOOL_NAME, Settings, Target, ToolCall, ToolResult,
 };
 
-use crate::hooks::{Hooks, NoHooks, RoundDecision, ToolDecision};
+use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundStart, ToolDecision};
 use crate::model::{Model, RoundError};
 use crate::search::{self, Declared, SearchMode};
 use crate::tool::{Concurrency, TOOL_CALL_NAME, ToolContext, Toolset};
@@ -442,6 +442,7 @@ impl<'a> Driver<'a> {
             input,
             observer: None,
             cancellation_token: CancellationToken::new(),
+            input_tokens: None,
         }
     }
 
@@ -457,12 +458,13 @@ impl<'a> Driver<'a> {
     ) -> Result<Round, TurnError> {
         let cancelled = || Ok(Round::new(Sent::Cancelled(Vec::new()), &self.model.target));
         let failed = |error| Ok(Round::new(Sent::Finished(Err(error)), &self.model.target));
-        let mut plan = match race(
-            self.hooks.before_round(turn_state.context()),
-            cancellation_token.cancelled(),
-        )
-        .await
-        {
+        let round = RoundStart {
+            context: turn_state.context(),
+            settings: self.settings,
+            window: self.model.context_window,
+            input_tokens: turn_state.input_tokens(),
+        };
+        let mut plan = match race(self.hooks.before_round(&round), cancellation_token.cancelled()).await {
             Raced::Done(Ok(plan)) => plan,
             Raced::Done(Err(error)) => return failed(RoundError::Hook { error, after: None }),
             Raced::Cancelled => return cancelled(),
@@ -594,6 +596,7 @@ pub struct Turn<'a> {
     input: Vec<Block>,
     observer: Option<&'a dyn Observer>,
     cancellation_token: CancellationToken,
+    input_tokens: Option<u64>,
 }
 
 impl fmt::Debug for Turn<'_> {
@@ -612,6 +615,12 @@ impl<'a> Turn<'a> {
             observer: Some(observer),
             ..self
         }
+    }
+
+    /// Start the turn with `input_tokens`, the input tokens of the newest answer before it. The first round gives it to
+    /// [`Hooks::before_round`].
+    pub fn input_tokens(self, input_tokens: Option<u64>) -> Self {
+        Turn { input_tokens, ..self }
     }
 
     /// Stop the turn when `cancellation_token` is cancelled. A cancelled token cannot be reset, so use a new token for
@@ -638,8 +647,9 @@ impl<'a> Turn<'a> {
             input,
             observer,
             cancellation_token,
+            input_tokens,
         } = self;
-        let mut turn_state = TurnState::new(context);
+        let mut turn_state = TurnState::new(context, input_tokens);
         let ignore = |_: &TurnEvent<'_>| {};
         let observer: &dyn Observer = match observer {
             Some(observer) => observer,

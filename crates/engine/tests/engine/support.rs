@@ -11,8 +11,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason};
 use yuke_engine::{
-    CancellationToken, Commit, Driver, Hooks, Inbox, Journal, RoundDecision, RoundError, RoundPlan, Timer, Tool,
-    ToolContent, ToolContext, TurnEnd,
+    CancellationToken, Commit, Driver, Hooks, Inbox, Journal, RoundDecision, RoundError, RoundPlan, RoundStart, Timer,
+    Tool, ToolContent, ToolContext, TurnEnd,
 };
 use yuke_testing::target;
 
@@ -128,7 +128,7 @@ fn next<T>(script: &Mutex<Option<VecDeque<T>>>, default: impl FnOnce() -> T) -> 
 
 #[async_trait]
 impl Hooks for Script {
-    async fn before_round(&self, _: &[Block]) -> Result<RoundPlan, Box<dyn Error + Send + Sync>> {
+    async fn before_round(&self, _: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn Error + Send + Sync>> {
         Ok(next(&self.plans, RoundPlan::default))
     }
 

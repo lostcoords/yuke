@@ -49,6 +49,7 @@ pub fn model_of(target: Target) -> Model {
     Model {
         target,
         source: Arc::new(Credential::None),
+        context_window: None,
     }
 }
 
@@ -115,6 +116,11 @@ pub fn text_reply(text: &str) -> String {
         delta,
         stop,
     ])
+}
+
+/// `reply`, an answer of this module, with `input_tokens` as the input tokens of its usage.
+pub fn counted(reply: &str, input_tokens: u64) -> String {
+    reply.replacen(r#""input_tokens":0"#, &format!(r#""input_tokens":{input_tokens}"#), 1)
 }
 
 /// An Anthropic answer that fails with an overload error before any output, as SSE. The default retry policy retries

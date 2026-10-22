@@ -169,6 +169,7 @@ impl Store for SqliteStore {
             prompt: prompt.to_vec(),
             context: Vec::new(),
             newest_turn: NewestTurn::Empty,
+            input_tokens: None,
             lease: Some(self.lease(id, lock)),
         })
     }

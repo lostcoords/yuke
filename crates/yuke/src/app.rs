@@ -533,7 +533,11 @@ fn model_of(reference: &ModelReference, shared: &Shared) -> Result<Model, AppErr
     let target = entry
         .bind()
         .map_err(|error| AppError::Invalid(format!("{}/{}: {error}", provider.id, entry.model.id)))?;
-    Ok(Model { target, source })
+    Ok(Model {
+        target,
+        source,
+        context_window: entry.model.limits.context_window,
+    })
 }
 
 /// Save `settings` in `session`, and return the saved event. A new folder is saved without links, and the saved folder

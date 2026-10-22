@@ -19,6 +19,9 @@ pub(crate) struct TurnState<'c> {
     /// The finish reason of the last answer, when that answer needs no other request. New input can still continue the
     /// turn.
     turn_end: Option<FinishReason>,
+
+    /// The input tokens of the newest answer, before this turn or in it.
+    input_tokens: Option<u64>,
 }
 
 /// The next thing the driver does for a turn. The driver saves the commit of an action before it acts.
@@ -158,6 +161,34 @@ pub struct Replaced<'a> {
     pub keep: usize,
 }
 
+impl Replaced<'_> {
+    /// Check that each tool result after this replacement of `context` follows a call with its id, in `head` or in the
+    /// kept blocks. A provider refuses a request with a result whose call is not before it. Call ids can repeat.
+    ///
+    /// # Errors
+    ///
+    /// Returns a text that names the call of the first result without its call.
+    pub fn check(&self, context: &[Block]) -> Result<(), String> {
+        let kept = &context[context.len() - self.keep.min(context.len())..];
+        let mut calls = std::collections::HashSet::new();
+        for block in self.head.iter().chain(kept) {
+            match block {
+                Block::ToolCall(call) => {
+                    calls.insert(call.call_id.as_str());
+                }
+                Block::ToolResult(result) if !calls.contains(result.call_id.as_str()) => {
+                    return Err(format!(
+                        "the replacement contains the result of call {} without its call",
+                        result.call_id
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The facts of one answer of the model.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -196,13 +227,19 @@ pub enum Outcome {
 
 impl<'c> TurnState<'c> {
     /// The decisions of one turn on `context`. The context counts as saved.
-    pub(crate) fn new(context: &'c mut Vec<Block>) -> Self {
+    pub(crate) fn new(context: &'c mut Vec<Block>, input_tokens: Option<u64>) -> Self {
         let saved = context.len();
         TurnState {
             context,
             saved,
             turn_end: None,
+            input_tokens,
         }
+    }
+
+    /// The input tokens of the newest answer.
+    pub(crate) fn input_tokens(&self) -> Option<u64> {
+        self.input_tokens
     }
 
     /// The context, oldest first.
@@ -234,6 +271,7 @@ impl<'c> TurnState<'c> {
     /// Take the answer to the request that [`Action::Send`] asked for. `origin` names the target that answered.
     pub(crate) fn model_finished(&mut self, completion: Completion, origin: Origin) -> Action<'_> {
         let finish_reason = completion.finish_reason;
+        self.input_tokens = completion.usage.input;
         let answer = Answer {
             origin,
             usage: completion.usage,

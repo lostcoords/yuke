@@ -52,6 +52,8 @@ pub struct Session {
     lease: Option<Lease>,
     /// The newest saved turn. An open turn of the store ends at the open of the session, so it is never open here.
     newest_turn: NewestTurn,
+    /// The input tokens of the newest saved answer. The next turn starts from them.
+    input_tokens: Option<u64>,
 }
 
 impl fmt::Debug for Session {
@@ -69,6 +71,8 @@ impl fmt::Debug for Session {
 struct TurnJournal<'a> {
     inputs: TurnInputs<'a>,
     updates: &'a Updates<'a>,
+    /// The input tokens of the newest saved answer: from before the turn, then from each answer that the turn saves.
+    input_tokens: Mutex<Option<u64>>,
 }
 
 /// The input state of one turn.
@@ -112,6 +116,9 @@ impl Journal for TurnJournal<'_> {
         let TurnInputs { store, id, taken } = &self.inputs;
         let consumed = std::mem::take(&mut *lock(taken));
         let event_number = store.commit(*id, commit, &consumed).await?;
+        if let Some(answer) = &commit.answer {
+            *lock(&self.input_tokens) = answer.usage.input;
+        }
         self.updates.committed(event_number, commit, consumed);
         Ok(())
     }
@@ -183,6 +190,7 @@ impl Session {
             id: opened.id,
             lease: opened.lease,
             newest_turn: opened.newest_turn,
+            input_tokens: opened.input_tokens,
         }
     }
 
@@ -226,6 +234,7 @@ impl Session {
         self.settings = opened.settings;
         self.context = opened.context;
         self.newest_turn = opened.newest_turn;
+        self.input_tokens = opened.input_tokens;
         if opened.lease.is_some() {
             self.lease = opened.lease;
         }
@@ -400,6 +409,7 @@ impl<'s> SessionTurn<'s> {
         let turn_journal = TurnJournal {
             inputs,
             updates: &updates,
+            input_tokens: Mutex::new(session.input_tokens),
         };
         let session_id = session.id.to_string();
         let system = prompt_text(prompt.as_deref().unwrap_or(&session.prompt));
@@ -411,9 +421,13 @@ impl<'s> SessionTurn<'s> {
             .inbox(&turn_journal)
             .blobs(&turn_journal)
             .turn(&mut session.context, input)
+            .input_tokens(session.input_tokens)
             .cancellation_token(cancellation_token)
             .observer(&updates);
-        let ran = match turn.run().await {
+        let ran = turn.run().await;
+        // A saved answer counts even when a later commit of the turn fails.
+        session.input_tokens = *lock(&turn_journal.input_tokens);
+        let ran = match ran {
             Ok(outcome) => Ok(outcome),
             Err(TurnError::Round(error)) => Err(error),
             // The commit can have saved or not, so the lease drops, and the session is stale.
