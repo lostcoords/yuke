@@ -10,8 +10,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    EventNumber, InputId, InstanceId, InteractionRespondParams, ListMcpServersParams, SessionId, SessionSettings,
-    SessionUpdateParams,
+    EventNumber, InputId, InstanceId, InteractionRespondParams, SessionId, SessionSettings, SessionUpdateParams,
 };
 
 /// The protocol version that this crate speaks. A breaking change of the messages takes the next number.
@@ -90,7 +89,7 @@ pub enum ClientRequest {
     RemoveInput(RemoveInputParams),
     /// List the running background jobs of an open session. Result: [`ListJobsResult`].
     #[serde(rename = "job/list")]
-    ListJobs(ListJobsParams),
+    ListJobs(SessionParams),
     /// Stop a running background job, and wait for its end. The `job` update with the end comes before the answer. A
     /// stopped job sends no end input. Result: [`EmptyResult`].
     #[serde(rename = "job/stop")]
@@ -107,7 +106,7 @@ pub enum ClientRequest {
     InteractionRespond(InteractionRespondParams),
     /// List the MCP servers of an open session. Result: [`crate::ListMcpServersResult`].
     #[serde(rename = "mcp/list")]
-    ListMcpServers(ListMcpServersParams),
+    ListMcpServers(SessionParams),
 }
 
 impl ClientRequest {
@@ -148,7 +147,7 @@ pub struct Notification<Message> {
 pub enum ClientNotification {
     /// Ask the server to stop the running turn of a session. The end of the turn arrives as a saved commit.
     #[serde(rename = "session/cancel")]
-    Cancel(CancelParams),
+    Cancel(SessionParams),
 }
 
 /// The method and the params of a server notification.
@@ -342,11 +341,11 @@ pub struct CloseSessionParams {
     pub stop_jobs: bool,
 }
 
-/// The params of `job/list`.
+/// The params of a message that names only an open session: `job/list`, `mcp/list`, and `session/cancel`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
-pub struct ListJobsParams {
+pub struct SessionParams {
     /// The open session.
     pub session_id: SessionId,
 }
@@ -486,12 +485,3 @@ pub struct RemoveInputParams {
     reason = "serde writes a struct with braces as `{}`, and a unit struct as `null`"
 )]
 pub struct EmptyResult {}
-
-/// The params of `session/cancel`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct CancelParams {
-    /// The session.
-    pub session_id: SessionId,
-}

@@ -24,7 +24,7 @@ use yuke_ai::{Blob, MAX_MEDIA_BYTES, Media, ToolDefinition};
 use yuke_engine::{MediaStore, Tool, ToolContent, ToolContext, parse_arguments};
 use yuke_protocol::{McpServer, McpServerSource, McpServerState};
 
-use crate::config::{Launch, ServerConfig};
+use crate::config::ServerConfig;
 use crate::names::{hashed_name, tool_name};
 
 /// The connection to one running server.
@@ -127,34 +127,19 @@ impl Servers {
         let mut slots = Vec::new();
         let (mut launches, mut gated) = (Vec::new(), Vec::new());
         for (index, (source, (name, config))) in entries.enumerate() {
-            let launch = config.enabled.then(|| config.launch(variable));
-            let state = match launch {
+            let state = match config.enabled.then(|| config.command(variable, folder)) {
                 None => McpServerState::Disabled,
-                Some(Ok(Launch {
-                    command,
-                    args,
-                    env,
-                    cwd,
-                })) => {
-                    let mut process = tokio::process::Command::new(command);
-                    process
-                        .args(args)
-                        .envs(env)
-                        .current_dir(folder.join(cwd.unwrap_or_default()));
-                    match source {
-                        McpServerSource::User => {
-                            launches.push((index, process));
-                            McpServerState::Connecting
-                        }
-                        McpServerSource::Project => {
-                            gated.push((index, process));
-                            McpServerState::Untrusted
-                        }
+                Some(Ok(process)) => match source {
+                    McpServerSource::User => {
+                        launches.push((index, process));
+                        McpServerState::Connecting
                     }
-                }
-                Some(Err(error)) => McpServerState::Failed {
-                    error: error.to_string(),
+                    McpServerSource::Project => {
+                        gated.push((index, process));
+                        McpServerState::Untrusted
+                    }
                 },
+                Some(Err(error)) => McpServerState::Failed { error },
             };
             slots.push(Slot {
                 name: name.clone(),

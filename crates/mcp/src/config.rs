@@ -1,10 +1,10 @@
 //! The MCP config: `{ "mcpServers": { name: server } }`, as in a user `mcp.json` and a project `.mcp.json`.
 
 use std::collections::BTreeMap;
-use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use tokio::process::Command;
 
 /// The servers of one MCP config file, by name.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,71 +41,36 @@ fn enabled() -> bool {
     true
 }
 
-/// How yuke starts a stdio server, after the expansion of the variables.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Launch {
-    /// The program.
-    pub(crate) command: String,
-    /// Its arguments.
-    pub(crate) args: Vec<String>,
-    /// The environment variables beside the environment of yuke.
-    pub(crate) env: BTreeMap<String, String>,
-    /// Its folder, or `None` for the session folder.
-    pub(crate) cwd: Option<PathBuf>,
-}
-
 impl ServerConfig {
-    /// How to start the server. `${NAME}` and `${NAME:-default}` in the command, the arguments, the environment values,
-    /// and the folder take the value of the variable `NAME` from `variable`.
-    pub(crate) fn launch(&self, variable: &dyn Fn(&str) -> Option<String>) -> Result<Launch, ConfigError> {
+    /// The command that starts the server, or why the entry gives none. The command runs in `folder`, in a relative
+    /// `cwd` under `folder`, or in an absolute `cwd`.
+    /// `${NAME}` and `${NAME:-default}` in the command, the arguments, the environment values, and the folder take the
+    /// value of the variable `NAME` from `variable`.
+    pub(crate) fn command(&self, variable: &dyn Fn(&str) -> Option<String>, folder: &Path) -> Result<Command, String> {
         let expand = |text: &str| expand(text, variable);
-        let command = match (&self.command, &self.url) {
-            (Some(command), None) => command,
-            (None, Some(_)) => return Err(ConfigError::Http),
-            _ => return Err(ConfigError::Transport),
+        let program = match (&self.command, &self.url) {
+            (Some(program), None) => program,
+            (None, Some(_)) => return Err("yuke cannot reach an HTTP server yet".to_owned()),
+            _ => return Err("the server needs exactly one of command and url".to_owned()),
         };
-        Ok(Launch {
-            command: expand(command)?,
-            args: self.args.iter().map(|arg| expand(arg)).collect::<Result<_, _>>()?,
-            env: self
-                .env
-                .iter()
-                .map(|(name, value)| Ok((name.clone(), expand(value)?)))
-                .collect::<Result<_, ConfigError>>()?,
-            cwd: self
-                .cwd
-                .as_ref()
-                .map(|cwd| expand(&cwd.to_string_lossy()).map(PathBuf::from))
-                .transpose()?,
-        })
-    }
-}
-
-/// Why a server entry cannot start.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ConfigError {
-    /// The entry has both or neither of `command` and `url`.
-    Transport,
-    /// The entry names an HTTP server.
-    Http,
-    /// The entry names a variable that has no value and no default.
-    Variable(String),
-}
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Transport => f.write_str("the server needs exactly one of command and url"),
-            Self::Http => f.write_str("yuke cannot reach an HTTP server yet"),
-            Self::Variable(name) => write!(f, "the variable {name} has no value and no default"),
+        let mut command = Command::new(expand(program)?);
+        for arg in &self.args {
+            command.arg(expand(arg)?);
         }
+        for (name, value) in &self.env {
+            command.env(name, expand(value)?);
+        }
+        let cwd = match &self.cwd {
+            Some(cwd) => PathBuf::from(expand(&cwd.to_string_lossy())?),
+            None => PathBuf::new(),
+        };
+        command.current_dir(folder.join(cwd));
+        Ok(command)
     }
 }
-
-impl std::error::Error for ConfigError {}
 
 /// `text` with each `${NAME}` and `${NAME:-default}` replaced. A `$` without `{` stays.
-fn expand(text: &str, variable: &dyn Fn(&str) -> Option<String>) -> Result<String, ConfigError> {
+fn expand(text: &str, variable: &dyn Fn(&str) -> Option<String>) -> Result<String, String> {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find("${") {
@@ -122,7 +87,7 @@ fn expand(text: &str, variable: &dyn Fn(&str) -> Option<String>) -> Result<Strin
         let value = variable(name).filter(|value| default.is_none() || !value.is_empty());
         match value.or_else(|| default.map(str::to_owned)) {
             Some(value) => out.push_str(&value),
-            None => return Err(ConfigError::Variable(name.to_owned())),
+            None => return Err(format!("the variable {name} has no value and no default")),
         }
         rest = &rest[start + 3 + length..];
     }
@@ -152,12 +117,42 @@ mod tests {
         );
         assert_eq!(
             expand("${PORT}", &variable),
-            Err(ConfigError::Variable("PORT".to_owned()))
+            Err("the variable PORT has no value and no default".to_owned())
         );
         assert_eq!(
             expand("[${EMPTY}] ${EMPTY:-default}", &variable),
             Ok("[] default".to_owned())
         );
+    }
+
+    #[test]
+    fn a_command_expands_each_field_and_starts_in_its_folder_under_the_session_folder() {
+        let config: Config = serde_json::from_str(
+            r#"{ "mcpServers": {
+                 "relative": { "command": "${HOME}/bin/x", "args": ["${PORT:-1}"], "env": { "TOKEN": "${HOME}" },
+                               "cwd": "sub" },
+                 "absolute": { "command": "x", "cwd": "${HOME}" }
+               } }"#,
+        )
+        .unwrap();
+
+        let relative = config.servers["relative"]
+            .command(&variable, Path::new("/work"))
+            .unwrap();
+        let absolute = config.servers["absolute"]
+            .command(&variable, Path::new("/work"))
+            .unwrap();
+
+        let relative = relative.as_std();
+        assert_eq!(relative.get_program(), "/home/me/bin/x");
+        assert_eq!(relative.get_args().collect::<Vec<_>>(), ["1"]);
+        let token = std::ffi::OsStr::new("/home/me");
+        assert_eq!(
+            relative.get_envs().collect::<Vec<_>>(),
+            [(std::ffi::OsStr::new("TOKEN"), Some(token))]
+        );
+        assert_eq!(relative.get_current_dir(), Some(Path::new("/work/sub")));
+        assert_eq!(absolute.as_std().get_current_dir(), Some(Path::new("/home/me")));
     }
 
     #[test]
@@ -171,21 +166,17 @@ mod tests {
         )
         .unwrap();
 
-        let git = config.servers["git"].launch(&variable);
-        let both = config.servers["both"].launch(&variable);
-        let none = config.servers["none"].launch(&variable);
+        let git = config.servers["git"].command(&variable, Path::new("/work")).unwrap();
+        let both = config.servers["both"].command(&variable, Path::new("/work"));
+        let none = config.servers["none"].command(&variable, Path::new("/work"));
 
-        assert_eq!(
-            git,
-            Ok(Launch {
-                command: "uvx".to_owned(),
-                args: vec!["mcp-server-git".to_owned()],
-                env: BTreeMap::new(),
-                cwd: None,
-            })
-        );
-        assert_eq!(both, Err(ConfigError::Transport));
-        assert_eq!(none, Err(ConfigError::Transport));
+        let git = git.as_std();
+        assert_eq!(git.get_program(), "uvx");
+        assert_eq!(git.get_args().collect::<Vec<_>>(), ["mcp-server-git"]);
+        assert_eq!(git.get_current_dir(), Some(Path::new("/work")));
+        let transport = "the server needs exactly one of command and url";
+        assert_eq!(both.err().as_deref(), Some(transport));
+        assert_eq!(none.err().as_deref(), Some(transport));
         assert!(!config.servers["none"].enabled);
     }
 }

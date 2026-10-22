@@ -166,7 +166,7 @@ fn each_job_request_reads_and_writes_its_json() {
             json!({ "jsonrpc": "2.0", "id": 8, "method": "job/list", "params": { "sessionId": SESSION } }),
             request(
                 8,
-                ClientRequest::ListJobs(yuke_protocol::ListJobsParams { session_id: session() }),
+                ClientRequest::ListJobs(yuke_protocol::SessionParams { session_id: session() }),
             ),
         ),
         (
@@ -470,7 +470,7 @@ fn cancel_and_update_notifications_read_and_write_their_json() {
         &json!({ "jsonrpc": "2.0", "method": "session/cancel", "params": { "sessionId": SESSION } }),
         &Notification {
             jsonrpc: yuke_protocol::JsonRpc::V2,
-            message: ClientNotification::Cancel(yuke_protocol::CancelParams { session_id: session() }),
+            message: ClientNotification::Cancel(yuke_protocol::SessionParams { session_id: session() }),
         },
     );
 

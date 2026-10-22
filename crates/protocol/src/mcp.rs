@@ -2,8 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::SessionId;
-
 /// The state of one MCP server of a session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -50,15 +48,6 @@ pub struct McpServer {
     /// Its state.
     #[serde(flatten)]
     pub state: McpServerState,
-}
-
-/// The params of `mcp/list`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct ListMcpServersParams {
-    /// The open session.
-    pub session_id: SessionId,
 }
 
 /// The result of `mcp/list`.

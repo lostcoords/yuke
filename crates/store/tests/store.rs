@@ -121,6 +121,19 @@ async fn a_delete_removes_the_folder_of_the_session() {
 }
 
 #[tokio::test]
+async fn an_open_for_writing_of_an_unknown_session_makes_no_folder() {
+    let folder = folder("an_open_for_writing_of_an_unknown_session_makes_no_folder");
+    let store = SqliteStore::open(&folder).await.unwrap();
+    let id = yuke_protocol::SessionId::generate();
+
+    let open = store.open(id, Access::Write).await;
+
+    assert!(matches!(open, Err(StoreError::NotFound)), "{open:?}");
+    let folders = std::fs::read_dir(folder.join("sessions")).map_or(0, Iterator::count);
+    assert_eq!(folders, 0);
+}
+
+#[tokio::test]
 async fn the_sweep_removes_a_folder_without_a_session_and_keeps_a_locked_one() {
     let folder = folder("the_sweep_removes_a_folder_without_a_session_and_keeps_a_locked_one");
     drop(SqliteStore::open(&folder).await.unwrap());

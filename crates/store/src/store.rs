@@ -196,7 +196,7 @@ impl Store for SqliteStore {
                     files::sync_folder(&sessions_folder).map_err(failed)?;
                     files::copy_blobs(&source_folder, &folder).map_err(failed)?;
                     copy_rows(connection, &rows)?;
-                    let opened = read(connection, |connection| context::load(connection, id))?;
+                    let opened = read(connection, |connection| context::load(connection, id).map_err(failed))?;
                     Ok((opened.ok_or(StoreError::NotFound)?, lock))
                 });
                 // The caller never learns the id of a failed fork, so nothing else can open or delete it.
@@ -253,18 +253,8 @@ impl Store for SqliteStore {
                 .map_err(failed)?;
             if pending_inputs::delete_pending_input(&transaction, &params).map_err(failed)? == 0 {
                 // No row: the session is unknown, or the input is not pending.
-                return Err(
-                    if sessions::session_count(&transaction, params.session_id)
-                        .one()
-                        .map_err(failed)?
-                        .count
-                        == 0
-                    {
-                        StoreError::NotFound
-                    } else {
-                        StoreError::InputNotPending(input)
-                    },
-                );
+                ensure_session(&transaction, params.session_id)?;
+                return Err(StoreError::InputNotPending(input));
             }
             transaction.commit().map_err(failed)
         })
@@ -293,11 +283,14 @@ impl Store for SqliteStore {
             .call(move |connection| {
                 // The lock comes before the load, so no other writer commits between the lock and the load.
                 let lock = match folder {
-                    Some(folder) => Some(lock_known_session(connection, session, &folder)?),
+                    Some(folder) => {
+                        ensure_session(connection, session)?;
+                        Some(files::take_lock(&folder)?)
+                    }
                     None => None,
                 };
 
-                let opened = read(connection, |connection| context::load(connection, id))?;
+                let opened = read(connection, |connection| context::load(connection, id).map_err(failed))?;
                 Ok((opened.ok_or(StoreError::NotFound)?, lock))
             })
             .await?;
@@ -333,13 +326,11 @@ impl Store for SqliteStore {
         let rows = self
             .call(move |connection| {
                 read(connection, |connection| {
-                    if sessions::session_count(connection, session).one()?.count == 0 {
-                        return Ok(None);
-                    }
-
-                    pending_inputs::pending_inputs(connection, session).all().map(Some)
-                })?
-                .ok_or(StoreError::NotFound)
+                    ensure_session(connection, session)?;
+                    pending_inputs::pending_inputs(connection, session)
+                        .all()
+                        .map_err(failed)
+                })
             })
             .await?;
 
@@ -362,14 +353,13 @@ impl Store for SqliteStore {
         let (events, pending) = self
             .call(move |connection| {
                 read(connection, |connection| {
-                    if sessions::session_count(connection, params.session_id).one()?.count == 0 {
-                        return Ok(None);
-                    }
-                    let events = events::events_after(connection, &params).all()?;
-                    let pending = pending_inputs::pending_inputs(connection, params.session_id).all()?;
-                    Ok(Some((events, pending)))
-                })?
-                .ok_or(StoreError::NotFound)
+                    ensure_session(connection, params.session_id)?;
+                    let events = events::events_after(connection, &params).all().map_err(failed)?;
+                    let pending = pending_inputs::pending_inputs(connection, params.session_id)
+                        .all()
+                        .map_err(failed)?;
+                    Ok((events, pending))
+                })
             })
             .await?;
 
@@ -407,7 +397,8 @@ impl Store for SqliteStore {
         let folder = self.folder(id);
 
         self.call(move |connection| {
-            let lock = lock_known_session(connection, session, &folder)?;
+            ensure_session(connection, session)?;
+            let lock = files::take_lock(&folder)?;
             sessions::delete_session(connection, session).map_err(failed)?;
 
             // Windows does not delete an open file, so the lock closes before the folder goes. When the removal
@@ -425,10 +416,10 @@ const LARGEST_SEQ: u64 = i64::MAX.unsigned_abs();
 /// Run `function` in a read transaction, so each of its queries reads the same state.
 fn read<T>(
     connection: &mut Connection,
-    function: impl FnOnce(&Connection) -> rusqlite::Result<T>,
+    function: impl FnOnce(&Connection) -> Result<T, StoreError>,
 ) -> Result<T, StoreError> {
     let transaction = connection.transaction().map_err(failed)?;
-    let value = function(&transaction).map_err(failed)?;
+    let value = function(&transaction)?;
     transaction.commit().map_err(failed)?;
     Ok(value)
 }
@@ -600,21 +591,23 @@ fn commit_params(
     })
 }
 
-/// Take the lock of session `session` in `folder`. An unknown session gets [`StoreError::NotFound`] and no folder.
-fn lock_known_session(connection: &Connection, session: [u8; 16], folder: &Path) -> Result<SessionLock, StoreError> {
-    ensure_session(connection, session)?;
-
-    files::take_lock(folder)
-}
-
-/// `Ok` when the database has session `session`, and [`StoreError::NotFound`] otherwise.
-fn ensure_session(connection: &Connection, session: [u8; 16]) -> Result<(), StoreError> {
-    let count = sessions::session_count(connection, session)
+/// Tell whether the database has session `session`.
+pub(crate) fn has_session(connection: &Connection, session: [u8; 16]) -> Result<bool, StoreError> {
+    Ok(sessions::session_count(connection, session)
         .one()
         .map_err(failed)?
-        .count;
+        .count
+        > 0)
+}
 
-    if count > 0 { Ok(()) } else { Err(StoreError::NotFound) }
+/// `Ok` when the database has session `session`, and [`StoreError::NotFound`] otherwise. Call this function before the
+/// lock of the session, so an unknown session gets no folder.
+fn ensure_session(connection: &Connection, session: [u8; 16]) -> Result<(), StoreError> {
+    if has_session(connection, session)? {
+        Ok(())
+    } else {
+        Err(StoreError::NotFound)
+    }
 }
 
 pub(crate) fn failed(error: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> StoreError {

@@ -16,12 +16,12 @@ pub use event::{SessionEvent, StoredEvent};
 pub use id::{DraftId, EventNumber, InputId, InstanceId, InteractionId, SessionId};
 pub use input::{ConsumedInput, Input, InputError, InputKind, InputSource, PendingInput};
 pub use interaction::{InteractionRequest, InteractionRespondParams, InteractionResponse};
-pub use mcp::{ListMcpServersParams, ListMcpServersResult, McpServer, McpServerSource, McpServerState};
+pub use mcp::{ListMcpServersResult, McpServer, McpServerSource, McpServerState};
 pub use message::{
-    CancelParams, ClientNotification, ClientRequest, CloseSessionParams, EmptyResult, ForkSessionParams,
-    Implementation, InitializeParams, InitializeResult, InputParams, InputResult, Job, JobState, JsonRpc,
-    ListJobsParams, ListJobsResult, LoadSessionParams, NoticeLevel, NoticeParams, Notification, PROTOCOL_VERSION,
-    RemoveInputParams, Request, RequestId, Response, ResponseError, ResponseOutcome, ServerNotification, SessionResult,
+    ClientNotification, ClientRequest, CloseSessionParams, EmptyResult, ForkSessionParams, Implementation,
+    InitializeParams, InitializeResult, InputParams, InputResult, Job, JobState, JsonRpc, ListJobsResult,
+    LoadSessionParams, NoticeLevel, NoticeParams, Notification, PROTOCOL_VERSION, RemoveInputParams, Request,
+    RequestId, Response, ResponseError, ResponseOutcome, ServerNotification, SessionParams, SessionResult,
     SetSettingsParams, StopJobParams, UpdateCredentialParams,
 };
 pub use session::{ModelReference, SessionSettings};

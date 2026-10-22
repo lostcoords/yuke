@@ -2,9 +2,9 @@
 import type { SessionId } from "./SessionId";
 
 /**
- * The params of `mcp/list`.
+ * The params of a message that names only an open session: `job/list`, `mcp/list`, and `session/cancel`.
  */
-export type ListMcpServersParams = { 
+export type SessionParams = { 
 /**
  * The open session.
  */

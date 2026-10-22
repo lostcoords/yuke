@@ -10,8 +10,7 @@ use yuke_agent::StoreError;
 use yuke_ai::hex;
 use yuke_sql::rusqlite::Connection;
 
-use crate::queries::sessions;
-use crate::store::failed;
+use crate::store::{failed, has_session};
 
 /// The name of the lock file in a session folder. No blob has this name, because a blob name has 64 characters.
 const LOCK: &str = "lock";
@@ -143,11 +142,7 @@ pub(crate) fn sweep(connection: &Connection, sessions: &Path) -> Result<(), Stor
         let Some(session) = entry.file_name().to_str().and_then(parse_session) else {
             continue;
         };
-        let count = sessions::session_count(connection, session)
-            .one()
-            .map_err(failed)?
-            .count;
-        if count > 0 {
+        if has_session(connection, session)? {
             continue;
         }
 
