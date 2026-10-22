@@ -2,7 +2,7 @@
 
 import type { GenerateTextOptions, GenerateTextResult, ObjectOutput } from "yuke:ai";
 import { checkArguments, checkParameters } from "yuke:internal/arguments";
-import { fieldsOf, jsonCopy } from "yuke:internal/define";
+import { fieldsOf, jsonCopy, mediaOf } from "yuke:internal/define";
 import { signalOf, underSignal } from "yuke:internal/events";
 import { aiComplete } from "yuke:internal/native";
 import type { FinishReason, Usage } from "yuke:protocol";
@@ -12,7 +12,7 @@ import type { Infer, ObjectSchema, Schema } from "yuke:tools";
 const SETTINGS = ["maxOutputTokens", "temperature", "topP", "reasoning"] as const;
 
 /** The names of the options of `generateText`. */
-const OPTIONS = ["model", "instructions", "prompt", "output", "abortSignal", ...SETTINGS] as const;
+const OPTIONS = ["model", "instructions", "prompt", "attachments", "output", "abortSignal", ...SETTINGS] as const;
 
 /** A schema name that OpenAI takes. */
 const NAME = /^[A-Za-z0-9_-]{1,64}$/;
@@ -74,7 +74,7 @@ export function generateText<T>(
 export function generateText(options: GenerateTextOptions): Promise<GenerateTextResult>;
 export async function generateText(options: GenerateTextOptions): Promise<GenerateTextResult<unknown>> {
   const fields = fieldsOf(options, "the options", OPTIONS);
-  const { model, instructions = "", prompt, output, abortSignal } = fields;
+  const { model, instructions = "", prompt, attachments = [], output, abortSignal } = fields;
   const { provider, model: id } = fieldsOf(model, "the option model", ["provider", "model"]);
   if (typeof provider !== "string" || typeof id !== "string") {
     throw new TypeError("the option model has no string provider and model");
@@ -82,6 +82,8 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
   if (typeof instructions !== "string") throw new TypeError("the option instructions is not a string");
   const blocks = typeof prompt === "string" ? [{ user_text: prompt }] : prompt;
   if (!Array.isArray(blocks)) throw new TypeError("the option prompt is not a string or an array");
+  if (!Array.isArray(attachments)) throw new TypeError("the option attachments is not an array");
+  const media = attachments.map((item: unknown, index) => mediaOf(item, `attachments[${index}]`));
   const schema = typeof output === "object" && output !== null ? schemas.get(output) : undefined;
   if (output !== undefined && schema === undefined) {
     throw new TypeError("the option output is not a value of Output.object");
@@ -96,6 +98,7 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
     model: { provider, model: id },
     system: instructions,
     blocks,
+    attachments: media,
     // The copy drops a missing setting. It refuses a number that is not finite, which JSON would make `null`.
     settings: jsonCopy(settings, "a setting"),
   };

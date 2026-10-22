@@ -18,6 +18,7 @@ use yuke_ai::MAX_MEDIA_BYTES;
 use yuke_engine::{CancellationToken, Concurrency, MediaStore, Tool, ToolContent, ToolContext, check_tool_name};
 
 use crate::error::{Error, caught};
+use crate::models::Attachment;
 use crate::native::{Operation, call};
 use crate::processes::Processes;
 use crate::runtime::Caller;
@@ -340,6 +341,18 @@ pub(crate) async fn store_media(
     folder: &Path,
 ) -> Result<Vec<yuke_ai::Media>, String> {
     // Each read comes before the first store, so a failed read leaves no blob without a reference.
+    let read = read_media(files, folder).await?;
+    let mut media = Vec::with_capacity(read.len());
+    for attachment in read {
+        let blob = host.put_media(attachment.bytes).await?;
+        media.push(yuke_ai::Media::new(blob, attachment.mime_type));
+    }
+    Ok(media)
+}
+
+/// The bytes and the media type of each item of `files`, in order. A relative path starts in `folder`. A file that
+/// does not read, or an item over [`MAX_MEDIA_BYTES`], fails with a text.
+pub(crate) async fn read_media(files: Vec<MediaFile>, folder: &Path) -> Result<Vec<Attachment>, String> {
     let mut read = Vec::with_capacity(files.len());
     for file in files {
         let bytes = match file.source {
@@ -349,14 +362,12 @@ pub(crate) async fn store_media(
             Source::Bytes(bytes) if bytes.len() as u64 > MAX_MEDIA_BYTES => return Err(too_large()),
             Source::Bytes(bytes) => bytes,
         };
-        read.push((bytes, file.mime_type));
+        read.push(Attachment {
+            bytes,
+            mime_type: file.mime_type,
+        });
     }
-    let mut media = Vec::with_capacity(read.len());
-    for (bytes, mime_type) in read {
-        let blob = host.put_media(bytes).await?;
-        media.push(yuke_ai::Media::new(blob, mime_type));
-    }
-    Ok(media)
+    Ok(read)
 }
 
 /// The bytes of the file at `path`, at most [`MAX_MEDIA_BYTES`]. A blocking thread of tokio reads them, so the task of
@@ -460,6 +471,16 @@ enum Source {
     Path(String),
     /// The bytes that the tool gave.
     Bytes(Vec<u8>),
+}
+
+impl MediaFile {
+    /// The path of the file, or `None` for bytes.
+    pub(crate) fn path(&self) -> Option<&str> {
+        match &self.source {
+            Source::Path(path) => Some(path),
+            Source::Bytes(_) => None,
+        }
+    }
 }
 
 impl<'js> FromJs<'js> for MediaFile {

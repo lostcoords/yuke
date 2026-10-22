@@ -212,6 +212,16 @@ async function models(): Promise<void> {
   const prompt: Block[] = [{ user_text: "Hi." }];
   const answer = await generateText({ model: s.model, prompt, maxOutputTokens: 100, abortSignal: s.signal });
   await generateText({ model: s.model, instructions: "Be brief.", prompt: "Hi." });
+  await generateText({
+    model: s.model,
+    prompt: "Describe.",
+    attachments: [
+      { mimeType: "image/png", bytes: new Uint8Array() },
+      { mimeType: "image/png", path: "/tmp/shot.png" },
+    ],
+  });
+  // @ts-expect-error: an attachment holds bytes or a path.
+  await generateText({ model: s.model, prompt: "Describe.", attachments: [{ mimeType: "image/png" }] });
   const text: string = answer.text;
   assert<Equal<typeof answer.finishReason, FinishReason>>();
   const input: number | null = answer.usage.input;

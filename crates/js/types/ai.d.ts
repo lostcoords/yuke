@@ -6,14 +6,15 @@
  *   takes blocks, not messages, and `reasoning`, `finishReason`, and `usage` have the types of `yuke:protocol`.
  * - A request offers no tools and runs no plugin hooks. The session keeps nothing of it.
  * - After an overload or a lost connection, the request sends its attempt again, as a turn does.
- * - A media block fails the request, because the request has no store of attachments.
+ * - A media block of the prompt fails the request, because the request cannot read the store of a session. Pass new
+ *   media as `attachments`.
  * - An abort of the `abortSignal` stops the request, and `generateText` rejects with the reason of the signal.
  * - A misuse throws a `TypeError`: an unknown option, an option of another type, a block of another shape, or a
  *   setting that JSON cannot hold.
  */
 declare module "yuke:ai" {
   import type { Block, FinishReason, ModelReference, Settings, Usage } from "yuke:protocol";
-  import type { Infer, ObjectSchema } from "yuke:tools";
+  import type { Infer, ObjectSchema, ToolMedia } from "yuke:tools";
 
   /** The key of the brand that carries the object type of an `ObjectOutput`. Only TypeScript sees it. */
   const objectType: unique symbol;
@@ -65,6 +66,12 @@ declare module "yuke:ai" {
     instructions?: string | undefined;
     /** The input of the request: a text as one user block, or blocks, oldest first. A media block fails the request. */
     prompt: string | readonly Block[];
+    /**
+     * The media after the prompt, in order, in the shape of the media of a tool result. A `path` is absolute. Each
+     * item holds at most 3.75 MiB, as the media of a tool does. The session keeps nothing of them. An image works with
+     * each provider. Another type depends on the provider: OpenAI needs a file name for a document, so it fails there.
+     */
+    attachments?: readonly ToolMedia[] | undefined;
     /** The output limit. */
     maxOutputTokens?: Settings["maxOutputTokens"] | undefined;
     /** The sampling temperature. */

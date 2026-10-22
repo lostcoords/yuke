@@ -158,6 +158,8 @@ declare module "yuke:internal/native" {
     readonly system: string;
     readonly blocks: readonly unknown[];
     readonly settings: object;
+    /** Each path is absolute. A path that does not read rejects with an `Error` that names the path. */
+    readonly attachments: readonly ToolMedia[];
   }): Operation<Omit<import("yuke:ai").GenerateTextResult, "output">>;
 
   /** One operation in flight: its promise, and the function that asks it to stop. */

@@ -21,6 +21,17 @@ pub struct CompleteRequest {
     pub blocks: Vec<Block>,
     /// The settings of the request.
     pub settings: Settings,
+    /// The media that follow `blocks` in the input, in order.
+    pub attachments: Vec<Attachment>,
+}
+
+/// One media item of a [`CompleteRequest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attachment {
+    /// The bytes of the media.
+    pub bytes: Vec<u8>,
+    /// The media type, for example `image/png`.
+    pub mime_type: String,
 }
 
 /// The answer of a [`CompleteRequest`].

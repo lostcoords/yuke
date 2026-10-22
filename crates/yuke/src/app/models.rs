@@ -1,17 +1,20 @@
 //! The model requests of the plugins, through the catalog and the credentials of the sessions.
 
+use std::borrow::Cow;
+use std::collections::HashMap;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use yuke_ai::{Block, FinishReason};
+use yuke_agent::blob_of;
+use yuke_ai::{BlobStore, Block, Digest, FinishReason, Media};
 use yuke_engine::{Answer, CancellationToken, Commit, Driver, Hooks, Journal, Outcome, RoundDecision};
 use yuke_js::{CompleteAnswer, CompleteRequest, Models};
 
 use super::{Shared, TokioTimer, lock, model_of};
 
 /// The models of the app for the plugins. A request is one round with no tools and no plugin hooks, and the store keeps
-/// nothing of it. The round has no blob store, so a media block fails the request.
+/// nothing of it. The round reads only the media of its attachments, so a media block of the session fails it.
 pub(super) struct PluginModels(pub(super) Arc<Shared>);
 
 #[async_trait]
@@ -23,14 +26,22 @@ impl Models for PluginModels {
     ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>> {
         let model = model_of(&request.model, &self.0)?;
         let first = FirstAnswer::default();
+        let mut input = request.blocks;
+        let mut attachments = Attachments::default();
+        for attachment in request.attachments {
+            let blob = blob_of(&attachment.bytes);
+            input.push(Block::Media(Media::new(blob, attachment.mime_type)));
+            attachments.0.insert(blob.digest, attachment.bytes);
+        }
         let driver = Driver::new(&*self.0.machine.transport, &model, &TokioTimer)
             .system(&request.system)
             .settings(&request.settings)
             .hooks(&first)
-            .journal(&first);
+            .journal(&first)
+            .blobs(&attachments);
         let mut context = Vec::new();
         let outcome = driver
-            .turn(&mut context, request.blocks)
+            .turn(&mut context, input)
             .cancellation_token(cancel)
             .run()
             .await?;
@@ -43,6 +54,16 @@ impl Models for PluginModels {
             finish_reason: answer.finish_reason,
             usage: answer.usage,
         })
+    }
+}
+
+/// The bytes of the attachments of one request, by digest.
+#[derive(Default)]
+struct Attachments(HashMap<Digest, Vec<u8>>);
+
+impl BlobStore for Attachments {
+    fn read(&self, digest: &Digest) -> Result<Option<Cow<'_, [u8]>>, Box<dyn Error + Send + Sync>> {
+        Ok(self.0.get(digest).map(|bytes| Cow::Borrowed(bytes.as_slice())))
     }
 }
 
@@ -80,6 +101,7 @@ mod tests {
 
     use yuke_ai::Usage;
     use yuke_ai::transport::Transport;
+    use yuke_js::Attachment;
     use yuke_protocol::{ModelReference, ServerNotification};
     use yuke_testing::{ScriptedTransport, assert_in_order, counted, text_reply, tool_reply};
 
@@ -119,6 +141,7 @@ mod tests {
                 max_output_tokens: Some(77),
                 ..yuke_ai::Settings::new()
             },
+            attachments: Vec::new(),
         }
     }
 
@@ -154,6 +177,35 @@ mod tests {
         assert_in_order(&requests[0], &["Summarize the text.", "the text to summarize"]);
         assert!(requests[0].contains(r#""max_tokens":77"#), "{}", requests[0]);
         assert!(!requests[0].contains(r#""tools""#), "{}", requests[0]);
+    }
+
+    #[tokio::test]
+    async fn an_attachment_reaches_the_provider_after_the_prompt() {
+        let transport = ScriptedTransport::new([text_reply("A cat.")]);
+        let app = app(
+            "an_attachment_reaches_the_provider_after_the_prompt",
+            Box::new(transport.clone()),
+        )
+        .await;
+        let request = CompleteRequest {
+            attachments: vec![Attachment {
+                bytes: b"png bytes".to_vec(),
+                mime_type: "image/png".to_owned(),
+            }],
+            ..request("MiniMax-M3")
+        };
+
+        let answer = PluginModels(Arc::clone(&app.shared))
+            .complete(request, CancellationToken::new())
+            .await;
+        app.shutdown().await;
+
+        assert_eq!(answer.unwrap().text, "A cat.");
+        // The provider gets the bytes as base64, after the text of the prompt.
+        assert_in_order(
+            &transport.requests()[0],
+            &["the text to summarize", "image/png", "cG5nIGJ5dGVz"],
+        );
     }
 
     #[tokio::test]

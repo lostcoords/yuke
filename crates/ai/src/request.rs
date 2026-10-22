@@ -355,9 +355,11 @@ impl Media {
         }
     }
 
-    /// The kind its media type names. A protocol writes a different part for each kind.
+    /// The kind its media type names, in any letter case. A protocol writes a different part for each kind.
     pub fn kind(&self) -> Modality {
-        let mime = self.mime.as_str();
+        // A media type ignores the letter case (RFC 6838).
+        let mime = self.mime.to_ascii_lowercase();
+        let mime = mime.as_str();
         if mime.starts_with("image/") {
             Modality::Image
         } else if mime.starts_with("audio/") {
@@ -977,6 +979,20 @@ mod tests {
     use super::*;
 
     use crate::testing::assert_same;
+
+    #[test]
+    fn a_media_type_names_its_kind_in_any_letter_case() {
+        let blob = Blob {
+            digest: [0; 32],
+            len: 0,
+        };
+        let kinds: Vec<Modality> = ["IMAGE/PNG", "Application/PDF", "text/Plain"]
+            .into_iter()
+            .map(|mime| Media::new(blob, mime).kind())
+            .collect();
+
+        assert_eq!(kinds, [Modality::Image, Modality::Pdf, Modality::Text]);
+    }
 
     #[test]
     fn the_answer_text_is_the_text_of_the_last_run_of_assistant_blocks() {
