@@ -11,13 +11,13 @@ use tokio::sync::{Notify, oneshot};
 use tokio::task::JoinHandle;
 use yuke_agent::{Loaded, Session, SessionError, SessionObserver, Store, StoreError};
 use yuke_ai::ToolDefinition;
-use yuke_engine::{CancellationToken, Driver, MediaStore, Toolset, chain_text};
+use yuke_engine::{CancellationToken, Driver, MediaStore, Model, Toolset, chain_text};
 use yuke_js::{Runtime, ScriptSession, ScriptTool, SessionHost};
 use yuke_mcp::{McpTool, OnChange, Servers};
 use yuke_protocol::{
     EventNumber, Input, InputId, InteractionId, InteractionRequest, InteractionResponse, Job, LiveUpdate, McpServer,
-    NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings, SessionState,
-    SessionUpdate, SessionUpdateParams, StoredEvent,
+    ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings,
+    SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 use super::trust;
@@ -746,6 +746,10 @@ impl SessionHost for Host {
         };
         drop(open);
         response
+    }
+
+    fn model(&self, reference: &ModelReference) -> Result<Model, String> {
+        model_of(reference, &self.shared).map_err(|error| chain_text(&error))
     }
 }
 

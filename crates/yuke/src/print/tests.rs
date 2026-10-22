@@ -104,6 +104,43 @@ async fn run_with_providers(
     (finished, transport)
 }
 
+// The window comes from the catalog of the app, so this test covers the way from the catalog to a plugin.
+#[tokio::test]
+async fn a_round_before_plugin_gets_the_window_of_the_catalog_and_replaces_the_context() {
+    let place = Place::new("print", "round_before_window");
+    let plugin = place.paths.config.join("windowed");
+    std::fs::create_dir_all(&plugin).unwrap();
+    std::fs::write(
+        plugin.join("plugin.json"),
+        r#"{ "name": "windowed", "extensions": { "sh.yuke": { "entry": "./index.ts" } } }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        plugin.join("index.ts"),
+        "export function session(s) {
+           s.hook('round.before', ({ window }) => ({ replace: { head: [{ user_text: `window ${window}` }], keep: 1 } }));
+         }",
+    )
+    .unwrap();
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["windowed"] }"#).unwrap();
+    let task = Task {
+        model: Some("local/small".to_owned()),
+        ..task("Hi.", SessionChoice::New)
+    };
+    let providers = r#"{ "providers": [{
+        "id": "local", "base_url": "http://127.0.0.1:8080/v1",
+        "endpoints": [{ "protocol": "anthropic_messages" }],
+        "models": [{ "id": "small", "limits": { "context_window": 64000, "max_output_tokens": 4096 } }]
+    }] }"#;
+
+    let (finished, transport) = run_with_providers(&place, &task, providers, Box::new(no_variable)).await;
+
+    assert_eq!(finished.unwrap().end, completed());
+    let request = &transport.requests()[0];
+    assert!(request.contains("window 64000"), "{request}");
+    assert!(request.contains("Hi."), "{request}");
+}
+
 #[tokio::test]
 async fn a_provider_that_providers_json_adds_serves_a_run_without_a_credential() {
     let place = Place::new("print", "added_provider");

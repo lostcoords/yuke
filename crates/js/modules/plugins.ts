@@ -10,7 +10,10 @@
  * - A tool that throws, or a result with `isError: true`, gives the model an error result.
  * - A notice only informs the user. It fails no tool and no turn.
  */
+import type { Block, FinishReason, ModelReference, Settings } from "yuke:protocol";
 import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
+
+export type { Block, FinishReason, ModelReference, Settings } from "yuke:protocol";
 
 /** The severity of a notice. */
 export type NoticeLevel = "debug" | "info" | "warn" | "error";
@@ -150,8 +153,39 @@ export interface ToolAfterAnswer {
   readonly media?: readonly (KeptMedia | (ToolMedia & { readonly id?: never }))[] | undefined;
 }
 
-/** Why a model answer ended: the name of the provider reason, in snake case. */
-export type FinishReason = "stop" | "length" | "content_filter" | "refusal" | "tool_calls" | "pause" | "unknown";
+/** What a `round.before` handler gets. */
+export interface RoundBeforeEvent {
+  /** The context window of the model of the session in tokens, or `null` when the catalog names none. */
+  readonly window: number | null;
+  /**
+   * The input tokens of the newest answer of the session, or `null` before the first answer or when the provider sent
+   * no count. A replacement does not change the count, so after one it describes the old context until the next answer.
+   */
+  readonly inputTokens: number | null;
+  /** The number of blocks of the context, after the replacements of the earlier handlers of this round. */
+  readonly blocks: number;
+  /** The blocks of the context, oldest first, after the replacements of the earlier handlers. Each call gives a copy. */
+  readonly context: () => Block[];
+  /**
+   * The host aborts this signal when the turn is cancelled. After the abort, the host does not wait for the handler,
+   * and it ignores the answer of the handler.
+   */
+  readonly signal: AbortSignal;
+}
+
+/**
+ * The answer of a `round.before` handler. Each part is optional.
+ * - `replace` makes the context `head`, then the last `keep` blocks of the context. The session keeps the replacement.
+ *   A replacement with a tool result without its call before it fails the turn.
+ * - `model` sends this round to another model of the catalog. An unknown model fails the turn.
+ * - `settings` replaces these settings for this round. Each field replaces its whole value, so a field that a new
+ *   `reasoning` leaves out has no value. An unknown field or a value of another shape fails the turn.
+ */
+export interface RoundBeforeAnswer {
+  readonly replace?: { readonly head: readonly Block[]; readonly keep: number } | undefined;
+  readonly model?: ModelReference | undefined;
+  readonly settings?: Partial<Settings> | undefined;
+}
 
 /** What a `round.after` handler gets. */
 export interface RoundAfterEvent {
@@ -189,6 +223,14 @@ export type RoundAfterAnswer =
  * - A throw, or an answer of another shape, is a failure of the handler. Its error names the point and the plugin.
  */
 export interface SessionHooks {
+  /**
+   * Prepare the request of a round: replace the context, or change the model or the settings of the round.
+   * - The handlers run once before each round, not before a retry of the round.
+   * - Each handler gets the context after the replacements of the earlier handlers.
+   * - A later model wins. For each setting, the later value wins.
+   * - A failed handler ends the turn with its error, and the round sends no request.
+   */
+  "round.before": (event: RoundBeforeEvent) => undefined | RoundBeforeAnswer | Promise<undefined | RoundBeforeAnswer>;
   /**
    * Change the system prompt of a turn.
    * - The handlers run once before each turn, after `session` of each plugin settles.

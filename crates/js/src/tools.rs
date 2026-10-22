@@ -51,6 +51,13 @@ pub trait SessionHost: MediaStore {
         request: yuke_protocol::InteractionRequest,
         cancel: CancellationToken,
     ) -> yuke_protocol::InteractionResponse;
+
+    /// The model of `reference`, with the credential of its provider, for one round that a `round.before` hook plans.
+    ///
+    /// # Errors
+    ///
+    /// Returns a text for the user when the catalog has no such model, or when its provider has no credential.
+    fn model(&self, reference: &yuke_protocol::ModelReference) -> Result<yuke_engine::Model, String>;
 }
 
 /// The state of the JavaScript thread: the tools that the JavaScript defined, the open sessions, and the processes that

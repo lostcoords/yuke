@@ -94,6 +94,17 @@ impl SessionHost for TestHost {
         cancel.cancelled().await;
         InteractionResponse::Canceled
     }
+
+    fn model(&self, reference: &yuke_protocol::ModelReference) -> Result<yuke_engine::Model, String> {
+        // The test catalog knows one other model.
+        if (reference.provider.as_str(), reference.model.as_str()) != ("test", "other-model") {
+            return Err(format!("no model {}/{}", reference.provider, reference.model));
+        }
+        Ok(yuke_testing::model_of(yuke_ai::Target {
+            model: "other-model".into(),
+            ..yuke_testing::target()
+        }))
+    }
 }
 
 /// A runtime with the tools of `modules` (module names), for a session in `folder`.

@@ -2750,6 +2750,7 @@ dependencies = [
  "yuke-protocol",
  "yuke-sql",
  "yuke-sqlgen",
+ "yuke-testing",
 ]
 
 [[package]]

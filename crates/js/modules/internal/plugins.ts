@@ -11,12 +11,14 @@ import type {
   PluginSession,
   ResultMedia,
   RoundAfterEvent,
+  RoundBeforeEvent,
   Services,
   SessionContext,
   SessionHooks,
   ToolCall,
   ToolCallResult,
 } from "yuke:plugins";
+import type { Block } from "yuke:protocol";
 import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
 /** One plugin as the host gives it. The host checked the manifest, the order, and the providers before any plugin code. */
@@ -261,6 +263,112 @@ export function startToolBefore({ open, call }: ToolBeforeRequest): Operation<st
       },
     );
     return reason;
+  }, TURN_CANCELLED);
+}
+
+/** What `startRoundBefore` gets. A Rust `None` crosses as `undefined`. */
+interface RoundBeforeRequest {
+  readonly open: number;
+  readonly window: number | undefined;
+  readonly inputTokens: number | undefined;
+  readonly blocks: number;
+  /** A new copy of the blocks of the context before the round. */
+  readonly context: () => Block[];
+}
+
+/** The plan of the `round.before` handlers as the host reads it. Each part names the plugin of its last change. */
+interface RoundBeforePlan {
+  replace?: { readonly plugin: string; readonly head: readonly Block[]; readonly keep: number };
+  model?: { readonly plugin: string; readonly provider: string; readonly model: string };
+  settings?: { readonly plugin: string; readonly changes: Readonly<Record<string, unknown>> };
+}
+
+/** The fields of a `round.before` answer. */
+const ROUND_BEFORE_FIELDS = ["replace", "model", "settings"];
+
+/**
+ * A copy of the JSON value `value`, so a later change by the plugin does not reach the host. JSON has no `NaN` and no
+ * infinity, so a number that is not finite throws a `TypeError` and does not become `null`.
+ */
+function jsonCopy<T>(value: T): T {
+  const text = JSON.stringify(value, (_key, item: unknown) => {
+    if (typeof item === "number" && !Number.isFinite(item)) {
+      throw new TypeError("the answer holds a number that is not finite");
+    }
+    return item;
+  });
+  return JSON.parse(text) as T;
+}
+
+/**
+ * Start the `round.before` handlers of the open session `open` before one round. Each handler gets the context after
+ * the replacements before it. The answer is the plan of all handlers, or `undefined` when no handler answered. A
+ * closed session answers nothing. A failed handler throws. `cancel` aborts the signal of the turn.
+ */
+export function startRoundBefore({
+  open,
+  window,
+  inputTokens,
+  blocks,
+  context,
+}: RoundBeforeRequest): Operation<RoundBeforePlan | undefined> {
+  return hostOperation(async (signal) => {
+    // The replacements so far make the context `head`, then the last `kept` blocks of the context before the round.
+    let head: readonly Block[] = [];
+    let kept = blocks;
+    const plan: RoundBeforePlan = {};
+    let answered = false;
+    await runHandlers(
+      open,
+      "round.before",
+      (handler) => {
+        const event: RoundBeforeEvent = Object.freeze({
+          window: window ?? null,
+          inputTokens: inputTokens ?? null,
+          blocks: head.length + kept,
+          context: () => {
+            const before = context();
+            return [...jsonCopy(head), ...before.slice(before.length - kept)];
+          },
+          signal,
+        });
+        return handler(event);
+      },
+      (answer, plugin) => {
+        const fields = fieldsOf(answer, "the answer", ROUND_BEFORE_FIELDS);
+        if (fields.replace !== undefined) {
+          const replace = fieldsOf(fields.replace, "the replace of the answer", ["head", "keep"]);
+          if (!Array.isArray(replace.head)) throw new TypeError("the head of the replace is not an array");
+          const { keep } = replace;
+          if (typeof keep !== "number" || !Number.isSafeInteger(keep) || keep < 0) {
+            throw new TypeError("the keep of the replace is not a whole number");
+          }
+          const given = jsonCopy(replace.head as Block[]);
+          // A keep past the kept blocks also keeps the end of the earlier head.
+          const keeps = Math.min(keep, head.length + kept);
+          head = keeps <= kept ? given : [...given, ...head.slice(head.length - (keeps - kept))];
+          kept = Math.min(kept, keeps);
+          plan.replace = { plugin, head, keep: kept };
+        }
+        if (fields.model !== undefined) {
+          const { provider, model } = fieldsOf(fields.model, "the model of the answer", ["provider", "model"]);
+          if (typeof provider !== "string" || typeof model !== "string") {
+            throw new TypeError("the model of the answer needs a provider and a model text");
+          }
+          plan.model = { plugin, provider, model };
+        }
+        if (fields.settings !== undefined) {
+          const { settings } = fields;
+          if (typeof settings !== "object" || settings === null || Array.isArray(settings)) {
+            throw new TypeError("the settings of the answer are not an object");
+          }
+          plan.settings = { plugin, changes: { ...plan.settings?.changes, ...jsonCopy(settings) } };
+        }
+        answered = true;
+        return false;
+      },
+    );
+    return answered ? plan : undefined;
   }, TURN_CANCELLED);
 }
 
@@ -572,7 +680,7 @@ function start(
     closed: false,
     abort,
     tools: [],
-    hooks: { "prompt.build": [], "tool.before": [], "tool.after": [], "round.after": [] },
+    hooks: { "round.before": [], "prompt.build": [], "tool.before": [], "tool.after": [], "round.after": [] },
     settled: Promise.resolve(undefined),
     clean,
   };

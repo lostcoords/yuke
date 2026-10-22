@@ -1,11 +1,13 @@
 // Type checks of the author API. `tsc -p crates/js/tsconfig.json` runs them; nothing executes this file.
 import type {
+  Block,
   PluginApply,
   PluginContext,
   PluginSession,
   PromptBuildAnswer,
   PromptBuildEvent,
   RoundAfterAnswer,
+  RoundBeforeAnswer,
   SessionContext,
   ToolAfterAnswer,
   ToolBeforeAnswer,
@@ -277,6 +279,17 @@ const mixed = { id: "ab", mimeType: "image/png", bytes: new Uint8Array() };
 s.hook("tool.after", () => ({ media: [mixed] }));
 // @ts-expect-error: a new media item needs a path or bytes.
 s.hook("tool.after", () => ({ media: [{ mimeType: "image/png" }] }));
+
+// A round.before handler reads the window and the tokens, and answers a summary of the old blocks.
+s.hook("round.before", ({ window, inputTokens, context }): RoundBeforeAnswer | undefined => {
+  if (window === null || inputTokens === null || inputTokens < window * 0.8) return undefined;
+  const summary: Block = { user_text: `${context().length} blocks before this summary.` };
+  return { replace: { head: [summary], keep: 4 }, settings: { temperature: 0 } };
+});
+// @ts-expect-error: a block holds one known kind.
+s.hook("round.before", () => ({ replace: { head: [{ text: "x" }], keep: 0 } }));
+// @ts-expect-error: a model names its provider and its model.
+s.hook("round.before", () => ({ model: { model: "x" } }));
 
 // A round.after handler reads the reason and the count, and answers a stop or a continue.
 s.hook("round.after", ({ finishReason, continues }): RoundAfterAnswer | undefined => {

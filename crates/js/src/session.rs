@@ -1,7 +1,9 @@
 //! These types open, use, and close one session of the plugins. Its tools are the tools of yuke and the tools that the
 //! `session` exports define. Its hooks are the hooks that the `session` exports add.
 
+use std::borrow::Cow;
 use std::error::Error as StdError;
+use std::fmt::Display;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,8 +13,8 @@ use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Promise, Value};
 use tokio::sync::oneshot;
 use yuke_agent::PromptSection;
 use yuke_ai::{Block, FinishReason, ToolCall, ToolResult, answer_text};
-use yuke_engine::{CancellationToken, Hooks, RoundDecision, ToolDecision};
-use yuke_protocol::{Input, InteractionRequest, InteractionResponse};
+use yuke_engine::{CancellationToken, Hooks, Replaced, RoundDecision, RoundPlan, RoundStart, ToolDecision};
+use yuke_protocol::{Input, InteractionRequest, InteractionResponse, ModelReference};
 
 use crate::Runtime;
 use crate::error::{Error, caught};
@@ -196,6 +198,25 @@ impl std::fmt::Debug for ScriptHooks {
 
 #[async_trait]
 impl Hooks for ScriptHooks {
+    async fn before_round(&self, round: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn StdError + Send + Sync>> {
+        let request = RoundBeforeRequest {
+            open: self.open,
+            window: round.window,
+            input_tokens: round.input_tokens,
+            blocks: round.context.len(),
+            context: ContextBlocks(round.context.to_vec()),
+        };
+        let answer: Option<Option<PlannedRound>> =
+            run_hook(&self.caller, "startRoundBefore", request, self.token.clone())
+                .await
+                .map_err(|error| failure_text("round.before", &error))?;
+        // A cancel ends the turn, so the driver does not read this plan.
+        let Some(Some(planned)) = answer else {
+            return Ok(RoundPlan::default());
+        };
+        Ok(planned.plan(round, &*self.host)?)
+    }
+
     async fn after_round(
         &self,
         context: &[Block],
@@ -399,6 +420,112 @@ struct HookResult {
 struct HookMedia {
     mime_type: String,
     size: usize,
+}
+
+/// What `startRoundBefore` gets.
+#[derive(IntoJs)]
+#[qjs(rename_all = "camelCase")]
+struct RoundBeforeRequest {
+    open: u64,
+    window: Option<u64>,
+    input_tokens: Option<u64>,
+    blocks: usize,
+    context: ContextBlocks,
+}
+
+/// A copy of the blocks of the context, which each round makes, also without a handler. They cross to JavaScript as the
+/// function `context`, which converts them at each call, so a round without a call converts nothing.
+struct ContextBlocks(Vec<Block>);
+
+impl<'js> IntoJs<'js> for ContextBlocks {
+    fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+        let blocks = self.0;
+        Function::new(ctx.clone(), move || Json(blocks.clone()))?.into_js(ctx)
+    }
+}
+
+/// The plan of the `round.before` handlers. Each part names the plugin of its last change.
+#[derive(FromJs)]
+struct PlannedRound {
+    replace: Option<PlannedReplace>,
+    model: Option<PlannedModel>,
+    settings: Option<PlannedSettings>,
+}
+
+#[derive(FromJs)]
+struct PlannedReplace {
+    plugin: String,
+    head: Json<serde_json::Value>,
+    keep: usize,
+}
+
+#[derive(FromJs)]
+struct PlannedModel {
+    plugin: String,
+    provider: String,
+    model: String,
+}
+
+#[derive(FromJs)]
+struct PlannedSettings {
+    plugin: String,
+    changes: Json<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl PlannedRound {
+    /// The plan of the engine for `round`. Each failure names its plugin: a head that is no list of blocks, a
+    /// replacement with a result without its call, a model that `host` does not know, or settings of another shape.
+    fn plan(self, round: &RoundStart<'_>, host: &dyn SessionHost) -> Result<RoundPlan, String> {
+        let failed = |plugin: &str, error: &dyn Display| format!("round.before of plugin {plugin} failed: {error}");
+        let replace = match self.replace {
+            Some(PlannedReplace { plugin, head, keep }) => {
+                let head: Vec<Block> = serde_json::from_value(head.0)
+                    .map_err(|error| failed(&plugin, &format!("the head is not a list of blocks: {error}")))?;
+                let replaced = Replaced {
+                    head: Cow::Owned(head),
+                    keep,
+                };
+                replaced.check(round.context).map_err(|error| failed(&plugin, &error))?;
+                Some(replaced)
+            }
+            None => None,
+        };
+        let model = match self.model {
+            Some(PlannedModel {
+                plugin,
+                provider,
+                model,
+            }) => {
+                let reference = ModelReference { provider, model };
+                Some(host.model(&reference).map_err(|error| failed(&plugin, &error))?)
+            }
+            None => None,
+        };
+        let settings = match self.settings {
+            Some(PlannedSettings { plugin, changes }) => {
+                let mut settings = serde_json::to_value(round.settings).map_err(|error| failed(&plugin, &error))?;
+                if let Some(fields) = settings.as_object_mut() {
+                    // serde skips an unknown field, so a misspelt setting would change nothing without this check.
+                    if let Some(unknown) = changes.0.keys().find(|key| !fields.contains_key(*key)) {
+                        return Err(failed(
+                            &plugin,
+                            &format!("the settings have the unknown field '{unknown}'"),
+                        ));
+                    }
+                    fields.extend(changes.0);
+                }
+                let settings = serde_json::from_value(settings)
+                    .map_err(|error| failed(&plugin, &format!("the settings are not valid: {error}")))?;
+                Some(settings)
+            }
+            None => None,
+        };
+        Ok(RoundPlan {
+            replace,
+            model,
+            settings,
+        })
+    }
 }
 
 /// What `startRoundAfter` gets.
