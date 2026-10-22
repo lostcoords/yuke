@@ -2,6 +2,7 @@ mod ask;
 mod exec;
 mod fs;
 mod globals;
+mod hook_points;
 mod plugins;
 mod process;
 mod prompt;
@@ -85,6 +86,17 @@ async fn load_entry(runtime: &Runtime, path: &Path) -> Result<(), Error> {
         Some(PluginError::Load(error)) => Err(error),
         Some(other) => panic!("{other:?}"),
     }
+}
+
+/// Wait until the body `condition` returns `true`. A wait past 5 seconds fails the test, so the test does not hang.
+async fn wait_until(runtime: &Runtime, condition: &str) {
+    let wait = async {
+        while !evaluate::<bool>(runtime, condition).await.unwrap() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    };
+    let waited = tokio::time::timeout(Duration::from_secs(5), wait).await;
+    assert!(waited.is_ok(), "the condition never held: {condition}");
 }
 
 /// Run the body of an async function, and return the value of its promise.

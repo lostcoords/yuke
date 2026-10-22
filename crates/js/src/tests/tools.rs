@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use yuke_engine::{CancellationToken, Concurrency, MediaStore, Tool, ToolContent};
 use yuke_protocol::{InteractionRequest, InteractionResponse, SessionId};
 
-use super::{evaluate, folder, load_entry, module, next_fault, next_notice, script_error, start, write};
+use super::{evaluate, folder, load_entry, module, next_fault, next_notice, script_error, start, wait_until, write};
 use crate::tools::forward;
 use crate::{Runtime, ScriptSession, ScriptTool, SessionHost, baked};
 
@@ -1105,12 +1105,7 @@ async fn a_media_path_starts_in_the_folder_of_the_start_of_the_call() {
     let (runtime, host, tools) = tools_in(runtime, host, &[&module(&folder, "tools.ts")]).await;
 
     let release = async {
-        while !evaluate::<bool>(&runtime, "return typeof globalThis.release === 'function';")
-            .await
-            .unwrap()
-        {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        wait_until(&runtime, "return typeof globalThis.release === 'function';").await;
         *host.folder.lock().unwrap() = folder.join("second");
         evaluate::<()>(&runtime, "globalThis.release();").await.unwrap();
     };

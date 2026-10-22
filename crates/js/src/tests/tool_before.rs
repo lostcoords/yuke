@@ -5,8 +5,8 @@ use std::time::Duration;
 use yuke_ai::ToolCall;
 use yuke_engine::{CancellationToken, Hooks, ToolDecision};
 
-use super::evaluate;
 use super::prompt::opened;
+use super::{evaluate, wait_until};
 use crate::ScriptSession;
 
 /// The decision of the hooks of `session` for one call. `name` is the tool, and `arguments` is the JSON text.
@@ -185,12 +185,7 @@ async fn a_cancel_aborts_the_signal_also_when_the_driver_drops_the_hook_future()
         }
     };
     let cancel = async {
-        while !evaluate::<bool>(&runtime, "return globalThis.started === true;")
-            .await
-            .unwrap()
-        {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        wait_until(&runtime, "return globalThis.started === true;").await;
         token.cancel();
     };
     let (decision, ()) = tokio::join!(raced, cancel);
@@ -226,12 +221,7 @@ async fn a_block_that_comes_after_the_close_of_the_session_does_not_count() {
     .await;
     let decision = decide(&session, "read", "{}");
     let close = async {
-        while !evaluate::<bool>(&runtime, "return typeof globalThis.release === 'function';")
-            .await
-            .unwrap()
-        {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        wait_until(&runtime, "return typeof globalThis.release === 'function';").await;
         session.close().await.unwrap();
         evaluate::<()>(&runtime, "globalThis.release();").await.unwrap();
     };
@@ -270,7 +260,11 @@ async fn a_removed_handler_and_the_handler_of_a_failed_session_block_nothing() {
 async fn a_call_is_blocked_when_the_javascript_thread_has_ended() {
     let (runtime, session, _reports) = opened(
         "a_call_is_blocked_when_the_javascript_thread_has_ended",
-        &[("quiet", "export function session(s) {}")],
+        // A handler makes the point held, so the hook needs the JavaScript thread.
+        &[(
+            "quiet",
+            "export function session(s) { s.hook('tool.before', () => undefined); }",
+        )],
     )
     .await;
     let hooks = session.hooks(CancellationToken::new());

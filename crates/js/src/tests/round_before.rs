@@ -6,8 +6,8 @@ use std::time::Duration;
 use yuke_ai::{Block, Settings, ToolCall, ToolResult};
 use yuke_engine::{CancellationToken, Hooks, RoundPlan, RoundStart};
 
-use super::evaluate;
 use super::prompt::opened;
+use super::{evaluate, wait_until};
 use crate::ScriptSession;
 
 /// A context of 4 blocks: the input, a call and its result, and a text.
@@ -271,12 +271,7 @@ async fn a_cancel_aborts_the_signal_and_the_hook_keeps_the_round_at_once() {
     };
 
     let cancel = async {
-        while !evaluate::<bool>(&runtime, "return globalThis.started === true;")
-            .await
-            .unwrap()
-        {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        wait_until(&runtime, "return globalThis.started === true;").await;
         token.cancel();
     };
     let (planned, ()) = tokio::join!(

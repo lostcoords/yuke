@@ -6,8 +6,8 @@ use yuke_ai::{Block, FinishReason, ToolCall, ToolResult};
 use yuke_engine::{CancellationToken, Hooks, RoundDecision};
 use yuke_protocol::{InputKind, InputSource};
 
-use super::evaluate;
 use super::prompt::{opened, opened_with_host};
+use super::{evaluate, wait_until};
 use crate::ScriptSession;
 
 /// A final answer: the input, two texts of the answer, and the reason `stop`.
@@ -224,12 +224,7 @@ async fn a_cancel_aborts_the_signal_and_the_hook_proceeds_at_once() {
     let context = final_answer();
 
     let cancel = async {
-        while !evaluate::<bool>(&runtime, "return globalThis.started === true;")
-            .await
-            .unwrap()
-        {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        wait_until(&runtime, "return globalThis.started === true;").await;
         token.cancel();
     };
     let (decision, ()) = tokio::join!(decide(&hooks, &context, Some(FinishReason::Stop)), cancel);
