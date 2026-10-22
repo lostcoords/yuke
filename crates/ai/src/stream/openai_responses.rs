@@ -125,9 +125,9 @@ impl Reducer {
         match event_type {
             "response.output_item.added" => self.on_output_item_added(&root)?,
             "response.content_part.added" => self.on_content_part_added(&root)?,
-            "response.output_text.done" => self.on_text_done(&root, BlockKind::Text)?,
-            "response.refusal.done" => self.on_text_done(&root, BlockKind::Refusal)?,
-            "response.content_part.done" => self.on_content_part_done(&root)?,
+            "response.output_text.done" => self.stop_part(&root, Some(BlockKind::Text))?,
+            "response.refusal.done" => self.stop_part(&root, Some(BlockKind::Refusal))?,
+            "response.content_part.done" => self.stop_part(&root, part_kind(part_type(&root)?))?,
             "response.function_call_arguments.done" => self.on_tool_arguments_done(&root)?,
             "response.output_item.done" => self.on_output_item_done(&root)?,
             "response.completed" => self.on_completed(&root)?,
@@ -209,8 +209,8 @@ impl Reducer {
         Ok(())
     }
 
-    /// Add a text or refusal delta to the block of that kind the item opened.
-    /// Apply one delta event. A summary delta reads `summary`, and another kind ignores it.
+    /// Apply one delta event. Only a summary delta reads `summary`. Each arm checks the item before it reads `delta`.
+    /// The reasoning arm starts its block when the item has none.
     fn apply_delta(
         &mut self,
         index: usize,
@@ -219,24 +219,17 @@ impl Reducer {
         delta: Result<&str, DecodeError>,
     ) -> Result<(), DecodeError> {
         match kind {
-            DeltaKind::Text(block) => self.text_delta(index, block, delta),
+            DeltaKind::Text(block) => {
+                let id = self.output(index)?.require(block)?;
+                self.draft.delta(id, delta?)
+            }
             DeltaKind::Summary => self.reasoning_delta(index, summary, delta),
             DeltaKind::Reasoning => self.reasoning_delta(index, None, delta),
-            DeltaKind::Arguments => self.arguments_delta(index, delta),
+            DeltaKind::Arguments => {
+                let id = self.output(index)?.require(BlockKind::ToolCall)?;
+                self.draft.tool_delta(id, delta?)
+            }
         }
-    }
-
-    // These functions take `delta` as a `Result`, and read it after they check the item. The reasoning delta opens
-    // its block first, so a delta that is not a string fails after the block starts.
-
-    fn text_delta(
-        &mut self,
-        index: usize,
-        kind: BlockKind,
-        delta: Result<&str, DecodeError>,
-    ) -> Result<(), DecodeError> {
-        let id = self.output(index)?.require(kind)?;
-        self.draft.delta(id, delta?)
     }
 
     fn reasoning_delta(
@@ -261,24 +254,14 @@ impl Reducer {
         self.draft.delta(id, delta)
     }
 
-    fn arguments_delta(&mut self, index: usize, delta: Result<&str, DecodeError>) -> Result<(), DecodeError> {
-        let id = self.output(index)?.require(BlockKind::ToolCall)?;
-        self.draft.tool_delta(id, delta?)
-    }
-
-    fn on_text_done(&mut self, root: &Value<'_>, kind: BlockKind) -> Result<(), DecodeError> {
-        // An item with no block of this kind sent no delta of it, so the event closes nothing.
-        match self.output(Self::output_for(root)?)?.block(kind) {
-            Some(id) => self.draft.stop_if_open(id),
-            None => Ok(()),
-        }
-    }
-
-    fn on_content_part_done(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
+    /// Stop the block of kind `kind` that the item at `output_index` holds. `None` is an unknown part type and stops
+    /// nothing.
+    fn stop_part(&mut self, root: &Value<'_>, kind: Option<BlockKind>) -> Result<(), DecodeError> {
         let output_index = Self::output_for(root)?;
-        let Some(kind) = part_kind(part_type(root)?) else {
+        let Some(kind) = kind else {
             return Ok(());
         };
+        // An item with no block of this kind sent no delta of it, so the event closes nothing.
         match self.output(output_index)?.block(kind) {
             Some(id) => self.draft.stop_if_open(id),
             None => Ok(()),
@@ -776,6 +759,34 @@ mod tests {
              stop 1 tool_call id=\"c\" name=\"read\" arguments=\"{}\"\n\
              stop 0 text\n\
              done tool_calls \"completed\"",
+        );
+    }
+
+    // A host can end a text part with only `output_text.done`, and a refusal part with only `refusal.done`.
+    #[test]
+    fn a_text_or_refusal_done_ends_its_part_without_a_part_done() {
+        let mut h = Harness::new(PROTOCOL);
+        h.feed(&[
+            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
+            r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
+            r#"{"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"a"}"#,
+            r#"{"type":"response.output_text.done","output_index":0,"content_index":0}"#,
+            r#"{"type":"response.content_part.added","output_index":0,"content_index":1,"part":{"type":"output_text"}}"#,
+            r#"{"type":"response.content_part.added","output_index":0,"content_index":2,"part":{"type":"refusal"}}"#,
+            r#"{"type":"response.refusal.delta","output_index":0,"content_index":2,"delta":"no"}"#,
+            r#"{"type":"response.refusal.done","output_index":0,"content_index":2}"#,
+            r#"{"type":"response.content_part.added","output_index":0,"content_index":3,"part":{"type":"refusal"}}"#,
+        ])
+        .unwrap();
+        h.expect_trace(
+            "start 0 text\n\
+             text_delta 0 \"a\"\n\
+             stop 0 text\n\
+             start 1 text\n\
+             start 2 refusal\n\
+             refusal_delta 2 \"no\"\n\
+             stop 2 refusal\n\
+             start 3 refusal",
         );
     }
 

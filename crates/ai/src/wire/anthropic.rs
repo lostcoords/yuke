@@ -2,9 +2,7 @@
 
 use crate::encoder::{EncodeError, Unsupported};
 use crate::request::read_blob;
-use crate::request::{
-    AnthropicWire, BlobStore, Block, Media, Modality, Reasoning, ReplayKind, Request, Target, Thinking,
-};
+use crate::request::{AnthropicWire, BlobStore, Block, Media, Modality, ReplayKind, Request, Target, Thinking};
 
 use super::json::{JsonWriter, call_arguments};
 
@@ -92,7 +90,7 @@ pub(crate) fn write_group(
         .position(|block| block.role() != role)
         .map_or(blocks.len(), |len| start + len);
     // A message of reasoning from another origin alone has no content this protocol takes, so it writes nothing.
-    if !blocks[start..end].iter().any(|block| writes(target, block)) {
+    if !blocks[start..end].iter().any(|block| super::writes(target, block)) {
         return Ok(end);
     }
     jw.begin_object();
@@ -153,7 +151,7 @@ fn write_block(
             jw.end_object();
         }
         Block::Media(media) => write_media(jw, request.blobs, media, cache)?,
-        Block::Reasoning(reasoning) => match replayed(target, reasoning) {
+        Block::Reasoning(reasoning) => match reasoning.replay_to(target) {
             Some((ReplayKind::AnthropicSignature, signature)) => {
                 jw.begin_object();
                 jw.field_str("type", "thinking");
@@ -261,24 +259,6 @@ fn write_media(
     Ok(())
 }
 
-/// Report whether this protocol writes the block.
-fn writes(target: &Target, block: &Block) -> bool {
-    match block {
-        Block::Reasoning(reasoning) => replayed(target, reasoning).is_some(),
-        Block::UserText(_) | Block::AssistantText(_) | Block::Media(_) | Block::ToolCall(_) | Block::ToolResult(_) => {
-            true
-        }
-    }
-}
-
-/// The thinking state a reasoning block returns with. Only state this origin produced in this protocol returns, so
-/// other reasoning writes nothing.
-fn replayed<'a>(target: &Target, reasoning: &'a Reasoning) -> Option<(ReplayKind, &'a str)> {
-    reasoning
-        .replay_to(target)
-        .filter(|(kind, _)| matches!(kind, ReplayKind::AnthropicSignature | ReplayKind::AnthropicRedacted))
-}
-
 /// The last block that can carry the cache marker carries it. A thinking block cannot.
 pub(crate) fn cacheable(block: &Block) -> bool {
     !matches!(block, Block::Reasoning(_))
@@ -289,7 +269,8 @@ mod tests {
     use super::*;
     use crate::ToolResult;
     use crate::request::{
-        Blob, BlobStore, Effort, Origin, OutputSchema, ReasoningReplay, Settings, ThinkingDisplay, ToolDefinition,
+        Blob, BlobStore, Effort, Origin, OutputSchema, Reasoning, ReasoningReplay, Settings, ThinkingDisplay,
+        ToolDefinition,
     };
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
 

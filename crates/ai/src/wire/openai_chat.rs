@@ -2,8 +2,8 @@
 
 use crate::encoder::{EncodeError, Unsupported};
 use crate::request::{
-    BlobStore, Block, ChatDialect, ChatWire, MaxTokensField, Media, Modality, Reasoning, ReasoningReplayMode,
-    ReasoningSettings, ReplayKind, Request, Target, ThinkingFormat, ToolChoice, ToolResult, read_blob,
+    BlobStore, Block, ChatDialect, ChatWire, MaxTokensField, Media, Modality, ReasoningReplayMode, ReasoningSettings,
+    Request, Target, ThinkingFormat, ToolChoice, ToolResult, read_blob,
 };
 
 use super::json::{JsonWriter, call_arguments};
@@ -191,7 +191,7 @@ fn write_assistant_message(jw: &mut JsonWriter<'_>, target: &Target, replay: Rea
     // A host that takes no replay drops the block. It is never a reason to fail the turn.
     let has_details = blocks
         .iter()
-        .any(|block| matches!(block, Block::Reasoning(reasoning) if replayed(target, reasoning).is_some()));
+        .any(|block| matches!(block, Block::Reasoning(reasoning) if reasoning.replay_to(target).is_some()));
     debug_assert!(
         has_text || has_tool_calls,
         "`write_group` writes no message without either"
@@ -259,20 +259,14 @@ fn write_details(jw: &mut JsonWriter<'_>, target: &Target, blocks: &[Block]) {
     for block in blocks {
         let Block::Reasoning(reasoning) = block else { continue };
         // One raw write holds the entries of one block. The writer puts one comma between two such writes.
-        let entries = replayed(target, reasoning).map_or("", array_items);
+        let entries = reasoning
+            .replay_to(target)
+            .map_or("", |(_, details)| array_items(details));
         if !entries.is_empty() {
             jw.raw(entries);
         }
     }
     jw.end_array();
-}
-
-/// The `reasoning_details` a reasoning block returns with. Only entries this origin produced in this protocol return.
-fn replayed<'a>(target: &Target, reasoning: &'a Reasoning) -> Option<&'a str> {
-    match reasoning.replay_to(target)? {
-        (ReplayKind::OpenrouterDetails, details) => Some(details),
-        _ => None,
-    }
 }
 
 /// The text between the brackets of a JSON array text. The caller supplies a valid array, as for any raw JSON.
@@ -426,7 +420,7 @@ fn write_effort_object(jw: &mut JsonWriter<'_>, level: &str) {
 mod tests {
     use super::*;
     use crate::ToolResult;
-    use crate::request::{Effort, OutputSchema, Settings, Thinking, ToolDefinition, Wire};
+    use crate::request::{Effort, OutputSchema, Reasoning, ReplayKind, Settings, Thinking, ToolDefinition, Wire};
     use crate::route::Credential;
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
 

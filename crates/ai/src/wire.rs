@@ -13,6 +13,17 @@ use crate::encoder::EncodeError;
 use crate::request::{Block, Request, Target, ToolDefinition, Wire};
 use json::JsonWriter;
 
+/// Tell whether the protocol of `target` writes `block`. It writes a reasoning block only when
+/// [`Reasoning::replay_to`](crate::request::Reasoning::replay_to) gives state for `target`.
+fn writes(target: &Target, block: &Block) -> bool {
+    match block {
+        Block::Reasoning(reasoning) => reasoning.replay_to(target).is_some(),
+        Block::UserText(_) | Block::AssistantText(_) | Block::Media(_) | Block::ToolCall(_) | Block::ToolResult(_) => {
+            true
+        }
+    }
+}
+
 /// Write the request up to its open context array. Return whether that array already holds an element, as the
 /// Chat system message is one.
 pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, request: &Request<'_>) -> bool {

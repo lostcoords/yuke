@@ -37,6 +37,17 @@ pub enum ReplayKind {
     OpenrouterDetails,
 }
 
+impl ReplayKind {
+    /// The one protocol that sends this state in an answer and reads it in a request.
+    fn protocol(self) -> Protocol {
+        match self {
+            Self::AnthropicSignature | Self::AnthropicRedacted => Protocol::AnthropicMessages,
+            Self::ResponsesEncrypted => Protocol::OpenaiResponses,
+            Self::OpenrouterDetails => Protocol::OpenaiChat,
+        }
+    }
+}
+
 /// The model and host that answered a request. Provider state returns only to the same model at the same host.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -378,12 +389,13 @@ pub struct Reasoning {
 }
 
 impl Reasoning {
-    /// The state a request to `target` may carry: the state of the same model at the same host, or `None`.
+    /// The state a request to `target` may carry: the state of the same model at the same host in the protocol of
+    /// `target`, or `None`. One host can serve one model over two protocols.
     pub fn replay_to(&self, target: &Target) -> Option<(ReplayKind, &str)> {
         let replay = self.replay.as_ref()?;
-        replay
-            .origin
-            .matches(target)
+        // An empty encrypted content carries nothing. An empty Anthropic signature still replays.
+        let empty = replay.kind == ReplayKind::ResponsesEncrypted && replay.data.is_empty();
+        (replay.origin.matches(target) && replay.kind.protocol() == target.wire.protocol() && !empty)
             .then_some((replay.kind, replay.data.as_str()))
     }
 }

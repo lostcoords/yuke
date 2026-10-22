@@ -2,8 +2,8 @@
 
 use crate::encoder::{EncodeError, Unsupported};
 use crate::request::{
-    BlobStore, Block, Media, Modality, Reasoning, ReasoningSettings, ReplayKind, Request, ResponsesDialect,
-    ResponsesWire, SEARCH_TOOL_NAME, Target, ToolChoice, ToolDefinition, ToolResult, read_blob,
+    BlobStore, Block, Media, Modality, ReasoningSettings, Request, ResponsesDialect, ResponsesWire, SEARCH_TOOL_NAME,
+    Target, ToolChoice, ToolDefinition, ToolResult, read_blob,
 };
 
 use super::json::{JsonWriter, call_arguments};
@@ -91,7 +91,7 @@ fn group_end(target: &Target, blocks: &[Block], start: usize) -> usize {
     while end < blocks.len() {
         let block = &blocks[end];
         // A reasoning block without encrypted content writes nothing, so it leaves the message open.
-        if (in_message(block) && block.role() == role) || !writes(target, block) {
+        if (in_message(block) && block.role() == role) || !super::writes(target, block) {
             end += 1;
             continue;
         }
@@ -102,24 +102,6 @@ fn group_end(target: &Target, blocks: &[Block], start: usize) -> usize {
 
 fn in_message(block: &Block) -> bool {
     matches!(block, Block::UserText(_) | Block::AssistantText(_) | Block::Media(_))
-}
-
-fn writes(target: &Target, block: &Block) -> bool {
-    match block {
-        Block::Reasoning(reasoning) => replayed(target, reasoning).is_some(),
-        Block::UserText(_) | Block::AssistantText(_) | Block::Media(_) | Block::ToolCall(_) | Block::ToolResult(_) => {
-            true
-        }
-    }
-}
-
-/// The encrypted content a reasoning block returns with. Only content this origin produced in this protocol returns,
-/// so other reasoning writes nothing.
-fn replayed<'a>(target: &Target, reasoning: &'a Reasoning) -> Option<&'a str> {
-    match reasoning.replay_to(target)? {
-        (ReplayKind::ResponsesEncrypted, encrypted) if !encrypted.is_empty() => Some(encrypted),
-        _ => None,
-    }
 }
 
 /// Write the item of the group from `start`, and return its end. `marker` is the block that carries the explicit
@@ -134,7 +116,7 @@ pub(crate) fn write_group(
     let end = group_end(target, request.blocks, start);
     let blocks = request.blocks;
     let first = &blocks[start];
-    if !writes(target, first) {
+    if !super::writes(target, first) {
         return Ok(end);
     }
     match first {
@@ -166,14 +148,14 @@ pub(crate) fn write_group(
                     }
                     Block::Media(media) => write_media(jw, request.blobs, media)?,
                     // `group_end` admits only empty reasoning beside the message content.
-                    _ => debug_assert!(!writes(target, block)),
+                    _ => debug_assert!(!super::writes(target, block)),
                 }
             }
             jw.end_array();
             jw.end_object();
         }
         Block::Reasoning(reasoning) => {
-            if let Some(encrypted) = replayed(target, reasoning) {
+            if let Some((_, encrypted)) = reasoning.replay_to(target) {
                 write_reasoning_item(jw, &reasoning.text, encrypted);
             }
         }
@@ -253,7 +235,7 @@ fn write_reasoning(jw: &mut JsonWriter<'_>, reasoning: ReasoningSettings) {
     jw.end_array();
 }
 
-/// Write one reasoning item. `replayed` admits only non-empty encrypted content.
+/// Write one reasoning item. `Reasoning::replay_to` gives only non-empty encrypted content.
 fn write_reasoning_item(jw: &mut JsonWriter<'_>, summary: &str, encrypted: &str) {
     jw.begin_object();
     jw.field_str("type", "reasoning");
@@ -350,7 +332,7 @@ mod tests {
     use super::*;
     use crate::ToolResult;
     use crate::Wire;
-    use crate::request::{Effort, OutputSchema, Settings, Thinking};
+    use crate::request::{Effort, OutputSchema, Reasoning, ReplayKind, Settings, Thinking};
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
 
     fn responses() -> Wire {
@@ -696,6 +678,8 @@ mod tests {
             reasoning("t", ReplayKind::AnthropicSignature, "sig"),
             reasoning("", ReplayKind::AnthropicRedacted, "opaque"),
             reasoning("t", ReplayKind::OpenrouterDetails, "[]"),
+            // An empty encrypted content carries nothing to return.
+            reasoning("t", ReplayKind::ResponsesEncrypted, ""),
             Block::assistant_text("done"),
         ];
         expect_json(
