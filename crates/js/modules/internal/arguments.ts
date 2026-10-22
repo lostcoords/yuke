@@ -10,10 +10,13 @@ const KEYWORDS: Readonly<Record<Schema["type"], readonly string[]>> = {
   object: ["type", "description", "properties", "required", "additionalProperties"],
 };
 
-/** Throw a `TypeError` when `schema` is not an object schema, or uses a part of JSON schema that `checkArguments` does not check. */
-export function checkParameters(schema: unknown): asserts schema is ObjectSchema {
-  checkSchema(schema, "parameters");
-  if (schema.type !== "object") throw new TypeError("parameters.type is not object");
+/**
+ * Throw a `TypeError` when `schema` is not an object schema, or uses a part of JSON schema that `checkArguments` does
+ * not check. The error names the schema `place`.
+ */
+export function checkParameters(schema: unknown, place = "parameters"): asserts schema is ObjectSchema {
+  checkSchema(schema, place);
+  if (schema.type !== "object") throw new TypeError(`${place}.type is not object`);
 }
 
 function checkSchema(schema: unknown, place: string): asserts schema is Schema {

@@ -13,6 +13,46 @@
  */
 declare module "yuke:ai" {
   import type { Block, FinishReason, ModelReference, Settings, Usage } from "yuke:protocol";
+  import type { Infer, ObjectSchema } from "yuke:tools";
+
+  /** The key of the brand that carries the object type of an `ObjectOutput`. Only TypeScript sees it. */
+  const objectType: unique symbol;
+
+  // biome-ignore lint/complexity/noUselessEmptyExport: without it, an ambient module exports `objectType` too.
+  export {};
+
+  /** A request for a JSON object of a schema. Only `Output.object` makes it. */
+  export interface ObjectOutput<T> {
+    /** The schema of the object, in the dialect of the parameters of a tool. */
+    readonly schema: ObjectSchema;
+    /** The name of the schema. OpenAI needs it, and Anthropic ignores it. */
+    readonly name: string;
+    readonly [objectType]: T;
+  }
+
+  /** The kinds of output that `generateText` can request. */
+  export const Output: {
+    /**
+     * Request a JSON object that matches `schema`. An inline schema keeps its types, and a schema in a constant needs
+     * `as const`. A schema that yuke does not check throws a `TypeError`. The default `name` is `response`. A name
+     * holds 1 to 64 letters, digits, `_`, or `-`.
+     */
+    readonly object: <const S extends ObjectSchema>(options: { schema: S; name?: string }) => ObjectOutput<Infer<S>>;
+  };
+
+  /**
+   * The answer is not a JSON object that matches the schema, or it did not finish with `"stop"`. The error keeps the
+   * answer, and `cause` tells what failed.
+   */
+  export class NoObjectGeneratedError extends Error {
+    constructor(message: string, options: { cause: unknown; text: string; finishReason: FinishReason; usage: Usage });
+    /** The text of the answer. */
+    readonly text: string;
+    /** The reason that the answer stopped, for example `"length"` or `"refusal"`. */
+    readonly finishReason: FinishReason;
+    /** The token counts of the request. */
+    readonly usage: Usage;
+  }
 
   /**
    * The options of `generateText`. An option that is `undefined` is missing. A missing setting keeps the default of
@@ -33,20 +73,30 @@ declare module "yuke:ai" {
     topP?: Settings["topP"] | undefined;
     /** Whether and how hard the model thinks. */
     reasoning?: Settings["reasoning"] | undefined;
+    /**
+     * A request for a JSON object, from `Output.object`. The provider gets the schema, and yuke checks the answer
+     * against it. An answer that does not match throws a `NoObjectGeneratedError`.
+     */
+    output?: ObjectOutput<unknown> | undefined;
     /** A signal that stops the request. */
     abortSignal?: AbortSignal | undefined;
   }
 
   /** The answer of the model. */
-  export interface GenerateTextResult {
+  export interface GenerateTextResult<T = undefined> {
     /** The text of the answer. A line feed joins two text blocks. */
     readonly text: string;
     /** The reason that the answer stopped. For `"tool_calls"`, yuke runs no tool call of the answer. */
     readonly finishReason: FinishReason;
     /** The token counts of the request. */
     readonly usage: Usage;
+    /** The checked object of an `output` request, or `undefined` without one. */
+    readonly output: T;
   }
 
   /** Send one request to a model, and wait for its answer. A failure of the request rejects with an `Error`. */
+  export function generateText<T>(
+    options: GenerateTextOptions & { output: ObjectOutput<T> },
+  ): Promise<GenerateTextResult<T>>;
   export function generateText(options: GenerateTextOptions): Promise<GenerateTextResult>;
 }

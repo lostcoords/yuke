@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use yuke_ai::{Block, Effort, FinishReason, ReasoningSettings, Settings, Thinking, Usage};
+use yuke_ai::{Block, Effort, FinishReason, OutputSchema, ReasoningSettings, Settings, Thinking, Usage};
 use yuke_engine::CancellationToken;
 use yuke_protocol::ModelReference;
 
@@ -309,4 +309,183 @@ async fn wait_for_requests(models: &Recorded, count: usize) {
         }
     };
     tokio::time::timeout(Duration::from_secs(5), wait).await.unwrap();
+}
+
+/// The JavaScript that defines `shape`, an output for an object with a required `summary` and an optional `count` of at
+/// least 0.
+const SHAPE: &str = "const ai = await import('yuke:ai');
+     const shape = ai.Output.object({
+       schema: {
+         type: 'object',
+         properties: { summary: { type: 'string' }, count: { type: 'integer', minimum: 0 } },
+         required: ['summary'],
+       },
+     });";
+
+/// A runtime of the test `name` whose model answers `text` with the finish `finish_reason`.
+async fn answering(name: &str, text: &str, finish_reason: FinishReason) -> (Runtime, Arc<Recorded>) {
+    let models = Arc::new(Recorded {
+        answer: Some(Ok(CompleteAnswer {
+            text: text.to_owned(),
+            finish_reason,
+            usage: Usage {
+                output: Some(5),
+                ..Usage::default()
+            },
+        })),
+        ..Recorded::default()
+    });
+    (runtime_with(name, &models).await, models)
+}
+
+#[tokio::test]
+async fn an_output_sends_the_schema_and_answers_with_the_checked_object() {
+    let (runtime, models) = answering(
+        "an_output_sends_the_schema_and_answers_with_the_checked_object",
+        r#"{"summary":"done","count":null}"#,
+        FinishReason::Stop,
+    )
+    .await;
+
+    let answers = evaluate::<Vec<String>>(
+        &runtime,
+        &format!(
+            "{SHAPE}
+             const answer = await ai.generateText({{ model: {{ provider: 'p', model: 'm' }}, prompt: 'go', output: shape }});
+             const plain = await ai.generateText({{ model: {{ provider: 'p', model: 'm' }}, prompt: 'go' }});
+             shape.schema.properties.summary.type = 'integer';
+             const again = await ai.generateText({{ model: {{ provider: 'p', model: 'm' }}, prompt: 'go', output: shape }});
+             return [JSON.stringify(answer.output), String(plain.output), JSON.stringify(again.output)];"
+        ),
+    )
+    .await
+    .unwrap();
+
+    // A `null` optional field counts as absent, as in the arguments of a tool. A change of the schema after
+    // `Output.object` changes nothing.
+    assert_eq!(answers, [r#"{"summary":"done"}"#, "undefined", r#"{"summary":"done"}"#]);
+    let requests = models.requests.lock().unwrap();
+    assert_eq!(
+        requests[0].settings.output_schema,
+        Some(OutputSchema {
+            name: "response".to_owned(),
+            // Anthropic refuses a bound and an object without `additionalProperties: false`.
+            schema: r#"{"type":"object","properties":{"summary":{"type":"string"},"count":{"type":"integer","description":"{\"minimum\":0}"}},"required":["summary"],"additionalProperties":false}"#.to_owned(),
+            strict: false,
+        })
+    );
+    assert_eq!(requests[1].settings.output_schema, None);
+}
+
+#[tokio::test]
+async fn an_answer_that_is_not_the_object_throws_a_no_object_generated_error_that_keeps_the_answer() {
+    // The engine words a JSON error itself, so only the start of the cause counts.
+    let cases = [
+        ("not json", FinishReason::Stop, "SyntaxError: "),
+        (
+            r#"{"summary":3}"#,
+            FinishReason::Stop,
+            "Error: Set summary to a string.",
+        ),
+        (
+            r#"{"summary":"cu"#,
+            FinishReason::Length,
+            "Error: the answer stopped with length",
+        ),
+        (
+            r#"{"summary":"done"}"#,
+            FinishReason::ContentFilter,
+            "Error: the answer stopped with content_filter",
+        ),
+    ];
+    for (index, (text, finish_reason, cause)) in cases.into_iter().enumerate() {
+        let (runtime, _models) = answering(
+            &format!("an_answer_that_is_not_the_object_throws_a_no_object_generated_error_{index}"),
+            text,
+            finish_reason,
+        )
+        .await;
+
+        let error = evaluate::<Vec<String>>(
+            &runtime,
+            &format!(
+                "{SHAPE}
+                 try {{
+                   await ai.generateText({{ model: {{ provider: 'p', model: 'm' }}, prompt: 'go', output: shape }});
+                   return ['none'];
+                 }} catch (error) {{
+                   return [
+                     String(error instanceof ai.NoObjectGeneratedError),
+                     error.name,
+                     error.message,
+                     error.text,
+                     error.finishReason,
+                     String(error.usage.output),
+                     `${{error.cause.name}}: ${{error.cause.message}}`,
+                   ];
+                 }}"
+            ),
+        )
+        .await
+        .unwrap();
+
+        let finish = serde_json::to_value(finish_reason).unwrap();
+        assert!(error[6].starts_with(cause), "{error:?}");
+        assert_eq!(
+            error[..6],
+            [
+                "true",
+                "NoObjectGeneratedError",
+                "the answer is not the requested object",
+                text,
+                finish.as_str().unwrap(),
+                "5",
+            ],
+            "{text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_bad_output_throws_a_type_error_and_sends_nothing() {
+    // The model answers at once, so a bad output that the checks miss gives `none`, and the test does not hang.
+    let (runtime, models) = answering(
+        "a_bad_output_throws_a_type_error_and_sends_nothing",
+        "{}",
+        FinishReason::Stop,
+    )
+    .await;
+
+    let errors = evaluate::<Vec<String>>(
+        &runtime,
+        "const ai = await import('yuke:ai');
+         const model = { provider: 'p', model: 'm' };
+         const attempts = [
+           () => ai.Output.object({ schema: { type: 'string' } }),
+           () => ai.Output.object({ schema: { type: 'object', properties: {}, oneOf: [] } }),
+           () => ai.Output.object({ schema: { type: 'object', properties: {} }, name: 3 }),
+           () => ai.Output.object({ schema: { type: 'object', properties: {} }, name: 'a name' }),
+           () => ai.generateText({ model, prompt: 'go', output: { schema: { type: 'object', properties: {} }, name: 'n' } }),
+         ];
+         const errors = [];
+         for (const attempt of attempts) {
+           try { await attempt(); errors.push('none'); }
+           catch (error) { errors.push(`${error.name}: ${error.message}`); }
+         }
+         return errors;",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        errors,
+        [
+            "TypeError: schema.type is not object",
+            "TypeError: schema: yuke does not check the keyword 'oneOf'",
+            "TypeError: the option name is not 1 to 64 letters, digits, _, or -",
+            "TypeError: the option name is not 1 to 64 letters, digits, _, or -",
+            "TypeError: the option output is not a value of Output.object",
+        ]
+    );
+    assert!(models.requests.lock().unwrap().is_empty());
 }

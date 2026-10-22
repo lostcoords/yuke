@@ -219,6 +219,26 @@ async function models(): Promise<void> {
   await generateText({ prompt });
   // @ts-expect-error: a setting has its type.
   await generateText({ model: s.model, prompt, temperature: "hot" });
+  assert<Equal<typeof answer.output, undefined>>();
+  const { Output, NoObjectGeneratedError } = await import("yuke:ai");
+  const schema = {
+    type: "object",
+    properties: { summary: { type: "string" }, count: { type: "integer" } },
+    required: ["summary"],
+  } as const;
+  const shaped = await generateText({ model: s.model, prompt, output: Output.object({ schema }) });
+  assert<Equal<typeof shaped.output, { summary: string; count?: number }>>();
+  // @ts-expect-error: an output schema is an object schema.
+  Output.object({ schema: { type: "string" } });
+  // @ts-expect-error: only `Output.object` gives the type of `output`.
+  await generateText<{ summary: string }>({ model: s.model, prompt });
+  // @ts-expect-error: only `Output.object` makes an output.
+  await generateText({ model: s.model, prompt, output: { schema, name: "response" } });
+  const failure: unknown = undefined;
+  if (failure instanceof NoObjectGeneratedError) {
+    const kept: string = failure.text;
+    void kept;
+  }
   void text;
   void input;
 }
