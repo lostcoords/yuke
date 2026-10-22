@@ -9,6 +9,7 @@ use std::fmt;
 
 use serde::Deserialize;
 
+use crate::oauth::Flow;
 use crate::request::{
     AnthropicWire, ChatDialect, ChatWire, Effort, MaxTokensField, Modality, Protocol, ReasoningReplayMode,
     ReasoningSettings, ResponsesDialect, ResponsesWire, Target, Thinking, ThinkingDisplay, ThinkingFormat, Wire,
@@ -60,9 +61,8 @@ pub struct Endpoint {
 pub enum Auth {
     /// The environment variable name of the key, or `None` when none is known.
     ApiKey(Option<Cow<'static, str>>),
-    /// The login flow name. [`crate::oauth::Flow::named`] gives the flow, or `None` for a name that yuke does not know.
-    /// The caller keeps the grant.
-    OAuth(Cow<'static, str>),
+    /// The login flow. The caller keeps the grant.
+    OAuth(Flow),
 }
 
 /// The kinds a model reads and writes. The generator keeps only the names of [`Modality`] that a model can list, so

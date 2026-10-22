@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use crate::catalog::{
     AnthropicThinking, Auth, Caps, ChatFlags, Dialect, Endpoint, Limits, Modalities, Model, PriceBand, Provider,
 };
+use crate::oauth::Flow;
 use crate::request::{
     ChatDialect, Effort, MaxTokensField, Modality, Protocol, ReasoningReplayMode, ResponsesDialect, ThinkingFormat,
 };
@@ -2494,7 +2495,7 @@ pub static PROVIDERS: &[Provider] = &[
     Provider {
         id: Cow::Borrowed("openai-codex"),
         name: Cow::Borrowed("OpenAI"),
-        auth: Auth::OAuth(Cow::Borrowed("codex")),
+        auth: Auth::OAuth(Flow::Codex),
         base_url: Cow::Borrowed("https://chatgpt.com/backend-api/codex"),
         headers: Cow::Borrowed(&[Header::from_static("originator", "codex_cli_rs")]),
         session_header: SessionHeader::SessionId,
@@ -19350,7 +19351,7 @@ pub static PROVIDERS: &[Provider] = &[
     Provider {
         id: Cow::Borrowed("xai-grok"),
         name: Cow::Borrowed("xAI"),
-        auth: Auth::OAuth(Cow::Borrowed("xai")),
+        auth: Auth::OAuth(Flow::Xai),
         base_url: Cow::Borrowed("https://api.x.ai/v1"),
         headers: Cow::Borrowed(&[]),
         session_header: SessionHeader::None,

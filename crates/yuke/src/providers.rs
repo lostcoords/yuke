@@ -74,11 +74,7 @@ impl Providers {
     pub(crate) fn login(&self, id: &str) -> Result<(&Provider, Flow), String> {
         let provider = self.0.iter().find(|provider| provider.id == id);
         match provider.map(|provider| (provider, &provider.auth)) {
-            Some((provider, Auth::OAuth(flow_name))) => {
-                if let Some(flow) = Flow::named(flow_name) {
-                    return Ok((provider, flow));
-                }
-            }
+            Some((provider, Auth::OAuth(flow))) => return Ok((provider, *flow)),
             Some((_, Auth::ApiKey(Some(variable)))) => {
                 return Err(format!(
                     "{id} takes an API key: set {variable}. {}",
@@ -95,7 +91,7 @@ impl Providers {
         let ids: Vec<_> = self
             .0
             .iter()
-            .filter(|provider| matches!(&provider.auth, Auth::OAuth(flow_name) if Flow::named(flow_name).is_some()))
+            .filter(|provider| matches!(provider.auth, Auth::OAuth(_)))
             .map(|provider| &*provider.id)
             .collect();
         format!("The providers that support a login: {}.", ids.join(", "))

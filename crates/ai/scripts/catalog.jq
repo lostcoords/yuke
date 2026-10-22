@@ -104,7 +104,7 @@ def provider:
   + "id: " + (.id | cow_string) + ",\n"
   + "name: " + (.name | cow_string) + ",\n"
   + "auth: " + (if .auth.kind == "oauth" then
-      "Auth::OAuth(" + (.auth.flow | cow_string) + ")"
+      "Auth::OAuth(Flow::" + (.auth.flow | variant) + ")"
     else "Auth::ApiKey(" + (.auth.env | option(cow_string)) + ")" end) + ",\n"
   + "base_url: " + (.base_url | cow_string) + ",\n"
   + "headers: " + (.headers | map("Header::from_static(" + (.name | rust_string) + ", " + (.value | rust_string) + ")") | cow_list) + ",\n"
@@ -116,6 +116,7 @@ def provider:
 "//! Generated from the Yuke catalog. Do not edit. Run scripts/generate-catalog.sh.\n\n"
 + "use std::borrow::Cow;\n\n"
 + "use crate::catalog::{AnthropicThinking, Auth, Caps, ChatFlags, Dialect, Endpoint, Limits, Modalities, Model, PriceBand, Provider};\n"
++ "use crate::oauth::Flow;\n"
 + "use crate::request::{ChatDialect, Effort, MaxTokensField, Modality, Protocol, ReasoningReplayMode, ResponsesDialect, ThinkingFormat};\n"
 + "use crate::route::{CredentialHeader, SessionHeader};\nuse crate::transport::Header;\n\n"
 + "/// The identifier of this catalog snapshot.\n"

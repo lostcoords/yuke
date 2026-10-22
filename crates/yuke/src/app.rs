@@ -528,11 +528,7 @@ fn model_of(reference: &ModelReference, shared: &Shared) -> Result<Model, AppErr
             Arc::new(Credential::ApiKey(key.into()))
         }
         Auth::ApiKey(None) => Arc::new(Credential::None),
-        Auth::OAuth(flow_name) => {
-            let flow = Flow::named(flow_name)
-                .ok_or_else(|| AppError::Invalid(format!("yuke has no login for {} yet", provider.id)))?;
-            Arc::new(login_source(shared, &provider.id, flow))
-        }
+        Auth::OAuth(flow) => Arc::new(login_source(shared, &provider.id, *flow)),
     };
     let target = entry
         .bind()

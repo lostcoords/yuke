@@ -43,15 +43,6 @@ pub enum Flow {
 }
 
 impl Flow {
-    /// The flow of `name`, the name in [`crate::catalog::Auth::OAuth`].
-    pub fn named(name: &str) -> Option<Flow> {
-        match name {
-            "xai" => Some(Flow::Xai),
-            "codex" => Some(Flow::Codex),
-            _ => None,
-        }
-    }
-
     /// Start a device login: the provider gives a code that the user approves on a page.
     ///
     /// # Errors

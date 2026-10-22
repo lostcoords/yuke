@@ -46,7 +46,7 @@ jq '.providers[0].models += [
       (.providers[0].models[0] | .id = "supported" | .flags.supports_tool_search = true),
       (.providers[0].models[0] | .id = "absent" | del(.flags.supports_tool_search)),
       (.providers[0].models[0] | .id = "null" | .flags.supports_tool_search = null)
-    ] | .providers += [(.providers[0] | .id = "oauth-fixture" | .auth = {kind: "oauth", flow: "fixture"})]' \
+    ] | .providers += [(.providers[0] | .id = "oauth-fixture" | .auth = {kind: "oauth", flow: "xai"})]' \
     "$tmp/catalog.json" > "$tmp/input.json"
 bash "$scripts/generate-catalog.sh" "$tmp/input.json" "$tmp/crates/ai/src/catalog/fixture.rs"
 cat > "$tmp/crates/ai/src/catalog/fixture_test.rs" <<'RUST'
@@ -67,6 +67,7 @@ fn catalog_translation_preserves_strings_nulls_false_and_zero() {
     assert_eq!(provider.endpoints[0].credential_header, Some(CredentialHeader::XApiKey));
     assert_eq!(provider.endpoints[1].credential_header, None);
     assert_eq!(provider.endpoints[1].chat_dialect, ChatDialect::Mistral);
+    assert_eq!(PROVIDERS[1].auth, super::Auth::OAuth(crate::oauth::Flow::Xai));
     for endpoint in PROVIDERS[1].endpoints.iter() {
         assert_eq!(endpoint.credential_header, Some(CredentialHeader::AuthorizationBearer));
     }
