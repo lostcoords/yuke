@@ -53,9 +53,11 @@ pub trait SessionHost: MediaStore {
     ) -> yuke_protocol::InteractionResponse;
 }
 
-/// The tools that the JavaScript defined, and the open sessions, on the JavaScript thread.
-#[derive(Debug, Default)]
+/// The state of the JavaScript thread: the tools that the JavaScript defined, the open sessions, and the processes that
+/// the calls start.
+#[derive(Debug)]
 pub(crate) struct Registry {
+    pub(crate) processes: Arc<Processes>,
     tools: RefCell<Vec<Registered>>,
     last_id: Cell<u64>,
     /// The open number of each open session.
@@ -76,6 +78,15 @@ struct Registered {
 }
 
 impl Registry {
+    pub(crate) fn new(processes: Arc<Processes>) -> Self {
+        Self {
+            processes,
+            tools: RefCell::default(),
+            last_id: Cell::default(),
+            opens: RefCell::default(),
+            last_open: Cell::default(),
+        }
+    }
     /// Add a tool to the open session `open`, or to every session when `open` is `None`, and return its id. A reserved
     /// name, a name that the session already has, or a closed session fails with the text of the failure.
     pub(crate) fn add<'js>(
@@ -177,39 +188,14 @@ impl Registry {
     }
 }
 
-/// The definitions of `entries` of the open session `open`, each with its engine tool for the session of `host`.
-pub(crate) fn script_tools(
-    caller: &Caller,
-    processes: &Arc<Processes>,
-    host: &Arc<dyn SessionHost>,
-    open: u64,
-    entries: Vec<(u64, yuke_ai::ToolDefinition, Concurrency)>,
-) -> Vec<(yuke_ai::ToolDefinition, ScriptTool)> {
-    entries
-        .into_iter()
-        .map(|(id, definition, concurrency)| {
-            let tool = ScriptTool {
-                caller: caller.clone(),
-                id,
-                open,
-                concurrency,
-                processes: Arc::clone(processes),
-                host: Arc::clone(host),
-            };
-            (definition, tool)
-        })
-        .collect()
-}
-
 /// A tool that the JavaScript defined, for one session. Each call runs on the JavaScript thread.
 #[derive(Clone)]
 pub struct ScriptTool {
-    caller: Caller,
-    id: u64,
-    open: u64,
-    concurrency: Concurrency,
-    processes: Arc<Processes>,
-    host: Arc<dyn SessionHost>,
+    pub(crate) caller: Caller,
+    pub(crate) id: u64,
+    pub(crate) open: u64,
+    pub(crate) concurrency: Concurrency,
+    pub(crate) host: Arc<dyn SessionHost>,
 }
 
 impl fmt::Debug for ScriptTool {
@@ -279,7 +265,6 @@ impl ScriptTool {
             return Err(format!("the workspace folder {} is not UTF-8", folder.display()));
         };
         let (id, open) = (self.id, self.open);
-        let processes = Arc::clone(&self.processes);
         let host = Arc::clone(&self.host);
         let session_folder = folder.clone();
         let arguments = arguments.to_owned();
@@ -300,7 +285,10 @@ impl ScriptTool {
                 // A cancel of the call stops its commands. The guard also stops them when the call ends or drops.
                 let stop = token.child_token();
                 let _guard = stop.clone().drop_guard();
-                let call = caught(&ctx, call::object(&ctx, &processes, &host, session_folder, &stop))?;
+                let call = caught(
+                    &ctx,
+                    call::object(&ctx, &registry.processes, &host, session_folder, &stop),
+                )?;
                 let request = CallRequest {
                     arguments: JsonText(arguments),
                     session_id,

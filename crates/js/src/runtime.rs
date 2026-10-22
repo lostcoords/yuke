@@ -52,7 +52,6 @@ type Call = Box<dyn for<'js> FnOnce(Ctx<'js>, &Rc<Registry>) + Send>;
 #[derive(Debug)]
 pub struct Runtime {
     pub(crate) caller: Caller,
-    pub(crate) processes: Arc<Processes>,
     /// The drop of this sender ends the thread. A tool keeps a clone of the caller, so the call channel can outlive the
     /// runtime.
     stop: oneshot::Sender<()>,
@@ -90,7 +89,6 @@ impl Runtime {
         let (faults, fault_receiver) = mpsc::unbounded_channel();
         let (ready, started) = oneshot::channel();
         let (stop, stopped) = oneshot::channel();
-        let processes = Arc::clone(&options.processes);
         let stopping = Arc::new(AtomicBool::new(false));
         let interrupt = Arc::clone(&stopping);
 
@@ -102,7 +100,6 @@ impl Runtime {
 
         let runtime = Self {
             caller: Caller { calls },
-            processes,
             stop,
             stopping: Stopping(stopping),
             thread,
@@ -138,12 +135,10 @@ impl Runtime {
     pub async fn shutdown(self) -> Result<(), Error> {
         let Self {
             caller,
-            processes,
             stop,
             stopping,
             thread,
         } = self;
-        drop(processes);
         drop(caller);
         drop(stopping);
         drop(stop);
@@ -305,7 +300,7 @@ impl Engine {
 
         let context = AsyncContext::full(&runtime).await.map_err(engine_error)?;
         let timers = Rc::new(Timers::default());
-        let registry = Rc::new(Registry::default());
+        let registry = Rc::new(Registry::new(Arc::clone(&options.processes)));
         context
             .with(|ctx| {
                 // The error constructors come before the natives, so each native throws with the constructors of the start.

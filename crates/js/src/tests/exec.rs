@@ -13,7 +13,7 @@ use yuke_protocol::{Input, JobState};
 use super::tools::{TestHost, Tools, call, call_with, error_of, text_of, tools_in, tools_of};
 use super::{folder, start};
 use crate::native;
-use crate::processes::{Request, recovered_home, whole_characters};
+use crate::processes::{Request, recovered_home};
 use crate::{Options, Processes, Runtime, SessionHost};
 
 /// The id of the job that the start text `started` names, for example `job-a1b2`.
@@ -138,6 +138,21 @@ async fn exec_gives_its_output_as_live_texts() {
 
     assert_eq!(answer.unwrap().text, "one\ntwo\n[exit code: 0]");
     assert_eq!(texts.concat(), "one\ntwo\n");
+}
+
+// The pause makes two reads, and the first one ends inside the 3 bytes of the euro sign.
+#[tokio::test]
+async fn live_output_keeps_a_character_that_a_read_cuts() {
+    let folder = folder("live_output_keeps_a_character_that_a_read_cuts");
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
+
+    let (_, texts) = call(
+        &tools["exec"],
+        r#"{"command": "printf '\\342'; sleep 0.2; printf '\\202\\254'"}"#,
+    )
+    .await;
+
+    assert_eq!(texts.concat(), "\u{20ac}");
 }
 
 #[tokio::test]
@@ -617,18 +632,6 @@ async fn processes_start_their_job_ids_at_different_numbers() {
     assert!(firsts.len() > 1, "{firsts:?}");
 }
 
-// A read can end inside a character after an invalid byte. Only the incomplete character waits for the next read.
-#[test]
-fn live_output_keeps_an_incomplete_character_after_an_invalid_byte() {
-    let mut bytes = vec![0xFF, 0xE2];
-    let first = whole_characters(&mut bytes);
-    bytes.extend_from_slice(&[0x82, 0xAC]);
-    let second = whole_characters(&mut bytes);
-
-    assert_eq!(first + &second, "\u{FFFD}\u{20AC}");
-    assert_eq!(bytes, Vec::<u8>::new());
-}
-
 #[test]
 fn a_child_gets_the_home_folder_of_the_user_when_home_is_missing_or_empty() {
     let user_home = std::env::home_dir().filter(|home| home.is_absolute());
@@ -731,15 +734,20 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
 async fn a_dropped_command_stops_its_process() {
     let folder = folder("a_dropped_command_stops_its_process");
     let processes = Processes::new(folder.join("processes"));
-    let running = processes.run(Request {
-        command: "sleep 0.3; touch late".to_owned(),
-        folder: folder.clone(),
-        timeout: Duration::from_secs(10),
-        max_bytes: 1024,
-        stop: CancellationToken::new(),
-    });
+    let (chunks, _texts) = tokio::sync::mpsc::unbounded_channel();
+    let running = processes.run(
+        Request {
+            command: "sleep 0.3; touch late".to_owned(),
+            folder: folder.clone(),
+            timeout: Duration::from_secs(10),
+            max_bytes: 1024,
+            stop: CancellationToken::new(),
+        },
+        chunks,
+    );
 
-    drop(running);
+    // The wait starts the command, and the timeout drops the wait before the command ends.
+    assert!(tokio::time::timeout(Duration::from_millis(100), running).await.is_err());
     tokio::time::sleep(Duration::from_millis(800)).await;
 
     assert!(!folder.join("late").exists());

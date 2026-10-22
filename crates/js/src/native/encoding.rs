@@ -3,6 +3,7 @@
 
 use rquickjs::{Ctx, Function, IntoJs, Object, TypedArray};
 
+use crate::bytes::decode;
 use crate::error::{ErrorClass, throw};
 
 /// Add `encodeText`, `encodeTextInto`, and `decodeText` to `object`, the export object of the native module.
@@ -68,61 +69,9 @@ fn prefix(text: &str, capacity: usize) -> (&str, usize) {
     (&text[..end], read)
 }
 
-/// Decode `bytes` as UTF-8. Each invalid sequence becomes U+FFFD, or fails with `None` when `fatal`. With `stream`, an
-/// incomplete sequence at the end stays undecoded, and the second value counts its bytes.
-fn decode(bytes: &[u8], fatal: bool, stream: bool) -> Option<(String, usize)> {
-    let mut text = String::with_capacity(bytes.len());
-    let mut rest = bytes;
-    loop {
-        let error = match std::str::from_utf8(rest) {
-            Ok(valid) => {
-                text.push_str(valid);
-                return Some((text, 0));
-            }
-            Err(error) => error,
-        };
-        let (valid, after) = rest.split_at(error.valid_up_to());
-        text.push_str(std::str::from_utf8(valid).ok()?);
-        match error.error_len() {
-            None if stream => return Some((text, after.len())),
-            _ if fatal => return None,
-            None => {
-                text.push(char::REPLACEMENT_CHARACTER);
-                return Some((text, 0));
-            }
-            Some(length) => {
-                text.push(char::REPLACEMENT_CHARACTER);
-                rest = &after[length..];
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{decode, prefix};
-
-    #[test]
-    fn an_invalid_sequence_becomes_one_replacement_character_per_maximal_subpart() {
-        // The bytes are `a`, a lone continuation byte, and the start of a 3-byte sequence that `b` cuts.
-        assert_eq!(
-            decode(b"a\x80\xe2\x82b", false, false),
-            Some(("a\u{fffd}\u{fffd}b".to_owned(), 0))
-        );
-    }
-
-    #[test]
-    fn a_stream_keeps_an_incomplete_sequence_at_the_end() {
-        assert_eq!(decode(b"a\xe2\x82", false, true), Some(("a".to_owned(), 2)));
-        assert_eq!(decode(b"a\xe2\x82", false, false), Some(("a\u{fffd}".to_owned(), 0)));
-    }
-
-    #[test]
-    fn a_fatal_decode_fails_at_an_invalid_sequence_and_at_an_incomplete_end() {
-        assert_eq!(decode(b"a\x80", true, false), None);
-        assert_eq!(decode(b"a\xe2\x82", true, false), None);
-        assert_eq!(decode(b"a\xe2\x82", true, true), Some(("a".to_owned(), 2)));
-    }
+    use super::prefix;
 
     #[test]
     fn a_prefix_ends_before_a_character_that_does_not_fit_and_counts_utf16_units() {

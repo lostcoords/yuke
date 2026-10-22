@@ -158,15 +158,16 @@ async function clean(plugin: string, cleanup: Cleanup): Promise<void> {
   }
 }
 
-/** A question as the native `ask` reads it. */
-interface Question {
-  readonly kind: "confirm" | "select" | "input";
-  readonly title: string;
-  readonly message?: string | undefined;
-  readonly options?: readonly string[];
-  readonly placeholder?: string | undefined;
-  readonly secret?: boolean | undefined;
-}
+/** A question for the native `ask`, which reads it through JSON as an `InteractionRequest` of the protocol. */
+type Question =
+  | { readonly kind: "confirm"; readonly title: string; readonly message: string }
+  | { readonly kind: "select"; readonly title: string; readonly options: readonly string[] }
+  | {
+      readonly kind: "input";
+      readonly title: string;
+      readonly placeholder: string | undefined;
+      readonly secret: boolean;
+    };
 
 /** Ask the user `question` for the plugin `source`. The promise gives the answer, or `undefined` without one. */
 type Ask = (source: string, question: Question) => Operation<boolean | string | undefined>;
@@ -606,7 +607,7 @@ function start(
       notify(plugin, level, String(message), sessionId);
     },
     confirm(title: string, message?: string, options?: AskOptions): Promise<boolean | undefined> {
-      return question<boolean>({ kind: "confirm", title, message }, options?.signal);
+      return question<boolean>({ kind: "confirm", title, message: message ?? "" }, options?.signal);
     },
     select(title: string, choices: readonly string[], options?: AskOptions): Promise<string | undefined> {
       if (choices.length === 0) return Promise.reject(new TypeError("select: choices is empty"));
@@ -617,7 +618,7 @@ function start(
     },
     input(title: string, options?: InputOptions): Promise<string | undefined> {
       const { placeholder, secret, signal: stop } = options ?? {};
-      return question<string>({ kind: "input", title, placeholder, secret }, stop);
+      return question<string>({ kind: "input", title, placeholder, secret: secret ?? false }, stop);
     },
   });
   scope.settled = (async () => {

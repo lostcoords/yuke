@@ -39,6 +39,7 @@ async fn each_question_names_its_plugin_and_gives_the_answer_of_the_user() {
            await s.confirm('Run the migration?', 'It drops a table.', { signal }),
            await s.select('Deploy to?', ['staging', 'production'], { signal }),
            await s.input('Name?', { placeholder: 'main', secret: true, signal }),
+           await s.input('Tag?'),
          ];",
     );
     let (_runtime, session, host, _reports) = opened_with_host(
@@ -52,13 +53,14 @@ async fn each_question_names_its_plugin_and_gives_the_answer_of_the_user() {
             value: "production".to_owned(),
         },
         InteractionResponse::Input { value: "v2".to_owned() },
+        InteractionResponse::Input { value: "t1".to_owned() },
     ]);
     let tools = session.tools().await.unwrap();
     let (_, ask) = tools.iter().find(|(definition, _)| definition.name == "ask").unwrap();
 
     let text = text_of(ask, "{}").await;
 
-    assert_eq!(text, r#"[true,"production","v2"]"#);
+    assert_eq!(text, r#"[true,"production","v2","t1"]"#);
     assert_eq!(
         *host.questions.lock().unwrap(),
         [
@@ -76,6 +78,14 @@ async fn each_question_names_its_plugin_and_gives_the_answer_of_the_user() {
                     title: "Name?".to_owned(),
                     placeholder: Some("main".to_owned()),
                     secret: true,
+                }
+            ),
+            (
+                "asker".to_owned(),
+                InteractionRequest::Input {
+                    title: "Tag?".to_owned(),
+                    placeholder: None,
+                    secret: false,
                 }
             ),
         ]

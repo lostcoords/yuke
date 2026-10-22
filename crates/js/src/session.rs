@@ -15,18 +15,16 @@ use yuke_engine::{CancellationToken, Hooks, RoundDecision, ToolDecision};
 use yuke_protocol::{Input, InteractionRequest, InteractionResponse};
 
 use crate::Runtime;
-use crate::error::{Error, ErrorClass, caught, throw};
+use crate::error::{Error, caught};
 use crate::native::Operation;
 use crate::plugins::loader;
-use crate::processes::Processes;
 use crate::runtime::Caller;
-use crate::tools::{self, Json, JsonText, MediaFile, Registry, ScriptTool, SessionHost, error_text, store_media};
+use crate::tools::{Json, JsonText, MediaFile, Registry, ScriptTool, SessionHost, error_text, store_media};
 
 /// An open session of the plugins. Call [`ScriptSession::close`] to await the cleanups. A drop posts the close and does
 /// not wait. The posted close runs only while the runtime thread runs, so close each session before a shutdown.
 pub struct ScriptSession {
     caller: Caller,
-    processes: Arc<Processes>,
     host: Arc<dyn SessionHost>,
     /// The open number of the registry. A new open of the same session gets a new number, so a late close of this
     /// handle never reaches it.
@@ -75,7 +73,6 @@ impl Runtime {
             .await?;
         Ok(ScriptSession {
             caller: self.caller.clone(),
-            processes: Arc::clone(&self.processes),
             host,
             open,
         })
@@ -101,13 +98,19 @@ impl ScriptSession {
                 Ok(registry.entries(open))
             })
             .await?;
-        Ok(tools::script_tools(
-            &self.caller,
-            &self.processes,
-            &self.host,
-            open,
-            entries,
-        ))
+        Ok(entries
+            .into_iter()
+            .map(|(id, definition, concurrency)| {
+                let tool = ScriptTool {
+                    caller: self.caller.clone(),
+                    id,
+                    open,
+                    concurrency,
+                    host: Arc::clone(&self.host),
+                };
+                (definition, tool)
+            })
+            .collect())
     }
 
     /// Run the `prompt.build` handlers of the plugins on `sections`, after `session(s)` of each plugin settles. Each
@@ -319,60 +322,16 @@ struct OpenRequest<'js> {
     ask: Function<'js>,
 }
 
-/// A question as the session context gives it to the native `ask`.
-#[derive(FromJs)]
-struct Question {
-    kind: String,
-    title: String,
-    message: Option<String>,
-    options: Option<Vec<String>>,
-    placeholder: Option<String>,
-    secret: Option<bool>,
-}
-
-impl Question {
-    fn request(self) -> Option<InteractionRequest> {
-        let Question {
-            kind,
-            title,
-            message,
-            options,
-            placeholder,
-            secret,
-        } = self;
-        Some(match kind.as_str() {
-            "confirm" => InteractionRequest::Confirm {
-                title,
-                message: message.unwrap_or_default(),
-            },
-            "select" => InteractionRequest::Select {
-                title,
-                options: options?,
-            },
-            "input" => InteractionRequest::Input {
-                title,
-                placeholder,
-                secret: secret.unwrap_or(false),
-            },
-            _ => return None,
-        })
-    }
-}
-
 /// The native `ask(source, question)` of the session of `host`. It answers an operation whose promise gives the answer:
 /// a boolean for a confirm, a text for a select and an input, and `undefined` without an answer. Its cancel ends the
 /// question.
 fn ask_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>) -> rquickjs::Result<Function<'js>> {
     Function::new(
         ctx.clone(),
-        move |ctx: Ctx<'js>, source: String, question: Question| -> rquickjs::Result<Operation<'js>> {
-            let Some(request) = question.request() else {
-                return Err(throw(
-                    &ctx,
-                    ErrorClass::TypeError,
-                    "ask: the question has no known kind",
-                ));
-            };
+        move |ctx: Ctx<'js>,
+              source: String,
+              Json(request): Json<InteractionRequest>|
+              -> rquickjs::Result<Operation<'js>> {
             let host = Arc::clone(&host);
             Operation::start(&ctx, move |ctx, stop| async move {
                 match host.ask(&source, request, stop).await {

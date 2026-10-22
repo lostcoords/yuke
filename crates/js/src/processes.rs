@@ -183,22 +183,6 @@ pub(crate) enum EndCause {
     Cancelled,
 }
 
-/// A command in flight. A drop stops its process group.
-pub(crate) struct RunningCommand {
-    /// Each chunk of output, on whole UTF-8 characters.
-    pub(crate) output: mpsc::UnboundedReceiver<String>,
-    /// The end of the command, or the text of a failure.
-    pub(crate) end: oneshot::Receiver<Result<CommandEnd, String>>,
-    /// Cancelled at the drop, so a dropped call ends its command.
-    stop: CancellationToken,
-}
-
-impl Drop for RunningCommand {
-    fn drop(&mut self) {
-        self.stop.cancel();
-    }
-}
-
 impl Processes {
     /// The processes of this tokio runtime. The full outputs and the logs go to `folder`.
     ///
@@ -274,31 +258,34 @@ impl Processes {
         format!("job-{}", base36(FIRST_JOB_NUMBER + next % JOB_NUMBERS))
     }
 
-    /// Run `request.command` until it ends, `request.timeout` expires, or the caller cancels `request.stop`.
-    /// The answer keeps at most `request.max_bytes` output bytes.
-    pub(crate) fn run(&self, request: Request) -> RunningCommand {
-        let (chunks, output) = mpsc::unbounded_channel();
-        let (finish, end) = oneshot::channel();
+    /// Run `request.command` until it ends, `request.timeout` expires, or the caller cancels `request.stop`. Each chunk
+    /// in `chunks` holds whole UTF-8 characters. The answer keeps at most `request.max_bytes` output bytes. A dropped
+    /// wait stops the command.
+    pub(crate) async fn run(
+        &self,
+        request: Request,
+        chunks: mpsc::UnboundedSender<String>,
+    ) -> Result<CommandEnd, String> {
         let file = self.folder.join(format!("exec-{}.log", self.next_output_number()));
         let stop = request.stop.clone();
-        self.handle.spawn(async move {
-            let answer = run(request, file, chunks).await;
-            if finish.send(answer).is_err() {
-                // The call has left.
-            }
-        });
-        RunningCommand { output, end, stop }
+        self.guarded(stop, run(request, file, chunks)).await
     }
 
     /// Run `program` until it ends, and answer its end and its output. A cancel of `stop` stops its process group:
-    /// SIGTERM, then SIGKILL after a grace. A dropped call stops it too.
+    /// SIGTERM, then SIGKILL after a grace. A dropped wait stops it too.
     pub(crate) async fn output(&self, program: Program, stop: CancellationToken) -> Result<ProgramEnd, String> {
-        // The task runs on the runtime of the consumer, which drives the pipes of the child.
-        let task = self.handle.spawn(run_program(program, stop.clone()));
-        let guard = stop.drop_guard();
-        let end = task.await.map_err(|error| error.to_string());
-        guard.disarm();
-        end?
+        self.guarded(stop.clone(), run_program(program, stop)).await
+    }
+
+    /// Await `task` on the runtime of the processes, which drives the pipes of the child. The end of the wait, a drop
+    /// included, cancels `stop`.
+    async fn guarded<T: Send + 'static>(
+        &self,
+        stop: CancellationToken,
+        task: impl Future<Output = Result<T, String>> + Send + 'static,
+    ) -> Result<T, String> {
+        let _guard = stop.drop_guard();
+        self.handle.spawn(task).await.map_err(|error| error.to_string())?
     }
 
     /// Start `command` in the folder of `owner` as a job, and answer its id and log file. A job that ends by itself
@@ -850,7 +837,9 @@ fn read_output(
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .add(bytes);
         partial.extend_from_slice(bytes);
-        let text = whole_characters(&mut partial);
+        // Only an incomplete character at the end waits for the next read.
+        let (text, rest) = crate::bytes::decode(&partial, false, true).unwrap_or_default();
+        partial.drain(..partial.len() - rest);
         if !text.is_empty() && chunks.send(text).is_err() {
             // The call has left. The capture still keeps the output.
         }
@@ -859,27 +848,6 @@ fn read_output(
         // The call has left.
     }
     Ok(())
-}
-
-/// The text of the whole UTF-8 characters at the start of `bytes`. The bytes of a character that a read cut stay in
-/// `bytes` for the next read.
-pub(crate) fn whole_characters(bytes: &mut Vec<u8>) -> String {
-    // Only an incomplete character at the end waits. Each invalid sequence before it becomes U+FFFD now, so the check
-    // goes on past each one.
-    let mut start = 0;
-    let keep = loop {
-        match std::str::from_utf8(&bytes[start..]) {
-            Ok(_) => break 0,
-            Err(error) => match error.error_len() {
-                Some(invalid) => start += error.valid_up_to() + invalid,
-                None => break bytes.len() - start - error.valid_up_to(),
-            },
-        }
-    };
-    let rest = bytes.split_off(bytes.len() - keep);
-    let text = String::from_utf8_lossy(bytes).into_owned();
-    *bytes = rest;
-    text
 }
 
 /// The kept output of a command: a head, a tail, and the full output in a file.
