@@ -120,8 +120,8 @@ impl App {
     /// Returns a text for the user when a part does not start.
     pub(crate) async fn start(machine: Machine, mode: Mode, observer: Arc<dyn Observer>) -> Result<App, String> {
         let providers = Providers::load(&machine.paths.config)?;
-        let config = Config::load(&machine.paths.config.join("config.json"))?;
-        let mcp = read_json::<yuke_mcp::Config>(&machine.paths.config.join("mcp.json"))?;
+        let config: Config = read_json(&machine.paths.config.join("config.json"))?.unwrap_or_default();
+        let mcp: yuke_mcp::Config = read_json(&machine.paths.config.join("mcp.json"))?.unwrap_or_default();
         let plugins = plugins::plugins(&machine.paths.config, &config.plugins, &machine.paths.data)?;
         let store: Arc<dyn Store> = Arc::new(
             SqliteStore::open(&machine.paths.data)
@@ -311,7 +311,7 @@ impl App {
         let live = self.live(id)?;
         let input = Input::new(InputSource::User, InputKind::Message, content)
             .map_err(|error| AppError::Invalid(chain_text(&error)))?;
-        live.inbox.accept(input).await.map_err(AppError::Store)
+        live.inbox().accept(input).await.map_err(AppError::Store)
     }
 
     /// Remove the pending input `input_id` of session `id`.
@@ -320,7 +320,7 @@ impl App {
     ///
     /// Returns [`AppError::Store`] when the input is not pending or the store fails.
     pub(crate) async fn remove_input(&self, id: SessionId, input_id: InputId) -> Result<(), AppError> {
-        self.live(id)?.inbox.remove(input_id).await.map_err(AppError::Store)
+        self.live(id)?.inbox().remove(input_id).await.map_err(AppError::Store)
     }
 
     /// Save `settings` for session `id`. The session keeps its system prompt.

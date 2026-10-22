@@ -15,21 +15,16 @@ pub(crate) struct Config {
     pub(crate) plugins: Vec<String>,
 }
 
-impl Config {
-    /// The config in the file `path`. A missing file gives the defaults.
-    pub(crate) fn load(path: &Path) -> Result<Config, String> {
-        read_json(path)
-    }
-}
-
-/// The JSON file `path`, with `//` and `/* */` comments. A missing file gives the default value.
-pub(crate) fn read_json<T: DeserializeOwned + Default>(path: &Path) -> Result<T, String> {
+/// Read the JSON file `path`, with `//` and `/* */` comments. A missing file gives `Ok(None)`. An error names the path.
+pub(crate) fn read_json<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(T::default()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("{}: {error}", path.display())),
     };
-    serde_json::from_str(&without_comments(&text)).map_err(|error| format!("{}: {error}", path.display()))
+    serde_json::from_str(&without_comments(&text))
+        .map(Some)
+        .map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// `text` with each comment outside a string made into spaces. A line end stays, so an error keeps its line and column.

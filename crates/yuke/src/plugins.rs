@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use yuke_js::Plugin;
 
-use crate::config::without_comments;
+use crate::config::read_json;
 
 /// The name of the manifest in each plugin folder.
 const MANIFEST: &str = "plugin.json";
@@ -93,9 +93,7 @@ pub(crate) fn plugins(config_folder: &Path, list: &[String], data: &Path) -> Res
 /// The plugin of the folder `root`, from its manifest.
 fn manifest_plugin(root: &Path, data: &Path) -> Result<Plugin, String> {
     let path = root.join(MANIFEST);
-    let text = std::fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let manifest: Manifest =
-        serde_json::from_str(&without_comments(&text)).map_err(|error| format!("{}: {error}", path.display()))?;
+    let manifest: Manifest = read_json(&path)?.ok_or_else(|| format!("{}: the file does not exist", path.display()))?;
     valid_name(&manifest.name)?;
     let fields: YukeFields = match manifest.extensions.get(EXTENSION) {
         Some(value) => YukeFields::deserialize(value)

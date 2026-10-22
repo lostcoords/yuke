@@ -26,21 +26,23 @@ use crate::config::read_json;
 
 /// An open session.
 pub(super) struct LiveSession {
-    /// The inbox of the session. The app saves and removes input through the inbox.
-    pub(super) inbox: Inbox,
+    parts: Arc<Parts>,
+    task: JoinHandle<()>,
+}
+
+/// The parts of an open session that the app and the task of the session share.
+struct Parts {
     /// A turn holds the lock for its whole run, so new settings never meet a turn.
     session: Arc<tokio::sync::Mutex<Session>>,
     /// The cancellation token of the running turn, or `None` while the session is idle.
-    turn: Arc<Mutex<Option<CancellationToken>>>,
-    /// Ends the task. The token of each turn is a child of it.
-    closed: CancellationToken,
-    /// The host of the tools. The jobs of the session belong to it.
+    turn: Mutex<Option<CancellationToken>>,
+    /// The host of the tools. The jobs of the session belong to the host. The `closed` token of the host ends the task,
+    /// and the token of each turn is a child of that token.
     host: Arc<Host>,
     /// The session of the plugins. Each turn takes its tools.
-    script: Arc<ScriptSession>,
+    script: ScriptSession,
     /// The MCP servers of the session. Each turn takes their tools.
-    servers: Arc<Servers>,
-    task: JoinHandle<()>,
+    servers: Servers,
 }
 
 impl LiveSession {
@@ -61,51 +63,43 @@ impl LiveSession {
                 last_question: Arc::clone(&shared.last_question),
             }),
         };
-        let closed = CancellationToken::new();
         let host = Arc::new(Host {
             folder: Mutex::new(session.settings().cwd.clone()),
             shared,
-            inbox: inbox.clone(),
-            closed: closed.clone(),
-        });
-        let script = Arc::new(
-            runtime
-                .open_session(Arc::clone(&host) as Arc<dyn SessionHost>)
-                .await
-                .map_err(|error| AppError::Internal(chain_text(&error)))?,
-        );
-        let servers = Arc::new(start_servers(&host, &session.settings().cwd));
-        let session = Arc::new(tokio::sync::Mutex::new(session));
-        let turn = Arc::default();
-        let task = SessionTask {
-            session: Arc::clone(&session),
-            script: Arc::clone(&script),
-            servers: Arc::clone(&servers),
-            host: Arc::clone(&host),
-            inbox: inbox.clone(),
-            turn: Arc::clone(&turn),
-            closed: closed.clone(),
-        };
-        Ok(LiveSession {
             inbox,
-            session,
-            turn,
-            closed,
+            closed: CancellationToken::new(),
+        });
+        let script = runtime
+            .open_session(Arc::clone(&host) as Arc<dyn SessionHost>)
+            .await
+            .map_err(|error| AppError::Internal(chain_text(&error)))?;
+        let servers = start_servers(&host, &session.settings().cwd);
+        let parts = Arc::new(Parts {
+            session: Arc::new(tokio::sync::Mutex::new(session)),
+            turn: Mutex::default(),
             host,
             script,
             servers,
-            task: tokio::spawn(task.run()),
+        });
+        Ok(LiveSession {
+            task: tokio::spawn(Arc::clone(&parts).run()),
+            parts,
         })
+    }
+
+    /// The inbox of the session. The app saves and removes input through the inbox.
+    pub(super) fn inbox(&self) -> &Inbox {
+        &self.parts.host.inbox
     }
 
     /// Each MCP server of the session and its state.
     pub(super) fn mcp_servers(&self) -> Vec<McpServer> {
-        self.servers.states()
+        self.parts.servers.states()
     }
 
     /// Whether a turn runs.
     pub(super) fn state(&self) -> SessionState {
-        if lock(&self.turn).is_some() {
+        if lock(&self.parts.turn).is_some() {
             SessionState::Running
         } else {
             SessionState::Idle
@@ -114,12 +108,12 @@ impl LiveSession {
 
     /// Give `response` to the open question `id`.
     pub(super) fn answer(&self, id: InteractionId, response: InteractionResponse) -> Result<(), AppError> {
-        self.inbox.output.answer(id, response)
+        self.parts.host.inbox.output.answer(id, response)
     }
 
     /// Cancel the running turn.
     pub(super) fn cancel(&self) {
-        if let Some(token) = lock(&self.turn).as_ref() {
+        if let Some(token) = lock(&self.parts.turn).as_ref() {
             token.cancel();
         }
     }
@@ -127,59 +121,66 @@ impl LiveSession {
     /// Send the session as updates: the saved events after `after`, the state, the pending inputs, and the running
     /// jobs. The live updates that come during the load follow them, without the ones that they hold.
     pub(super) async fn load(&self, after: Option<EventNumber>) -> Result<(), AppError> {
-        let hold = Hold::start(&self.inbox.output);
-        let loaded = self
-            .host
+        let host = &self.parts.host;
+        let hold = Hold::start(&host.inbox.output);
+        let loaded = host
             .shared
             .store
-            .load(self.inbox.output.session, after)
+            .load(host.inbox.output.session, after)
             .await
             .map_err(AppError::Store)?;
-        hold.release(loaded, || (self.state(), self.jobs(), self.servers.states()));
+        hold.release(loaded, || (self.state(), self.jobs(), self.parts.servers.states()));
         Ok(())
     }
 
     /// Save `settings`. It fails while a turn runs or input waits, and it never waits for a turn. The session keeps its
     /// system prompt.
     pub(super) async fn set_settings(&self, settings: SessionSettings) -> Result<(), AppError> {
-        let Ok(mut session) = self.session.try_lock() else {
+        let Ok(mut session) = self.parts.session.try_lock() else {
             return Err(AppError::Busy);
         };
+        let host = &self.parts.host;
+        let output = &host.inbox.output;
         // A turn starts only under the lock, so an input that comes after this check runs with the new settings.
-        let waiting = self
-            .host
+        let waiting = host
             .shared
             .store
-            .pending(self.inbox.output.session)
+            .pending(output.session)
             .await
             .map_err(AppError::Store)?;
         if !waiting.is_empty() {
             return Err(AppError::Busy);
         }
         if session.is_stale() {
-            recover(&mut session, &self.inbox.output).await?;
+            recover(&mut session, output).await?;
         }
-        let saved = save_settings(&mut session, settings, &self.host.shared).await?;
-        self.inbox.output.publish(SessionUpdate::Saved(saved));
+        let saved = save_settings(&mut session, settings, &host.shared).await?;
+        output.publish(SessionUpdate::Saved(saved));
         Ok(())
     }
 
     /// The running background jobs, oldest first.
     pub(super) fn jobs(&self) -> Vec<Job> {
-        self.host.shared.processes.running_jobs(&self.owner())
+        self.parts.host.shared.processes.running_jobs(&self.owner())
     }
 
     /// Stop the running job `id`, and wait for its end. Answer `false` when no such job runs.
     pub(super) async fn stop_job(&self, id: &str) -> bool {
-        self.host.shared.processes.stop_job(id, &self.owner()).await.is_some()
+        self.parts
+            .host
+            .shared
+            .processes
+            .stop_job(id, &self.owner())
+            .await
+            .is_some()
     }
 
     /// Stop the running turn, and start no other.
     pub(super) fn stop(&self) {
         // The task starts a turn under the same lock, so a turn starts either before the stop and ends cancelled, or
         // not at all and leaves its input pending.
-        let _turn = lock(&self.turn);
-        self.closed.cancel();
+        let _turn = lock(&self.parts.turn);
+        self.parts.host.closed.cancel();
     }
 
     /// Stop the running turn, wait for the task to end, and stop the jobs. Waiting input stays saved and starts no
@@ -190,27 +191,27 @@ impl LiveSession {
             warn(&format!("a session task failed: {error}"));
         }
         // After the task, so no turn takes the tools of the closed plugins.
-        if let Err(error) = self.script.close().await {
+        if let Err(error) = self.parts.script.close().await {
             warn(&format!(
                 "the plugins of a session did not close: {}",
                 chain_text(&error)
             ));
         }
         // After the task, so a job that the cancelled turn started also stops.
-        self.host.shared.processes.close_owner(&self.owner()).await;
-        self.servers.close().await;
+        self.parts.host.shared.processes.close_owner(&self.owner()).await;
+        self.parts.servers.close().await;
     }
 
     /// The owner of the jobs of the session.
     fn owner(&self) -> Arc<dyn SessionHost> {
-        Arc::clone(&self.host) as Arc<dyn SessionHost>
+        Arc::clone(&self.parts.host) as Arc<dyn SessionHost>
     }
 }
 
 // A session that the app drops without a close still ends its task and its turn.
 impl Drop for LiveSession {
     fn drop(&mut self) {
-        self.closed.cancel();
+        self.parts.host.closed.cancel();
     }
 }
 
@@ -441,25 +442,14 @@ impl Drop for Hold<'_> {
     }
 }
 
-/// The task of one session.
-struct SessionTask {
-    session: Arc<tokio::sync::Mutex<Session>>,
-    script: Arc<ScriptSession>,
-    servers: Arc<Servers>,
-    host: Arc<Host>,
-    inbox: Inbox,
-    turn: Arc<Mutex<Option<CancellationToken>>>,
-    closed: CancellationToken,
-}
-
-impl SessionTask {
-    /// Run the waiting input at each wake, until the app closes the session.
-    async fn run(self) {
+impl Parts {
+    /// Run the task of the session. Each wake runs the pending input, until the app closes the session.
+    async fn run(self: Arc<Self>) {
         // An open alone runs nothing, so a load only reads. The waiting input runs at the next wake.
         loop {
             tokio::select! {
-                () = self.inbox.wake.notified() => self.run_waiting_turns().await,
-                () = self.closed.cancelled() => return,
+                () = self.host.inbox.wake.notified() => self.run_waiting_turns().await,
+                () = self.host.closed.cancelled() => return,
             }
         }
     }
@@ -479,7 +469,7 @@ impl SessionTask {
 
     /// Run one turn after another while input waits.
     async fn run_waiting_turns(&self) {
-        let output = &self.inbox.output;
+        let output = &self.host.inbox.output;
         loop {
             // The check comes before the lock, so a wake with no input never makes new settings fail.
             match self.host.shared.store.pending(output.session).await {
@@ -508,10 +498,10 @@ impl SessionTask {
             lock(&self.host.folder).clone_from(&session.settings().cwd);
             let token = {
                 let mut turn = lock(&self.turn);
-                if self.closed.is_cancelled() {
+                if self.host.closed.is_cancelled() {
                     return;
                 }
-                let token = self.closed.child_token();
+                let token = self.host.closed.child_token();
                 *turn = Some(token.clone());
                 token
             };
@@ -617,7 +607,7 @@ const MCP_SOURCE: &str = "host:mcp";
 fn start_servers(host: &Arc<Host>, folder: &Path) -> Servers {
     let output = Arc::clone(&host.inbox.output);
     let project = match read_json::<yuke_mcp::Config>(&folder.join(".mcp.json")) {
-        Ok(project) => project,
+        Ok(project) => project.unwrap_or_default(),
         Err(error) => {
             output.notice(NoticeLevel::Error, &error);
             yuke_mcp::Config::default()

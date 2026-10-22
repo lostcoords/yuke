@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use super::*;
+use crate::config::without_comments;
 
 fn built_in(id: &str) -> Provider {
     catalog::PROVIDERS
@@ -14,9 +15,15 @@ fn provider<'p>(providers: &'p Providers, id: &str) -> &'p Provider {
     providers.0.iter().find(|provider| provider.id == id).unwrap()
 }
 
+/// Parse the file text `text`, which can hold comments, and apply it to the built-in providers.
+fn parse_text(text: &str) -> Result<Providers, String> {
+    let file: File = serde_json::from_str(&without_comments(text)).map_err(|error| error.to_string())?;
+    Providers::from_file(file)
+}
+
 /// The providers of a file with `entries` as its provider list.
 fn parse(entries: &str) -> Result<Providers, String> {
-    Providers::parse(&format!(r#"{{ "providers": [{entries}] }}"#))
+    parse_text(&format!(r#"{{ "providers": [{entries}] }}"#))
 }
 
 fn folder(name: &str) -> PathBuf {
@@ -40,7 +47,7 @@ fn a_missing_file_gives_the_built_in_providers_and_a_bad_file_names_its_path() {
 
 #[test]
 fn a_written_field_replaces_the_built_in_value_and_an_omitted_one_keeps_it() {
-    let providers = Providers::parse(
+    let providers = parse_text(
         r#"{
           // A proxy in front of OpenAI.
           "providers": [{
@@ -418,7 +425,7 @@ fn an_unknown_field_or_value_is_an_error() {
         assert!(error.contains(expected), "{entries}: {error}");
     }
     assert!(
-        Providers::parse(r#"{ "provider": [] }"#)
+        parse_text(r#"{ "provider": [] }"#)
             .unwrap_err()
             .contains("unknown field `provider`")
     );

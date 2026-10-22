@@ -3,7 +3,6 @@
 
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::io;
 use std::path::Path;
 
 use serde::{Deserialize, Deserializer};
@@ -15,7 +14,7 @@ use yuke_ai::route::{self, CredentialHeader, SessionHeader};
 use yuke_ai::transport::Header;
 use yuke_ai::{ChatDialect, Effort, MaxTokensField, Protocol, ReasoningReplayMode, ResponsesDialect, ThinkingFormat};
 
-use crate::config::without_comments;
+use crate::config::read_json;
 
 /// The name of the file in the config folder.
 const FILE: &str = "providers.json";
@@ -32,17 +31,14 @@ impl Providers {
     /// Returns a text that names the file, the entry, and the field of the first bad value.
     pub(crate) fn load(folder: &Path) -> Result<Providers, String> {
         let path = folder.join(FILE);
-        let text = match std::fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Providers(catalog::PROVIDERS.to_vec())),
-            Err(error) => return Err(format!("{}: {error}", path.display())),
-        };
-        Providers::parse(&text).map_err(|error| format!("{}: {error}", path.display()))
+        match read_json::<File>(&path)? {
+            Some(file) => Providers::from_file(file).map_err(|error| format!("{}: {error}", path.display())),
+            None => Ok(Providers(catalog::PROVIDERS.to_vec())),
+        }
     }
 
-    /// The built-in providers changed by the file text `text`.
-    fn parse(text: &str) -> Result<Providers, String> {
-        let file: File = serde_json::from_str(&without_comments(text)).map_err(|error| error.to_string())?;
+    /// Apply the entries of `file` to the built-in providers, and give the result.
+    fn from_file(file: File) -> Result<Providers, String> {
         let mut providers = catalog::PROVIDERS.to_vec();
         let mut ids = HashSet::new();
         for patch in file.providers {

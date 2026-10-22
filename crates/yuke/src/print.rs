@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tokio::sync::Notify;
 use yuke_agent::StoreError;
-use yuke_ai::catalog::{Entry, ReasoningLevel};
-use yuke_ai::{Block, answer_text};
+use yuke_ai::catalog::ReasoningLevel;
+use yuke_ai::{Block, Effort, answer_text};
 use yuke_engine::{CancellationToken, Outcome, TurnEnd, chain_text};
 use yuke_protocol::{
     LiveUpdate, ModelReference, NoticeLevel, ServerNotification, SessionEvent, SessionId, SessionSettings,
@@ -28,18 +28,40 @@ pub(crate) struct Task {
     /// session, and the run then needs a reasoning choice too.
     pub(crate) model: Option<String>,
     /// The reasoning choice. A new session needs it. For an existing session, it replaces the level of the session.
-    pub(crate) reasoning: Option<ReasoningChoice>,
+    pub(crate) reasoning: Option<Reasoning>,
     /// The session of the turn.
     pub(crate) session: SessionChoice,
 }
 
 /// A reasoning choice of the command line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReasoningChoice {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum Reasoning {
     /// Send no reasoning control, so the endpoint chooses the level.
-    Endpoint,
-    /// This level.
-    Level(ReasoningLevel),
+    Default,
+    Off,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
+impl Reasoning {
+    /// Give the level of this choice. [`Reasoning::Default`] gives `None`.
+    fn level(self) -> Option<ReasoningLevel> {
+        let effort = |effort| Some(ReasoningLevel::Effort(effort));
+        match self {
+            Self::Default => None,
+            Self::Off => Some(ReasoningLevel::Off),
+            Self::Minimal => effort(Effort::Minimal),
+            Self::Low => effort(Effort::Low),
+            Self::Medium => effort(Effort::Medium),
+            Self::High => effort(Effort::High),
+            Self::Xhigh => effort(Effort::Xhigh),
+            Self::Max => effort(Effort::Max),
+        }
+    }
 }
 
 /// The session that a run continues.
@@ -150,19 +172,14 @@ const NO_REASONING: &str =
 fn new_settings(
     providers: &Providers,
     selector: &str,
-    choice: ReasoningChoice,
+    choice: Reasoning,
     cwd: &Path,
 ) -> Result<SessionSettings, String> {
-    let entry = providers
-        .lookup(selector)
-        .map_err(|error| format!("{selector}: {error}"))?;
+    let (model, reasoning) = choose(providers, selector, choice)?;
     Ok(SessionSettings {
-        model: ModelReference {
-            provider: entry.provider.id.to_string(),
-            model: entry.model.id.to_string(),
-        },
+        model,
         settings: yuke_ai::Settings {
-            reasoning: reasoning(&entry, choice)?,
+            reasoning,
             ..yuke_ai::Settings::new()
         },
         cwd: cwd.to_owned(),
@@ -183,15 +200,10 @@ async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<S
             Some(model) => model.clone(),
             None => format!("{}/{}", saved.model.provider, saved.model.model),
         };
-        let entry = providers
-            .lookup(&selector)
-            .map_err(|error| AppError::Invalid(format!("{selector}: {error}")))?;
+        let (model, reasoning) = choose(providers, &selector, choice).map_err(AppError::Invalid)?;
         let mut settings = saved.clone();
-        settings.model = ModelReference {
-            provider: entry.provider.id.to_string(),
-            model: entry.model.id.to_string(),
-        };
-        settings.settings.reasoning = reasoning(&entry, choice).map_err(AppError::Invalid)?;
+        settings.model = model;
+        settings.settings.reasoning = reasoning;
         Ok(Some(settings))
     };
     match app.open(id, changed).await {
@@ -201,15 +213,27 @@ async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<S
     }
 }
 
-/// The reasoning settings of `choice` on the model of `entry`.
-fn reasoning(entry: &Entry<'_>, choice: ReasoningChoice) -> Result<yuke_ai::ReasoningSettings, String> {
-    let ReasoningChoice::Level(level) = choice else {
-        return Ok(yuke_ai::ReasoningSettings::default());
+/// Find the model of `selector` in `providers`. Give its reference and the reasoning settings of `choice` for that model.
+fn choose(
+    providers: &Providers,
+    selector: &str,
+    choice: Reasoning,
+) -> Result<(ModelReference, yuke_ai::ReasoningSettings), String> {
+    let entry = providers
+        .lookup(selector)
+        .map_err(|error| format!("{selector}: {error}"))?;
+    let reasoning = match choice.level() {
+        Some(level) => entry
+            .model
+            .reasoning(level)
+            .map_err(|error| format!("{}/{}: {error}", entry.provider.id, entry.model.id))?,
+        None => yuke_ai::ReasoningSettings::default(),
     };
-    entry
-        .model
-        .reasoning(level)
-        .map_err(|error| format!("{}/{}: {error}", entry.provider.id, entry.model.id))
+    let model = ModelReference {
+        provider: entry.provider.id.to_string(),
+        model: entry.model.id.to_string(),
+    };
+    Ok((model, reasoning))
 }
 
 /// Keeps what a run needs from the notifications of its session: the saved blocks of the turn, its end, and a
